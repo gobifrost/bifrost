@@ -28,6 +28,25 @@ opt in should remain workflow-only, exactly as they are today.
 - **Reworking the workflow path.** Workflows continue to use the SDK; the SDK
   bypasses the access-rule check (workflow context is implicitly trusted).
 
+## In-scope deliverables
+
+Three deliverables ship together:
+
+1. **REST access rules** — the `Table.access` block, the checker, and the
+   relaxed REST endpoints (covered in the rest of this spec).
+2. **Web SDK** — a TypeScript `tables` client mirroring the Python workflow
+   SDK's surface (`get`, `insert`, `update`, `delete`, `upsert`, `query`,
+   `count`, `insert_batch`, `upsert_batch`, `delete_batch`). Exposed to apps
+   via the existing platform scope (`client/src/lib/app-code-runtime.ts`).
+   Authoritatively backed by the same REST endpoints; access enforced
+   server-side.
+3. **Websocket subscriptions** — apps can subscribe to a table and receive
+   push events on insert/update/delete. Plugs into the existing
+   `/ws/connect` channel-based subscription system
+   (`api/src/routers/websocket.py`) and Redis pub/sub fanout
+   (`api/src/core/pubsub.py`). Subscription authorization runs the same
+   `TableAccessChecker` against `read`.
+
 ## Model
 
 A new `access` block on each `Table`. Three scopes (Everyone, Role, Creator),
@@ -278,33 +297,146 @@ Per CLAUDE.md "Keeping CLI, MCP, and manifest in sync":
 ### Frontend
 
 The existing `client/src/services/tables.ts` continues to work unchanged for
-admins. For app-author UX:
+admins. New surfaces:
 
-- The Tables admin page gains an "Access" tab/section per table — three
-  collapsible cards (Everyone, Role, Creator), each with four checkboxes;
-  the Role card includes a role multi-select.
-- Apps that read tables in the browser use the existing `$api.useQuery`
-  hooks against `/api/tables/*`. No new client surface.
-- A Vitest test covers the access editor component
-  (`TableAccessEditor.test.tsx`).
+- **Admin access editor.** The Tables admin page gains an "Access"
+  tab/section per table — three collapsible cards (Everyone, Role,
+  Creator), each with four checkboxes; the Role card includes a role
+  multi-select. Vitest covers the editor (`TableAccessEditor.test.tsx`).
+- **Web SDK for apps** (`client/src/lib/app-sdk/tables.ts`). A new
+  TypeScript module mirroring the Python workflow SDK's `tables` surface
+  one-for-one. Methods: `get`, `insert`, `update`, `delete`, `upsert`,
+  `query`, `count`, `insert_batch`, `upsert_batch`, `delete_batch`,
+  `subscribe`. All async, all backed by the REST endpoints (and `/ws` for
+  `subscribe`). Exposed to apps via the existing platform scope
+  (`client/src/lib/app-code-runtime.ts`); apps import as
+  `import { tables } from "bifrost"`. Vitest covers every method.
+- **Subscription hook**
+  (`client/src/lib/app-sdk/use-table-subscription.ts`). React hook wrapping
+  `tables.subscribe` for the common case. Vitest covers reconnect, cleanup,
+  and access-denied paths.
+
+### Websocket subscriptions
+
+A new channel kind is added to the existing `/ws/connect` router
+(`api/src/routers/websocket.py`):
+
+- **Channel name:** `table:{table_id}`. One channel per table.
+- **Subscribe handshake:** when a client subscribes, the server loads the
+  `Table`, runs `TableAccessChecker(action=read, ...)` against the
+  websocket-authenticated user, and rejects the subscription if denied.
+  Subscriptions on tables with `access IS NULL` are denied (workflow-only).
+- **Server-side fanout:** `DocumentRepository.insert/update/delete` calls a
+  new `publish_document_change(table_id, action, doc)` helper in
+  `api/src/core/pubsub.py`, which broadcasts a small JSON envelope to the
+  channel:
+
+  ```json
+  {
+    "type": "document_change",
+    "table_id": "...",
+    "action": "insert" | "update" | "delete",
+    "id": "...",
+    "created_by": "<uuid|null>",
+    "data": { ... }
+  }
+  ```
+
+- **Per-recipient Creator-scope filtering.** This is the one non-trivial
+  bit. Tables that grant `read` only via the Creator scope can't broadcast
+  every change to every subscriber — that would leak rows that don't belong
+  to the recipient. Two-step filter:
+
+  1. The broadcast envelope always includes `created_by` (cheap, already
+     loaded).
+  2. The websocket router's per-connection send path checks: if the
+     subscriber's effective read grant is *Creator-only*, drop the event
+     unless `created_by == subscriber.user_id`. If Everyone or Role grants
+     read, send unfiltered.
+
+  The per-connection check uses cached access-rule + role data computed at
+  subscribe time (refreshed if the table's `access` column changes — see
+  invalidation below).
+
+- **Invalidation on access changes.** When `Table.access` is updated via
+  the admin UI, the API publishes a `table_access_changed:{table_id}`
+  envelope on the same channel. Each connected client recomputes its
+  effective grants — or, if the change revokes read, the server closes the
+  subscription with a `subscription_revoked` event. (Server enforces;
+  client is informed.)
+
+- **Reconnect semantics.** No replay. Clients that disconnect lose events
+  in the gap; on reconnect they should re-fetch state via REST. The
+  envelope is fire-and-forget. (This matches how `execution:*` channels
+  behave today.)
+
+- **What the SDK exposes:** `tables.subscribe(name, callback, options?)`
+  returns an `unsubscribe()` function. The SDK handles the ws connection
+  (or reuses the runtime's existing connection), the handshake, and the
+  envelope-to-callback dispatch. Callers see typed events:
+
+  ```ts
+  tables.subscribe("tickets", (evt) => {
+    // evt: { action: "insert"|"update"|"delete", id, data, created_by }
+  });
+  ```
+
+  React users use the `useTableSubscription` hook wrapper.
 
 ## Testing
 
-- **Unit, `tests/unit/test_table_access.py`**: pure-function checker tests
-  for every scope × action × caller combination, including the Creator
-  filter behavior for list/query.
-- **Unit, `tests/unit/test_manifest.py`**: round-trip a table with a fully
-  populated `access` block including role IDs.
-- **E2E, `tests/e2e/platform/test_table_access.py`**: matrix of three users
-  (admin, role-holder, plain) hitting list/get/insert/update/delete on a
-  table with a representative access config; assertions on 200/403 and on
-  the Creator-filter case (Bob sees only his rows).
-- **E2E, existing tests**: the existing `tests/e2e/platform/test_tables.py`
-  is updated to assert the default-deny behavior (a non-superuser hitting a
-  table with no `access` block gets 403).
-- **Client unit, `client/src/services/tables.test.ts`**: hooks unchanged;
-  no new test required unless the access-editor component is added.
-- **Client e2e**: a Playwright spec exercises the admin access editor.
+The combinatorial space is large; coverage is structured so the unit layer
+exhaustively walks scope × action × caller, and the e2e layer proves the
+end-to-end wiring works on a representative slice.
+
+**Backend unit:**
+- **`tests/unit/test_table_access.py`** — pure-function checker. Every
+  combination of: 3 scopes × 4 actions × {admin, role-holder, plain user,
+  workflow caller} × {row-with-creator, row-without-creator}. Plus the
+  list/query Creator-filter rule: Everyone-read and Role-read return
+  unfiltered; Creator-read-only returns SQL-filtered.
+- **`tests/unit/test_manifest.py`** — `ManifestTable` round-trip with a
+  fully populated `access` block including role IDs and role-name
+  rewriting on portable export.
+- **`tests/unit/test_pubsub_table_changes.py`** — `publish_document_change`
+  emits the right envelope shape; `table_access_changed` invalidation
+  envelope is correct.
+- **`tests/unit/test_dto_flags.py`** — DTO parity test passes with the new
+  `access` field on `TableUpdate` (or with an explicit `DTO_EXCLUDES`
+  entry, decided in plan-writing).
+
+**Backend e2e:**
+- **`tests/e2e/platform/test_table_access.py`** — REST matrix: 3 users
+  (admin, role-holder, plain) × 4 actions × representative access configs.
+  Assertions on 200/403 and on the Creator-filter case (Bob sees only his
+  rows in list/query).
+- **`tests/e2e/platform/test_tables.py`** — updated to assert default-deny:
+  a non-superuser hitting a table with `access IS NULL` gets 403.
+- **`tests/e2e/platform/test_table_subscriptions.py`** — websocket flow:
+  subscribe with read access (accepted), without read access (rejected),
+  receive insert event, receive update event, receive delete event,
+  Creator-only filtering (Bob's subscription receives only his rows even
+  when Alice inserts), access revocation (admin removes Bob's role,
+  server emits `subscription_revoked`).
+
+**Client unit (vitest):**
+- **`client/src/lib/app-sdk/tables.test.ts`** — every SDK method:
+  `get`/`insert`/`update`/`delete`/`upsert`/`query`/`count`/
+  `insert_batch`/`upsert_batch`/`delete_batch`. Mocks `apiClient`; asserts
+  shape parity with the Python SDK.
+- **`client/src/lib/app-sdk/use-table-subscription.test.tsx`** — happy
+  path, reconnect, cleanup-on-unmount, access-denied propagation,
+  `subscription_revoked` cleanup.
+- **`client/src/components/tables/TableAccessEditor.test.tsx`** — the
+  admin access editor.
+
+**Client e2e (Playwright):**
+- **`client/e2e/tables-app-direct.spec.ts`** — an embedded test app uses
+  the web SDK to insert + read a row; assert it round-trips without a
+  workflow execution being created.
+- **`client/e2e/tables-subscription.spec.ts`** — embedded test app
+  subscribes to a table; assert it receives a push event when a separate
+  REST call inserts a row.
 
 ## Rollout & migration
 
@@ -344,3 +476,8 @@ core design.
   endpoint behavior (including access-rule enforcement) is tracked in
   `docs/plans/2026-04-18-mcp-router-reconciliation.md`.
 - **Audit log.** Per-row access decisions are not currently logged.
+- **Replay / event log for subscriptions.** Subscriptions are
+  fire-and-forget; clients that miss events during a disconnect re-fetch
+  via REST. A durable event log per table (so clients can replay since a
+  cursor) is a future addition if real-time apps need exactly-once
+  semantics.
