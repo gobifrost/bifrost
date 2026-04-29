@@ -484,7 +484,8 @@ async def test_edit_user_message_rejects_non_user_message(
 
     try:
         executor = AgentExecutor(async_session_factory)
-        u1 = await executor._save_message(
+        # u1 is the parent of a1; we don't reference it directly.
+        await executor._save_message(
             conversation_id=conv_id, role=MessageRole.USER, content="hi",
         )
         a1 = await executor._save_message(

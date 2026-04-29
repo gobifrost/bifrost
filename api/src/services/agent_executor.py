@@ -774,7 +774,13 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         *,
         local_id: str | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
-        """Edit a user message — create a sibling and dispatch a fresh turn."""
+        """Edit a user message — create a sibling and dispatch a fresh turn.
+
+        Note on validation: this is an async generator, so the validation
+        below runs on the first ``__anext__()`` (not when the method is
+        called). Callers must iterate (e.g. ``async for chunk in …``) to
+        observe a ValueError raised before the first yield.
+        """
         # Validate target.
         async with self._db() as session:
             target = await session.get(Message, target_message_id)
@@ -800,6 +806,10 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         if fresh is None:
             raise ValueError(f"conversation {conversation.id} not found")
 
+        # enable_routing=False — edits stay on the current agent. We don't
+        # re-parse @mentions on edit; users wanting to switch agents can do
+        # so via the agent selector. This avoids edits silently changing
+        # routing semantics.
         async for chunk in self.chat(
             agent=agent,
             conversation=fresh,
@@ -820,7 +830,12 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         *,
         local_id: str | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
-        """Retry an assistant message — back the leaf up, dispatch a fresh turn."""
+        """Retry an assistant message — back the leaf up, dispatch a fresh turn.
+
+        Note on validation: this is an async generator. Validation in
+        ``_walk_leaf_to_assistant_parent`` runs on the first ``__anext__()``
+        — callers must iterate to observe a ValueError.
+        """
         parent_user_id = await self._walk_leaf_to_assistant_parent(
             conversation, target_message_id
         )
@@ -831,6 +846,8 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         if fresh is None or user_msg is None:
             raise ValueError("conversation or parent user message not found")
 
+        # enable_routing=False — retries stay on the current agent. See
+        # edit_user_message for the same rationale.
         async for chunk in self.chat(
             agent=agent,
             conversation=fresh,
