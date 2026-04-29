@@ -746,11 +746,19 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             system_prompt = await self._get_default_system_prompt()
 
         # M3: append workspace + per-conversation instructions when present.
+        # TODO(perf): the websocket handler and chat router both load
+        # Conversation already; if they switch to selectinload(Conversation.workspace)
+        # we can drop this round-trip and read conversation.workspace directly.
         extra_blocks: list[str] = []
         if conversation.workspace_id is not None:
             async with self._db() as _ws_session:
                 ws = await _ws_session.get(Workspace, conversation.workspace_id)
-            if ws is not None and ws.instructions:
+            if ws is None:
+                logger.warning(
+                    "Conversation %s references missing workspace %s",
+                    conversation.id, conversation.workspace_id,
+                )
+            elif ws.instructions:
                 extra_blocks.append(ws.instructions.strip())
         if conversation.instructions:
             extra_blocks.append(conversation.instructions.strip())

@@ -373,8 +373,13 @@ async def test_system_prompt_includes_workspace_and_conversation_instructions(
         messages = await executor._build_message_history(fresh_agent, fresh_conv)
         assert messages[0].role == "system"
         sysp = messages[0].content or ""
-        assert "Always respond in formal English." in sysp
-        assert "Cite the user's name in every reply." in sysp
+        ws_idx = sysp.index("Always respond in formal English.")
+        conv_idx = sysp.index("Cite the user's name in every reply.")
+        # Spec order: agent prompt → workspace inst → conversation inst.
+        assert ws_idx < conv_idx
+        # The agent's prompt must come first; both inst blocks come after it.
+        agent_idx = sysp.index((seed_agent.system_prompt or "").strip())
+        assert agent_idx < ws_idx
     finally:
         await _cleanup_conversation(async_session_factory, conv_id)
         async with async_session_factory() as s:
@@ -383,10 +388,61 @@ async def test_system_prompt_includes_workspace_and_conversation_instructions(
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_omits_empty_instruction_blocks(
+async def test_system_prompt_appends_workspace_only_when_conv_inst_empty(
     db_session, seed_user, seed_agent, async_session_factory
 ):
-    """Empty workspace/conv instructions don't produce stray triple-blank-lines."""
+    """Workspace inst alone (no conv inst) appends with one separator."""
+    from sqlalchemy import delete
+    from src.models.enums import WorkspaceScope
+    from src.models.orm import Workspace
+
+    ws = Workspace(
+        name="Test M3 ws-only",
+        scope=WorkspaceScope.PERSONAL,
+        user_id=seed_user.id,
+        organization_id=None,
+        created_by=seed_user.email,
+        instructions="Workspace-only instruction.",
+    )
+    db_session.add(ws)
+    await db_session.flush()
+
+    conv = Conversation(
+        user_id=seed_user.id,
+        channel="chat",
+        workspace_id=ws.id,
+        agent_id=seed_agent.id,
+        # conversation.instructions intentionally None.
+    )
+    db_session.add(conv)
+    await db_session.commit()
+    conv_id = conv.id
+    ws_id = ws.id
+
+    try:
+        executor = AgentExecutor(async_session_factory)
+        async with async_session_factory() as s:
+            fresh_conv = await s.get(Conversation, conv_id)
+            fresh_agent = await s.get(type(seed_agent), seed_agent.id)
+        messages = await executor._build_message_history(fresh_agent, fresh_conv)
+        sysp = messages[0].content or ""
+        assert "Workspace-only instruction." in sysp
+        # No triple newline (would indicate an empty block sneaking in).
+        assert "\n\n\n" not in sysp
+        # Exactly one "\n\n" between the agent prompt and the workspace block.
+        assert sysp.count("\n\n") == 1
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
+        async with async_session_factory() as s:
+            await s.execute(delete(Workspace).where(Workspace.id == ws_id))
+            await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_no_extras_equals_agent_prompt(
+    db_session, seed_user, seed_agent, async_session_factory
+):
+    """No workspace, no conv inst → system prompt is exactly the agent prompt."""
     conv = Conversation(
         user_id=seed_user.id,
         channel="chat",
@@ -403,6 +459,12 @@ async def test_system_prompt_omits_empty_instruction_blocks(
             fresh_agent = await s.get(type(seed_agent), seed_agent.id)
         messages = await executor._build_message_history(fresh_agent, fresh_conv)
         sysp = messages[0].content or ""
-        assert "\n\n\n" not in sysp
+        # Without extras, the assembly takes the no-op path and returns the
+        # agent prompt unchanged. Exact equality, no trailing whitespace shifts.
+        from src.services.execution.agent_helpers import build_agent_system_prompt
+        expected = build_agent_system_prompt(
+            fresh_agent, execution_context={"mode": "chat"}
+        )
+        assert sysp == expected
     finally:
         await _cleanup_conversation(async_session_factory, conv_id)
