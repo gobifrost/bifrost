@@ -244,6 +244,10 @@ class ConversationUpdate(BaseModel):
             "user's allowed set."
         ),
     )
+    instructions: str | None = Field(
+        default=None,
+        description="Per-conversation custom instructions appended to the system prompt.",
+    )
 
 
 class ConversationPublic(BaseModel):
@@ -254,6 +258,8 @@ class ConversationPublic(BaseModel):
     agent_id: UUID | None = None
     user_id: UUID
     workspace_id: UUID | None = None
+    active_leaf_message_id: UUID | None = None
+    instructions: str | None = None
     current_model: str | None = None
     channel: str
     title: str | None = None
@@ -269,7 +275,7 @@ class ConversationPublic(BaseModel):
     def serialize_uuid(self, v: UUID) -> str:
         return str(v)
 
-    @field_serializer("agent_id", "workspace_id")
+    @field_serializer("agent_id", "workspace_id", "active_leaf_message_id")
     def serialize_optional_uuid(self, v: UUID | None) -> str | None:
         return str(v) if v else None
 
@@ -328,10 +334,17 @@ class MessagePublic(BaseModel):
     duration_ms: int | None = None
     sequence: int
     created_at: datetime
+    parent_message_id: UUID | None = None
+    sibling_count: int = 1   # 1 = this message has no siblings
+    sibling_index: int = 0   # 0-based index among siblings
 
     @field_serializer("id", "conversation_id")
     def serialize_uuid(self, v: UUID) -> str:
         return str(v)
+
+    @field_serializer("parent_message_id")
+    def serialize_parent_message_id(self, v: UUID | None) -> str | None:
+        return str(v) if v else None
 
     @field_serializer("created_at")
     def serialize_dt(self, dt: datetime) -> str:
@@ -359,6 +372,22 @@ class ChatResponse(BaseModel):
     @field_serializer("message_id")
     def serialize_uuid(self, v: UUID) -> str:
         return str(v)
+
+
+class EditMessageRequest(BaseModel):
+    """Edit a user message — creates a sibling and dispatches a fresh turn."""
+    content: str = Field(..., min_length=1, description="New text for the user message.")
+    local_id: str | None = Field(default=None, description="Client-generated ID for optimistic update reconciliation.")
+
+
+class RetryMessageRequest(BaseModel):
+    """Retry an assistant message — creates a sibling and dispatches a fresh turn."""
+    local_id: str | None = Field(default=None, description="Client-generated ID for optimistic update reconciliation.")
+
+
+class SwitchBranchRequest(BaseModel):
+    """Switch the conversation's active leaf to another message id."""
+    message_id: UUID = Field(..., description="Target message id (must belong to this conversation).")
 
 
 class AgentSwitch(BaseModel):
