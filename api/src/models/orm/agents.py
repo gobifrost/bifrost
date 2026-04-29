@@ -198,6 +198,13 @@ class Conversation(Base):
     channel: Mapped[str] = mapped_column(String(50), default="chat")
     title: Mapped[str | None] = mapped_column(String(500), default=None)
     current_model: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Active branch tip — drives history loading. NULL on empty conversation.
+    active_leaf_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    instructions: Mapped[str | None] = mapped_column(Text, default=None)
     extra_data: Mapped[dict] = mapped_column(JSONB, default={})  # Channel-specific metadata
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -218,6 +225,7 @@ class Conversation(Base):
         back_populates="conversation",
         cascade="all, delete-orphan",
         order_by="Message.sequence",
+        foreign_keys="Message.conversation_id",
     )
     ai_usages: Mapped[list["AIUsage"]] = relationship(back_populates="conversation")
 
@@ -269,13 +277,23 @@ class Message(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     # Order within conversation
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Parent in the message tree. NULL only for the root message.
+    parent_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )
 
     # Relationships
-    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    conversation: Mapped["Conversation"] = relationship(
+        back_populates="messages",
+        foreign_keys="Message.conversation_id",
+    )
 
     __table_args__ = (
         Index("ix_messages_conversation_sequence", "conversation_id", "sequence"),
+        Index("ix_messages_parent_message_id", "parent_message_id"),
     )
