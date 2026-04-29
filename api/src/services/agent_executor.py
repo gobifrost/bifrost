@@ -685,6 +685,8 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 leaf_id = fallback.id
 
             # Walk parent chain from leaf to root.
+            # TODO(perf): if median chain length grows past ~50, replace this
+            # N+1 walk with a single recursive CTE.
             chain: list[Message] = []
             current_id: UUID | None = leaf_id
             seen: set[UUID] = set()
@@ -692,10 +694,19 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 if current_id in seen:
                     # Defensive cycle break — should be impossible given FK
                     # acyclicity but guards against bad data.
+                    logger.warning(
+                        "Active branch walk hit a cycle at %s for conversation %s",
+                        current_id, conversation.id,
+                    )
                     break
                 seen.add(current_id)
                 msg = await session.get(Message, current_id)
                 if msg is None:
+                    logger.warning(
+                        "Active branch walk truncated at %s for conversation %s — "
+                        "parent_message_id points at a missing row",
+                        current_id, conversation.id,
+                    )
                     break
                 chain.append(msg)
                 current_id = msg.parent_message_id

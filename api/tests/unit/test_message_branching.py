@@ -1,10 +1,28 @@
 """Branching primitives — ORM and history loader."""
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.models.enums import MessageRole
 from src.models.orm import Conversation, Message
 from src.services.agent_executor import AgentExecutor
+
+
+async def _cleanup_conversation(session_factory, conversation_id):
+    """Hard-delete a conversation + its messages.
+
+    Tests in this file commit so a fresh session inside ``_load_active_branch``
+    can see the data; that defeats the ``db_session`` rollback fixture, so the
+    rows must be torn down explicitly. Cascade on Conversation.messages takes
+    care of the message rows.
+    """
+    async with session_factory() as cleanup:
+        await cleanup.execute(
+            delete(Message).where(Message.conversation_id == conversation_id)
+        )
+        await cleanup.execute(
+            delete(Conversation).where(Conversation.id == conversation_id)
+        )
+        await cleanup.commit()
 
 
 @pytest.mark.asyncio
@@ -112,11 +130,14 @@ async def test_load_active_branch_returns_path_root_to_leaf(
     # Active leaf points at the new branch.
     conv.active_leaf_message_id = m2b.id
     await db_session.commit()
+    conv_id = conv.id
 
-    executor = AgentExecutor(async_session_factory)
-    path = await executor._load_active_branch(conv)
-
-    assert [m.content for m in path] == ["hi", "hey there"]
+    try:
+        executor = AgentExecutor(async_session_factory)
+        path = await executor._load_active_branch(conv)
+        assert [m.content for m in path] == ["hi", "hey there"]
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
 
 
 @pytest.mark.asyncio
@@ -135,11 +156,14 @@ async def test_load_active_branch_falls_back_to_max_sequence(
     db_session.add(m2)
     # active_leaf_message_id intentionally left NULL to simulate legacy data.
     await db_session.commit()
+    conv_id = conv.id
 
-    executor = AgentExecutor(async_session_factory)
-    path = await executor._load_active_branch(conv)
-
-    assert [m.content for m in path] == ["hi", "hello"]
+    try:
+        executor = AgentExecutor(async_session_factory)
+        path = await executor._load_active_branch(conv)
+        assert [m.content for m in path] == ["hi", "hello"]
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
 
 
 @pytest.mark.asyncio
@@ -150,8 +174,53 @@ async def test_load_active_branch_empty_conversation(
     conv = Conversation(user_id=seed_user.id, channel="chat")
     db_session.add(conv)
     await db_session.commit()
+    conv_id = conv.id
 
-    executor = AgentExecutor(async_session_factory)
-    path = await executor._load_active_branch(conv)
+    try:
+        executor = AgentExecutor(async_session_factory)
+        path = await executor._load_active_branch(conv)
+        assert path == []
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
 
-    assert path == []
+
+@pytest.mark.asyncio
+async def test_load_active_branch_breaks_cycles(
+    db_session, seed_user, async_session_factory
+):
+    """A corrupt parent-chain cycle does not infinite-loop the loader."""
+    conv = Conversation(user_id=seed_user.id, channel="chat")
+    db_session.add(conv)
+    await db_session.flush()
+    m1 = Message(conversation_id=conv.id, role=MessageRole.USER, content="a", sequence=0)
+    db_session.add(m1)
+    await db_session.flush()
+    m2 = Message(
+        conversation_id=conv.id, role=MessageRole.ASSISTANT, content="b",
+        sequence=1, parent_message_id=m1.id,
+    )
+    db_session.add(m2)
+    await db_session.flush()
+    # Inject a cycle: m1 → m2 → m1.
+    m1.parent_message_id = m2.id
+    conv.active_leaf_message_id = m2.id
+    await db_session.commit()
+    conv_id = conv.id
+
+    try:
+        executor = AgentExecutor(async_session_factory)
+        path = await executor._load_active_branch(conv)
+        # The walker terminates at the cycle. Two messages in either order is
+        # acceptable; the contract is "doesn't hang or crash."
+        assert len(path) == 2
+        assert {m.content for m in path} == {"a", "b"}
+    finally:
+        # Break the cycle before deleting so the DELETE doesn't fight the FK.
+        async with async_session_factory() as cleanup:
+            await cleanup.execute(
+                delete(Message).where(Message.conversation_id == conv_id)
+            )
+            await cleanup.execute(
+                delete(Conversation).where(Conversation.id == conv_id)
+            )
+            await cleanup.commit()
