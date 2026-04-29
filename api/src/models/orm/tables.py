@@ -43,6 +43,7 @@ class Table(Base):
         ForeignKey("applications.id", ondelete="SET NULL", onupdate="CASCADE"), default=None
     )
     schema: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    access: Mapped[dict | None] = mapped_column(JSONB, default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
