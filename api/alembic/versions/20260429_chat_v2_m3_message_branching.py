@@ -1,13 +1,17 @@
 """chat v2 m3: message branching + per-conversation instructions
 
 Adds:
-- messages.parent_message_id (FK to messages.id, nullable)
+- messages.parent_message_id (FK to messages.id, nullable) + index
 - conversations.active_leaf_message_id (FK to messages.id, nullable)
 - conversations.instructions (TEXT, nullable)
 
 Backfills:
 - parent_message_id from the prior sequence row in the same conversation
 - active_leaf_message_id from MAX(sequence) per conversation
+
+Window-function ordering uses (sequence, created_at, id) as a deterministic
+tiebreaker. Message.sequence is non-unique per conversation, so a tie is
+theoretically possible; the extra columns make the backfill reproducible.
 
 Revision ID: 20260429_chat_v2_m3
 Revises: 20260428_chat_v2_m2
@@ -79,7 +83,8 @@ def upgrade() -> None:
             SELECT
                 id,
                 LAG(id) OVER (
-                    PARTITION BY conversation_id ORDER BY sequence
+                    PARTITION BY conversation_id
+                    ORDER BY sequence, created_at, id
                 ) AS prev_id
             FROM messages
         )
@@ -98,7 +103,8 @@ def upgrade() -> None:
                 conversation_id,
                 id AS leaf_id,
                 ROW_NUMBER() OVER (
-                    PARTITION BY conversation_id ORDER BY sequence DESC
+                    PARTITION BY conversation_id
+                    ORDER BY sequence DESC, created_at DESC, id DESC
                 ) AS rn
             FROM messages
         )
