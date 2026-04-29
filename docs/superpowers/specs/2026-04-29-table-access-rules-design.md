@@ -69,6 +69,9 @@ table:
   `Document.created_by`. The row's creator gets the CRUD actions enabled in
   this block; `create` here means "the logged-in user can insert rows" (which
   trivially makes them the creator of the row they just inserted).
+  Configuring Creator with `read=true` but `create=false` is a valid and
+  useful pattern — users see only rows that workflows created on their
+  behalf, but cannot insert new rows themselves.
 
 ### Resolution: additive (union)
 
@@ -92,14 +95,28 @@ itself, only for population.
 
 - **REST insert** (logged-in user): `created_by = <session user id>`,
   unconditionally.
-- **Workflow SDK insert**: `created_by` defaults to `NULL`. A new optional
-  argument lets the workflow attribute the row to a user (e.g. a form
-  submission's submitter). Workflows that don't pass it leave the row with
-  `created_by = NULL`, which means **no Creator-scope grant ever applies** to
-  that row — exactly the safe behavior for system-inserted data.
+- **Workflow SDK insert**: `created_by` is **resolved automatically from the
+  execution context** (`context.user_id` —
+  `api/bifrost/_execution_context.py:84`). The execution context already
+  carries the originating user for every trigger path:
+  - Manual run / form submission / user-scheduled run → the human user's
+    UUID.
+  - Webhook / event system / autonomous trigger →
+    `SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"`
+    (`api/src/core/constants.py`), the existing system-user sentinel.
+  - Legacy executions with no recorded user → `NULL`.
 
-`Document.updated_by` already exists too; same rules — REST writes set it to
-the session user; SDK writes can pass it explicitly, default `NULL`.
+  An optional `created_by=` argument on the SDK lets a workflow override the
+  attribution explicitly. Default behavior pulls from the context so existing
+  call sites get correct attribution for free. The system-user sentinel is a
+  real `User` row, so Creator grants will apply to system-inserted rows
+  (rare, generally undesirable — table authors who want system inserts to
+  *not* match Creator grants should leave Creator scope empty for that
+  table).
+
+`Document.updated_by` follows the same rule: REST writes set it to the
+session user; SDK writes resolve from `context.user_id`, with an optional
+`updated_by=` override.
 
 ## Storage
 
@@ -146,12 +163,16 @@ adapter. The checker takes:
   `WorkflowCaller` sentinel),
 - and, for read/update/delete, the row's `created_by` (or `None` for create).
 
-It returns `Allow` or `Deny`. Workflow callers always return `Allow`.
+It returns `Allow` or `Deny`. **Platform admins (superusers) and workflow
+callers always return `Allow`** — they bypass the access block entirely, the
+same way they bypass other entity ACLs in Bifrost. Admin access is unconditional
+across every scope and action; admins do not need to be listed in any role.
 
-For a logged-in user it walks the three scopes in order — Everyone, Role,
-Creator — and returns `Allow` on the first grant. The check is pure and
-synchronous (no DB I/O); the caller is responsible for loading `Table.access`,
-the user's role IDs, and the row's `created_by` before invoking it.
+For a non-admin logged-in user the checker walks the three scopes in order —
+Everyone, Role, Creator — and returns `Allow` on the first grant. The check is
+pure and synchronous (no DB I/O); the caller is responsible for loading
+`Table.access`, the user's role IDs, and the row's `created_by` before
+invoking it.
 
 ### REST endpoints (`api/src/routers/tables.py`)
 
@@ -173,9 +194,10 @@ For each document endpoint:
    "doesn't exist" so callers can't probe.
 5. **For create**: run the checker with `created_by=None` (the row doesn't
    exist yet); the Creator scope's `create` flag, if set, is sufficient.
-6. **Superuser bypass**: superusers continue to bypass the checker — same as
-   they bypass other access checks today. The existing admin Tables UI keeps
-   working without changes.
+6. **Platform admin bypass**: superusers (platform admins) continue to bypass
+   the checker — same as they bypass other access checks today. The existing
+   admin Tables UI keeps working without changes. Admins can read/write every
+   table regardless of `access` configuration.
 
 The table-level admin endpoints (POST `/api/tables`, PATCH `/api/tables/{id}`,
 DELETE `/api/tables/{id}`) keep `CurrentSuperuser`. Only the document-level
@@ -187,14 +209,23 @@ The SDK's `tables` client gets an internal `WorkflowCaller` marker; the
 checker short-circuits to `Allow` for it. The workflow context already runs
 with system trust (it's how reads work today); this just makes that explicit.
 
-The SDK's insert/update methods gain an optional `created_by` / `updated_by`
-parameter:
+The SDK's insert and update methods automatically resolve `created_by` /
+`updated_by` from `context.user_id` — covering form submitters, manual
+runners, user-scheduled runs (the originating human), and webhook / event /
+autonomous triggers (the system-user sentinel). An optional override is
+available for workflows that need to attribute on behalf of a different
+user:
 
 ```python
-sdk.tables.get("tickets").insert({"title": "..."}, created_by=submitter_user_id)
+# Default: row attributed to context.user_id (form submitter, etc.)
+sdk.tables.get("tickets").insert({"title": "..."})
+
+# Override (rare — e.g., a workflow ingesting an external system's event)
+sdk.tables.get("tickets").insert({"title": "..."}, created_by=external_user_id)
 ```
 
-Default is `None` for both. Existing call sites are unaffected.
+Existing call sites get correct attribution automatically; no code changes
+required for the default path. The override is the escape hatch.
 
 ## API surface
 
@@ -284,8 +315,11 @@ admins. For app-author UX:
    not call these endpoints yesterday still cannot call them today** — the
    only change is the error code (401 → 403 in some paths) and the
    opportunity to opt in.
-3. SDK behavior is unchanged for existing call sites; new `created_by` /
-   `updated_by` params default to `NULL`.
+3. SDK behavior is unchanged for existing call sites by default — but row
+   inserts now record `created_by` from `context.user_id` automatically.
+   This is strictly additive (existing rows untouched, existing reads
+   unaffected); the only observable difference is that newly inserted rows
+   carry the originating user.
 4. Admin UI ships the access editor.
 5. Apps that want direct table access have their tables configured
    per-table; they migrate off the workflow-proxy reads at their own pace.
