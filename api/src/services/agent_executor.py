@@ -658,6 +658,51 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             # Don't fail the agent execution just because notification failed
             logger.warning(f"Failed to create tool conflict notification: {e}")
 
+    async def _load_active_branch(
+        self, conversation: Conversation
+    ) -> list[Message]:
+        """Resolve the active branch as a chronological list of messages.
+
+        Walks from `active_leaf_message_id` back through `parent_message_id`
+        until NULL, then reverses. Falls back to MAX(sequence) when the
+        leaf is NULL (legacy rows the M3 migration's backfill couldn't reach,
+        plus brand-new conversations with no leaf set yet).
+        """
+        async with self._db() as session:
+            leaf_id = conversation.active_leaf_message_id
+            if leaf_id is None:
+                # Fall back: pick the row with the highest sequence.
+                fallback = (
+                    await session.execute(
+                        select(Message)
+                        .where(Message.conversation_id == conversation.id)
+                        .order_by(Message.sequence.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if fallback is None:
+                    return []
+                leaf_id = fallback.id
+
+            # Walk parent chain from leaf to root.
+            chain: list[Message] = []
+            current_id: UUID | None = leaf_id
+            seen: set[UUID] = set()
+            while current_id is not None:
+                if current_id in seen:
+                    # Defensive cycle break — should be impossible given FK
+                    # acyclicity but guards against bad data.
+                    break
+                seen.add(current_id)
+                msg = await session.get(Message, current_id)
+                if msg is None:
+                    break
+                chain.append(msg)
+                current_id = msg.parent_message_id
+
+            chain.reverse()
+            return chain
+
     async def _build_message_history(
         self, agent: Agent | None, conversation: Conversation
     ) -> list[LLMMessage]:
@@ -677,14 +722,8 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             )
         )
 
-        # Get conversation messages in order
-        async with self._db() as session:
-            result = await session.execute(
-                select(Message)
-                .where(Message.conversation_id == conversation.id)
-                .order_by(Message.sequence)
-            )
-            db_messages = result.scalars().all()
+        # Get the active branch path (chronological).
+        db_messages = await self._load_active_branch(conversation)
 
         # Track seen tool_call IDs to handle providers (e.g. Minimax) that
         # reuse the same IDs across turns. When a collision is detected, remap
