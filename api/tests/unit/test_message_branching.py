@@ -468,3 +468,111 @@ async def test_system_prompt_no_extras_equals_agent_prompt(
         assert sysp == expected
     finally:
         await _cleanup_conversation(async_session_factory, conv_id)
+
+
+@pytest.mark.asyncio
+async def test_edit_user_message_rejects_non_user_message(
+    db_session, seed_user, seed_agent, async_session_factory
+):
+    """edit_user_message refuses to edit an assistant message."""
+    conv = Conversation(
+        user_id=seed_user.id, channel="chat", agent_id=seed_agent.id,
+    )
+    db_session.add(conv)
+    await db_session.commit()
+    conv_id = conv.id
+
+    try:
+        executor = AgentExecutor(async_session_factory)
+        u1 = await executor._save_message(
+            conversation_id=conv_id, role=MessageRole.USER, content="hi",
+        )
+        a1 = await executor._save_message(
+            conversation_id=conv_id, role=MessageRole.ASSISTANT, content="hello",
+        )
+
+        with pytest.raises(ValueError, match="user messages"):
+            async for _ in executor.edit_user_message(
+                agent=None,
+                conversation=await _refetch_conv(async_session_factory, conv_id),
+                target_message_id=a1.id,
+                new_text="should not work",
+            ):
+                pass
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_assistant_message_rejects_non_assistant(
+    db_session, seed_user, seed_agent, async_session_factory
+):
+    """retry_assistant_message refuses to retry a user message."""
+    conv = Conversation(
+        user_id=seed_user.id, channel="chat", agent_id=seed_agent.id,
+    )
+    db_session.add(conv)
+    await db_session.commit()
+    conv_id = conv.id
+
+    try:
+        executor = AgentExecutor(async_session_factory)
+        u1 = await executor._save_message(
+            conversation_id=conv_id, role=MessageRole.USER, content="hi",
+        )
+
+        with pytest.raises(ValueError, match="assistant messages"):
+            async for _ in executor.retry_assistant_message(
+                agent=None,
+                conversation=await _refetch_conv(async_session_factory, conv_id),
+                target_message_id=u1.id,
+            ):
+                pass
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_walks_leaf_back_to_user_parent(
+    db_session, seed_user, seed_agent, async_session_factory
+):
+    """retry_assistant_message moves the leaf to the assistant's parent.
+
+    This is the prerequisite step before the new assistant turn runs. The
+    walk back is what makes the next _save_message create a sibling under
+    the same user message (because Task 4's _save_message reads the leaf as
+    the parent for the new row).
+    """
+    conv = Conversation(
+        user_id=seed_user.id, channel="chat", agent_id=seed_agent.id,
+    )
+    db_session.add(conv)
+    await db_session.commit()
+    conv_id = conv.id
+
+    try:
+        executor = AgentExecutor(async_session_factory)
+        u1 = await executor._save_message(
+            conversation_id=conv_id, role=MessageRole.USER, content="hi",
+        )
+        a1 = await executor._save_message(
+            conversation_id=conv_id, role=MessageRole.ASSISTANT, content="hello",
+        )
+
+        # Directly invoke the leaf-walk-back portion via the test helper.
+        await executor._walk_leaf_to_assistant_parent(
+            await _refetch_conv(async_session_factory, conv_id),
+            a1.id,
+        )
+        async with async_session_factory() as s:
+            fresh = await s.get(Conversation, conv_id)
+            assert fresh is not None
+            assert fresh.active_leaf_message_id == u1.id
+    finally:
+        await _cleanup_conversation(async_session_factory, conv_id)
+
+
+async def _refetch_conv(async_session_factory, conv_id):
+    """Helper: refetch a Conversation in a fresh session."""
+    async with async_session_factory() as s:
+        return await s.get(Conversation, conv_id)

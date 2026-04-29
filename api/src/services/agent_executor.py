@@ -176,6 +176,8 @@ class AgentExecutor:
         stream: bool = True,
         enable_routing: bool = True,
         local_id: str | None = None,
+        _skip_save_user_message: bool = False,
+        _user_message_id: UUID | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -224,19 +226,23 @@ class AgentExecutor:
                             yield chunk
                         agent = routed_agent
 
-            # 3. Save user message
-            user_msg = await self._save_message(
-                conversation_id=conversation.id,
-                role=MessageRole.USER,
-                content=user_message,
-                local_id=local_id,
-            )
+            # 3. Save user message — unless caller already created one (edit/retry path).
+            if _skip_save_user_message:
+                user_msg_id = _user_message_id
+            else:
+                user_msg = await self._save_message(
+                    conversation_id=conversation.id,
+                    role=MessageRole.USER,
+                    content=user_message,
+                    local_id=local_id,
+                )
+                user_msg_id = user_msg.id
 
             # 3b. Generate assistant message ID upfront and send message_start
             assistant_message_id = uuid4()
             yield ChatStreamChunk(
                 type="message_start",
-                user_message_id=str(user_msg.id),
+                user_message_id=str(user_msg_id) if user_msg_id else None,
                 assistant_message_id=str(assistant_message_id),
                 local_id=local_id,
             )
@@ -731,6 +737,111 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
             chain.reverse()
             return chain
+
+    async def _walk_leaf_to_assistant_parent(
+        self, conversation: Conversation, assistant_message_id: UUID
+    ) -> UUID:
+        """Move active_leaf to the parent of an assistant message; return that parent id.
+
+        Used by retry_assistant_message: we need the leaf to point at the
+        user message that prompted the assistant reply, so the next turn's
+        history loader returns the path up-to-but-not-including the
+        assistant message being retried, and the next saved assistant
+        message becomes a sibling of the original.
+        """
+        async with self._db() as session:
+            target = await session.get(Message, assistant_message_id)
+            if target is None or target.conversation_id != conversation.id:
+                raise ValueError("target message not in this conversation")
+            if target.role != MessageRole.ASSISTANT:
+                raise ValueError("retry_assistant_message: can only retry assistant messages")
+            parent_id = target.parent_message_id
+            if parent_id is None:
+                raise ValueError("assistant message has no parent — nothing to retry from")
+
+            conv = await session.get(Conversation, conversation.id)
+            assert conv is not None
+            conv.active_leaf_message_id = parent_id
+            # commit on context exit
+        return parent_id
+
+    async def edit_user_message(
+        self,
+        agent: Agent | None,
+        conversation: Conversation,
+        target_message_id: UUID,
+        new_text: str,
+        *,
+        local_id: str | None = None,
+    ) -> AsyncIterator[ChatStreamChunk]:
+        """Edit a user message — create a sibling and dispatch a fresh turn."""
+        # Validate target.
+        async with self._db() as session:
+            target = await session.get(Message, target_message_id)
+            if target is None or target.conversation_id != conversation.id:
+                raise ValueError("target message not in this conversation")
+            if target.role != MessageRole.USER:
+                raise ValueError("edit_user_message: can only edit user messages")
+            parent_of_target = target.parent_message_id
+
+        # Save the new user message as a sibling under the same parent.
+        # _save_message advances the active leaf to the new sibling.
+        new_user = await self._save_message(
+            conversation_id=conversation.id,
+            role=MessageRole.USER,
+            content=new_text,
+            local_id=local_id,
+            parent_message_id_override=parent_of_target,
+        )
+
+        # Re-fetch the conversation so chat() reads the freshly-advanced leaf.
+        async with self._db() as session:
+            fresh = await session.get(Conversation, conversation.id)
+        if fresh is None:
+            raise ValueError(f"conversation {conversation.id} not found")
+
+        async for chunk in self.chat(
+            agent=agent,
+            conversation=fresh,
+            user_message=new_text,
+            stream=True,
+            enable_routing=False,
+            local_id=local_id,
+            _skip_save_user_message=True,
+            _user_message_id=new_user.id,
+        ):
+            yield chunk
+
+    async def retry_assistant_message(
+        self,
+        agent: Agent | None,
+        conversation: Conversation,
+        target_message_id: UUID,
+        *,
+        local_id: str | None = None,
+    ) -> AsyncIterator[ChatStreamChunk]:
+        """Retry an assistant message — back the leaf up, dispatch a fresh turn."""
+        parent_user_id = await self._walk_leaf_to_assistant_parent(
+            conversation, target_message_id
+        )
+
+        async with self._db() as session:
+            fresh = await session.get(Conversation, conversation.id)
+            user_msg = await session.get(Message, parent_user_id)
+        if fresh is None or user_msg is None:
+            raise ValueError("conversation or parent user message not found")
+
+        async for chunk in self.chat(
+            agent=agent,
+            conversation=fresh,
+            user_message=user_msg.content or "",
+            stream=True,
+            enable_routing=False,
+            local_id=local_id,
+            _skip_save_user_message=True,
+            _user_message_id=parent_user_id,
+        ):
+            yield chunk
 
     async def _build_message_history(
         self, agent: Agent | None, conversation: Conversation
