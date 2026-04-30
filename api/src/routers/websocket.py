@@ -930,7 +930,7 @@ async def websocket_connect(
                 new_text = data.get("content", "")
                 local_id = data.get("local_id")
 
-                if not conversation_id or not target_message_id or not new_text:
+                if not conversation_id or not target_message_id or not new_text or not new_text.strip():
                     await websocket.send_json({
                         "type": "error",
                         "error": "Missing conversation_id, target_message_id, or content",
@@ -1331,7 +1331,18 @@ async def _process_edit_message(
                     content=streamed_content,
                     message_id=UUID(assistant_message_id) if assistant_message_id else None,
                 )
-            raise
+
+            # Match chat's cancel semantics: emit a terminal "done" frame so
+            # the client clears its in-flight indicator. Swallowing the
+            # CancelledError (no re-raise) matches _process_chat_message.
+            try:
+                await websocket.send_json({
+                    "type": "done",
+                    "conversation_id": conversation_id,
+                })
+            except Exception:
+                pass  # WebSocket may already be closed
+            return
         except ValueError as e:
             await websocket.send_json({
                 "type": "error",
@@ -1339,8 +1350,6 @@ async def _process_edit_message(
                 "error": str(e),
             })
             return
-    except asyncio.CancelledError:
-        raise
     except Exception as e:
         logger.error(f"Error processing edit_message: {e}", exc_info=True)
         try:
@@ -1422,7 +1431,17 @@ async def _process_retry_message(
                     content=streamed_content,
                     message_id=UUID(assistant_message_id) if assistant_message_id else None,
                 )
-            raise
+
+            # Match chat's cancel semantics: emit a terminal "done" frame so
+            # the client clears its in-flight indicator.
+            try:
+                await websocket.send_json({
+                    "type": "done",
+                    "conversation_id": conversation_id,
+                })
+            except Exception:
+                pass  # WebSocket may already be closed
+            return
         except ValueError as e:
             await websocket.send_json({
                 "type": "error",
@@ -1430,8 +1449,6 @@ async def _process_retry_message(
                 "error": str(e),
             })
             return
-    except asyncio.CancelledError:
-        raise
     except Exception as e:
         logger.error(f"Error processing retry_message: {e}", exc_info=True)
         try:
