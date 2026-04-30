@@ -25,6 +25,10 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
 
+vi.mock("@/hooks/useRoles", () => ({
+	useRoles: () => ({ data: [] }),
+}));
+
 // OrganizationSelect pulls useOrganizations — stub to a simple select.
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
@@ -127,6 +131,7 @@ describe("TableDialog — create mode", () => {
 			name: "tickets",
 			description: "Support tickets",
 			schema: { type: "object" },
+			access: null,
 		});
 		// Non-admin default org is "org-1" → scope should be set.
 		expect(call.params.query).toEqual({ scope: "org-1" });
@@ -174,6 +179,7 @@ describe("TableDialog — edit mode", () => {
 			body: {
 				description: "Updated",
 				schema: { type: "object" },
+				access: null,
 			},
 		});
 	});

@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import {
 	Dialog,
 	DialogContent,
@@ -28,6 +28,11 @@ import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCreateTable, useUpdateTable } from "@/services/tables";
 import type { TablePublic } from "@/services/tables";
+import { TableAccessEditor } from "@/components/tables/TableAccessEditor";
+import { useRoles } from "@/hooks/useRoles";
+import type { components } from "@/lib/v1";
+
+type TableAccess = components["schemas"]["TableAccess"];
 
 const tableNameRegex = /^[a-z][a-z0-9_-]*$/;
 
@@ -57,7 +62,17 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 	const createTable = useCreateTable();
 	const updateTable = useUpdateTable();
 	const { isPlatformAdmin, user } = useAuth();
+	const { data: rolesData } = useRoles();
 	const isEditing = !!table;
+
+	// Access state is re-derived each time the dialog opens (via key on inner component).
+	// We track the "last opened" table to detect when to reset.
+	const lastTableRef = useRef<typeof table>(undefined);
+	const lastOpenRef = useRef<boolean>(false);
+	const [accessExpanded, setAccessExpanded] = useState(() => !!table?.access);
+	const [access, setAccess] = useState<TableAccess | null>(
+		() => table?.access ?? null,
+	);
 
 	// Derive original organization_id from the table prop
 	const originalOrgId = useMemo(() => table?.organization_id ?? null, [table]);
@@ -81,7 +96,17 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 	const watchedOrgId = useWatch({ control: form.control, name: "organization_id" });
 	const scopeChanged = isEditing && watchedOrgId !== originalOrgId;
 
+	const resetAccessState = useCallback(() => {
+		setAccess(table?.access ?? null);
+		setAccessExpanded(!!table?.access);
+	}, [table]);
+
 	useEffect(() => {
+		const tableChanged = lastTableRef.current !== table;
+		const justOpened = open && !lastOpenRef.current;
+		lastTableRef.current = table;
+		lastOpenRef.current = open;
+
 		if (table) {
 			form.reset({
 				name: table.name,
@@ -99,7 +124,11 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 				organization_id: defaultOrgId,
 			});
 		}
-	}, [table, form, open, defaultOrgId]);
+
+		if (tableChanged || justOpened) {
+			resetAccessState();
+		}
+	}, [table, form, open, defaultOrgId, resetAccessState]);
 
 	const onSubmit = async (values: FormValues) => {
 		let parsedSchema: Record<string, unknown> | null = null;
@@ -127,6 +156,7 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 				body: {
 					description: values.description || null,
 					schema: parsedSchema,
+					access: access,
 				},
 			});
 		} else {
@@ -138,6 +168,7 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 					name: values.name,
 					description: values.description || null,
 					schema: parsedSchema,
+					access: access,
 				},
 			});
 		}
@@ -266,6 +297,47 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 								</FormItem>
 							)}
 						/>
+
+						{/* Access Rules — collapsed by default (opt-in) */}
+						<div className="border rounded-md">
+							<button
+								type="button"
+								className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+								onClick={() => setAccessExpanded((v) => !v)}
+								aria-expanded={accessExpanded}
+							>
+								<span>
+									Access Rules{" "}
+									<span className="text-muted-foreground font-normal">
+										(advanced)
+									</span>
+								</span>
+								{accessExpanded ? (
+									<ChevronDown className="h-4 w-4 text-muted-foreground" />
+								) : (
+									<ChevronRight className="h-4 w-4 text-muted-foreground" />
+								)}
+							</button>
+							{accessExpanded && (
+								<div className="px-4 pb-4">
+									<p className="text-xs text-muted-foreground mb-3">
+										Configure who can read, create, update, or
+										delete documents. Leave unset to restrict
+										access to workflows only.
+									</p>
+									<TableAccessEditor
+										value={access}
+										roles={
+											rolesData?.map((r) => ({
+												id: r.id,
+												name: r.name,
+											})) ?? []
+										}
+										onChange={setAccess}
+									/>
+								</div>
+							)}
+						</div>
 
 						<DialogFooter>
 							<Button
