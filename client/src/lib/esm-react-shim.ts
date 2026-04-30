@@ -1,22 +1,36 @@
 /**
- * ESM React Shim — ensures external esm.sh packages use the platform's
- * React instance instead of downloading their own copy.
+ * ESM React Shim — single import map covering every shared module a bundled
+ * app needs from the host (React, React Router, Lucide).
  *
  * Problem: esm.sh serves its own React 19 bundle. Same version, but a
  * different JS object in memory. React hooks require the exact same object
- * instance, so any package calling useState/useContext crashes.
+ * instance, so any package calling useState/useContext crashes. The same
+ * hazard applies to React Router (one provider tree, one consumer tree).
  *
- * Solution: expose Vite's React on window globals, create blob-URL ES
- * modules that re-export from those globals, and inject an import map so
- * bare `import "react"` resolves to the platform's copy.
+ * Solution: expose the host modules on window globals, create blob-URL ES
+ * modules that re-export from those globals, and inject one import map so
+ * bare `import "react"` / `import "react-router-dom"` / `import "lucide-react"`
+ * resolve to the host's copy.
  *
- * Must be called once at startup, before any dynamic import() of esm.sh URLs.
+ * Why all of it lives here: the browser only honors specifier-resolution
+ * from import maps installed before the first matching `import()` call. If
+ * we inject one map at startup and then a SECOND map later (e.g. when the
+ * bundle is loaded), the browser warns and drops the conflicting rules from
+ * the later map. We had that bug — `BundledAppShell` injected its own map
+ * with overlapping React entries, producing console warnings AND two
+ * separate captured React module references on `window`. Consolidating into
+ * one early map removes both problems.
+ *
+ * Must be called once at startup, before any dynamic import() of esm.sh
+ * URLs or app bundles.
  */
 import React from "react";
 import ReactDOM from "react-dom";
 import * as ReactJSXRuntime from "react/jsx-runtime";
 import * as ReactJSXDevRuntime from "react/jsx-dev-runtime";
 import * as ReactDOMClient from "react-dom/client";
+import * as ReactRouterDOM from "react-router-dom";
+import * as LucideReact from "lucide-react";
 
 declare global {
 	interface Window {
@@ -25,6 +39,8 @@ declare global {
 		__BIFROST_REACT_JSX_RUNTIME: typeof ReactJSXRuntime;
 		__BIFROST_REACT_JSX_DEV_RUNTIME: typeof ReactJSXDevRuntime;
 		__BIFROST_REACT_DOM_CLIENT: typeof ReactDOMClient;
+		__BIFROST_REACT_ROUTER_DOM: typeof ReactRouterDOM;
+		__BIFROST_LUCIDE_REACT: typeof LucideReact;
 	}
 }
 
@@ -49,11 +65,14 @@ function makeBlobModule(globalName: string, moduleObj: object): string {
 
 /**
  * Inject an import map into the document so bare specifiers like
- * `import "react"` resolve to our blob URLs.
+ * `import "react"` resolve to our blob URLs. Tags the script with
+ * `data-bifrost-import-map` so other code (BundledAppShell) can detect it
+ * and avoid injecting an overlapping map.
  */
 function injectImportMap(imports: Record<string, string>): void {
 	const script = document.createElement("script");
 	script.type = "importmap";
+	script.dataset.bifrostImportMap = "true";
 	script.textContent = JSON.stringify({ imports });
 	document.head.appendChild(script);
 }
@@ -73,6 +92,8 @@ export function initReactShim(): void {
 	window.__BIFROST_REACT_JSX_RUNTIME = ReactJSXRuntime;
 	window.__BIFROST_REACT_JSX_DEV_RUNTIME = ReactJSXDevRuntime;
 	window.__BIFROST_REACT_DOM_CLIENT = ReactDOMClient;
+	window.__BIFROST_REACT_ROUTER_DOM = ReactRouterDOM;
+	window.__BIFROST_LUCIDE_REACT = LucideReact;
 
 	// 2. Create blob URLs
 	const imports: Record<string, string> = {
@@ -89,6 +110,14 @@ export function initReactShim(): void {
 		"react-dom/client": makeBlobModule(
 			"__BIFROST_REACT_DOM_CLIENT",
 			ReactDOMClient,
+		),
+		"react-router-dom": makeBlobModule(
+			"__BIFROST_REACT_ROUTER_DOM",
+			ReactRouterDOM,
+		),
+		"lucide-react": makeBlobModule(
+			"__BIFROST_LUCIDE_REACT",
+			LucideReact,
 		),
 	};
 

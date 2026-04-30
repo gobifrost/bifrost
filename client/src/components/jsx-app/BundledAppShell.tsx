@@ -10,11 +10,6 @@
  */
 
 import { useEffect, useState } from "react";
-import * as ReactRuntime from "react";
-import * as ReactDOMClient from "react-dom/client";
-import * as ReactRouterDOM from "react-router-dom";
-import * as ReactJsxRuntime from "react/jsx-runtime";
-import * as LucideReact from "lucide-react";
 import { authFetch } from "@/lib/api-client";
 import { $ as platformScope } from "@/lib/app-code-runtime";
 import {
@@ -26,31 +21,46 @@ import { useAppBuilderStore } from "@/stores/app-builder.store";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
 
 /**
- * Ensure an import map is installed in the document head that points
- * bare module specifiers at blob URLs wrapping the host's already-loaded
- * copies. This avoids shipping a second copy of React in every app bundle
- * AND avoids the "two Reacts" hooks failure.
+ * Set the platform-scope global the bundler reads at runtime.
  *
- * User-declared npm deps (from Application.dependencies) resolve via
- * esm.sh URLs.
- *
- * Import maps are immutable once installed on a page, so user-dep URLs
- * are additive — we re-write the entire map if a new dep appears.
+ * The bundler synthesizes a `node_modules/bifrost/index.js` whose body emits
+ * `globalThis.__bifrost_platform[...]` accesses. We populate that global
+ * here. (The shared-host React/Router/Lucide modules are wired up at app
+ * startup by `initReactShim` and live in a single import map; this module
+ * only needs to ensure the platform-scope global is in place plus an
+ * import-map entry for any per-app npm deps.)
  */
-function ensureImportMap(dependencies: Record<string, string>): void {
-	// Import maps are immutable once installed. If one is present and the
-	// new app needs deps the existing map doesn't have, the only way to
-	// install a fresh map is a full page reload — the page comes back with
-	// the new app's correct map from the start.
+function setPlatformScope(): void {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	(globalThis as any).__bifrost_platform = platformScope;
+}
+
+/**
+ * Ensure user-declared npm dependencies resolve via esm.sh in the browser.
+ *
+ * The host shim's import map already covers React, React Router, Lucide,
+ * and the JSX runtimes; this function only writes a SECOND map for
+ * per-app user dependencies (e.g. `recharts`, `react-quill-new`). No
+ * specifier overlaps with the shim's map, so the browser merges both maps
+ * cleanly without "rule was removed, conflicted with an existing rule"
+ * warnings.
+ *
+ * Import maps are immutable once a module that matches has been resolved,
+ * so if the user's deps change between apps within the same page-lifetime,
+ * we trigger a full reload — the next load installs the deps map from the
+ * start.
+ */
+function ensureUserDepsImportMap(dependencies: Record<string, string>): void {
+	const depKeys = Object.keys(dependencies);
+	if (depKeys.length === 0) return;
+
 	const existing = document.querySelector<HTMLScriptElement>(
-		"script[data-bifrost-import-map]",
+		"script[data-bifrost-deps-import-map]",
 	);
 	if (existing) {
 		try {
 			const current = JSON.parse(existing.textContent || "{}");
-			const missing = Object.keys(dependencies).filter(
-				(k) => !current.imports?.[k],
-			);
+			const missing = depKeys.filter((k) => !current.imports?.[k]);
 			if (missing.length > 0) {
 				location.reload();
 			}
@@ -60,84 +70,23 @@ function ensureImportMap(dependencies: Record<string, string>): void {
 		return;
 	}
 
-	// Wrap each host module in a blob-URL ES module that re-exports it.
-	// The module body just reads from a globalThis key the host sets below.
-	function blobModule(globalKey: string, namedExports: string[]): string {
-		const body =
-			`const m = globalThis[${JSON.stringify(globalKey)}];\n` +
-			`export default m.default ?? m;\n` +
-			namedExports
-				.map((n) => `export const ${n} = m[${JSON.stringify(n)}];`)
-				.join("\n");
-		const blob = new Blob([body], { type: "text/javascript" });
-		return URL.createObjectURL(blob);
-	}
-
-	// Stash host copies on globalThis so the blob modules can read them.
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const g = globalThis as any;
-	g.__bifrost_react = ReactRuntime;
-	g.__bifrost_react_dom_client = ReactDOMClient;
-	g.__bifrost_react_router_dom = ReactRouterDOM;
-	g.__bifrost_react_jsx_runtime = ReactJsxRuntime;
-	g.__bifrost_lucide_react = LucideReact;
-	g.__bifrost_platform = platformScope;
-
-	const reactUrl = blobModule(
-		"__bifrost_react",
-		Object.keys(ReactRuntime).filter((k) => k !== "default"),
-	);
-	const reactDomClientUrl = blobModule(
-		"__bifrost_react_dom_client",
-		Object.keys(ReactDOMClient).filter((k) => k !== "default"),
-	);
-	const reactRouterUrl = blobModule(
-		"__bifrost_react_router_dom",
-		Object.keys(ReactRouterDOM).filter((k) => k !== "default"),
-	);
-	const reactJsxUrl = blobModule(
-		"__bifrost_react_jsx_runtime",
-		Object.keys(ReactJsxRuntime).filter((k) => k !== "default"),
-	);
-	const lucideUrl = blobModule(
-		"__bifrost_lucide_react",
-		Object.keys(LucideReact).filter((k) => k !== "default"),
-	);
-
-	// Note: "bifrost" is NOT in the import map — the bundler synthesizes a
-	// real `node_modules/bifrost/index.js` inside the tempdir that
-	// re-exports user components + Lucide icons + a platform-scope proxy.
-	// esbuild bundles it internally and emits `globalThis.__bifrost_platform`
-	// reads for platform scope at runtime.
 	// esm.sh bundles its own copy of React by default, which produces a
 	// dual-React hazard: libraries like recharts call useContext from their
 	// bundled React, but host context providers live in the host's React —
-	// null mismatch. `?external=react,react-dom` tells esm.sh to resolve
-	// those as bare specifiers at runtime, which our import map then points
-	// at the host's shared copies. Same trick for react-router-dom.
-	const REACT_EXTERNALS = "react,react-dom,react-dom/client,react/jsx-runtime,react-router-dom";
+	// null mismatch. `?external=...` tells esm.sh to leave those specifiers
+	// as bare imports at runtime, which the host shim's import map then
+	// points at the host's shared copies.
+	const REACT_EXTERNALS =
+		"react,react-dom,react-dom/client,react/jsx-runtime,react-router-dom";
 	const userDepImports: Record<string, string> = {};
 	for (const [name, version] of Object.entries(dependencies)) {
 		userDepImports[name] = `https://esm.sh/${name}@${version}?external=${REACT_EXTERNALS}`;
 	}
 
-	const map = {
-		imports: {
-			"react": reactUrl,
-			"react-dom": reactDomClientUrl,
-			"react-dom/client": reactDomClientUrl,
-			"react-router-dom": reactRouterUrl,
-			"react/jsx-runtime": reactJsxUrl,
-			"react/jsx-dev-runtime": reactJsxUrl,
-			"lucide-react": lucideUrl,
-			...userDepImports,
-		},
-	};
-
 	const scriptEl = document.createElement("script");
 	scriptEl.type = "importmap";
-	scriptEl.dataset.bifrostImportMap = "true";
-	scriptEl.textContent = JSON.stringify(map);
+	scriptEl.dataset.bifrostDepsImportMap = "true";
+	scriptEl.textContent = JSON.stringify({ imports: userDepImports });
 	// Import maps must be inserted before any module scripts that use them.
 	document.head.insertBefore(scriptEl, document.head.firstChild);
 }
@@ -251,9 +200,12 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					}
 				}
 
-				// Apply (or refresh) the import map for this load — covers both
-				// initial loads and hot-reloads so dep changes are picked up.
-				ensureImportMap(dependencies);
+				// Make sure the platform-scope global is populated and any
+				// user-declared npm deps are reachable via esm.sh. The shared
+				// host modules (React, Router, Lucide, JSX runtimes) live in
+				// the import map installed by initReactShim at startup.
+				setPlatformScope();
+				ensureUserDepsImportMap(dependencies);
 
 				if (controller.signal.aborted) return;
 				if (loadedEntry === entry) return;
