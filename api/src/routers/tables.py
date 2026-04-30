@@ -436,6 +436,21 @@ class DocumentRepository:
 # =============================================================================
 
 
+def _parse_creator_uuid(value: str | None) -> UUID | None:
+    """Parse Document.created_by into a UUID for the Creator-scope check.
+
+    Legacy rows may carry an email string instead of a UUID. Treat unparseable
+    values as `None` (the Creator scope simply won't match — equivalent to
+    "no known owner").
+    """
+    if not value:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
 async def _get_table_or_404(ctx: Context, table_id: UUID) -> Table:
     """Get table by UUID, raise 404 if not found."""
     result = await ctx.db.execute(select(Table).where(Table.id == table_id))
@@ -722,7 +737,7 @@ async def get_document(
     if doc is None:
         # 403 instead of 404 to avoid leaking presence to unauthorized callers.
         raise HTTPException(status_code=403, detail="Access denied")
-    row_creator = UUID(doc.created_by) if doc.created_by else None
+    row_creator = _parse_creator_uuid(doc.created_by)
     res = check_table_access(
         action=Action.READ, access=table.access, caller=caller, row_created_by=row_creator
     )
@@ -749,16 +764,18 @@ async def update_document(
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=403, detail="Access denied")
-    row_creator = UUID(existing.created_by) if existing.created_by else None
+    row_creator = _parse_creator_uuid(existing.created_by)
     res = check_table_access(
         action=Action.UPDATE, access=table.access, caller=caller, row_created_by=row_creator
     )
     if not res.allow:
         raise HTTPException(status_code=403, detail="Access denied")
     doc = await repo.update(doc_id, body.data, updated_by=str(ctx.user.user_id))
+    if doc is None:
+        # Lost a race with a concurrent delete after we fetched + access-checked.
+        raise HTTPException(status_code=404, detail="Document not found")
     await ctx.db.commit()
     # TODO Task 7: publish_document_change(table_id, "update", doc)
-    assert doc is not None
     return DocumentPublic.model_validate(doc)
 
 
@@ -779,15 +796,17 @@ async def delete_document(
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=403, detail="Access denied")
-    row_creator = UUID(existing.created_by) if existing.created_by else None
+    row_creator = _parse_creator_uuid(existing.created_by)
     res = check_table_access(
         action=Action.DELETE, access=table.access, caller=caller, row_created_by=row_creator
     )
     if not res.allow:
         raise HTTPException(status_code=403, detail="Access denied")
-    await repo.delete(doc_id)
+    deleted = await repo.delete(doc_id)
     await ctx.db.commit()
-    # TODO Task 7: publish_document_change(table_id, "delete", existing)
+    if deleted:
+        # TODO Task 7: publish_document_change(table_id, "delete", existing)
+        pass
 
 
 @router.post(
