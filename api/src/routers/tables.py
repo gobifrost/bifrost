@@ -21,6 +21,10 @@ from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, resolve_org_filter, resolve_target_org
 from src.models.contracts.tables import (
+    DocumentBatchCreate,
+    DocumentBatchCreateResponse,
+    DocumentBatchDeleteRequest,
+    DocumentBatchDeleteResponse,
     DocumentCountResponse,
     DocumentCreate,
     DocumentListResponse,
@@ -327,13 +331,21 @@ class DocumentRepository:
         clone._creator_filter = user_id
         return clone
 
-    async def insert(self, data: dict[str, Any], created_by: str | None) -> Document:
+    async def insert(
+        self,
+        data: dict[str, Any],
+        created_by: str | None,
+        doc_id: str | None = None,
+    ) -> Document:
         """Insert a new document."""
-        doc = Document(
-            table_id=self.table.id,
-            data=data,
-            created_by=created_by,
-        )
+        kwargs: dict[str, Any] = {
+            "table_id": self.table.id,
+            "data": data,
+            "created_by": created_by,
+        }
+        if doc_id is not None:
+            kwargs["id"] = doc_id
+        doc = Document(**kwargs)
         self.session.add(doc)
         await self.session.flush()
         await self.session.refresh(doc)
@@ -719,7 +731,18 @@ async def insert_document(
         raise HTTPException(status_code=403, detail="Access denied")
 
     repo = DocumentRepository(ctx.db, table)
-    doc = await repo.insert(body.data, created_by=str(ctx.user.user_id))
+    created_by = str(ctx.user.user_id)
+    if body.upsert and body.id:
+        # Upsert: update if exists, otherwise insert.
+        existing = await repo.get(body.id)
+        if existing is not None:
+            doc = await repo.update(body.id, body.data, updated_by=created_by)
+            if doc is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            await ctx.db.commit()
+            await publish_document_change(table_id, "update", doc)
+            return DocumentPublic.model_validate(doc)
+    doc = await repo.insert(body.data, created_by=created_by, doc_id=body.id)
     await ctx.db.commit()
     await publish_document_change(table_id, "insert", doc)
     return DocumentPublic.model_validate(doc)
@@ -868,3 +891,88 @@ async def count_documents(
     if res.creator_filter_required:
         repo = repo.with_creator_filter(str(caller.user_id))
     return DocumentCountResponse(count=await repo.count())
+
+
+@router.post(
+    "/{table_id}/documents/batch",
+    response_model=DocumentBatchCreateResponse,
+    summary="Batch insert or upsert documents",
+)
+async def batch_documents(
+    table_id: UUID,
+    body: DocumentBatchCreate,
+    ctx: Context,
+) -> DocumentBatchCreateResponse:
+    """Insert (or upsert) multiple documents in a single request.
+
+    When `upsert=true`, each item with a provided id will be updated if it
+    exists, otherwise inserted. Items without an id are always inserted.
+    """
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
+    res = check_table_access(action=Action.CREATE, access=table.access, caller=caller)
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    repo = DocumentRepository(ctx.db, table)
+    created_by = str(ctx.user.user_id)
+    inserted = 0
+    errors: list[dict[str, Any]] = []
+
+    for item in body.documents:
+        try:
+            if body.upsert and item.id:
+                existing = await repo.get(item.id)
+                if existing is not None:
+                    doc = await repo.update(item.id, item.data, updated_by=created_by)
+                    if doc is not None:
+                        await publish_document_change(table_id, "update", doc)
+                    inserted += 1
+                    continue
+            doc = await repo.insert(item.data, created_by=created_by, doc_id=item.id)
+            await publish_document_change(table_id, "insert", doc)
+            inserted += 1
+        except Exception as exc:
+            errors.append({"id": item.id, "error": str(exc)})
+
+    await ctx.db.commit()
+    return DocumentBatchCreateResponse(inserted=inserted, errors=errors)
+
+
+@router.post(
+    "/{table_id}/documents/batch-delete",
+    response_model=DocumentBatchDeleteResponse,
+    summary="Batch delete documents by ID",
+)
+async def batch_delete_documents(
+    table_id: UUID,
+    body: DocumentBatchDeleteRequest,
+    ctx: Context,
+) -> DocumentBatchDeleteResponse:
+    """Delete multiple documents by ID.
+
+    Skips IDs that don't exist. Enforces DELETE access for each row
+    (creator-only rules mean rows not owned by the caller are skipped).
+    """
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
+    repo = DocumentRepository(ctx.db, table)
+    deleted = 0
+
+    for doc_id in body.ids:
+        existing = await repo.get(doc_id)
+        if existing is None:
+            continue
+        row_creator = _parse_creator_uuid(existing.created_by)
+        res = check_table_access(
+            action=Action.DELETE, access=table.access, caller=caller, row_created_by=row_creator
+        )
+        if not res.allow:
+            continue
+        ok = await repo.delete(doc_id)
+        if ok:
+            await publish_document_change(table_id, "delete", existing)
+            deleted += 1
+
+    await ctx.db.commit()
+    return DocumentBatchDeleteResponse(deleted=deleted)

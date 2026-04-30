@@ -115,7 +115,61 @@ class TableListResponse(BaseModel):
 class DocumentCreate(BaseModel):
     """Input for creating a document."""
 
+    id: str | None = Field(
+        default=None,
+        description="Optional document ID. Auto-generated (UUID) if omitted.",
+    )
     data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+    upsert: bool = Field(
+        default=False,
+        description="If true and id is provided, update the existing document instead of raising a conflict.",
+    )
+
+
+class DocumentBatchItem(BaseModel):
+    """A single item in a batch insert or upsert."""
+
+    id: str | None = Field(
+        default=None,
+        description="Optional document ID. Auto-generated (UUID) if omitted.",
+    )
+    data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+
+
+class DocumentBatchCreate(BaseModel):
+    """Input for inserting or upserting multiple documents."""
+
+    documents: list[DocumentBatchItem] = Field(..., description="Documents to insert or upsert")
+    upsert: bool = Field(
+        default=False,
+        description="If true, upsert documents with an id instead of inserting.",
+    )
+
+
+class DocumentBatchCreateResponse(BaseModel):
+    """Response for a batch insert or upsert."""
+
+    inserted: int
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DocumentBatchUpsertResponse(BaseModel):
+    """Response for a batch upsert."""
+
+    upserted: int
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DocumentBatchDeleteRequest(BaseModel):
+    """Input for deleting multiple documents by ID."""
+
+    ids: list[str] = Field(..., description="Document IDs to delete")
+
+
+class DocumentBatchDeleteResponse(BaseModel):
+    """Response for a batch delete."""
+
+    deleted: int
 
 
 class DocumentUpdate(BaseModel):
