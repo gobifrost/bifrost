@@ -206,15 +206,6 @@ async def write_file(
             content = request.content.encode("utf-8")
 
         updated_by = user.email if user else "system"
-        if request.location == "workspace" and request.mode == "cloud":
-            if await _is_workspace_git_locked():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        "Workspace contains a .git directory; writes are blocked when the "
-                        "workspace is git-controlled."
-                    ),
-                )
         await backend.write(request.path, content, request.location, updated_by, scope=request.scope)
 
         logger.info(f"Wrote file: {log_safe(request.path)} ({len(content)} bytes, mode={log_safe(request.mode)}, location={log_safe(request.location)})")
@@ -338,8 +329,7 @@ async def get_signed_url(
 
     Path resolution goes through `shared.file_paths.resolve_s3_key`, so the
     URL targets the same key as a `files.read`/`files.write` to the same
-    `(location, scope, path)`. For workspace writes, requires the workspace
-    to not be a checked-out git repo (`_repo/.git/` absent).
+    `(location, scope, path)`.
     """
     from shared.file_paths import resolve_s3_key
 
@@ -347,16 +337,6 @@ async def get_signed_url(
         s3_path = resolve_s3_key(request.location, request.scope, request.path)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    if request.location == "workspace" and request.method == "PUT":
-        if await _is_workspace_git_locked():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Workspace contains a .git directory; signed-url uploads to workspace "
-                    "are blocked when the workspace is git-controlled."
-                ),
-            )
 
     file_storage = FileStorageService(db)
 
@@ -374,14 +354,6 @@ async def get_signed_url(
         url=url,
         path=s3_path,
     )
-
-
-async def _is_workspace_git_locked() -> bool:
-    """Return True if `_repo/.git/` exists in the bucket — workspace is git-controlled."""
-    from src.services.repo_storage import RepoStorage
-    repo = RepoStorage()
-    children = await repo.list(".git/")
-    return len(children) > 0
 
 
 # =============================================================================

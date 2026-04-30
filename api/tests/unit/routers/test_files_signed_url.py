@@ -73,9 +73,8 @@ class TestPathResolution:
         assert "scope" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
-    @patch("src.routers.files._is_workspace_git_locked", new_callable=AsyncMock, return_value=False)
     @patch("src.routers.files.FileStorageService")
-    async def test_workspace_unscoped(self, mock_fss_class, _git_lock):
+    async def test_workspace_unscoped(self, mock_fss_class):
         mock_fss = MagicMock()
         mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
         mock_fss_class.return_value = mock_fss
@@ -157,35 +156,6 @@ class TestPathValidation:
             await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
         assert exc_info.value.status_code == 400
         assert "scope" in str(exc_info.value.detail).lower()
-
-
-class TestWorkspaceGitLock:
-    """Test that workspace PUTs are blocked when _repo/.git/ exists."""
-
-    @pytest.mark.asyncio
-    @patch("src.routers.files._is_workspace_git_locked", new_callable=AsyncMock, return_value=True)
-    @patch("src.routers.files.FileStorageService")
-    async def test_workspace_put_rejected_when_git_locked(self, _fss, _git_lock):
-        from fastapi import HTTPException
-
-        req = SignedUrlRequest(path="x.txt", location="workspace", method="PUT")
-        with pytest.raises(HTTPException) as exc_info:
-            await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
-        assert exc_info.value.status_code == 400
-        assert ".git" in str(exc_info.value.detail)
-
-    @pytest.mark.asyncio
-    @patch("src.routers.files._is_workspace_git_locked", new_callable=AsyncMock, return_value=True)
-    @patch("src.routers.files.FileStorageService")
-    async def test_workspace_get_allowed_when_git_locked(self, mock_fss_class, _git_lock):
-        # GETs (downloads) of existing files shouldn't be blocked by the .git lock.
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
-
-        req = SignedUrlRequest(path="x.txt", location="workspace", method="GET")
-        result = await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
-        assert result.url == "https://s3/url"
 
 
 class TestPresignedUrlGeneration:

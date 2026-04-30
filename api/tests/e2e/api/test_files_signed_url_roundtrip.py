@@ -45,8 +45,6 @@ class TestSignedUrlRoundTrip:
         content = secrets.token_bytes(64)
 
         write = self._write(e2e_client, platform_admin.headers, path, "workspace", content)
-        if write.status_code == 400 and "git" in write.text.lower():
-            pytest.skip("workspace is git-controlled; skipping write-side roundtrip")
         assert write.status_code == 204, f"write failed: {write.text}"
 
         sign = self._sign(e2e_client, platform_admin.headers, path, "workspace")
