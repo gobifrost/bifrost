@@ -287,10 +287,11 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
 async def password_login_flow(api_url: str, email: str, password: str) -> tuple[int, dict | None]:
     """
-    Password-grant login. Tokens are returned to the caller; the caller decides
-    whether to persist them. The CLI's `bifrost login` command does NOT persist
-    them — the three BIFROST_* env-var lines printed to stdout are the entire
-    contract. Suitable only for isolated development stacks with MFA disabled.
+    Password-grant login. Tokens are returned to the caller; the caller
+    decides where to persist them. The CLI's `bifrost login` command writes
+    BIFROST_API_URL + the two tokens to .env in CWD so subsequent commands
+    in that directory inherit them. Suitable only for isolated development
+    stacks with MFA disabled.
 
     Returns (exit_code, payload). On success, payload is the parsed JSON
     response from /auth/login containing access_token / refresh_token.
@@ -367,6 +368,34 @@ def _read_env_file(path: pathlib.Path) -> list[str]:
         return []
 
 
+def _upsert_env_vars(updates: dict[str, str]) -> None:
+    """
+    Write or update KEY=VALUE pairs in CWD's .env.
+
+    For each key in ``updates``: replaces an existing ``KEY=`` (or
+    ``export KEY=``) line if present; otherwise appends.
+    """
+    cwd = pathlib.Path.cwd()
+    env_path = cwd / ".env"
+    lines = _read_env_file(env_path)
+
+    for key, value in updates.items():
+        new_line = f"{key}={value}\n"
+        found = False
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith(f"{key}=") or stripped.startswith(f"export {key}="):
+                lines[i] = new_line
+                found = True
+                break
+        if not found:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] = lines[-1] + "\n"
+            lines.append(new_line)
+
+    env_path.write_text("".join(lines))
+
+
 def _write_env_url(api_url: str) -> None:
     """
     Write or update `BIFROST_API_URL=<api_url>` in CWD's .env.
@@ -374,25 +403,9 @@ def _write_env_url(api_url: str) -> None:
     Updates an existing `BIFROST_API_URL=` line if present; otherwise appends.
     Adds `.env` to .gitignore if it isn't already gitignored.
     """
+    _upsert_env_vars({"BIFROST_API_URL": api_url})
     cwd = pathlib.Path.cwd()
     env_path = cwd / ".env"
-    lines = _read_env_file(env_path)
-
-    new_line = f"BIFROST_API_URL={api_url}\n"
-    found = False
-    for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith("BIFROST_API_URL=") or stripped.startswith("export BIFROST_API_URL="):
-            lines[i] = new_line
-            found = True
-            break
-    if not found:
-        # Ensure file ends with newline before appending
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] = lines[-1] + "\n"
-        lines.append(new_line)
-
-    env_path.write_text("".join(lines))
     print(f"Updated {env_path} with BIFROST_API_URL={api_url}")
 
     # gitignore .env if we're in a git repo and it isn't already ignored
@@ -649,9 +662,11 @@ Browser (default): Device-code flow; tokens stored in OS keychain (with JSON
                    current directory so subsequent CLI commands target this
                    instance.
 Password: When --email and --password are passed, performs an ephemeral
-          password-grant login and prints BIFROST_* env-var lines to stdout.
-          Tokens are NOT persisted. For isolated dev stacks only — refuses
-          if MFA is enabled on the instance.
+          password-grant login and writes BIFROST_API_URL +
+          BIFROST_ACCESS_TOKEN + BIFROST_REFRESH_TOKEN to .env in the
+          current directory. Subsequent CLI commands from this directory
+          pick the tokens up automatically. For isolated dev stacks only
+          — refuses if MFA is enabled on the instance.
 
 Options:
   --url, -u URL         API URL (default: BIFROST_API_URL or http://localhost:8000)
@@ -695,9 +710,26 @@ Examples:
         assert password is not None
         rc, data = asyncio.run(password_login_flow(api_url, email, password))
         if rc == 0 and data is not None:
-            print(f"BIFROST_API_URL={api_url}")
-            print(f"BIFROST_ACCESS_TOKEN={data['access_token']}")
-            print(f"BIFROST_REFRESH_TOKEN={data['refresh_token']}")
+            # Persist URL + tokens to CWD's .env so subsequent `bifrost`
+            # commands from this directory just work — no shell-eval needed.
+            # Isolation is by directory: each sandbox dir has its own .env.
+            try:
+                _write_env_url(api_url)
+                _upsert_env_vars(
+                    {
+                        "BIFROST_ACCESS_TOKEN": data["access_token"],
+                        "BIFROST_REFRESH_TOKEN": data["refresh_token"],
+                    }
+                )
+            except OSError as e:
+                print(
+                    f"Warning: could not update .env in current directory: {e}",
+                    file=sys.stderr,
+                )
+                # Fall back to printing so the caller can eval them.
+                print(f"BIFROST_API_URL={api_url}")
+                print(f"BIFROST_ACCESS_TOKEN={data['access_token']}")
+                print(f"BIFROST_REFRESH_TOKEN={data['refresh_token']}")
         return rc
 
     # Browser device-code flow (persistent → keychain or JSON fallback).
