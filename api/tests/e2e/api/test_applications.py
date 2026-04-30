@@ -655,3 +655,69 @@ class TestCodeEngineApps:
 
         # Cleanup
         _delete_app(e2e_client, platform_admin.headers, app["id"])
+
+    def test_app_create_preserves_existing_local_files(self, e2e_client, platform_admin):
+        """Creating an app whose source dir already has files must NOT clobber them with the default scaffold.
+
+        Repro: author writes apps/<slug>/_layout.tsx locally, pushes to S3,
+        then runs `bifrost apps create --slug <slug>`. The user-authored
+        layout must survive — losing it to the default Welcome scaffold is
+        the bug this guards against.
+        """
+        slug = "preserve-local-source"
+
+        # Pre-stage a user-authored file at apps/<slug>/_layout.tsx,
+        # mimicking a `bifrost watch` push that ran before `apps create`.
+        custom_layout = (
+            'import { Outlet } from "bifrost";\n\n'
+            'export default function RootLayout() {\n'
+            '  return <div data-test="user-authored"><Outlet /></div>;\n'
+            '}\n'
+        )
+        write_response = e2e_client.post(
+            "/api/files/write",
+            headers=platform_admin.headers,
+            json={
+                "path": f"apps/{slug}/_layout.tsx",
+                "content": custom_layout,
+                "location": "workspace",
+                "mode": "cloud",
+            },
+        )
+        assert write_response.status_code == 204, f"Pre-stage write failed: {write_response.text}"
+
+        try:
+            response = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={"name": "Preserve Local Source", "slug": slug},
+            )
+            assert response.status_code == 201, f"Create app failed: {response.text}"
+            app = response.json()
+
+            files_response = e2e_client.get(
+                f"/api/applications/{app['id']}/files",
+                headers=platform_admin.headers,
+            )
+            assert files_response.status_code == 200
+            files_by_path = {f["path"]: f for f in files_response.json()["files"]}
+
+            assert "_layout.tsx" in files_by_path, "Pre-staged _layout.tsx missing after create"
+            assert 'data-test="user-authored"' in files_by_path["_layout.tsx"]["source"], (
+                "Default scaffold clobbered the pre-staged user-authored _layout.tsx"
+            )
+            assert "pages/index.tsx" not in files_by_path, (
+                "Scaffold should be skipped entirely when prefix is non-empty"
+            )
+
+            _delete_app(e2e_client, platform_admin.headers, app["id"])
+        finally:
+            e2e_client.post(
+                "/api/files/delete",
+                headers=platform_admin.headers,
+                json={
+                    "path": f"apps/{slug}/_layout.tsx",
+                    "location": "workspace",
+                    "mode": "cloud",
+                },
+            )

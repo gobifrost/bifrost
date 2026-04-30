@@ -246,6 +246,17 @@ async def create_app(
 @apps_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@click.option(
+    "--deps",
+    "deps_raw",
+    type=str,
+    default=None,
+    help=(
+        "Dependencies as a JSON literal or @path to a package.json / "
+        "{name: version} file. Triggers a follow-up PUT to /dependencies "
+        "after the metadata patch. Mirrors `apps create --deps`."
+    ),
+)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -255,6 +266,7 @@ async def update_app(
     *,
     client: BifrostClient,
     resolver: RefResolver,
+    deps_raw: str | None,
     **fields: Any,
 ) -> None:
     """Update application metadata (patch-without-draft).
@@ -263,12 +275,52 @@ async def update_app(
     from the payload so the server only applies the fields the user
     explicitly passed. Per the audit this is PATCH directly on the live
     application — there's no draft-staging step.
+
+    When ``--deps`` is passed this runs the same two-call orchestration
+    as ``apps create --deps``: the metadata PATCH first, then a
+    ``PUT /dependencies`` applies the parsed dict. If the deps call
+    fails after the patch succeeded, the command prints both outcomes,
+    exits non-zero, and leaves the metadata change in place — there is
+    no rollback.
     """
     app_uuid = await resolver.resolve("app", ref)
     body = await assemble_body(ApplicationUpdate, fields, resolver=resolver)
     response = await client.patch(f"/api/applications/{app_uuid}", json=body)
     response.raise_for_status()
-    output_result(response.json(), ctx=ctx)
+    updated = response.json()
+
+    if deps_raw is None:
+        output_result(updated, ctx=ctx)
+        return
+
+    deps = _parse_deps(deps_raw)
+    deps_response = await client.put(
+        f"/api/applications/{app_uuid}/dependencies", json=deps
+    )
+    try:
+        deps_response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        error_body: Any
+        try:
+            error_body = deps_response.json()
+        except ValueError:
+            error_body = deps_response.text
+        output_result(
+            {
+                "application": updated,
+                "dependencies_error": {
+                    "status_code": deps_response.status_code,
+                    "body": error_body,
+                },
+            },
+            ctx=ctx,
+        )
+        raise exc
+
+    output_result(
+        {"application": updated, "dependencies": deps_response.json()},
+        ctx=ctx,
+    )
 
 
 @apps_group.command("set-deps")

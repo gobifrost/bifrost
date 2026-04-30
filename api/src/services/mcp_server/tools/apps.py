@@ -145,10 +145,21 @@ async def create_app(
             db.add(app)
             await db.flush()
 
-            # Write scaffold files via FileStorageService
-            file_storage = FileStorageService(db)
+            # Write scaffold files via FileStorageService — but only if no
+            # files already exist under apps/{slug}/. Authors who created
+            # the source dir locally first should not lose their work to
+            # the default Welcome scaffold.
+            from src.models.orm.file_index import FileIndex
 
-            layout_source = '''import { Outlet } from "bifrost";
+            prefix = f"apps/{slug}/"
+            existing_files = await db.execute(
+                select(FileIndex.path).where(FileIndex.path.startswith(prefix)).limit(1)
+            )
+            scaffolded = 0
+            if existing_files.first() is None:
+                file_storage = FileStorageService(db)
+
+                layout_source = '''import { Outlet } from "bifrost";
 
 export default function RootLayout() {
   return (
@@ -158,7 +169,7 @@ export default function RootLayout() {
   );
 }
 '''
-            index_source = '''export default function HomePage() {
+                index_source = '''export default function HomePage() {
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold mb-4">Welcome</h1>
@@ -169,16 +180,17 @@ export default function RootLayout() {
   );
 }
 '''
-            await file_storage.write_file(
-                path=f"apps/{slug}/_layout.tsx",
-                content=layout_source.encode("utf-8"),
-                updated_by="system",
-            )
-            await file_storage.write_file(
-                path=f"apps/{slug}/pages/index.tsx",
-                content=index_source.encode("utf-8"),
-                updated_by="system",
-            )
+                await file_storage.write_file(
+                    path=f"apps/{slug}/_layout.tsx",
+                    content=layout_source.encode("utf-8"),
+                    updated_by="system",
+                )
+                await file_storage.write_file(
+                    path=f"apps/{slug}/pages/index.tsx",
+                    content=index_source.encode("utf-8"),
+                    updated_by="system",
+                )
+                scaffolded = 2
 
             await db.commit()
 
@@ -188,7 +200,7 @@ export default function RootLayout() {
                 "id": str(app.id),
                 "name": app.name,
                 "slug": app.slug,
-                "file_count": 2,
+                "file_count": scaffolded,
                 "url": f"/apps/{app.slug}",
             })
 
@@ -709,12 +721,19 @@ async def validate_app(context: Any, app_id: str) -> ToolResult:
                         except ValueError:
                             errors.append({"severity": "error", "file": rel_path, "message": f"'{wf_ref}' is not a valid UUID"})
 
-            # Check for missing/unused dependencies
-            for dep in referenced_deps:
+            # Check for missing/unused dependencies. Host-provided modules
+            # (DEFAULT_EXTERNALS — react, lucide-react, sonner, etc.) are
+            # resolved by the host import map and never need to appear in
+            # `app.dependencies`.
+            from src.services.app_bundler import DEFAULT_EXTERNALS
+
+            host_provided = set(DEFAULT_EXTERNALS)
+            user_referenced = referenced_deps - host_provided
+            for dep in user_referenced:
                 if dep not in declared_deps:
                     errors.append({"severity": "error", "file": "dependencies", "message": f"Missing dependency: '{dep}' is imported but not declared in app dependencies"})
             for dep in declared_deps:
-                if dep not in referenced_deps:
+                if dep not in user_referenced:
                     warnings.append({"severity": "warning", "file": "dependencies", "message": f"Unused dependency: '{dep}' is declared but not imported by any file"})
 
             # Build result

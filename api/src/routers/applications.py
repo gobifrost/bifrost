@@ -460,8 +460,24 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         Creates:
         - _layout.tsx: Root layout wrapper
         - pages/index.tsx: Home page
+
+        Skipped entirely if any file already exists under apps/{slug}/ — the
+        caller (e.g. `bifrost apps create` against a slug whose source dir
+        was authored locally first) is not expected to lose their work to
+        the default Welcome scaffold.
         """
+        from src.models.orm.file_index import FileIndex
         from src.services.file_storage import FileStorageService
+
+        prefix = f"apps/{slug}/"
+        existing = await self.session.execute(
+            select(FileIndex.path).where(FileIndex.path.startswith(prefix)).limit(1)
+        )
+        if existing.first() is not None:
+            logger.info(
+                f"Skipped scaffold for app {log_safe(slug)}: files already exist at {log_safe(prefix)}"
+            )
+            return
 
         file_storage = FileStorageService(self.session)
 
@@ -1207,8 +1223,15 @@ async def validate_application(
                         message=f"Workflow '{wf_ref}' not found or inactive",
                     ))
 
-    # Check for missing/unused dependencies
-    for dep in referenced_deps:
+    # Check for missing/unused dependencies. Host-provided modules
+    # (DEFAULT_EXTERNALS — react, lucide-react, sonner, etc.) are
+    # resolved by the host import map and never need to appear in
+    # `app.dependencies`, so subtract them before the missing check.
+    from src.services.app_bundler import DEFAULT_EXTERNALS
+
+    host_provided = set(DEFAULT_EXTERNALS)
+    user_referenced = referenced_deps - host_provided
+    for dep in user_referenced:
         if dep not in declared_deps:
             errors.append(AppValidationIssue(
                 severity="error",
@@ -1216,7 +1239,7 @@ async def validate_application(
                 message=f"Missing dependency: '{dep}' is imported but not declared in app dependencies",
             ))
     for dep in declared_deps:
-        if dep not in referenced_deps:
+        if dep not in user_referenced:
             warnings.append(AppValidationIssue(
                 severity="warning",
                 file="dependencies",

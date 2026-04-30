@@ -101,3 +101,22 @@ import { Real } from "real-pkg";
     deps = extract_external_deps(src)
     assert "real-pkg" in deps
     assert "fake-pkg" not in deps
+
+
+def test_default_externals_cover_host_provided_libs():
+    """The validator filters host-provided modules out of the
+    "missing dependency" check by subtracting the bundler's
+    DEFAULT_EXTERNALS from the referenced set. lucide-react and
+    react-router-dom MUST stay in that list, otherwise every app that
+    imports them will fail validation despite working at runtime
+    (regression: covi-design-system tripped this on first push).
+    """
+    from src.services.app_bundler import DEFAULT_EXTERNALS
+
+    externals = set(DEFAULT_EXTERNALS)
+    # The runtime import map serves these; users must not need to declare them.
+    for required in ("react", "react-dom", "react-router-dom", "lucide-react"):
+        assert required in externals, (
+            f"{required!r} missing from DEFAULT_EXTERNALS — apps that import "
+            f"it will fail validation while still running at runtime"
+        )
