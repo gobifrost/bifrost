@@ -719,12 +719,12 @@ async def delete_table(
     summary="Insert a document",
 )
 async def insert_document(
-    table_id: UUID,
+    table_id: str,
     body: DocumentCreate,
     ctx: Context,
 ) -> DocumentPublic:
     """Insert a new document into the table."""
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     res = check_table_access(action=Action.CREATE, access=table.access, caller=caller)
     if not res.allow:
@@ -740,11 +740,11 @@ async def insert_document(
             if doc is None:
                 raise HTTPException(status_code=404, detail="Document not found")
             await ctx.db.commit()
-            await publish_document_change(table_id, "update", doc)
+            await publish_document_change(table.id, "update", doc)
             return DocumentPublic.model_validate(doc)
     doc = await repo.insert(body.data, created_by=created_by, doc_id=body.id)
     await ctx.db.commit()
-    await publish_document_change(table_id, "insert", doc)
+    await publish_document_change(table.id, "insert", doc)
     return DocumentPublic.model_validate(doc)
 
 
@@ -754,12 +754,12 @@ async def insert_document(
     summary="Get a document",
 )
 async def get_document(
-    table_id: UUID,
+    table_id: str,
     doc_id: str,
     ctx: Context,
 ) -> DocumentPublic:
     """Get a document by ID."""
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     doc = await repo.get(doc_id)
@@ -781,13 +781,13 @@ async def get_document(
     summary="Update a document",
 )
 async def update_document(
-    table_id: UUID,
+    table_id: str,
     doc_id: str,
     body: DocumentUpdate,
     ctx: Context,
 ) -> DocumentPublic:
     """Update a document (partial update, merges with existing)."""
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
@@ -804,7 +804,7 @@ async def update_document(
         # Lost a race with a concurrent delete after we fetched + access-checked.
         raise HTTPException(status_code=404, detail="Document not found")
     await ctx.db.commit()
-    await publish_document_change(table_id, "update", doc)
+    await publish_document_change(table.id, "update", doc)
     return DocumentPublic.model_validate(doc)
 
 
@@ -814,12 +814,12 @@ async def update_document(
     summary="Delete a document",
 )
 async def delete_document(
-    table_id: UUID,
+    table_id: str,
     doc_id: str,
     ctx: Context,
 ) -> None:
     """Delete a document."""
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
@@ -834,7 +834,7 @@ async def delete_document(
     deleted = await repo.delete(doc_id)
     await ctx.db.commit()
     if deleted:
-        await publish_document_change(table_id, "delete", existing)
+        await publish_document_change(table.id, "delete", existing)
 
 
 @router.post(
@@ -843,7 +843,7 @@ async def delete_document(
     summary="Query documents",
 )
 async def query_documents(
-    table_id: UUID,
+    table_id: str,
     query_params: DocumentQuery,
     ctx: Context,
 ) -> DocumentListResponse:
@@ -851,7 +851,7 @@ async def query_documents(
 
     Returns 404 if the table doesn't exist.
     """
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     res = check_table_access(action=Action.READ, access=table.access, caller=caller)
     if not res.allow:
@@ -875,14 +875,14 @@ async def query_documents(
     summary="Count documents",
 )
 async def count_documents(
-    table_id: UUID,
+    table_id: str,
     ctx: Context,
 ) -> DocumentCountResponse:
     """Count documents in a table.
 
     Returns 404 if the table doesn't exist.
     """
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     res = check_table_access(action=Action.READ, access=table.access, caller=caller)
     if not res.allow:
@@ -899,7 +899,7 @@ async def count_documents(
     summary="Batch insert or upsert documents",
 )
 async def batch_documents(
-    table_id: UUID,
+    table_id: str,
     body: DocumentBatchCreate,
     ctx: Context,
 ) -> DocumentBatchCreateResponse:
@@ -908,7 +908,7 @@ async def batch_documents(
     When `upsert=true`, each item with a provided id will be updated if it
     exists, otherwise inserted. Items without an id are always inserted.
     """
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     res = check_table_access(action=Action.CREATE, access=table.access, caller=caller)
     if not res.allow:
@@ -926,11 +926,11 @@ async def batch_documents(
                 if existing is not None:
                     doc = await repo.update(item.id, item.data, updated_by=created_by)
                     if doc is not None:
-                        await publish_document_change(table_id, "update", doc)
+                        await publish_document_change(table.id, "update", doc)
                     inserted += 1
                     continue
             doc = await repo.insert(item.data, created_by=created_by, doc_id=item.id)
-            await publish_document_change(table_id, "insert", doc)
+            await publish_document_change(table.id, "insert", doc)
             inserted += 1
         except Exception as exc:
             errors.append({"id": item.id, "error": str(exc)})
@@ -945,7 +945,7 @@ async def batch_documents(
     summary="Batch delete documents by ID",
 )
 async def batch_delete_documents(
-    table_id: UUID,
+    table_id: str,
     body: DocumentBatchDeleteRequest,
     ctx: Context,
 ) -> DocumentBatchDeleteResponse:
@@ -954,7 +954,7 @@ async def batch_delete_documents(
     Skips IDs that don't exist. Enforces DELETE access for each row
     (creator-only rules mean rows not owned by the caller are skipped).
     """
-    table = await _get_table_or_404(ctx, table_id)
+    table = await get_table_or_404(ctx, table_id)
     caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     deleted = 0
@@ -971,7 +971,7 @@ async def batch_delete_documents(
             continue
         ok = await repo.delete(doc_id)
         if ok:
-            await publish_document_change(table_id, "delete", existing)
+            await publish_document_change(table.id, "delete", existing)
             deleted += 1
 
     await ctx.db.commit()

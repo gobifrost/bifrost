@@ -55,6 +55,8 @@ PLATFORM_EXPORT_NAMES: frozenset[str] = frozenset({
     "useUser", "useAppState",
     "useWorkflowQuery", "useWorkflowMutation",
     "RequireRole",
+    # Tables SDK
+    "tables", "useTableSubscription",
     # Utilities
     "cn", "clsx", "twMerge", "format",
     "formatDate", "formatDateShort", "formatTime", "formatRelativeTime",

@@ -7,14 +7,28 @@ type DocumentCountResponse = components["schemas"]["DocumentCountResponse"];
 
 const base = "/api/tables";
 
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 async function http<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T | null> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const csrfHeaders: Record<string, string> =
+    method === "GET" || method === "HEAD"
+      ? {}
+      : { "X-CSRF-Token": getCsrfToken() };
   const r = await fetch(path, {
     ...init,
     credentials: "include",
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    headers: {
+      "content-type": "application/json",
+      ...csrfHeaders,
+      ...(init.headers ?? {}),
+    },
   });
   if (r.status === 403) return null;
   if (r.status === 404) return null;
