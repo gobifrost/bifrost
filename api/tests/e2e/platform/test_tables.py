@@ -2,6 +2,7 @@
 
 Covers the TableUpdate DTO's ability to rename tables and reassign the owning
 application, plus validation for bogus application references.
+Also covers the default-deny behaviour for non-admin users.
 """
 
 from uuid import uuid4
@@ -102,3 +103,29 @@ class TestTableUpdatePublic:
         )
         assert resp.status_code == 422, resp.text
         assert "not found" in resp.json()["detail"].lower()
+
+
+@pytest.mark.e2e
+class TestTableDefaultDeny:
+    """Non-admin users are denied by default when no access block is set."""
+
+    def test_default_deny_non_superuser(self, e2e_client, platform_admin, non_admin_user):
+        """A table with no access block denies inserts and queries for non-admin users."""
+        table_name = f"default_deny_{uuid4().hex[:8]}"
+        table_id = _create_table(e2e_client, platform_admin.headers, table_name)
+
+        # Non-admin insert → 403
+        insert_resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=non_admin_user.headers,
+            json={"data": {"key": "value"}},
+        )
+        assert insert_resp.status_code == 403, insert_resp.text
+
+        # Non-admin query → 403
+        query_resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents/query",
+            headers=non_admin_user.headers,
+            json={},
+        )
+        assert query_resp.status_code == 403, query_resp.text
