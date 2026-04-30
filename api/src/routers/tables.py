@@ -34,11 +34,24 @@ from src.models.contracts.tables import (
 )
 from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
+from src.models.orm.users import UserRole as UserRoleORM
 from src.repositories.org_scoped import OrgScopedRepository
+from shared.table_access import Action, Caller, check_table_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
+
+
+async def _load_caller(ctx: Context) -> Caller:
+    """Build a Caller from the request context."""
+    role_q = select(UserRoleORM.role_id).where(UserRoleORM.user_id == ctx.user.user_id)
+    role_ids = {r for r in (await ctx.db.execute(role_q)).scalars().all()}
+    return Caller(
+        user_id=ctx.user.user_id,
+        role_ids=frozenset(role_ids),
+        is_admin=ctx.user.is_superuser,
+    )
 
 
 # =============================================================================
@@ -303,6 +316,13 @@ class DocumentRepository:
     def __init__(self, session: AsyncSession, table: Table):
         self.session = session
         self.table = table
+        self._creator_filter: str | None = None
+
+    def with_creator_filter(self, user_id: str) -> "DocumentRepository":
+        """Return a clone that filters all reads by created_by = user_id."""
+        clone = DocumentRepository(self.session, self.table)
+        clone._creator_filter = user_id
+        return clone
 
     async def insert(self, data: dict[str, Any], created_by: str | None) -> Document:
         """Insert a new document."""
@@ -359,6 +379,9 @@ class DocumentRepository:
         """Query documents with filtering and pagination."""
         base_query = select(Document).where(Document.table_id == self.table.id)
 
+        if self._creator_filter is not None:
+            base_query = base_query.where(Document.created_by == self._creator_filter)
+
         # Apply where filters using JSON-native operators
         if query_params.where:
             base_query = _build_document_filters(base_query, query_params.where)
@@ -397,6 +420,9 @@ class DocumentRepository:
         """Count documents matching filter."""
         base_query = select(Document).where(Document.table_id == self.table.id)
 
+        if self._creator_filter is not None:
+            base_query = base_query.where(Document.created_by == self._creator_filter)
+
         if where:
             base_query = _build_document_filters(base_query, where)
 
@@ -408,6 +434,15 @@ class DocumentRepository:
 # =============================================================================
 # Helper functions
 # =============================================================================
+
+
+async def _get_table_or_404(ctx: Context, table_id: UUID) -> Table:
+    """Get table by UUID, raise 404 if not found."""
+    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
+    table = result.scalar_one_or_none()
+    if table is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    return table
 
 
 def _resolve_target_org_safe(ctx: Context, scope: str | None) -> UUID | None:
@@ -652,21 +687,20 @@ async def delete_table(
 )
 async def insert_document(
     table_id: UUID,
-    data: DocumentCreate,
+    body: DocumentCreate,
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> DocumentPublic:
-    """Insert a new document into the table (platform admin only)."""
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
-    repo = DocumentRepository(ctx.db, table)
+    """Insert a new document into the table."""
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
+    res = check_table_access(action=Action.CREATE, access=table.access, caller=caller)
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    doc = await repo.insert(data.data, created_by=user.email)
+    repo = DocumentRepository(ctx.db, table)
+    doc = await repo.insert(body.data, created_by=str(ctx.user.user_id))
+    await ctx.db.commit()
+    # TODO Task 7: publish_document_change(table_id, "insert", doc)
     return DocumentPublic.model_validate(doc)
 
 
@@ -679,25 +713,21 @@ async def get_document(
     table_id: UUID,
     doc_id: str,
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> DocumentPublic:
-    """Get a document by ID (platform admin only)."""
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
+    """Get a document by ID."""
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
-
     doc = await repo.get(doc_id)
-    if not doc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
+    if doc is None:
+        # 403 instead of 404 to avoid leaking presence to unauthorized callers.
+        raise HTTPException(status_code=403, detail="Access denied")
+    row_creator = UUID(doc.created_by) if doc.created_by else None
+    res = check_table_access(
+        action=Action.READ, access=table.access, caller=caller, row_created_by=row_creator
+    )
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
     return DocumentPublic.model_validate(doc)
 
 
@@ -709,27 +739,26 @@ async def get_document(
 async def update_document(
     table_id: UUID,
     doc_id: str,
-    data: DocumentUpdate,
+    body: DocumentUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> DocumentPublic:
-    """Update a document (platform admin only, partial update, merges with existing)."""
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
+    """Update a document (partial update, merges with existing)."""
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
-
-    doc = await repo.update(doc_id, data.data, updated_by=user.email)
-    if not doc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
+    existing = await repo.get(doc_id)
+    if existing is None:
+        raise HTTPException(status_code=403, detail="Access denied")
+    row_creator = UUID(existing.created_by) if existing.created_by else None
+    res = check_table_access(
+        action=Action.UPDATE, access=table.access, caller=caller, row_created_by=row_creator
+    )
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
+    doc = await repo.update(doc_id, body.data, updated_by=str(ctx.user.user_id))
+    await ctx.db.commit()
+    # TODO Task 7: publish_document_change(table_id, "update", doc)
+    assert doc is not None
     return DocumentPublic.model_validate(doc)
 
 
@@ -742,24 +771,23 @@ async def delete_document(
     table_id: UUID,
     doc_id: str,
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> None:
-    """Delete a document (platform admin only)."""
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
+    """Delete a document."""
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
-
-    success = await repo.delete(doc_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    existing = await repo.get(doc_id)
+    if existing is None:
+        raise HTTPException(status_code=403, detail="Access denied")
+    row_creator = UUID(existing.created_by) if existing.created_by else None
+    res = check_table_access(
+        action=Action.DELETE, access=table.access, caller=caller, row_created_by=row_creator
+    )
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
+    await repo.delete(doc_id)
+    await ctx.db.commit()
+    # TODO Task 7: publish_document_change(table_id, "delete", existing)
 
 
 @router.post(
@@ -771,23 +799,21 @@ async def query_documents(
     table_id: UUID,
     query_params: DocumentQuery,
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> DocumentListResponse:
-    """Query documents with filtering and pagination (platform admin only).
+    """Query documents with filtering and pagination.
 
     Returns 404 if the table doesn't exist.
     """
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
+    res = check_table_access(action=Action.READ, access=table.access, caller=caller)
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     repo = DocumentRepository(ctx.db, table)
-
+    if res.creator_filter_required:
+        repo = repo.with_creator_filter(str(caller.user_id))
     documents, total = await repo.query(query_params)
-
     return DocumentListResponse(
         documents=[DocumentPublic.model_validate(d) for d in documents],
         total=total,
@@ -804,20 +830,17 @@ async def query_documents(
 async def count_documents(
     table_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> DocumentCountResponse:
-    """Count documents in a table (platform admin only).
+    """Count documents in a table.
 
     Returns 404 if the table doesn't exist.
     """
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
+    table = await _get_table_or_404(ctx, table_id)
+    caller = await _load_caller(ctx)
+    res = check_table_access(action=Action.READ, access=table.access, caller=caller)
+    if not res.allow:
+        raise HTTPException(status_code=403, detail="Access denied")
     repo = DocumentRepository(ctx.db, table)
-
-    count = await repo.count()
-    return DocumentCountResponse(count=count)
+    if res.creator_filter_required:
+        repo = repo.with_creator_filter(str(caller.user_id))
+    return DocumentCountResponse(count=await repo.count())
