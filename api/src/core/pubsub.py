@@ -104,6 +104,12 @@ class ConnectionManager:
 
         for websocket in self.connections[channel]:
             try:
+                # Per-websocket filter hook: websocket.state._table_msg_filter is
+                # an optional async callable(channel, message) -> bool. If it
+                # returns False the message is silently dropped for this connection.
+                msg_filter = getattr(getattr(websocket, "state", None), "_table_msg_filter", None)
+                if msg_filter is not None and not await msg_filter(channel, message):
+                    continue
                 await websocket.send_text(message_json)
             except Exception:
                 dead_connections.add(websocket)
