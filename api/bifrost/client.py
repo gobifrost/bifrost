@@ -66,11 +66,14 @@ def raise_for_status_with_detail(response: httpx.Response) -> None:
 # and httpx.AsyncClient is bound to the event loop that created it.
 _thread_local = threading.local()
 
-# Auto-load .env file if present (for local development)
+# Auto-load .env file if present (for local development).
+# Walk upward from cwd, not from this file. With pipx-installed CLIs, __file__
+# lives in the pipx venv and the default upward walk never reaches the user's
+# workspace, so a .env in the project root is silently ignored.
 try:
-    from dotenv import load_dotenv
+    from dotenv import find_dotenv, load_dotenv
 
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))
 except ImportError:
     pass  # dotenv not installed, rely on environment variables
 
