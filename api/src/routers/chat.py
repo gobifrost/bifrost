@@ -29,6 +29,7 @@ from src.models.contracts.agents import (
     ConversationSummary,
     ConversationUpdate,
     MessagePublic,
+    SwitchBranchRequest,
     ToolCall,
 )
 from src.models.enums import AgentAccessLevel
@@ -304,6 +305,8 @@ async def get_conversation(
         agent_id=conversation.agent_id,
         user_id=conversation.user_id,
         workspace_id=conversation.workspace_id,
+        active_leaf_message_id=conversation.active_leaf_message_id,
+        instructions=conversation.instructions,
         channel=conversation.channel,
         title=conversation.title,
         is_active=conversation.is_active,
@@ -364,6 +367,9 @@ async def update_conversation(
     if "current_model" in update_fields:
         conversation.current_model = update_fields["current_model"]
 
+    if "instructions" in update_fields:
+        conversation.instructions = update_fields["instructions"]
+
     conversation.updated_at = datetime.now(timezone.utc)
     await db.flush()
 
@@ -387,6 +393,71 @@ async def update_conversation(
         agent_id=conversation.agent_id,
         user_id=conversation.user_id,
         workspace_id=conversation.workspace_id,
+        active_leaf_message_id=conversation.active_leaf_message_id,
+        instructions=conversation.instructions,
+        current_model=conversation.current_model,
+        channel=conversation.channel,
+        title=conversation.title,
+        is_active=conversation.is_active,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        message_count=message_count,
+        last_message_at=last_message_at,
+        agent_name=conversation.agent.name if conversation.agent else None,
+    )
+
+
+@router.post("/conversations/{conversation_id}/active-leaf")
+async def switch_active_leaf(
+    conversation_id: UUID,
+    payload: SwitchBranchRequest,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ConversationPublic:
+    """Switch the conversation's active leaf — sibling navigation."""
+    result = await db.execute(
+        select(Conversation)
+        .options(selectinload(Conversation.agent))
+        .where(Conversation.id == conversation_id)
+        .where(Conversation.user_id == user.user_id)
+    )
+    conversation = result.scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation {conversation_id} not found",
+        )
+
+    target = await db.get(Message, payload.message_id)
+    if target is None or target.conversation_id != conversation_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not in this conversation",
+        )
+
+    conversation.active_leaf_message_id = target.id
+    conversation.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    count_result = await db.execute(
+        select(func.count(Message.id)).where(Message.conversation_id == conversation_id)
+    )
+    message_count = count_result.scalar() or 0
+    last_msg_result = await db.execute(
+        select(Message.created_at)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.sequence.desc())
+        .limit(1)
+    )
+    last_message_at = last_msg_result.scalar_one_or_none()
+
+    return ConversationPublic(
+        id=conversation.id,
+        agent_id=conversation.agent_id,
+        user_id=conversation.user_id,
+        workspace_id=conversation.workspace_id,
+        active_leaf_message_id=conversation.active_leaf_message_id,
+        instructions=conversation.instructions,
         current_model=conversation.current_model,
         channel=conversation.channel,
         title=conversation.title,
@@ -452,9 +523,19 @@ async def get_messages(
             detail=f"Conversation {conversation_id} not found",
         )
 
-    # Get messages
+    # Get messages with sibling metadata via window functions.
+    sibling_count_col = func.count("*").over(
+        partition_by=Message.parent_message_id
+    ).label("sibling_count")
+    sibling_index_col = (
+        func.row_number().over(
+            partition_by=Message.parent_message_id,
+            order_by=Message.sequence,
+        ) - 1
+    ).label("sibling_index")
+
     stmt = (
-        select(Message)
+        select(Message, sibling_count_col, sibling_index_col)
         .where(Message.conversation_id == conversation_id)
     )
 
@@ -463,8 +544,7 @@ async def get_messages(
 
     stmt = stmt.order_by(Message.sequence.asc()).limit(limit)
 
-    result = await db.execute(stmt)
-    messages = result.scalars().all()
+    rows = (await db.execute(stmt)).all()
 
     return [
         MessagePublic(
@@ -493,9 +573,12 @@ async def get_messages(
             model=m.model,
             duration_ms=m.duration_ms,
             sequence=m.sequence,
+            parent_message_id=m.parent_message_id,
+            sibling_count=int(sib_count),
+            sibling_index=int(sib_index),
             created_at=m.created_at,
         )
-        for m in messages
+        for m, sib_count, sib_index in rows
     ]
 
 
