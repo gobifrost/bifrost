@@ -98,6 +98,7 @@ Key cross-phase decisions, with the commit that recorded them. The committed pro
 | 2026-04-27 | Model resolver as shared infrastructure; allowlist chain platform→org→role→workspace→conversation→message with provenance tooltips | 4a1f0356 |
 | 2026-04-27 | Cost surfaced as 3-tier symbolic glyphs (⚡/⚖/💎); dollars only in admin dashboard | 4a1f0356 |
 | 2026-04-27 | Logical model aliases (bifrost-fast/balanced/premium) + deprecation remap table to insulate from provider churn; Message.model is immutable history | 4a1f0356 |
+| 2026-04-29 | M3 ships branching (parent/leaf model); linear-only non-goal removed; retry-with-different-model dropdown dropped | (M3 PR) |
 
 ## How a future session resumes this work
 

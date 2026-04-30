@@ -13,7 +13,6 @@ Bring the Bifrost chat experience to feature parity with Claude.ai for everyday 
 
 ## Non-goals
 
-- Branching/tree conversations (linear-only).
 - Voice input/output.
 - Conversation-level full-text search (sidebar filter only in v1).
 - Auto-routing between models (user picks; admin curates).
@@ -24,14 +23,13 @@ Bring the Bifrost chat experience to feature parity with Claude.ai for everyday 
 
 | Feature | Shape | Section |
 |---|---|---|
-| Edit user message + retry | Edit replaces, retry regenerates, no branch history | §1 |
+| Edit user message + retry | Edit and retry both branch — old version preserved, sibling navigation | §1 |
 | Workspaces | First-class scoped destinations (not sidebar folders) | §2 |
 | Tool layering | Workspace ∩ Agent (intersection) | §2.4 |
 | Attachments | Files only — images, PDFs, CSVs, text, screenshots | §3 |
 | Lossless compaction | Auto at threshold + manual button; DB unchanged | §4 |
 | Context budget indicator | Per-model-aware tokens + symbolic cost tier badges | §4.2, §5.5 |
 | Model resolver | Shared infrastructure; allowlist chain with provenance | §5 |
-| Per-message regenerate | With optional model override | §1.2 |
 | Per-conversation instruction override | Hidden behind settings; not a primary affordance | §6 |
 | Multi-agent within turn | Within-turn delegation via existing `delegated_agent_ids` | §7 |
 | Conversation rename/delete/export | Inline rename, soft-delete, markdown/JSON export | §8 |
@@ -41,16 +39,18 @@ Bring the Bifrost chat experience to feature parity with Claude.ai for everyday 
 ## 1. Edit user message + retry
 
 ### 1.1 Edit user message
-Replaces the message in place; conversation continues from the edited message. **No branching** — the previous version of the message is not retained in DB. The assistant's prior reply (and any messages after the edited message) are discarded when the user submits the edit.
+Editing creates a **sibling user message** under the same parent. The original message and any subsequent assistant replies remain in the database; the active branch flips to the new sibling. Both branches are accessible via sibling navigation arrows (`< 2/2 >`).
 
-UI: pencil icon on user messages on hover. Click → message becomes editable inline. Submit re-runs from this point. Cancel reverts.
+UI: pencil icon on user messages on hover. Click → message becomes editable inline. Submit creates the sibling and runs a new turn. Cancel reverts. **No confirmation dialog** — edit is non-destructive.
 
-Implementation note: the existing `Message.sequence` field stays linear. Edit = `DELETE FROM messages WHERE conversation_id = ? AND sequence > ?`, then update the edited message, then run a new turn.
+Implementation: every Message row carries `parent_message_id`; every Conversation carries `active_leaf_message_id`. The edit endpoint creates a new user Message with the same parent as the original and updates `active_leaf_message_id`. The agent loop's `_load_active_branch` walks the parent chain from the leaf to load the active path.
 
 ### 1.2 Retry last response
-Regenerates the most recent assistant message. The previous assistant message is replaced (not kept).
+Regenerates an assistant message. The new response is created as a **sibling** under the same user message; the original is preserved and accessible via sibling navigation.
 
-UI: refresh icon on the assistant message. Default click → retry with current conversation model. Adjacent dropdown → "Retry with [other model]" — picks from the user's allowed model set (§5). Switching models via retry sets the conversation's current model going forward.
+UI: refresh icon on the assistant message. Single click → retry with the conversation's current model. **No model override dropdown.** Per-conversation model switching happens via the chat header's model picker (M2).
+
+Implementation: the retry endpoint walks `active_leaf_message_id` back to the user message that prompted the target assistant message, then runs a fresh turn. The new assistant message is saved as a sibling of the original.
 
 ## 2. Workspaces
 
@@ -673,11 +673,11 @@ Today's `ChatInput` has a Paperclip button (already wired up) and supports auto-
 
 Hover a user message → small `Pencil` icon appears at the top-right of the message bubble (ghost button, opacity-0 on default, opacity-100 on group-hover — same pattern as inline-edit affordances elsewhere). Click → message text becomes editable inline (textarea, autosize, same width as the bubble), with "Send" (default button) and "Cancel" (ghost) below.
 
-On Send: existing `AlertDialog` confirms — "This will discard the assistant's response and any subsequent messages. Continue?" — because edit-replaces is destructive (DB rows beyond this point get deleted). On Cancel: bubble reverts. (We could skip the confirm for the common case and just show an undo toast, but I'd flag this in usage testing — the destructive action is irreversible without DB restore.)
+On Send: the existing message stays in the DB; a sibling user message is created with the new text, and the conversation's active branch flips to the new sibling. Sibling navigation (`< 2/2 >`) renders below both versions so the user can revisit the original.
 
 ### 16.10 Retry button
 
-Hover an assistant message → small `RotateCcw` icon at top-right of the bubble. Single click = retry with current model. Adjacent caret (`ChevronDown`) opens a Popover with "Retry with…" header and the model picker (§16.6) inline. Selecting a model retries with that model and switches the conversation's current model going forward.
+Hover an assistant message → small `RotateCcw` icon at top-right of the bubble. Single click → retry. The new response is a sibling under the same user message; sibling navigation renders below both versions.
 
 ### 16.11 Compaction indicators
 
