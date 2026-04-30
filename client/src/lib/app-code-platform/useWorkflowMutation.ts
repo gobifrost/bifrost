@@ -49,6 +49,16 @@ export interface UseWorkflowMutationResult<T> {
 	execute: (params?: Record<string, unknown>) => Promise<T>;
 	isLoading: boolean;
 	isError: boolean;
+	/**
+	 * Workflow execution error message, or null on success / before completion.
+	 * Already a string — do NOT access `.message` on this value.
+	 */
+	errorMessage: string | null;
+	/**
+	 * @deprecated Use `errorMessage` — this is a string alias kept for
+	 * backward compatibility. Reading `error.message` returns undefined and
+	 * is the source of "Unknown error" fallbacks in app code.
+	 */
 	error: string | null;
 	data: T | null;
 	logs: StreamingLog[];
@@ -390,6 +400,7 @@ export function useWorkflowMutation<T = unknown>(
 		execute,
 		isLoading,
 		isError,
+		errorMessage: error,
 		error,
 		data,
 		logs,
