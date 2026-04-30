@@ -20,6 +20,16 @@ export interface UseWorkflowQueryResult<T> {
 	data: T | null;
 	isLoading: boolean;
 	isError: boolean;
+	/**
+	 * Workflow execution error message, or null on success / before completion.
+	 * Already a string — do NOT access `.message` on this value.
+	 */
+	errorMessage: string | null;
+	/**
+	 * @deprecated Use `errorMessage` — this is a string alias kept for
+	 * backward compatibility. Reading `error.message` returns undefined and
+	 * is the source of "Unknown error" fallbacks in app code.
+	 */
 	error: string | null;
 	logs: StreamingLog[];
 	refetch: () => Promise<T>;
@@ -59,7 +69,8 @@ export function useWorkflowQuery<T = unknown>(
 		data: mutation.data,
 		isLoading: mutation.isLoading,
 		isError: mutation.isError,
-		error: mutation.error,
+		errorMessage: mutation.errorMessage,
+		error: mutation.errorMessage,
 		logs: mutation.logs,
 		refetch: () => mutation.execute(params),
 		executionId: mutation.executionId,

@@ -59,7 +59,15 @@ export interface UseWorkflowQueryResult<T> {
 	isLoading: boolean;
 	/** True if the workflow failed. */
 	isError: boolean;
-	/** Error message if the workflow failed. */
+	/**
+	 * Error message string if the workflow failed, otherwise null.
+	 * Already a string — do NOT access `.message` on this value.
+	 */
+	errorMessage: string | null;
+	/**
+	 * @deprecated Use `errorMessage` — this is a string alias kept for
+	 * backward compatibility. Reading `error.message` returns undefined.
+	 */
 	error: string | null;
 	/** Streaming logs array that updates in real-time. */
 	logs: StreamingLog[];
@@ -84,13 +92,13 @@ export interface UseWorkflowQueryResult<T> {
  * @example
  * ```tsx
  * // Load data on mount
- * const { data, isLoading, error } = useWorkflowQuery<Customer[]>(
+ * const { data, isLoading, errorMessage } = useWorkflowQuery<Customer[]>(
  *   "workflow-uuid",
  *   { limit: 10 }
  * );
  *
  * if (isLoading) return <Skeleton />;
- * if (error) return <Alert>{error}</Alert>;
+ * if (errorMessage) return <Alert>{errorMessage}</Alert>;
  * return <CustomerList data={data} />;
  * ```
  *
@@ -120,7 +128,15 @@ export interface UseWorkflowMutationResult<T> {
 	isLoading: boolean;
 	/** True if the last execution failed. */
 	isError: boolean;
-	/** Error message from the last execution. */
+	/**
+	 * Error message string from the last execution, otherwise null.
+	 * Already a string — do NOT access `.message` on this value.
+	 */
+	errorMessage: string | null;
+	/**
+	 * @deprecated Use `errorMessage` — this is a string alias kept for
+	 * backward compatibility. Reading `error.message` returns undefined.
+	 */
 	error: string | null;
 	/** Result data from the last execution. */
 	data: T | null;
