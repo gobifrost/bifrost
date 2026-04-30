@@ -9,6 +9,7 @@ Covers the full access matrix:
 
 import uuid
 
+import httpx
 import pytest
 
 
@@ -29,7 +30,7 @@ def _create_table(e2e_client, headers, name: str) -> str:
     return resp.json()["id"]
 
 
-def _insert_doc(e2e_client, headers, table_id, data: dict) -> dict:
+def _insert_doc(e2e_client, headers, table_id, data: dict) -> httpx.Response:
     resp = e2e_client.post(
         f"/api/tables/{table_id}/documents",
         headers=headers,
@@ -38,7 +39,7 @@ def _insert_doc(e2e_client, headers, table_id, data: dict) -> dict:
     return resp
 
 
-def _query_docs(e2e_client, headers, table_id) -> dict:
+def _query_docs(e2e_client, headers, table_id) -> httpx.Response:
     resp = e2e_client.post(
         f"/api/tables/{table_id}/documents/query",
         headers=headers,
