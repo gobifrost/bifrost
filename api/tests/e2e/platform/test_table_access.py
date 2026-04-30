@@ -183,3 +183,37 @@ class TestTableAccessMatrix:
         bob_docs = bob_query.json()["documents"]
         assert len(bob_docs) == 1, f"Bob expected 1 doc, got {len(bob_docs)}"
         assert bob_docs[0]["data"]["owner"] == "bob"
+
+    def test_create_persists_access_inline(
+        self, e2e_client, platform_admin, alice_user
+    ):
+        """POST /api/tables with access in body persists the access block."""
+        table_name = f"create_with_access_{uuid.uuid4().hex[:8]}"
+        access_block = {
+            "everyone": {
+                "read": True,
+                "create": False,
+                "update": False,
+                "delete": False,
+            },
+            "roles": [],
+            "creator": {
+                "read": False,
+                "create": False,
+                "update": False,
+                "delete": False,
+            },
+        }
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={"name": table_name, "access": access_block},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["access"] is not None, "access should be persisted on create"
+        assert body["access"]["everyone"]["read"] is True
+        # Verify it actually persisted by having a non-admin read it
+        table_id = body["id"]
+        alice_query = _query_docs(e2e_client, alice_user.headers, table_id)
+        assert alice_query.status_code == 200, alice_query.text
