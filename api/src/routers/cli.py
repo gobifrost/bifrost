@@ -2848,7 +2848,7 @@ async def cli_insert_document(
         id=request.id if request.id else str(uuid4()),
         table_id=table.id,
         data=request.data,
-        created_by=current_user.email,
+        created_by=request.created_by if request.created_by is not None else current_user.email,
     )
     db.add(doc)
 
@@ -2903,19 +2903,21 @@ async def cli_upsert_document(
 
     now = datetime.now(timezone.utc)
 
+    effective_created_by = request.created_by if request.created_by is not None else current_user.email
+    effective_updated_by = request.updated_by if request.updated_by is not None else current_user.email
     # Atomic upsert using PostgreSQL's INSERT ... ON CONFLICT DO UPDATE
     stmt = insert(Document).values(
         id=request.id,
         table_id=table.id,
         data=request.data,
-        created_by=current_user.email,
+        created_by=effective_created_by,
         created_at=now,
         updated_at=now,
     ).on_conflict_do_update(
         index_elements=["table_id", "id"],
         set_={
             "data": request.data,
-            "updated_by": current_user.email,
+            "updated_by": effective_updated_by,
             "updated_at": now,
         },
     ).returning(Document)
@@ -3009,7 +3011,7 @@ async def cli_update_document(
     # Merge data
     merged_data = {**doc.data, **request.data}
     doc.data = merged_data
-    doc.updated_by = current_user.email
+    doc.updated_by = request.updated_by if request.updated_by is not None else current_user.email
 
     await db.commit()
     await db.refresh(doc)
@@ -3094,12 +3096,13 @@ async def cli_insert_documents_batch(
     )
 
     now = datetime.now(timezone.utc)
+    effective_created_by = request.created_by if request.created_by is not None else current_user.email
     values = [
         {
             "id": item.id if item.id else str(uuid4()),
             "table_id": table.id,
             "data": item.data,
-            "created_by": current_user.email,
+            "created_by": effective_created_by,
             "created_at": now,
             "updated_at": now,
         }
@@ -3159,12 +3162,14 @@ async def cli_upsert_documents_batch(
     )
 
     now = datetime.now(timezone.utc)
+    effective_created_by = request.created_by if request.created_by is not None else current_user.email
+    effective_updated_by = request.updated_by if request.updated_by is not None else current_user.email
     values = [
         {
             "id": item.id,
             "table_id": table.id,
             "data": item.data,
-            "created_by": current_user.email,
+            "created_by": effective_created_by,
             "created_at": now,
             "updated_at": now,
         }
@@ -3176,7 +3181,7 @@ async def cli_upsert_documents_batch(
         index_elements=["table_id", "id"],
         set_={
             "data": insert_stmt.excluded.data,
-            "updated_by": current_user.email,
+            "updated_by": effective_updated_by,
             "updated_at": now,
         },
     ).returning(Document)

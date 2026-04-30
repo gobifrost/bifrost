@@ -12,7 +12,12 @@ from typing import Any
 
 from .client import get_client, raise_for_status_with_detail
 from .models import TableInfo, DocumentData, DocumentList, BatchResult, BatchDeleteResult
-from ._context import resolve_scope
+from ._context import resolve_scope, _execution_context
+
+
+def _current_context():
+    """Return the active ExecutionContext, or None if not in a workflow execution."""
+    return _execution_context.get()
 
 
 class tables:
@@ -171,6 +176,7 @@ class tables:
         id: str | None = None,
         scope: str | None = None,
         app: str | None = None,
+        created_by: str | None = None,
     ) -> DocumentData:
         """
         Insert a document into a table.
@@ -204,17 +210,24 @@ class tables:
             ...     "email": "info@acme.com",
             ... })
         """
+        if created_by is None:
+            ctx = _current_context()
+            if ctx is not None and getattr(ctx, "user_id", None) is not None:
+                created_by = str(ctx.user_id)
         client = get_client()
         effective_scope = resolve_scope(scope)
+        body: dict[str, Any] = {
+            "table": table,
+            "data": data,
+            "id": id,
+            "scope": effective_scope,
+            "app": app,
+        }
+        if created_by is not None:
+            body["created_by"] = created_by
         response = await client.post(
             "/api/cli/tables/documents/insert",
-            json={
-                "table": table,
-                "data": data,
-                "id": id,
-                "scope": effective_scope,
-                "app": app,
-            }
+            json=body,
         )
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
@@ -226,6 +239,8 @@ class tables:
         data: dict[str, Any],
         scope: str | None = None,
         app: str | None = None,
+        created_by: str | None = None,
+        updated_by: str | None = None,
     ) -> DocumentData:
         """
         Upsert (create or replace) a document.
@@ -254,17 +269,27 @@ class tables:
             ...     "department": "Engineering",
             ... })
         """
+        ctx = _current_context()
+        if created_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            created_by = str(ctx.user_id)
+        if updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            updated_by = str(ctx.user_id)
         client = get_client()
         effective_scope = resolve_scope(scope)
+        body: dict[str, Any] = {
+            "table": table,
+            "id": id,
+            "data": data,
+            "scope": effective_scope,
+            "app": app,
+        }
+        if created_by is not None:
+            body["created_by"] = created_by
+        if updated_by is not None:
+            body["updated_by"] = updated_by
         response = await client.post(
             "/api/cli/tables/documents/upsert",
-            json={
-                "table": table,
-                "id": id,
-                "data": data,
-                "scope": effective_scope,
-                "app": app,
-            }
+            json=body,
         )
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
@@ -321,6 +346,7 @@ class tables:
         data: dict[str, Any],
         scope: str | None = None,
         app: str | None = None,
+        updated_by: str | None = None,
     ) -> DocumentData | None:
         """
         Update a document (partial update, merges with existing).
@@ -342,17 +368,24 @@ class tables:
             >>> from bifrost import tables
             >>> doc = await tables.update("customers", "uuid-here", {"status": "inactive"})
         """
+        if updated_by is None:
+            ctx = _current_context()
+            if ctx is not None and getattr(ctx, "user_id", None) is not None:
+                updated_by = str(ctx.user_id)
         client = get_client()
         effective_scope = resolve_scope(scope)
+        body: dict[str, Any] = {
+            "table": table,
+            "doc_id": doc_id,
+            "data": data,
+            "scope": effective_scope,
+            "app": app,
+        }
+        if updated_by is not None:
+            body["updated_by"] = updated_by
         response = await client.post(
             "/api/cli/tables/documents/update",
-            json={
-                "table": table,
-                "doc_id": doc_id,
-                "data": data,
-                "scope": effective_scope,
-                "app": app,
-            }
+            json=body,
         )
         if response.status_code == 404:
             return None
@@ -414,6 +447,7 @@ class tables:
         documents: list[dict[str, Any]],
         scope: str | None = None,
         app: str | None = None,
+        created_by: str | None = None,
     ) -> BatchResult:
         """
         Batch insert multiple documents into a table.
@@ -452,6 +486,10 @@ class tables:
             ...     {"id": "beta-001", "data": {"name": "Beta Inc"}},
             ... ])
         """
+        if created_by is None:
+            ctx = _current_context()
+            if ctx is not None and getattr(ctx, "user_id", None) is not None:
+                created_by = str(ctx.user_id)
         client = get_client()
         effective_scope = resolve_scope(scope)
 
@@ -463,14 +501,17 @@ class tables:
             else:
                 items.append({"id": None, "data": doc})
 
+        req_body: dict[str, Any] = {
+            "table": table,
+            "documents": items,
+            "scope": effective_scope,
+            "app": app,
+        }
+        if created_by is not None:
+            req_body["created_by"] = created_by
         response = await client.post(
             "/api/cli/tables/documents/insert/batch",
-            json={
-                "table": table,
-                "documents": items,
-                "scope": effective_scope,
-                "app": app,
-            }
+            json=req_body,
         )
         raise_for_status_with_detail(response)
         body = response.json()
@@ -485,6 +526,8 @@ class tables:
         documents: list[dict[str, Any]],
         scope: str | None = None,
         app: str | None = None,
+        created_by: str | None = None,
+        updated_by: str | None = None,
     ) -> BatchResult:
         """
         Batch upsert (create or replace) multiple documents.
@@ -513,19 +556,29 @@ class tables:
             ... ])
             >>> print(result.count)  # 2
         """
+        ctx = _current_context()
+        if created_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            created_by = str(ctx.user_id)
+        if updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            updated_by = str(ctx.user_id)
         client = get_client()
         effective_scope = resolve_scope(scope)
 
         items = [{"id": doc["id"], "data": doc["data"]} for doc in documents]
 
+        req_body: dict[str, Any] = {
+            "table": table,
+            "documents": items,
+            "scope": effective_scope,
+            "app": app,
+        }
+        if created_by is not None:
+            req_body["created_by"] = created_by
+        if updated_by is not None:
+            req_body["updated_by"] = updated_by
         response = await client.post(
             "/api/cli/tables/documents/upsert/batch",
-            json={
-                "table": table,
-                "documents": items,
-                "scope": effective_scope,
-                "app": app,
-            }
+            json=req_body,
         )
         raise_for_status_with_detail(response)
         body = response.json()

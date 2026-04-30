@@ -496,6 +496,7 @@ class SDKDocumentInsertRequest(BaseModel):
     data: dict[str, Any] = Field(..., description="Document data")
     scope: str | None = Field(default=None, description="Organization scope")
     app: str | None = Field(default=None, description="Application UUID")
+    created_by: str | None = Field(default=None, description="Attribution override; resolved from execution context by SDK when omitted")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -507,6 +508,8 @@ class SDKDocumentUpsertRequest(BaseModel):
     data: dict[str, Any] = Field(..., description="Document data")
     scope: str | None = Field(default=None, description="Organization scope")
     app: str | None = Field(default=None, description="Application UUID")
+    created_by: str | None = Field(default=None, description="Attribution override for new documents; resolved from execution context by SDK when omitted")
+    updated_by: str | None = Field(default=None, description="Attribution override for updates; resolved from execution context by SDK when omitted")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -528,6 +531,7 @@ class SDKDocumentUpdateRequest(BaseModel):
     data: dict[str, Any] = Field(..., description="Fields to update (merged with existing)")
     scope: str | None = Field(default=None, description="Organization scope")
     app: str | None = Field(default=None, description="Application UUID")
+    updated_by: str | None = Field(default=None, description="Attribution override; resolved from execution context by SDK when omitted")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -594,6 +598,7 @@ class SDKDocumentInsertBatchRequest(BaseModel):
     )
     scope: str | None = Field(default=None, description="Organization scope")
     app: str | None = Field(default=None, description="Application UUID")
+    created_by: str | None = Field(default=None, description="Attribution override; resolved from execution context by SDK when omitted")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -614,6 +619,8 @@ class SDKDocumentUpsertBatchRequest(BaseModel):
     )
     scope: str | None = Field(default=None, description="Organization scope")
     app: str | None = Field(default=None, description="Application UUID")
+    created_by: str | None = Field(default=None, description="Attribution override for new documents; resolved from execution context by SDK when omitted")
+    updated_by: str | None = Field(default=None, description="Attribution override for updates; resolved from execution context by SDK when omitted")
 
     model_config = ConfigDict(from_attributes=True)
 
