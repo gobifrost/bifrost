@@ -108,3 +108,19 @@ def test_public_outputs_policies_field_name():
     assert "policies" in dumped
     assert "access" not in dumped
     assert dumped["policies"]["policies"][0]["name"] == "p1"
+
+
+def test_load_policies_corruption_returns_empty(caplog):
+    """_load_policies fails closed (empty TablePolicies → default deny)
+    when JSONB is corrupt, with a warning log so corruption is visible."""
+    from src.routers.tables import _load_policies
+
+    class FakeTable:
+        access = {"policies": [{"name": "p", "actions": ["read"], "when": {"INVALID_OP": []}}]}
+        id = "fake-id"
+
+    with caplog.at_level("WARNING"):
+        result = _load_policies(FakeTable())
+
+    assert result.policies == []  # default deny
+    assert any("malformed policies" in rec.message for rec in caplog.records)

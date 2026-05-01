@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
@@ -55,10 +56,24 @@ router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
 
 def _load_policies(table: Table) -> TablePolicies:
-    """Load TablePolicies from the table's `access` JSONB column. Empty if null."""
+    """Load TablePolicies from the table's `access` JSONB column.
+
+    Empty if null. Fails closed (empty → default deny) on validation error,
+    with a warning log so corrupt data is visible to operators. Without this,
+    one bad JSONB blob would take the whole table offline (HTTP 500); now
+    users get a predictable deny instead.
+    """
     if not table.access:
         return TablePolicies()
-    return TablePolicies.model_validate(table.access)
+    try:
+        return TablePolicies.model_validate(table.access)
+    except ValidationError as e:
+        logger.warning(
+            "malformed policies on table %s; defaulting to empty (deny). "
+            "Validation error: %s",
+            table.id, e,
+        )
+        return TablePolicies()
 
 
 def _row_from_doc(doc: Document) -> dict[str, Any]:
