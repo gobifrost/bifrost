@@ -107,10 +107,10 @@ class TestTableUpdatePublic:
 
 @pytest.mark.e2e
 class TestTableDefaultDeny:
-    """Non-admin users are denied by default when no access block is set."""
+    """Non-admin users are denied by default when only the seeded admin_bypass policy applies."""
 
     def test_default_deny_non_superuser(self, e2e_client, platform_admin, non_admin_user):
-        """A table with no access block denies inserts and queries for non-admin users."""
+        """A freshly-created table only grants admins; non-admins see empty reads and 403 writes."""
         table_name = f"default_deny_{uuid4().hex[:8]}"
         table_id = _create_table(e2e_client, platform_admin.headers, table_name)
 
@@ -122,10 +122,11 @@ class TestTableDefaultDeny:
         )
         assert insert_resp.status_code == 403, insert_resp.text
 
-        # Non-admin query → 403
+        # Non-admin query → 200 with empty results (existence-non-leak per Task 9 design)
         query_resp = e2e_client.post(
             f"/api/tables/{table_id}/documents/query",
             headers=non_admin_user.headers,
             json={},
         )
-        assert query_resp.status_code == 403, query_resp.text
+        assert query_resp.status_code == 200, query_resp.text
+        assert query_resp.json()["documents"] == []
