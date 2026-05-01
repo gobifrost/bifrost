@@ -587,6 +587,7 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   configs      Manage config values
   tables       Manage tables
   events       Manage event sources and subscriptions
+  requirements Manage workspace Python requirements.txt (install/list/remove)
 
 Examples:
   bifrost run workflow.py -w greet

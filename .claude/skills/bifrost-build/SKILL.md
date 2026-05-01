@@ -7,6 +7,19 @@ description: Build Bifrost workflows, forms, and apps. Use when user wants to cr
 
 Create and debug Bifrost artifacts.
 
+## Who Runs What (read this first)
+
+The skill draws a hard line between commands the agent runs and commands the user runs. Mixing them up is the #1 source of confusion.
+
+| Action | Who runs it | Why |
+|---|---|---|
+| `bifrost run <file>`, `bifrost workflows execute`, `bifrost <entity> create / update / delete / get / list`, `bifrost api GET/POST`, `bifrost requirements install` | **Agent** | Non-interactive, idempotent, scoped to the entity at hand |
+| Writing files into `apps/` and `workflows/` | **Agent** (after confirming `bifrost watch` is running) | Watch syncs them automatically |
+| `bifrost watch`, `bifrost sync`, `bifrost push`, `bifrost pull`, `bifrost git push` | **User** | Interactive TUI, broad blast radius, controls deployment cadence |
+| `bifrost requirements install <pkg>` (ONLY on a workflow that triggered `ModuleNotFoundError`) | **Agent** | Recycles workers — see "Python workflow dependencies" |
+
+When in doubt, the agent does the small entity mutation; the user does anything that watches files, deploys, or recycles infrastructure unsolicited.
+
 ## First: Check Prerequisites
 
 ```bash
@@ -15,6 +28,8 @@ echo "Source: $BIFROST_HAS_SOURCE | Path: $BIFROST_SOURCE_PATH | URL: $BIFROST_D
 ```
 
 **If SDK or Login is false/empty:** Direct user to run `/bifrost:setup` first.
+
+**If `BIFROST_DEV_URL` is empty:** Don't guess the URL. Ask the user: "I don't see `BIFROST_DEV_URL` set — what URL should I use for previews and platform links?" Then use that. Never invent a `*.gobifrost.com` / `*.musick.gg` / etc. host on your own; the user has been burned by this before.
 
 ## Step 1: Download Platform Docs (Once Per Session)
 
@@ -162,7 +177,9 @@ Example — Agent Tuning tools:
 |---------|---------|
 | `bifrost watch` | Primary dev command — starts interactive watch session, syncs file changes on save |
 | `bifrost sync` | One-shot bidirectional sync — **interactive TUI, user must run manually** |
-| `bifrost run <file> -w <name> --org <UUID>` | Execute workflow in specific org context |
+| `bifrost run <file> -w <name> --org <UUID>` | Execute workflow from a local `.py` file (no sync required). Best for active iteration. |
+| `bifrost workflows execute <ref> --params '{...}'` | Execute a registered workflow remotely; streams logs via WebSocket; exits on terminal status. |
+| `bifrost requirements install [pkg[==ver]] \| list \| remove <pkg>` | Manage workspace `requirements.txt` for Python workflow deps. Workers recycle async after install/remove. |
 | `bifrost api <METHOD> <path>` | Bifrost platform API client ONLY — inspect executions, validate apps, check platform state. NOT for third-party APIs. |
 | `bifrost push` | One-shot upload — **interactive TUI, user must run manually** |
 | `bifrost pull` | One-shot download — **interactive TUI, user must run manually** |
@@ -176,13 +193,40 @@ Example — Agent Tuning tools:
 
 | Need | Command |
 |------|---------|
-| Run a workflow | `bifrost run <file> -w <name> --org <UUID> --params '{...}'` |
-| Run a workflow (remote) | `bifrost api POST /api/workflows/{id}/execute '{"workflow_id":"...","input_data":{...},"sync":true}'` |
-| Check execution logs | `bifrost api GET /api/executions/{id}` |
+| Run a workflow (local file, fastest iteration) | `bifrost run <file> -w <name> --org <UUID> --params '{...}'` |
+| Run a registered workflow remotely (streams logs as it runs, exits on terminal status) | `bifrost workflows execute <ref> --params '{...}' [--org <ref>]` |
+| Check execution logs (one-shot) | `bifrost api GET /api/executions/{id}` |
 | List executions | `bifrost api GET /api/executions` |
 | List workflows / discover by id | `bifrost workflows list --json` / `bifrost workflows get <ref> --json` |
 | Validate an app | `bifrost api POST /api/applications/{id}/validate` |
 | Download platform docs | `bifrost api GET /api/llms.txt > /tmp/bifrost-docs/llms.txt` |
+
+**`bifrost run` vs `bifrost workflows execute` — pick the right one:**
+
+- **`bifrost run <file> -w <name>`** — executes a `.py` file from the local workspace against the running platform. No sync required, no platform-side registration required. This is the default for iterating on a workflow you're actively editing.
+- **`bifrost workflows execute <ref>`** — executes an *already-registered* workflow on the platform by UUID/name/`path::func`. Use this when the workflow is already deployed and you want to test it as it would run in production (real org context, real triggers, real workers). Streams logs over WebSocket as the workflow runs.
+
+Do not use `bifrost api POST /api/workflows/execute` directly — it returns immediately without logs and forces a manual `GET /api/executions/{id}` follow-up. Use `bifrost workflows execute` instead.
+
+### Python Workflow Dependencies
+
+Workflow `.py` files run on platform workers, which install Python packages from a single workspace-wide `requirements.txt`. App `app.yaml` `dependencies:` are for npm packages only — they have nothing to do with Python imports.
+
+If a workflow imports a third-party Python package, that package must be in `requirements.txt` and the workers must have recycled to pick it up. Symptom of a missing dep: `ModuleNotFoundError: No module named 'reportlab'` (or whichever package).
+
+**Add a dependency:**
+
+```bash
+bifrost requirements install reportlab           # append, then recycle workers
+bifrost requirements install httpx==0.27.0       # pin version, then recycle
+bifrost requirements install                     # no arg = warm cache + recycle (after manual edit)
+bifrost requirements list                        # what's installed
+bifrost requirements remove reportlab            # drop from requirements.txt + recycle
+```
+
+`bifrost requirements install` returns immediately. Worker recycle happens asynchronously — give it a few seconds before re-running the workflow.
+
+**Stdlib and a small set of pre-installed packages** (httpx, pydantic, pyjwt, anthropic, openai, etc. — anything bundled into the worker image) are always available. Don't try to install those.
 
 ### `bifrost api` Boundaries (CRITICAL)
 
@@ -320,11 +364,15 @@ Common lookups:
 
 ### App Workflow (SDK-First)
 
-1. Write files in `apps/{slug}/`
-2. Create the app record: `bifrost apps create --name "My App" --slug my-app [--deps @package.json]` — the server assigns the UUID and returns it. Do NOT hand-edit `.bifrost/apps.yaml`.
+**Order matters.** `bifrost watch` ignores files under `apps/{slug}/` until an app record exists for that slug. Files written before `bifrost apps create` are silently dropped — the user opens the preview and sees the "Welcome / Start building your app" placeholder. Always create the app record FIRST.
+
+1. **Create the app record FIRST**: `bifrost apps create --name "My App" --slug my-app [--deps @package.json]` — the server assigns the UUID and returns it. Do NOT hand-edit `.bifrost/apps.yaml`. The agent runs this; do not ask the user to.
+2. Write files in `apps/{slug}/` (only after step 1).
 3. `bifrost watch` syncs file changes (triggers esbuild rebuild + validation after each push).
 4. Preview at `$BIFROST_DEV_URL/apps/{slug}/preview`
 5. Fix any validation errors shown in watch output. esbuild errors appear as a banner in the preview and in the diagnostics channel — the last good bundle keeps serving underneath until the error is fixed.
+
+If you've dispatched a sub-agent to write app files, the parent agent — not the user — runs `bifrost apps create` immediately when the sub-agent returns. Do not defer to the user "after review"; that's the failure mode where 30+ files exist on disk and the preview is empty.
 
 ### App Workflow (MCP-Only)
 
@@ -352,8 +400,8 @@ After writing all app files, verify:
 
 ## Testing
 
-- **Workflows (local):** `bifrost run <file> --workflow <name> --org <UUID> --params '{...}'`
-- **Workflows (remote):** `bifrost api POST /api/workflows/{id}/execute '{"workflow_id":"...","input_data":{...},"sync":true}'`
+- **Workflows (local file):** `bifrost run <file> --workflow <name> --org <UUID> --params '{...}'`
+- **Workflows (registered, remote):** `bifrost workflows execute <ref> --params '{...}'` — streams logs, exits on terminal status
 - **Forms:** `$BIFROST_DEV_URL/forms/{form_id}`
 - **Apps:** Preview at `$BIFROST_DEV_URL/apps/{slug}/preview`, publish with `publish_app`, live at `$BIFROST_DEV_URL/apps/{slug}`
 - **Webhooks:** `curl -X POST $BIFROST_DEV_URL/api/hooks/{source_id} -H 'Content-Type: application/json' -d '{...}'`

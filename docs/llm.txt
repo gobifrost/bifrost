@@ -37,7 +37,7 @@ Run `bifrost roles <verb> --help` for the complete flag list.
 
 Registered Python functions available for execution by forms / agents / events / HTTP endpoints.
 
-Commands: `workflows list / get / register / update / delete / grant-role / revoke-role`.
+Commands: `workflows list / get / register / execute / update / delete / grant-role / revoke-role`.
 
 Example: `bifrost workflows register --path workflows/foo.py --function-name foo`.
 
@@ -45,6 +45,7 @@ Non-obvious semantics:
 - `<workflow-ref>` accepts UUID, name, or `path::func` (e.g. `workflows/sales.py::close_deal`).
 - `get` is served by list-and-filter (the API has no per-id GET endpoint).
 - `register` is how workflows come into existence — workflows are never "created" in the CLI sense because they're defined by a `@workflow`-decorated Python function. Write the `.py` file first, then `register` it (or sync it via `bifrost watch`).
+- `execute <ref> --params '{...}'` runs a registered workflow remotely; opens a WebSocket to `/ws/execution/{id}` and prints log lines as they arrive, then exits 0/1 based on terminal status. Use `bifrost run <file>` for local-file iteration; `execute` is for workflows already on the platform.
 - `delete --force-deactivation` bypasses the 409-on-history guard.
 
 ### Renaming or moving a workflow
@@ -180,6 +181,22 @@ Non-obvious semantics:
 - `subscribe` accepts exactly one of `--workflow` or `--agent`; target type is inferred.
 
 Run `bifrost events <verb> --help` for the complete flag list.
+
+## Requirements (Python workflow deps)
+
+Workspace-wide `requirements.txt` for Python packages workers install at process spawn. Wraps `/api/packages/*`.
+
+Commands: `requirements list / install / remove`.
+
+Examples:
+- `bifrost requirements install reportlab` — append package to requirements.txt + recycle workers (async).
+- `bifrost requirements install httpx==0.27.0` — pin a version.
+- `bifrost requirements install` (no arg) — warm cache from S3 + recycle workers (use after a manual `requirements.txt` edit).
+- `bifrost requirements remove reportlab` — drop from requirements.txt + recycle.
+
+Non-obvious semantics:
+- All install/remove operations recycle workers asynchronously; returns immediately. Wait a few seconds before re-running the workflow that needed the package.
+- App `app.yaml` `dependencies:` are unrelated — those are npm packages bundled into the app, not Python deps.
 
 ---
 

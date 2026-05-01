@@ -24,6 +24,7 @@ from .events import events_group
 from .forms import forms_group
 from .integrations import integrations_group
 from .orgs import orgs_group
+from .requirements import requirements_group
 from .roles import roles_group
 from .tables import tables_group
 from .workflows import workflows_group
@@ -41,6 +42,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "configs": configs_group,
     "tables": tables_group,
     "events": events_group,
+    "requirements": requirements_group,
 }
 
 
