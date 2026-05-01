@@ -120,7 +120,7 @@ def test_load_policies_corruption_returns_empty(caplog):
         id = "fake-id"
 
     with caplog.at_level("WARNING"):
-        result = _load_policies(FakeTable())
+        result = _load_policies(FakeTable())  # type: ignore[arg-type]
 
     assert result.policies == []  # default deny
     assert any("malformed policies" in rec.message for rec in caplog.records)
