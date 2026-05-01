@@ -1,6 +1,7 @@
 """Round-trip: evaluator and compiler must agree on the same fixtures."""
 
 import pytest
+from pydantic import ValidationError
 
 from shared.policies.compile import compile_to_sql
 from shared.policies.evaluate import evaluate
@@ -74,3 +75,16 @@ def test_round_trip(expr_dict, row, user_kwargs, expected):
     # For round-trip, we trust per-test verification in test_compile.py
     # and just verify the compile call succeeds without error.
     assert sql_expr is not None
+
+
+def test_is_null_via_eq_is_rejected_at_validate_time():
+    """`{"eq": [col, null]}` is the divergent shape — evaluator returns False
+    (NULL-as-false), compiler emits `col IS NULL`. Reject at validation so it
+    can never reach either path. The portable idiom is `is_null`."""
+    with pytest.raises(ValidationError, match="use is_null"):
+        Expr.model_validate({"eq": [{"row": "x"}, None]})
+    with pytest.raises(ValidationError, match="use is_null"):
+        Expr.model_validate({"neq": [{"row": "x"}, None]})
+    # The portable replacement validates and round-trips through evaluator
+    # and compiler (covered by the parametrized CASES above).
+    Expr.model_validate({"is_null": {"row": "x"}})

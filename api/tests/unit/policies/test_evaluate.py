@@ -3,6 +3,9 @@
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from shared.policies.evaluate import evaluate
 from src.models.contracts.policies import Expr
 
@@ -267,14 +270,14 @@ def test_in_membership_mixed_types():
     assert evaluate(expr, row={"x": 2}, user=user) is False
 
 
-# --- eq against literal None (NULL-as-false documentation) ---
+# --- eq against literal None is rejected at validate time ---
 
 
-def test_eq_against_literal_none_always_false():
-    """eq with a None operand always returns False; use is_null to test for null."""
-    expr = _e({"eq": [{"row": "x"}, None]})
+def test_eq_against_literal_none_rejected():
+    """eq/neq with a literal None is rejected at construction. Evaluator and SQL
+    pushdown disagree on its meaning, so the only safe shape is `is_null`."""
     user = FakeUser()
-    assert evaluate(expr, row={"x": None}, user=user) is False
-    assert evaluate(expr, row={"x": "v"}, user=user) is False
-    # The correct way to test for null:
+    with pytest.raises(ValidationError, match="use is_null"):
+        _e({"eq": [{"row": "x"}, None]})
+    # The correct shape:
     assert evaluate(_e({"is_null": {"row": "x"}}), row={"x": None}, user=user) is True

@@ -82,6 +82,13 @@ def _validate_op_node(op: str, value: Any) -> None:
     if op in _COMPARE_OPS:
         if not isinstance(value, list) or len(value) != 2:
             raise ValueError(f"{op} requires exactly two operands")
+        if op in {"eq", "neq"}:
+            for operand in value:
+                if operand is None:
+                    raise ValueError(
+                        f"{op} does not accept null literals (NULL semantics differ "
+                        "between evaluator and SQL pushdown); use is_null instead"
+                    )
         for item in value:
             _validate_operand(item)
         return

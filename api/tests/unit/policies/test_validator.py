@@ -21,6 +21,18 @@ def test_eq_requires_two_operands():
         _expr({"eq": [{"row": "x"}]})
 
 
+def test_eq_rejects_none_literal():
+    """eq/neq with a None literal is ambiguous between IS NULL and NULL-as-false.
+    Use is_null instead."""
+    with pytest.raises(ValidationError, match="use is_null"):
+        _expr({"eq": [{"row": "x"}, None]})
+    with pytest.raises(ValidationError, match="use is_null"):
+        _expr({"neq": [{"row": "x"}, None]})
+    # eq with None on left side is also rejected (symmetric)
+    with pytest.raises(ValidationError, match="use is_null"):
+        _expr({"eq": [None, {"row": "x"}]})
+
+
 def test_and_requires_at_least_two_operands():
     _expr({"and": [{"eq": [{"row": "x"}, 1]}, {"eq": [{"row": "y"}, 2]}]})
     with pytest.raises(ValidationError):
