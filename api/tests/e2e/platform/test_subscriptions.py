@@ -141,6 +141,71 @@ async def test_receive_insert(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, alice_user):
+    """`useTable(name)` subscribes via `table:<name>`; server resolves to UUID.
+
+    The publisher only emits on `table:<uuid>` channels, so a subscription
+    registered against the user-supplied name would silently drop every
+    message. The subscribe handler resolves name → UUID and registers under
+    the canonical channel.
+    """
+    table_name = f"sub_byname_{uuid.uuid4().hex[:8]}"
+    async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
+        r = await client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "policies": {"policies": [
+                    {
+                        "name": "admin_bypass",
+                        "actions": ["read", "create", "update", "delete"],
+                        "when": {"user": "is_platform_admin"},
+                    },
+                    {"name": "everyone_read", "actions": ["read"], "when": None},
+                ]},
+            },
+        )
+        assert r.status_code == 201, r.text
+        table_id = r.json()["id"]
+
+        # Subscribe by NAME, not UUID — the channel string the SDK builds
+        # when callers do `useTable("ticket_table")`.
+        ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{table_name}"])
+        try:
+            assert ack.get("type") == "subscribed", f"subscribe failed: {ack}"
+            # Server normalizes to canonical UUID channel in the ack so the
+            # client/server agree on identity for any future messages.
+            assert ack.get("channel") == f"table:{table_id}", ack
+
+            await client.post(
+                f"/api/tables/{table_id}/documents",
+                headers=platform_admin.headers,
+                json={"data": {"x": 7}},
+            )
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
+            assert msg["type"] == "document_change", msg
+            assert msg["action"] == "insert", msg
+            assert msg["row"]["x"] == 7, msg
+        finally:
+            await ws.close()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user):
+    """Subscribing to a non-existent table name returns an error ack."""
+    bogus = f"nope_{uuid.uuid4().hex[:8]}"
+    ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{bogus}"])
+    try:
+        assert ack.get("type") == "error", f"expected error ack, got {ack}"
+        assert ack.get("channel") == f"table:{bogus}"
+    finally:
+        await ws.close()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 @pytest.mark.skip(
     reason="created_by is a column overwriting JSONB created_by in _row_from_doc; "
     "visibility-gain logic is unit-tested in tests/unit/test_subscription_visibility.py "

@@ -27,14 +27,12 @@ export default function Layout() { return <Outlet />; }
 // The app uses the platform-injected `useTable` hook from "bifrost".
 // We pass the table id via search params so the seed source stays
 // parameter-free. useTable returns { rows, loading, error } and applies
-// websocket events to local state. The websocket subscribe protocol uses
-// `table:{id}` channels, so the hook is called with the id (not the name).
+// websocket events to local state.
 //
-// Row shape note: snapshot rows from `tables.query` come back as
-// `DocumentPublic` (nested `data`), while websocket-delivered rows are
-// pre-flattened by the API (`_row_from_doc` flattens jsonb keys to the top
-// level). The renderer falls back across both shapes so this spec exercises
-// the live update path regardless of which side delivered the row.
+// Row shape: useTable normalizes snapshot rows to the flat shape websocket
+// events deliver (jsonb fields spread at the top level alongside id /
+// created_by / etc), so consumers see `r.value` regardless of which side —
+// snapshot or live update — delivered the row.
 const INDEX_TSX = `import { useTable, useSearchParams } from "bifrost";
 
 export default function Home() {
@@ -50,7 +48,7 @@ export default function Home() {
 			<div data-testid="count">{rows.length}</div>
 			<ul data-testid="rows">
 				{rows.map((r: any) => (
-					<li key={r.id} data-testid="row">{r.data?.value ?? r.value}</li>
+					<li key={r.id} data-testid="row">{r.value as string}</li>
 				))}
 			</ul>
 		</div>

@@ -30,7 +30,9 @@ describe("useTable", () => {
     lastOnEvent = null;
   });
 
-  it("returns initial snapshot", async () => {
+  it("returns initial snapshot flattened to match the ws event shape", async () => {
+    // API snapshot rows are nested ({id, data: {...}}); the hook flattens
+    // them so consumers see a single shape across snapshot + live updates.
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({ documents: [{ id: "r1", data: { x: 1 } }], total: 1 }),
@@ -46,10 +48,13 @@ describe("useTable", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.rows).toHaveLength(1);
     expect(result.current.rows[0]?.id).toBe("r1");
+    // JSONB fields are spread to the top level — `x` is reachable directly,
+    // not via `.data.x`.
+    expect((result.current.rows[0] as { x?: unknown }).x).toBe(1);
     expect(result.current.error).toBeNull();
   });
 
-  it("applies inserts from subscribe", async () => {
+  it("applies inserts from subscribe (flat row shape)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ documents: [], total: 0 }), {
         status: 200,
@@ -62,17 +67,20 @@ describe("useTable", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     await waitFor(() => expect(lastOnEvent).not.toBeNull());
 
+    // Server emits flat rows from `_row_from_doc` — JSONB fields spread at
+    // the top level alongside id/created_by/etc.
     act(() => {
       lastOnEvent?.({
         type: "document_change",
         action: "insert",
-        row: { id: "r1", data: { x: 1 } },
+        row: { id: "r1", x: 1, table_id: "t1" },
         table_id: "t1",
       });
     });
 
     expect(result.current.rows).toHaveLength(1);
     expect(result.current.rows[0]?.id).toBe("r1");
+    expect((result.current.rows[0] as { x?: unknown }).x).toBe(1);
   });
 
   it("applies updates by replacing the row with matching id", async () => {
@@ -101,17 +109,18 @@ describe("useTable", () => {
       lastOnEvent?.({
         type: "document_change",
         action: "update",
-        row: { id: "r1", data: { x: 99 } },
+        row: { id: "r1", x: 99, table_id: "t1" },
         table_id: "t1",
       });
     });
 
     expect(result.current.rows).toHaveLength(2);
+    // After flattening, `x` is at top level on snapshot rows too — so
+    // updates merge cleanly across snapshot and ws-event shapes.
     const r1 = result.current.rows.find((r) => r.id === "r1");
-    expect((r1?.data as { x: number } | undefined)?.x).toBe(99);
-    // r2 untouched
+    expect((r1 as { x?: number } | undefined)?.x).toBe(99);
     const r2 = result.current.rows.find((r) => r.id === "r2");
-    expect((r2?.data as { x: number } | undefined)?.x).toBe(2);
+    expect((r2 as { x?: number } | undefined)?.x).toBe(2);
   });
 
   it("applies deletes by row_id (covers visibility-loss)", async () => {
