@@ -138,6 +138,27 @@ def test_table_policies_default_empty():
     assert tp.policies == []
 
 
+def test_validator_rejects_deeply_nested_expression():
+    """Recursion is bounded at 64 levels; deeper raises a clear error."""
+    expr_dict = {"not": True}
+    for _ in range(70):
+        expr_dict = {"not": expr_dict}
+    with pytest.raises(ValidationError, match="nested too deeply"):
+        Expr.model_validate(expr_dict)
+
+
+def test_validator_error_includes_path():
+    """Error message includes a JSON path to the bad node."""
+    bad = {
+        "and": [
+            {"eq": [{"row": "x"}, 1]},
+            {"eq": [{"row": "y"}]},  # missing operand at and[1]
+        ]
+    }
+    with pytest.raises(ValidationError, match=r"\$\.and\[1\]\.eq"):
+        Expr.model_validate(bad)
+
+
 def test_policy_round_trips():
     """JSON serialization round-trips through model_dump/validate."""
     role_id = str(uuid4())

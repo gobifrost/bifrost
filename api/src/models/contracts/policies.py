@@ -30,100 +30,124 @@ _COMPARE_OPS: Final[frozenset[str]] = frozenset({"eq", "neq", "lt", "lte", "gt",
 _OTHER_OPS: Final[frozenset[str]] = frozenset({"in", "is_null", "call"})
 _ALL_OPS: Final[frozenset[str]] = _LOGIC_OPS | _COMPARE_OPS | _OTHER_OPS
 
+# Bound on AST recursion depth. Prevents pathological deeply-nested imports
+# (e.g., manifest expressions from an untrusted source) from hitting Python's
+# recursion limit and surfacing as an opaque RecursionError → 500.
+_DEPTH_LIMIT: Final[int] = 64
 
-def _validate_operand(node: Any) -> None:
+
+def _validate_operand(node: Any, depth: int = 0, path: str = "$") -> None:
     """Recursively validate that a node is a literal, reference, or expression."""
+    if depth >= _DEPTH_LIMIT:
+        raise ValueError(
+            f"{path}: expression nested too deeply (>{_DEPTH_LIMIT} levels)"
+        )
     if isinstance(node, (str, int, float, bool)) or node is None:
         return
     if isinstance(node, list):
-        for item in node:
-            _validate_operand(item)
+        for i, item in enumerate(node):
+            _validate_operand(item, depth + 1, f"{path}[{i}]")
         return
     if not isinstance(node, dict):
-        raise ValueError(f"unexpected operand type: {type(node).__name__}")
+        raise ValueError(f"{path}: unexpected operand type: {type(node).__name__}")
 
     keys = set(node.keys())
     if keys == {"row"}:
         ref = node["row"]
         if not isinstance(ref, str) or not ref:
-            raise ValueError(f"row reference must be a non-empty string, got {ref!r}")
+            raise ValueError(
+                f"{path}: row reference must be a non-empty string, got {ref!r}"
+            )
         return
     if keys == {"user"}:
         ref = node["user"]
         if ref not in KNOWN_USER_FIELDS:
             raise ValueError(
-                f"unknown user field {ref!r}; available: {sorted(KNOWN_USER_FIELDS)}"
+                f"{path}: unknown user field {ref!r}; "
+                f"available: {sorted(KNOWN_USER_FIELDS)}"
             )
         return
     if keys == {"call", "args"} or keys == {"call"}:
-        _validate_call(node)
+        _validate_call(node, depth=depth, path=path)
         return
     # Any other operator dict
     if len(keys) != 1:
-        raise ValueError(f"operator node must have exactly one key, got {sorted(keys)}")
+        raise ValueError(
+            f"{path}: operator node must have exactly one key, got {sorted(keys)}"
+        )
     op = next(iter(keys))
     if op not in _ALL_OPS:
-        raise ValueError(f"unknown operator {op!r}")
-    _validate_op_node(op, node[op])
+        raise ValueError(f"{path}: unknown operator {op!r}")
+    _validate_op_node(op, node[op], depth=depth, path=path)
 
 
-def _validate_op_node(op: str, value: Any) -> None:
+def _validate_op_node(op: str, value: Any, depth: int, path: str) -> None:
     if op in _LOGIC_OPS - {"not"}:
         if not isinstance(value, list) or len(value) < 2:
-            raise ValueError(f"{op} requires at least two operands")
-        for item in value:
-            _validate_operand(item)
+            raise ValueError(f"{path}.{op}: {op} requires at least two operands")
+        for i, item in enumerate(value):
+            _validate_operand(item, depth + 1, f"{path}.{op}[{i}]")
         return
     if op == "not":
         if isinstance(value, list):
-            raise ValueError("not requires exactly one operand (not a list)")
-        _validate_operand(value)
+            raise ValueError(
+                f"{path}.{op}: not requires exactly one operand (not a list)"
+            )
+        _validate_operand(value, depth + 1, f"{path}.{op}")
         return
     if op in _COMPARE_OPS:
         if not isinstance(value, list) or len(value) != 2:
-            raise ValueError(f"{op} requires exactly two operands")
+            raise ValueError(f"{path}.{op}: {op} requires exactly two operands")
         if op in {"eq", "neq"}:
             for operand in value:
                 if operand is None:
                     raise ValueError(
-                        f"{op} does not accept null literals (NULL semantics differ "
-                        "between evaluator and SQL pushdown); use is_null instead"
+                        f"{path}.{op}: {op} does not accept null literals "
+                        "(NULL semantics differ between evaluator and SQL "
+                        "pushdown); use is_null instead"
                     )
-        for item in value:
-            _validate_operand(item)
+        for i, item in enumerate(value):
+            _validate_operand(item, depth + 1, f"{path}.{op}[{i}]")
         return
     if op == "in":
         if not isinstance(value, list) or len(value) != 2:
-            raise ValueError("in requires [operand, [literal, ...]]")
+            raise ValueError(f"{path}.{op}: in requires [operand, [literal, ...]]")
         left, right = value
-        _validate_operand(left)
+        _validate_operand(left, depth + 1, f"{path}.{op}[0]")
         if not isinstance(right, list) or not right:
-            raise ValueError("in requires a non-empty literal list as second arg")
+            raise ValueError(
+                f"{path}.{op}: in requires a non-empty literal list as second arg"
+            )
         for item in right:
             if not isinstance(item, (str, int, float, bool)) and item is not None:
-                raise ValueError("in literal list items must be scalars or null")
+                raise ValueError(
+                    f"{path}.{op}: in literal list items must be scalars or null"
+                )
         return
     if op == "is_null":
         # Single operand (not a list)
         if isinstance(value, list):
-            raise ValueError("is_null requires exactly one operand (not a list)")
-        _validate_operand(value)
+            raise ValueError(
+                f"{path}.{op}: is_null requires exactly one operand (not a list)"
+            )
+        _validate_operand(value, depth + 1, f"{path}.{op}")
         return
 
 
-def _validate_call(node: dict) -> None:
+def _validate_call(node: dict, depth: int, path: str) -> None:
     target = node.get("call")
     args = node.get("args", [])
     if not isinstance(target, str):
-        raise ValueError("call target must be a string")
+        raise ValueError(f"{path}: call target must be a string")
     if target not in FUNCTIONS:
         raise ValueError(
-            f"unknown function {target!r}; available: {sorted(FUNCTIONS)}"
+            f"{path}: unknown function {target!r}; available: {sorted(FUNCTIONS)}"
         )
     fn = FUNCTIONS[target]
     if len(args) != len(fn.arg_types):
         raise ValueError(
-            f"function {target!r} expects {len(fn.arg_types)} args, got {len(args)}"
+            f"{path}: function {target!r} expects {len(fn.arg_types)} args, "
+            f"got {len(args)}"
         )
     for i, (arg, t) in enumerate(zip(args, fn.arg_types)):
         # `arg_types` is the contract for LITERAL args only. Reference args
@@ -131,12 +155,12 @@ def _validate_call(node: dict) -> None:
         # their resolved value is only known at evaluate time. The evaluator
         # is responsible for handling type mismatches at the row.
         if isinstance(arg, dict):
-            _validate_operand(arg)
+            _validate_operand(arg, depth + 1, f"{path}.args[{i}]")
             continue
         if not isinstance(arg, t):
             raise ValueError(
-                f"function {target!r} arg {i} expected {t.__name__}, "
-                f"got {type(arg).__name__}"
+                f"{path}.args[{i}]: function {target!r} arg {i} expected "
+                f"{t.__name__}, got {type(arg).__name__}"
             )
 
 
@@ -145,7 +169,7 @@ class Expr(RootModel[dict]):
 
     @model_validator(mode="after")
     def _validate(self):
-        _validate_operand(self.root)
+        _validate_operand(self.root, depth=0, path="$")
         return self
 
 
