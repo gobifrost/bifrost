@@ -38,6 +38,21 @@ CASES = [
     # Function call
     ({"call": "has_role", "args": ["admin"]}, {}, {"role_names": ["admin"]}, True),
     ({"call": "has_role", "args": ["admin"]}, {}, {"role_names": []}, False),
+    # neq
+    ({"neq": [1, 2]}, {}, {}, True),
+    ({"neq": [1, 1]}, {}, {}, False),
+    # Comparisons (numeric)
+    ({"lt": [1, 2]}, {}, {}, True),
+    ({"lt": [2, 1]}, {}, {}, False),
+    ({"lte": [2, 2]}, {}, {}, True),
+    ({"lte": [3, 2]}, {}, {}, False),
+    ({"gt": [3, 2]}, {}, {}, True),
+    ({"gt": [2, 3]}, {}, {}, False),
+    ({"gte": [2, 2]}, {}, {}, True),
+    ({"gte": [1, 2]}, {}, {}, False),
+    # Nested row path
+    ({"is_null": {"row": "a.b.c"}}, {"a": {"b": {"c": "v"}}}, {}, False),
+    ({"is_null": {"row": "a.b.c"}}, {"a": {}}, {}, True),
 ]
 
 
