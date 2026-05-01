@@ -1,10 +1,11 @@
 import type { components } from "@/lib/v1";
-import { subscribeToTable, type TableChangeMessage } from "./ws-client";
+import { subscribeToTable } from "./ws-client";
 
 type DocumentPublic = components["schemas"]["DocumentPublic"];
 type DocumentQuery = components["schemas"]["DocumentQuery"];
 type DocumentListResponse = components["schemas"]["DocumentListResponse"];
 type DocumentCountResponse = components["schemas"]["DocumentCountResponse"];
+type Expr = components["schemas"]["Expr"];
 
 const base = "/api/tables";
 
@@ -38,6 +39,21 @@ async function http<T>(
   return (await r.json()) as T;
 }
 
+export type TableChangeEvent =
+  | {
+      type: "document_change";
+      action: "insert" | "update";
+      row: DocumentPublic;
+      table_id: string;
+    }
+  | {
+      type: "document_change";
+      action: "delete";
+      row_id: string;
+      table_id: string;
+    }
+  | { type: "subscription_revoked"; channel: string };
+
 export const tables = {
   async get(table: string, id: string): Promise<DocumentPublic | null> {
     return http<DocumentPublic>(
@@ -47,14 +63,46 @@ export const tables = {
 
   async insert(
     table: string,
-    data: Record<string, unknown>,
-    options?: { id?: string },
-  ): Promise<DocumentPublic> {
-    const body: Record<string, unknown> = { data };
-    if (options?.id) body.id = options.id;
+    data:
+      | Record<string, unknown>
+      | Array<{ data: Record<string, unknown>; id?: string }>,
+  ): Promise<DocumentPublic | DocumentPublic[]> {
+    if (Array.isArray(data)) {
+      const r = await http<{ documents: DocumentPublic[] }>(
+        `${base}/${encodeURIComponent(table)}/documents/batch`,
+        { method: "POST", body: JSON.stringify({ documents: data }) },
+      );
+      if (!r) throw new Error("Access denied");
+      return r.documents;
+    }
     const r = await http<DocumentPublic>(
       `${base}/${encodeURIComponent(table)}/documents`,
-      { method: "POST", body: JSON.stringify(body) },
+      { method: "POST", body: JSON.stringify({ data }) },
+    );
+    if (!r) throw new Error("Access denied");
+    return r;
+  },
+
+  async upsert(
+    table: string,
+    item:
+      | { id: string; data: Record<string, unknown> }
+      | Array<{ id: string; data: Record<string, unknown> }>,
+  ): Promise<DocumentPublic | DocumentPublic[]> {
+    if (Array.isArray(item)) {
+      const r = await http<{ documents: DocumentPublic[] }>(
+        `${base}/${encodeURIComponent(table)}/documents/batch`,
+        {
+          method: "POST",
+          body: JSON.stringify({ documents: item, upsert: true }),
+        },
+      );
+      if (!r) throw new Error("Access denied");
+      return r.documents;
+    }
+    const r = await http<DocumentPublic>(
+      `${base}/${encodeURIComponent(table)}/documents`,
+      { method: "POST", body: JSON.stringify({ ...item, upsert: true }) },
     );
     if (!r) throw new Error("Access denied");
     return r;
@@ -71,20 +119,18 @@ export const tables = {
     );
   },
 
-  async upsert(
+  async delete(
     table: string,
-    id: string,
-    data: Record<string, unknown>,
-  ): Promise<DocumentPublic> {
-    const r = await http<DocumentPublic>(
-      `${base}/${encodeURIComponent(table)}/documents`,
-      { method: "POST", body: JSON.stringify({ id, data, upsert: true }) },
-    );
-    if (!r) throw new Error("Access denied");
-    return r;
-  },
-
-  async delete(table: string, id: string): Promise<boolean> {
+    id: string | string[],
+  ): Promise<boolean | { deleted: number }> {
+    if (Array.isArray(id)) {
+      const r = await http<{ deleted: number }>(
+        `${base}/${encodeURIComponent(table)}/documents/batch-delete`,
+        { method: "POST", body: JSON.stringify({ ids: id }) },
+      );
+      if (!r) throw new Error("Access denied");
+      return r;
+    }
     const r = await http(
       `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
       { method: "DELETE" },
@@ -113,9 +159,12 @@ export const tables = {
   },
 
   subscribe(
-    table_id: string,
-    onEvent: (evt: TableChangeMessage) => void,
+    tableId: string,
+    filter: Expr | null,
+    onEvent: (evt: TableChangeEvent) => void,
   ): () => void {
-    return subscribeToTable(table_id, onEvent);
+    return subscribeToTable(tableId, filter, (msg) => {
+      onEvent(msg as TableChangeEvent);
+    });
   },
 };

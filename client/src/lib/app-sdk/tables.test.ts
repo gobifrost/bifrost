@@ -81,8 +81,62 @@ describe("tables web SDK", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    await tables.upsert("t1", "row-1", { k: "v" });
+    await tables.upsert("t1", { id: "row-1", data: { k: "v" } });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.id).toBe("row-1");
+    expect(body.upsert).toBe(true);
+  });
+
+  it("insert with array posts to /documents/batch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ documents: [{ id: "1", data: {} }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await tables.insert("t1", [{ data: { x: 1 } }]);
+    expect(Array.isArray(result)).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/documents\/batch$/);
+  });
+
+  it("delete with array posts to /documents/batch-delete", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ deleted: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await tables.delete("t1", ["a", "b"]);
+    expect((result as { deleted: number }).deleted).toBe(2);
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/documents\/batch-delete$/);
+  });
+
+  it("upsert with array posts to /documents/batch with upsert flag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          documents: [
+            { id: "a", data: {} },
+            { id: "b", data: {} },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await tables.upsert("t1", [
+      { id: "a", data: { k: 1 } },
+      { id: "b", data: { k: 2 } },
+    ]);
+    expect(Array.isArray(result)).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/documents\/batch$/);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.upsert).toBe(true);
+    expect(body.documents).toHaveLength(2);
   });
 });
