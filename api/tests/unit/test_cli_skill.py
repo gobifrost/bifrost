@@ -17,14 +17,32 @@ import pytest
 from bifrost import skill as skill_module
 
 
-def _make_tarball(repo: str, ref: str, files: dict[str, bytes]) -> bytes:
+def _make_tarball(
+    repo: str,
+    ref: str,
+    files: dict[str, bytes],
+    public_skills: list[str] | None = None,
+) -> bytes:
     """Build a tarball mimicking what GitHub's codeload returns.
 
     GitHub wraps everything in a ``<repo-name>-<sha>/`` prefix, so we
-    simulate that.
+    simulate that. ``public_skills`` lists the names that should appear as
+    symlinks under the top-level ``skills/`` directory (the plugin allowlist).
+    Defaults to every skill seen under ``.claude/skills/`` so existing tests
+    that don't care about filtering keep their current shape.
     """
     repo_name = repo.split("/")[-1]
     prefix = f"{repo_name}-{ref}"
+    if public_skills is None:
+        derived: set[str] = set()
+        for relpath in files:
+            if not relpath.startswith(".claude/skills/"):
+                continue
+            tail = relpath[len(".claude/skills/"):]
+            name = tail.split("/", 1)[0]
+            if name:
+                derived.add(name)
+        public_skills = sorted(derived)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for relpath, contents in files.items():
@@ -32,6 +50,11 @@ def _make_tarball(repo: str, ref: str, files: dict[str, bytes]) -> bytes:
             info = tarfile.TarInfo(name=f"{prefix}/{relpath}")
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
+        for name in public_skills:
+            info = tarfile.TarInfo(name=f"{prefix}/skills/{name}")
+            info.type = tarfile.SYMTYPE
+            info.linkname = f"../.claude/skills/{name}"
+            tar.addfile(info)
     return buf.getvalue()
 
 
@@ -43,7 +66,7 @@ def stub_github(monkeypatch: pytest.MonkeyPatch):
     wants the "repo" to ship.
     """
 
-    state: dict[str, object] = {"calls": []}
+    state: dict[str, object] = {"calls": [], "public_skills": None}
 
     def install(files: dict[str, bytes], repo: str = "jackmusick/bifrost") -> None:
         def _get(url: str, **_kwargs):
@@ -53,7 +76,13 @@ def stub_github(monkeypatch: pytest.MonkeyPatch):
                 ref = url.rsplit("/refs/heads/", 1)[1]
             elif "/refs/tags/" in url:
                 ref = url.rsplit("/refs/tags/", 1)[1]
-            tarball = _make_tarball(repo, ref, files)
+            public = state["public_skills"]
+            tarball = _make_tarball(
+                repo,
+                ref,
+                files,
+                public_skills=public,  # type: ignore[arg-type]
+            )
             request = httpx.Request("GET", url)
             return httpx.Response(200, content=tarball, request=request)
 
@@ -156,6 +185,54 @@ class TestSkillUpdate:
         skill_module.handle_skill(["update", "--repo", "jackmusick/other-repo"])
         urls = stub_github["calls"]  # type: ignore[index]
         assert any("jackmusick/other-repo" in u for u in urls), urls
+
+    def test_only_public_skills_are_installed(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        # Mirror the real repo: bifrost-build is symlinked from skills/ (public);
+        # bifrost-debug only exists under .claude/skills/ (internal).
+        stub_github["install"](
+            {
+                ".claude/skills/bifrost-build/SKILL.md": b"public\n",
+                ".claude/skills/bifrost-debug/SKILL.md": b"internal\n",
+                ".claude/skills/bifrost-secaudit/SKILL.md": b"internal\n",
+            },
+        )
+        # Override the auto-derived allowlist to only expose bifrost-build.
+        stub_github["public_skills"] = ["bifrost-build"]  # type: ignore[index]
+
+        rc = skill_module.handle_skill(["update"])
+        assert rc == 0
+
+        for root in (".claude/skills", ".agents/skills"):
+            assert (workspace / root / "bifrost-build/SKILL.md").is_file()
+            assert not (workspace / root / "bifrost-debug").exists()
+            assert not (workspace / root / "bifrost-secaudit").exists()
+        out = capsys.readouterr().out
+        assert "Installed bifrost-build" in out
+        assert "bifrost-debug" not in out
+        assert "bifrost-secaudit" not in out
+
+    def test_repo_with_no_public_skills_errors(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        # Repo has skills under .claude/skills/ but none symlinked from skills/.
+        # That's the shape of any fork/repo without a Claude Code plugin manifest.
+        stub_github["install"](
+            {".claude/skills/private/SKILL.md": b"x"},
+        )
+        stub_github["public_skills"] = []  # type: ignore[index]
+
+        rc = skill_module.handle_skill(["update"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "No public skills" in err
 
 
 class TestSkillList:
