@@ -126,8 +126,10 @@ def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
 def _scalar_eq(a: Any, b: Any) -> bool:
     """Equality with NULL-as-false semantics (matches SQL).
 
-    If either operand is None, returns False — `eq` cannot be used to test
-    for null. Use the dedicated `is_null` operator instead.
+    If either operand resolves to None at evaluate time (e.g. a {"row": ...}
+    reference to a missing field), returns False. Literal None is rejected at
+    validate time, so the only legitimate caller of this guard is a reference
+    resolving to None. Use `is_null` to test for null.
     """
     if a is None or b is None:
         return False
