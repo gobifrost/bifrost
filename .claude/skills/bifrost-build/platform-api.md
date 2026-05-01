@@ -1404,3 +1404,17 @@ import { twMerge } from "bifrost";
 twMerge("px-2 px-4");  // "px-4"
 ```
 
+### tables
+
+Web SDK for the Bifrost Tables API. CRUD plus subscribe over websocket.
+
+> **Note:** This entry is a placeholder. The full Tables SDK surface (insert/update/delete/upsert/select/subscribe + the `useTable` React hook) is documented in detail by the table-policies plan's Task 21 rewrite. Until then, see `client/src/lib/app-sdk/tables.ts`.
+
+```tsx
+import { tables } from "bifrost";
+
+await tables.insert("clients", { name: "Acme", status: "active" });
+const rows = await tables.select("clients", { where: { status: "active" } });
+const unsubscribe = tables.subscribe("clients", (evt) => console.log(evt));
+```
+

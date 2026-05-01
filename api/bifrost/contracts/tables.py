@@ -25,7 +25,7 @@ class TableCreate(BaseModel):
     description: str | None = Field(default=None)
     schema: dict[str, Any] | None = Field(default=None)
     organization_id: UUID | None = Field(default=None)
-    access: dict[str, Any] | None = Field(default=None)
+    policies: dict[str, Any] | None = Field(default=None)
 
 
 class TableUpdate(BaseModel):
@@ -35,4 +35,4 @@ class TableUpdate(BaseModel):
     description: str | None = None
     schema: dict[str, Any] | None = None
     application_id: UUID | None = None
-    access: dict[str, Any] | None = None
+    policies: dict[str, Any] | None = None
