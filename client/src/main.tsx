@@ -7,8 +7,27 @@ import App from "./App.tsx";
 import { queryClient } from "./lib/queryClient";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { OrgScopeQueryInvalidator } from "./components/OrgScopeQueryInvalidator";
+import { VersionUpdateBanner } from "@/components/layout/VersionUpdateBanner";
 import { configureMonaco } from "./lib/monaco-setup";
 import { initReactShim } from "./lib/esm-react-shim";
+
+// After a deploy, hashed JS chunks vanish and dynamic imports for old chunk
+// names start 404'ing. Vite emits `vite:preloadError` for those — reload once
+// to pull the fresh bundle, with a sessionStorage guard so a chronically
+// broken deploy can't trap the user in a reload loop.
+window.addEventListener("vite:preloadError", () => {
+	const RELOAD_KEY = "bifrost:last-preload-reload";
+	const lastReload = sessionStorage.getItem(RELOAD_KEY);
+	const now = Date.now();
+	if (lastReload && now - Number(lastReload) < 5_000) {
+		// Reloaded within the last 5s — don't loop. The banner will surface
+		// the version mismatch on the next poll cycle.
+		console.error("[bifrost] preload error after recent reload, suppressing");
+		return;
+	}
+	sessionStorage.setItem(RELOAD_KEY, String(now));
+	window.location.reload();
+});
 
 // Expose platform React via import map so esm.sh packages use the same instance
 initReactShim();
@@ -22,6 +41,7 @@ createRoot(document.getElementById("root")!).render(
 			<QueryClientProvider client={queryClient}>
 				<OrgScopeQueryInvalidator />
 				<App />
+				<VersionUpdateBanner />
 				<Toaster />
 			</QueryClientProvider>
 		</ThemeProvider>
