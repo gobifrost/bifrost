@@ -14,16 +14,17 @@ from shared.policies.functions import FUNCTIONS
 from src.models.contracts.policies import Expr
 
 
-def evaluate(expr: Expr, row: dict, user: Any) -> bool:
+def evaluate(expr: Expr, row: dict | None, user: Any) -> bool:
     """Evaluate an expression against a row + user, return bool.
 
-    `row` is a dict; missing keys resolve to None. UUID-typed values
+    `row` may be a dict (the typical case) or None (e.g., DELETE events
+    with no payload). Missing keys resolve to None. UUID-typed values
     in user are stringified before comparison.
     """
-    return _eval_node(expr.root, row, user)
+    return bool(_eval_node(expr.root, row, user))
 
 
-def _eval_node(node: Any, row: dict, user: Any) -> Any:
+def _eval_node(node: Any, row: dict | None, user: Any) -> Any:
     """Resolve a node to its value (literal, reference, or operator result)."""
     # Literals
     if isinstance(node, (str, int, float, bool)) or node is None:
@@ -48,7 +49,7 @@ def _eval_node(node: Any, row: dict, user: Any) -> Any:
     raise ValueError(f"unevaluatable node: {node!r}")
 
 
-def _resolve_row_path(row: dict, path: str) -> Any:
+def _resolve_row_path(row: dict | None, path: str) -> Any:
     """Resolve dot-path against the row dict; missing keys return None."""
     parts = path.split(".")
     cur: Any = row
@@ -72,14 +73,14 @@ def _resolve_user_field(user: Any, field: str) -> Any:
     return val
 
 
-def _eval_call(node: dict, row: dict, user: Any) -> bool:
+def _eval_call(node: dict, row: dict | None, user: Any) -> bool:
     target = node["call"]
     args = [_eval_node(a, row, user) for a in node.get("args", [])]
     fn = FUNCTIONS[target]
     return fn.evaluate(args, user, row)
 
 
-def _eval_op(op: str, value: Any, row: dict, user: Any) -> bool:
+def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
     if op == "and":
         for item in value:
             if not _eval_node(item, row, user):
@@ -123,7 +124,11 @@ def _eval_op(op: str, value: Any, row: dict, user: Any) -> bool:
 
 
 def _scalar_eq(a: Any, b: Any) -> bool:
-    """Equality with NULL-as-false semantics (matches SQL)."""
+    """Equality with NULL-as-false semantics (matches SQL).
+
+    If either operand is None, returns False — `eq` cannot be used to test
+    for null. Use the dedicated `is_null` operator instead.
+    """
     if a is None or b is None:
         return False
     return a == b

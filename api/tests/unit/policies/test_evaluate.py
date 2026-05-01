@@ -213,3 +213,68 @@ def test_boolean_field_eq():
     user = FakeUser()
     assert evaluate(expr, row={"enabled": True}, user=user) is True
     assert evaluate(expr, row={"enabled": False}, user=user) is False
+
+
+# --- Top-level boolean coercion ---
+
+
+def test_bare_literal_top_level_coerces_to_bool():
+    """A top-level bare literal coerces to bool (truthy → True)."""
+    user = FakeUser()
+    assert evaluate(_e({"eq": ["yes", "yes"]}), row={}, user=user) is True
+    # A reference resolving to a non-empty string is truthy
+    expr = _e({"eq": [{"row": "x"}, "v"]})
+    assert evaluate(expr, row={"x": "v"}, user=user) is True
+
+
+# --- row=None contract (DELETE events) ---
+
+
+def test_row_none_resolves_refs_to_none():
+    """row=None makes every {"row": ...} reference resolve to None."""
+    user = FakeUser()
+    expr = _e({"eq": [{"row": "x"}, "v"]})
+    # Null left side -> NULL-as-false
+    assert evaluate(expr, row=None, user=user) is False
+    # User-only refs still work
+    expr_user = _e({"user": "is_platform_admin"})
+    assert evaluate(expr_user, row=None, user=FakeUser(is_platform_admin=True)) is True
+
+
+# --- is_null on nested paths ---
+
+
+def test_is_null_nested_missing_path():
+    """is_null on a nested path where an intermediate is missing."""
+    expr = _e({"is_null": {"row": "a.b.c"}})
+    assert evaluate(expr, row={}, user=FakeUser()) is True
+    assert evaluate(expr, row={"a": None}, user=FakeUser()) is True
+    assert evaluate(expr, row={"a": "scalar"}, user=FakeUser()) is True
+    assert evaluate(expr, row={"a": {"b": {"c": "v"}}}, user=FakeUser()) is False
+
+
+# --- in-membership with mixed types ---
+
+
+def test_in_membership_mixed_types():
+    """`in` with a list containing both an int and a string matches by Python equality."""
+    expr = _e({"in": [{"row": "x"}, [1, "1"]]})
+    user = FakeUser()
+    # String "1" matches the literal "1" in the list
+    assert evaluate(expr, row={"x": "1"}, user=user) is True
+    # Int 1 matches the literal 1 in the list
+    assert evaluate(expr, row={"x": 1}, user=user) is True
+    assert evaluate(expr, row={"x": 2}, user=user) is False
+
+
+# --- eq against literal None (NULL-as-false documentation) ---
+
+
+def test_eq_against_literal_none_always_false():
+    """eq with a None operand always returns False; use is_null to test for null."""
+    expr = _e({"eq": [{"row": "x"}, None]})
+    user = FakeUser()
+    assert evaluate(expr, row={"x": None}, user=user) is False
+    assert evaluate(expr, row={"x": "v"}, user=user) is False
+    # The correct way to test for null:
+    assert evaluate(_e({"is_null": {"row": "x"}}), row={"x": None}, user=user) is True
