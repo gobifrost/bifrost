@@ -1,0 +1,16 @@
+{
+  "name": "bifrost",
+  "owner": {
+    "name": "Jack Musick",
+    "url": "https://github.com/jackmusick"
+  },
+  "plugins": [
+    {
+      "name": "bifrost",
+      "source": ".",
+      "description": "Bifrost — MSP automation platform. Skills for building workflows, forms, agents, and apps with the Bifrost SDK + CLI.",
+      "category": "automation",
+      "tags": ["msp", "automation", "workflows", "bifrost", "psa"]
+    }
+  ]
+}

@@ -103,32 +103,15 @@ class TestSkillUpdate:
         assert "Installed foo" in captured
         assert "Installed bar" in captured
 
-    def test_install_single_named_skill(
+    def test_positional_arg_rejected(
         self,
         workspace: Path,
-        stub_github,
-    ) -> None:
-        stub_github["install"](
-            {
-                ".claude/skills/foo/SKILL.md": b"foo",
-                ".claude/skills/bar/SKILL.md": b"bar",
-            }
-        )
-        rc = skill_module.handle_skill(["update", "foo"])
-        assert rc == 0
-        assert (workspace / ".claude/skills/foo/SKILL.md").is_file()
-        assert not (workspace / ".claude/skills/bar").exists()
-
-    def test_unknown_skill_name_errors(
-        self,
-        workspace: Path,
-        stub_github,
         capsys: pytest.CaptureFixture,
     ) -> None:
-        stub_github["install"]({".claude/skills/foo/SKILL.md": b"foo"})
-        rc = skill_module.handle_skill(["update", "nonexistent"])
+        # Update is all-or-nothing. A positional arg is a usage error.
+        rc = skill_module.handle_skill(["update", "foo"])
         assert rc == 1
-        assert "Unknown skill" in capsys.readouterr().err
+        assert "no positional args" in capsys.readouterr().err
 
     def test_update_wipes_stale_files_before_writing(
         self,

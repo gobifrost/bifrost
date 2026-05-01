@@ -40,9 +40,7 @@ work across Claude Code, Copilot CLI, Cursor, Codex, and Gemini CLI:
 
 Subcommands:
   list                    List installed skills in the current workspace
-  update [<name>...]      Install or update skills from GitHub. With no name,
-                          updates ALL skills shipped by the bifrost repo. Pass
-                          one or more names to update a subset.
+  update                  Install / update ALL Bifrost skills from GitHub
   remove <name>           Remove an installed skill from both locations
 
 Options for update:
@@ -51,9 +49,8 @@ Options for update:
 
 Examples:
   bifrost skill list
-  bifrost skill update                        # all skills, latest main
-  bifrost skill update bifrost-build          # one skill
-  bifrost skill update --ref v1.4.2           # pin to a release
+  bifrost skill update                  # all skills, latest main
+  bifrost skill update --ref v1.4.2     # pin to a release
 """.strip())
 
 
@@ -122,11 +119,8 @@ def _handle_remove(args: list[str]) -> int:
     return 0
 
 
-def _parse_update_args(
-    args: list[str],
-) -> tuple[list[str], str, str] | None:
-    """Returns (names, ref, repo) or None on error (after printing usage)."""
-    names: list[str] = []
+def _parse_update_args(args: list[str]) -> tuple[str, str] | None:
+    """Returns (ref, repo) or None on error (after printing usage)."""
     ref = _DEFAULT_REF
     repo = _DEFAULT_REPO
     i = 0
@@ -149,19 +143,17 @@ def _parse_update_args(
             repo = args[i + 1]
             i += 2
             continue
-        if arg.startswith("-"):
-            print(f"Error: unknown flag {arg}", file=sys.stderr)
-            return None
-        names.append(arg)
-        i += 1
-    return names, ref, repo
+        print(f"Error: unexpected argument {arg!r}", file=sys.stderr)
+        print("`bifrost skill update` takes no positional args.", file=sys.stderr)
+        return None
+    return ref, repo
 
 
 def _handle_update(args: list[str]) -> int:
     parsed = _parse_update_args(args)
     if parsed is None:
         return 1
-    names, ref, repo = parsed
+    ref, repo = parsed
 
     cwd = Path.cwd()
     claude_dir, agents_dir = _skill_dirs(cwd)
@@ -173,25 +165,12 @@ def _handle_update(args: list[str]) -> int:
         print(f"Error fetching tarball: {exc}", file=sys.stderr)
         return 1
 
-    available = sorted({path.split("/", 1)[0] for path in skill_files})
-    if not available:
+    targets = sorted({path.split("/", 1)[0] for path in skill_files})
+    if not targets:
         print(
             f"No .claude/skills/ entries found in {repo}@{ref}.", file=sys.stderr
         )
         return 1
-
-    if names:
-        unknown = [n for n in names if n not in available]
-        if unknown:
-            print(
-                f"Unknown skill(s): {', '.join(unknown)}. "
-                f"Available: {', '.join(available)}",
-                file=sys.stderr,
-            )
-            return 1
-        targets = names
-    else:
-        targets = available
 
     for skill_name in targets:
         claude_target = claude_dir / skill_name
