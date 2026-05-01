@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -15,20 +15,20 @@ from pydantic import (
 from shared.policies.functions import FUNCTIONS
 
 # Known fields on the USER namespace — the validator rejects anything else.
-KNOWN_USER_FIELDS = {
+KNOWN_USER_FIELDS: Final[frozenset[str]] = frozenset({
     "user_id",
     "email",
     "organization_id",
     "is_platform_admin",
     "role_ids",
     "role_names",
-}
+})
 
 # Operators that produce boolean results.
-_LOGIC_OPS = {"and", "or", "not"}
-_COMPARE_OPS = {"eq", "neq", "lt", "lte", "gt", "gte"}
-_OTHER_OPS = {"in", "is_null", "call"}
-_ALL_OPS = _LOGIC_OPS | _COMPARE_OPS | _OTHER_OPS
+_LOGIC_OPS: Final[frozenset[str]] = frozenset({"and", "or", "not"})
+_COMPARE_OPS: Final[frozenset[str]] = frozenset({"eq", "neq", "lt", "lte", "gt", "gte"})
+_OTHER_OPS: Final[frozenset[str]] = frozenset({"in", "is_null", "call"})
+_ALL_OPS: Final[frozenset[str]] = _LOGIC_OPS | _COMPARE_OPS | _OTHER_OPS
 
 
 def _validate_operand(node: Any) -> None:
@@ -119,8 +119,10 @@ def _validate_call(node: dict) -> None:
             f"function {target!r} expects {len(fn.arg_types)} args, got {len(args)}"
         )
     for i, (arg, t) in enumerate(zip(args, fn.arg_types)):
-        # Args may be literals or references; validator only enforces types
-        # for raw literals. References are checked at evaluate time.
+        # `arg_types` is the contract for LITERAL args only. Reference args
+        # ({"row": "..."}, {"user": "..."}) bypass the type check here because
+        # their resolved value is only known at evaluate time. The evaluator
+        # is responsible for handling type mismatches at the row.
         if isinstance(arg, dict):
             _validate_operand(arg)
             continue
