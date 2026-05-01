@@ -50,7 +50,7 @@ Expressions are JSON ASTs. No string DSL, no parser, no injection surface. The A
 
 ### Operators
 
-Twelve total. Every operator must have a SQL form (this is a constraint, not a guideline).
+Thirteen total. Every operator must have a SQL form (this is a constraint, not a guideline).
 
 | Op | Shape | Semantics |
 |---|---|---|
@@ -61,6 +61,7 @@ Twelve total. Every operator must have a SQL form (this is a constraint, not a g
 | `neq` | `{ neq: [a, b] }` | Inequality |
 | `lt` / `lte` / `gt` / `gte` | `{ lt: [a, b] }` | Comparison (numbers, strings, ISO dates) |
 | `in` | `{ in: [a, [v1, v2, ...]] }` | Set membership; right side is a literal list |
+| `is_null` | `{ is_null: a }` | True iff the operand resolves to null/missing. `{not: {is_null: ...}}` covers "is set". |
 | `call` | `{ call: <fn>, args: [...] }` | Function call (extension point) |
 
 Operands are either nested expressions, references (`{row: ...}`, `{user: ...}`), or literals (string / number / bool / null / list). A bare scalar in an operand position is a literal.
@@ -84,9 +85,29 @@ Field paths use simple dot notation (`row.metadata.priority`). Implementation us
 
 ### Functions
 
-One function for v1: `has_role(name_or_uuid: str) -> bool`. Implemented as membership in `user.role_ids` or `user.role_names`.
+One function for v1: `has_role(name_or_uuid: str) -> bool`. Returns true iff the argument is in `user.role_names` or matches a UUID in `user.role_ids` (string-compared).
 
-Function calls are intentionally restricted to a registered allow-list. Adding `manages()` or anything that touches the DB during evaluation requires an explicit design — for now, denormalize relationships into row fields instead.
+Function calls are restricted to a **registered allow-list**. Each entry in the registry provides BOTH forms — the per-row evaluator and the SQL compiler — and they are registered together so they can't drift:
+
+```python
+FUNCTIONS = {
+    "has_role": FunctionDef(
+        evaluate=lambda args, user, row: (
+            args[0] in user.role_names
+            or args[0] in [str(r) for r in user.role_ids]
+        ),
+        compile=lambda args, user, row_ctx: sql_literal(
+            args[0] in user.role_names
+            or args[0] in [str(r) for r in user.role_ids]
+        ),
+        arg_types=[str],  # validator enforces this at table-create time
+    ),
+}
+```
+
+The validator at table create/update rejects any `call` whose target is not in the registry, with a 422 listing the available functions. A function that cannot be SQL-compiled (because it requires DB lookup at evaluation time, network calls, etc.) cannot be registered — the registration signature requires both forms. This is the gate that prevents `manages()` from sneaking in without an explicit design (it would require a `manager_relationships` table, an indexed lookup, and a join in the compile path — all of which need a separate spec).
+
+For now, denormalize relationships into row fields. `ROW.manager_user_id` is preferable to `manages(ROW.user_id)` for both correctness and performance.
 
 ### Type semantics
 
@@ -135,6 +156,8 @@ Compilation is mechanical:
 | `{or: [A, B]}` | `(<A>) OR (<B>)` |
 | `{not: A}` | `NOT (<A>)` |
 | `{in: [{row: x}, ["a","b"]]}` | `data->>'x' = ANY(ARRAY['a','b'])` |
+| `{is_null: {row: x}}` | `data->>'x' IS NULL` |
+| `{is_null: {row: organization_id}}` | `organization_id IS NULL` (column form) |
 | `{call: has_role, args: ["mgr"]}` | `TRUE` or `FALSE` (resolved at request time from `user.role_names`) |
 | `{user: is_platform_admin}` in any operand | resolved at request time, becomes `TRUE`/`FALSE` literal |
 
@@ -154,7 +177,16 @@ For action `A` against row `R` (or candidate row, on insert) by caller `C`:
    - Else evaluate `when(R, C)`. If true, the rule allows.
 3. If any rule allows, the action is allowed. Otherwise denied.
 
-Admin bypass is **not** a built-in — the spec example above includes an explicit `admin_bypass` rule. This is intentional: by making it visible in policies, an org can choose to forbid even superusers from updating finalized records, or whatever audit constraint they need. The migration that ships with this feature seeds an admin-bypass rule on every table with no existing policies; tables created via UI/CLI/manifest get the same default in their generated stub.
+Admin bypass is **not** a built-in — the spec example above includes an explicit `admin_bypass` rule. The evaluator has no implicit "if user.is_platform_admin: return True" branch; admins are subject to the same `policies` list as everyone else.
+
+To preserve the "admins can do anything" default, every table is **seeded** with an `admin_bypass` rule when it's created with no policies set. The seeded rule is an ordinary entry in the `policies` list — visible in the editor, exported in the manifest, editable via PATCH or CLI. An org that needs stricter audit constraints (e.g., "even superusers cannot update rows where status=archived") can edit or remove it, and the change takes effect via the normal policy evaluation path.
+
+Two consequences worth naming:
+
+- A table with `policies: []` (explicitly empty) denies all access including admins. To restore admin access, add the rule back. This is intentional — "I deleted my admin bypass" should not be a silent no-op.
+- The seed only fires when no policies are set. Once a table has any policy, the seed never re-fires. Removing the bypass is durable.
+
+Tables created via UI / CLI / manifest get the seed automatically. Tables created in tests or fixtures get the seed unless they pass an explicit `policies` field.
 
 ## Per-action notes
 
@@ -191,24 +223,30 @@ The OpenAPI schema names the field `policies` on `TableCreate`/`TableUpdate`/`Ta
 
 ## Migration from current branch
 
-Three commits on the current branch encode contract + UI for the old `TableAccess` shape (`939982b8`, `0358aa0f`, `61d34287`). All of them are reverted before this feature lands.
+The plan is to revert the contract / UI / handler / test commits while keeping the column migration intact. Net result: **a single migration ships** (the original `Table.access` JSONB column add) and the multi-role data migration (`20260429b_migrate_table_access_role_to_roles.py`) is deleted before merge — there is no production data with the old shape, so no migration is needed for the rebuild.
 
 Kept from the current branch:
-- Migration `5024a64c` (adds `Table.access` JSONB column) — reused unchanged
-- ORM, manifest scaffolding, web SDK structure, websocket `table:` channel, REST endpoints, batch endpoints, CSRF wiring, platform-scope SDK injection
-- Workflow SDK auto-attribution (`38c9d17e`)
-- E2E test infrastructure (the `alice_user`/`bob_user` fixtures, the websocket fixture pattern, the Playwright app fixture for tables)
+- Migration that adds `Table.access` JSONB column — reused unchanged. Column name stays `access` for migration cleanliness; the contract field name in the API is `policies`.
+- ORM stub for the `access` column on `Table`
+- Manifest scaffolding (the round-trip plumbing — the inner shape changes)
+- Web SDK structure (`tables.{get, insert, update, upsert, delete, query, count, *_batch, subscribe}` — surface unchanged)
+- Websocket `table:` channel + per-message filter scaffolding (the filter logic generalizes)
+- REST endpoints, batch endpoints, CSRF wiring
+- Platform-scope SDK injection (`tables` and `useTableSubscription` exported to apps)
+- Workflow SDK auto-attribution (`created_by`/`updated_by` resolved from execution context)
+- E2E test infrastructure: `alice_user` / `bob_user` fixtures, the websocket fixture pattern, the Playwright app fixture for tables
 
 Reset and rebuilt:
 - `TableAccessChecker` → `evaluate_policy` (pure function over expressions)
-- The handler integration in `api/src/routers/tables.py` — the call shape stays similar (load table, check, optionally compile read filter), but it calls a new evaluator
-- Pydantic contract (`TableAccess` family removed, `TablePolicies`/`Policy`/`Expr` added)
-- Manifest serialization
-- The CLI `--access` flag (renamed `--policies`, same JSON-or-@file mechanics)
-- The admin editor UI (rebuilt around a policy list — see UI section)
+- The handler integration in `api/src/routers/tables.py` — the call shape stays similar (load table, check, optionally compile read filter), but it calls the new evaluator and the new SQL compiler
+- Pydantic contract: `TableAccess` family deleted, `TablePolicies` / `Policy` / `Expr` added
+- Manifest models for the new shape
+- The CLI `--access` flag — renamed `--policies`, same JSON-or-@file mechanics
+- The admin editor UI — rebuilt around the policy list with Monaco
 - All tests for the access matrix
+- The data migration `20260429b_migrate_table_access_role_to_roles.py` — deleted
 
-The reset preserves the SDK, websocket, batch endpoints, and manifest plumbing. We don't lose the week's work; we replace the contract layer.
+The reset preserves the SDK, websocket, batch endpoints, and manifest infrastructure. The contract layer and policy editor are the only meaningful rewrites.
 
 ## Admin editor UI (v1)
 
@@ -217,15 +255,18 @@ The current `TableAccessEditor` (compact grid) is replaced by a **policy list ed
 - Name (string input)
 - Description (optional, smaller input)
 - Actions checkboxes (Read / Create / Update / Delete)
-- A "When" field — for v1, **a JSON textarea with live AST validation** (uses the same Pydantic validator). Below it, a small read-only preview pane that pretty-prints the expression in pseudocode for sanity.
+- A "When" expression editor — a **Monaco** editor in `json` mode, schema-driven (autocomplete + inline validation derived from the `Expr` Pydantic schema)
 - A delete button per row
 - An "Add policy" button at the bottom that inserts a stub: `{name: "new_policy", actions: ["read"], when: null}`
 
-Two helpers below the textarea:
-- A "Templates" dropdown that inserts common patterns (own-row, own-org, role-gated, admin-bypass) as starting points
-- A "Reference" link that opens a dialog showing available `row.*` and `user.*` references and the `has_role()` function
+The Monaco editor uses the same JSON Schema we already publish via OpenAPI for the `Expr` model. That gives autocomplete for operator keys (`and`, `or`, `eq`, `is_null`, etc.), the `row.<field>` and `user.<field>` reference shapes, and the `call` target list (only registered functions). Inline validation runs in two layers: client-side via the schema (instant feedback while typing) and server-side via Pydantic on save (the source of truth, catches anything the schema can't express).
 
-This is intentionally a **textarea, not a visual builder**, for v1. Visual expression builders are a separate piece of work and the user research for what to build needs the textarea version in production first to inform design.
+Helpers around the editor:
+
+- A "Templates" dropdown that inserts common patterns as starting points (own-row, own-org, role-gated, admin-bypass)
+- A "Reference" link that opens a side panel listing every `row.*` / `user.*` reference and every registered function with arg types
+
+This is the v1 surface. A visual / drag-and-drop builder is a separate piece of work and benefits from seeing what users actually configure in production before being designed.
 
 ## CLI
 
@@ -243,11 +284,108 @@ The policy evaluator runs server-side regardless of caller (browser SDK or workf
 
 If an app/workflow needs to bypass policy (e.g., a backfill workflow), it must run as a platform-admin user, and the table must have an `admin_bypass`-style rule. There is no separate "system" caller class; this keeps audit and behavior aligned.
 
+## Subscriptions
+
+The websocket `table:{id}` channel exists already (per the in-flight branch). Two extensions are needed for the policy model: **visibility-change fanout** and **server-side query filtering**.
+
+### Subscribe protocol
+
+The client may pass an optional `filter` expression at subscribe time. The expression is the same JSON AST as policies (same operators, same `row.*` references, same validator). Same registered functions, including `has_role`.
+
+```jsonc
+// Client → server
+{ "type": "subscribe", "channels": [
+  { "name": "table:00000000-0000-0000-0000-000000000000",
+    "filter": { "eq": [{ "row": "user_id" }, { "user": "user_id" }] }
+  }
+] }
+```
+
+If `filter` is omitted, the subscription receives every change the policy lets the user see.
+
+The server validates the filter at subscribe time. Invalid expressions return an `error` ack and the channel is not subscribed.
+
+### Visibility-change fanout
+
+When a row changes, the publisher has both the **pre-mutation** state and the **post-mutation** state (for update events) or one of them (for insert/delete). For each subscriber on that table, the server computes:
+
+```
+old_visible = policy_read(old_row, user) AND filter(old_row, user)   // false if no old_row
+new_visible = policy_read(new_row, user) AND filter(new_row, user)   // false if no new_row
+```
+
+And emits exactly one of:
+
+| `old_visible` | `new_visible` | Emit | Body |
+|---|---|---|---|
+| F | F | nothing | — |
+| F | T | `insert` | full new row |
+| T | F | `delete` | row id only |
+| T | T | `update` | full new row |
+
+This means a row that mutates from "I can't see it" to "I can see it" surfaces as an insert in the client, even though it's not a real DB insert. Same the other way around: a row that mutates out of visibility surfaces as a delete. App code never has to think about this; the hook just receives `insert`/`update`/`delete` and reconciles its local list.
+
+`policy_read` here is the OR of all `read`-allowing policies, evaluated per-row by the same evaluator the REST path uses.
+
+### Initial snapshot
+
+The hook (`useTable`) is responsible for the snapshot. On mount it does a `tables.query(name, query)` REST call to fetch the current matching rows, then opens the subscription with the same filter. The REST `query` and the subscription `filter` use the same expression shape, so they return / fanout the same set. This avoids designing a "fetch-and-subscribe" combined endpoint for v1.
+
+There is a tiny race window: rows that change between the snapshot and the subscription open won't fire events for that change. The hook handles this by re-querying on websocket reconnect (a no-op in the steady state, a recovery path on flap). Out of scope for v1: full at-least-once semantics with sequence numbers.
+
+### Re-evaluation on policy edit
+
+When a table's `policies` are updated, the publisher emits a `table_access_changed` event on the channel. The connection re-checks every active subscription on that table:
+
+```
+for each active subscription:
+    can_still_subscribe = any read-allowing policy matches against
+                          a probe row (the table-id row only)
+    if not can_still_subscribe:
+        emit subscription_revoked, close subscription
+```
+
+The probe-row check is conservative: it asks "could this user receive ANY message on this table now?" If the new policies are row-data-aware (e.g., creator-only) the probe-row check returns true (some rows could match) and the subscription stays open. The per-message filter then drops irrelevant rows individually. This matches the existing creator-filter behavior in the in-flight branch — the policy version generalizes the same logic.
+
+### Hook surface
+
+```ts
+// Already shipped — keep, but it now reflects policy-filtered events
+useTableSubscription(tableId, (evt) => { ... })
+
+// New v1 hooks
+useTable(name: string, query?: { where?: Expr; limit?: number; offset?: number }): {
+  rows: Row[]
+  loading: boolean
+  error: Error | null
+}
+
+useTableRow(name: string, id: string): {
+  row: Row | null
+  loading: boolean
+  error: Error | null
+}
+```
+
+Both new hooks:
+1. Fetch the initial snapshot via `tables.query` / `tables.get`
+2. Open a websocket subscription with the same filter (or row-id filter for `useTableRow`)
+3. Reconcile insert/update/delete events into local state
+4. Return reactive state plus loading/error
+
+`query.where` for `useTable` accepts the same JSON AST as policies. `useTableRow` builds an internal `eq[row.id, <id>]` filter.
+
+### What's deferred
+
+- Pagination across the websocket boundary (re-querying when the user pages). For v1, `useTable` re-runs `tables.query` when offset/limit change.
+- At-least-once delivery / message replay after reconnect. For v1, reconnect = re-query.
+- Subscriptions to multiple tables joined together. Out of scope.
+
 ## Web SDK
 
-No surface change to `client/src/lib/app-sdk/tables.ts`. Same methods, same return types. Behavior changes only in *what gets allowed*: the SDK calls return whatever the policy evaluator allows.
+No surface change to `client/src/lib/app-sdk/tables.ts` REST methods. Same methods, same return types. Behavior changes only in *what gets allowed*: the SDK calls return whatever the policy evaluator allows.
 
-The `subscribe()` method already routes through the websocket layer; the per-message filter (today checks creator-filter) becomes "evaluate the read policies against the changed row." Existing logic generalizes naturally.
+The `subscribe()` method gains an optional `filter` parameter (forwarded to the websocket protocol). The two new hooks (`useTable`, `useTableRow`) ship in the same module.
 
 ## Manifest round-trip
 
@@ -261,9 +399,9 @@ Three test surfaces, in this order:
 
 2. **SQL pushdown unit tests** (40+ cases): every operator's SQL output, parameterization, role-name resolution at compile time, plus a "round-trip" test that runs the same policy through both paths against the same fixtures and asserts the results match.
 
-3. **REST + websocket e2e** (15+ cases, mirrors the access-matrix tests but expanded): admin bypass, own-org filter, manager visibility (with `manager_user_id` denormalized into rows), finalized-state guard on update, websocket subscription filtering, policy-edit revoking an active subscription.
+3. **REST + websocket e2e** (20+ cases, mirrors the access-matrix tests but expanded): admin bypass (seeded rule + custom edit + deletion), own-org filter, manager visibility (with `manager_user_id` denormalized into rows), state-locked guard on update, websocket subscription filtering with the four-way visibility-change fanout (insert/update/delete/visibility-gain/visibility-loss), policy-edit revoking an active subscription, server-side filter validation.
 
-Plus the existing Playwright app-fixture specs continue to work — they exercise the SDK end-to-end. We add one spec covering a multi-policy scenario (perf-review-shaped: two roles, finalized state, denormalized manager field).
+Plus the existing Playwright app-fixture specs continue to work — they exercise the SDK end-to-end. We add a spec covering a multi-policy scenario (two roles + state-aware predicate + denormalized manager field) and a spec exercising `useTable` end-to-end (initial snapshot + insert + update + delete + visibility-gain via row mutation).
 
 ## Open questions
 
@@ -274,11 +412,17 @@ Plus the existing Playwright app-fixture specs continue to work — they exercis
 
 ## What this isn't
 
-- Not a general-purpose rules engine. Twelve operators by design.
-- Not a workflow replacement. State-transition guards (can't move finalized=true→false) belong in workflows.
-- Not free. The admin editor is a textarea; visual expression building is a future feature when we know what users actually configure.
+- Not a general-purpose rules engine. Thirteen operators by design.
+- Not a workflow replacement. State-transition guards (can't move a row from done→open after the fact) belong in workflows. Pre-update evaluation means a user CAN cause their row to enter a locked state (because the row was unlocked when they touched it); they CANNOT touch it again afterwards.
+- Not free. The admin editor is Monaco with schema-driven autocomplete; a visual / drag-and-drop builder is a future feature once we see what users actually configure.
 - Not column-level. Row-level only.
 
 ## Scope
 
-A single implementation plan. The migration is small (column already exists), the contract change is well-bounded, the integration points are the same handlers we already touched. The biggest single piece of work is the SQL compiler with its tests — about 1.5 days. Whole feature: 4-6 working days.
+A single implementation plan, sized at 4-6 working days. The migration is small (column already exists), the contract change is well-bounded, the integration points are the same handlers we already touched. Three pieces dominate the cost:
+
+- The SQL compiler + its tests (~1.5 days)
+- The visibility-change websocket fanout + the two new hooks + e2e (~1.5 days)
+- The Monaco editor with schema-driven autocomplete + templates + reference panel (~1 day)
+
+Everything else (Pydantic contract, evaluator, REST integration, manifest, CLI, llm.txt, skill update, branch reset) fits in the remaining 1-2 days.
