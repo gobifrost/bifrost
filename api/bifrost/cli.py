@@ -534,6 +534,10 @@ def main(args: list[str] | None = None) -> int:
         if command == "migrate-imports":
             return handle_migrate_imports(args[1:])
 
+        if command == "skill":
+            from bifrost.skill import handle_skill
+            return handle_skill(args[1:])
+
         # Entity mutation subgroups (bifrost orgs ..., bifrost roles ..., etc.).
         from bifrost.commands import ENTITY_GROUPS, dispatch_entity_subgroup
 
@@ -568,6 +572,7 @@ Commands:
   watch       Watch for file changes and auto-push
   api         Generic authenticated API request
   migrate-imports  Rewrite "bifrost" imports into user/lucide/router imports
+  skill       Install / update / remove agent skills (.claude/skills + .agents/skills)
   login       Authenticate (browser device-code by default; password-grant with --email/--password)
   logout      Clear stored credentials for one URL
   auth        Inspect stored credentials (auth list)

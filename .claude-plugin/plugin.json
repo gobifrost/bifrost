@@ -1,0 +1,12 @@
+{
+  "name": "bifrost",
+  "description": "Bifrost — MSP automation platform. Skills for building workflows, forms, agents, and apps with the Bifrost SDK + CLI. Includes :build (create and debug artifacts) and :setup (install CLI, authenticate, configure MCP).",
+  "version": "0.1.0",
+  "author": {
+    "name": "Jack Musick",
+    "url": "https://github.com/jackmusick/bifrost"
+  },
+  "homepage": "https://github.com/jackmusick/bifrost",
+  "repository": "https://github.com/jackmusick/bifrost",
+  "license": "AGPL-3.0"
+}
