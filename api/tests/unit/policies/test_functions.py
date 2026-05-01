@@ -32,9 +32,9 @@ def test_has_role_compile_resolves_at_compile_time():
     fn = FUNCTIONS["has_role"]
     user = _FakeUser(role_names=["admin"])
     # Compile must resolve the call to a literal True/False, not defer.
-    result = fn.compile(["admin"], user, row_ctx=None)
+    result = fn.compile(["admin"], user)
     assert result is True
-    result = fn.compile(["other"], user, row_ctx=None)
+    result = fn.compile(["other"], user)
     assert result is False
 
 
