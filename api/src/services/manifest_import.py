@@ -2131,6 +2131,14 @@ class ManifestResolver:
         app_id = UUID(mtable.application_id) if mtable.application_id else None
         now = datetime.now(timezone.utc)
 
+        # Manifest-carried policies → Table.access JSONB. When the manifest
+        # entry has no policies (older bundles, or hand-authored YAML that
+        # omits the field), seed the admin_bypass default so platform admins
+        # aren't locked out — same default the REST create path uses.
+        access = (
+            mtable.policies.model_dump(mode="json") if mtable.policies else make_seed_admin_bypass()
+        )
+
         # 1. Look up by natural key (name + org) — use cache if available
         if cache is not None:
             existing_by_natural = cache["table_by_natural"].get((table_name, org_id))
@@ -2156,6 +2164,7 @@ class ManifestResolver:
                     description=mtable.description,
                     application_id=app_id,
                     schema=mtable.table_schema,
+                    access=access,
                     updated_at=now,
                 )
             )
@@ -2178,14 +2187,13 @@ class ManifestResolver:
                     description=mtable.description,
                     application_id=app_id,
                     schema=mtable.table_schema,
+                    access=access,
                     updated_at=now,
                 )
             )
             return []
 
         # 3. New table — insert
-        # Default seed: admin_bypass so platform admins aren't locked out.
-        # Task 16 will wire manifest-carried policies through this path.
         stmt = insert(Table).values(
             id=table_id,
             name=table_name,
@@ -2193,7 +2201,7 @@ class ManifestResolver:
             organization_id=org_id,
             application_id=app_id,
             schema=mtable.table_schema,
-            access=make_seed_admin_bypass(),
+            access=access,
             created_by="git-sync",
         ).on_conflict_do_nothing()
         await self.db.execute(stmt)

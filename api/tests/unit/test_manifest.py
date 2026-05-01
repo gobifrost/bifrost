@@ -840,6 +840,215 @@ class TestTableManifest:
         assert "schema" in table_data["tables"][table_id]
 
 
+class TestTablePoliciesManifest:
+    """Tests for Table.access policies round-tripping through the manifest."""
+
+    def test_table_policies_round_trip(self):
+        """Policies field on a table parses, serializes, and parses again with no drift."""
+        from bifrost.manifest import (
+            ManifestPolicy,
+            ManifestTable,
+            ManifestTablePolicies,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        table_id = str(uuid4())
+        raw = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "tickets",
+                    "policies": {
+                        "policies": [
+                            {
+                                "name": "admin_bypass",
+                                "description": "Platform admins bypass.",
+                                "actions": ["read", "create", "update", "delete"],
+                                "when": {"user": "is_platform_admin"},
+                            },
+                            {
+                                "name": "owner_can_write",
+                                "actions": ["update", "delete"],
+                                "when": {
+                                    "eq": [{"row": "owner_id"}, {"user": "user_id"}],
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+        }
+
+        manifest = parse_manifest(yaml.dump(raw, default_flow_style=False))
+        table = manifest.tables[table_id]
+        assert isinstance(table.policies, ManifestTablePolicies)
+        assert len(table.policies.policies) == 2
+        first = table.policies.policies[0]
+        assert isinstance(first, ManifestPolicy)
+        assert first.name == "admin_bypass"
+        assert first.actions == ["read", "create", "update", "delete"]
+        assert first.when == {"user": "is_platform_admin"}
+
+        # Round-trip through YAML
+        output = serialize_manifest(manifest)
+        restored = parse_manifest(output)
+        restored_table = restored.tables[table_id]
+        assert restored_table.policies is not None
+        assert len(restored_table.policies.policies) == 2
+        assert restored_table.policies.policies[0].name == "admin_bypass"
+        assert restored_table.policies.policies[1].when == {
+            "eq": [{"row": "owner_id"}, {"user": "user_id"}],
+        }
+
+        # Direct constructor path also works
+        direct = ManifestTable(
+            id=table_id,
+            name="t",
+            policies=ManifestTablePolicies(
+                policies=[
+                    ManifestPolicy(
+                        name="p",
+                        actions=["read"],
+                        when={"call": "has_role", "args": ["00000000-0000-0000-0000-000000000000"]},
+                    ),
+                ],
+            ),
+        )
+        dumped = direct.model_dump(mode="json")
+        assert dumped["policies"]["policies"][0]["when"] == {
+            "call": "has_role",
+            "args": ["00000000-0000-0000-0000-000000000000"],
+        }
+
+    def test_table_policies_omitted_when_none(self):
+        """Tables without policies serialize cleanly (no `policies: null` noise)."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestTable,
+            serialize_manifest,
+        )
+
+        table_id = str(uuid4())
+        manifest = Manifest(tables={
+            table_id: ManifestTable(id=table_id, name="t1"),
+        })
+        output = serialize_manifest(manifest)
+        # exclude_defaults=True is set in serialize_manifest, so policies=None
+        # should not appear in the YAML output.
+        assert "policies:" not in output
+
+
+class TestPortableHasRoleRewrite:
+    """Tests for has_role role-name rewrite in portable bundles."""
+
+    def test_has_role_role_name_rewrite_round_trip(self):
+        """has_role(<uuid>) → @<name> on export, restored on import against target env."""
+        from bifrost.portable import (
+            _rewrite_has_role_in_table_policies,
+            _rewrite_role_names_to_ids,
+        )
+
+        role_id = str(uuid4())
+        table_id = str(uuid4())
+        manifest = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "t1",
+                    "policies": {
+                        "policies": [
+                            {
+                                "name": "admins_only",
+                                "actions": ["read"],
+                                "when": {"call": "has_role", "args": [role_id]},
+                            },
+                        ],
+                    },
+                },
+            },
+            "roles": [{"id": role_id, "name": "admin"}],
+        }
+
+        # Forward: id → @name
+        from copy import deepcopy
+        portable = deepcopy(manifest)
+        visited = _rewrite_has_role_in_table_policies(portable, {role_id: "admin"})
+        assert visited == 1
+        when = portable["tables"][table_id]["policies"]["policies"][0]["when"]
+        assert when == {"call": "has_role", "args": ["@admin"]}
+
+        # Inverse: @name → id (target env may have different role UUID)
+        new_role_id = str(uuid4())
+        rewritten = _rewrite_role_names_to_ids(portable, {"admin": new_role_id})
+        when_back = rewritten["tables"][table_id]["policies"]["policies"][0]["when"]
+        assert when_back == {"call": "has_role", "args": [new_role_id]}
+
+    def test_has_role_walks_nested_ast(self):
+        """has_role inside and/or/not is rewritten at any depth."""
+        from bifrost.portable import (
+            _rewrite_has_role_in_expr,
+            _restore_has_role_in_expr,
+        )
+
+        role_a = str(uuid4())
+        role_b = str(uuid4())
+        nested = {
+            "or": [
+                {"call": "has_role", "args": [role_a]},
+                {
+                    "and": [
+                        {"not": {"call": "has_role", "args": [role_b]}},
+                        {"eq": [{"row": "status"}, "active"]},
+                    ],
+                },
+            ],
+        }
+
+        names = {role_a: "admin", role_b: "viewer"}
+        rewritten = _rewrite_has_role_in_expr(nested, names)
+        # Walk the result to find both has_role calls were rewritten.
+        assert rewritten["or"][0]["args"] == ["@admin"]
+        assert rewritten["or"][1]["and"][0]["not"]["args"] == ["@viewer"]
+        # Non-has_role nodes (eq with row reference) survive unchanged.
+        assert rewritten["or"][1]["and"][1] == {"eq": [{"row": "status"}, "active"]}
+
+        # Inverse round trip
+        ids_by_name = {"admin": role_a, "viewer": role_b}
+        back = _restore_has_role_in_expr(rewritten, ids_by_name)
+        assert back == nested
+
+    def test_scrub_pipeline_rewrites_has_role(self):
+        """The public `scrub` function emits the has_role rewrite rule."""
+        from bifrost.portable import scrub
+
+        role_id = str(uuid4())
+        table_id = str(uuid4())
+        manifest = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "t1",
+                    "policies": {
+                        "policies": [
+                            {
+                                "name": "p",
+                                "actions": ["read"],
+                                "when": {"call": "has_role", "args": [role_id]},
+                            },
+                        ],
+                    },
+                },
+            },
+        }
+        scrubbed, rules = scrub(manifest, role_names_by_id={role_id: "admin"})
+        when = scrubbed["tables"][table_id]["policies"]["policies"][0]["when"]
+        assert when == {"call": "has_role", "args": ["@admin"]}
+        assert any("has_role" in rule for rule in rules)
+        # Original input must be untouched (deep-copied internally).
+        assert manifest["tables"][table_id]["policies"]["policies"][0]["when"]["args"] == [role_id]
+
+
 class TestEventManifest:
     """Tests for event source + subscription manifest models."""
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -229,6 +230,28 @@ class ManifestConfig(BaseModel):
     value: object | None = Field(default=None, description="Config value (null for secret type)")
 
 
+class ManifestPolicy(BaseModel):
+    """Single policy entry within a table's policies list.
+
+    Mirrors :class:`src.models.contracts.policies.Policy`. The ``when`` field
+    holds the policy AST as a plain dict (validated server-side at import).
+    """
+    name: str = Field(description="Unique policy name within the table")
+    description: str | None = Field(default=None, description="Human-readable description")
+    actions: list[Literal["read", "create", "update", "delete"]] = Field(
+        description="Actions this policy applies to (read/create/update/delete)"
+    )
+    when: dict | None = Field(
+        default=None,
+        description="Policy AST as JSON-compatible dict; null = always allow for matching actions",
+    )
+
+
+class ManifestTablePolicies(BaseModel):
+    """Container for a table's access policies, mirroring the JSONB shape of ``Table.access``."""
+    policies: list[ManifestPolicy] = Field(default_factory=list)
+
+
 class ManifestTable(BaseModel):
     """Table entry in manifest.
 
@@ -241,6 +264,10 @@ class ManifestTable(BaseModel):
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)")
     application_id: str | None = Field(default=None, description="App UUID (for app-scoped tables)")
     table_schema: dict | None = Field(default=None, alias="schema", description="Column definitions and validation hints")
+    policies: ManifestTablePolicies | None = Field(
+        default=None,
+        description="Access policies (mirrors Table.access JSONB). When null on import, the seed admin_bypass policy is written.",
+    )
 
     model_config = {"populate_by_name": True}
 
