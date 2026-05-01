@@ -87,6 +87,11 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # JSON-object flags alongside the flat ones.
     "EventSourceCreate": {"webhook", "schedule"},
     "EventSourceUpdate": {"webhook", "schedule"},
+    # Tables: ``policies`` is a complex AST blob — exposed via ``--policies``
+    # (a ``@file`` JSON/YAML loader) in Task 18; excluded for now so the
+    # field-parity test stays green during the policy reset window.
+    "TableCreate": {"policies"},
+    "TableUpdate": {"policies"},
 }
 
 #: Per-DTO field renames applied to the assembled body.

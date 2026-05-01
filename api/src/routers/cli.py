@@ -2522,6 +2522,11 @@ async def cli_create_table(
             detail=f"Table '{request.name}' already exists",
         )
 
+    # Seed admin_bypass so platform admins can still operate on tables
+    # created via the SDK. SDK callers can override this later by setting
+    # explicit policies through the REST `PATCH /api/tables/{id}` endpoint.
+    from shared.policies.probe import make_seed_admin_bypass
+
     table = Table(
         name=request.name,
         description=request.description,
@@ -2529,6 +2534,7 @@ async def cli_create_table(
         organization_id=org_uuid,
         application_id=app_uuid,
         created_by=current_user.email,
+        access=make_seed_admin_bypass(),
     )
     db.add(table)
     await db.commit()
@@ -2676,12 +2682,15 @@ async def _find_or_create_table_for_sdk(
     if table:
         return table
 
-    # Create new table
+    # Create new table — seed admin_bypass for parity with explicit creates.
+    from shared.policies.probe import make_seed_admin_bypass
+
     table = Table(
         name=table_name,
         organization_id=org_uuid,
         application_id=app_uuid,
         created_by=created_by,
+        access=make_seed_admin_bypass(),
     )
     db.add(table)
     await db.flush()  # Get the ID without committing

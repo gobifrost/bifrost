@@ -16,10 +16,17 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ColumnElement
 
-from src.core.auth import Context, CurrentSuperuser
+from shared.policies.probe import (
+    compile_read_filter,
+    evaluate_action,
+    make_seed_admin_bypass,
+)
+from src.core.auth import Context, CurrentSuperuser, UserPrincipal
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, resolve_org_filter, resolve_target_org
+from src.models.contracts.policies import TablePolicies
 from src.models.contracts.tables import (
     DocumentBatchCreate,
     DocumentBatchCreateResponse,
@@ -46,18 +53,48 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
 
-def _check_action(action: str, table: Table, ctx: Context, doc: Document | None = None) -> None:
-    """Stub access check during the policy reset window.
+def _load_policies(table: Table) -> TablePolicies:
+    """Load TablePolicies from the table's `access` JSONB column. Empty if null."""
+    if not table.access:
+        return TablePolicies()
+    return TablePolicies.model_validate(table.access)
 
-    Tightened to admin-only until Task 9 wires in policy enforcement —
-    matches the docs/llm.txt 'workflow-only by default' contract for
-    non-admin callers. Workflow-attributed traffic goes through the
-    `/api/cli/tables/...` routes, not these REST endpoints, so blocking
-    non-admins here does not affect SDK callers running inside workflows.
-    Replaced in Task 8/9 with policy evaluation.
+
+def _row_from_doc(doc: Document) -> dict[str, Any]:
+    """Flatten a Document ORM row into the dict shape the evaluator expects.
+
+    Column-mapped fields (id, created_by, updated_by, created_at, updated_at,
+    table_id) are placed at the top level alongside the JSONB `data` keys, so
+    `{"row": "any_field"}` resolves consistently for both kinds of references.
+    UUIDs are stringified to match what `_resolve_user_field` produces.
     """
-    if not ctx.user.is_platform_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    return {
+        **(doc.data or {}),
+        "id": doc.id,
+        "table_id": str(doc.table_id),
+        "created_by": doc.created_by,
+        "updated_by": doc.updated_by,
+        "created_at": doc.created_at,
+        "updated_at": doc.updated_at,
+    }
+
+
+def _check_action_or_403(
+    action: str,
+    table: Table,
+    row: dict[str, Any],
+    user: UserPrincipal,
+) -> None:
+    """Run evaluate_action; raise 403 with a generic message on deny.
+
+    The detail is intentionally generic — denials must not leak policy names.
+    """
+    policies = _load_policies(table)
+    if not evaluate_action(action, policies, row, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
 
 
 # =============================================================================
@@ -129,11 +166,22 @@ class TableRepository(OrgScopedRepository[Table]):
         data: TableCreate,
         created_by: str,
     ) -> Table:
-        """Create a new table."""
+        """Create a new table.
+
+        When `policies` is omitted from the request, the table is seeded
+        with `admin_bypass` so platform admins can still operate on it
+        without an explicit rule. Callers who want a strictly-empty policy
+        set must pass `policies=TablePolicies()` explicitly.
+        """
         # Check if table already exists in this scope
         existing = await self.get_by_name_strict(data.name)
         if existing:
             raise ValueError(f"Table '{data.name}' already exists")
+
+        if data.policies is not None:
+            access_json: dict[str, Any] | None = data.policies.model_dump(mode="json")
+        else:
+            access_json = make_seed_admin_bypass()
 
         table = Table(
             name=data.name,
@@ -141,11 +189,7 @@ class TableRepository(OrgScopedRepository[Table]):
             schema=data.schema,
             organization_id=self.org_id,
             created_by=created_by,
-            access=(
-                data.policies.model_dump(mode="json")
-                if data.policies is not None
-                else None
-            ),
+            access=access_json,
         )
         self.session.add(table)
         await self.session.flush()
@@ -393,13 +437,26 @@ class DocumentRepository:
         await self.session.flush()
         return True
 
-    async def query(self, query_params: DocumentQuery) -> tuple[list[Document], int]:
-        """Query documents with filtering and pagination."""
+    async def query(
+        self,
+        query_params: DocumentQuery,
+        *,
+        extra_where: ColumnElement | None = None,
+    ) -> tuple[list[Document], int]:
+        """Query documents with filtering and pagination.
+
+        ``extra_where`` is ANDed into the WHERE clause before pagination —
+        used by the REST handlers to push a compiled policy read-filter
+        down into the SQL query.
+        """
         base_query = select(Document).where(Document.table_id == self.table.id)
 
         # Apply where filters using JSON-native operators
         if query_params.where:
             base_query = _build_document_filters(base_query, query_params.where)
+
+        if extra_where is not None:
+            base_query = base_query.where(extra_where)
 
         # Get total count before pagination (skip if caller doesn't need it)
         if not query_params.skip_count:
@@ -431,12 +488,23 @@ class DocumentRepository:
 
         return documents, total
 
-    async def count(self, where: dict[str, Any] | None = None) -> int:
-        """Count documents matching filter."""
+    async def count(
+        self,
+        where: dict[str, Any] | None = None,
+        *,
+        extra_where: ColumnElement | None = None,
+    ) -> int:
+        """Count documents matching filter.
+
+        ``extra_where`` is ANDed in alongside the user-provided filters.
+        """
         base_query = select(Document).where(Document.table_id == self.table.id)
 
         if where:
             base_query = _build_document_filters(base_query, where)
+
+        if extra_where is not None:
+            base_query = base_query.where(extra_where)
 
         count_query = base_query.with_only_columns(func.count()).order_by(None)
         result = await self.session.execute(count_query)
@@ -704,20 +772,29 @@ async def insert_document(
 ) -> DocumentPublic:
     """Insert a new document into the table."""
     table = await get_table_or_404(ctx, table_id)
-    _check_action("create", table, ctx)
-
     repo = DocumentRepository(ctx.db, table)
     created_by = str(ctx.user.user_id)
+
     if body.upsert and body.id:
-        # Upsert: update if exists, otherwise insert.
+        # Upsert: update if exists, otherwise insert. Check `update` against
+        # the existing row, `create` against the candidate row.
         existing = await repo.get(body.id)
         if existing is not None:
+            _check_action_or_403("update", table, _row_from_doc(existing), ctx.user)
             doc = await repo.update(body.id, body.data, updated_by=created_by)
             if doc is None:
                 raise HTTPException(status_code=404, detail="Document not found")
             await ctx.db.commit()
             await publish_document_change(table.id, "update", doc)
             return DocumentPublic.model_validate(doc)
+
+    candidate_row: dict[str, Any] = {
+        **body.data,
+        "id": body.id,
+        "created_by": created_by,
+        "updated_by": created_by,
+    }
+    _check_action_or_403("create", table, candidate_row, ctx.user)
     doc = await repo.insert(body.data, created_by=created_by, doc_id=body.id)
     await ctx.db.commit()
     await publish_document_change(table.id, "insert", doc)
@@ -739,9 +816,8 @@ async def get_document(
     repo = DocumentRepository(ctx.db, table)
     doc = await repo.get(doc_id)
     if doc is None:
-        # 403 instead of 404 to avoid leaking presence to unauthorized callers.
-        raise HTTPException(status_code=403, detail="Access denied")
-    _check_action("read", table, ctx, doc=doc)
+        raise HTTPException(status_code=404, detail="Document not found")
+    _check_action_or_403("read", table, _row_from_doc(doc), ctx.user)
     return DocumentPublic.model_validate(doc)
 
 
@@ -761,8 +837,8 @@ async def update_document(
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
     if existing is None:
-        raise HTTPException(status_code=403, detail="Access denied")
-    _check_action("update", table, ctx, doc=existing)
+        raise HTTPException(status_code=404, detail="Document not found")
+    _check_action_or_403("update", table, _row_from_doc(existing), ctx.user)
     doc = await repo.update(doc_id, body.data, updated_by=str(ctx.user.user_id))
     if doc is None:
         # Lost a race with a concurrent delete after we fetched + access-checked.
@@ -787,8 +863,8 @@ async def delete_document(
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
     if existing is None:
-        raise HTTPException(status_code=403, detail="Access denied")
-    _check_action("delete", table, ctx, doc=existing)
+        raise HTTPException(status_code=404, detail="Document not found")
+    _check_action_or_403("delete", table, _row_from_doc(existing), ctx.user)
     deleted = await repo.delete(doc_id)
     await ctx.db.commit()
     if deleted:
@@ -810,10 +886,21 @@ async def query_documents(
     Returns 404 if the table doesn't exist.
     """
     table = await get_table_or_404(ctx, table_id)
-    _check_action("read", table, ctx)
+
+    policies = _load_policies(table)
+    read_filter = compile_read_filter(policies, ctx.user)
+    if read_filter is None:
+        # No rule grants read → empty result. Don't 403 to avoid leaking
+        # the table's existence to unauthorized callers.
+        return DocumentListResponse(
+            documents=[],
+            total=0,
+            limit=query_params.limit,
+            offset=query_params.offset,
+        )
 
     repo = DocumentRepository(ctx.db, table)
-    documents, total = await repo.query(query_params)
+    documents, total = await repo.query(query_params, extra_where=read_filter)
     return DocumentListResponse(
         documents=[DocumentPublic.model_validate(d) for d in documents],
         total=total,
@@ -836,9 +923,16 @@ async def count_documents(
     Returns 404 if the table doesn't exist.
     """
     table = await get_table_or_404(ctx, table_id)
-    _check_action("read", table, ctx)
+
+    policies = _load_policies(table)
+    read_filter = compile_read_filter(policies, ctx.user)
+    if read_filter is None:
+        # No rule grants read → count zero. Same existence-leak rationale
+        # as `query_documents`.
+        return DocumentCountResponse(count=0)
+
     repo = DocumentRepository(ctx.db, table)
-    return DocumentCountResponse(count=await repo.count())
+    return DocumentCountResponse(count=await repo.count(extra_where=read_filter))
 
 
 @router.post(
@@ -855,25 +949,55 @@ async def batch_documents(
 
     When `upsert=true`, each item with a provided id will be updated if it
     exists, otherwise inserted. Items without an id are always inserted.
+
+    All-or-nothing on policy denials: any denied row aborts the whole batch
+    with a 403 listing every denied index.
     """
     table = await get_table_or_404(ctx, table_id)
-    _check_action("create", table, ctx)
-
     repo = DocumentRepository(ctx.db, table)
     created_by = str(ctx.user.user_id)
+    policies = _load_policies(table)
+
+    # Pre-flight: check every row up front. Collect ALL denials so the
+    # client sees the full denied set in one response.
+    denied: list[int] = []
+    pre_existing: dict[int, Document] = {}
+    for i, item in enumerate(body.documents):
+        if body.upsert and item.id:
+            existing = await repo.get(item.id)
+            if existing is not None:
+                pre_existing[i] = existing
+                if not evaluate_action(
+                    "update", policies, _row_from_doc(existing), ctx.user
+                ):
+                    denied.append(i)
+                continue
+        candidate_row: dict[str, Any] = {
+            **item.data,
+            "id": item.id,
+            "created_by": created_by,
+            "updated_by": created_by,
+        }
+        if not evaluate_action("create", policies, candidate_row, ctx.user):
+            denied.append(i)
+
+    if denied:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"denied_row_indices": denied},
+        )
+
     inserted = 0
     errors: list[dict[str, Any]] = []
 
-    for item in body.documents:
+    for i, item in enumerate(body.documents):
         try:
-            if body.upsert and item.id:
-                existing = await repo.get(item.id)
-                if existing is not None:
-                    doc = await repo.update(item.id, item.data, updated_by=created_by)
-                    if doc is not None:
-                        await publish_document_change(table.id, "update", doc)
-                    inserted += 1
-                    continue
+            if i in pre_existing:
+                doc = await repo.update(item.id, item.data, updated_by=created_by)
+                if doc is not None:
+                    await publish_document_change(table.id, "update", doc)
+                inserted += 1
+                continue
             doc = await repo.insert(item.data, created_by=created_by, doc_id=item.id)
             await publish_document_change(table.id, "insert", doc)
             inserted += 1
@@ -896,17 +1020,39 @@ async def batch_delete_documents(
 ) -> DocumentBatchDeleteResponse:
     """Delete multiple documents by ID.
 
-    Skips IDs that don't exist.
+    Skips IDs that don't exist. All-or-nothing on policy denials: any
+    denied row aborts the whole batch with a 403 listing every denied index.
     """
     table = await get_table_or_404(ctx, table_id)
     repo = DocumentRepository(ctx.db, table)
-    deleted = 0
+    policies = _load_policies(table)
 
-    for doc_id in body.ids:
+    # Pre-flight: load each existing row and check `delete` against policy.
+    denied: list[int] = []
+    existing_by_index: dict[int, Document] = {}
+    for i, doc_id in enumerate(body.ids):
         existing = await repo.get(doc_id)
         if existing is None:
+            # Skipping non-existent rows is the documented behavior; not a
+            # denial, just a no-op.
             continue
-        _check_action("delete", table, ctx, doc=existing)
+        existing_by_index[i] = existing
+        if not evaluate_action(
+            "delete", policies, _row_from_doc(existing), ctx.user
+        ):
+            denied.append(i)
+
+    if denied:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"denied_row_indices": denied},
+        )
+
+    deleted = 0
+    for i, doc_id in enumerate(body.ids):
+        existing = existing_by_index.get(i)
+        if existing is None:
+            continue
         ok = await repo.delete(doc_id)
         if ok:
             await publish_document_change(table.id, "delete", existing)
