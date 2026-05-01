@@ -254,18 +254,22 @@ class TestPoliciesMatrix:
         audit = e2e_client.get(
             "/api/audit",
             headers=platform_admin.headers,
-            params={"action": "policy.deny", "limit": 50},
+            params={
+                "action": "policy.deny",
+                "user_id": str(alice_user.user_id),
+                "limit": 50,
+            },
         )
         assert audit.status_code == 200, audit.text
         rows = audit.json()["entries"]
-        matching = [r for r in rows if r["actor"]["user_id"] == str(alice_user.user_id)]
-        assert len(matching) >= 1, f"no policy.deny for alice in {[r['actor'] for r in rows]}"
-        entry = matching[0]
+        assert len(rows) >= 1, f"no policy.deny rows for alice: {rows}"
+        entry = rows[0]
         assert entry["action"] == "policy.deny"
         assert entry["resource_type"] == "table_document"
         assert entry["outcome"] == "failure"
         assert entry["details"]["policy_action"] == "create"
         assert entry["details"]["table_id"] == table_id
+        assert set(entry["details"].keys()) == {"policy_action", "table_id", "table_name"}
 
     def test_batch_all_or_nothing(self, e2e_client, platform_admin, alice_user):
         """Batch insert: any single denial rejects the whole batch (transactional)."""

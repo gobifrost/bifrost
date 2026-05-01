@@ -97,14 +97,20 @@ async def _check_action_or_403(
     The audit record carries actor + table + action metadata only — never
     the row body or policy names (no info leak via audit). The detail
     returned to the caller stays intentionally generic.
+
+    IMPORTANT: callers MUST NOT have uncommitted mutations on `db` when
+    calling this — the commit() below would persist them as a side effect
+    of the deny. All current call sites either run this before any
+    mutation or only after read-only operations.
     """
     policies = _load_policies(table)
     if evaluate_action(action, policies, row, user):
         return
 
-    # Resolve the row id only when it's actually a UUID. The row dict
-    # comes from either an existing Document (UUID id) or a candidate
-    # body (str | None). AuditLog.resource_id is UUID | None.
+    # Resolve the row id only when it's actually a UUID.
+    # Document.id is a string primary key (often non-UUID, e.g. email or
+    # user-provided id). AuditLog.resource_id is UUID | None — try to
+    # coerce, else None.
     raw_id = row.get("id")
     resource_id: UUID | None = None
     if raw_id is not None:
@@ -127,7 +133,9 @@ async def _check_action_or_403(
     )
     # Commit the audit row now — if we let the HTTPException propagate
     # without committing, the request-scoped session rolls back and the
-    # audit trail is lost.
+    # audit trail is lost. FOOTGUN: this also commits any uncommitted
+    # mutations on `db` from the caller. See docstring — callers must
+    # have a clean session at this point.
     await db.commit()
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
