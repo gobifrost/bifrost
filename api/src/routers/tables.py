@@ -141,6 +141,11 @@ class TableRepository(OrgScopedRepository[Table]):
             schema=data.schema,
             organization_id=self.org_id,
             created_by=created_by,
+            access=(
+                data.policies.model_dump(mode="json")
+                if data.policies is not None
+                else None
+            ),
         )
         self.session.add(table)
         await self.session.flush()
@@ -177,6 +182,12 @@ class TableRepository(OrgScopedRepository[Table]):
                 self.session, data.application_id, table.organization_id
             )
             table.application_id = data.application_id
+        if "policies" in data.model_fields_set:
+            table.access = (
+                data.policies.model_dump(mode="json")
+                if data.policies is not None
+                else None
+            )
 
         await self.session.flush()
         await self.session.refresh(table)

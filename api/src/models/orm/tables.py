@@ -43,6 +43,10 @@ class Table(Base):
         ForeignKey("applications.id", ondelete="SET NULL", onupdate="CASCADE"), default=None
     )
     schema: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    # Stores the policies block per
+    # docs/superpowers/specs/2026-04-30-table-policies-design.md.
+    # The API contract field is named `policies`; the column name stays `access`
+    # to avoid a schema migration. See contracts/tables.py for the rename adapter.
     access: Mapped[dict | None] = mapped_column(JSONB, default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(

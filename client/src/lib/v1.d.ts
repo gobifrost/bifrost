@@ -3473,22 +3473,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -12388,6 +12388,13 @@ export interface components {
             ids?: string[];
         };
         /**
+         * Expr
+         * @description Policy expression AST. Validated at construction.
+         */
+        Expr: {
+            [key: string]: unknown;
+        };
+        /**
          * FileChange
          * @description Represents a changed file in Git
          */
@@ -16341,6 +16348,16 @@ export interface components {
             /** Refreshed At */
             refreshed_at: string;
         };
+        /** Policy */
+        Policy: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Actions */
+            actions: ("read" | "create" | "update" | "delete")[];
+            when?: components["schemas"]["Expr"] | null;
+        };
         /**
          * PoolDetail
          * @description Detailed pool information including all processes.
@@ -18710,6 +18727,8 @@ export interface components {
              * @description Organization ID. Null for global table.
              */
             organization_id?: string | null;
+            /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
+            policies?: components["schemas"]["TablePolicies"] | null;
         };
         /**
          * TableListResponse
@@ -18720,6 +18739,11 @@ export interface components {
             tables: components["schemas"]["TablePublic"][];
             /** Total */
             total: number;
+        };
+        /** TablePolicies */
+        TablePolicies: {
+            /** Policies */
+            policies?: components["schemas"]["Policy"][];
         };
         /**
          * TablePublic
@@ -18752,6 +18776,7 @@ export interface components {
             organization_id: string | null;
             /** Application Id */
             application_id: string | null;
+            policies?: components["schemas"]["TablePolicies"] | null;
             /** Created At */
             created_at: string | null;
             /** Updated At */
@@ -18777,6 +18802,8 @@ export interface components {
             } | null;
             /** Application Id */
             application_id?: string | null;
+            /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
+            policies?: components["schemas"]["TablePolicies"] | null;
         };
         /**
          * Token
@@ -25942,7 +25969,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -25975,7 +26002,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26008,7 +26035,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26041,7 +26068,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
