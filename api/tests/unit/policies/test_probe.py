@@ -153,3 +153,47 @@ def test_make_seed_admin_bypass_shape():
     assert seed["policies"][0]["name"] == "admin_bypass"
     assert set(seed["policies"][0]["actions"]) == {"read", "create", "update", "delete"}
     assert seed["policies"][0]["when"] == {"user": "is_platform_admin"}
+
+
+def test_subscribe_user_dep_false_followed_by_row_dep_allows():
+    """User-only rule that resolves False does not block a later row-dep rule."""
+    tp = TablePolicies(policies=[_admin_bypass_policy(), _own_row_policy()])
+    # Non-admin → admin_bypass resolves False at probe time
+    # own_row is row-dep → conservatively allow
+    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=False)) is True
+
+
+def test_subscribe_all_user_dep_resolving_false_denies():
+    """Multiple user-only rules all resolving False → deny."""
+    tp = TablePolicies(policies=[
+        _admin_bypass_policy(),
+        Policy.model_validate({
+            "name": "support_only",
+            "actions": ["read"],
+            "when": {"call": "has_role", "args": ["support"]},
+        }),
+    ])
+    assert is_subscribe_authorized(
+        tp, user=FakeUser(is_platform_admin=False, role_names=["customer"])
+    ) is False
+
+
+def test_make_seed_admin_bypass_validates():
+    """Seed must round-trip through TablePolicies validation.
+
+    Catches schema drift at module-test time rather than at first table-create.
+    """
+    TablePolicies.model_validate(make_seed_admin_bypass())  # must not raise
+
+
+def test_compile_read_filter_single_rule_no_or_wrap():
+    """Single read rule returns the fragment as-is, not wrapped in sa_or."""
+    from sqlalchemy import select
+    from src.models.orm.tables import Document
+
+    tp = TablePolicies(policies=[_admin_bypass_policy()])
+    f = compile_read_filter(tp, user=FakeUser(is_platform_admin=True))
+    assert f is not None
+    sql = str(select(Document.id).where(f).compile(compile_kwargs={"literal_binds": True}))
+    # Single fragment → no OR wrapping
+    assert " OR " not in sql.upper()
