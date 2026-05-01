@@ -4,8 +4,10 @@ Two login modes:
   * Browser device-code (default) — token stored in keychain (or JSON
     fallback). On success, login also writes BIFROST_API_URL=<url> to the
     CWD .env so subsequent CLI commands in this folder target this stack.
-  * Password-grant (when --email and --password are passed) — tokens
-    printed to stdout, never persisted. Refuses MFA-enabled instances.
+  * Password-grant (when --email and --password are passed) — URL +
+    access + refresh tokens written to .env in CWD so subsequent CLI
+    commands from that directory inherit the session. Tokens are NOT
+    written to the OS keychain. Refuses MFA-enabled instances.
 """
 
 from bifrost import cli
@@ -63,13 +65,16 @@ class TestPasswordLoginFlagParsing:
 
 
 class TestPasswordLoginSuccess:
-    def test_prints_three_lines_and_warning(self, capsys, monkeypatch):
+    def test_writes_three_vars_to_env_and_warning_to_stderr(
+        self, capsys, monkeypatch, tmp_path,
+    ):
         stub = _stub_post({
             "access_token": "at_value",
             "refresh_token": "rt_value",
             "expires_in": 1800,
         })
         monkeypatch.setattr("httpx.AsyncClient", stub)
+        monkeypatch.chdir(tmp_path)
 
         rc = cli.handle_login([
             "--email", "dev@gobifrost.com",
@@ -78,17 +83,23 @@ class TestPasswordLoginSuccess:
         ])
         assert rc == 0
 
-        captured = capsys.readouterr()
-        out_lines = [line for line in captured.out.splitlines() if line.strip()]
-        assert "BIFROST_API_URL=http://localhost:38421" in out_lines
-        assert "BIFROST_ACCESS_TOKEN=at_value" in out_lines
-        assert "BIFROST_REFRESH_TOKEN=rt_value" in out_lines
+        env_text = (tmp_path / ".env").read_text()
+        assert "BIFROST_API_URL=http://localhost:38421" in env_text
+        assert "BIFROST_ACCESS_TOKEN=at_value" in env_text
+        assert "BIFROST_REFRESH_TOKEN=rt_value" in env_text
 
         # Warning to stderr
+        captured = capsys.readouterr()
         assert "MFA" in captured.err
         assert "ephemeral" in captured.err.lower()
 
-    def test_does_not_write_to_disk(self, capsys, monkeypatch, tmp_path):
+    def test_does_not_write_to_keychain(self, capsys, monkeypatch, tmp_path):
+        """Password-grant must not touch the persistent (keychain/JSON) store.
+
+        The session is per-directory via .env; persistence is intentionally
+        excluded so a password-grant login on a dev machine doesn't end up
+        in the long-lived auth list visible to `bifrost auth list`.
+        """
         stub = _stub_post({
             "access_token": "at",
             "refresh_token": "rt",
@@ -99,7 +110,6 @@ class TestPasswordLoginSuccess:
             "bifrost.credentials.get_credentials_path",
             lambda: tmp_path / "credentials.json",
         )
-        # Run from tmp_path so any inadvertent .env write also goes there
         monkeypatch.chdir(tmp_path)
 
         cli.handle_login([
@@ -108,8 +118,10 @@ class TestPasswordLoginSuccess:
             "--url", "http://localhost:38421",
         ])
 
+        # No keychain / JSON-fallback record was written.
         assert not (tmp_path / "credentials.json").exists()
-        assert not (tmp_path / ".env").exists()
+        # .env IS written (that's the new contract).
+        assert (tmp_path / ".env").exists()
 
 
 class TestPasswordLoginMfaRefusal:
@@ -139,7 +151,7 @@ class TestPasswordLoginMfaRefusal:
 
 
 class TestPasswordLoginUsesBifrostApiUrl:
-    def test_falls_back_to_env_var_for_url(self, capsys, monkeypatch):
+    def test_falls_back_to_env_var_for_url(self, capsys, monkeypatch, tmp_path):
         stub = _stub_post({
             "access_token": "at",
             "refresh_token": "rt",
@@ -147,14 +159,15 @@ class TestPasswordLoginUsesBifrostApiUrl:
         })
         monkeypatch.setattr("httpx.AsyncClient", stub)
         monkeypatch.setenv("BIFROST_API_URL", "http://localhost:38421")
+        monkeypatch.chdir(tmp_path)
 
         rc = cli.handle_login([
             "--email", "dev@gobifrost.com",
             "--password", "password",
         ])
         assert rc == 0
-        out_lines = capsys.readouterr().out.splitlines()
-        assert "BIFROST_API_URL=http://localhost:38421" in out_lines
+        env_text = (tmp_path / ".env").read_text()
+        assert "BIFROST_API_URL=http://localhost:38421" in env_text
 
 
 class TestBrowserLoginWritesEnv:
