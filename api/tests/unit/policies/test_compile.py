@@ -133,3 +133,13 @@ def test_compound_realistic_policy():
     assert str(uid) in sql
     assert "'open'" in sql
     assert "AND" in sql.upper()
+
+
+def test_call_with_row_reference_arg_raises():
+    """Function args may be literals or user refs only — row refs can't compile."""
+    import pytest
+
+    user = FakeUser()
+    expr = Expr.model_validate({"call": "has_role", "args": [{"row": "x"}]})
+    with pytest.raises(ValueError, match="cannot resolve"):
+        compile_to_sql(expr, user)

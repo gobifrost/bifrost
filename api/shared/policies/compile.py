@@ -93,11 +93,21 @@ def _compile_call(node: dict, user: Any) -> ColumnElement:
 
 
 def _resolve_arg_for_call(arg: Any, user: Any) -> Any:
-    """Resolve a call arg to its concrete Python value at compile time."""
+    """Resolve a call arg to its concrete Python value at compile time.
+
+    Function args must be literals or {"user": ...} references — row
+    references can't be resolved at compile time. The validator allows
+    {"row": ...} structurally, but reaching it here is a programming error;
+    surfacing as ValueError prevents silently-wrong SQL.
+    """
     if isinstance(arg, dict):
         keys = set(arg.keys())
         if keys == {"user"}:
             return getattr(user, arg["user"], None)
+        raise ValueError(
+            f"function call args must be literals or {{user: ...}}; "
+            f"got {arg!r} which the SQL compiler cannot resolve"
+        )
     return arg  # literal
 
 
