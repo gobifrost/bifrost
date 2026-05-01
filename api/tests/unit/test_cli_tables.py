@@ -82,3 +82,64 @@ class TestCreate:
         assert result.exit_code == 0, result.output
         assert captured["post_path"] == "/api/tables"
         assert captured["post_body"]["name"] == "mytable"
+
+    def test_create_with_policies_inline_json(self) -> None:
+        """``--policies`` accepts inline JSON and forwards as a dict body field."""
+        captured: dict = {}
+        pol = (
+            '{"policies":[{"name":"admin_bypass","actions":["read"],'
+            '"when":{"user":"is_platform_admin"}}]}'
+        )
+        result = _invoke_create(["--policies", pol], captured)
+        assert result.exit_code == 0, result.output
+        body = captured["post_body"]
+        assert body["policies"]["policies"][0]["name"] == "admin_bypass"
+        assert body["policies"]["policies"][0]["actions"] == ["read"]
+
+    def test_create_with_policies_from_file(self, tmp_path: pathlib.Path) -> None:
+        """``--policies @file.json`` loads the policies dict from disk."""
+        captured: dict = {}
+        policies_path = tmp_path / "policies.json"
+        policies_path.write_text(
+            '{"policies":[{"name":"owner_only","actions":["read","update"],'
+            '"when":{"user":"id_eq","row_field":"owner_id"}}]}'
+        )
+        result = _invoke_create(
+            ["--policies", f"@{policies_path}"], captured
+        )
+        assert result.exit_code == 0, result.output
+        body = captured["post_body"]
+        assert body["policies"]["policies"][0]["name"] == "owner_only"
+
+
+class TestUpdate:
+    def test_update_with_policies_inline_json(self) -> None:
+        """``--policies`` is also exposed on ``update`` and patches the table."""
+        captured: dict = {}
+        client = _make_mock_client(captured)
+        pol = (
+            '{"policies":[{"name":"admin_bypass","actions":["read"],'
+            '"when":{"user":"is_platform_admin"}}]}'
+        )
+
+        with (
+            mock.patch(
+                "bifrost.client.BifrostClient.get_instance", return_value=client
+            ),
+            mock.patch(
+                "bifrost.refs.RefResolver.resolve",
+                new_callable=lambda: lambda self, kind, ref: _async_identity(ref),
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                tables_group,
+                ["update", "t1", "--policies", pol],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert captured["patch_path"] == "/api/tables/t1"
+        assert (
+            captured["patch_body"]["policies"]["policies"][0]["name"]
+            == "admin_bypass"
+        )
