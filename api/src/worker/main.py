@@ -66,6 +66,7 @@ class Worker:
         self.running = False
         self._shutdown_event = asyncio.Event()
         self._consumers: list = []
+        self._stopping = False
 
     async def start(self) -> None:
         """Start the worker.
@@ -157,6 +158,9 @@ class Worker:
         less than the K8s terminationGracePeriodSeconds with margin for
         connection cleanup.
         """
+        if self._stopping:
+            return
+        self._stopping = True
         logger.info("Stopping Bifrost Worker (graceful drain)...")
         self.running = False
 

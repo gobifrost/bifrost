@@ -587,12 +587,8 @@ class BifrostClient:
         return _send_sync_with_5xx_retry("GET", lambda: self._sync_http.get(path, **kwargs))
 
     def post_sync(self, path: str, **kwargs) -> httpx.Response:
-        """Make synchronous POST request.
-
-        Wrapped with :func:`_send_sync_with_5xx_retry` for signature uniformity;
-        POST is not idempotent so the retry gate will return immediately.
-        """
-        return _send_sync_with_5xx_retry("POST", lambda: self._sync_http.post(path, **kwargs))
+        """Make synchronous POST request."""
+        return self._sync_http.post(path, **kwargs)
 
     async def close(self):
         """Close HTTP clients."""
