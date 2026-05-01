@@ -2122,6 +2122,7 @@ class ManifestResolver:
         from sqlalchemy import update
         from sqlalchemy.dialects.postgresql import insert
 
+        from shared.policies.probe import make_seed_admin_bypass
         from src.models.orm.tables import Table
         from src.services.sync_ops import SyncOp  # noqa: F401
 
@@ -2183,6 +2184,8 @@ class ManifestResolver:
             return []
 
         # 3. New table — insert
+        # Default seed: admin_bypass so platform admins aren't locked out.
+        # Task 16 will wire manifest-carried policies through this path.
         stmt = insert(Table).values(
             id=table_id,
             name=table_name,
@@ -2190,6 +2193,7 @@ class ManifestResolver:
             organization_id=org_id,
             application_id=app_id,
             schema=mtable.table_schema,
+            access=make_seed_admin_bypass(),
             created_by="git-sync",
         ).on_conflict_do_nothing()
         await self.db.execute(stmt)

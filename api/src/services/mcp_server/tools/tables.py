@@ -240,6 +240,7 @@ async def create_table(
     """Create a new table with explicit scope."""
     from sqlalchemy import select
 
+    from shared.policies.probe import make_seed_admin_bypass
     from src.models.orm.tables import Table
 
     logger.info(f"MCP create_table called with name={name}, scope={scope}")
@@ -312,6 +313,8 @@ async def create_table(
                 schema = {"columns": columns}
 
             # Create table
+            # Default seed: admin_bypass so platform admins aren't locked out.
+            # Task 18 will wire policies into the MCP create path.
             table = Table(
                 id=uuid4(),
                 name=name,
@@ -319,6 +322,7 @@ async def create_table(
                 organization_id=org_uuid,
                 application_id=app_uuid,
                 schema=schema,
+                access=make_seed_admin_bypass(),
                 created_by=str(context.user_id),
             )
             db.add(table)
