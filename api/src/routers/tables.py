@@ -66,7 +66,9 @@ def _row_from_doc(doc: Document) -> dict[str, Any]:
     Column-mapped fields (id, created_by, updated_by, created_at, updated_at,
     table_id) are placed at the top level alongside the JSONB `data` keys, so
     `{"row": "any_field"}` resolves consistently for both kinds of references.
-    UUIDs are stringified to match what `_resolve_user_field` produces.
+    UUIDs are stringified to match what `_resolve_user_field` produces, and
+    datetimes are ISO-stringified so the same dict round-trips cleanly through
+    JSON pubsub / `websocket.send_json` without a custom encoder.
     """
     return {
         **(doc.data or {}),
@@ -74,8 +76,8 @@ def _row_from_doc(doc: Document) -> dict[str, Any]:
         "table_id": str(doc.table_id),
         "created_by": doc.created_by,
         "updated_by": doc.updated_by,
-        "created_at": doc.created_at,
-        "updated_at": doc.updated_at,
+        "created_at": doc.created_at.isoformat() if doc.created_at is not None else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at is not None else None,
     }
 
 
