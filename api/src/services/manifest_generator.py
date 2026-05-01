@@ -269,7 +269,6 @@ def serialize_table(table: Table) -> ManifestTable:
         description=table.description,
         organization_id=str(table.organization_id) if table.organization_id else None,
         application_id=str(table.application_id) if table.application_id else None,
-        access=table.access,  # type: ignore[arg-type]  # JSONB dict → Pydantic coercion
         **{"schema": table.schema},  # type: ignore[arg-type]  # alias for table_schema
     )
 

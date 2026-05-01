@@ -22,7 +22,6 @@ import { RequireRole } from "./RequireRole";
 import { useAppState } from "./useAppState";
 import { Link, NavLink, Navigate } from "./navigation";
 import { tables } from "../app-sdk/tables";
-import { useTableSubscription } from "../app-sdk/use-table-subscription";
 
 /**
  * Platform scope object containing all platform APIs
@@ -73,6 +72,5 @@ export function createPlatformScope(): Record<string, unknown> {
 
 		// Table access
 		tables,
-		useTableSubscription,
 	};
 }

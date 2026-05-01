@@ -1,4 +1,5 @@
 import type { components } from "@/lib/v1";
+import { subscribeToTable, type TableChangeMessage } from "./ws-client";
 
 type DocumentPublic = components["schemas"]["DocumentPublic"];
 type DocumentQuery = components["schemas"]["DocumentQuery"];
@@ -111,63 +112,10 @@ export const tables = {
     return r.count;
   },
 
-  async insert_batch(
-    table: string,
-    rows: Array<{ id?: string; data: Record<string, unknown> }>,
-  ): Promise<{ inserted: number; errors: unknown[] }> {
-    const r = await http<{ inserted: number; errors: unknown[] }>(
-      `${base}/${encodeURIComponent(table)}/documents/batch`,
-      { method: "POST", body: JSON.stringify({ documents: rows }) },
-    );
-    if (!r) throw new Error("Access denied");
-    return r;
-  },
-
-  async upsert_batch(
-    table: string,
-    rows: Array<{ id: string; data: Record<string, unknown> }>,
-  ): Promise<{ upserted: number; errors: unknown[] }> {
-    const r = await http<{ upserted: number; errors: unknown[] }>(
-      `${base}/${encodeURIComponent(table)}/documents/batch`,
-      { method: "POST", body: JSON.stringify({ documents: rows, upsert: true }) },
-    );
-    if (!r) throw new Error("Access denied");
-    return r;
-  },
-
-  async delete_batch(
-    table: string,
-    ids: string[],
-  ): Promise<{ deleted: number }> {
-    const r = await http<{ deleted: number }>(
-      `${base}/${encodeURIComponent(table)}/documents/batch-delete`,
-      { method: "POST", body: JSON.stringify({ ids }) },
-    );
-    if (!r) throw new Error("Access denied");
-    return r;
-  },
-
   subscribe(
     table_id: string,
-    onEvent: (evt: TableChangeEvent) => void,
+    onEvent: (evt: TableChangeMessage) => void,
   ): () => void {
-    let cleanup: (() => void) | null = null;
-    import("./ws-client").then(({ subscribeToTable }) => {
-      cleanup = subscribeToTable(
-        table_id,
-        onEvent as Parameters<typeof subscribeToTable>[1],
-      );
-    });
-    return () => cleanup?.();
+    return subscribeToTable(table_id, onEvent);
   },
 };
-
-export type TableChangeEvent =
-  | {
-      type: "document_change";
-      action: "insert" | "update" | "delete";
-      id: string;
-      data: Record<string, unknown> | null;
-      created_by: string | null;
-    }
-  | { type: "subscription_revoked"; channel: string };

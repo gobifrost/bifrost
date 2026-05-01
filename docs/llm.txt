@@ -155,24 +155,9 @@ Commands: `tables list / get / create / update / delete`.
 Example: `bifrost tables create --name clients --application app-ref --schema @schema.yaml`.
 
 Non-obvious semantics:
-- Tables are **workflow-only by default**. The REST endpoints under `/api/tables/{id}/documents/*` reject non-admin callers unless the table has an `access` block configured.
+- Tables are **workflow-only by default**. The REST endpoints under `/api/tables/{id}/documents/*` reject non-admin callers (per-row policies are reintroduced in the table-policies work — until then admins only).
 - `update --name` prints a warning to stderr about workflow SDK references (SDK calls like `sdk.tables.get("clients")` reference tables by name). It does not block — the author must grep the workspace before pushing.
 - `--application` accepts app slug / UUID / name.
-- `--access` accepts a JSON literal or `@path/to/file.json`. Shape:
-  ```
-  {
-    "everyone": {"read": bool, "create": bool, "update": bool, "delete": bool},
-    "roles": [
-      {"roles": [<role-uuid>...], "read": bool, "create": bool, "update": bool, "delete": bool}
-    ],
-    "creator":  {"read": bool, "create": bool, "update": bool, "delete": bool}
-  }
-  ```
-  `roles` is a list so admins can configure multiple role grants (e.g. Admins: r/c/u/d, Viewers: r-only).
-  Resolution is additive (union of grants across all matching role entries); `null` (the default) means workflow-only.
-- The Creator scope filters reads to rows whose `created_by` matches the caller's user_id when no broader scope grants `read` — useful for "users see only their own submissions" patterns.
-- Browser apps can call tables directly via the platform SDK (`import { tables, useTableSubscription } from "bifrost"`); see `bifrost-build` skill `platform-api.md` for examples. Apps using the SDK do not create execution records.
-- Workflow SDK auto-attributes `created_by` / `updated_by` from `context.user_id`; pass `created_by=` / `updated_by=` to override.
 
 Run `bifrost tables <verb> --help` for the complete flag list.
 

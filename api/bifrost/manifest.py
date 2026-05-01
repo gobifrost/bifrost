@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from uuid import UUID
 
 import yaml
 from pydantic import BaseModel, Field
@@ -230,35 +229,6 @@ class ManifestConfig(BaseModel):
     value: object | None = Field(default=None, description="Config value (null for secret type)")
 
 
-class ManifestTableAccessScopeCRUD(BaseModel):
-    """CRUD flags for a table access scope in the manifest."""
-
-    read: bool = False
-    create: bool = False
-    update: bool = False
-    delete: bool = False
-
-
-class ManifestTableAccessRoleScope(ManifestTableAccessScopeCRUD):
-    """Role scope with a list of role UUIDs (stored as strings in YAML).
-
-    ``roles`` carries UUID strings from the canonical manifest.
-    ``role_names`` is populated by ``bifrost export --portable`` (role-name
-    rewrite) and consumed at import time when ``role_resolution="name"``.
-    """
-
-    roles: list[UUID] = Field(default_factory=list)
-    role_names: list[str] | None = Field(default=None, description="Role names (portable export only; resolved back to UUIDs at import)")
-
-
-class ManifestTableAccess(BaseModel):
-    """Table-level access rules in the manifest."""
-
-    everyone: ManifestTableAccessScopeCRUD = Field(default_factory=ManifestTableAccessScopeCRUD)
-    roles: list[ManifestTableAccessRoleScope] = Field(default_factory=list)
-    creator: ManifestTableAccessScopeCRUD = Field(default_factory=ManifestTableAccessScopeCRUD)
-
-
 class ManifestTable(BaseModel):
     """Table entry in manifest.
 
@@ -271,7 +241,6 @@ class ManifestTable(BaseModel):
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)")
     application_id: str | None = Field(default=None, description="App UUID (for app-scoped tables)")
     table_schema: dict | None = Field(default=None, alias="schema", description="Column definitions and validation hints")
-    access: ManifestTableAccess | None = Field(default=None, description="Table-level access rules")
 
     model_config = {"populate_by_name": True}
 

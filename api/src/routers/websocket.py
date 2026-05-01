@@ -21,9 +21,6 @@ from src.core.pubsub import manager
 from src.models import Conversation, Execution
 from src.models.orm import Agent
 from src.models.orm.applications import Application
-from src.models.orm.tables import Table
-from src.models.orm.users import UserRole as UserRoleORM
-from shared.table_access import Action, Caller, check_table_access
 
 logger = logging.getLogger(__name__)
 
@@ -154,17 +151,6 @@ async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
         return org_id == user.organization_id
 
 
-async def _load_caller_for_ws(user: UserPrincipal, db) -> Caller:
-    """Build a Caller from a WebSocket user principal (mirrors _load_caller in tables.py)."""
-    role_q = select(UserRoleORM.role_id).where(UserRoleORM.user_id == user.user_id)
-    role_ids = {r for r in (await db.execute(role_q)).scalars().all()}
-    return Caller(
-        user_id=user.user_id,
-        role_ids=frozenset(role_ids),
-        is_admin=user.is_superuser,
-    )
-
-
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
 
@@ -205,8 +191,6 @@ async def websocket_connect(
     # Filter channels - users can only subscribe to their own user channel
     # and execution channels (we'll validate execution access separately)
     allowed_channels = []
-    # Per-connection table subscription state: channel -> {table_id, caller, creator_filter_required}
-    table_subscription_state: dict[str, dict] = {}
     for channel in channels:
         if channel.startswith("user:"):
             # Users can only subscribe to their own notifications
@@ -287,26 +271,9 @@ async def websocket_connect(
             if user.is_superuser:
                 allowed_channels.append(channel)
         elif channel.startswith("table:"):
-            # Table channels — access governed by check_table_access (READ action).
-            table_id_str = channel.split(":", 1)[1]
-            try:
-                table_id = UUID(table_id_str)
-            except ValueError:
-                continue
-            async with get_db_context() as db:
-                table = (await db.execute(select(Table).where(Table.id == table_id))).scalar_one_or_none()
-                if table is None:
-                    continue
-                caller = await _load_caller_for_ws(user, db)
-                res = check_table_access(action=Action.READ, access=table.access, caller=caller)
-            if not res.allow:
-                continue
+            # Table channels — policy enforcement reintroduced in Tasks 11-12.
+            # For now, any authenticated user may subscribe.
             allowed_channels.append(channel)
-            table_subscription_state[channel] = {
-                "table_id": table_id,
-                "caller": caller,
-                "creator_filter_required": res.creator_filter_required,
-            }
         elif channel == "system":
             allowed_channels.append(channel)
         elif channel.startswith("agent-run:"):
@@ -337,55 +304,6 @@ async def websocket_connect(
     try:
         await manager.connect(websocket, allowed_channels)
         logger.info(f"WebSocket connected for user {user.user_id}, channels: {log_safe(allowed_channels)}")
-
-        # Install per-message filter on websocket.state for table channels.
-        # The pubsub manager's _send_local checks websocket.state._table_msg_filter
-        # before forwarding each message.  Two responsibilities:
-        #  1. Drop document_change messages when creator_filter_required and the
-        #     row's created_by doesn't match this user.
-        #  2. On table_access_changed: re-evaluate access; send subscription_revoked
-        #     and remove state if access is now denied.
-        async def _table_msg_filter(channel: str, message: dict) -> bool:
-            if not channel.startswith("table:"):
-                return True
-            state = table_subscription_state.get(channel)
-            if state is None:
-                # Not subscribed to this table channel from this connection.
-                return True
-
-            msg_type = message.get("type")
-
-            if msg_type == "document_change" and state["creator_filter_required"]:
-                # Only forward rows owned by this user.
-                created_by = message.get("created_by")
-                if created_by != str(state["caller"].user_id):
-                    return False
-
-            elif msg_type == "table_access_changed":
-                # Re-evaluate access rules; revoke subscription if now denied.
-                table_id: UUID = state["table_id"]
-                async with get_db_context() as db:
-                    table_row = (
-                        await db.execute(select(Table).where(Table.id == table_id))
-                    ).scalar_one_or_none()
-                    new_access = table_row.access if table_row else None
-                res = check_table_access(
-                    action=Action.READ,
-                    access=new_access,
-                    caller=state["caller"],
-                )
-                if not res.allow:
-                    # Notify client then unsubscribe.
-                    await websocket.send_json({"type": "subscription_revoked", "channel": channel})
-                    del table_subscription_state[channel]
-                    manager.connections.get(channel, set()).discard(websocket)
-                    return False  # don't forward the original table_access_changed
-                # Update creator filter flag in case it changed.
-                state["creator_filter_required"] = res.creator_filter_required
-
-            return True
-
-        websocket.state._table_msg_filter = _table_msg_filter
 
         # Send connection confirmation
         await websocket.send_json({
@@ -544,47 +462,11 @@ async def websocket_connect(
                                 "message": "Access denied"
                             })
                     elif channel.startswith("table:"):
-                        # Table channels — validate READ access before subscribing.
-                        table_id_str = channel.split(":", 1)[1]
-                        try:
-                            table_id = UUID(table_id_str)
-                        except ValueError:
-                            await websocket.send_json({
-                                "type": "error",
-                                "channel": channel,
-                                "message": "Invalid table ID"
-                            })
-                            continue
-                        async with get_db_context() as db:
-                            dyn_table = (
-                                await db.execute(select(Table).where(Table.id == table_id))
-                            ).scalar_one_or_none()
-                            if dyn_table is None:
-                                await websocket.send_json({
-                                    "type": "error",
-                                    "channel": channel,
-                                    "message": "Table not found"
-                                })
-                                continue
-                            dyn_caller = await _load_caller_for_ws(user, db)
-                            dyn_res = check_table_access(
-                                action=Action.READ, access=dyn_table.access, caller=dyn_caller
-                            )
-                        if not dyn_res.allow:
-                            await websocket.send_json({
-                                "type": "error",
-                                "channel": channel,
-                                "message": "Access denied"
-                            })
-                            continue
+                        # Table channels — policy enforcement reintroduced in Tasks 11-12.
+                        # For now, any authenticated user may subscribe.
                         if channel not in manager.connections:
                             manager.connections[channel] = set()
                         manager.connections[channel].add(websocket)
-                        table_subscription_state[channel] = {
-                            "table_id": table_id,
-                            "caller": dyn_caller,
-                            "creator_filter_required": dyn_res.creator_filter_required,
-                        }
                         await websocket.send_json({
                             "type": "subscribed",
                             "channel": channel
@@ -594,7 +476,6 @@ async def websocket_connect(
                 channel = data.get("channel")
                 if channel and channel in manager.connections:
                     manager.connections[channel].discard(websocket)
-                    table_subscription_state.pop(channel, None)
                     await websocket.send_json({
                         "type": "unsubscribed",
                         "channel": channel

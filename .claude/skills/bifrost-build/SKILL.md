@@ -361,7 +361,6 @@ Common lookups:
 - **UI primitives (Button, Card, Dialog, Table, etc.)** — [platform-api.md](platform-api.md) § UI Components
 - **`toast` / `cn` / `format*`** — [platform-api.md](platform-api.md) § Utilities
 - **React Router (Link, useNavigate, etc.)** — [platform-api.md](platform-api.md) § React Router
-- **`tables.*` / `useTableSubscription`** — [platform-api.md](platform-api.md) § Tables SDK. **If you're about to write a workflow just to read/write a table, use the SDK directly instead** (provided the table has `access` rules configured). Full CRUD + live-update pattern in [app-patterns.md](app-patterns.md) §11.
 
 ### App Workflow (SDK-First)
 

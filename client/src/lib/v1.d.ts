@@ -3473,22 +3473,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6839,8 +6839,7 @@ export interface paths {
          * Batch delete documents by ID
          * @description Delete multiple documents by ID.
          *
-         *     Skips IDs that don't exist. Enforces DELETE access for each row
-         *     (creator-only rules mean rows not owned by the caller are skipped).
+         *     Skips IDs that don't exist.
          */
         post: operations["batch_delete_documents_api_tables__table_id__documents_batch_delete_post"];
         delete?: never;
@@ -18685,70 +18684,6 @@ export interface components {
             confirm_deletes: boolean;
         };
         /**
-         * TableAccess
-         * @description Table-level access rules. NULL on Table = workflow-only.
-         */
-        TableAccess: {
-            everyone?: components["schemas"]["TableAccessScopeCRUD"];
-            /** Roles */
-            roles?: components["schemas"]["TableAccessRoleScope"][];
-            creator?: components["schemas"]["TableAccessScopeCRUD"];
-        };
-        /**
-         * TableAccessRoleScope
-         * @description Role scope adds a list of role IDs.
-         */
-        TableAccessRoleScope: {
-            /**
-             * Read
-             * @default false
-             */
-            read: boolean;
-            /**
-             * Create
-             * @default false
-             */
-            create: boolean;
-            /**
-             * Update
-             * @default false
-             */
-            update: boolean;
-            /**
-             * Delete
-             * @default false
-             */
-            delete: boolean;
-            /** Roles */
-            roles?: string[];
-        };
-        /**
-         * TableAccessScopeCRUD
-         * @description CRUD flags for an access scope.
-         */
-        TableAccessScopeCRUD: {
-            /**
-             * Read
-             * @default false
-             */
-            read: boolean;
-            /**
-             * Create
-             * @default false
-             */
-            create: boolean;
-            /**
-             * Update
-             * @default false
-             */
-            update: boolean;
-            /**
-             * Delete
-             * @default false
-             */
-            delete: boolean;
-        };
-        /**
          * TableCreate
          * @description Input for creating a table.
          */
@@ -18775,7 +18710,6 @@ export interface components {
              * @description Organization ID. Null for global table.
              */
             organization_id?: string | null;
-            access?: components["schemas"]["TableAccess"] | null;
         };
         /**
          * TableListResponse
@@ -18824,7 +18758,6 @@ export interface components {
             updated_at: string | null;
             /** Created By */
             created_by: string | null;
-            access?: components["schemas"]["TableAccess"] | null;
         };
         /**
          * TableUpdate
@@ -18844,7 +18777,6 @@ export interface components {
             } | null;
             /** Application Id */
             application_id?: string | null;
-            access?: components["schemas"]["TableAccess"] | null;
         };
         /**
          * Token
@@ -26010,7 +25942,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -26043,7 +25975,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -26076,7 +26008,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -26109,7 +26041,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {

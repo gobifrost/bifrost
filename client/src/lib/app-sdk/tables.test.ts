@@ -85,19 +85,4 @@ describe("tables web SDK", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.id).toBe("row-1");
   });
-
-  it("insert_batch posts the array", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ inserted: 2, errors: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await tables.insert_batch("t1", [
-      { data: { x: 1 } },
-      { data: { x: 2 } },
-    ]);
-    expect(result.inserted).toBe(2);
-  });
 });

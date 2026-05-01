@@ -21,29 +21,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 warnings.filterwarnings("ignore", message='Field name "schema"')
 
 
-class TableAccessScopeCRUD(BaseModel):
-    """CRUD flags for an access scope."""
-
-    read: bool = False
-    create: bool = False
-    update: bool = False
-    delete: bool = False
-
-
-class TableAccessRoleScope(TableAccessScopeCRUD):
-    """Role scope adds a list of role IDs."""
-
-    roles: list[UUID] = Field(default_factory=list)
-
-
-class TableAccess(BaseModel):
-    """Table-level access rules. NULL on Table = workflow-only."""
-
-    everyone: TableAccessScopeCRUD = Field(default_factory=TableAccessScopeCRUD)
-    roles: list[TableAccessRoleScope] = Field(default_factory=list)
-    creator: TableAccessScopeCRUD = Field(default_factory=TableAccessScopeCRUD)
-
-
 class TableBase(BaseModel):
     """Shared table fields."""
 
@@ -66,7 +43,6 @@ class TableCreate(TableBase):
         default=None,
         description="Organization ID. Null for global table.",
     )
-    access: TableAccess | None = None
 
 
 class TableUpdate(BaseModel):
@@ -81,7 +57,6 @@ class TableUpdate(BaseModel):
     description: str | None = None
     schema: dict[str, Any] | None = None
     application_id: UUID | None = None
-    access: TableAccess | None = None
 
 
 class TablePublic(TableBase):
@@ -95,7 +70,6 @@ class TablePublic(TableBase):
     created_at: datetime
     updated_at: datetime
     created_by: str | None
-    access: TableAccess | None = None
 
     @field_serializer("created_at", "updated_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:

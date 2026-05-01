@@ -38,25 +38,17 @@ from src.models.contracts.tables import (
 )
 from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
-from src.models.orm.users import UserRole as UserRoleORM
 from src.repositories.org_scoped import OrgScopedRepository
-from shared.table_access import Action, Caller, check_table_access
-from src.core.pubsub import publish_document_change, publish_table_access_changed
+from src.core.pubsub import publish_document_change
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
 
-async def _load_caller(ctx: Context) -> Caller:
-    """Build a Caller from the request context."""
-    role_q = select(UserRoleORM.role_id).where(UserRoleORM.user_id == ctx.user.user_id)
-    role_ids = {r for r in (await ctx.db.execute(role_q)).scalars().all()}
-    return Caller(
-        user_id=ctx.user.user_id,
-        role_ids=frozenset(role_ids),
-        is_admin=ctx.user.is_superuser,
-    )
+def _check_action(action: str, table: Table, ctx: Context, doc: Document | None = None) -> None:
+    """Stub access check — allows all callers. Replaced in Task 8 with policy enforcement."""
+    return None
 
 
 # =============================================================================
@@ -328,13 +320,6 @@ class DocumentRepository:
     def __init__(self, session: AsyncSession, table: Table):
         self.session = session
         self.table = table
-        self._creator_filter: str | None = None
-
-    def with_creator_filter(self, user_id: str) -> "DocumentRepository":
-        """Return a clone that filters all reads by created_by = user_id."""
-        clone = DocumentRepository(self.session, self.table)
-        clone._creator_filter = user_id
-        return clone
 
     async def insert(
         self,
@@ -399,9 +384,6 @@ class DocumentRepository:
         """Query documents with filtering and pagination."""
         base_query = select(Document).where(Document.table_id == self.table.id)
 
-        if self._creator_filter is not None:
-            base_query = base_query.where(Document.created_by == self._creator_filter)
-
         # Apply where filters using JSON-native operators
         if query_params.where:
             base_query = _build_document_filters(base_query, query_params.where)
@@ -440,9 +422,6 @@ class DocumentRepository:
         """Count documents matching filter."""
         base_query = select(Document).where(Document.table_id == self.table.id)
 
-        if self._creator_filter is not None:
-            base_query = base_query.where(Document.created_by == self._creator_filter)
-
         if where:
             base_query = _build_document_filters(base_query, where)
 
@@ -454,21 +433,6 @@ class DocumentRepository:
 # =============================================================================
 # Helper functions
 # =============================================================================
-
-
-def _parse_creator_uuid(value: str | None) -> UUID | None:
-    """Parse Document.created_by into a UUID for the Creator-scope check.
-
-    Legacy rows may carry an email string instead of a UUID. Treat unparseable
-    values as `None` (the Creator scope simply won't match — equivalent to
-    "no known owner").
-    """
-    if not value:
-        return None
-    try:
-        return UUID(value)
-    except ValueError:
-        return None
 
 
 async def _get_table_or_404(ctx: Context, table_id: UUID) -> Table:
@@ -685,9 +649,6 @@ async def update_table(
             detail=f"Table '{table_id}' not found",
         )
 
-    if "access" in data.model_fields_set:
-        await publish_table_access_changed(table_id)
-
     return TablePublic.model_validate(table)
 
 
@@ -730,10 +691,7 @@ async def insert_document(
 ) -> DocumentPublic:
     """Insert a new document into the table."""
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
-    res = check_table_access(action=Action.CREATE, access=table.access, caller=caller)
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("create", table, ctx)
 
     repo = DocumentRepository(ctx.db, table)
     created_by = str(ctx.user.user_id)
@@ -765,18 +723,12 @@ async def get_document(
 ) -> DocumentPublic:
     """Get a document by ID."""
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     doc = await repo.get(doc_id)
     if doc is None:
         # 403 instead of 404 to avoid leaking presence to unauthorized callers.
         raise HTTPException(status_code=403, detail="Access denied")
-    row_creator = _parse_creator_uuid(doc.created_by)
-    res = check_table_access(
-        action=Action.READ, access=table.access, caller=caller, row_created_by=row_creator
-    )
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("read", table, ctx, doc=doc)
     return DocumentPublic.model_validate(doc)
 
 
@@ -793,17 +745,11 @@ async def update_document(
 ) -> DocumentPublic:
     """Update a document (partial update, merges with existing)."""
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=403, detail="Access denied")
-    row_creator = _parse_creator_uuid(existing.created_by)
-    res = check_table_access(
-        action=Action.UPDATE, access=table.access, caller=caller, row_created_by=row_creator
-    )
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("update", table, ctx, doc=existing)
     doc = await repo.update(doc_id, body.data, updated_by=str(ctx.user.user_id))
     if doc is None:
         # Lost a race with a concurrent delete after we fetched + access-checked.
@@ -825,17 +771,11 @@ async def delete_document(
 ) -> None:
     """Delete a document."""
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=403, detail="Access denied")
-    row_creator = _parse_creator_uuid(existing.created_by)
-    res = check_table_access(
-        action=Action.DELETE, access=table.access, caller=caller, row_created_by=row_creator
-    )
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("delete", table, ctx, doc=existing)
     deleted = await repo.delete(doc_id)
     await ctx.db.commit()
     if deleted:
@@ -857,14 +797,9 @@ async def query_documents(
     Returns 404 if the table doesn't exist.
     """
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
-    res = check_table_access(action=Action.READ, access=table.access, caller=caller)
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("read", table, ctx)
 
     repo = DocumentRepository(ctx.db, table)
-    if res.creator_filter_required:
-        repo = repo.with_creator_filter(str(caller.user_id))
     documents, total = await repo.query(query_params)
     return DocumentListResponse(
         documents=[DocumentPublic.model_validate(d) for d in documents],
@@ -888,13 +823,8 @@ async def count_documents(
     Returns 404 if the table doesn't exist.
     """
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
-    res = check_table_access(action=Action.READ, access=table.access, caller=caller)
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("read", table, ctx)
     repo = DocumentRepository(ctx.db, table)
-    if res.creator_filter_required:
-        repo = repo.with_creator_filter(str(caller.user_id))
     return DocumentCountResponse(count=await repo.count())
 
 
@@ -914,10 +844,7 @@ async def batch_documents(
     exists, otherwise inserted. Items without an id are always inserted.
     """
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
-    res = check_table_access(action=Action.CREATE, access=table.access, caller=caller)
-    if not res.allow:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _check_action("create", table, ctx)
 
     repo = DocumentRepository(ctx.db, table)
     created_by = str(ctx.user.user_id)
@@ -956,11 +883,9 @@ async def batch_delete_documents(
 ) -> DocumentBatchDeleteResponse:
     """Delete multiple documents by ID.
 
-    Skips IDs that don't exist. Enforces DELETE access for each row
-    (creator-only rules mean rows not owned by the caller are skipped).
+    Skips IDs that don't exist.
     """
     table = await get_table_or_404(ctx, table_id)
-    caller = await _load_caller(ctx)
     repo = DocumentRepository(ctx.db, table)
     deleted = 0
 
@@ -968,12 +893,7 @@ async def batch_delete_documents(
         existing = await repo.get(doc_id)
         if existing is None:
             continue
-        row_creator = _parse_creator_uuid(existing.created_by)
-        res = check_table_access(
-            action=Action.DELETE, access=table.access, caller=caller, row_created_by=row_creator
-        )
-        if not res.allow:
-            continue
+        _check_action("delete", table, ctx, doc=existing)
         ok = await repo.delete(doc_id)
         if ok:
             await publish_document_change(table.id, "delete", existing)
