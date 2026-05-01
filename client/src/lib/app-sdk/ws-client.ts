@@ -1,5 +1,5 @@
 export type TableChangeMessage = {
-  type: "document_change" | "subscription_revoked" | "table_access_changed";
+  type: "document_change";
   table_id?: string;
   action?: string;
   id?: string;
