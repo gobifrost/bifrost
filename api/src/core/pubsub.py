@@ -13,7 +13,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -902,31 +902,48 @@ async def publish_file_activity(
 # =============================================================================
 
 
-async def publish_document_change(
-    table_id: UUID,
-    action: str,
-    doc: Any,
-) -> None:
-    """Broadcast a document change to the table's channel.
+class _Publisher:
+    """Thin publish helper that delegates to the global ConnectionManager.
 
-    `doc` may be a SQLAlchemy Document or a plain dict. Only id, data, and
-    created_by are propagated (plus the action).
+    Exists so callers (and tests) have a stable seam — `pubsub.publisher.publish`
+    — for emitting channel messages, independent of the concrete transport.
     """
-    if hasattr(doc, "id"):
-        payload_id = doc.id
-        payload_data = doc.data
-        created_by = doc.created_by
-    else:
-        payload_id = doc.get("id")
-        payload_data = doc.get("data")
-        created_by = doc.get("created_by")
 
-    message = {
+    async def publish(self, channel: str, payload: dict[str, Any]) -> None:
+        await manager.broadcast(channel, payload)
+
+
+publisher = _Publisher()
+
+
+async def publish_document_change(
+    table_id: str,
+    action: Literal["insert", "update", "delete"],
+    old_row: dict | None,
+    new_row: dict | None,
+) -> None:
+    """Emit a document-change event with both pre/post row states.
+
+    Subscribers compare old_row and new_row visibility to compute the
+    four-way (still-visible / became-visible / no-longer-visible / still-hidden)
+    fanout decision.
+    """
+    payload = {
         "type": "document_change",
-        "table_id": str(table_id),
+        "table_id": table_id,
         "action": action,
-        "id": payload_id,
-        "created_by": created_by,
-        "data": payload_data,
+        "old_row": old_row,
+        "new_row": new_row,
     }
-    await manager.broadcast(f"table:{table_id}", message)
+    channel = f"table:{table_id}"
+    await publisher.publish(channel, payload=payload)
+
+
+async def publish_policy_changed(table_id: str) -> None:
+    """Notify subscribers that the table's policies were edited.
+
+    The websocket layer re-runs subscription authorization on each message
+    of this type and may emit subscription_revoked.
+    """
+    channel = f"table:{table_id}"
+    await publisher.publish(channel, payload={"type": "policy_changed", "table_id": table_id})

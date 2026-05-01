@@ -46,7 +46,7 @@ from src.models.contracts.tables import (
 from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
 from src.repositories.org_scoped import OrgScopedRepository
-from src.core.pubsub import publish_document_change
+from src.core.pubsub import publish_document_change, publish_policy_changed
 
 logger = logging.getLogger(__name__)
 
@@ -730,6 +730,9 @@ async def update_table(
             detail=f"Table '{table_id}' not found",
         )
 
+    if "policies" in data.model_fields_set:
+        await publish_policy_changed(str(table.id))
+
     return TablePublic.model_validate(table)
 
 
@@ -780,12 +783,18 @@ async def insert_document(
         # the existing row, `create` against the candidate row.
         existing = await repo.get(body.id)
         if existing is not None:
-            _check_action_or_403("update", table, _row_from_doc(existing), ctx.user)
+            old_row = _row_from_doc(existing)
+            _check_action_or_403("update", table, old_row, ctx.user)
             doc = await repo.update(body.id, body.data, updated_by=created_by)
             if doc is None:
                 raise HTTPException(status_code=404, detail="Document not found")
             await ctx.db.commit()
-            await publish_document_change(table.id, "update", doc)
+            await publish_document_change(
+                table_id=str(table.id),
+                action="update",
+                old_row=old_row,
+                new_row=_row_from_doc(doc),
+            )
             return DocumentPublic.model_validate(doc)
 
     candidate_row: dict[str, Any] = {
@@ -797,7 +806,12 @@ async def insert_document(
     _check_action_or_403("create", table, candidate_row, ctx.user)
     doc = await repo.insert(body.data, created_by=created_by, doc_id=body.id)
     await ctx.db.commit()
-    await publish_document_change(table.id, "insert", doc)
+    await publish_document_change(
+        table_id=str(table.id),
+        action="insert",
+        old_row=None,
+        new_row=_row_from_doc(doc),
+    )
     return DocumentPublic.model_validate(doc)
 
 
@@ -838,13 +852,19 @@ async def update_document(
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    _check_action_or_403("update", table, _row_from_doc(existing), ctx.user)
+    old_row = _row_from_doc(existing)
+    _check_action_or_403("update", table, old_row, ctx.user)
     doc = await repo.update(doc_id, body.data, updated_by=str(ctx.user.user_id))
     if doc is None:
         # Lost a race with a concurrent delete after we fetched + access-checked.
         raise HTTPException(status_code=404, detail="Document not found")
     await ctx.db.commit()
-    await publish_document_change(table.id, "update", doc)
+    await publish_document_change(
+        table_id=str(table.id),
+        action="update",
+        old_row=old_row,
+        new_row=_row_from_doc(doc),
+    )
     return DocumentPublic.model_validate(doc)
 
 
@@ -864,11 +884,17 @@ async def delete_document(
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    _check_action_or_403("delete", table, _row_from_doc(existing), ctx.user)
+    old_row = _row_from_doc(existing)
+    _check_action_or_403("delete", table, old_row, ctx.user)
     deleted = await repo.delete(doc_id)
     await ctx.db.commit()
     if deleted:
-        await publish_document_change(table.id, "delete", existing)
+        await publish_document_change(
+            table_id=str(table.id),
+            action="delete",
+            old_row=old_row,
+            new_row=None,
+        )
 
 
 @router.post(
@@ -993,13 +1019,24 @@ async def batch_documents(
     for i, item in enumerate(body.documents):
         try:
             if i in pre_existing:
+                old_row = _row_from_doc(pre_existing[i])
                 doc = await repo.update(item.id, item.data, updated_by=created_by)
                 if doc is not None:
-                    await publish_document_change(table.id, "update", doc)
+                    await publish_document_change(
+                        table_id=str(table.id),
+                        action="update",
+                        old_row=old_row,
+                        new_row=_row_from_doc(doc),
+                    )
                 inserted += 1
                 continue
             doc = await repo.insert(item.data, created_by=created_by, doc_id=item.id)
-            await publish_document_change(table.id, "insert", doc)
+            await publish_document_change(
+                table_id=str(table.id),
+                action="insert",
+                old_row=None,
+                new_row=_row_from_doc(doc),
+            )
             inserted += 1
         except Exception as exc:
             errors.append({"id": item.id, "error": str(exc)})
@@ -1053,9 +1090,15 @@ async def batch_delete_documents(
         existing = existing_by_index.get(i)
         if existing is None:
             continue
+        old_row = _row_from_doc(existing)
         ok = await repo.delete(doc_id)
         if ok:
-            await publish_document_change(table.id, "delete", existing)
+            await publish_document_change(
+                table_id=str(table.id),
+                action="delete",
+                old_row=old_row,
+                new_row=None,
+            )
             deleted += 1
 
     await ctx.db.commit()
