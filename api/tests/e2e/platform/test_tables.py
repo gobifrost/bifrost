@@ -829,3 +829,175 @@ class TestDocumentAttributionOverride:
         by_x = {d["data"]["x"]: d for d in docs}
         assert by_x[1]["created_by"] == str(alice_user.user_id)
         assert by_x[2]["created_by"] == str(non_admin_user.user_id)
+
+
+@pytest.mark.e2e
+class TestDocumentUpsertVerb:
+    """Explicit ``POST /api/tables/{id}/documents/upsert`` — atomic INSERT
+    ON CONFLICT DO UPDATE with replace semantics on conflict."""
+
+    def test_upsert_inserts_when_missing(self, e2e_client, platform_admin):
+        """First call creates the row; response carries the supplied id."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"upsert_ins_{uuid4().hex[:8]}"
+        )
+        doc_id = f"key-{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"v": 1}},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["id"] == doc_id
+        assert body["data"] == {"v": 1}
+        assert body["created_by"] == str(platform_admin.user_id)
+
+    def test_upsert_replaces_on_conflict(self, e2e_client, platform_admin):
+        """Second call with the same id REPLACES (not merges) the data column."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"upsert_rep_{uuid4().hex[:8]}"
+        )
+        doc_id = f"key-{uuid4().hex[:8]}"
+        first = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"a": 1, "b": 2}},
+        )
+        assert first.status_code == 200, first.text
+
+        second = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"a": 99}},
+        )
+        assert second.status_code == 200, second.text
+        # Replace semantics: 'b' is gone; only 'a' remains.
+        assert second.json()["data"] == {"a": 99}
+
+    def test_upsert_denied_for_non_superuser_no_policy(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """A seeded admin_bypass-only table denies non-admin upserts (no create rule)."""
+        org1_id = org1["id"]
+        table_id = _create_table(
+            e2e_client, platform_admin.headers,
+            f"upsert_deny_{uuid4().hex[:8]}",
+            organization_id=org1_id,
+        )
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=non_admin_user.headers,
+            json={"id": f"k-{uuid4().hex[:8]}", "data": {"v": 1}},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_upsert_existing_row_gates_on_update_action(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """If a row already exists, the upsert is gated by the `update` action
+        on the pre-image (same as PATCH semantics)."""
+        org1_id = org1["id"]
+        table_name = f"upsert_gate_{uuid4().hex[:8]}"
+        # Policy: anyone can create, but only admins can update
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "organization_id": org1_id,
+                "policies": {
+                    "policies": [
+                        {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+                        {"name": "anyone_create", "actions": ["create"], "when": None},
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+        doc_id = f"k-{uuid4().hex[:8]}"
+
+        # Non-admin upserts a new row → allowed (create branch)
+        first = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=non_admin_user.headers,
+            json={"id": doc_id, "data": {"v": 1}},
+        )
+        assert first.status_code == 200, first.text
+
+        # Non-admin upserts the same id → must hit the update branch and 403
+        second = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=non_admin_user.headers,
+            json={"id": doc_id, "data": {"v": 2}},
+        )
+        assert second.status_code == 403, second.text
+
+    def test_upsert_id_is_required(self, e2e_client, platform_admin):
+        """Missing id → 422 (the conflict key isn't optional on this verb)."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"upsert_noid_{uuid4().hex[:8]}"
+        )
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=platform_admin.headers,
+            json={"data": {"v": 1}},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_upsert_attribution_override_on_insert(
+        self, e2e_client, platform_admin, alice_user
+    ):
+        """Engine/superuser can override created_by on the insert branch."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"upsert_attr_{uuid4().hex[:8]}"
+        )
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=platform_admin.headers,
+            json={
+                "id": f"k-{uuid4().hex[:8]}",
+                "data": {"v": 1},
+                "created_by": str(alice_user.user_id),
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["created_by"] == str(alice_user.user_id)
+        assert body["updated_by"] == str(alice_user.user_id)
+
+    def test_upsert_attribution_override_rejected_for_non_superuser(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """Non-privileged caller sending an override gets 403 even if the
+        action would have been allowed."""
+        org1_id = org1["id"]
+        table_name = f"upsert_attr_403_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "organization_id": org1_id,
+                "policies": {
+                    "policies": [
+                        {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+                        {"name": "anyone", "actions": ["create"], "when": None},
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+
+        forge = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=non_admin_user.headers,
+            json={
+                "id": f"k-{uuid4().hex[:8]}",
+                "data": {"v": 1},
+                "created_by": str(platform_admin.user_id),
+            },
+        )
+        assert forge.status_code == 403, forge.text

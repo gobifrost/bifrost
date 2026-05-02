@@ -10,6 +10,7 @@ Tables follow the same scoping pattern as configs:
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -40,6 +41,7 @@ from src.models.contracts.tables import (
     DocumentPublic,
     DocumentQuery,
     DocumentUpdate,
+    DocumentUpsert,
     TableCreate,
     TableListResponse,
     TablePublic,
@@ -529,6 +531,61 @@ class DocumentRepository:
         await self.session.refresh(doc)
         return doc
 
+    async def upsert(
+        self,
+        doc_id: str,
+        data: dict[str, Any],
+        *,
+        created_by: str | None,
+        updated_by: str | None,
+    ) -> tuple[Document, bool]:
+        """Atomic upsert by ``(table_id, id)`` — single round trip.
+
+        Returns ``(doc, inserted)`` where ``inserted`` is True if a new row
+        was created and False if an existing row was updated.
+
+        Replace semantics on conflict (the JSONB ``data`` column is
+        overwritten, not merged). This matches the CLI's prior upsert
+        endpoint and lets workflow callers do an idempotent put without a
+        round trip to fetch + merge first.
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        now = datetime.now(timezone.utc)
+        effective_updated_by = updated_by if updated_by is not None else created_by
+        stmt = (
+            pg_insert(Document)
+            .values(
+                id=doc_id,
+                table_id=self.table.id,
+                data=data,
+                created_by=created_by,
+                updated_by=effective_updated_by,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=["table_id", "id"],
+                set_={
+                    "data": data,
+                    "updated_by": effective_updated_by,
+                    "updated_at": now,
+                },
+            )
+            .returning(Document.id, (Document.created_at == now).label("inserted"))
+        )
+        result = await self.session.execute(stmt)
+        row = result.one()
+        inserted = bool(row.inserted)
+
+        # The upsert ran as raw SQL (bypassing the ORM); any identity-mapped
+        # instance for this row from a prior ``get`` carries pre-write attrs.
+        # Wipe the identity map so the next ``get`` re-reads from the DB.
+        self.session.expunge_all()
+        doc = await self.get(doc_id)
+        assert doc is not None  # we just upserted it
+        return doc, inserted
+
     async def delete(self, doc_id: str) -> bool:
         """Delete a document."""
         doc = await self.get(doc_id)
@@ -876,6 +933,65 @@ async def insert_document(
         table_id=str(table.id),
         action="insert",
         old_row=None,
+        new_row=_row_from_doc(doc),
+    )
+    return DocumentPublic.model_validate(doc)
+
+
+@router.post(
+    "/{table_id}/documents/upsert",
+    response_model=DocumentPublic,
+    summary="Upsert a document by id",
+)
+async def upsert_document(
+    table_id: str,
+    body: DocumentUpsert,
+    ctx: Context,
+    scope: str | None = Query(
+        None,
+        description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
+    ),
+) -> DocumentPublic:
+    """Atomically upsert a document by id (single ``INSERT ... ON CONFLICT DO UPDATE``).
+
+    On conflict the JSONB ``data`` column is **replaced**, not merged — use
+    PATCH ``/{doc_id}`` for partial updates with merge semantics.
+
+    The candidate row is policy-checked for ``create``; if a row already
+    exists, it is also policy-checked for ``update`` against its pre-image.
+    Either denial returns 403; the row is not written.
+
+    NOTE: This route is declared BEFORE ``GET /{table_id}/documents/{doc_id}``
+    so the literal ``/upsert`` segment matches first. Reversing the order
+    binds ``doc_id="upsert"`` and the endpoint becomes unreachable.
+    """
+    table = await get_table_or_404(ctx, table_id, scope=scope)
+    repo = DocumentRepository(ctx.db, table)
+    created_by, updated_by = _resolve_attribution(
+        ctx.user, body.created_by, body.updated_by
+    )
+
+    existing = await repo.get(body.id)
+    old_row: dict[str, Any] | None = None
+    if existing is not None:
+        old_row = _row_from_doc(existing)
+        await _check_action_or_403("update", table, old_row, ctx.user, db=ctx.db)
+    candidate_row: dict[str, Any] = {
+        **body.data,
+        "id": body.id,
+        "created_by": created_by,
+        "updated_by": updated_by,
+    }
+    await _check_action_or_403("create", table, candidate_row, ctx.user, db=ctx.db)
+
+    doc, inserted = await repo.upsert(
+        body.id, body.data, created_by=created_by, updated_by=updated_by
+    )
+    await ctx.db.commit()
+    await publish_document_change(
+        table_id=str(table.id),
+        action="insert" if inserted else "update",
+        old_row=None if inserted else old_row,
         new_row=_row_from_doc(doc),
     )
     return DocumentPublic.model_validate(doc)

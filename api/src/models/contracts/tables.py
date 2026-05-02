@@ -143,6 +143,27 @@ class DocumentCreate(BaseModel):
     )
 
 
+class DocumentUpsert(BaseModel):
+    """Input for upserting a document by id (atomic INSERT ... ON CONFLICT DO UPDATE)."""
+
+    id: str = Field(..., description="Document ID. Required (the upsert conflict key).")
+    data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for created_by (insert path). Engine and platform-admin "
+            "callers only; any other caller that sends this field receives 403."
+        ),
+    )
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by (insert and update paths). "
+            "Engine and platform-admin callers only."
+        ),
+    )
+
+
 class DocumentBatchItem(BaseModel):
     """A single item in a batch insert or upsert."""
 

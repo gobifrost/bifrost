@@ -3473,22 +3473,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6725,6 +6725,37 @@ export interface paths {
          * @description Insert a new document into the table.
          */
         post: operations["insert_document_api_tables__table_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tables/{table_id}/documents/upsert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upsert a document by id
+         * @description Atomically upsert a document by id (single ``INSERT ... ON CONFLICT DO UPDATE``).
+         *
+         *     On conflict the JSONB ``data`` column is **replaced**, not merged — use
+         *     PATCH ``/{doc_id}`` for partial updates with merge semantics.
+         *
+         *     The candidate row is policy-checked for ``create``; if a row already
+         *     exists, it is also policy-checked for ``update`` against its pre-image.
+         *     Either denial returns 403; the row is not written.
+         *
+         *     NOTE: This route is declared BEFORE ``GET /{table_id}/documents/{doc_id}``
+         *     so the literal ``/upsert`` segment matches first. Reversing the order
+         *     binds ``doc_id="upsert"`` and the endpoint becomes unreachable.
+         */
+        post: operations["upsert_document_api_tables__table_id__documents_upsert_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11429,6 +11460,34 @@ export interface components {
             /**
              * Updated By
              * @description Override attribution for updated_by. Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            updated_by?: string | null;
+        };
+        /**
+         * DocumentUpsert
+         * @description Input for upserting a document by id (atomic INSERT ... ON CONFLICT DO UPDATE).
+         */
+        DocumentUpsert: {
+            /**
+             * Id
+             * @description Document ID. Required (the upsert conflict key).
+             */
+            id: string;
+            /**
+             * Data
+             * @description Document data (any JSON-serializable dict)
+             */
+            data: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created By
+             * @description Override attribution for created_by (insert path). Engine and platform-admin callers only; any other caller that sends this field receives 403.
+             */
+            created_by?: string | null;
+            /**
+             * Updated By
+             * @description Override attribution for updated_by (insert and update paths). Engine and platform-admin callers only.
              */
             updated_by?: string | null;
         };
@@ -26008,7 +26067,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -26041,7 +26100,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -26074,7 +26133,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -26107,7 +26166,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -31805,6 +31864,44 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_document_api_tables__table_id__documents_upsert_post: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
