@@ -9,7 +9,8 @@ This document describes both **the system as it exists** (the scoping section) a
 **What changes:**
 
 - Ten CLI table-document handlers (`/api/cli/tables/documents/*`) get deleted. The Python SDK is repointed at the existing REST endpoints (`/api/tables/{id}/documents/*`).
-- Three small additions to the REST endpoints to absorb features the CLI had: `?app=<uuid>` query param on table lookup, optional `created_by`/`updated_by` body fields on document writes, an explicit `POST /api/tables/{id}/documents/upsert` verb.
+- Two small additions to the REST endpoints to absorb features the CLI had: optional `created_by`/`updated_by` body fields on document writes (accepted only when the caller is the engine or a platform admin; 403 otherwise), and an explicit `POST /api/tables/{id}/documents/upsert` verb.
+- `Table.application_id` column and the `app` lookup parameter that flowed through it are removed entirely (separate migration). The column was used only by the CLI handlers being deleted plus a few REST table-CRUD references; no live consumers in the SDK or web UI depend on it.
 - Auto-create-on-insert moves from the CLI handler into the SDK as a 404→create→retry pattern.
 - `_get_cli_org_id` gets UUID validation. One-paragraph fix.
 
@@ -107,9 +108,9 @@ Side-by-side behavior:
 What CLI does that REST doesn't:
 
 1. **Auto-create on insert.** Workflow authors can call `tables.insert("foo", {...})` without an explicit create, and the table is materialized on first write with `make_seed_admin_bypass()` policies. This is real ergonomic value.
-2. **`app` lookup filter.** Same table name in different apps within the same org resolves differently depending on the SDK caller's `app` argument. Used by the SDK (`api/bifrost/tables.py:178+`).
-3. **`created_by` / `updated_by` body override.** CLI handlers accept these in the body and use them; REST always uses the calling user.
-4. **Atomic upsert as a single verb.** REST has it via `batch` with `upsert=true`, not as a single-doc operation.
+2. **`created_by` / `updated_by` body override.** CLI handlers accept these in the body and use them; REST always uses the calling user.
+3. **Atomic upsert as a single verb.** REST has it via `batch` with `upsert=true`, not as a single-doc operation.
+4. **`app` lookup filter** via `Table.application_id`. Same table name in different apps within the same org resolves differently. Not preserved — `Table.application_id` is being removed entirely.
 
 What REST does that CLI doesn't:
 
@@ -124,11 +125,11 @@ The duplication isn't justified. Reasons to keep CLI handlers:
 
 - **Auto-create on insert** — real ergonomic; doesn't have to live on the API. Move it to the SDK as a 404→create→retry. The SDK already issues `POST /api/tables` for explicit creates (api/bifrost/tables.py:89). On `INSERT` returning 404 from the REST endpoint, post a create with the same name, then retry the insert. Race resolution via the existing 409-on-create-conflict path.
 
-- **`app` lookup filter** — the SDK already passes `app` through. Either teach the REST `get_table_or_404` to accept an `app` query param (small change), or scope the SDK lookup by `app` client-side (issue a `GET /api/tables` filtered by `application_id` first, then issue the document op against the resolved UUID). Server-side via `?app=<uuid>` is simpler.
+- **`app` lookup filter** — dropped. `Table.application_id` is removed in a separate migration; same-name-different-app within one org is no longer a supported model.
 
-- **`created_by` / `updated_by` body override** — this exists because CLI handlers run as engine-superuser and the workflow author wanted to attribute writes to "alice" rather than "engine@bifrost.internal". After consolidation, REST handlers will receive engine-superuser as the user (since the engine token still hits the wire). If we want attribution to differ from the connected user, REST needs to accept the override too. **Decision required:** either (a) add `created_by` / `updated_by` to the REST `DocumentCreate` / `DocumentUpdate` bodies and accept them when the caller is engine-attested, or (b) accept that consolidated writes from workflows will be attributed to the engine. (a) preserves current behavior; (b) is a behavior change.
+- **`created_by` / `updated_by` body override** — added to the REST `DocumentCreate` / `DocumentUpdate` bodies. Accepted only when `ctx.user.user_id == ENGINE_USER_ID` or `ctx.user.is_superuser`; otherwise the field's presence in the body returns 403. The SDK populates these from `ExecutionContext.caller` so workflow writes attribute to whoever triggered the workflow. Web UI users get a 403 if they try to forge attribution; if they don't send the field, the handler defaults to `ctx.user.user_id` exactly as it does today.
 
-- **Atomic upsert as a single verb** — the SDK gets one round trip vs two for upserts. Not strictly necessary but worth keeping. We can add `POST /api/tables/{id}/documents/upsert` to REST as an explicit verb, or use `batch` with one doc. The SDK is the only caller; it can do whichever is more convenient.
+- **Atomic upsert as a single verb** — added as `POST /api/tables/{id}/documents/upsert`. One round trip, same `INSERT ... ON CONFLICT DO UPDATE` SQL the CLI used.
 
 Reasons to drop CLI handlers:
 
@@ -136,7 +137,7 @@ Reasons to drop CLI handlers:
 - **WS publish.** Visible bug today: workflow inserts don't show up live in the UI. Demo POC at `/tmp/bifrost-poc/` documented this in the prior session.
 - **Audit.** Same reason — engine-attributed denials aren't useful, but only because engine-attributed everything is the bug. Once engine writes go through the policy gate, audit becomes meaningful.
 
-The consolidation: **delete the 10 CLI handlers; point the Python SDK at `/api/tables/{name_or_id}/documents/*` (which already accepts name-or-UUID via `get_table_or_404`). Move auto-create into the SDK. Add `?app=<uuid>` to the REST table-lookup helpers. Decide on `created_by` override.**
+The consolidation: **delete the 10 CLI handlers; point the Python SDK at `/api/tables/{name_or_id}/documents/*` (which already accepts name-or-UUID via `get_table_or_404`). Move auto-create into the SDK. Add `created_by`/`updated_by` to the REST write bodies, gated to engine + superuser. Add an explicit upsert verb. Drop `Table.application_id` and the `app` lookup parameter in a separate migration.**
 
 After consolidation, web UI and Python SDK share one endpoint set, policy enforcement / WS publish / audit are uniform, and the no-server-gate `_get_cli_org_id` stops being part of the table-document path. (`_get_cli_org_id` itself stays for the surviving `/api/cli/*` endpoints — fixing it is a separate, smaller question handled below.)
 
@@ -164,26 +165,14 @@ These are all small and follow from the analysis:
 
 - **Raw `WHERE organization_id = ...` patterns** scattered through routers (workflows.py, knowledge_sources.py, roi_reports.py, executions.py, users.py, export_import.py — see prior session's audit). Most are correct given correct upstream resolvers; full audit is a separate sweep.
 
-## Decisions required before implementation
-
-These are the only items where I want input before any code change:
-
-1. **`created_by` / `updated_by` body override on the consolidated REST endpoints.** Keep current CLI behavior (workflows can attribute writes to specific users) by adding to `DocumentCreate` / `DocumentUpdate`, or accept that consolidated workflow writes are attributed to the engine? Default if undecided: **add the override**, gated to engine-attested callers only.
-
-2. **`?app=<uuid>` on REST table lookup.** Required to preserve the same-name-different-app SDK behavior. Add it to `get_table_or_404` and the relevant REST endpoints? Default if undecided: **yes** — small change, preserves existing SDK semantics.
-
-3. **Atomic `POST /api/tables/{id}/documents/upsert` as an explicit verb on REST**, or have the SDK use `batch` with one doc? Default if undecided: **explicit verb** — one round trip, cleaner SDK code, the same SQL pattern (`INSERT ... ON CONFLICT DO UPDATE`).
-
 ## Plan stack
 
-If decisions above land defaults:
-
-1. Add `?app=<uuid>` query param to REST `get_table_or_404`. Wire through to the relevant document endpoints.
-2. Add `created_by` / `updated_by` to `DocumentCreate` / `DocumentUpdate`, accept only when caller is engine-attested.
-3. Add `POST /api/tables/{id}/documents/upsert` to REST.
-4. Move auto-create-on-insert into the Python SDK (`tables.insert` and `tables.insert_batch`): catch 404, post `/api/tables`, retry.
-5. Repoint Python SDK's `tables.documents.*` methods at the REST URLs.
-6. Delete CLI table-document handlers (cli.py:2818-3370) and the helpers `_find_or_create_table_for_sdk`, `_find_table_for_sdk` if no surviving callers.
+1. Add `created_by` / `updated_by` to `DocumentCreate` / `DocumentUpdate`. Accept only when `ctx.user.user_id == ENGINE_USER_ID` or `ctx.user.is_superuser`; otherwise 403 if the field is present in the body.
+2. Add `POST /api/tables/{id}/documents/upsert` to REST. Reuse the `INSERT ... ON CONFLICT DO UPDATE` pattern from the CLI handler.
+3. Move auto-create-on-insert into the Python SDK (`tables.insert` and `tables.insert_batch`): catch 404, post `/api/tables`, retry. Race resolution via the existing 409-on-create-conflict path.
+4. Repoint Python SDK's `tables.documents.*` methods at the REST URLs.
+5. Delete CLI table-document handlers (cli.py:2818-3370) and the helpers `_find_or_create_table_for_sdk`, `_find_table_for_sdk` if no surviving callers.
+6. Drop `Table.application_id` column. Migration removes the column and the FK to `applications.id`. Strip the few REST table-CRUD references (`TableUpdate.application_id`, `_validate_application_for_table`, `tables.py:285-289`).
 7. Validate `scope` as UUID/`"global"`/null in `_get_cli_org_id`. (Independent small fix.)
 
-Each step is independently reviewable. After step 6 lands, web UI and SDK share one table-document path; policy/WS/audit happen uniformly. Step 7 closes a small validation gap on the CLI endpoints that remain.
+Each step is independently reviewable. After step 5 lands, web UI and SDK share one table-document path; policy/WS/audit happen uniformly. Step 6 is a separate pure-removal migration. Step 7 closes a small validation gap on the CLI endpoints that remain.
