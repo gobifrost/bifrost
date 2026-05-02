@@ -24,6 +24,12 @@ export interface UseTableQuery {
   where?: Expr;
   limit?: number;
   offset?: number;
+  /**
+   * Optional org scope. Provider admins can target a specific org; other
+   * callers should omit it and the server defaults to the caller's org.
+   * Mirrors the `scope: str | None` parameter on the Python SDK.
+   */
+  scope?: string;
 }
 
 export interface UseTableResult {
@@ -76,7 +82,7 @@ export function useTable(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const { where, limit, offset } = query;
+  const { where, limit, offset, scope } = query;
   // Effect deps below intentionally use JSON.stringify(where) since `where`
   // is an object whose identity changes per render. This keeps the effect
   // stable when callers pass an inline literal each render.
@@ -90,12 +96,15 @@ export function useTable(
 
     async function init() {
       try {
-        const snap = await tables.query(name, { where, limit, offset });
+        const snap = await tables.query(name, { where, limit, offset }, scope);
         if (cancelled) return;
         setRows(snap.documents.map(flattenDocument));
         setLoading(false);
 
-        unsubscribe = tables.subscribe(name, filter, (evt) => {
+        // Subscribe by the canonical table UUID resolved server-side in the
+        // requested scope. This sidesteps the cross-org name ambiguity that
+        // `_resolve_table_id` would otherwise hit when subscribing by name.
+        unsubscribe = tables.subscribe(snap.table_id, filter, (evt) => {
           applyEvent(evt, setRows);
         });
       } catch (e) {
@@ -114,7 +123,7 @@ export function useTable(
     // the lint rule sees the closed-over `where` and we still get value-based
     // change detection via `whereKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, whereKey, limit, offset]);
+  }, [name, whereKey, limit, offset, scope]);
 
   return { rows, loading, error };
 }

@@ -14,6 +14,18 @@ function getCsrfToken(): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+/**
+ * Append `?scope=<encoded>` (or `&scope=<encoded>` if a query string already
+ * exists) to a path when scope is provided. Mirrors the Python SDK's
+ * `scope: str | None` parameter — provider admins can target a specific org;
+ * other callers omit it and the server defaults to the caller's org.
+ */
+function withScope(path: string, scope?: string): string {
+  if (!scope) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}scope=${encodeURIComponent(scope)}`;
+}
+
 async function http<T>(
   path: string,
   init: RequestInit = {},
@@ -55,9 +67,16 @@ export type TableChangeEvent =
   | { type: "subscription_revoked"; channel: string };
 
 export const tables = {
-  async get(table: string, id: string): Promise<DocumentPublic | null> {
+  async get(
+    table: string,
+    id: string,
+    scope?: string,
+  ): Promise<DocumentPublic | null> {
     return http<DocumentPublic>(
-      `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
+      withScope(
+        `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
+        scope,
+      ),
     );
   },
 
@@ -66,17 +85,21 @@ export const tables = {
     data:
       | Record<string, unknown>
       | Array<{ data: Record<string, unknown>; id?: string }>,
+    scope?: string,
   ): Promise<DocumentPublic | DocumentPublic[]> {
     if (Array.isArray(data)) {
       const r = await http<{ documents: DocumentPublic[] }>(
-        `${base}/${encodeURIComponent(table)}/documents/batch`,
+        withScope(
+          `${base}/${encodeURIComponent(table)}/documents/batch`,
+          scope,
+        ),
         { method: "POST", body: JSON.stringify({ documents: data }) },
       );
       if (!r) throw new Error("Access denied");
       return r.documents;
     }
     const r = await http<DocumentPublic>(
-      `${base}/${encodeURIComponent(table)}/documents`,
+      withScope(`${base}/${encodeURIComponent(table)}/documents`, scope),
       { method: "POST", body: JSON.stringify({ data }) },
     );
     if (!r) throw new Error("Access denied");
@@ -88,10 +111,14 @@ export const tables = {
     item:
       | { id: string; data: Record<string, unknown> }
       | Array<{ id: string; data: Record<string, unknown> }>,
+    scope?: string,
   ): Promise<DocumentPublic | DocumentPublic[]> {
     if (Array.isArray(item)) {
       const r = await http<{ documents: DocumentPublic[] }>(
-        `${base}/${encodeURIComponent(table)}/documents/batch`,
+        withScope(
+          `${base}/${encodeURIComponent(table)}/documents/batch`,
+          scope,
+        ),
         {
           method: "POST",
           body: JSON.stringify({ documents: item, upsert: true }),
@@ -101,7 +128,7 @@ export const tables = {
       return r.documents;
     }
     const r = await http<DocumentPublic>(
-      `${base}/${encodeURIComponent(table)}/documents`,
+      withScope(`${base}/${encodeURIComponent(table)}/documents`, scope),
       { method: "POST", body: JSON.stringify({ ...item, upsert: true }) },
     );
     if (!r) throw new Error("Access denied");
@@ -112,9 +139,13 @@ export const tables = {
     table: string,
     id: string,
     data: Record<string, unknown>,
+    scope?: string,
   ): Promise<DocumentPublic | null> {
     return http<DocumentPublic>(
-      `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
+      withScope(
+        `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
+        scope,
+      ),
       { method: "PATCH", body: JSON.stringify({ data }) },
     );
   },
@@ -122,17 +153,24 @@ export const tables = {
   async delete(
     table: string,
     id: string | string[],
+    scope?: string,
   ): Promise<boolean | { deleted: number }> {
     if (Array.isArray(id)) {
       const r = await http<{ deleted: number }>(
-        `${base}/${encodeURIComponent(table)}/documents/batch-delete`,
+        withScope(
+          `${base}/${encodeURIComponent(table)}/documents/batch-delete`,
+          scope,
+        ),
         { method: "POST", body: JSON.stringify({ ids: id }) },
       );
       if (!r) throw new Error("Access denied");
       return r;
     }
     const r = await http(
-      `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
+      withScope(
+        `${base}/${encodeURIComponent(table)}/documents/${encodeURIComponent(id)}`,
+        scope,
+      ),
       { method: "DELETE" },
     );
     return r === true || r !== null;
@@ -141,18 +179,25 @@ export const tables = {
   async query(
     table: string,
     q: Partial<DocumentQuery> = {},
+    scope?: string,
   ): Promise<DocumentListResponse> {
     const r = await http<DocumentListResponse>(
-      `${base}/${encodeURIComponent(table)}/documents/query`,
+      withScope(
+        `${base}/${encodeURIComponent(table)}/documents/query`,
+        scope,
+      ),
       { method: "POST", body: JSON.stringify(q) },
     );
     if (!r) throw new Error("Access denied");
     return r;
   },
 
-  async count(table: string): Promise<number> {
+  async count(table: string, scope?: string): Promise<number> {
     const r = await http<DocumentCountResponse>(
-      `${base}/${encodeURIComponent(table)}/documents/count`,
+      withScope(
+        `${base}/${encodeURIComponent(table)}/documents/count`,
+        scope,
+      ),
     );
     if (!r) return 0;
     return r.count;

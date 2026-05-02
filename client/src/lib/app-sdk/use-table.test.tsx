@@ -35,7 +35,11 @@ describe("useTable", () => {
     // them so consumers see a single shape across snapshot + live updates.
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        JSON.stringify({ documents: [{ id: "r1", data: { x: 1 } }], total: 1 }),
+        JSON.stringify({
+          documents: [{ id: "r1", data: { x: 1 } }],
+          table_id: "tbl-uuid",
+          total: 1,
+        }),
         {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -56,10 +60,17 @@ describe("useTable", () => {
 
   it("applies inserts from subscribe (flat row shape)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ documents: [], total: 0 }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -91,6 +102,7 @@ describe("useTable", () => {
             { id: "r1", data: { x: 1 } },
             { id: "r2", data: { x: 2 } },
           ],
+          table_id: "tbl-uuid",
           total: 2,
         }),
         {
@@ -109,8 +121,8 @@ describe("useTable", () => {
       lastOnEvent?.({
         type: "document_change",
         action: "update",
-        row: { id: "r1", x: 99, table_id: "t1" },
-        table_id: "t1",
+        row: { id: "r1", x: 99, table_id: "tbl-uuid" },
+        table_id: "tbl-uuid",
       });
     });
 
@@ -131,6 +143,7 @@ describe("useTable", () => {
             { id: "r1", data: { x: 1 } },
             { id: "r2", data: { x: 2 } },
           ],
+          table_id: "tbl-uuid",
           total: 2,
         }),
         {
@@ -150,7 +163,7 @@ describe("useTable", () => {
         type: "document_change",
         action: "delete",
         row_id: "r1",
-        table_id: "t1",
+        table_id: "tbl-uuid",
       });
     });
 
@@ -161,7 +174,11 @@ describe("useTable", () => {
   it("ignores non-document_change events (e.g. subscription_revoked)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        JSON.stringify({ documents: [{ id: "r1", data: {} }], total: 1 }),
+        JSON.stringify({
+          documents: [{ id: "r1", data: {} }],
+          table_id: "tbl-uuid",
+          total: 1,
+        }),
         {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -187,10 +204,17 @@ describe("useTable", () => {
 
   it("subscribes with the same filter passed to the initial query", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ documents: [], total: 0 }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -205,7 +229,107 @@ describe("useTable", () => {
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled());
 
     const [tableId, filterArg] = subscribeMock.mock.calls[0];
-    expect(tableId).toBe("t1");
+    // Subscribe goes by the canonical table UUID from the snapshot, NOT
+    // the name passed to useTable. This sidesteps cross-org name ambiguity
+    // when scope targets a different org.
+    expect(tableId).toBe("tbl-uuid");
     expect(filterArg).toEqual(where);
+  });
+
+  it("plumbs scope through to tables.query (REST snapshot is scope-aware)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useTable("t1", { scope: "org-a" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // The query URL should carry ?scope=org-a — proves scope reaches the
+    // server and isn't silently dropped.
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toMatch(/\/documents\/query\?scope=org-a$/);
+  });
+
+  it("subscribes by the snapshot's table_id, not the table name", async () => {
+    // Critical for cross-org subscriptions: when scope targets org A but
+    // the caller's session belongs to org B, the same name may resolve to
+    // different table UUIDs. The snapshot's `table_id` is the canonical
+    // UUID for the target scope.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid-in-target-scope",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useTable("tickets", { scope: "org-a" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalled());
+
+    const [tableId] = subscribeMock.mock.calls[0];
+    expect(tableId).toBe("tbl-uuid-in-target-scope");
+    expect(tableId).not.toBe("tickets");
+  });
+
+  it("re-runs the effect when scope changes", async () => {
+    // If the effect didn't depend on scope, switching providers' "selected
+    // org" would silently keep the old subscription.
+    // mockImplementation returns a fresh Response per call — Response
+    // bodies can only be consumed once.
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            documents: [],
+            table_id: "tbl-uuid",
+            total: 0,
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ scope }: { scope: string }) => useTable("t1", { scope }),
+      { initialProps: { scope: "org-a" } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(1));
+
+    rerender({ scope: "org-b" });
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(2));
+
+    // Both queries fired: one per scope value. Verifies the effect
+    // re-ran end-to-end (not just refetched and dropped the subscription).
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls.some((u) => u.includes("scope=org-a"))).toBe(true);
+    expect(urls.some((u) => u.includes("scope=org-b"))).toBe(true);
   });
 });
