@@ -424,3 +424,58 @@ class TestDocumentScopeQueryParam:
             json={},
         )
         assert q.status_code == 422, q.text
+
+    def test_uuid_lookup_does_not_leak_other_org_rows(
+        self, e2e_client, platform_admin, alice_user, org2
+    ):
+        """A non-superuser who learns another org's table UUID cannot read its rows.
+
+        get_table_or_404's UUID branch fetches the Table row without an org
+        filter (pre-existing behavior). The defense is the policy gate, not
+        the table lookup. Verify the policy gate holds: alice (org1) targets
+        an org2 table by UUID + scope, gets the table object back, but the
+        rows are policy-filtered to empty.
+        """
+        org2_id = org2["id"]
+        name = f"uuid_leak_{uuid4().hex[:8]}"
+        # Org2 table with admin_bypass only — no read for non-org2 users.
+        table_id = _create_table(
+            e2e_client,
+            platform_admin.headers,
+            name,
+            organization_id=org2_id,
+        )
+        # Provider admin inserts a row into org2.
+        ins = e2e_client.post(
+            f"/api/tables/{name}/documents",
+            headers=platform_admin.headers,
+            params={"scope": org2_id},
+            json={"data": {"secret": "org2-only"}},
+        )
+        assert ins.status_code == 201, ins.text
+
+        # Alice (org1) hits the org2 table BY UUID with ?scope=org2_id.
+        # Scope is silently ignored for non-superusers, but the UUID lookup
+        # at line 614 of tables.py finds the table regardless. The policy
+        # gate must filter the read to empty.
+        q = e2e_client.post(
+            f"/api/tables/{table_id}/documents/query",
+            headers=alice_user.headers,
+            params={"scope": org2_id},
+            json={},
+        )
+        assert q.status_code == 200, q.text
+        body = q.json()
+        assert body["table_id"] == table_id
+        assert body["documents"] == [], (
+            f"LEAK: alice saw org2 rows via UUID + scope: {body['documents']}"
+        )
+
+        # Direct GET by doc_id is also gated.
+        doc_id = ins.json()["id"]
+        get_one = e2e_client.get(
+            f"/api/tables/{table_id}/documents/{doc_id}",
+            headers=alice_user.headers,
+            params={"scope": org2_id},
+        )
+        assert get_one.status_code == 403, get_one.text
