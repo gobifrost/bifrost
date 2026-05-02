@@ -41,8 +41,8 @@ from bifrost.manifest import (
     ManifestOAuthProvider,
     ManifestOrganization,
     ManifestRole,
+    ManifestPolicy,
     ManifestTable,
-    ManifestTablePolicies,
     ManifestWorkflow,
 )
 
@@ -265,13 +265,19 @@ def serialize_config(cfg: Config) -> ManifestConfig:
 def serialize_table(table: Table) -> ManifestTable:
     """Serialize a Table ORM object to ManifestTable.
 
-    Parses the JSONB ``Table.access`` payload (shape: ``{"policies": [...]}``)
-    into a :class:`ManifestTablePolicies`. Tables with no access blob (legacy
-    rows from before Task 9 seeded admin_bypass on create) serialize with
-    ``policies=None``; the importer reseeds those on the next round-trip.
+    Unwraps the JSONB ``Table.access`` payload (shape: ``{"policies": [...]}``)
+    into a flat list of :class:`ManifestPolicy`. Tables with no access blob
+    (legacy rows from before Task 9 seeded admin_bypass on create) serialize
+    with ``policies=None``; the importer reseeds those on the next
+    round-trip.
     """
     access = table.access if isinstance(table.access, dict) else None
-    policies = ManifestTablePolicies.model_validate(access) if access else None
+    raw_policies = access.get("policies") if access else None
+    policies = (
+        [ManifestPolicy.model_validate(p) for p in raw_policies]
+        if raw_policies
+        else None
+    )
     return ManifestTable(
         id=str(table.id),
         name=table.name,

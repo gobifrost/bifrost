@@ -2132,10 +2132,12 @@ class ManifestResolver:
         app_id = UUID(mtable.application_id) if mtable.application_id else None
         now = datetime.now(timezone.utc)
 
-        # Manifest-carried policies → Table.access JSONB. When the manifest
-        # entry has no policies (older bundles, or hand-authored YAML that
-        # omits the field), seed the admin_bypass default so platform admins
-        # aren't locked out — same default the REST create path uses.
+        # Manifest-carried policies → Table.access JSONB. The manifest stores
+        # policies as a flat list; wrap to ``{"policies": [...]}`` here to
+        # match the JSONB shape expected by `_load_policies`. When the entry
+        # has no policies (older bundles or hand-authored YAML that omits the
+        # field), seed admin_bypass so platform admins aren't locked out —
+        # same default the REST create path uses.
         #
         # SECURITY: ManifestPolicy.when is typed as `dict | None` (permissive),
         # so the manifest model alone does NOT validate the AST. Re-validate
@@ -2145,9 +2147,9 @@ class ManifestResolver:
         # unparseable AST in the DB. Pattern: fail loud at the writer, fail
         # closed at the reader (see _load_policies in src/routers/tables.py).
         if mtable.policies is not None:
-            policies_dict = mtable.policies.model_dump(mode="json")
-            TablePolicies(**policies_dict)  # raises ValidationError on bad AST
-            access = policies_dict
+            policies_list = [p.model_dump(mode="json") for p in mtable.policies]
+            access = {"policies": policies_list}
+            TablePolicies(**access)  # raises ValidationError on bad AST
         else:
             access = make_seed_admin_bypass()
 

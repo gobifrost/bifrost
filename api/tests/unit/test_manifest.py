@@ -848,7 +848,6 @@ class TestTablePoliciesManifest:
         from bifrost.manifest import (
             ManifestPolicy,
             ManifestTable,
-            ManifestTablePolicies,
             parse_manifest,
             serialize_manifest,
         )
@@ -859,32 +858,30 @@ class TestTablePoliciesManifest:
                 table_id: {
                     "id": table_id,
                     "name": "tickets",
-                    "policies": {
-                        "policies": [
-                            {
-                                "name": "admin_bypass",
-                                "description": "Platform admins bypass.",
-                                "actions": ["read", "create", "update", "delete"],
-                                "when": {"user": "is_platform_admin"},
+                    "policies": [
+                        {
+                            "name": "admin_bypass",
+                            "description": "Platform admins bypass.",
+                            "actions": ["read", "create", "update", "delete"],
+                            "when": {"user": "is_platform_admin"},
+                        },
+                        {
+                            "name": "owner_can_write",
+                            "actions": ["update", "delete"],
+                            "when": {
+                                "eq": [{"row": "owner_id"}, {"user": "user_id"}],
                             },
-                            {
-                                "name": "owner_can_write",
-                                "actions": ["update", "delete"],
-                                "when": {
-                                    "eq": [{"row": "owner_id"}, {"user": "user_id"}],
-                                },
-                            },
-                        ],
-                    },
+                        },
+                    ],
                 },
             },
         }
 
         manifest = parse_manifest(yaml.dump(raw, default_flow_style=False))
         table = manifest.tables[table_id]
-        assert isinstance(table.policies, ManifestTablePolicies)
-        assert len(table.policies.policies) == 2
-        first = table.policies.policies[0]
+        assert table.policies is not None
+        assert len(table.policies) == 2
+        first = table.policies[0]
         assert isinstance(first, ManifestPolicy)
         assert first.name == "admin_bypass"
         assert first.actions == ["read", "create", "update", "delete"]
@@ -895,9 +892,9 @@ class TestTablePoliciesManifest:
         restored = parse_manifest(output)
         restored_table = restored.tables[table_id]
         assert restored_table.policies is not None
-        assert len(restored_table.policies.policies) == 2
-        assert restored_table.policies.policies[0].name == "admin_bypass"
-        assert restored_table.policies.policies[1].when == {
+        assert len(restored_table.policies) == 2
+        assert restored_table.policies[0].name == "admin_bypass"
+        assert restored_table.policies[1].when == {
             "eq": [{"row": "owner_id"}, {"user": "user_id"}],
         }
 
@@ -905,18 +902,16 @@ class TestTablePoliciesManifest:
         direct = ManifestTable(
             id=table_id,
             name="t",
-            policies=ManifestTablePolicies(
-                policies=[
-                    ManifestPolicy(
-                        name="p",
-                        actions=["read"],
-                        when={"call": "has_role", "args": ["00000000-0000-0000-0000-000000000000"]},
-                    ),
-                ],
-            ),
+            policies=[
+                ManifestPolicy(
+                    name="p",
+                    actions=["read"],
+                    when={"call": "has_role", "args": ["00000000-0000-0000-0000-000000000000"]},
+                ),
+            ],
         )
         dumped = direct.model_dump(mode="json")
-        assert dumped["policies"]["policies"][0]["when"] == {
+        assert dumped["policies"][0]["when"] == {
             "call": "has_role",
             "args": ["00000000-0000-0000-0000-000000000000"],
         }
@@ -956,15 +951,13 @@ class TestPortableHasRoleRewrite:
                 table_id: {
                     "id": table_id,
                     "name": "t1",
-                    "policies": {
-                        "policies": [
-                            {
-                                "name": "admins_only",
-                                "actions": ["read"],
-                                "when": {"call": "has_role", "args": [role_id]},
-                            },
-                        ],
-                    },
+                    "policies": [
+                        {
+                            "name": "admins_only",
+                            "actions": ["read"],
+                            "when": {"call": "has_role", "args": [role_id]},
+                        },
+                    ],
                 },
             },
             "roles": [{"id": role_id, "name": "admin"}],
@@ -975,13 +968,13 @@ class TestPortableHasRoleRewrite:
         portable = deepcopy(manifest)
         visited = _rewrite_has_role_in_table_policies(portable, {role_id: "admin"})
         assert visited == 1
-        when = portable["tables"][table_id]["policies"]["policies"][0]["when"]
+        when = portable["tables"][table_id]["policies"][0]["when"]
         assert when == {"call": "has_role", "args": ["@admin"]}
 
         # Inverse: @name → id (target env may have different role UUID)
         new_role_id = str(uuid4())
         rewritten = _rewrite_role_names_to_ids(portable, {"admin": new_role_id})
-        when_back = rewritten["tables"][table_id]["policies"]["policies"][0]["when"]
+        when_back = rewritten["tables"][table_id]["policies"][0]["when"]
         assert when_back == {"call": "has_role", "args": [new_role_id]}
 
     def test_has_role_walks_nested_ast(self):
@@ -1029,24 +1022,22 @@ class TestPortableHasRoleRewrite:
                 table_id: {
                     "id": table_id,
                     "name": "t1",
-                    "policies": {
-                        "policies": [
-                            {
-                                "name": "p",
-                                "actions": ["read"],
-                                "when": {"call": "has_role", "args": [role_id]},
-                            },
-                        ],
-                    },
+                    "policies": [
+                        {
+                            "name": "p",
+                            "actions": ["read"],
+                            "when": {"call": "has_role", "args": [role_id]},
+                        },
+                    ],
                 },
             },
         }
         scrubbed, rules = scrub(manifest, role_names_by_id={role_id: "admin"})
-        when = scrubbed["tables"][table_id]["policies"]["policies"][0]["when"]
+        when = scrubbed["tables"][table_id]["policies"][0]["when"]
         assert when == {"call": "has_role", "args": ["@admin"]}
         assert any("has_role" in rule for rule in rules)
         # Original input must be untouched (deep-copied internally).
-        assert manifest["tables"][table_id]["policies"]["policies"][0]["when"]["args"] == [role_id]
+        assert manifest["tables"][table_id]["policies"][0]["when"]["args"] == [role_id]
 
 
 class TestEventManifest:

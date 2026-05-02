@@ -247,16 +247,16 @@ class ManifestPolicy(BaseModel):
     )
 
 
-class ManifestTablePolicies(BaseModel):
-    """Container for a table's access policies, mirroring the JSONB shape of ``Table.access``."""
-    policies: list[ManifestPolicy] = Field(default_factory=list)
-
-
 class ManifestTable(BaseModel):
     """Table entry in manifest.
 
     Uses ``table_schema`` in Python but serializes as ``schema`` in YAML
     via the alias, matching the DB column name.
+
+    Policies are a flat list at the manifest level; the serializer wraps
+    them as ``{"policies": [...]}`` when writing to ``Table.access`` JSONB
+    and unwraps on export. This keeps the YAML readable without the
+    redundant ``policies.policies`` nesting.
     """
     id: str = Field(description="Table UUID")
     name: str = Field(default="", description="Table display name")
@@ -264,9 +264,9 @@ class ManifestTable(BaseModel):
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)")
     application_id: str | None = Field(default=None, description="App UUID (for app-scoped tables)")
     table_schema: dict | None = Field(default=None, alias="schema", description="Column definitions and validation hints")
-    policies: ManifestTablePolicies | None = Field(
+    policies: list[ManifestPolicy] | None = Field(
         default=None,
-        description="Access policies (mirrors Table.access JSONB). When null on import, the seed admin_bypass policy is written.",
+        description="Access policies (flat list). When null on import, the seed admin_bypass policy is written.",
     )
 
     model_config = {"populate_by_name": True}

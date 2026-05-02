@@ -2055,25 +2055,23 @@ class TestSplitManifestFormat:
                 "with_policies": {
                     "id": table_id,
                     "description": "Table with non-trivial policies",
-                    "policies": {
-                        "policies": [
-                            {
-                                "name": "admin_bypass",
-                                "actions": ["read", "create", "update", "delete"],
-                                "when": {"user": "is_platform_admin"},
-                            },
-                            {
-                                "name": "own_row",
-                                "actions": ["read", "update", "delete"],
-                                "when": {"eq": [{"row": "created_by"}, {"user": "user_id"}]},
-                            },
-                            {
-                                "name": "support_read",
-                                "actions": ["read"],
-                                "when": {"call": "has_role", "args": ["support"]},
-                            },
-                        ],
-                    },
+                    "policies": [
+                        {
+                            "name": "admin_bypass",
+                            "actions": ["read", "create", "update", "delete"],
+                            "when": {"user": "is_platform_admin"},
+                        },
+                        {
+                            "name": "own_row",
+                            "actions": ["read", "update", "delete"],
+                            "when": {"eq": [{"row": "created_by"}, {"user": "user_id"}]},
+                        },
+                        {
+                            "name": "support_read",
+                            "actions": ["read"],
+                            "when": {"call": "has_role", "args": ["support"]},
+                        },
+                    ],
                 },
             },
         }, default_flow_style=False))
@@ -2112,15 +2110,15 @@ class TestSplitManifestFormat:
 
         round_tripped = serialize_table(table)
         assert round_tripped.policies is not None
-        rt_dump = round_tripped.policies.model_dump(mode="json")
-        rt_names = [p["name"] for p in rt_dump["policies"]]
+        rt_dump = [p.model_dump(mode="json") for p in round_tripped.policies]
+        rt_names = [p["name"] for p in rt_dump]
         assert rt_names == ["admin_bypass", "own_row", "support_read"]
 
-        rt_own = next(p for p in rt_dump["policies"] if p["name"] == "own_row")
+        rt_own = next(p for p in rt_dump if p["name"] == "own_row")
         assert rt_own["when"] == {"eq": [{"row": "created_by"}, {"user": "user_id"}]}
         assert sorted(rt_own["actions"]) == ["delete", "read", "update"]
 
-        rt_support = next(p for p in rt_dump["policies"] if p["name"] == "support_read")
+        rt_support = next(p for p in rt_dump if p["name"] == "support_read")
         assert rt_support["when"] == {"call": "has_role", "args": ["support"]}
 
     async def test_pull_table_with_invalid_policy_when_clause_is_rejected(
@@ -2153,17 +2151,15 @@ class TestSplitManifestFormat:
                 "bad_policy": {
                     "id": table_id,
                     "description": "Has an unparseable when AST",
-                    "policies": {
-                        "policies": [
-                            {
-                                "name": "broken",
-                                "actions": ["read"],
-                                # INVALID_OP is not a known operator — the
-                                # AST validator must reject this.
-                                "when": {"INVALID_OP": []},
-                            },
-                        ],
-                    },
+                    "policies": [
+                        {
+                            "name": "broken",
+                            "actions": ["read"],
+                            # INVALID_OP is not a known operator — the
+                            # AST validator must reject this.
+                            "when": {"INVALID_OP": []},
+                        },
+                    ],
                 },
             },
         }, default_flow_style=False))

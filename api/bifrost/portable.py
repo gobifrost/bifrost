@@ -268,10 +268,7 @@ def _rewrite_has_role_in_table_policies(
     for table in tables.values():
         if not isinstance(table, dict):
             continue
-        policies_block = table.get("policies")
-        if not isinstance(policies_block, dict):
-            continue
-        policy_list = policies_block.get("policies")
+        policy_list = table.get("policies")
         if not isinstance(policy_list, list):
             continue
         for policy in policy_list:
@@ -323,7 +320,7 @@ def _rewrite_role_names_to_ids(
 ) -> dict[str, Any]:
     """Inverse of :func:`_rewrite_role_ids_to_names` for ``has_role`` AST args.
 
-    Walks every ``tables[*].policies.policies[*].when`` AST and rewrites
+    Walks every ``tables[*].policies[*].when`` AST and rewrites
     ``"@<name>"`` markers back to the role UUID against the target environment's
     role table. Names that don't resolve are left as-is (still prefixed) so the
     server-side importer can fail loud rather than silently swap in a wrong UUID.
@@ -336,10 +333,7 @@ def _rewrite_role_names_to_ids(
     for table in tables.values():
         if not isinstance(table, dict):
             continue
-        policies_block = table.get("policies")
-        if not isinstance(policies_block, dict):
-            continue
-        policy_list = policies_block.get("policies")
+        policy_list = table.get("policies")
         if not isinstance(policy_list, list):
             continue
         for policy in policy_list:
