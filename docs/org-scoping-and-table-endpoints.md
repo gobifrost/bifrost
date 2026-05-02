@@ -153,6 +153,44 @@ These are all small and follow from the analysis:
 
 4. **`is_provider` not populated in the API handler's `Organization`.** `workflows.py:867` constructs `Organization(id=..., name="", is_active=True)` without `is_provider`. Currently throwaway because the worker re-fetches (`workflow_execution.py:643-647`), but a footgun. Out of scope; cleanup ticket.
 
+## Known divergences from intent (refactor candidates)
+
+If a future session is here to refactor scoping itself (not the table consolidation), this is the consolidated list of known issues. Each is documented above with file:line; this section is the index.
+
+1. **Server-side gate uses `is_superuser`, not `is_provider`** (`api/src/core/org_filter.py:91-139` and `:28-89`). The intended rule is provider-org membership; the implementation uses the platform-admin role bit. They correlate today only because of migration history. Real change in who-can-do-what — a provider-org non-superuser gains cross-org access, a hypothetical non-provider superuser loses it. Needs the test matrix that doesn't exist yet to land safely.
+
+2. **`UserPrincipal` doesn't carry `is_provider`** (`api/src/core/auth.py:30-79`). JWT doesn't carry it either. Any server-side `is_provider` check would need a DB lookup (or a JWT-claim addition + login-time population). Prerequisite for #1.
+
+3. **Dual scope-resolution in workflow dispatch.** `api/src/routers/workflows.py:807-832` and `api/src/jobs/consumers/workflow_execution.py:540-549` both implement "workflow's org if set, else caller's org." Consistent today; if the rule changes, both must change in lockstep. The API-handler value is throwaway (the worker re-derives), so the API-handler version should probably go away — but `_publish_pending` and `create_execution` rely on it.
+
+4. **`is_provider` not populated in the API handler's `Organization`** (`api/src/routers/workflows.py:867`). Currently throwaway because the worker re-fetches; if anyone removes the re-fetch, `set_scope`/`resolve_scope` silently break. Either populate it or document the throwaway nature in code.
+
+5. **`_get_cli_org_id` has no permission gate** (`api/src/routers/cli.py:357-392`). Honors any scope from any caller. Mostly invisible because most consumers are engine-only by design, but the table-document handlers under it (now being consolidated away) made the bypass real. After consolidation, this is "all surviving CLI endpoints are engine-intended but lack server-side enforcement of that intent" — defense in depth would harden them.
+
+6. **`DeveloperContext` is spread across multiple consumers.** `_get_cli_org_id` (cli.py:384), `workflows.py:826-832`, `cli.py:606+` (`bifrost run` direct path), and the `bifrost run --interactive` session machinery (`cli.py:846+`, `client/src/pages/CLI.tsx`, `/api/cli/sessions/*`, the `cli-sessions:{user.id}` WebSocket channel). The interactive path is alive. Refactoring `DeveloperContext` means deciding the future of the dev-workbench feature.
+
+7. **Embed token scope handling** (`api/src/core/auth.py:201-211`) exempts embed tokens from the "non-superuser must have org" rule. Works in practice; not pinned down with tests; how scope flows for embed callers isn't documented.
+
+8. **Raw `WHERE organization_id = ...` bypasses `OrgScopedRepository`** in `workflows.py`, `knowledge_sources.py`, `roi_reports.py`, `executions.py`, `users.py`, `export_import.py`. Each is correct given a correct upstream resolver, but they bypass the repo's role-check defense-in-depth.
+
+## Approaches considered and rejected
+
+For a future session: these were discussed during the design pass and ruled out. They might still be right for a different problem; they're not the right answer for this one.
+
+- **Rescoping the engine token** to be a transport-only credential, with caller identity propagated separately. The user's call: engine identity is intentional, the engine is a controlled environment, an admin wrote the workflow, and the engine has the authority to do what workflows need. Don't redesign it.
+
+- **`X-Bifrost-On-Behalf-Of` header carrying caller claims.** Rejected because it requires the engine-vs-caller split above, which we're not doing.
+
+- **Per-workflow capability sets** (e.g. `permissions: ["integrations:write"]` declared in workflow manifest). Rejected because it adds per-workflow identity bookkeeping; the user explicitly said they don't want more identity stuff per workflow.
+
+- **Per-workflow `bypass_caller_auth: bool`** flag. Same reason — still per-workflow identity bookkeeping.
+
+- **New FastAPI dependency markers** (`CurrentBrowserSession`, `CurrentCallerScoped`, `CurrentEngineOnly`). Rejected because the underlying problem they solved (caller-vs-engine identity routing) was rejected. The existing dependencies (`CurrentUser`, `CurrentSuperuser`) are sufficient.
+
+- **`CurrentOrgScoped` marker as a single new dependency.** Briefly considered as a lighter version of the four-marker scheme. Rejected because the existing scope helpers (`_resolve_target_org_safe`, `resolve_target_org`) already do the work; adding a marker would be net-additional code without solving a concrete problem.
+
+The shape these all share: **redesigning where authorization decisions happen.** The user's preference is to leave the engine alone and address only the specific bug (CLI handlers don't enforce policies). That preference rules out anything that touches the engine token's role.
+
 ## Out of scope, captured for later
 
 - **`is_superuser` → `is_provider` migration in `resolve_target_org` and `resolve_org_filter`.** Real change in who-can-do-what (a non-superuser provider-org member would gain cross-org access; a hypothetical superuser outside the provider org would lose it). Today's rule (`is_superuser` as the gate) continues unchanged.

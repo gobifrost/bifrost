@@ -725,3 +725,28 @@ Branch state: 21 commits on `feat/table-access`, all tests green, ready for the 
 - Cherry-pick the manifest format flatten + e2e test additions onto a parallel branch if those are wanted independently of the CLI consolidation.
 
 Then proceed to `superpowers:finishing-a-development-branch`.
+
+---
+
+# Direction for finishing this branch (added 2026-05-02)
+
+After tracing the CLI/REST split end-to-end and walking through several rejected design directions, the path forward for this branch is documented in **`docs/org-scoping-and-table-endpoints.md`** at the repo root. That doc is the source of truth for what changes; this plan is preserved as historical record of how the branch got here.
+
+Highlights of what landed on the framing:
+
+- **The engine identity stays as-is.** Nothing about `authenticate_engine`, the engine-superuser token, or the SDK's bearer credentials changes. The user's framing: workflow execution is a controlled environment, an admin wrote the workflow, the engine has authority to do what workflows need.
+- **The consolidation is the only refactor.** Ten CLI table-document handlers get deleted; SDK is repointed at REST. Two small REST additions (engine/superuser-gated `created_by`/`updated_by` body fields, explicit upsert verb), one removal (`Table.application_id` column), one validation fix (`_get_cli_org_id` UUID validation).
+- **Eight known scoping divergences are catalogued in the doc** as refactor candidates for future sessions. None are addressed here. The doc names them with file:line so a future session can pick any subset without re-tracing.
+- **Approaches considered and rejected** are also captured in the doc — engine-token rescoping, on-behalf-of header, per-workflow capability sets, per-workflow `bypass_caller_auth` flag, four-marker FastAPI dependency scheme. A future session that proposes any of these has a place to read why they were ruled out.
+
+**Plan stack for this branch** (from `docs/org-scoping-and-table-endpoints.md`):
+
+1. Add `created_by` / `updated_by` to `DocumentCreate` / `DocumentUpdate`. 403 if present and caller isn't engine or superuser.
+2. Add `POST /api/tables/{id}/documents/upsert` to REST.
+3. Move auto-create-on-insert into the Python SDK (404 → POST `/api/tables` → retry).
+4. Repoint Python SDK's `tables.documents.*` methods at REST URLs.
+5. Delete CLI table-document handlers (cli.py:2818-3370) + helpers `_find_or_create_table_for_sdk`, `_find_table_for_sdk`.
+6. Drop `Table.application_id` column (separate migration).
+7. Validate `scope` as UUID/`"global"`/null in `_get_cli_org_id`.
+
+Each step is independently reviewable. Use `superpowers:writing-plans` to expand any step into a task list when ready to implement. After step 5 lands, web UI and SDK share one path; policy/WS/audit happen uniformly. The branch is shippable.
