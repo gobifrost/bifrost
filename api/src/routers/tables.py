@@ -25,6 +25,7 @@ from shared.policies.probe import (
     make_seed_admin_bypass,
 )
 from src.core.auth import Context, CurrentSuperuser, UserPrincipal
+from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, resolve_org_filter, resolve_target_org
 from src.models.contracts.policies import TablePolicies
@@ -74,6 +75,37 @@ def _load_policies(table: Table) -> TablePolicies:
             table.id, e,
         )
         return TablePolicies()
+
+
+def _resolve_attribution(
+    user: UserPrincipal,
+    body_created_by: str | None,
+    body_updated_by: str | None,
+) -> tuple[str, str]:
+    """Decide attribution (created_by, updated_by) for a document write.
+
+    If the body carries either field, the caller must be the engine
+    (SYSTEM_USER_UUID) or a platform admin (is_superuser); otherwise we 403
+    so a regular user can't forge attribution.
+
+    Defaulting:
+    - both omitted → both default to the caller's id.
+    - only created_by provided → updated_by mirrors it (same actor on first write).
+    - only updated_by provided → created_by defaults to the caller (only meaningful
+      on insert; ignored on the update path).
+    """
+    has_override = body_created_by is not None or body_updated_by is not None
+    if has_override:
+        is_engine = user.user_id == SYSTEM_USER_UUID
+        if not (is_engine or user.is_superuser):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="created_by/updated_by override requires engine or platform-admin caller",
+            )
+    caller = str(user.user_id)
+    created_by = body_created_by or caller
+    updated_by = body_updated_by or body_created_by or caller
+    return (created_by, updated_by)
 
 
 def _row_from_doc(doc: Document) -> dict[str, Any]:
@@ -444,12 +476,21 @@ class DocumentRepository:
         data: dict[str, Any],
         created_by: str | None,
         doc_id: str | None = None,
+        updated_by: str | None = None,
     ) -> Document:
-        """Insert a new document."""
+        """Insert a new document.
+
+        ``updated_by`` defaults to ``created_by`` so a freshly-inserted row
+        carries a non-null updater (matches the row's ``updated_at`` semantics).
+        Pass an explicit value to attribute the insert to a different actor
+        than the creator (used by the engine when a workflow inserts on
+        behalf of a triggering user).
+        """
         kwargs: dict[str, Any] = {
             "table_id": self.table.id,
             "data": data,
             "created_by": created_by,
+            "updated_by": updated_by if updated_by is not None else created_by,
         }
         if doc_id is not None:
             kwargs["id"] = doc_id
@@ -797,7 +838,9 @@ async def insert_document(
     """Insert a new document into the table."""
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
-    created_by = str(ctx.user.user_id)
+    created_by, updated_by = _resolve_attribution(
+        ctx.user, body.created_by, body.updated_by
+    )
 
     if body.upsert and body.id:
         # Upsert: update if exists, otherwise insert. Check `update` against
@@ -806,7 +849,7 @@ async def insert_document(
         if existing is not None:
             old_row = _row_from_doc(existing)
             await _check_action_or_403("update", table, old_row, ctx.user, db=ctx.db)
-            doc = await repo.update(body.id, body.data, updated_by=created_by)
+            doc = await repo.update(body.id, body.data, updated_by=updated_by)
             if doc is None:
                 raise HTTPException(status_code=404, detail="Document not found")
             await ctx.db.commit()
@@ -822,10 +865,12 @@ async def insert_document(
         **body.data,
         "id": body.id,
         "created_by": created_by,
-        "updated_by": created_by,
+        "updated_by": updated_by,
     }
     await _check_action_or_403("create", table, candidate_row, ctx.user, db=ctx.db)
-    doc = await repo.insert(body.data, created_by=created_by, doc_id=body.id)
+    doc = await repo.insert(
+        body.data, created_by=created_by, doc_id=body.id, updated_by=updated_by
+    )
     await ctx.db.commit()
     await publish_document_change(
         table_id=str(table.id),
@@ -913,12 +958,13 @@ async def update_document(
     """Update a document (partial update, merges with existing)."""
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
+    _, updated_by = _resolve_attribution(ctx.user, None, body.updated_by)
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found")
     old_row = _row_from_doc(existing)
     await _check_action_or_403("update", table, old_row, ctx.user, db=ctx.db)
-    doc = await repo.update(doc_id, body.data, updated_by=str(ctx.user.user_id))
+    doc = await repo.update(doc_id, body.data, updated_by=updated_by)
     if doc is None:
         # Lost a race with a concurrent delete after we fetched + access-checked.
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1033,14 +1079,22 @@ async def batch_documents(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
-    created_by = str(ctx.user.user_id)
     policies = _load_policies(table)
+
+    # Pre-resolve attribution per item up front so any forged-attribution
+    # 403 surfaces before we do work and applies all-or-nothing across
+    # the batch (consistent with the policy-denial semantics below).
+    attribution: list[tuple[str, str]] = [
+        _resolve_attribution(ctx.user, item.created_by, item.updated_by)
+        for item in body.documents
+    ]
 
     # Pre-flight: check every row up front. Collect ALL denials so the
     # client sees the full denied set in one response.
     denied: list[int] = []
     pre_existing: dict[int, Document] = {}
     for i, item in enumerate(body.documents):
+        item_created_by, item_updated_by = attribution[i]
         if body.upsert and item.id:
             existing = await repo.get(item.id)
             if existing is not None:
@@ -1053,8 +1107,8 @@ async def batch_documents(
         candidate_row: dict[str, Any] = {
             **item.data,
             "id": item.id,
-            "created_by": created_by,
-            "updated_by": created_by,
+            "created_by": item_created_by,
+            "updated_by": item_updated_by,
         }
         if not evaluate_action("create", policies, candidate_row, ctx.user):
             denied.append(i)
@@ -1069,10 +1123,11 @@ async def batch_documents(
     errors: list[dict[str, Any]] = []
 
     for i, item in enumerate(body.documents):
+        item_created_by, item_updated_by = attribution[i]
         try:
             if i in pre_existing:
                 old_row = _row_from_doc(pre_existing[i])
-                doc = await repo.update(item.id, item.data, updated_by=created_by)
+                doc = await repo.update(item.id, item.data, updated_by=item_updated_by)
                 if doc is not None:
                     await publish_document_change(
                         table_id=str(table.id),
@@ -1082,7 +1137,12 @@ async def batch_documents(
                     )
                 inserted += 1
                 continue
-            doc = await repo.insert(item.data, created_by=created_by, doc_id=item.id)
+            doc = await repo.insert(
+                item.data,
+                created_by=item_created_by,
+                doc_id=item.id,
+                updated_by=item_updated_by,
+            )
             await publish_document_change(
                 table_id=str(table.id),
                 action="insert",

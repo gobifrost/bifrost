@@ -125,6 +125,22 @@ class DocumentCreate(BaseModel):
         default=False,
         description="If true and id is provided, update the existing document instead of raising a conflict.",
     )
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for created_by. Engine and platform-admin callers only; "
+            "any other caller that sends this field receives 403. When omitted, defaults to "
+            "the calling user."
+        ),
+    )
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by (used on the update branch of an upsert). "
+            "Engine and platform-admin callers only; any other caller that sends this field "
+            "receives 403. When omitted, defaults to the calling user."
+        ),
+    )
 
 
 class DocumentBatchItem(BaseModel):
@@ -135,6 +151,20 @@ class DocumentBatchItem(BaseModel):
         description="Optional document ID. Auto-generated (UUID) if omitted.",
     )
     data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for created_by. Engine and platform-admin callers only; "
+            "any item that sends this field from a non-privileged caller fails the whole batch with 403."
+        ),
+    )
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by (upsert-update branch). "
+            "Engine and platform-admin callers only."
+        ),
+    )
 
 
 class DocumentBatchCreate(BaseModel):
@@ -177,6 +207,14 @@ class DocumentUpdate(BaseModel):
     """Input for updating a document (partial update, merges with existing)."""
 
     data: dict[str, Any] = Field(..., description="Fields to update (merged with existing data)")
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by. Engine and platform-admin callers only; "
+            "any other caller that sends this field receives 403. When omitted, defaults to "
+            "the calling user."
+        ),
+    )
 
 
 class DocumentPublic(BaseModel):

@@ -568,3 +568,264 @@ class TestDocumentScopeQueryParam:
         assert q.status_code == 200, q.text
         assert q.json()["table_id"] == table_id
         assert len(q.json()["documents"]) == 1
+
+
+@pytest.mark.e2e
+class TestDocumentAttributionOverride:
+    """`created_by` / `updated_by` override on document writes.
+
+    Engine and platform-admin callers can override attribution to attribute
+    a write to a different actor (used by the SDK to attribute workflow
+    writes to the workflow's calling user). Non-privileged callers that
+    send the field receive 403 — they cannot forge attribution.
+    """
+
+    def test_superuser_can_set_created_by_on_insert(
+        self, e2e_client, platform_admin, alice_user
+    ):
+        """Superuser sends `created_by` in the body; the row is attributed to
+        that user, not the calling superuser."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"attr_super_ins_{uuid4().hex[:8]}"
+        )
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=platform_admin.headers,
+            json={"data": {"x": 1}, "created_by": str(alice_user.user_id)},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["created_by"] == str(alice_user.user_id)
+        # updated_by defaults to created_by on insert when not explicitly set
+        assert body["updated_by"] == str(alice_user.user_id)
+
+    def test_superuser_can_set_distinct_created_by_and_updated_by_on_insert(
+        self, e2e_client, platform_admin, alice_user, non_admin_user
+    ):
+        """Superuser can set created_by and updated_by to different actors."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"attr_super_dist_{uuid4().hex[:8]}"
+        )
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=platform_admin.headers,
+            json={
+                "data": {"x": 1},
+                "created_by": str(alice_user.user_id),
+                "updated_by": str(non_admin_user.user_id),
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["created_by"] == str(alice_user.user_id)
+        assert body["updated_by"] == str(non_admin_user.user_id)
+
+    def test_superuser_can_set_updated_by_on_update(
+        self, e2e_client, platform_admin, alice_user
+    ):
+        """Superuser sends `updated_by` on PATCH; row is attributed accordingly."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"attr_super_upd_{uuid4().hex[:8]}"
+        )
+        ins = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=platform_admin.headers,
+            json={"data": {"x": 1}},
+        )
+        assert ins.status_code == 201, ins.text
+        doc_id = ins.json()["id"]
+
+        upd = e2e_client.patch(
+            f"/api/tables/{table_id}/documents/{doc_id}",
+            headers=platform_admin.headers,
+            json={"data": {"x": 2}, "updated_by": str(alice_user.user_id)},
+        )
+        assert upd.status_code == 200, upd.text
+        assert upd.json()["updated_by"] == str(alice_user.user_id)
+
+    def test_non_superuser_with_created_by_returns_403(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """Non-superuser sending `created_by` is rejected (can't forge attribution)."""
+        org1_id = org1["id"]
+        # Table must seed a policy that grants non_admin_user create access; admin_bypass
+        # alone denies the call before attribution check. Use an everyone-can-create policy.
+        table_name = f"attr_forge_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "organization_id": org1_id,
+                "policies": {
+                    "policies": [
+                        {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+                        {"name": "anyone_create", "actions": ["create"], "when": None},
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+
+        forge = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=non_admin_user.headers,
+            json={"data": {"x": 1}, "created_by": str(platform_admin.user_id)},
+        )
+        assert forge.status_code == 403, forge.text
+        assert "override" in forge.json()["detail"].lower()
+
+    def test_non_superuser_with_updated_by_returns_403(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """Non-superuser sending `updated_by` on PATCH is rejected."""
+        org1_id = org1["id"]
+        table_name = f"attr_forge_upd_{uuid4().hex[:8]}"
+        # Policy: non_admin_user can create+update their own rows; admin_bypass for admins.
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "organization_id": org1_id,
+                "policies": {
+                    "policies": [
+                        {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+                        {"name": "anyone", "actions": ["create", "update"], "when": None},
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+
+        # Non-admin inserts a row without override (allowed)
+        ins = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=non_admin_user.headers,
+            json={"data": {"x": 1}},
+        )
+        assert ins.status_code == 201, ins.text
+        doc_id = ins.json()["id"]
+
+        # Non-admin updates with override → 403
+        forge = e2e_client.patch(
+            f"/api/tables/{table_id}/documents/{doc_id}",
+            headers=non_admin_user.headers,
+            json={"data": {"x": 2}, "updated_by": str(platform_admin.user_id)},
+        )
+        assert forge.status_code == 403, forge.text
+        assert "override" in forge.json()["detail"].lower()
+
+    def test_non_superuser_without_override_defaults_to_caller(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """Regression: non-superuser writing without override is unaffected — row
+        is attributed to the calling user."""
+        org1_id = org1["id"]
+        table_name = f"attr_default_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "organization_id": org1_id,
+                "policies": {
+                    "policies": [
+                        {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+                        {"name": "anyone", "actions": ["create", "read", "update"], "when": None},
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+
+        ins = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=non_admin_user.headers,
+            json={"data": {"x": 1}},
+        )
+        assert ins.status_code == 201, ins.text
+        body = ins.json()
+        assert body["created_by"] == str(non_admin_user.user_id)
+        assert body["updated_by"] == str(non_admin_user.user_id)
+
+    def test_batch_with_forged_attribution_fails_whole_batch(
+        self, e2e_client, platform_admin, non_admin_user, org1
+    ):
+        """A batch with any item carrying override from a non-superuser fails
+        the whole batch with 403 before any row is written."""
+        org1_id = org1["id"]
+        table_name = f"attr_batch_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "organization_id": org1_id,
+                "policies": {
+                    "policies": [
+                        {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+                        {"name": "anyone", "actions": ["create"], "when": None},
+                    ]
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+
+        batch = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
+            headers=non_admin_user.headers,
+            json={
+                "documents": [
+                    {"data": {"x": 1}},
+                    {"data": {"x": 2}, "created_by": str(platform_admin.user_id)},
+                    {"data": {"x": 3}},
+                ],
+            },
+        )
+        assert batch.status_code == 403, batch.text
+
+        # No rows should have been written
+        cnt = e2e_client.get(
+            f"/api/tables/{table_id}/documents/count",
+            headers=platform_admin.headers,
+        )
+        assert cnt.status_code == 200
+        assert cnt.json()["count"] == 0
+
+    def test_batch_superuser_distinct_attribution_per_item(
+        self, e2e_client, platform_admin, alice_user, non_admin_user
+    ):
+        """Superuser batch writes can carry per-item attribution."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"attr_batch_super_{uuid4().hex[:8]}"
+        )
+        resp = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
+            headers=platform_admin.headers,
+            json={
+                "documents": [
+                    {"data": {"x": 1}, "created_by": str(alice_user.user_id)},
+                    {"data": {"x": 2}, "created_by": str(non_admin_user.user_id)},
+                ],
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["inserted"] == 2
+
+        q = e2e_client.post(
+            f"/api/tables/{table_id}/documents/query",
+            headers=platform_admin.headers,
+            json={"order_by": "x", "order_dir": "asc"},
+        )
+        assert q.status_code == 200, q.text
+        docs = q.json()["documents"]
+        assert len(docs) == 2
+        # Map by data.x to assert per-item attribution
+        by_x = {d["data"]["x"]: d for d in docs}
+        assert by_x[1]["created_by"] == str(alice_user.user_id)
+        assert by_x[2]["created_by"] == str(non_admin_user.user_id)

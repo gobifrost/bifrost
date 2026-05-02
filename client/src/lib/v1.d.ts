@@ -11267,6 +11267,16 @@ export interface components {
             data: {
                 [key: string]: unknown;
             };
+            /**
+             * Created By
+             * @description Override attribution for created_by. Engine and platform-admin callers only; any item that sends this field from a non-privileged caller fails the whole batch with 403.
+             */
+            created_by?: string | null;
+            /**
+             * Updated By
+             * @description Override attribution for updated_by (upsert-update branch). Engine and platform-admin callers only.
+             */
+            updated_by?: string | null;
         };
         /**
          * DocumentCountResponse
@@ -11299,6 +11309,16 @@ export interface components {
              * @default false
              */
             upsert: boolean;
+            /**
+             * Created By
+             * @description Override attribution for created_by. Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            created_by?: string | null;
+            /**
+             * Updated By
+             * @description Override attribution for updated_by (used on the update branch of an upsert). Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            updated_by?: string | null;
         };
         /**
          * DocumentListResponse
@@ -11406,6 +11426,11 @@ export interface components {
             data: {
                 [key: string]: unknown;
             };
+            /**
+             * Updated By
+             * @description Override attribution for updated_by. Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            updated_by?: string | null;
         };
         /**
          * DryRunPerRun
