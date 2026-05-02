@@ -1,6 +1,28 @@
-# Org Scoping (As Implemented) + Table-Document Endpoint Consolidation
+# Org Scoping + Table-Document Endpoints
 
-> **Status:** Design document. Documents how scoping currently works (citing the code), names what diverges from intent, and recommends a focused fix list. The substantive change is consolidating two parallel table-document endpoint paths.
+Reference doc: how organization scoping works in Bifrost today, where the implementation diverges from intent, and the table-document endpoint consolidation that brings web UI and SDK callers onto a single path.
+
+## Scope of changes
+
+This document describes both **the system as it exists** (the scoping section) and **a focused refactor** (the table-document consolidation). The two are written together because the consolidation is the only thing that requires any code change today; everything else in the scoping section is reference material.
+
+**What changes:**
+
+- Ten CLI table-document handlers (`/api/cli/tables/documents/*`) get deleted. The Python SDK is repointed at the existing REST endpoints (`/api/tables/{id}/documents/*`).
+- Three small additions to the REST endpoints to absorb features the CLI had: `?app=<uuid>` query param on table lookup, optional `created_by`/`updated_by` body fields on document writes, an explicit `POST /api/tables/{id}/documents/upsert` verb.
+- Auto-create-on-insert moves from the CLI handler into the SDK as a 404→create→retry pattern.
+- `_get_cli_org_id` gets UUID validation. One-paragraph fix.
+
+**Net effect on scope handling:** fewer scope helpers in the table-document path, not more. Today three resolvers participate (`_resolve_target_org_safe`, `_get_cli_org_id`, the SDK's `resolve_scope`); after consolidation it's two (the SDK runtime check plus the REST helper). `_get_cli_org_id` stops being part of the table-document path entirely.
+
+**What does not change:**
+
+- Engine identity. The synthetic engine-superuser token (`authenticate_engine`) and the engine's authority to do what workflows need to do are intentional and stay as-is.
+- `is_superuser` → `is_provider` migration in the REST scope helpers. Real change in who-can-do-what; deferred to a separate effort.
+- `DeveloperContext` and the `bifrost run --interactive` dev-workbench feature. Alive and used; refactor opportunity, not a bug.
+- The dual scope-resolution sites in workflow dispatch (`workflows.py:807-832` and `workflow_execution.py:540-549`). Consistent today; cleanup deferred.
+- The other `/api/cli/*` endpoints (configs, integrations management, knowledge mutation, AI completion). Engine-only by intent; not consolidated.
+- Embed token scope handling, raw `WHERE organization_id = ...` patterns, and other audit items called out at the bottom of this doc.
 
 ## How scoping works today
 
