@@ -1,16 +1,13 @@
 /**
  * Top-level policy editor — a tabbed shell that exposes the same
  * `TablePolicies | null` AST through three views:
- *   - Form: a graphical rule list (filled in by Task 2)
- *   - JSON: a Monaco JSON editor (filled in by Task 3)
- *   - YAML: a Monaco YAML editor (filled in by Task 3)
+ *   - Form: graphical rule list + when builder (PolicyFormView)
+ *   - JSON: Monaco editor of the whole TablePolicies document,
+ *     schema-bound via policy-schema.json
+ *   - YAML: plain Monaco YAML mode
  *
  * The shell owns the per-tab text buffers and the parse/reserialize
- * plumbing so tabs can swap freely without losing in-progress edits or
- * silently dropping invalid input. Tabs that aren't yet implemented
- * render placeholder stubs; the buffer plumbing is already wired so
- * future tasks just slot their editors into the existing contracts.
- *
+ * plumbing so tabs can swap freely without losing in-progress edits.
  * The parent (e.g. `TableDialog`) passes the current `TablePolicies | null`
  * and a setter, and is responsible for shipping the resulting structure
  * in the create/update request body.

@@ -23,7 +23,7 @@ import type * as Monaco from "monaco-editor";
 
 import schema from "@/lib/app-sdk/policy-schema.json";
 
-export const POLICY_SCHEMA_URI = "inmemory://policy-schema.json";
+const POLICY_SCHEMA_URI = "inmemory://policy-schema.json";
 
 interface MonacoJsonDefaults {
 	diagnosticsOptions: {
