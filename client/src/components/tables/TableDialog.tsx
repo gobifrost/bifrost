@@ -30,6 +30,7 @@ import { useCreateTable, useUpdateTable } from "@/services/tables";
 import type { TablePublic } from "@/services/tables";
 import type { components } from "@/lib/v1";
 import { PolicyEditor } from "./PolicyEditor";
+import { CodeEditor } from "./CodeEditor";
 
 type TablePolicies = components["schemas"]["TablePolicies"];
 
@@ -272,11 +273,15 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 								<FormItem>
 									<FormLabel>Schema (Optional)</FormLabel>
 									<FormControl>
-										<Textarea
-											placeholder='{"type": "object", "properties": {...}}'
-											className="font-mono text-sm"
-											rows={5}
-											{...field}
+										<CodeEditor
+											mode="json"
+											text={field.value ?? ""}
+											onChange={(next) =>
+												field.onChange(next)
+											}
+											path="table-schema.json"
+											height="200px"
+											data-testid="table-schema-editor"
 										/>
 									</FormControl>
 									<FormDescription>

@@ -200,8 +200,8 @@ describe("TableDialog — validation", () => {
 		);
 
 		await user.type(screen.getByLabelText(/table name/i), "my_table");
-		// fireEvent.change avoids userEvent.type interpreting `{` as a keyboard modifier.
-		fireEvent.change(screen.getByLabelText(/^schema/i), {
+		// Schema field is a Monaco editor mocked as a textarea labelled by its `path` prop.
+		fireEvent.change(screen.getByLabelText("table-schema.json"), {
 			target: { value: "{not json" },
 		});
 		await user.click(screen.getByRole("button", { name: /^create$/i }));
@@ -225,8 +225,8 @@ describe("TableDialog — create mode", () => {
 			screen.getByLabelText(/description/i),
 			"Support tickets",
 		);
-		// fireEvent.change avoids userEvent.type interpreting `{` as a keyboard modifier.
-		fireEvent.change(screen.getByLabelText(/^schema/i), {
+		// Schema field is a Monaco editor mocked as a textarea labelled by its `path` prop.
+		fireEvent.change(screen.getByLabelText("table-schema.json"), {
 			target: { value: '{"type":"object"}' },
 		});
 

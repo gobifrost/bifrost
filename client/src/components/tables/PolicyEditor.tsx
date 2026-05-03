@@ -34,7 +34,7 @@ import {
 	TabsTrigger,
 } from "@/components/ui/tabs";
 
-import { PolicyCodeView } from "./PolicyCodeView";
+import { CodeEditor } from "./CodeEditor";
 import { PolicyReferencePanel } from "./PolicyReferencePanel";
 import {
 	POLICY_TEMPLATES,
@@ -418,19 +418,21 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 				</TabsList>
 
 				<TabsContent value="json" className="min-h-[320px]">
-					<PolicyCodeView
+					<CodeEditor
 						mode="json"
 						text={jsonText}
 						onChange={handleJsonText}
+						path="policies.json"
 						data-testid="policy-editor-json"
 					/>
 				</TabsContent>
 
 				<TabsContent value="yaml" className="min-h-[320px]">
-					<PolicyCodeView
+					<CodeEditor
 						mode="yaml"
 						text={yamlText}
 						onChange={handleYamlText}
+						path="policies.yaml"
 						data-testid="policy-editor-yaml"
 					/>
 				</TabsContent>
