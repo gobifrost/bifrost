@@ -13,7 +13,7 @@
  * filter — every caller passes) and an editable expression node.
  */
 
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import { Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -846,6 +846,36 @@ function LiteralBody({
 	);
 }
 
+// Coerce a chip's typed text into the most specific scalar the Python
+// validator accepts (str | int | float | bool | None). Order matters:
+// boolean / null literals are checked first (case-insensitive exact match),
+// then a strict numeric form (no scientific notation, no trailing dot).
+// Anything else stays a string. Keeping this conservative — `1e5`, `1.`,
+// `+42` all stay strings — avoids surprising the user in the rare cases
+// where they actually want those literal characters.
+function coerceChip(text: string): string | number | boolean | null {
+	const lower = text.toLowerCase();
+	if (lower === "true") return true;
+	if (lower === "false") return false;
+	if (lower === "null") return null;
+	if (/^-?\d+(\.\d+)?$/.test(text)) {
+		const n = Number(text);
+		if (Number.isFinite(n)) return n;
+	}
+	return text;
+}
+
+function renderChip(v: unknown): ReactNode {
+	if (v === null) {
+		return <span className="text-muted-foreground italic">null</span>;
+	}
+	if (typeof v === "string") {
+		return `"${v}"`;
+	}
+	// number, boolean: bare literal.
+	return String(v);
+}
+
 function ChipList({
 	values,
 	onChange,
@@ -856,7 +886,7 @@ function ChipList({
 	function addChip(text: string) {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		onChange([...values, trimmed]);
+		onChange([...values, coerceChip(trimmed)]);
 	}
 	function removeChip(idx: number) {
 		const copy = values.slice();
@@ -872,7 +902,7 @@ function ChipList({
 					className="inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-xs"
 					data-testid={`chip-${idx}`}
 				>
-					{typeof v === "string" ? v : JSON.stringify(v)}
+					{renderChip(v)}
 					<button
 						type="button"
 						className="text-muted-foreground hover:text-destructive"
@@ -885,10 +915,10 @@ function ChipList({
 			))}
 			<Input
 				aria-label="Add list value"
-				className="h-7 w-[140px] text-xs"
-				placeholder="Add value, Enter"
+				className="h-7 w-[200px] text-xs"
+				placeholder="Enter, comma, or tab to add. Strings need no quotes; numbers, true, false, null are auto-typed."
 				onKeyDown={(e) => {
-					if (e.key === "Enter" || e.key === ",") {
+					if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
 						e.preventDefault();
 						const target = e.currentTarget;
 						addChip(target.value);

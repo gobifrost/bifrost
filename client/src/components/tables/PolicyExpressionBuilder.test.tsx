@@ -199,6 +199,81 @@ describe("PolicyExpressionBuilder — in chip list", () => {
 			screen.getByText(/in: requires a non-empty list/i),
 		).toBeInTheDocument();
 	});
+
+	it("coerces a numeric chip to number", () => {
+		const value: ExprNode = { in: [{ row: "amount" }, []] };
+		renderWithProviders(
+			<PolicyExpressionBuilder value={value} onChange={onChange} />,
+		);
+		const chipInput = screen.getByLabelText(/add list value/i);
+		fireEvent.change(chipInput, { target: { value: "42" } });
+		fireEvent.keyDown(chipInput, { key: "Enter" });
+		const last = lastEmitted() as { in: [unknown, unknown[]] };
+		expect(last.in[1]).toEqual([42]);
+	});
+
+	it("coerces true / false / null to matching scalars", () => {
+		// Each coercion is independent: drive one chip per render.
+		for (const [text, expected] of [
+			["true", true],
+			["false", false],
+			["null", null],
+		] as const) {
+			const local = vi.fn<(next: ExprNode | null) => void>();
+			const value: ExprNode = { in: [{ row: "x" }, []] };
+			const { unmount } = renderWithProviders(
+				<PolicyExpressionBuilder value={value} onChange={local} />,
+			);
+			const chipInput = screen.getByLabelText(/add list value/i);
+			fireEvent.change(chipInput, { target: { value: text } });
+			fireEvent.keyDown(chipInput, { key: "Enter" });
+			const last = local.mock.calls.at(-1)?.[0] as {
+				in: [unknown, unknown[]];
+			};
+			expect(last.in[1]).toEqual([expected]);
+			unmount();
+		}
+	});
+
+	it("leaves non-numeric, non-keyword text as a string", () => {
+		const value: ExprNode = { in: [{ row: "name" }, []] };
+		renderWithProviders(
+			<PolicyExpressionBuilder value={value} onChange={onChange} />,
+		);
+		const chipInput = screen.getByLabelText(/add list value/i);
+		fireEvent.change(chipInput, { target: { value: "hello" } });
+		fireEvent.keyDown(chipInput, { key: "Enter" });
+		const last = lastEmitted() as { in: [unknown, unknown[]] };
+		expect(last.in[1]).toEqual(["hello"]);
+	});
+
+	it("coerces a mixed sequence of chips per-chip", () => {
+		// Build the list cumulatively by re-rendering with the prior emit so
+		// each Enter operates on the accumulating array. The builder is fully
+		// controlled — without rerender, each addChip would be relative to
+		// the original empty list.
+		let value: ExprNode = { in: [{ row: "x" }, []] };
+		const local = vi.fn<(next: ExprNode | null) => void>((next) => {
+			if (next && typeof next === "object" && "in" in next) {
+				value = next as ExprNode;
+			}
+		});
+		const { rerender } = renderWithProviders(
+			<PolicyExpressionBuilder value={value} onChange={local} />,
+		);
+		for (const text of ["42", "true", "hello", "null"]) {
+			const chipInput = screen.getByLabelText(/add list value/i);
+			fireEvent.change(chipInput, { target: { value: text } });
+			fireEvent.keyDown(chipInput, { key: "Enter" });
+			rerender(
+				<PolicyExpressionBuilder value={value} onChange={local} />,
+			);
+		}
+		const last = local.mock.calls.at(-1)?.[0] as {
+			in: [unknown, unknown[]];
+		};
+		expect(last.in[1]).toEqual([42, true, "hello", null]);
+	});
 });
 
 describe("PolicyExpressionBuilder — and operand removal", () => {
