@@ -34,6 +34,7 @@ import {
 	TabsTrigger,
 } from "@/components/ui/tabs";
 
+import { PolicyCodeView } from "./PolicyCodeView";
 import { PolicyFormView } from "./PolicyFormView";
 import { PolicyReferencePanel } from "./PolicyReferencePanel";
 import {
@@ -179,6 +180,58 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 	}
 
 	/**
+	 * JSON-tab keystroke handler. Always updates the buffer; tries to
+	 * parse and emit on every keystroke so a valid edit immediately
+	 * propagates to `onChange` (and reseeds the YAML sibling). An empty
+	 * buffer collapses to `null`. Invalid JSON sets the parse-error
+	 * indicator and does NOT call `onChange` — the user keeps editing
+	 * with the broken text intact.
+	 */
+	function handleJsonText(next: string) {
+		setJsonText(next);
+		const trimmed = next.trim();
+		if (!trimmed) {
+			setJsonParseError(null);
+			emit(null);
+			return;
+		}
+		try {
+			const parsed = asTablePolicies(JSON.parse(next));
+			setJsonParseError(null);
+			emit(parsed);
+		} catch (err) {
+			setJsonParseError(
+				err instanceof Error ? err.message : "Invalid JSON",
+			);
+		}
+	}
+
+	/**
+	 * YAML-tab keystroke handler — same contract as `handleJsonText`,
+	 * but parsed via `js-yaml` with the JSON_SCHEMA (no anchors / aliases
+	 * / custom types) so we round-trip cleanly into the JSON tab.
+	 */
+	function handleYamlText(next: string) {
+		setYamlText(next);
+		const trimmed = next.trim();
+		if (!trimmed) {
+			setYamlParseError(null);
+			emit(null);
+			return;
+		}
+		try {
+			const raw = yaml.load(next, { schema: yaml.JSON_SCHEMA });
+			const parsed = raw === null ? null : asTablePolicies(raw);
+			setYamlParseError(null);
+			emit(parsed);
+		} catch (err) {
+			setYamlParseError(
+				err instanceof Error ? err.message : "Invalid YAML",
+			);
+		}
+	}
+
+	/**
 	 * Switch tabs, parsing/reserializing the source tab's contents into the
 	 * destination grammar where needed. Returns true on success; false (and
 	 * leaves `activeTab` untouched) if the source tab has an unresolved
@@ -298,25 +351,21 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 				</TabsContent>
 
 				<TabsContent value="json" className="min-h-[320px]">
-					<div
-						data-testid="json-tab-stub"
-						data-buffer={jsonText}
-						className="text-sm text-muted-foreground"
-					>
-						JSON tab (placeholder) — buffer is wired; Monaco lands
-						in Task 3.
-					</div>
+					<PolicyCodeView
+						mode="json"
+						text={jsonText}
+						onChange={handleJsonText}
+						data-testid="policy-editor-json"
+					/>
 				</TabsContent>
 
 				<TabsContent value="yaml" className="min-h-[320px]">
-					<div
-						data-testid="yaml-tab-stub"
-						data-buffer={yamlText}
-						className="text-sm text-muted-foreground"
-					>
-						YAML tab (placeholder) — buffer is wired; Monaco lands
-						in Task 3.
-					</div>
+					<PolicyCodeView
+						mode="yaml"
+						text={yamlText}
+						onChange={handleYamlText}
+						data-testid="policy-editor-yaml"
+					/>
 				</TabsContent>
 			</Tabs>
 

@@ -1,19 +1,28 @@
 /**
- * Component tests for PolicyEditor (Task 1 shell).
+ * Component tests for PolicyEditor.
  *
- * The editor is now a tabbed shell — the Form/JSON/YAML tab content is
- * stubbed in this task and gets filled in by Tasks 2 and 3. These tests
- * cover the responsibilities the shell already owns:
+ * The editor is a three-tab shell (Form / JSON / YAML). The JSON and YAML
+ * tabs each render a single Monaco editor for the whole `TablePolicies`
+ * document; this test file mocks `@monaco-editor/react` to a textarea
+ * labelled by its `path` prop so we can drive the buffers from tests.
+ *
+ * Coverage here:
  *   - empty-state hint + "Add policy"
  *   - template insertion via the toolbar Select
- *   - tab switching with placeholder content
+ *   - tab switching renders the right editor
+ *   - JSON tab shows pretty-printed JSON of `value`
+ *   - JSON / YAML keystrokes parse and emit
+ *   - clearing a code tab collapses to null
+ *   - invalid JSON surfaces the parse-error row
+ *   - tab switch is blocked while a code tab has an unresolved parse error
+ *   - inserting a template from the JSON tab reseeds the JSON buffer
  *   - Reference button opens the side sheet
  *
- * Task 6 owns the full rewrite once the real tab content lands.
+ * Task 6 owns the full integration rewrite that crosses tab boundaries.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen } from "@/test-utils";
+import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 import type { ReactNode } from "react";
 
 vi.mock("@monaco-editor/react", () => ({
@@ -185,10 +194,150 @@ describe("PolicyEditor — templates", () => {
 		// pattern). Mirror that so we exercise the same code path.
 		const emitted = lastEmitted();
 		rerender(<PolicyEditor value={emitted} onChange={onChange} />);
-		const stub = screen.getByTestId("json-tab-stub");
-		const buffer = stub.getAttribute("data-buffer") ?? "";
-		expect(buffer).toContain('"own_row"');
-		expect(buffer).toContain('"created_by"');
+		const editor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		expect(editor.value).toContain('"own_row"');
+		expect(editor.value).toContain('"created_by"');
+	});
+});
+
+describe("PolicyEditor — JSON tab", () => {
+	it("shows pretty-printed JSON of value when value is non-null", async () => {
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const editor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		expect(editor.value).toBe(JSON.stringify(value, null, 2));
+	});
+
+	it("typing valid JSON emits parsed TablePolicies on every keystroke", async () => {
+		const { user } = renderWithProviders(
+			<PolicyEditor value={null} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const editor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		const next = JSON.stringify(
+			{ policies: [{ name: "p1", actions: ["read"], when: null }] },
+			null,
+			2,
+		);
+		fireEvent.change(editor, { target: { value: next } });
+		const emitted = lastEmitted();
+		expect(emitted).not.toBeNull();
+		expect(emitted!.policies).toHaveLength(1);
+		expect(emitted!.policies![0]!.name).toBe("p1");
+	});
+
+	it("clearing the JSON buffer collapses to null", async () => {
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const editor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		fireEvent.change(editor, { target: { value: "" } });
+		expect(lastEmitted()).toBeNull();
+	});
+
+	it("invalid JSON shows the parse-error row and does not emit", async () => {
+		const { user } = renderWithProviders(
+			<PolicyEditor value={null} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const editor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		// Sentinel so we can detect spurious emits.
+		onChange.mockClear();
+		fireEvent.change(editor, { target: { value: "{not json" } });
+		expect(
+			screen.getByTestId("policy-editor-parse-error"),
+		).toBeInTheDocument();
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	it("blocks tab switch while a parse error is unresolved", async () => {
+		const { user } = renderWithProviders(
+			<PolicyEditor value={null} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const editor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		fireEvent.change(editor, { target: { value: "{not json" } });
+		// Try to switch back to Form. The parse-error row stays, and the
+		// JSON editor remains visible (i.e. activeTab did not change).
+		await user.click(screen.getByRole("tab", { name: /^form$/i }));
+		expect(
+			screen.getByTestId("policy-editor-parse-error"),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText("policies.json")).toBeVisible();
+	});
+});
+
+describe("PolicyEditor — YAML tab", () => {
+	it("typing valid YAML emits parsed TablePolicies", async () => {
+		const { user } = renderWithProviders(
+			<PolicyEditor value={null} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /yaml/i }));
+		const editor = screen.getByLabelText(
+			"policies.yaml",
+		) as HTMLTextAreaElement;
+		const yamlSrc = `policies:
+  - name: p1
+    actions:
+      - read
+    when: null
+`;
+		fireEvent.change(editor, { target: { value: yamlSrc } });
+		const emitted = lastEmitted();
+		expect(emitted).not.toBeNull();
+		expect(emitted!.policies).toHaveLength(1);
+		expect(emitted!.policies![0]!.name).toBe("p1");
+		expect(emitted!.policies![0]!.when).toBeNull();
+	});
+
+	it("clearing the YAML buffer collapses to null", async () => {
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /yaml/i }));
+		const editor = screen.getByLabelText(
+			"policies.yaml",
+		) as HTMLTextAreaElement;
+		fireEvent.change(editor, { target: { value: "" } });
+		expect(lastEmitted()).toBeNull();
+	});
+
+	it("serializes when:null literally so always-true rules are visible", async () => {
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /yaml/i }));
+		const editor = screen.getByLabelText(
+			"policies.yaml",
+		) as HTMLTextAreaElement;
+		expect(editor.value).toContain("when: null");
 	});
 });
 
@@ -202,7 +351,7 @@ describe("PolicyEditor — tab shell", () => {
 		expect(screen.getAllByTestId(/^policy-row-/).length).toBe(1);
 	});
 
-	it("clicking the JSON tab shows the json stub", async () => {
+	it("clicking the JSON tab shows the JSON Monaco editor", async () => {
 		const value: TablePolicies = {
 			policies: [{ name: "p1", actions: ["read"], when: null }],
 		};
@@ -210,10 +359,10 @@ describe("PolicyEditor — tab shell", () => {
 			<PolicyEditor value={value} onChange={onChange} />,
 		);
 		await user.click(screen.getByRole("tab", { name: /json/i }));
-		expect(screen.getByTestId("json-tab-stub")).toBeVisible();
+		expect(screen.getByLabelText("policies.json")).toBeVisible();
 	});
 
-	it("clicking the YAML tab shows the yaml stub", async () => {
+	it("clicking the YAML tab shows the YAML Monaco editor", async () => {
 		const value: TablePolicies = {
 			policies: [{ name: "p1", actions: ["read"], when: null }],
 		};
@@ -221,7 +370,7 @@ describe("PolicyEditor — tab shell", () => {
 			<PolicyEditor value={value} onChange={onChange} />,
 		);
 		await user.click(screen.getByRole("tab", { name: /yaml/i }));
-		expect(screen.getByTestId("yaml-tab-stub")).toBeVisible();
+		expect(screen.getByLabelText("policies.yaml")).toBeVisible();
 	});
 
 	it("Form tab still shows the empty-state hint when value is null", () => {
@@ -243,8 +392,3 @@ describe("PolicyEditor — reference panel", () => {
 	});
 });
 
-// TODO(task-3): test that toolbar disables when activeParseError is set.
-// Once Task 3 wires the JSON/YAML Monaco editors, the placeholder stubs go
-// away and we can drive a parse error by typing invalid text into the
-// buffer. Until then the disabled-when-error guard is implemented in
-// PolicyEditor but not exercised by a test.
