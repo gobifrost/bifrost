@@ -573,25 +573,75 @@ export function MCPConnectionEdit() {
 							service connection is healthy to populate.
 						</p>
 					) : (
-						<DataTable>
+						<>
+							{/*
+							 * Auth-context summary at the connection level.
+							 * The MCP protocol's tools/list response doesn't
+							 * carry per-tool auth-context metadata, so we
+							 * describe how this connection will resolve
+							 * tokens once, instead of slapping a misleading
+							 * badge on every row.
+							 */}
+							<div className="text-xs text-muted-foreground border-l-2 border-blue-500 bg-blue-500/5 px-3 py-2 rounded-sm">
+								{isClientCredentials ? (
+									<>
+										<strong>Server-to-server auth:</strong>{" "}
+										every tool call uses the shared service
+										token (no per-user mode in
+										client_credentials flow).
+									</>
+								) : availableInChat &&
+									availableToAutonomous ? (
+									<>
+										Tools resolve to the calling user's
+										personal token if connected; fall back
+										to the shared service token in chat
+										and autonomous runs.
+									</>
+								) : availableInChat ? (
+									<>
+										Tools resolve to the calling user's
+										personal token if connected; fall back
+										to the shared service token in chat
+										only.{" "}
+										<em>
+											Autonomous agent runs cannot use
+											these tools until "Available to
+											autonomous agents" is enabled.
+										</em>
+									</>
+								) : availableToAutonomous ? (
+									<>
+										Tools resolve to the calling user's
+										personal token if connected. Autonomous
+										runs use the shared service token.{" "}
+										<em>
+											Chat users without a personal
+											connection get a connect prompt.
+										</em>
+									</>
+								) : (
+									<>
+										<strong>Per-user only:</strong> users
+										must individually OAuth their account;
+										no shared service fallback. Autonomous
+										agent runs cannot use these tools.
+									</>
+								)}
+							</div>
+							<DataTable>
 							<DataTableHeader>
 								<DataTableRow>
 									<DataTableHead className="w-10">
 										Enabled
 									</DataTableHead>
 									<DataTableHead>Tool</DataTableHead>
-									<DataTableHead>Auth context</DataTableHead>
 								</DataTableRow>
 							</DataTableHeader>
 							<DataTableBody>
 								{(connection.tools ?? []).map((tool) => {
 									const enabled =
 										toolEnabledMap[tool.id] ?? tool.enabled;
-									const authBadge =
-										connection.available_in_chat ||
-										connection.available_to_autonomous
-											? "Service auth"
-											: "Per-user only";
 									return (
 										<DataTableRow key={tool.id}>
 											<DataTableCell>
@@ -618,19 +668,12 @@ export function MCPConnectionEdit() {
 													</div>
 												)}
 											</DataTableCell>
-											<DataTableCell>
-												<Badge
-													variant="default"
-													className="bg-blue-600 hover:bg-blue-700"
-												>
-													{authBadge}
-												</Badge>
-											</DataTableCell>
 										</DataTableRow>
 									);
 								})}
 							</DataTableBody>
 						</DataTable>
+						</>
 					)}
 					<p className="text-xs text-muted-foreground">
 						Catalog is per-connection: the vendor's tools/list
