@@ -339,6 +339,34 @@ describe("PolicyEditor — YAML tab", () => {
 		) as HTMLTextAreaElement;
 		expect(editor.value).toContain("when: null");
 	});
+
+	it("shows the YAML serialization of the current value when the tab is opened", async () => {
+		// Plan-matrix item: "YAML tab (after click) shows the YAML
+		// serialization." Asserts the initial buffer matches what we would
+		// expect from a yaml.dump of value, not just an arbitrary substring.
+		const value: TablePolicies = {
+			policies: [
+				{
+					name: "p1",
+					actions: ["read"],
+					when: { eq: [{ row: "created_by" }, { user: "user_id" }] },
+				},
+			],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /yaml/i }));
+		const editor = screen.getByLabelText(
+			"policies.yaml",
+		) as HTMLTextAreaElement;
+		// Rather than hand-rolling the expected YAML string, parse the buffer
+		// back through js-yaml and assert structural equivalence with `value`.
+		const yaml = await import("js-yaml");
+		expect(yaml.load(editor.value, { schema: yaml.JSON_SCHEMA })).toEqual(
+			value,
+		);
+	});
 });
 
 describe("PolicyEditor — tab shell", () => {
@@ -377,6 +405,90 @@ describe("PolicyEditor — tab shell", () => {
 		renderWithProviders(<PolicyEditor value={null} onChange={onChange} />);
 		expect(screen.queryAllByTestId(/^policy-row-/).length).toBe(0);
 		expect(screen.getByText(/no policies/i)).toBeInTheDocument();
+	});
+});
+
+describe("PolicyEditor — tab round-trip", () => {
+	it("Form → JSON → YAML preserves the AST through all three serializations", async () => {
+		// Plan-matrix item: round-trip smoke test crossing tab boundaries.
+		// Drive the editor through Form (default) → JSON → YAML, asserting
+		// the parsed contents on each code tab match the structural value.
+		const value: TablePolicies = {
+			policies: [
+				{
+					name: "own_row",
+					description: "owner reads + updates",
+					actions: ["read", "update"],
+					when: { eq: [{ row: "created_by" }, { user: "user_id" }] },
+				},
+			],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+
+		// Form tab: a single rule row exists for the policy.
+		expect(screen.getAllByTestId(/^policy-row-/)).toHaveLength(1);
+
+		// JSON tab: pretty-printed JSON parses back to the same TablePolicies.
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const jsonEditor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		expect(JSON.parse(jsonEditor.value)).toEqual(value);
+
+		// YAML tab: same AST round-trips through YAML serialization.
+		await user.click(screen.getByRole("tab", { name: /yaml/i }));
+		const yamlEditor = screen.getByLabelText(
+			"policies.yaml",
+		) as HTMLTextAreaElement;
+		const yaml = await import("js-yaml");
+		expect(yaml.load(yamlEditor.value, { schema: yaml.JSON_SCHEMA })).toEqual(
+			value,
+		);
+	});
+});
+
+describe("PolicyEditor — Form-tab behavior at editor surface", () => {
+	it("always-true toggle hides the operator picker / node body", async () => {
+		// Plan-matrix item: always-true mode hides the builder body. Pin
+		// this at the PolicyEditor surface (rather than the inner builder)
+		// so it survives any future refactor that re-roots the always-true
+		// toggle. The builder only mounts inside an expanded row, so expand
+		// first, then assert the always-true radio is checked AND no
+		// `policy-expr-node-*` body is rendered.
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user, container } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("button", { name: /expand/i }));
+		expect(
+			screen.getByRole("radio", { name: /always true/i }),
+		).toHaveAttribute("aria-checked", "true");
+		expect(
+			container.querySelectorAll("[data-testid^='policy-expr-node-']")
+				.length,
+		).toBe(0);
+	});
+
+	it("removing the last policy collapses to onChange(null)", async () => {
+		// Plan-matrix item: "Remove row → if last, onChange(null)". The
+		// PolicyFormView layer forwards `{policies: []}`; the PolicyEditor
+		// `emit()` is what collapses that to null. Pin the collapse at the
+		// editor surface so a refactor that moves the collapse can't
+		// silently regress it.
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user } = renderWithProviders(
+			<PolicyEditor value={value} onChange={onChange} />,
+		);
+		await user.click(
+			screen.getByRole("button", { name: /remove policy/i }),
+		);
+		expect(lastEmitted()).toBeNull();
 	});
 });
 

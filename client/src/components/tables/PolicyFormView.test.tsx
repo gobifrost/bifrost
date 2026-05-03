@@ -185,6 +185,29 @@ describe("PolicyFormView — list rendering", () => {
 			screen.queryByTestId(/^policy-row-expanded-/),
 		).not.toBeInTheDocument();
 	});
+
+	it("expanding a row reveals the description input and the when builder", async () => {
+		// Plan-matrix item: "expanding shows the description + when builder".
+		// The expanded panel is the only place description + builder mount.
+		const value: TablePolicies = {
+			policies: [{ name: "p1", actions: ["read"], when: null }],
+		};
+		const { user } = renderWithProviders(
+			<PolicyFormView value={value} onChange={onChange} />,
+		);
+		// Pre-expansion: description input + builder are NOT in the DOM.
+		expect(screen.queryByLabelText(/policy description/i)).toBeNull();
+		expect(
+			screen.queryByTestId("policy-expression-builder-root"),
+		).toBeNull();
+
+		await user.click(screen.getByRole("button", { name: /expand/i }));
+
+		expect(screen.getByLabelText(/policy description/i)).toBeInTheDocument();
+		expect(
+			screen.getByTestId("policy-expression-builder-root"),
+		).toBeInTheDocument();
+	});
 });
 
 describe("PolicyFormView — mutations", () => {
