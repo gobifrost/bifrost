@@ -74,7 +74,14 @@ function readMetadata(metadata: DiscoveredMetadata) {
 	return { authorization_url, token_url, audience, scopes };
 }
 
-export function MCPServerForm() {
+interface MCPServerFormProps {
+	/** Called after a successful create. If omitted, navigates to the new server's detail page. */
+	onSuccess?: (serverId: string) => void;
+	/** Called when the user clicks Cancel. If omitted, navigates back to the list page. */
+	onCancel?: () => void;
+}
+
+export function MCPServerForm({ onSuccess, onCancel }: MCPServerFormProps = {}) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const createServer = $api.useMutation("post", "/api/mcp-servers");
@@ -197,7 +204,11 @@ export function MCPServerForm() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/mcp-servers"],
 			});
-			navigate(`/mcp-servers/${result.id}`);
+			if (onSuccess) {
+				onSuccess(result.id);
+			} else {
+				navigate(`/mcp-servers/${result.id}`);
+			}
 		} catch (err) {
 			toast.error(
 				err instanceof Error
@@ -428,7 +439,13 @@ export function MCPServerForm() {
 					<Button
 						type="button"
 						variant="outline"
-						onClick={() => navigate("/mcp-servers")}
+						onClick={() => {
+							if (onCancel) {
+								onCancel();
+							} else {
+								navigate("/mcp-servers");
+							}
+						}}
 					>
 						Cancel
 					</Button>

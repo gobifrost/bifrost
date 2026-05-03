@@ -241,7 +241,13 @@ export function MCPServers() {
 							discovery to populate OAuth fields.
 						</DialogDescription>
 					</DialogHeader>
-					<MCPServerForm />
+					<MCPServerForm
+						onCancel={() => setIsCreateOpen(false)}
+						onSuccess={(serverId) => {
+							setIsCreateOpen(false);
+							navigate(`/mcp-servers/${serverId}`);
+						}}
+					/>
 				</DialogContent>
 			</Dialog>
 		</div>
