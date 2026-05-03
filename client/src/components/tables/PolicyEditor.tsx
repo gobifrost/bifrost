@@ -16,7 +16,7 @@
  * in the create/update request body.
  */
 
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import yaml from "js-yaml";
 
@@ -77,7 +77,6 @@ function asTablePolicies(parsed: unknown): TablePolicies {
 }
 
 export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
-	const idPrefix = useId();
 	const [activeTab, setActiveTab] = useState<TabKey>("form");
 	const [showRef, setShowRef] = useState(false);
 	const [templateKey, setTemplateKey] = useState<string>("");
@@ -116,7 +115,10 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		setYamlParseError(null);
 	}
 
-	function emit(next: TablePolicies | null) {
+	function emit(
+		next: TablePolicies | null,
+		opts: { resyncBuffers?: boolean } = {},
+	) {
 		// Empty policy list collapses back to null so we don't persist
 		// `{policies: []}` and accidentally lock the table down for everyone.
 		const collapsed =
@@ -130,42 +132,55 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		setLastSyncedJson(nextJson);
 		setLastSyncedYaml(nextYaml);
 		// Refresh sibling buffers so a tab switch shows the latest value.
-		// The active tab's buffer is preserved by the !== check.
-		if (activeTab !== "json") {
+		// Keystroke-driven commits skip the active tab's buffer so the user's
+		// in-progress text isn't clobbered by their own commit. AST-driven
+		// mutations (template insert / add policy / remove policy) pass
+		// `resyncBuffers: true` to force-refresh the active buffer too, since
+		// the change didn't originate from the active editor's text.
+		if (opts.resyncBuffers || activeTab !== "json") {
 			setJsonText(nextJson);
 			setJsonParseError(null);
 		}
-		if (activeTab !== "yaml") {
+		if (opts.resyncBuffers || activeTab !== "yaml") {
 			setYamlText(nextYaml);
 			setYamlParseError(null);
 		}
 		onChange(collapsed);
 	}
 
-	function commitPolicies(nextPolicies: Policy[]) {
-		emit(nextPolicies.length === 0 ? null : { policies: nextPolicies });
+	function commitPolicies(
+		nextPolicies: Policy[],
+		opts: { resyncBuffers?: boolean } = {},
+	) {
+		emit(
+			nextPolicies.length === 0 ? null : { policies: nextPolicies },
+			opts,
+		);
 	}
 
 	function handleTemplate(key: string) {
 		if (!key) return;
 		const tpl = instantiateTemplate(key as PolicyTemplateKey);
 		const current: Policy[] = value?.policies ?? [];
-		commitPolicies([...current, tpl]);
+		commitPolicies([...current, tpl], { resyncBuffers: true });
 		// Reset the trigger so the same template can be re-inserted next time.
 		setTemplateKey("");
 	}
 
 	function addBlank() {
 		const current: Policy[] = value?.policies ?? [];
-		commitPolicies([
-			...current,
-			{
-				name: "new_policy",
-				description: null,
-				actions: ["read"],
-				when: null,
-			},
-		]);
+		commitPolicies(
+			[
+				...current,
+				{
+					name: "new_policy",
+					description: null,
+					actions: ["read"],
+					when: null,
+				},
+			],
+			{ resyncBuffers: true },
+		);
 	}
 
 	/**
@@ -300,19 +315,22 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 				<TabsContent value="json" className="min-h-[320px]">
 					<div
 						data-testid="json-tab-stub"
-						data-prefix={idPrefix}
+						data-buffer={jsonText}
 						className="text-sm text-muted-foreground"
 					>
-						JSON tab (placeholder)
+						JSON tab (placeholder) — buffer is wired; Monaco lands
+						in Task 3.
 					</div>
 				</TabsContent>
 
 				<TabsContent value="yaml" className="min-h-[320px]">
 					<div
 						data-testid="yaml-tab-stub"
+						data-buffer={yamlText}
 						className="text-sm text-muted-foreground"
 					>
-						YAML tab (placeholder)
+						YAML tab (placeholder) — buffer is wired; Monaco lands
+						in Task 3.
 					</div>
 				</TabsContent>
 			</Tabs>

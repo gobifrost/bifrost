@@ -165,6 +165,31 @@ describe("PolicyEditor — templates", () => {
 			eq: [{ row: "created_by" }, { user: "user_id" }],
 		});
 	});
+
+	it("inserting a template while the JSON tab is active reseeds the JSON buffer", async () => {
+		// Regression: AST mutations driven from outside the active code tab
+		// (template insert / Add policy / Remove policy) used to leave the
+		// active tab's buffer stale because emit() always skipped the active
+		// tab. The user would see "no change" until they tab away and back.
+		// The fix is the `resyncBuffers` opt-in on emit(); this test pins it.
+		const { user, rerender } = renderWithProviders(
+			<PolicyEditor value={null} onChange={onChange} />,
+		);
+		await user.click(screen.getByRole("tab", { name: /json/i }));
+		const select = screen.getByLabelText(
+			/insert template/i,
+		) as HTMLSelectElement;
+		select.value = "own_row";
+		select.dispatchEvent(new Event("change", { bubbles: true }));
+		// Parent echoes the emitted value back via props (the real TableDialog
+		// pattern). Mirror that so we exercise the same code path.
+		const emitted = lastEmitted();
+		rerender(<PolicyEditor value={emitted} onChange={onChange} />);
+		const stub = screen.getByTestId("json-tab-stub");
+		const buffer = stub.getAttribute("data-buffer") ?? "";
+		expect(buffer).toContain('"own_row"');
+		expect(buffer).toContain('"created_by"');
+	});
 });
 
 describe("PolicyEditor — tab shell", () => {
