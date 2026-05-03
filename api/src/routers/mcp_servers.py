@@ -294,7 +294,11 @@ async def create_mcp_server(
     await ctx.db.flush()
     await ctx.db.refresh(server, ["connections"])
 
-    logger.info(f"Created MCP server template: {log_safe(server.name)} ({server.id})")
+    logger.info(
+        "Created MCP server template: %s (%s)",
+        log_safe(server.name),
+        log_safe(str(server.id)),
+    )
     flow_type = await _resolve_flow_type(ctx, server)
     return _server_to_public(server, oauth_flow_type=flow_type)
 
@@ -332,7 +336,11 @@ async def update_mcp_server(
     await ctx.db.flush()
     await ctx.db.refresh(server, ["connections"])
 
-    logger.info(f"Updated MCP server template: {log_safe(server.name)} ({server.id})")
+    logger.info(
+        "Updated MCP server template: %s (%s)",
+        log_safe(server.name),
+        log_safe(str(server.id)),
+    )
     flow_type = await _resolve_flow_type(ctx, server)
     return _server_to_public(server, oauth_flow_type=flow_type)
 

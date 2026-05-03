@@ -294,11 +294,11 @@ async def resolve_token(
             raise MisconfigError(
                 connection_id=connection.id,
                 reason=(
-                    f"Connection's OAuth flow is client_credentials "
-                    f"(server-to-server only) and 'Available in user chat' "
-                    f"is disabled. Admin must enable that flag for chat "
-                    f"users to invoke these tools — there is no per-user "
-                    f"OAuth path for this connection."
+                    "Connection's OAuth flow is client_credentials "
+                    "(server-to-server only) and 'Available in user chat' "
+                    "is disabled. Admin must enable that flag for chat "
+                    "users to invoke these tools — there is no per-user "
+                    "OAuth path for this connection."
                 ),
             )
         raise NeedsReauthError(

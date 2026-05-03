@@ -33,7 +33,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.orm.base import Base
 
 if TYPE_CHECKING:
-    from src.models.orm.agents import Agent
     from src.models.orm.oauth import OAuthProvider, OAuthToken
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
@@ -172,13 +171,10 @@ class MCPConnection(Base):
         foreign_keys=[service_oauth_token_id],
         lazy="joined",
     )
-    # Agents that have been explicitly granted access to this connection.
-    # Empty list means no agent in the org may use this connection's tools.
-    agents: Mapped[list["Agent"]] = relationship(
-        secondary="agent_mcp_connections",
-        back_populates="mcp_connections",
-        lazy="selectin",
-    )
+    # Note: there's intentionally no `agents` back-relationship here. Going
+    # MCPConnection → Agent would close a module-level import cycle that
+    # CodeQL flags (jackmusick/bifrost). Query through agent_mcp_connections
+    # directly when you need "which agents have this connection."
 
     __table_args__ = (
         Index("ix_mcp_connections_server_id", "server_id"),

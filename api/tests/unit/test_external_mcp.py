@@ -271,15 +271,16 @@ async def test_agent_mcp_connection_relationship(db_session):
     assert len(reloaded_agent.mcp_connections) == 1
     assert reloaded_agent.mcp_connections[0].id == connection.id
 
-    # And the reverse: connection.agents includes the agent.
+    # And the reverse: query through the join table directly. There's
+    # intentionally no MCPConnection.agents back-relationship — closing
+    # that cycle creates a module-level import loop CodeQL flags.
+    from src.models.orm.external_mcp import AgentMCPConnection
     result = await db_session.execute(
-        select(MCPConnection)
-        .where(MCPConnection.id == connection.id)
-        .options(selectinload(MCPConnection.agents))
+        select(AgentMCPConnection.agent_id)
+        .where(AgentMCPConnection.connection_id == connection.id)
     )
-    reloaded_conn = result.scalar_one()
-    assert len(reloaded_conn.agents) == 1
-    assert reloaded_conn.agents[0].id == agent.id
+    bound_agent_ids = [row[0] for row in result.all()]
+    assert bound_agent_ids == [agent.id]
 
 
 @pytest.mark.asyncio

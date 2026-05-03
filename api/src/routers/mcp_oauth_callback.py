@@ -318,7 +318,9 @@ async def mcp_oauth_callback(
     try:
         payload = decode_state(state)
     except StateDecodeError as exc:
-        logger.warning(f"MCP OAuth callback: invalid state ({exc})")
+        logger.warning(
+            "MCP OAuth callback: invalid state (%s)", log_safe(str(exc))
+        )
         return _popup_response(success=False, connection_id="", error=str(exc))
 
     nonce = payload["nonce"]
@@ -330,7 +332,10 @@ async def mcp_oauth_callback(
 
     # 2. Single-use nonce check
     if not await consume_nonce(nonce):
-        logger.warning(f"MCP OAuth callback: state nonce already used or unknown ({nonce[:8]}…)")
+        logger.warning(
+            "MCP OAuth callback: state nonce already used or unknown (%s…)",
+            log_safe(nonce[:8]),
+        )
         return _popup_response(
             success=False,
             connection_id=str(connection_id),
