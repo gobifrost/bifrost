@@ -146,10 +146,6 @@ class TestPersistToken:
     @pytest.mark.asyncio
     async def test_persist_token_inserts_row_with_encryption(self):
         added = []
-
-        async def add_recorder(obj):
-            added.append(obj)
-
         db = MagicMock()
         db.add = lambda obj: added.append(obj)
         db.flush = AsyncMock()

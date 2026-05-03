@@ -110,11 +110,11 @@ async def _refresh_token_in_place(
         return False
 
     if not outcome.get("success"):
-        logger.info(
-            "MCP auth: refresh failed for token %s: %s",
-            token.id,
-            outcome.get("error"),
-        )
+        # Don't log outcome["error"] verbatim — OAuth provider error responses can
+        # echo client tokens or other sensitive material back. We only need to
+        # know that refresh failed; the error type/category is captured upstream
+        # by the OAuth provider service's own logs.
+        logger.info("MCP auth: refresh failed for token %s", token.id)
         return False
 
     token.encrypted_access_token = outcome["encrypted_access_token"]

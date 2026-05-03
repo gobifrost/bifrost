@@ -287,12 +287,20 @@ async def delete_mcp_server(
     if hard:
         await ctx.db.execute(delete(MCPServer).where(MCPServer.id == server_id))
         await ctx.db.flush()
-        logger.info(f"Hard-deleted MCP server template: {log_safe(server.name)} ({server_id})")
+        logger.info(
+            "Hard-deleted MCP server template: %s (%s)",
+            log_safe(server.name),
+            log_safe(str(server_id)),
+        )
     else:
         server.is_active = False
         server.updated_at = datetime.now(timezone.utc)
         await ctx.db.flush()
-        logger.info(f"Soft-deleted MCP server template: {log_safe(server.name)} ({server_id})")
+        logger.info(
+            "Soft-deleted MCP server template: %s (%s)",
+            log_safe(server.name),
+            log_safe(str(server_id)),
+        )
 
 
 # =============================================================================

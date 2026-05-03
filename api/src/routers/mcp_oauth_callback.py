@@ -33,6 +33,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 from starlette.responses import HTMLResponse
 
+from src.core.log_safety import log_safe
+
 from src.config import get_settings
 from src.core.database import DbSession
 from src.core.security import decrypt_secret, encrypt_secret
@@ -305,7 +307,7 @@ async def mcp_oauth_callback(
     """Handle the vendor's redirect after the user consents (or refuses)."""
     # Vendor-side error: surface immediately without any state work.
     if error:
-        logger.info(f"MCP OAuth callback received vendor error: {error}")
+        logger.info("MCP OAuth callback received vendor error: %s", log_safe(error))
         return _popup_response(
             success=False,
             connection_id="",

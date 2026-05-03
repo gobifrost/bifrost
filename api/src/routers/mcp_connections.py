@@ -412,7 +412,7 @@ async def update_mcp_connection(
 
     await ctx.db.flush()
     refreshed = await _get_connection_or_404(ctx, connection_id)
-    logger.info(f"Updated MCP connection {connection_id}")
+    logger.info("Updated MCP connection %s", log_safe(str(connection_id)))
     return _connection_to_public(refreshed)
 
 
@@ -435,7 +435,7 @@ async def delete_mcp_connection(
 
     await ctx.db.execute(delete(MCPConnection).where(MCPConnection.id == connection_id))
     await ctx.db.flush()
-    logger.info(f"Deleted MCP connection {connection_id}")
+    logger.info("Deleted MCP connection %s", log_safe(str(connection_id)))
 
 
 # =============================================================================
@@ -465,7 +465,9 @@ async def refresh_tools(
         tools = await catalog_sync.sync_catalog(connection, ctx.db)
     except Exception as exc:
         logger.warning(
-            f"refresh-tools failed for connection {connection_id}: {exc}"
+            "refresh-tools failed for connection %s: %s",
+            log_safe(str(connection_id)),
+            log_safe(str(exc)),
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
