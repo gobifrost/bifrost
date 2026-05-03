@@ -1,13 +1,16 @@
 /**
  * Side panel that documents the policy AST: USER fields, ROW field examples,
- * available functions, and operators. Lives inside the PolicyEditor and is
- * toggled via the "Reference" button.
+ * available functions, operators, copy-pasteable worked examples, and
+ * footguns. Lives inside the PolicyEditor and is toggled via the "Reference"
+ * button.
  *
  * Sourced from `api/src/models/contracts/policies.py` (KNOWN_USER_FIELDS,
- * _ALL_OPS) and `api/shared/policies/functions.py` (FUNCTIONS). Keep this in
- * sync if those constants change.
+ * _ALL_OPS), `api/shared/policies/functions.py` (FUNCTIONS), and the worked
+ * scenarios in docs/superpowers/specs/2026-04-30-table-policies-design.md.
+ * Keep this in sync if those constants change.
  */
 
+import { useState } from "react";
 import {
 	Sheet,
 	SheetContent,
@@ -15,6 +18,8 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { POLICY_TEMPLATES, type Policy } from "./policy-templates";
 
 interface RefRow {
 	term: string;
@@ -56,10 +61,268 @@ const OPERATORS: RefRow[] = [
 	{ term: "not", def: "Logical NOT. Single operand." },
 	{ term: "eq", def: "Equality. [left, right]." },
 	{ term: "neq", def: "Inequality. [left, right]." },
-	{ term: "lt / lte / gt / gte", def: "Numeric / lexical comparison. [left, right]." },
+	{
+		term: "lt / lte / gt / gte",
+		def: "Numeric / lexical comparison. [left, right].",
+	},
 	{ term: "in", def: "Membership. [operand, [literal, ...]]." },
 	{ term: "is_null", def: "True when the operand is null. Single operand." },
 	{ term: "call", def: "Invoke a function. { call: name, args: [...] }." },
+];
+
+interface WorkedExample {
+	heading: string;
+	description: string;
+	policy: Policy;
+}
+
+/**
+ * Worked examples — copy-pasteable full policies covering every operator and
+ * the canonical scenarios from the table-policies design doc. The first four
+ * (admin_bypass, own_row, own_org, role_gated_read) are pulled from
+ * `policy-templates.ts` so the "Insert template..." menu and this panel stay
+ * aligned.
+ */
+const EXAMPLES: WorkedExample[] = [
+	{
+		heading: "admin_bypass",
+		description: "Platform admins can do anything.",
+		policy: POLICY_TEMPLATES.admin_bypass!,
+	},
+	{
+		heading: "own_row",
+		description: "Row owner can read/update/delete.",
+		policy: POLICY_TEMPLATES.own_row!,
+	},
+	{
+		heading: "own_org",
+		description: "Caller can see rows in their own org.",
+		policy: POLICY_TEMPLATES.own_org!,
+	},
+	{
+		heading: "role_gated_read",
+		description: "A specific role can read.",
+		policy: POLICY_TEMPLATES.role_gated_read!,
+	},
+	{
+		heading: "read_only_finalized",
+		description:
+			"Anyone in org can read finalized rows; nobody can update.",
+		policy: {
+			name: "read_only_finalized",
+			description:
+				"Anyone in org can read finalized rows; nobody can update",
+			actions: ["read"],
+			when: {
+				and: [
+					{
+						eq: [
+							{ row: "organization_id" },
+							{ user: "organization_id" },
+						],
+					},
+					{ eq: [{ row: "data.status" }, "finalized"] },
+				],
+			},
+		},
+	},
+	{
+		heading: "range_read",
+		description: "Range comparison example.",
+		policy: {
+			name: "range_read",
+			description:
+				"Read rows whose data.amount is between 100 and 1000",
+			actions: ["read"],
+			when: {
+				and: [
+					{ gte: [{ row: "data.amount" }, 100] },
+					{ lte: [{ row: "data.amount" }, 1000] },
+				],
+			},
+		},
+	},
+	{
+		heading: "status_membership",
+		description: "Membership against literal list.",
+		policy: {
+			name: "status_membership",
+			description:
+				"Read rows whose data.status is one of an allowed list",
+			actions: ["read"],
+			when: {
+				in: [
+					{ row: "data.status" },
+					["active", "pending", "approved"],
+				],
+			},
+		},
+	},
+	{
+		heading: "field_unset",
+		description: "Null check.",
+		policy: {
+			name: "unassigned",
+			description: "Read rows where data.assignee_id is unset",
+			actions: ["read"],
+			when: { is_null: { row: "data.assignee_id" } },
+		},
+	},
+	{
+		heading: "field_set",
+		description: "\"Is set\" idiom (not + is_null).",
+		policy: {
+			name: "assigned",
+			description:
+				"Read rows where data.assignee_id is set (not null)",
+			actions: ["read"],
+			when: { not: { is_null: { row: "data.assignee_id" } } },
+		},
+	},
+	{
+		heading: "compound_and",
+		description: "Two clauses combined.",
+		policy: {
+			name: "own_open_row",
+			description:
+				"Owner can update only while row.data.status is 'open'",
+			actions: ["update"],
+			when: {
+				and: [
+					{ eq: [{ row: "created_by" }, { user: "user_id" }] },
+					{ eq: [{ row: "data.status" }, "open"] },
+				],
+			},
+		},
+	},
+	{
+		heading: "compound_or",
+		description: "Alternative grants.",
+		policy: {
+			name: "owner_or_role",
+			description:
+				"Either the row owner, or members of 'editors' role can update",
+			actions: ["update"],
+			when: {
+				or: [
+					{ eq: [{ row: "created_by" }, { user: "user_id" }] },
+					{ call: "has_role", args: ["editors"] },
+				],
+			},
+		},
+	},
+	{
+		heading: "nested_and_or",
+		description: "Showing precedence + indentation.",
+		policy: {
+			name: "nested_grant",
+			description: "Read if (own row AND open) OR (platform admin)",
+			actions: ["read"],
+			when: {
+				or: [
+					{
+						and: [
+							{
+								eq: [
+									{ row: "created_by" },
+									{ user: "user_id" },
+								],
+							},
+							{ eq: [{ row: "data.status" }, "open"] },
+						],
+					},
+					{ user: "is_platform_admin" },
+				],
+			},
+		},
+	},
+	{
+		heading: "has_role_name",
+		description: "Function call with role name.",
+		policy: {
+			name: "managers_only",
+			description: "Members of role 'managers' can read all rows",
+			actions: ["read"],
+			when: { call: "has_role", args: ["managers"] },
+		},
+	},
+	{
+		heading: "has_role_uuid",
+		description: "Function call with role UUID (string compared).",
+		policy: {
+			name: "by_role_uuid",
+			description: "Specific role UUID can read",
+			actions: ["read"],
+			when: {
+				call: "has_role",
+				args: ["00000000-0000-0000-0000-000000000123"],
+			},
+		},
+	},
+	{
+		heading: "manager_reads_reports",
+		description:
+			"Denormalized manager_user_id row field (lifted from the design doc).",
+		policy: {
+			name: "manager_reads_reports",
+			description:
+				"Manager (denormalized on the row) can read their reports' rows",
+			actions: ["read"],
+			when: {
+				eq: [{ row: "data.manager_user_id" }, { user: "user_id" }],
+			},
+		},
+	},
+	{
+		heading: "cross_org_provider_read",
+		description:
+			"`or` between own-org and platform-admin (cross-org provider scenario).",
+		policy: {
+			name: "provider_read",
+			description:
+				"Caller can read if it's their own org's row, or if they're a platform admin (cross-org provider scenario)",
+			actions: ["read"],
+			when: {
+				or: [
+					{
+						eq: [
+							{ row: "organization_id" },
+							{ user: "organization_id" },
+						],
+					},
+					{ user: "is_platform_admin" },
+				],
+			},
+		},
+	},
+];
+
+interface FootgunEntry {
+	title: string;
+	body: string;
+}
+
+const FOOTGUNS: FootgunEntry[] = [
+	{
+		title: "null in eq is invalid.",
+		body: "`eq` and `neq` reject `null` literals (the validator uses different SQL/evaluator semantics around null). Use `is_null` instead.",
+	},
+	{
+		title: "Validator rejects `eq: [..., null]` literal.",
+		body: "Same as above from the API author's perspective — the request will fail validation. Always reach for `is_null` when you mean \"unset\".",
+	},
+	{
+		title: "Empty `in` lists rejected.",
+		body: "An `in` predicate requires a non-empty literal list. Empty lists fail validation.",
+	},
+	{
+		title: "`not + is_null` is the \"is set\" idiom.",
+		body: "To check that a field is set (non-null), use `{not: {is_null: {row: '...'}}}`.",
+	},
+	{
+		title: "`eq` on missing JSONB path is false, not error.",
+		body: "If `data.path` doesn't exist on the row, `eq` returns false; the policy doesn't fail. Use `is_null` if 'unset' should grant access.",
+	},
 ];
 
 function RefSection({ title, rows }: { title: string; rows: RefRow[] }) {
@@ -73,6 +336,98 @@ function RefSection({ title, rows }: { title: string; rows: RefRow[] }) {
 							{r.term}
 						</dt>
 						<dd>{r.def}</dd>
+					</div>
+				))}
+			</dl>
+		</section>
+	);
+}
+
+function ExampleBlock({
+	example,
+	copied,
+	onCopy,
+}: {
+	example: WorkedExample;
+	copied: boolean;
+	onCopy: () => void;
+}) {
+	const json = JSON.stringify(example.policy, null, 2);
+	return (
+		<div className="space-y-1">
+			<div className="flex items-center justify-between gap-2">
+				<h5 className="text-sm font-semibold font-mono">
+					{example.heading}
+				</h5>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					className="h-6 px-2 text-xs"
+					onClick={onCopy}
+				>
+					{copied ? "Copied!" : "Copy"}
+				</Button>
+			</div>
+			<p className="text-xs text-muted-foreground">
+				{example.description}
+			</p>
+			<pre className="text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto">
+				<code>{json}</code>
+			</pre>
+		</div>
+	);
+}
+
+function ExamplesSection({ examples }: { examples: WorkedExample[] }) {
+	const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+
+	function handleCopy(idx: number, policy: Policy) {
+		const text = JSON.stringify(policy, null, 2);
+		// Guard the clipboard call so jsdom (which omits navigator.clipboard)
+		// doesn't blow up the visual feedback. The button still flips to
+		// "Copied!" so users get immediate confirmation either way.
+		try {
+			void navigator.clipboard?.writeText(text);
+		} catch {
+			// no-op; the user-visible state still updates
+		}
+		setCopiedIdx(idx);
+		setTimeout(() => {
+			setCopiedIdx((current) => (current === idx ? null : current));
+		}, 1500);
+	}
+
+	return (
+		<section className="space-y-3">
+			<h4 className="text-sm font-semibold">Worked examples</h4>
+			<p className="text-xs text-muted-foreground">
+				Copy-pasteable full policies covering every operator and the
+				canonical scenarios from the table-policies design doc.
+			</p>
+			<div className="space-y-4">
+				{examples.map((ex, idx) => (
+					<ExampleBlock
+						key={ex.heading}
+						example={ex}
+						copied={copiedIdx === idx}
+						onCopy={() => handleCopy(idx, ex.policy)}
+					/>
+				))}
+			</div>
+		</section>
+	);
+}
+
+function FootgunsSection({ entries }: { entries: FootgunEntry[] }) {
+	return (
+		<section className="space-y-2">
+			<h4 className="text-sm font-semibold">Footguns</h4>
+			<dl className="space-y-2 text-sm">
+				{entries.map((f) => (
+					<div key={f.title}>
+						<dt className="font-semibold">{f.title}</dt>
+						<dd className="text-muted-foreground">{f.body}</dd>
 					</div>
 				))}
 			</dl>
@@ -109,6 +464,8 @@ export function PolicyReferencePanel({
 					<RefSection title="ROW fields" rows={ROW_FIELDS} />
 					<RefSection title="Functions" rows={FUNCTIONS} />
 					<RefSection title="Operators" rows={OPERATORS} />
+					<ExamplesSection examples={EXAMPLES} />
+					<FootgunsSection entries={FOOTGUNS} />
 				</div>
 			</SheetContent>
 		</Sheet>
