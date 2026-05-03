@@ -23,6 +23,7 @@ import {
 	within,
 } from "@/test-utils";
 import type { ReactNode } from "react";
+import { POLICY_TEMPLATES } from "./policy-templates";
 
 // Stub Monaco to a textarea labelled by the editor's `path` prop. The
 // PolicyEditorRow uses path=`policy-${rowKey}.json`; PolicyEditor passes
@@ -295,76 +296,49 @@ describe("TableDialog — edit mode", () => {
 });
 
 describe("TableDialog — PolicyEditor save round-trip (security)", () => {
-	// These two integration tests reach into the PolicyEditor's Form-tab
-	// content (per-row name input + Monaco JSON editor). Task 1 of the
-	// policy-editor redesign reduces the Form tab to a placeholder stub,
-	// so the round-trip is currently exercised end-to-end via the JSON
-	// tab buffer in PolicyEditor.test.tsx instead. Task 2 reinstates the
-	// Form-tab UI; Task 6 will restore these assertions against the new
-	// rule-list/when-builder shape.
-	it.skip("creates a table whose policies body matches what the user authored", async () => {
+	// The dialog-level round-trip used to drive per-row name + Monaco
+	// inputs inside the PolicyEditor's Form tab. Task 1 reduces that tab
+	// to a placeholder stub, so we drive the toolbar Insert Template flow
+	// instead — that's a usable surface today and survives the Task 2/3
+	// rewrite (Task 6 will broaden coverage once the per-row inputs are
+	// back). The edit-mode equivalent stays skipped: it tested in-row
+	// mutations that genuinely need the Form tab content.
+	it("creates a table whose policies body matches the inserted template", async () => {
 		const onClose = vi.fn();
 		const { user } = renderWithProviders(
 			<TableDialog open={true} onClose={onClose} />,
 		);
 
-		// Author a name and a custom policy.
 		await user.type(screen.getByLabelText(/table name/i), "secrets");
 
-		// Insert the `own_row` template — this exercises the Select binding
-		// inside PolicyEditor and adds a row with a baseline `when` expression.
+		// Drive the toolbar Insert Template Select to add the `own_row`
+		// template. The mock above swaps Radix Select for a native <select>
+		// labelled `Insert template`; firing a change event with the template
+		// key invokes onValueChange in the real component.
 		const selectTrigger = screen.getByLabelText(
 			/insert template/i,
 		) as HTMLSelectElement;
 		selectTrigger.value = "own_row";
 		selectTrigger.dispatchEvent(new Event("change", { bubbles: true }));
 
-		// Find the policy row that was just added and overwrite its `when`
-		// expression with one we picked here. The path the PolicyEditorRow
-		// passes to Monaco starts with `policy-` and is unique per row, so
-		// match by regex against any policy row's editor.
-		const policyRow = await screen.findByTestId(/^policy-row-/);
-		const customWhen = JSON.stringify(
-			{ user: "is_platform_admin" },
-			null,
-			2,
-		);
-		const editor = within(policyRow).getByLabelText(
-			/^policy-.+\.json$/,
-		) as HTMLTextAreaElement;
-		fireEvent.change(editor, { target: { value: customWhen } });
-
-		// Also rename the policy so the test can assert the full shape.
-		const nameInput = within(policyRow).getByLabelText(/^name$/i);
-		await user.clear(nameInput);
-		await user.type(nameInput, "audit_only_admin");
-
 		await user.click(screen.getByRole("button", { name: /^create$/i }));
 
 		await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
 		const call = mockCreateMutate.mock.calls[0]![0];
-		// The body's `policies` MUST contain the row the user authored, with
-		// the exact `when` they typed. Drift here = silent policy bypass.
-		expect(call.body.policies).not.toBeNull();
-		const policies = call.body.policies as {
-			policies: Array<{
-				name: string;
-				actions: string[];
-				when: unknown;
-			}>;
-		};
-		expect(policies.policies).toHaveLength(1);
-		expect(policies.policies[0]!.name).toBe("audit_only_admin");
-		expect(policies.policies[0]!.when).toEqual({
-			user: "is_platform_admin",
+		// The body's `policies` MUST mirror the template the user inserted,
+		// including the template's `when` AST. Any drift between what the
+		// editor emits and what the API receives = silent policy bypass.
+		const expectedTemplate = POLICY_TEMPLATES.own_row!;
+		expect(call.body.policies).toEqual({
+			policies: [
+				{
+					name: "own_row",
+					description: expectedTemplate.description,
+					actions: expectedTemplate.actions,
+					when: expectedTemplate.when,
+				},
+			],
 		});
-		// Template seeded actions are read/update/delete — the row is preserved
-		// through the dialog submit unchanged.
-		expect(policies.policies[0]!.actions).toEqual([
-			"read",
-			"update",
-			"delete",
-		]);
 	});
 
 	it.skip("edit-mode: pre-filled policies round-trip through update mutation when modified", async () => {

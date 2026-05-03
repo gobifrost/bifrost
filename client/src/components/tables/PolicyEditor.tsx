@@ -152,10 +152,8 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		nextPolicies: Policy[],
 		opts: { resyncBuffers?: boolean } = {},
 	) {
-		emit(
-			nextPolicies.length === 0 ? null : { policies: nextPolicies },
-			opts,
-		);
+		// emit() owns the empty-list -> null collapse; just hand it the shape.
+		emit({ policies: nextPolicies }, opts);
 	}
 
 	function handleTemplate(key: string) {
@@ -239,16 +237,30 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 			: activeTab === "yaml"
 				? yamlParseError
 				: null;
+	// While a code tab has an unresolved parse error, AST-driven mutations
+	// would silently clobber the user's broken buffer (we resync buffers on
+	// commit). Disable the toolbar mutations until they fix or abandon the
+	// buffer by switching tabs.
+	const mutationsDisabled = activeParseError !== null;
+	const mutationsDisabledTitle = mutationsDisabled
+		? "Resolve the parse error in the JSON/YAML tab to use this action"
+		: undefined;
 
 	return (
 		<div className="space-y-3">
 			<div className="flex justify-between items-center">
 				<h3 className="text-sm font-medium">Policies</h3>
 				<div className="flex gap-2">
-					<Select value={templateKey} onValueChange={handleTemplate}>
+					<Select
+						value={templateKey}
+						onValueChange={handleTemplate}
+						disabled={mutationsDisabled}
+					>
 						<SelectTrigger
 							className="w-[200px]"
 							aria-label="Insert template"
+							disabled={mutationsDisabled}
+							title={mutationsDisabledTitle}
 						>
 							<SelectValue placeholder="Insert template..." />
 						</SelectTrigger>
@@ -305,6 +317,8 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 							variant="outline"
 							size="sm"
 							onClick={addBlank}
+							disabled={mutationsDisabled}
+							title={mutationsDisabledTitle}
 						>
 							<Plus className="h-4 w-4 mr-1" />
 							Add policy

@@ -245,3 +245,9 @@ describe("PolicyEditor — reference panel", () => {
 		expect(screen.getByText(/Operators/i)).toBeInTheDocument();
 	});
 });
+
+// TODO(task-3): test that toolbar disables when activeParseError is set.
+// Once Task 3 wires the JSON/YAML Monaco editors, the placeholder stubs go
+// away and we can drive a parse error by typing invalid text into the
+// buffer. Until then the disabled-when-error guard is implemented in
+// PolicyEditor but not exercised by a test.
