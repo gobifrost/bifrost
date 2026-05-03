@@ -341,7 +341,7 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 		});
 	});
 
-	it.skip("edit-mode: pre-filled policies round-trip through update mutation when modified", async () => {
+	it("edit-mode: pre-filled policies round-trip through update mutation when modified", async () => {
 		const table = {
 			id: "tbl-policy",
 			name: "existing_table",
@@ -375,35 +375,39 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 			/>,
 		);
 
-		// Pre-existing policy is rendered.
-		expect(screen.getByDisplayValue("everyone_read")).toBeInTheDocument();
+		// Pre-existing policy is rendered. The new Form view shows the name
+		// in a per-row Input — confirm it's present.
+		const nameInput = screen.getByDisplayValue(
+			"everyone_read",
+		) as HTMLInputElement;
+		expect(nameInput).toBeInTheDocument();
 
-		// User restricts the policy by typing a new `when`.
+		// User tightens the policy by toggling on `update` and renaming the
+		// row. Both flow through the per-row Input + per-row Checkbox surface
+		// the Form view exposes.
+		await user.clear(nameInput);
+		await user.type(nameInput, "owner_only");
+
 		const policyRow = screen.getByTestId(/^policy-row-/);
-		const restrictedWhen = JSON.stringify(
-			{ eq: [{ row: "created_by" }, { user: "user_id" }] },
-			null,
-			2,
-		);
-		const editor = within(policyRow).getByLabelText(
-			/^policy-.+\.json$/,
-		) as HTMLTextAreaElement;
-		fireEvent.change(editor, { target: { value: restrictedWhen } });
+		// Per-row action checkboxes are labelled by the action key.
+		const updateBox = within(policyRow).getByLabelText(/^update$/i);
+		await user.click(updateBox);
 
 		await user.click(screen.getByRole("button", { name: /^update$/i }));
 
 		await waitFor(() => expect(mockUpdateMutate).toHaveBeenCalled());
 		const call = (mockUpdateMutate as Mock).mock.calls[0]![0];
-		// Update body MUST carry the new tighter policy. If the dialog ever
-		// dropped local PolicyEditor state on submit, the user would think
-		// they restricted access but the table would stay open.
+		// Update body MUST carry the renamed policy + the toggled action.
+		// If the dialog ever dropped local PolicyEditor state on submit, the
+		// user would think they tightened access but the table would not
+		// reflect the change.
 		const updatedPolicies = call.body.policies as {
-			policies: Array<{ when: unknown; actions: string[] }>;
+			policies: Array<{ name: string; actions: string[] }>;
 		};
-		expect(updatedPolicies.policies[0]!.when).toEqual({
-			eq: [{ row: "created_by" }, { user: "user_id" }],
-		});
-		expect(updatedPolicies.policies[0]!.actions).toEqual(["read"]);
+		expect(updatedPolicies.policies[0]!.name).toBe("owner_only");
+		expect(updatedPolicies.policies[0]!.actions).toEqual(
+			expect.arrayContaining(["read", "update"]),
+		);
 	});
 });
 

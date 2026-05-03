@@ -17,7 +17,6 @@
  */
 
 import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
 import yaml from "js-yaml";
 
 import { Button } from "@/components/ui/button";
@@ -35,6 +34,7 @@ import {
 	TabsTrigger,
 } from "@/components/ui/tabs";
 
+import { PolicyFormView } from "./PolicyFormView";
 import { PolicyReferencePanel } from "./PolicyReferencePanel";
 import {
 	POLICY_TEMPLATES,
@@ -165,20 +165,16 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		setTemplateKey("");
 	}
 
-	function addBlank() {
-		const current: Policy[] = value?.policies ?? [];
-		commitPolicies(
-			[
-				...current,
-				{
-					name: "new_policy",
-					description: null,
-					actions: ["read"],
-					when: null,
-				},
-			],
-			{ resyncBuffers: true },
-		);
+	/**
+	 * Form-tab onChange wrapper. The Form view emits the next
+	 * `TablePolicies | null` directly (with empty-list-collapse already
+	 * applied at its source). We forward through `commitPolicies` /
+	 * `emit` so sibling code-tab buffers get reseeded — the user is
+	 * mutating the AST out-of-band from those buffers, so they must
+	 * resync.
+	 */
+	function handleFormChange(next: TablePolicies | null) {
+		emit(next, { resyncBuffers: true });
 	}
 
 	/**
@@ -230,7 +226,6 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		setActiveTab(next);
 	}
 
-	const policies: Policy[] = value?.policies ?? [];
 	const activeParseError =
 		activeTab === "json"
 			? jsonParseError
@@ -295,35 +290,10 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 				</TabsList>
 
 				<TabsContent value="form" className="min-h-[320px]">
-					{policies.length === 0 ? (
-						<p className="text-sm text-muted-foreground">
-							No policies. Without a policy, only the table owner
-							and platform admins can access rows. Use a template
-							or click "Add policy" to start.
-						</p>
-					) : (
-						<div
-							data-testid="form-tab-stub"
-							data-policy-count={policies.length}
-							className="text-sm text-muted-foreground"
-						>
-							Form tab (placeholder) — {policies.length} polic
-							{policies.length === 1 ? "y" : "ies"}
-						</div>
-					)}
-					<div className="mt-3">
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							onClick={addBlank}
-							disabled={mutationsDisabled}
-							title={mutationsDisabledTitle}
-						>
-							<Plus className="h-4 w-4 mr-1" />
-							Add policy
-						</Button>
-					</div>
+					<PolicyFormView
+						value={value}
+						onChange={handleFormChange}
+					/>
 				</TabsContent>
 
 				<TabsContent value="json" className="min-h-[320px]">

@@ -193,16 +193,13 @@ describe("PolicyEditor — templates", () => {
 });
 
 describe("PolicyEditor — tab shell", () => {
-	it("renders the Form tab by default with the placeholder stub when policies exist", () => {
+	it("renders the Form tab by default with the live PolicyFormView when policies exist", () => {
 		const value: TablePolicies = {
 			policies: [{ name: "p1", actions: ["read"], when: null }],
 		};
 		renderWithProviders(<PolicyEditor value={value} onChange={onChange} />);
-		expect(screen.getByTestId("form-tab-stub")).toBeInTheDocument();
-		expect(screen.getByTestId("form-tab-stub")).toHaveAttribute(
-			"data-policy-count",
-			"1",
-		);
+		// The Form view renders one policy row per policy in `value`.
+		expect(screen.getAllByTestId(/^policy-row-/).length).toBe(1);
 	});
 
 	it("clicking the JSON tab shows the json stub", async () => {
@@ -229,7 +226,7 @@ describe("PolicyEditor — tab shell", () => {
 
 	it("Form tab still shows the empty-state hint when value is null", () => {
 		renderWithProviders(<PolicyEditor value={null} onChange={onChange} />);
-		expect(screen.queryByTestId("form-tab-stub")).toBeNull();
+		expect(screen.queryAllByTestId(/^policy-row-/).length).toBe(0);
 		expect(screen.getByText(/no policies/i)).toBeInTheDocument();
 	});
 });
