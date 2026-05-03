@@ -1,9 +1,7 @@
 /**
  * Top-level policy editor — a tabbed shell that exposes the same
- * `TablePolicies | null` AST through three views:
- *   - Form: graphical rule list + when builder (PolicyFormView)
- *   - JSON: Monaco editor of the whole TablePolicies document,
- *     schema-bound via policy-schema.json
+ * `TablePolicies | null` AST through two views:
+ *   - JSON: Monaco editor of the whole TablePolicies document
  *   - YAML: plain Monaco YAML mode
  *
  * The shell owns the per-tab text buffers and the parse/reserialize
@@ -11,6 +9,11 @@
  * The parent (e.g. `TableDialog`) passes the current `TablePolicies | null`
  * and a setter, and is responsible for shipping the resulting structure
  * in the create/update request body.
+ *
+ * When `value === null`, the JSON/YAML buffers seed to a `{policies: []}`
+ * wrapper so the user has a wrapper to paste into without manual editing.
+ * The empty-collapse path (user clears the buffer → `onChange(null)`) is
+ * handled separately on the keystroke handlers.
  */
 
 import { useMemo, useState } from "react";
@@ -32,7 +35,6 @@ import {
 } from "@/components/ui/tabs";
 
 import { PolicyCodeView } from "./PolicyCodeView";
-import { PolicyFormView } from "./PolicyFormView";
 import { PolicyReferencePanel } from "./PolicyReferencePanel";
 import {
 	POLICY_TEMPLATES,
@@ -44,19 +46,25 @@ import type { components } from "@/lib/v1";
 
 type TablePolicies = components["schemas"]["TablePolicies"];
 
-type TabKey = "form" | "json" | "yaml";
+type TabKey = "json" | "yaml";
 
 export interface PolicyEditorProps {
 	value: TablePolicies | null;
 	onChange: (next: TablePolicies | null) => void;
 }
 
+/**
+ * Canonical-text serializers. For `null` we emit the empty-wrapper form
+ * (`{"policies": []}` / `policies: []`) so the user has a wrapper to paste
+ * into without typing the scaffolding by hand. Empty buffers (user clears
+ * the editor) collapse back to `onChange(null)` via the keystroke handler.
+ */
 function serializeJson(value: TablePolicies | null): string {
-	return value ? JSON.stringify(value, null, 2) : "";
+	return JSON.stringify(value ?? { policies: [] }, null, 2);
 }
 
 function serializeYaml(value: TablePolicies | null): string {
-	return value ? yaml.dump(value) : "";
+	return yaml.dump(value ?? { policies: [] });
 }
 
 /**
@@ -75,13 +83,12 @@ function asTablePolicies(parsed: unknown): TablePolicies {
 }
 
 export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
-	const [activeTab, setActiveTab] = useState<TabKey>("form");
+	const [activeTab, setActiveTab] = useState<TabKey>("json");
 	const [showRef, setShowRef] = useState(false);
 	const [templateKey, setTemplateKey] = useState<string>("");
 
-	// Per-tab text buffers. The Form tab works directly off `value` so it
-	// has no buffer of its own. JSON/YAML keep their own text so a partial
-	// edit isn't reverted to the canonical serialization on every keystroke.
+	// Per-tab text buffers. JSON/YAML keep their own text so a partial edit
+	// isn't reverted to the canonical serialization on every keystroke.
 	const [jsonText, setJsonText] = useState<string>(() => serializeJson(value));
 	const [yamlText, setYamlText] = useState<string>(() => serializeYaml(value));
 	const [jsonParseError, setJsonParseError] = useState<string | null>(null);
@@ -133,9 +140,9 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		// Refresh sibling buffers so a tab switch shows the latest value.
 		// Keystroke-driven commits skip the active tab's buffer so the user's
 		// in-progress text isn't clobbered by their own commit. AST-driven
-		// mutations (template insert / add policy / remove policy) pass
-		// `resyncBuffers: true` to force-refresh the active buffer too, since
-		// the change didn't originate from the active editor's text.
+		// mutations (template insert) pass `resyncBuffers: true` to
+		// force-refresh the active buffer too, since the change didn't
+		// originate from the active editor's text.
 		if (opts.resyncBuffers || activeTab !== "json") {
 			setJsonText(nextJson);
 			setJsonParseError(null);
@@ -162,18 +169,6 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		commitPolicies([...current, tpl], { resyncBuffers: true });
 		// Reset the trigger so the same template can be re-inserted next time.
 		setTemplateKey("");
-	}
-
-	/**
-	 * Form-tab onChange wrapper. The Form view emits the next
-	 * `TablePolicies | null` directly (with empty-list-collapse already
-	 * applied at its source). We forward through `commitPolicies` /
-	 * `emit` so sibling code-tab buffers get reseeded — the user is
-	 * mutating the AST out-of-band from those buffers, so they must
-	 * resync.
-	 */
-	function handleFormChange(next: TablePolicies | null) {
-		emit(next, { resyncBuffers: true });
 	}
 
 	/**
@@ -272,17 +267,12 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 			setYamlParseError(null);
 			emit(parsed);
 		}
-		// Form tab leaves `value` already current — no work needed.
 
 		setActiveTab(next);
 	}
 
 	const activeParseError =
-		activeTab === "json"
-			? jsonParseError
-			: activeTab === "yaml"
-				? yamlParseError
-				: null;
+		activeTab === "json" ? jsonParseError : yamlParseError;
 	// While a code tab has an unresolved parse error, AST-driven mutations
 	// would silently clobber the user's broken buffer (we resync buffers on
 	// commit). Disable the toolbar mutations until they fix or abandon the
@@ -335,17 +325,9 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 				className="min-h-[320px]"
 			>
 				<TabsList>
-					<TabsTrigger value="form">Form</TabsTrigger>
 					<TabsTrigger value="json">JSON</TabsTrigger>
 					<TabsTrigger value="yaml">YAML</TabsTrigger>
 				</TabsList>
-
-				<TabsContent value="form" className="min-h-[320px]">
-					<PolicyFormView
-						value={value}
-						onChange={handleFormChange}
-					/>
-				</TabsContent>
 
 				<TabsContent value="json" className="min-h-[320px]">
 					<PolicyCodeView

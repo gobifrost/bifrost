@@ -20,13 +20,32 @@ import {
 	screen,
 	waitFor,
 	fireEvent,
-	within,
 } from "@/test-utils";
 import type { ReactNode } from "react";
 import { POLICY_TEMPLATES } from "./policy-templates";
 
 vi.mock("@/contexts/ThemeContext", () => ({
 	useTheme: () => ({ theme: "light" }),
+}));
+
+// PolicyEditor mounts a Monaco editor; replace it with a labelled <textarea>
+// so the test can drive the JSON buffer via fireEvent.change.
+vi.mock("@monaco-editor/react", () => ({
+	default: ({
+		value,
+		onChange,
+		path,
+	}: {
+		value?: string;
+		onChange?: (v: string | undefined) => void;
+		path?: string;
+	}) => (
+		<textarea
+			aria-label={path ?? "monaco-editor"}
+			value={value ?? ""}
+			onChange={(e) => onChange?.(e.target.value)}
+		/>
+	),
 }));
 
 // Radix Select uses pointer events that jsdom doesn't fully implement; swap
@@ -275,9 +294,9 @@ describe("TableDialog — edit mode", () => {
 
 describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 	// Two complementary surfaces:
-	//   1. Toolbar Insert Template flow (template → policies in submit body).
-	//   2. Edit-mode per-row Form view inputs (rename + toggle action → update
-	//      body).
+	//   1. Create-mode toolbar Insert Template flow (template → policies in
+	//      submit body).
+	//   2. Edit-mode JSON-tab edit (typed JSON → policies in update body).
 	// Both paths must reach the create/update mutation body verbatim — any
 	// drift between what the editor emits and what the API receives is a
 	// silent policy bypass.
@@ -319,7 +338,7 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 		});
 	});
 
-	it("edit-mode: pre-filled policies round-trip through update mutation when modified", async () => {
+	it("edit-mode: typing modified JSON in the JSON tab round-trips through update mutation", async () => {
 		const table = {
 			id: "tbl-policy",
 			name: "existing_table",
@@ -353,23 +372,24 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 			/>,
 		);
 
-		// Pre-existing policy is rendered. The new Form view shows the name
-		// in a per-row Input — confirm it's present.
-		const nameInput = screen.getByDisplayValue(
-			"everyone_read",
-		) as HTMLInputElement;
-		expect(nameInput).toBeInTheDocument();
-
-		// User tightens the policy by toggling on `update` and renaming the
-		// row. Both flow through the per-row Input + per-row Checkbox surface
-		// the Form view exposes.
-		await user.clear(nameInput);
-		await user.type(nameInput, "owner_only");
-
-		const policyRow = screen.getByTestId(/^policy-row-/);
-		// Per-row action checkboxes are labelled by the action key.
-		const updateBox = within(policyRow).getByLabelText(/^update$/i);
-		await user.click(updateBox);
+		// Pre-existing policy is shown in the JSON Monaco editor (mocked to a
+		// labelled <textarea>). Drive a modified JSON value through fireEvent
+		// to simulate the user editing the policy.
+		const jsonEditor = screen.getByLabelText(
+			"policies.json",
+		) as HTMLTextAreaElement;
+		const modified = {
+			policies: [
+				{
+					name: "owner_only",
+					actions: ["read", "update"],
+					when: { eq: [{ row: "created_by" }, { user: "user_id" }] },
+				},
+			],
+		};
+		fireEvent.change(jsonEditor, {
+			target: { value: JSON.stringify(modified, null, 2) },
+		});
 
 		await user.click(screen.getByRole("button", { name: /^update$/i }));
 
@@ -380,12 +400,20 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 		// user would think they tightened access but the table would not
 		// reflect the change.
 		const updatedPolicies = call.body.policies as {
-			policies: Array<{ name: string; actions: string[] }>;
+			policies: Array<{
+				name: string;
+				actions: string[];
+				when: unknown;
+			}>;
 		};
 		expect(updatedPolicies.policies[0]!.name).toBe("owner_only");
-		expect(updatedPolicies.policies[0]!.actions).toEqual(
-			expect.arrayContaining(["read", "update"]),
-		);
+		expect(updatedPolicies.policies[0]!.actions).toEqual([
+			"read",
+			"update",
+		]);
+		expect(updatedPolicies.policies[0]!.when).toEqual({
+			eq: [{ row: "created_by" }, { user: "user_id" }],
+		});
 	});
 });
 

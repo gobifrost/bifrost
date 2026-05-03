@@ -19,7 +19,10 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { POLICY_TEMPLATES, type Policy } from "./policy-templates";
+import { POLICY_TEMPLATES } from "./policy-templates";
+import type { components } from "@/lib/v1";
+
+type TablePolicies = components["schemas"]["TablePolicies"];
 
 interface RefRow {
 	term: string;
@@ -73,7 +76,7 @@ const OPERATORS: RefRow[] = [
 interface WorkedExample {
 	heading: string;
 	description: string;
-	policy: Policy;
+	policy: TablePolicies;
 }
 
 /**
@@ -82,181 +85,225 @@ interface WorkedExample {
  * (admin_bypass, own_row, own_org, role_gated_read) are pulled from
  * `policy-templates.ts` so the "Insert template..." menu and this panel stay
  * aligned.
+ *
+ * Each `policy` is wrapped in the full `{policies: [...]}` document so Copy →
+ * paste-into-fresh-JSON works directly without the user having to add the
+ * wrapper themselves.
  */
 const EXAMPLES: WorkedExample[] = [
 	{
 		heading: "admin_bypass",
 		description: "Platform admins can do anything.",
-		policy: POLICY_TEMPLATES.admin_bypass!,
+		policy: { policies: [POLICY_TEMPLATES.admin_bypass!] },
 	},
 	{
 		heading: "own_row",
 		description: "Row owner can read/update/delete.",
-		policy: POLICY_TEMPLATES.own_row!,
+		policy: { policies: [POLICY_TEMPLATES.own_row!] },
 	},
 	{
 		heading: "own_org",
 		description: "Caller can see rows in their own org.",
-		policy: POLICY_TEMPLATES.own_org!,
+		policy: { policies: [POLICY_TEMPLATES.own_org!] },
 	},
 	{
 		heading: "role_gated_read",
 		description: "A specific role can read.",
-		policy: POLICY_TEMPLATES.role_gated_read!,
+		policy: { policies: [POLICY_TEMPLATES.role_gated_read!] },
 	},
 	{
 		heading: "read_only_finalized",
 		description:
 			"Anyone in org can read finalized rows; nobody can update.",
 		policy: {
-			name: "read_only_finalized",
-			description:
-				"Anyone in org can read finalized rows; nobody can update",
-			actions: ["read"],
-			when: {
-				and: [
-					{
-						eq: [
-							{ row: "organization_id" },
-							{ user: "organization_id" },
+			policies: [
+				{
+					name: "read_only_finalized",
+					description:
+						"Anyone in org can read finalized rows; nobody can update",
+					actions: ["read"],
+					when: {
+						and: [
+							{
+								eq: [
+									{ row: "organization_id" },
+									{ user: "organization_id" },
+								],
+							},
+							{ eq: [{ row: "data.status" }, "finalized"] },
 						],
 					},
-					{ eq: [{ row: "data.status" }, "finalized"] },
-				],
-			},
+				},
+			],
 		},
 	},
 	{
 		heading: "range_read",
 		description: "Range comparison example.",
 		policy: {
-			name: "range_read",
-			description:
-				"Read rows whose data.amount is between 100 and 1000",
-			actions: ["read"],
-			when: {
-				and: [
-					{ gte: [{ row: "data.amount" }, 100] },
-					{ lte: [{ row: "data.amount" }, 1000] },
-				],
-			},
+			policies: [
+				{
+					name: "range_read",
+					description:
+						"Read rows whose data.amount is between 100 and 1000",
+					actions: ["read"],
+					when: {
+						and: [
+							{ gte: [{ row: "data.amount" }, 100] },
+							{ lte: [{ row: "data.amount" }, 1000] },
+						],
+					},
+				},
+			],
 		},
 	},
 	{
 		heading: "status_membership",
 		description: "Membership against literal list.",
 		policy: {
-			name: "status_membership",
-			description:
-				"Read rows whose data.status is one of an allowed list",
-			actions: ["read"],
-			when: {
-				in: [
-					{ row: "data.status" },
-					["active", "pending", "approved"],
-				],
-			},
+			policies: [
+				{
+					name: "status_membership",
+					description:
+						"Read rows whose data.status is one of an allowed list",
+					actions: ["read"],
+					when: {
+						in: [
+							{ row: "data.status" },
+							["active", "pending", "approved"],
+						],
+					},
+				},
+			],
 		},
 	},
 	{
 		heading: "unassigned",
 		description: "Null check.",
 		policy: {
-			name: "unassigned",
-			description: "Read rows where data.assignee_id is unset",
-			actions: ["read"],
-			when: { is_null: { row: "data.assignee_id" } },
+			policies: [
+				{
+					name: "unassigned",
+					description: "Read rows where data.assignee_id is unset",
+					actions: ["read"],
+					when: { is_null: { row: "data.assignee_id" } },
+				},
+			],
 		},
 	},
 	{
 		heading: "assigned",
 		description: "\"Is set\" idiom (not + is_null).",
 		policy: {
-			name: "assigned",
-			description:
-				"Read rows where data.assignee_id is set (not null)",
-			actions: ["read"],
-			when: { not: { is_null: { row: "data.assignee_id" } } },
+			policies: [
+				{
+					name: "assigned",
+					description:
+						"Read rows where data.assignee_id is set (not null)",
+					actions: ["read"],
+					when: { not: { is_null: { row: "data.assignee_id" } } },
+				},
+			],
 		},
 	},
 	{
 		heading: "own_open_row",
 		description: "Two clauses combined.",
 		policy: {
-			name: "own_open_row",
-			description:
-				"Owner can update only while row.data.status is 'open'",
-			actions: ["update"],
-			when: {
-				and: [
-					{ eq: [{ row: "created_by" }, { user: "user_id" }] },
-					{ eq: [{ row: "data.status" }, "open"] },
-				],
-			},
+			policies: [
+				{
+					name: "own_open_row",
+					description:
+						"Owner can update only while row.data.status is 'open'",
+					actions: ["update"],
+					when: {
+						and: [
+							{ eq: [{ row: "created_by" }, { user: "user_id" }] },
+							{ eq: [{ row: "data.status" }, "open"] },
+						],
+					},
+				},
+			],
 		},
 	},
 	{
 		heading: "owner_or_role",
 		description: "Alternative grants.",
 		policy: {
-			name: "owner_or_role",
-			description:
-				"Either the row owner, or members of 'editors' role can update",
-			actions: ["update"],
-			when: {
-				or: [
-					{ eq: [{ row: "created_by" }, { user: "user_id" }] },
-					{ call: "has_role", args: ["editors"] },
-				],
-			},
+			policies: [
+				{
+					name: "owner_or_role",
+					description:
+						"Either the row owner, or members of 'editors' role can update",
+					actions: ["update"],
+					when: {
+						or: [
+							{ eq: [{ row: "created_by" }, { user: "user_id" }] },
+							{ call: "has_role", args: ["editors"] },
+						],
+					},
+				},
+			],
 		},
 	},
 	{
 		heading: "nested_grant",
 		description: "Showing precedence + indentation.",
 		policy: {
-			name: "nested_grant",
-			description: "Read if (own row AND open) OR (platform admin)",
-			actions: ["read"],
-			when: {
-				or: [
-					{
-						and: [
+			policies: [
+				{
+					name: "nested_grant",
+					description: "Read if (own row AND open) OR (platform admin)",
+					actions: ["read"],
+					when: {
+						or: [
 							{
-								eq: [
-									{ row: "created_by" },
-									{ user: "user_id" },
+								and: [
+									{
+										eq: [
+											{ row: "created_by" },
+											{ user: "user_id" },
+										],
+									},
+									{ eq: [{ row: "data.status" }, "open"] },
 								],
 							},
-							{ eq: [{ row: "data.status" }, "open"] },
+							{ user: "is_platform_admin" },
 						],
 					},
-					{ user: "is_platform_admin" },
-				],
-			},
+				},
+			],
 		},
 	},
 	{
 		heading: "managers_only",
 		description: "Function call with role name.",
 		policy: {
-			name: "managers_only",
-			description: "Members of role 'managers' can read all rows",
-			actions: ["read"],
-			when: { call: "has_role", args: ["managers"] },
+			policies: [
+				{
+					name: "managers_only",
+					description: "Members of role 'managers' can read all rows",
+					actions: ["read"],
+					when: { call: "has_role", args: ["managers"] },
+				},
+			],
 		},
 	},
 	{
 		heading: "by_role_uuid",
 		description: "Function call with role UUID (string compared).",
 		policy: {
-			name: "by_role_uuid",
-			description: "Specific role UUID can read",
-			actions: ["read"],
-			when: {
-				call: "has_role",
-				args: ["00000000-0000-0000-0000-000000000123"],
-			},
+			policies: [
+				{
+					name: "by_role_uuid",
+					description: "Specific role UUID can read",
+					actions: ["read"],
+					when: {
+						call: "has_role",
+						args: ["00000000-0000-0000-0000-000000000123"],
+					},
+				},
+			],
 		},
 	},
 	{
@@ -264,13 +311,20 @@ const EXAMPLES: WorkedExample[] = [
 		description:
 			"Denormalized manager_user_id row field (lifted from the design doc).",
 		policy: {
-			name: "manager_reads_reports",
-			description:
-				"Manager (denormalized on the row) can read their reports' rows",
-			actions: ["read"],
-			when: {
-				eq: [{ row: "data.manager_user_id" }, { user: "user_id" }],
-			},
+			policies: [
+				{
+					name: "manager_reads_reports",
+					description:
+						"Manager (denormalized on the row) can read their reports' rows",
+					actions: ["read"],
+					when: {
+						eq: [
+							{ row: "data.manager_user_id" },
+							{ user: "user_id" },
+						],
+					},
+				},
+			],
 		},
 	},
 	{
@@ -278,21 +332,25 @@ const EXAMPLES: WorkedExample[] = [
 		description:
 			"`or` between own-org and platform-admin (cross-org provider scenario).",
 		policy: {
-			name: "provider_read",
-			description:
-				"Caller can read if it's their own org's row, or if they're a platform admin (cross-org provider scenario)",
-			actions: ["read"],
-			when: {
-				or: [
-					{
-						eq: [
-							{ row: "organization_id" },
-							{ user: "organization_id" },
+			policies: [
+				{
+					name: "provider_read",
+					description:
+						"Caller can read if it's their own org's row, or if they're a platform admin (cross-org provider scenario)",
+					actions: ["read"],
+					when: {
+						or: [
+							{
+								eq: [
+									{ row: "organization_id" },
+									{ user: "organization_id" },
+								],
+							},
+							{ user: "is_platform_admin" },
 						],
 					},
-					{ user: "is_platform_admin" },
-				],
-			},
+				},
+			],
 		},
 	},
 ];
@@ -382,7 +440,7 @@ function ExampleBlock({
 function ExamplesSection({ examples }: { examples: WorkedExample[] }) {
 	const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-	function handleCopy(idx: number, policy: Policy) {
+	function handleCopy(idx: number, policy: TablePolicies) {
 		const text = JSON.stringify(policy, null, 2);
 		// Guard the clipboard call so jsdom (which omits navigator.clipboard)
 		// doesn't blow up the visual feedback. The button still flips to

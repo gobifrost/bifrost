@@ -9,20 +9,15 @@
  * parse/reserialize plumbing — see `PolicyEditor.tsx` for the
  * lastSynced / render-phase reset / tab-switch parse logic.
  *
- * JSON mode binds the `Expr` schema via `configureMonacoSchema` for
- * inline validation hints inside `when` clauses; see
- * `policy-monaco-schema.ts` for the scope caveat.
- *
- * YAML mode uses Monaco's built-in plain YAML language. There is no
- * schema binding — `monaco-yaml` is not in `package.json` — so YAML-side
- * validation comes entirely from the runtime parser in `PolicyEditor`.
+ * Authoritative validation lives on the server; this component is
+ * format-only (JSON / YAML syntax). No JSON Schema is registered with
+ * Monaco — the previous `Expr`-only schema bound to `*` filematch was
+ * misleading and produced false positives at the document level.
  */
 
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 
 import { useTheme } from "@/contexts/ThemeContext";
-
-import { configureMonacoSchema } from "./policy-monaco-schema";
 
 export interface PolicyCodeViewProps {
 	mode: "json" | "yaml";
@@ -40,10 +35,6 @@ export function PolicyCodeView({
 	const { theme } = useTheme();
 	const monacoTheme = theme === "dark" ? "vs-dark" : "light";
 
-	const handleMount: OnMount = (_editor, monaco) => {
-		if (mode === "json") configureMonacoSchema(monaco);
-	};
-
 	return (
 		<div
 			className="border rounded-md overflow-hidden h-[320px]"
@@ -54,7 +45,6 @@ export function PolicyCodeView({
 				language={mode}
 				value={text}
 				onChange={(next) => onChange(next ?? "")}
-				onMount={handleMount}
 				theme={monacoTheme}
 				path={`policies.${mode}`}
 				options={{

@@ -93,6 +93,32 @@ describe("PolicyReferencePanel — worked examples", () => {
 		expect(copyButtons.length).toBe(exampleHeadings.length);
 	});
 
+	it("wraps each example JSON with the {policies: [...]} document so paste-into-fresh-JSON works", () => {
+		// Each pretty-printed example must be a parseable TablePolicies
+		// document (i.e. starts with the wrapper) — the plan calls this out
+		// explicitly so users can copy → paste into the JSON tab without
+		// hand-editing the wrapper.
+		renderWithProviders(
+			<PolicyReferencePanel open onClose={() => {}} />,
+		);
+		const headings = screen.getAllByRole("heading", { level: 5 });
+		for (const heading of headings) {
+			// Each example renders as <div.space-y-1><div.flex>h5+button</div>
+			// <p/><pre><code>JSON</code></pre></div>. Walk up two levels to
+			// reach the outer block, then locate the <code>.
+			const outerBlock = heading.parentElement?.parentElement;
+			expect(outerBlock).not.toBeNull();
+			const code = outerBlock!.querySelector("pre code");
+			expect(code).not.toBeNull();
+			const parsed = JSON.parse(code!.textContent ?? "");
+			expect(parsed).toHaveProperty("policies");
+			expect(Array.isArray(parsed.policies)).toBe(true);
+			expect(parsed.policies.length).toBeGreaterThan(0);
+			// Heading matches the inner policy's name.
+			expect(parsed.policies[0].name).toBe(heading.textContent);
+		}
+	});
+
 	it("flips Copy button to Copied! on click and resets", async () => {
 		// Stub clipboard so the click handler doesn't throw in jsdom. We don't
 		// assert the call payload — only the visible state transition.
