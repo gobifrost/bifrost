@@ -202,6 +202,8 @@ export function MCPConnectionEdit() {
 	};
 
 	const isConnected = !!connection.service_oauth_token_id;
+	const isClientCredentials =
+		server.oauth_flow_type === "client_credentials";
 
 	return (
 		<div className="space-y-6 max-w-5xl mx-auto">
@@ -432,12 +434,19 @@ export function MCPConnectionEdit() {
 							)}
 						</div>
 						<div className="flex gap-2">
-							<Button
-								variant="outline"
-								onClick={() => setConnectModalOpen(true)}
-							>
-								{isConnected ? "Reconnect" : "Connect"}
-							</Button>
+							{isClientCredentials ? (
+								<ActivateButton
+									connectionId={connection.id}
+									isConnected={isConnected}
+								/>
+							) : (
+								<Button
+									variant="outline"
+									onClick={() => setConnectModalOpen(true)}
+								>
+									{isConnected ? "Reconnect" : "Connect"}
+								</Button>
+							)}
 							{isConnected && (
 								<Button
 									variant="outline"
@@ -616,14 +625,96 @@ export function MCPConnectionEdit() {
 				</Button>
 			</div>
 
-			<ConnectServicePopup
-				open={connectModalOpen}
-				onOpenChange={setConnectModalOpen}
-				connectionId={connection.id}
-				serverName={server.name}
-				userEmail={user?.email ?? "your account"}
-			/>
+			{!isClientCredentials && (
+				<ConnectServicePopup
+					open={connectModalOpen}
+					onOpenChange={setConnectModalOpen}
+					connectionId={connection.id}
+					serverName={server.name}
+					userEmail={user?.email ?? "your account"}
+				/>
+			)}
 		</div>
+	);
+}
+
+/**
+ * Activate button for ``client_credentials`` connections.
+ *
+ * Posts to ``/api/mcp-connections/{id}/connect`` synchronously — no popup.
+ * The backend exchanges the connection's client_id+secret for a token and
+ * persists it as ``service_oauth_token_id``. We refetch the connection on
+ * success so ``isConnected`` flips to ``true``.
+ */
+function ActivateButton({
+	connectionId,
+	isConnected,
+}: {
+	connectionId: string;
+	isConnected: boolean;
+}) {
+	const queryClient = useQueryClient();
+	const [activating, setActivating] = useState(false);
+
+	const handleActivate = async () => {
+		setActivating(true);
+		try {
+			const { data, error } = await apiClient.POST(
+				"/api/mcp-connections/{connection_id}/connect",
+				{ params: { path: { connection_id: connectionId } } },
+			);
+			if (error) {
+				const detail =
+					(error as { detail?: string })?.detail ??
+					"Activation failed";
+				toast.error(detail);
+				return;
+			}
+			if (data && "flow" in data && data.flow === "client_credentials") {
+				toast.success("Connection activated");
+			} else {
+				// Backend returned an authorization_code response — the
+				// server is misconfigured (provider flow_type was changed
+				// after the form was rendered). Surface gracefully.
+				toast.error(
+					"Server returned an authorization flow — refresh the page",
+				);
+				return;
+			}
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/mcp-connections/{connection_id}"],
+			});
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/mcp-servers/{server_id}"],
+			});
+		} catch (err) {
+			toast.error(
+				err instanceof Error
+					? err.message
+					: "Activation failed",
+			);
+		} finally {
+			setActivating(false);
+		}
+	};
+
+	return (
+		<Button
+			variant="outline"
+			disabled={activating}
+			onClick={handleActivate}
+		>
+			{activating ? (
+				<>
+					<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+					Activating...
+				</>
+			) : isConnected ? (
+				"Reactivate connection"
+			) : (
+				"Activate connection"
+			)}
+		</Button>
 	);
 }
 
@@ -656,7 +747,12 @@ function ConnectServicePopup({
 				{ params: { path: { connection_id: connectionId } } },
 			);
 
-			if (error || !data?.authorization_url) {
+			if (
+				error ||
+				!data ||
+				!("flow" in data) ||
+				data.flow !== "authorization_code"
+			) {
 				toast.error("Failed to start OAuth flow");
 				return;
 			}

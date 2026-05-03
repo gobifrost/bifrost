@@ -20,11 +20,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
+from src.core.security import encrypt_secret
 from src.models.contracts.external_mcp import (
     MCPConnectionPublic,
     MCPConnectionToolPublic,
@@ -34,6 +35,7 @@ from src.models.contracts.external_mcp import (
     MCPServerUpdate,
 )
 from src.models.orm.external_mcp import MCPServer
+from src.models.orm.oauth import OAuthProvider
 from src.repositories.external_mcp import MCPServerRepository
 from src.services.mcp_client.discovery import discover_oauth_metadata
 
@@ -68,10 +70,16 @@ class MCPServerDiscoverResponse(BaseModel):
 # =============================================================================
 
 
-def _server_to_public(server: MCPServer) -> MCPServerPublic:
+def _server_to_public(
+    server: MCPServer, oauth_flow_type: str | None = None
+) -> MCPServerPublic:
     """Convert an ``MCPServer`` ORM row (with eager-loaded connections) to its
     public response model. Tools nested under each connection use the same
     eager-load that the repo already arranges.
+
+    The OAuth provider's ``oauth_flow_type`` is surfaced when supplied — the
+    handlers that pre-loaded the provider pass it through; the rest leave
+    it ``None`` and the frontend treats that as "no provider linked".
     """
     connections: list[MCPConnectionPublic] = []
     for conn in server.connections:
@@ -84,7 +92,22 @@ def _server_to_public(server: MCPServer) -> MCPServerPublic:
 
     public_server = MCPServerPublic.model_validate(server)
     public_server.connections = connections
+    public_server.oauth_flow_type = oauth_flow_type
     return public_server
+
+
+async def _resolve_flow_type(
+    ctx: Context, server: MCPServer
+) -> str | None:
+    """Look up the linked OAuth provider's flow type, if any."""
+    if server.oauth_provider_id is None:
+        return None
+    result = await ctx.db.execute(
+        select(OAuthProvider.oauth_flow_type).where(
+            OAuthProvider.id == server.oauth_provider_id
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 # =============================================================================
@@ -178,7 +201,8 @@ async def get_mcp_server(
                 detail="MCP server not found",
             )
 
-    return _server_to_public(server)
+    flow_type = await _resolve_flow_type(ctx, server)
+    return _server_to_public(server, oauth_flow_type=flow_type)
 
 
 # =============================================================================
@@ -197,11 +221,70 @@ async def create_mcp_server(
     ctx: Context,
     user: CurrentSuperuser,
 ) -> MCPServerPublic:
-    """Create a new server template. Platform admin only."""
+    """Create a new server template. Platform admin only.
+
+    If ``oauth_provider`` is set on the request, this also creates an
+    ``OAuthProvider`` row and links it on the new server. The provider
+    holds the schema (token_url, flow_type, scopes, audience). The actual
+    per-org client_id+secret pairs live on ``mcp_connections`` rows since
+    each org registers its own OAuth app with the vendor — the provider's
+    ``encrypted_client_secret`` is a non-authoritative placeholder.
+    """
+    if request.oauth_provider_id is not None and request.oauth_provider is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Provide either ``oauth_provider_id`` (link existing) or "
+                "``oauth_provider`` (create inline), not both."
+            ),
+        )
+
+    oauth_provider_id: UUID | None = request.oauth_provider_id
+
+    if request.oauth_provider is not None:
+        op = request.oauth_provider
+        if op.oauth_flow_type == "authorization_code" and not op.authorization_url:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "authorization_url is required when oauth_flow_type "
+                    "is 'authorization_code'"
+                ),
+            )
+
+        # Provider-level credentials are placeholders — the authoritative
+        # per-org client_id+secret pair lives on mcp_connections. We still
+        # set a non-empty value because the column is NOT NULL; it MUST
+        # NOT be used for token requests.
+        provider = OAuthProvider(
+            provider_name=f"mcp:{request.name}",
+            display_name=request.name,
+            oauth_flow_type=op.oauth_flow_type,
+            client_id="__mcp_per_connection__",
+            encrypted_client_secret=encrypt_secret(
+                "__mcp_per_connection__"
+            ).encode(),
+            authorization_url=op.authorization_url,
+            token_url=op.token_url,
+            audience=op.audience,
+            scopes=op.scopes,
+            organization_id=request.organization_id,
+            created_by=user.email,
+        )
+        ctx.db.add(provider)
+        await ctx.db.flush()
+        oauth_provider_id = provider.id
+        logger.info(
+            "Created OAuth provider %s (%s) for MCP server %s",
+            log_safe(provider.provider_name),
+            provider.id,
+            log_safe(request.name),
+        )
+
     server = MCPServer(
         name=request.name,
         server_url=request.server_url,
-        oauth_provider_id=request.oauth_provider_id,
+        oauth_provider_id=oauth_provider_id,
         redirect_url=request.redirect_url,
         discovery_metadata=request.discovery_metadata,
         organization_id=request.organization_id,
@@ -212,7 +295,8 @@ async def create_mcp_server(
     await ctx.db.refresh(server, ["connections"])
 
     logger.info(f"Created MCP server template: {log_safe(server.name)} ({server.id})")
-    return _server_to_public(server)
+    flow_type = await _resolve_flow_type(ctx, server)
+    return _server_to_public(server, oauth_flow_type=flow_type)
 
 
 @router.patch(
@@ -249,7 +333,8 @@ async def update_mcp_server(
     await ctx.db.refresh(server, ["connections"])
 
     logger.info(f"Updated MCP server template: {log_safe(server.name)} ({server.id})")
-    return _server_to_public(server)
+    flow_type = await _resolve_flow_type(ctx, server)
+    return _server_to_public(server, oauth_flow_type=flow_type)
 
 
 @router.delete(

@@ -3472,22 +3472,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7904,6 +7904,13 @@ export interface paths {
         /**
          * Create MCP server template (platform admin)
          * @description Create a new server template. Platform admin only.
+         *
+         *     If ``oauth_provider`` is set on the request, this also creates an
+         *     ``OAuthProvider`` row and links it on the new server. The provider
+         *     holds the schema (token_url, flow_type, scopes, audience). The actual
+         *     per-org client_id+secret pairs live on ``mcp_connections`` rows since
+         *     each org registers its own OAuth app with the vendor — the provider's
+         *     ``encrypted_client_secret`` is a non-authoritative placeholder.
          */
         post: operations["create_mcp_server_api_mcp_servers_post"];
         delete?: never;
@@ -8052,8 +8059,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Initiate OAuth flow for the shared service connection
-         * @description Returns the vendor's authorize URL plus the signed ``state`` token. The frontend opens the URL in a popup; the vendor redirects back to ``/api/mcp/oauth/callback`` which completes the exchange and writes ``service_oauth_token_id`` on the connection.
+         * Initiate or activate the shared service connection
+         * @description Branches on the linked OAuth provider's ``oauth_flow_type``:
+         *
+         *     - ``authorization_code`` — returns the vendor's authorize URL plus the signed ``state`` token. The frontend opens the URL in a popup; the vendor redirects back to ``/api/mcp/oauth/callback`` which completes the exchange and writes ``service_oauth_token_id`` on the connection.
+         *
+         *     - ``client_credentials`` — performs a server-to-server token exchange using the connection's client_id+secret and persists the resulting access token as ``service_oauth_token_id``. Synchronous, no popup.
          */
         post: operations["connect_service_token_api_mcp_connections__connection_id__connect_post"];
         delete?: never;
@@ -8072,6 +8083,8 @@ export interface paths {
         /**
          * Initiate per-user OAuth flow
          * @description Per-user delegated connect. Returns the vendor's authorize URL with state encoded for the *user* flow — the callback writes a ``user_mcp_credentials`` row instead of touching ``mcp_connections.service_oauth_token_id``.
+         *
+         *     Per-user delegation is only meaningful for ``authorization_code`` providers; ``client_credentials`` connections are rejected with 400.
          */
         get: operations["connect_user_credential_api_me_mcp_connections__connection_id__connect_get"];
         put?: never;
@@ -14988,10 +15001,44 @@ export interface components {
             configured_by?: string | null;
         };
         /**
+         * MCPConnectActivateResponse
+         * @description Response for ``POST /connect`` when the linked OAuth provider uses
+         *     the ``client_credentials`` flow.
+         *
+         *     No popup — the server already exchanged client_id+secret for a token
+         *     and stored it as ``service_oauth_token_id``.
+         */
+        MCPConnectActivateResponse: {
+            /**
+             * Flow
+             * @default client_credentials
+             * @constant
+             */
+            flow: "client_credentials";
+            /** Success */
+            success: boolean;
+            /**
+             * Service Oauth Token Id
+             * Format: uuid
+             */
+            service_oauth_token_id: string;
+        };
+        /**
          * MCPConnectAuthorizeResponse
-         * @description Response for ``POST /connect`` (and the per-user variant).
+         * @description Response for ``POST /connect`` when the linked OAuth provider uses
+         *     the ``authorization_code`` flow.
+         *
+         *     The frontend opens ``authorization_url`` in a popup; the vendor
+         *     redirects back to ``/api/mcp/oauth/callback`` which completes the
+         *     exchange.
          */
         MCPConnectAuthorizeResponse: {
+            /**
+             * Flow
+             * @default authorization_code
+             * @constant
+             */
+            flow: "authorization_code";
             /** Authorization Url */
             authorization_url: string;
             /** State */
@@ -15217,6 +15264,8 @@ export interface components {
              * @description OAuth provider configuration FK; absent for servers without auth
              */
             oauth_provider_id?: string | null;
+            /** @description Inline OAuth provider creation. When set, the router creates an OAuthProvider row and links it via ``oauth_provider_id``. Mutually exclusive with ``oauth_provider_id``. */
+            oauth_provider?: components["schemas"]["MCPServerOAuthProviderCreate"] | null;
             /**
              * Redirect Url
              * @description Deterministic redirect URL for the OAuth callback
@@ -15263,6 +15312,37 @@ export interface components {
             } | null;
         };
         /**
+         * MCPServerOAuthProviderCreate
+         * @description Inline OAuth provider creation block carried on ``MCPServerCreate``.
+         *
+         *     When present, ``POST /api/mcp-servers`` creates an ``OAuthProvider`` row
+         *     and links it via ``mcp_servers.oauth_provider_id``. A placeholder
+         *     ``encrypted_client_secret`` is stored on the provider — the per-org
+         *     client_id+secret pair lives on each ``mcp_connections`` row, since each
+         *     org registers its own OAuth app with the vendor. The provider row is
+         *     just the schema (token_url, scopes, audience, flow_type).
+         */
+        MCPServerOAuthProviderCreate: {
+            /**
+             * Oauth Flow Type
+             * @description OAuth grant type. Detect from discovery's ``grant_types_supported``: if ``client_credentials`` is supported, default to that; else ``authorization_code``. Admin can override.
+             * @default authorization_code
+             * @enum {string}
+             */
+            oauth_flow_type: "authorization_code" | "client_credentials";
+            /** Token Url */
+            token_url: string;
+            /**
+             * Authorization Url
+             * @description Required for ``authorization_code`` flow; ignored for ``client_credentials``.
+             */
+            authorization_url?: string | null;
+            /** Scopes */
+            scopes?: string[];
+            /** Audience */
+            audience?: string | null;
+        };
+        /**
          * MCPServerPublic
          * @description Detailed server response including nested per-org connections.
          */
@@ -15278,6 +15358,11 @@ export interface components {
             server_url: string;
             /** Oauth Provider Id */
             oauth_provider_id: string | null;
+            /**
+             * Oauth Flow Type
+             * @description OAuth flow type of the linked provider, if any. One of ``authorization_code`` | ``client_credentials``. The frontend branches on this when rendering the connect button (popup vs synchronous activate).
+             */
+            oauth_flow_type?: string | null;
             /** Redirect Url */
             redirect_url: string | null;
             /** Discovery Metadata */
@@ -26458,7 +26543,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26491,7 +26576,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26524,7 +26609,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26557,7 +26642,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -34898,7 +34983,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MCPConnectAuthorizeResponse"];
+                    "application/json": components["schemas"]["MCPConnectAuthorizeResponse"] | components["schemas"]["MCPConnectActivateResponse"];
                 };
             };
             /** @description Validation Error */

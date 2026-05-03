@@ -235,3 +235,170 @@ class TestMCPConnectionConnectErrors:
             headers=org1_user.headers,
         )
         assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.e2e
+class TestMCPServerCreateWithOAuthProvider:
+    """Inline OAuth provider creation on ``POST /api/mcp-servers``."""
+
+    def test_server_create_with_inline_authorization_code_provider(
+        self, e2e_client, platform_admin
+    ):
+        """Inline OAuth provider for authorization_code flow."""
+        name = f"e2e_mcp_srv_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "server_url": "https://example.com/mcp",
+                "oauth_provider": {
+                    "oauth_flow_type": "authorization_code",
+                    "token_url": "https://example.com/oauth/token",
+                    "authorization_url": "https://example.com/oauth/authorize",
+                    "scopes": ["read", "write"],
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["oauth_provider_id"] is not None
+        # cleanup
+        e2e_client.delete(
+            f"/api/mcp-servers/{body['id']}?hard=true",
+            headers=platform_admin.headers,
+        )
+
+    def test_server_create_with_inline_client_credentials_provider(
+        self, e2e_client, platform_admin
+    ):
+        """Inline OAuth provider for client_credentials flow — no
+        authorization_url required."""
+        name = f"e2e_mcp_srv_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "server_url": "https://example.com/mcp",
+                "oauth_provider": {
+                    "oauth_flow_type": "client_credentials",
+                    "token_url": "https://example.com/oauth/token",
+                    "scopes": ["read"],
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["oauth_provider_id"] is not None
+        # cleanup
+        e2e_client.delete(
+            f"/api/mcp-servers/{body['id']}?hard=true",
+            headers=platform_admin.headers,
+        )
+
+    def test_server_create_authorization_code_requires_authorization_url(
+        self, e2e_client, platform_admin
+    ):
+        """authorization_code flow without authorization_url → 422."""
+        name = f"e2e_mcp_srv_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "server_url": "https://example.com/mcp",
+                "oauth_provider": {
+                    "oauth_flow_type": "authorization_code",
+                    "token_url": "https://example.com/oauth/token",
+                    "scopes": ["read"],
+                },
+            },
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_server_create_rejects_both_provider_id_and_inline(
+        self, e2e_client, platform_admin
+    ):
+        """Cannot pass both ``oauth_provider_id`` and ``oauth_provider``."""
+        name = f"e2e_mcp_srv_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "server_url": "https://example.com/mcp",
+                "oauth_provider_id": str(uuid4()),
+                "oauth_provider": {
+                    "oauth_flow_type": "client_credentials",
+                    "token_url": "https://example.com/oauth/token",
+                },
+            },
+        )
+        assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.e2e
+class TestMCPConnectClientCredentials:
+    """Negative-path checks for the client_credentials connect flow.
+
+    The happy-path success of the token exchange is exercised in the unit
+    test ``tests/unit/routers/test_mcp_connections_connect.py`` (the e2e
+    process can't mock the vendor's ``/token`` endpoint).
+    """
+
+    def test_user_connect_rejects_client_credentials_400(
+        self, e2e_client, platform_admin, org1_user, org1
+    ):
+        """Per-user delegation is meaningless for client_credentials → 400."""
+        # Create a server template with a client_credentials inline provider
+        srv_resp = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": f"e2e_mcp_srv_{uuid4().hex[:8]}",
+                "server_url": "https://example.com/mcp",
+                "oauth_provider": {
+                    "oauth_flow_type": "client_credentials",
+                    "token_url": "https://example.com/oauth/token",
+                    "scopes": ["read"],
+                },
+            },
+        )
+        assert srv_resp.status_code == 201, srv_resp.text
+        server = srv_resp.json()
+        try:
+            conn_resp = e2e_client.post(
+                "/api/mcp-connections",
+                headers=platform_admin.headers,
+                json={
+                    "server_id": server["id"],
+                    "organization_id": str(org1["id"]),
+                    "client_id": "vendor-client-id",
+                    "client_secret": "vendor-secret-PLAINTEXT",
+                    "available_in_chat": False,
+                    "available_to_autonomous": True,
+                },
+            )
+            assert conn_resp.status_code == 201, conn_resp.text
+            connection = conn_resp.json()
+            try:
+                user_resp = e2e_client.get(
+                    f"/api/me/mcp-connections/{connection['id']}/connect",
+                    headers=org1_user.headers,
+                )
+                assert user_resp.status_code == 400, user_resp.text
+                assert (
+                    "authorization_code"
+                    in user_resp.json().get("detail", "").lower()
+                )
+            finally:
+                e2e_client.delete(
+                    f"/api/mcp-connections/{connection['id']}",
+                    headers=platform_admin.headers,
+                )
+        finally:
+            e2e_client.delete(
+                f"/api/mcp-servers/{server['id']}?hard=true",
+                headers=platform_admin.headers,
+            )

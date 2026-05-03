@@ -48,6 +48,8 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
+type OAuthFlowType = "authorization_code" | "client_credentials";
+
 interface DiscoveredMetadata {
 	authorization_endpoint?: string;
 	token_endpoint?: string;
@@ -57,6 +59,7 @@ interface DiscoveredMetadata {
 	resource?: string;
 	scopes_supported?: string[];
 	scopes?: string[] | string;
+	grant_types_supported?: string[];
 	[key: string]: unknown;
 }
 
@@ -72,6 +75,20 @@ function readMetadata(metadata: DiscoveredMetadata) {
 			? scopesValue
 			: "";
 	return { authorization_url, token_url, audience, scopes };
+}
+
+/**
+ * Detect OAuth flow type from the discovery's ``grant_types_supported``.
+ * If it contains ``client_credentials`` and not ``authorization_code``,
+ * default to client_credentials (forcing example: halopsa-mcp). Otherwise
+ * default to authorization_code (M365, etc.).
+ */
+function detectFlowFromMetadata(metadata: DiscoveredMetadata): OAuthFlowType {
+	const grants = metadata.grant_types_supported ?? [];
+	const hasCC = grants.includes("client_credentials");
+	const hasAC = grants.includes("authorization_code");
+	if (hasCC && !hasAC) return "client_credentials";
+	return "authorization_code";
 }
 
 interface MCPServerFormProps {
@@ -101,6 +118,9 @@ export function MCPServerForm({ onSuccess, onCancel }: MCPServerFormProps = {}) 
 	const [manualTokenUrl, setManualTokenUrl] = useState("");
 	const [manualAudience, setManualAudience] = useState("");
 	const [manualScopes, setManualScopes] = useState("");
+
+	// OAuth flow type — detected from discovery, admin can override.
+	const [flowType, setFlowType] = useState<OAuthFlowType>("authorization_code");
 
 	const handleDiscover = async () => {
 		const url = form.getValues("server_url");
@@ -146,6 +166,7 @@ export function MCPServerForm({ onSuccess, onCancel }: MCPServerFormProps = {}) 
 			setManualTokenUrl(parsed.token_url);
 			setManualAudience(parsed.audience);
 			setManualScopes(parsed.scopes);
+			setFlowType(detectFlowFromMetadata(discoveredMetadata));
 			toast.success("OAuth metadata discovered");
 		} catch (err) {
 			toast.error(
@@ -190,12 +211,60 @@ export function MCPServerForm({ onSuccess, onCancel }: MCPServerFormProps = {}) 
 			payload = metadata;
 		}
 
+		// Build the inline OAuth provider create payload from the
+		// discovered/manual values. Only sent when we have a token_url —
+		// otherwise the server is auth-less and no provider is created.
+		const parsed = metadata ? readMetadata(metadata) : null;
+		const tokenUrl = overrideMode
+			? manualTokenUrl
+			: (parsed?.token_url ?? "");
+		const authUrl = overrideMode
+			? manualAuthUrl
+			: (parsed?.authorization_url ?? "");
+		const audience = overrideMode
+			? manualAudience
+			: (parsed?.audience ?? "");
+		const scopesStr = overrideMode
+			? manualScopes
+			: (parsed?.scopes ?? "");
+		const scopes = scopesStr
+			? scopesStr.split(/[\s,]+/).filter(Boolean)
+			: [];
+
+		// authorization_code requires authorization_url; if the admin chose
+		// authorization_code but didn't supply one, fail fast with a toast.
+		if (
+			tokenUrl &&
+			flowType === "authorization_code" &&
+			!authUrl
+		) {
+			toast.error(
+				"Authorization URL is required for authorization_code flow",
+			);
+			return;
+		}
+
+		const oauthProviderPayload =
+			tokenUrl
+				? {
+						oauth_flow_type: flowType,
+						token_url: tokenUrl,
+						authorization_url:
+							flowType === "authorization_code"
+								? authUrl
+								: null,
+						scopes,
+						audience: audience || null,
+					}
+				: undefined;
+
 		try {
 			const result = await createServer.mutateAsync({
 				body: {
 					name: values.name,
 					server_url: values.server_url,
 					discovery_metadata: payload as Record<string, unknown> | null,
+					oauth_provider: oauthProviderPayload as never,
 					is_active: true,
 				},
 			});
@@ -333,19 +402,46 @@ export function MCPServerForm({ onSuccess, onCancel }: MCPServerFormProps = {}) 
 
 						<div className="space-y-2">
 							<label className="text-xs font-medium text-muted-foreground">
-								Authorization URL
+								OAuth flow
 							</label>
-							<Input
-								readOnly={!overrideMode}
-								value={
-									overrideMode
-										? manualAuthUrl
-										: parsed?.authorization_url ?? ""
+							<select
+								value={flowType}
+								onChange={(e) =>
+									setFlowType(e.target.value as OAuthFlowType)
 								}
-								onChange={(e) => setManualAuthUrl(e.target.value)}
-								className="font-mono text-xs"
-							/>
+								className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							>
+								<option value="authorization_code">
+									Authorization Code (3-legged, user-interactive)
+								</option>
+								<option value="client_credentials">
+									Client Credentials (2-legged, machine-to-machine)
+								</option>
+							</select>
+							<p className="text-xs text-muted-foreground">
+								{flowType === "client_credentials"
+									? "Each org enters a client_id+secret on its connection. No popup — Bifrost exchanges credentials for a token directly."
+									: "Standard 3-legged OAuth — admin connects via popup at the vendor's authorize URL."}
+							</p>
 						</div>
+
+						{flowType === "authorization_code" && (
+							<div className="space-y-2">
+								<label className="text-xs font-medium text-muted-foreground">
+									Authorization URL
+								</label>
+								<Input
+									readOnly={!overrideMode}
+									value={
+										overrideMode
+											? manualAuthUrl
+											: parsed?.authorization_url ?? ""
+									}
+									onChange={(e) => setManualAuthUrl(e.target.value)}
+									className="font-mono text-xs"
+								/>
+							</div>
+						)}
 
 						<div className="space-y-2">
 							<label className="text-xs font-medium text-muted-foreground">

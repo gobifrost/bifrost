@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Literal, Union
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -34,7 +35,7 @@ from sqlalchemy.orm import joinedload
 from src.config import get_settings
 from src.core.auth import Context
 from src.core.log_safety import log_safe
-from src.core.security import encrypt_secret
+from src.core.security import decrypt_secret, encrypt_secret
 from src.models.contracts.external_mcp import (
     MCPConnectionPublic,
     MCPConnectionSummary,
@@ -54,6 +55,7 @@ from src.services.mcp_client.oauth_state import (
     remember_nonce,
 )
 from src.services.oauth_provider import (
+    OAuthProviderClient,
     get_url_resolution_defaults,
     resolve_url_template,
 )
@@ -108,10 +110,38 @@ class MCPConnectionRefreshToolsResponse(BaseModel):
 
 
 class MCPConnectAuthorizeResponse(BaseModel):
-    """Response for ``POST /connect`` (and the per-user variant)."""
+    """Response for ``POST /connect`` when the linked OAuth provider uses
+    the ``authorization_code`` flow.
 
+    The frontend opens ``authorization_url`` in a popup; the vendor
+    redirects back to ``/api/mcp/oauth/callback`` which completes the
+    exchange.
+    """
+
+    flow: Literal["authorization_code"] = Field(default="authorization_code")
     authorization_url: str = Field(...)
     state: str = Field(...)
+
+
+class MCPConnectActivateResponse(BaseModel):
+    """Response for ``POST /connect`` when the linked OAuth provider uses
+    the ``client_credentials`` flow.
+
+    No popup — the server already exchanged client_id+secret for a token
+    and stored it as ``service_oauth_token_id``.
+    """
+
+    flow: Literal["client_credentials"] = Field(default="client_credentials")
+    success: bool = Field(...)
+    service_oauth_token_id: UUID = Field(...)
+
+
+# Discriminated union return type for the connect endpoints. The OpenAPI
+# schema renders this as ``oneOf`` on ``flow``; the frontend branches on
+# ``flow`` to decide whether to open a popup or just refetch.
+MCPConnectResponse = Union[
+    MCPConnectAuthorizeResponse, MCPConnectActivateResponse
+]
 
 
 # =============================================================================
@@ -186,9 +216,35 @@ def _build_callback_redirect_uri() -> str:
     return f"{public_url}/api/mcp/oauth/callback"
 
 
+async def _load_provider_or_400(
+    ctx: Context, connection: MCPConnection
+) -> OAuthProvider:
+    """Resolve the OAuth provider linked to the connection's server template.
+
+    Raises 400 if the template has no provider configured.
+    """
+    provider_id = connection.server.oauth_provider_id
+    if provider_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Server template has no OAuth provider configured",
+        )
+    result = await ctx.db.execute(
+        select(OAuthProvider).where(OAuthProvider.id == provider_id)
+    )
+    provider = result.scalar_one_or_none()
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth provider linked to server template is missing",
+        )
+    return provider
+
+
 async def _build_authorization_url(
     ctx: Context,
     connection: MCPConnection,
+    provider: OAuthProvider,
     state_token: str,
     code_verifier: str,
     redirect_uri: str,
@@ -199,20 +255,7 @@ async def _build_authorization_url(
     URL placeholders ({entity_id}) the same way the integrations
     authorize flow does.
     """
-    provider_id = connection.server.oauth_provider_id
-    if provider_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Server template has no OAuth provider configured",
-        )
-
-    from sqlalchemy import select
-
-    result = await ctx.db.execute(
-        select(OAuthProvider).where(OAuthProvider.id == provider_id)
-    )
-    provider = result.scalar_one_or_none()
-    if provider is None or not provider.authorization_url:
+    if not provider.authorization_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth provider missing authorization_url; cannot start flow",
@@ -237,6 +280,133 @@ async def _build_authorization_url(
         params["audience"] = provider.audience
 
     return f"{resolved}?{urlencode(params)}"
+
+
+async def _activate_client_credentials(
+    ctx: Context,
+    connection: MCPConnection,
+    provider: OAuthProvider,
+) -> MCPConnectActivateResponse:
+    """Run the 2-legged ``client_credentials`` token exchange.
+
+    The OAuth provider row holds the schema (token_url, scopes, audience,
+    flow_type). The actual ``client_id`` and ``client_secret`` come from
+    the *connection* — each org has its own pair registered with the
+    vendor — so we override the provider's stored credentials at the
+    call site rather than using ``provider.client_id`` /
+    ``provider.encrypted_client_secret``.
+    """
+    if not provider.token_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth provider missing token_url; cannot exchange",
+        )
+
+    # Decrypt the per-org client_secret from the connection row.
+    try:
+        client_secret = decrypt_secret(connection.encrypted_client_secret)
+    except Exception:
+        logger.exception(
+            "failed to decrypt client_secret for connection %s",
+            log_safe(str(connection.id)),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stored client_secret could not be decrypted",
+        )
+
+    defaults = await get_url_resolution_defaults(ctx.db, provider)
+    resolved_token_url = resolve_url_template(
+        provider.token_url, defaults=defaults
+    )
+
+    oauth_client = OAuthProviderClient()
+    scopes = " ".join(provider.scopes) if provider.scopes else ""
+    success, result = await oauth_client.get_client_credentials_token(
+        token_url=resolved_token_url,
+        client_id=connection.client_id,
+        client_secret=client_secret,
+        scopes=scopes,
+        audience=provider.audience,
+    )
+
+    if not success:
+        # Don't echo upstream raw text — we trust the parsed error fields.
+        error_msg = result.get("error_description") or result.get(
+            "error", "client_credentials exchange failed"
+        )
+        logger.warning(
+            "client_credentials exchange failed for connection %s: %s",
+            log_safe(str(connection.id)),
+            log_safe(str(error_msg)),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Token exchange failed: {error_msg}",
+        )
+
+    access_token = result.get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vendor returned no access_token",
+        )
+
+    # Persist as a new OAuthToken row, reuse if connection already had one.
+    expires_at = result.get("expires_at")
+    response_scopes_raw = result.get("scope", "")
+    response_scopes = (
+        response_scopes_raw.split(" ")
+        if isinstance(response_scopes_raw, str) and response_scopes_raw
+        else (provider.scopes or [])
+    )
+
+    encrypted_access = encrypt_secret(access_token).encode()
+
+    if connection.service_oauth_token_id is not None:
+        # Update in place — preserves FK referenced by other consumers.
+        existing = await ctx.db.execute(
+            select(OAuthToken).where(
+                OAuthToken.id == connection.service_oauth_token_id
+            )
+        )
+        token_row = existing.scalar_one_or_none()
+    else:
+        token_row = None
+
+    if token_row is None:
+        token_row = OAuthToken(
+            organization_id=connection.organization_id,
+            provider_id=provider.id,
+            user_id=None,
+            encrypted_access_token=encrypted_access,
+            encrypted_refresh_token=None,
+            expires_at=expires_at,
+            scopes=response_scopes,
+        )
+        ctx.db.add(token_row)
+        await ctx.db.flush()
+        connection.service_oauth_token_id = token_row.id
+    else:
+        token_row.encrypted_access_token = encrypted_access
+        token_row.encrypted_refresh_token = None
+        token_row.expires_at = expires_at
+        token_row.scopes = response_scopes
+        token_row.updated_at = datetime.now(timezone.utc)
+
+    connection.updated_at = datetime.now(timezone.utc)
+    await ctx.db.flush()
+
+    logger.info(
+        "client_credentials connection %s activated (token=%s)",
+        log_safe(str(connection.id)),
+        log_safe(str(token_row.id)),
+    )
+    return MCPConnectActivateResponse(
+        flow="client_credentials",
+        success=True,
+        service_oauth_token_id=token_row.id,
+    )
 
 
 # =============================================================================
@@ -484,23 +654,33 @@ async def refresh_tools(
 
 @router.post(
     "/{connection_id}/connect",
-    response_model=MCPConnectAuthorizeResponse,
-    summary="Initiate OAuth flow for the shared service connection",
+    response_model=MCPConnectResponse,
+    summary="Initiate or activate the shared service connection",
     description=(
-        "Returns the vendor's authorize URL plus the signed ``state`` "
-        "token. The frontend opens the URL in a popup; the vendor "
-        "redirects back to ``/api/mcp/oauth/callback`` which completes "
-        "the exchange and writes ``service_oauth_token_id`` on the "
-        "connection."
+        "Branches on the linked OAuth provider's ``oauth_flow_type``:\n\n"
+        "- ``authorization_code`` — returns the vendor's authorize URL plus "
+        "the signed ``state`` token. The frontend opens the URL in a popup; "
+        "the vendor redirects back to ``/api/mcp/oauth/callback`` which "
+        "completes the exchange and writes ``service_oauth_token_id`` on "
+        "the connection.\n\n"
+        "- ``client_credentials`` — performs a server-to-server token "
+        "exchange using the connection's client_id+secret and persists the "
+        "resulting access token as ``service_oauth_token_id``. Synchronous, "
+        "no popup."
     ),
 )
 async def connect_service_token(
     connection_id: UUID,
     ctx: Context,
-) -> MCPConnectAuthorizeResponse:
-    """Begin the service-token OAuth flow."""
+) -> MCPConnectResponse:
+    """Begin or complete the service-token flow."""
     connection = await _get_connection_or_404(ctx, connection_id)
     _enforce_can_write_org(ctx, connection.organization_id)
+
+    provider = await _load_provider_or_400(ctx, connection)
+
+    if provider.oauth_flow_type == "client_credentials":
+        return await _activate_client_credentials(ctx, connection, provider)
 
     redirect_uri = _build_callback_redirect_uri()
     code_verifier = generate_pkce_verifier()
@@ -513,9 +693,10 @@ async def connect_service_token(
     await remember_nonce(nonce)
 
     authorization_url = await _build_authorization_url(
-        ctx, connection, state_token, code_verifier, redirect_uri
+        ctx, connection, provider, state_token, code_verifier, redirect_uri
     )
     return MCPConnectAuthorizeResponse(
+        flow="authorization_code",
         authorization_url=authorization_url,
         state=state_token,
     )
@@ -534,7 +715,10 @@ async def connect_service_token(
         "Per-user delegated connect. Returns the vendor's authorize URL "
         "with state encoded for the *user* flow — the callback writes a "
         "``user_mcp_credentials`` row instead of touching "
-        "``mcp_connections.service_oauth_token_id``."
+        "``mcp_connections.service_oauth_token_id``.\n\n"
+        "Per-user delegation is only meaningful for ``authorization_code`` "
+        "providers; ``client_credentials`` connections are rejected with "
+        "400."
     ),
 )
 async def connect_user_credential(
@@ -546,6 +730,16 @@ async def connect_user_credential(
     # No write-org enforcement for the per-user path: the user is
     # connecting their own credentials, which they're entitled to do
     # provided they can see the connection.
+
+    provider = await _load_provider_or_400(ctx, connection)
+    if provider.oauth_flow_type != "authorization_code":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Per-user delegated connections are only supported for "
+                "authorization_code flows"
+            ),
+        )
 
     redirect_uri = _build_callback_redirect_uri()
     code_verifier = generate_pkce_verifier()
@@ -559,9 +753,10 @@ async def connect_user_credential(
     await remember_nonce(nonce)
 
     authorization_url = await _build_authorization_url(
-        ctx, connection, state_token, code_verifier, redirect_uri
+        ctx, connection, provider, state_token, code_verifier, redirect_uri
     )
     return MCPConnectAuthorizeResponse(
+        flow="authorization_code",
         authorization_url=authorization_url,
         state=state_token,
     )

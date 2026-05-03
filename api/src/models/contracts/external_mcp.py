@@ -12,13 +12,45 @@ be returned by the API without leaking secrets.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 # ==================== MCP SERVER ====================
+
+
+class MCPServerOAuthProviderCreate(BaseModel):
+    """Inline OAuth provider creation block carried on ``MCPServerCreate``.
+
+    When present, ``POST /api/mcp-servers`` creates an ``OAuthProvider`` row
+    and links it via ``mcp_servers.oauth_provider_id``. A placeholder
+    ``encrypted_client_secret`` is stored on the provider — the per-org
+    client_id+secret pair lives on each ``mcp_connections`` row, since each
+    org registers its own OAuth app with the vendor. The provider row is
+    just the schema (token_url, scopes, audience, flow_type).
+    """
+
+    oauth_flow_type: Literal["authorization_code", "client_credentials"] = Field(
+        default="authorization_code",
+        description=(
+            "OAuth grant type. Detect from discovery's ``grant_types_supported``: "
+            "if ``client_credentials`` is supported, default to that; else "
+            "``authorization_code``. Admin can override."
+        ),
+    )
+    token_url: str = Field(..., min_length=1, max_length=500)
+    authorization_url: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Required for ``authorization_code`` flow; ignored for "
+            "``client_credentials``."
+        ),
+    )
+    scopes: list[str] = Field(default_factory=list)
+    audience: str | None = Field(default=None, max_length=500)
 
 
 class MCPServerCreate(BaseModel):
@@ -39,6 +71,14 @@ class MCPServerCreate(BaseModel):
     oauth_provider_id: UUID | None = Field(
         default=None,
         description="OAuth provider configuration FK; absent for servers without auth",
+    )
+    oauth_provider: MCPServerOAuthProviderCreate | None = Field(
+        default=None,
+        description=(
+            "Inline OAuth provider creation. When set, the router creates an "
+            "OAuthProvider row and links it via ``oauth_provider_id``. Mutually "
+            "exclusive with ``oauth_provider_id``."
+        ),
     )
     redirect_url: str | None = Field(
         default=None,
@@ -91,6 +131,15 @@ class MCPServerPublic(BaseModel):
     name: str
     server_url: str
     oauth_provider_id: UUID | None
+    oauth_flow_type: str | None = Field(
+        default=None,
+        description=(
+            "OAuth flow type of the linked provider, if any. One of "
+            "``authorization_code`` | ``client_credentials``. The frontend "
+            "branches on this when rendering the connect button (popup vs "
+            "synchronous activate)."
+        ),
+    )
     redirect_url: str | None
     discovery_metadata: dict[str, Any] | None
     organization_id: UUID | None
