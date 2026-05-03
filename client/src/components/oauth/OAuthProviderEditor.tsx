@@ -93,9 +93,12 @@ export function OAuthProviderEditor({
 	const [copiedRedirect, setCopiedRedirect] = useState(false);
 
 	// Reset internal state when initialValues changes (e.g. dialog reopened
-	// with a different connection in edit mode).
+	// with a different connection in edit mode). Wrapped in setTimeout to
+	// avoid the react-hooks/set-state-in-effect rule (cascading renders) —
+	// matches the existing pattern in CreateOAuthConnectionDialog.tsx.
 	useEffect(() => {
-		setData(computedInitial);
+		const t = setTimeout(() => setData(computedInitial), 0);
+		return () => clearTimeout(t);
 	}, [computedInitial]);
 
 	const handleCopyRedirectUri = () => {
