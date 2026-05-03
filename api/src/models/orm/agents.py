@@ -4,6 +4,8 @@ Agent, AgentTool, AgentDelegation, AgentRole, Conversation, and Message ORM mode
 Represents AI agents, their tool/delegation relationships, and chat conversations.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4

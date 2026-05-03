@@ -103,10 +103,11 @@ async def _refresh_token_in_place(
             db=db, provider=provider, token=token, org_id=None
         )
         outcome = await refresh_oauth_token_http(td)
-    except Exception as exc:
-        logger.warning(
-            "MCP auth: refresh raised for token %s (%s)", token.id, exc
-        )
+    except Exception:
+        # Don't log the exception verbatim — OAuth provider error responses
+        # propagated through here can echo client tokens back. Caller logs
+        # the resolution failure with a stable category.
+        logger.warning("MCP auth: refresh raised for token %s", token.id)
         return False
 
     if not outcome.get("success"):

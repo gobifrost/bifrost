@@ -22,6 +22,8 @@ applies to FKs from ``mcp_connections.service_oauth_token_id`` and
 jackmusick/bifrost#148 for the integration-cache bug this defends against.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4

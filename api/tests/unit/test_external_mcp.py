@@ -274,7 +274,6 @@ async def test_agent_mcp_connection_relationship(db_session):
     # And the reverse: query through the join table directly. There's
     # intentionally no MCPConnection.agents back-relationship — closing
     # that cycle creates a module-level import loop CodeQL flags.
-    from src.models.orm.external_mcp import AgentMCPConnection
     result = await db_session.execute(
         select(AgentMCPConnection.agent_id)
         .where(AgentMCPConnection.connection_id == connection.id)
