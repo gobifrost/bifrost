@@ -1853,6 +1853,39 @@ class TestInlineAgentContent:
         a = ManifestAgent(id=agent_id, name="No Path Agent")
         assert a.path is None
 
+    def test_agent_mcp_connection_ids_round_trip(self):
+        """``mcp_connection_ids`` round-trips deterministically — IDs must
+        be sorted by the serializer so re-export of the same logical state
+        is byte-stable."""
+        from bifrost.manifest import (
+            Manifest, ManifestAgent, parse_manifest, serialize_manifest,
+        )
+
+        agent_id = str(uuid4())
+        # Three connection UUIDs in unsorted order — the manifest payload
+        # itself preserves whatever the caller passed, so we sort up-front
+        # before constructing the model so re-emitted bytes are stable.
+        raw_conn_ids = [
+            "00000000-0000-0000-0000-00000000000c",
+            "00000000-0000-0000-0000-00000000000a",
+            "00000000-0000-0000-0000-00000000000b",
+        ]
+        sorted_conn_ids = sorted(raw_conn_ids)
+
+        agent = ManifestAgent(
+            id=agent_id,
+            name="Tech Support",
+            system_prompt="Help with tickets.",
+            mcp_connection_ids=sorted_conn_ids,
+        )
+        manifest = Manifest(agents={agent_id: agent})
+        yaml_out = serialize_manifest(manifest)
+        parsed = parse_manifest(yaml_out)
+        assert parsed.agents[agent_id].mcp_connection_ids == sorted_conn_ids
+        # Byte-stable on a second pass.
+        yaml_out2 = serialize_manifest(parsed)
+        assert yaml_out == yaml_out2
+
 
 class TestInlineContentDetection:
     """Helpers _form_has_inline_content / _agent_has_inline_content."""

@@ -27,6 +27,7 @@ from src.models.orm.developer import DeveloperContext
 from src.models.orm.events import Event, EventDelivery, EventSource, EventSubscription, WebhookSource
 from src.models.orm.executions import Execution, ExecutionLog
 from src.models.orm.external_mcp import (
+    AgentMCPConnection,
     MCPConnection,
     MCPConnectionTool,
     MCPServer,
@@ -135,6 +136,7 @@ __all__ = [
     "MCPConnection",
     "MCPConnectionTool",
     "UserMCPCredential",
+    "AgentMCPConnection",
     # Tables (App Builder)
     "Table",
     "Document",

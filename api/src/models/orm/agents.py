@@ -17,6 +17,7 @@ from src.models.orm.base import Base
 
 if TYPE_CHECKING:
     from src.models.orm.ai_usage import AIUsage
+    from src.models.orm.external_mcp import MCPConnection
     from src.models.orm.organizations import Organization
     from src.models.orm.users import Role, User
     from src.models.orm.workflows import Workflow
@@ -96,6 +97,14 @@ class Agent(Base):
         secondary="agent_roles",
         back_populates="agents",
     )
+    # External MCP connections this agent has been explicitly granted access
+    # to. Default for new agents is empty (deny-by-default); the migration
+    # that introduces ``agent_mcp_connections`` backfills grants for existing
+    # rows so the rollout preserves current behavior.
+    mcp_connections: Mapped[list["MCPConnection"]] = relationship(
+        secondary="agent_mcp_connections",
+        back_populates="agents",
+    )
 
     __table_args__ = (
         Index("ix_agents_organization_id", "organization_id"),
@@ -118,6 +127,11 @@ class Agent(Base):
     def role_ids(self) -> list[str]:
         """List of role IDs that can access this agent."""
         return [str(r.id) for r in self.roles]
+
+    @property
+    def mcp_connection_ids(self) -> list[str]:
+        """List of MCP connection UUIDs granted to this agent."""
+        return [str(c.id) for c in self.mcp_connections]
 
 
 class AgentTool(Base):

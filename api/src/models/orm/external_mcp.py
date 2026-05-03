@@ -33,6 +33,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.orm.base import Base
 
 if TYPE_CHECKING:
+    from src.models.orm.agents import Agent
     from src.models.orm.oauth import OAuthProvider, OAuthToken
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
@@ -170,6 +171,13 @@ class MCPConnection(Base):
         "OAuthToken",
         foreign_keys=[service_oauth_token_id],
         lazy="joined",
+    )
+    # Agents that have been explicitly granted access to this connection.
+    # Empty list means no agent in the org may use this connection's tools.
+    agents: Mapped[list["Agent"]] = relationship(
+        secondary="agent_mcp_connections",
+        back_populates="mcp_connections",
+        lazy="selectin",
     )
 
     __table_args__ = (
@@ -317,4 +325,50 @@ class UserMCPCredential(Base):
             "connection_id",
             unique=True,
         ),
+    )
+
+
+class AgentMCPConnection(Base):
+    """Per-agent grant for an MCP connection.
+
+    A row here means "this agent may use the tools published by this MCP
+    connection". Without a row, the agent gets zero MCP tools from that
+    connection — the default for new agents is **deny**, so registering a
+    write-capable connection at the org level no longer silently widens
+    every agent's capabilities.
+
+    The migration that introduces this table backfills grants for every
+    existing (agent, connection) pair within the same org so the rollout
+    preserves current behavior. ``granted_by`` is ``NULL`` for backfilled
+    rows and the email/UUID of the granting admin for explicit grants —
+    the audit log uses the distinction to tell those apart.
+    """
+
+    __tablename__ = "agent_mcp_connections"
+
+    agent_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    connection_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "mcp_connections.id", ondelete="CASCADE", onupdate="CASCADE"
+        ),
+        primary_key=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+        nullable=False,
+    )
+    granted_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        default=None,
+        nullable=True,
+    )
+
+    __table_args__ = (
+        Index("ix_agent_mcp_connections_agent_id", "agent_id"),
+        Index("ix_agent_mcp_connections_connection_id", "connection_id"),
     )

@@ -28,6 +28,7 @@ from src.core.security import encrypt_secret
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.models.orm.external_mcp import (
+    AgentMCPConnection,
     MCPConnection,
     MCPConnectionTool,
     MCPServer,
@@ -160,6 +161,8 @@ async def _make_tool(
 async def _make_agent(
     db: AsyncSession,
     org: Organization | None,
+    *,
+    granted_connections: "list[MCPConnection] | None" = None,
 ) -> Agent:
     agent = Agent(
         id=uuid4(),
@@ -176,11 +179,21 @@ async def _make_agent(
     )
     db.add(agent)
     await db.flush()
+    # New agents are deny-by-default for MCP connections — every test
+    # that wants the agent to see MCP tools must grant them explicitly.
+    # ``granted_connections=None`` keeps that strict default; pass a list
+    # to bind grants for connections the test plans to surface.
+    for conn in granted_connections or []:
+        db.add(AgentMCPConnection(agent_id=agent.id, connection_id=conn.id))
+    await db.flush()
     # ``resolve_agent_tools`` reads ``agent.tools`` and ``agent.delegated_agents``;
     # default lazy loading on those collections triggers a sync IO call
     # inside the async resolve_agent_tools function, so we load them
     # eagerly here.
-    await db.refresh(agent, attribute_names=["tools", "delegated_agents"])
+    await db.refresh(
+        agent,
+        attribute_names=["tools", "delegated_agents", "mcp_connections"],
+    )
     return agent
 
 
@@ -301,7 +314,11 @@ async def test_chat_includes_all_enabled_mcp_tools(
     )
     await _make_tool(db_session, conn_auto, tool_name="autonomous_only_tool")
 
-    agent = await _make_agent(db_session, org)
+    agent = await _make_agent(
+        db_session,
+        org,
+        granted_connections=[conn_chat, conn_both, conn_auto],
+    )
 
     tools, id_map = await resolve_agent_tools(
         agent, db_session, caller_user_id=seed_user.id
@@ -425,7 +442,16 @@ async def test_autonomous_filters_to_flag_and_healthy_service_token(
     )
     await _make_tool(db_session, conn_expired, tool_name="expired_auto_tool")
 
-    agent = await _make_agent(db_session, org)
+    agent = await _make_agent(
+        db_session,
+        org,
+        granted_connections=[
+            conn_healthy,
+            conn_no_token,
+            conn_chat_only,
+            conn_expired,
+        ],
+    )
 
     tools, id_map = await resolve_agent_tools(
         agent, db_session, caller_user_id=None
@@ -476,7 +502,9 @@ async def test_autonomous_includes_tool_with_recently_expired_token(
     )
     await _make_tool(db_session, conn, tool_name="recent_expiry_tool")
 
-    agent = await _make_agent(db_session, org)
+    agent = await _make_agent(
+        db_session, org, granted_connections=[conn]
+    )
     tools, _ = await resolve_agent_tools(agent, db_session, caller_user_id=None)
 
     qual = f"{MCP_TOOL_PREFIX}{conn.id}__recent_expiry_tool"
@@ -507,7 +535,13 @@ async def test_mcp_tools_org_scoped(db_session: AsyncSession, seed_user):
     )
     await _make_tool(db_session, conn_b, tool_name="org_b_tool")
 
-    agent_a = await _make_agent(db_session, org_a)
+    # Grant both connections to test that the org filter still applies even
+    # when an agent is granted access to a connection from a different org
+    # — the join's WHERE clause on agent.organization_id should still drop
+    # the cross-org connection.
+    agent_a = await _make_agent(
+        db_session, org_a, granted_connections=[conn_a, conn_b]
+    )
     tools, _ = await resolve_agent_tools(
         agent_a, db_session, caller_user_id=seed_user.id
     )
@@ -531,9 +565,101 @@ async def test_platform_level_agent_gets_no_mcp_tools(
     )
     await _make_tool(db_session, conn, tool_name="some_mcp_tool")
 
-    platform_agent = await _make_agent(db_session, org=None)
+    # Even attempting to grant the platform agent access to the connection
+    # is a no-op — set_mcp_connection_grants refuses when the agent has no
+    # organization_id, and the helper here drops the AgentMCPConnection
+    # row entirely. We pass the connection anyway to confirm the spec:
+    # platform-level agents NEVER see MCP tools.
+    platform_agent = await _make_agent(
+        db_session, org=None, granted_connections=[conn]
+    )
     tools, _ = await resolve_agent_tools(
         platform_agent, db_session, caller_user_id=seed_user.id
     )
 
     assert all(not t.name.startswith(MCP_TOOL_PREFIX) for t in tools)
+
+
+# ---------------------------------------------------------------------------
+# resolve_agent_tools — per-agent grant filter (deny-by-default)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_with_no_grants_sees_no_mcp_tools(
+    db_session: AsyncSession, seed_user
+):
+    """An agent in an org with enabled MCP connections sees zero MCP tools
+    when no grants have been issued. The deny-by-default semantics mean a
+    new agent must be explicitly bound to a connection before its tools
+    surface."""
+    org = await _make_org(db_session)
+    server = await _make_server(db_session)
+    conn = await _make_connection(
+        db_session,
+        server,
+        org,
+        available_in_chat=True,
+        available_to_autonomous=True,
+    )
+    await _make_tool(db_session, conn, tool_name="visible_tool")
+    await _make_tool(db_session, conn, tool_name="another_visible_tool")
+
+    # Agent in the same org but with no grants.
+    agent = await _make_agent(db_session, org)
+    assert agent.mcp_connections == []
+
+    tools, id_map = await resolve_agent_tools(
+        agent, db_session, caller_user_id=seed_user.id
+    )
+
+    assert all(not t.name.startswith(MCP_TOOL_PREFIX) for t in tools)
+    assert all(
+        not name.startswith(MCP_TOOL_PREFIX) for name in id_map
+    )
+
+
+@pytest.mark.asyncio
+async def test_grant_for_one_connection_filters_out_other_connections(
+    db_session: AsyncSession, seed_user
+):
+    """An agent granted access to connection A sees A's tools but NOT
+    connection B's tools, even when B is in the same org and otherwise
+    enabled. This is the core "Tech Support gets HaloPSA, Marketing AI
+    doesn't" guarantee the join table is supposed to deliver."""
+    org = await _make_org(db_session)
+    server_a = await _make_server(db_session)
+    server_b = await _make_server(db_session)
+
+    conn_a = await _make_connection(
+        db_session,
+        server_a,
+        org,
+        available_in_chat=True,
+        available_to_autonomous=True,
+    )
+    await _make_tool(db_session, conn_a, tool_name="a_only_tool")
+
+    conn_b = await _make_connection(
+        db_session,
+        server_b,
+        org,
+        available_in_chat=True,
+        available_to_autonomous=True,
+    )
+    await _make_tool(db_session, conn_b, tool_name="b_only_tool")
+
+    # Grant ONLY connection A; B is intentionally not bound.
+    agent = await _make_agent(
+        db_session, org, granted_connections=[conn_a]
+    )
+
+    tools, _ = await resolve_agent_tools(
+        agent, db_session, caller_user_id=seed_user.id
+    )
+    names = {t.name for t in tools}
+
+    a_qual = f"{MCP_TOOL_PREFIX}{conn_a.id}__a_only_tool"
+    b_qual = f"{MCP_TOOL_PREFIX}{conn_b.id}__b_only_tool"
+    assert a_qual in names
+    assert b_qual not in names

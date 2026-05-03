@@ -183,6 +183,7 @@ def _build_side_effects(
         empty,                        # form_fields (inline form_schema)
         empty,                        # agent_tools (inline tool_ids)
         empty,                        # agent_delegations (inline delegated_agent_ids)
+        empty,                        # agent_mcp_connections (inline mcp_connection_ids)
         empty,                        # integrations
         empty,                        # config_schemas
         empty,                        # oauth_providers

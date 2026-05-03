@@ -145,6 +145,13 @@ class ManifestAgent(BaseModel):
     delegated_agent_ids: list[str] = Field(default_factory=list, description="Agent UUIDs this agent can delegate to")
     knowledge_sources: list[str] = Field(default_factory=list, description="Knowledge namespaces searchable via RAG")
     system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'execute_workflow')")
+    mcp_connection_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "MCP connection UUIDs explicitly granted to this agent. Empty "
+            "list means the agent surfaces no external MCP tools."
+        ),
+    )
     llm_model: str | None = Field(default=None, description="Override LLM model (null = global default)")
     llm_max_tokens: int | None = Field(default=None, description="Override LLM max tokens (null = global default)")
     max_iterations: int | None = Field(default=None, description="Max LLM iterations for autonomous runs")

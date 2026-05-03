@@ -264,6 +264,7 @@ def _agent_has_inline_content(magent) -> bool:
             "delegated_agent_ids",
             "knowledge_sources",
             "system_tools",
+            "mcp_connection_ids",
             "llm_model",
             "llm_max_tokens",
         )
@@ -305,6 +306,8 @@ def _agent_content_from_manifest(magent) -> bytes:
         data["knowledge_sources"] = list(magent.knowledge_sources)
     if magent.system_tools:
         data["system_tools"] = list(magent.system_tools)
+    if getattr(magent, "mcp_connection_ids", None):
+        data["mcp_connection_ids"] = list(magent.mcp_connection_ids)
     if magent.llm_model is not None:
         data["llm_model"] = magent.llm_model
     if magent.llm_max_tokens is not None:
@@ -1229,6 +1232,39 @@ class ManifestResolver:
                 post_values["updated_at"] = datetime.now(timezone.utc)
                 await self.db.execute(
                     sa_update(Agent).where(Agent.id == agent_id_uuid).values(**post_values)
+                )
+
+            # Sync MCP connection grants. The manifest carries the grants
+            # the agent had at export time; round-trip is byte-stable
+            # because the IDs are sorted in the serializer. Connections
+            # whose UUIDs aren't present in the target environment are
+            # silently skipped — the manifest cannot create connections,
+            # only grant existing ones.
+            mcp_ids = list(getattr(magent, "mcp_connection_ids", None) or [])
+            if mcp_ids or _agent_has_inline_content(magent):
+                from src.repositories.agents import AgentRepository
+
+                repo = AgentRepository(
+                    session=self.db,
+                    org_id=org_id_uuid,
+                    user_id=None,
+                    is_superuser=True,
+                )
+                try:
+                    parsed_ids = [UUID(cid) for cid in mcp_ids]
+                except ValueError:
+                    logger.warning(
+                        "Invalid MCP connection UUID in manifest for agent %s",
+                        magent.id,
+                    )
+                    parsed_ids = []
+                # ``granted_by=None`` flags the grant as system-driven so
+                # the audit log distinguishes manifest sync from explicit
+                # admin grants.
+                await repo.set_mcp_connection_grants(
+                    agent_id_uuid,
+                    parsed_ids,
+                    granted_by=None,
                 )
 
         return modified

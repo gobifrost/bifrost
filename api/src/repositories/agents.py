@@ -4,13 +4,15 @@ Agent Repository
 Repository for Agent CRUD operations with organization scoping and role-based access.
 """
 
+from collections.abc import Iterable
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent, AgentRole
+from src.models.orm.external_mcp import AgentMCPConnection, MCPConnection
 from src.repositories.org_scoped import OrgScopedRepository
 
 
@@ -144,6 +146,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
                 selectinload(self.model.delegated_agents),
                 selectinload(self.model.roles),
                 selectinload(self.model.owner),
+                selectinload(self.model.mcp_connections),
             )
             .where(self.model.id == agent_id)
         )
@@ -171,6 +174,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
                 selectinload(self.model.delegated_agents),
                 selectinload(self.model.roles),
                 selectinload(self.model.owner),
+                selectinload(self.model.mcp_connections),
             )
             .where(self.model.id == agent_id)
         )
@@ -197,3 +201,82 @@ class AgentRepository(OrgScopedRepository[Agent]):
         if entity and await self._can_access_entity(entity):
             return entity
         return None
+
+    async def set_mcp_connection_grants(
+        self,
+        agent_id: UUID,
+        connection_ids: Iterable[UUID],
+        *,
+        granted_by: UUID | None,
+    ) -> list[UUID]:
+        """Replace the agent's full set of MCP connection grants.
+
+        Mirrors the ``agent_tools`` delete-all-then-insert pattern: every
+        existing grant for the agent is removed and the supplied
+        ``connection_ids`` are re-inserted within the same transaction.
+        Caller is responsible for committing.
+
+        Connections must already belong to the agent's organization. IDs
+        whose connection row is missing or whose org doesn't match the
+        agent's org are silently skipped — the API layer should validate
+        before calling so admins get a 4xx, not a no-op grant.
+
+        Args:
+            agent_id: Agent whose grants are being replaced.
+            connection_ids: New set of connection UUIDs to grant.
+            granted_by: User UUID recorded on each new row (audit trail);
+                ``None`` is allowed for system-driven syncs (manifest
+                import, backfill jobs).
+
+        Returns:
+            The list of connection IDs that were actually granted (i.e.
+            the input filtered to existing, org-matching connections).
+        """
+        # Fetch agent for org validation.
+        agent_result = await self.session.execute(
+            select(Agent).where(Agent.id == agent_id)
+        )
+        agent = agent_result.scalar_one_or_none()
+        if agent is None:
+            return []
+
+        # Drop existing grants up front so an empty input list revokes
+        # everything atomically.
+        await self.session.execute(
+            delete(AgentMCPConnection).where(
+                AgentMCPConnection.agent_id == agent_id
+            )
+        )
+
+        connection_id_list = list(dict.fromkeys(connection_ids))  # dedup, preserve order
+        if not connection_id_list:
+            return []
+
+        # Validate that each connection exists and belongs to the agent's
+        # org. A platform-level agent (organization_id IS NULL) cannot
+        # carry MCP grants — connections are strictly per-org.
+        if agent.organization_id is None:
+            return []
+
+        valid_result = await self.session.execute(
+            select(MCPConnection.id).where(
+                MCPConnection.id.in_(connection_id_list),
+                MCPConnection.organization_id == agent.organization_id,
+            )
+        )
+        valid_ids = {row[0] for row in valid_result.all()}
+        granted: list[UUID] = []
+        for cid in connection_id_list:
+            if cid not in valid_ids:
+                continue
+            self.session.add(
+                AgentMCPConnection(
+                    agent_id=agent_id,
+                    connection_id=cid,
+                    granted_by=granted_by,
+                )
+            )
+            granted.append(cid)
+
+        await self.session.flush()
+        return granted

@@ -128,6 +128,7 @@ const formSchema = z.object({
 	delegated_agent_ids: z.array(z.string()),
 	role_ids: z.array(z.string()),
 	knowledge_sources: z.array(z.string()),
+	mcp_connection_ids: z.array(z.string()),
 	llm_model: z.string().nullable(),
 	llm_max_tokens: z.number().min(1).max(200_000).nullable(),
 	max_iterations: z.number().min(1).max(200).nullable(),
@@ -193,6 +194,7 @@ export function AgentSettingsTab({
 			const a = agent as AgentPublic & {
 				organization_id?: string | null;
 				system_tools?: string[];
+				mcp_connection_ids?: string[];
 				llm_model?: string | null;
 				llm_max_tokens?: number | null;
 				max_iterations?: number | null;
@@ -212,6 +214,7 @@ export function AgentSettingsTab({
 				delegated_agent_ids: a.delegated_agent_ids ?? [],
 				role_ids: a.role_ids ?? [],
 				knowledge_sources: a.knowledge_sources ?? [],
+				mcp_connection_ids: a.mcp_connection_ids ?? [],
 				llm_model: a.llm_model ?? null,
 				llm_max_tokens: a.llm_max_tokens ?? null,
 				max_iterations: a.max_iterations ?? null,
@@ -231,6 +234,7 @@ export function AgentSettingsTab({
 			delegated_agent_ids: [],
 			role_ids: [],
 			knowledge_sources: [],
+			mcp_connection_ids: [],
 			llm_model: null,
 			llm_max_tokens: null,
 			max_iterations: null,
@@ -330,6 +334,7 @@ export function AgentSettingsTab({
 			delegated_agent_ids: values.delegated_agent_ids,
 			role_ids: values.role_ids,
 			knowledge_sources: values.knowledge_sources,
+			mcp_connection_ids: values.mcp_connection_ids,
 			llm_model: values.llm_model,
 			...(isPlatformAdmin
 				? {
@@ -947,17 +952,27 @@ export function AgentSettingsTab({
 					</FormItem>
 
 					{/*
-					 * MCP auth-context badges + publish-warning panel
-					 * (mockup §8). Per-tool badges expose whether each
-					 * selected tool needs per-user delegation, falls back
-					 * to the shared service token, or is admin-disabled.
-					 * The warning panel fires when the agent is bound to a
-					 * chat-only MCP tool while also (potentially) being
-					 * invoked autonomously.
+					 * External MCP tools — per-connection grants. An admin
+					 * checks each connection the agent should be allowed to
+					 * call, and the tools published by that connection are
+					 * shown as muted hints below the checkbox so it's clear
+					 * what's being granted. New agents start with zero
+					 * grants (deny-by-default); the migration that
+					 * introduced this surface backfilled grants for agents
+					 * that existed prior to the rollout. Hidden entirely
+					 * for platform-level (organization_id=null) agents
+					 * since MCP connections are strictly per-org.
 					 */}
-					<AgentToolAuthSummary
-						systemToolIds={systemTools ?? []}
-						workflowToolIds={toolIds ?? []}
+					<FormField
+						control={form.control}
+						name="mcp_connection_ids"
+						render={({ field }) => (
+							<AgentMCPConnectionsPanel
+								organizationId={watchedOrgId}
+								value={field.value ?? []}
+								onChange={field.onChange}
+							/>
+						)}
 					/>
 
 					<FormField
@@ -1283,41 +1298,65 @@ export function AgentSettingsTab({
 
 
 /**
- * AgentToolAuthSummary — mockup §8.
+ * AgentMCPConnectionsPanel — per-agent MCP connection grants.
  *
- * Renders auth-context badges for each selected tool and a publish-time
- * warning panel covering chat-only MCP tools on (potentially) autonomous
- * agents.
+ * Lists every MCP connection in the agent's org with a checkbox. Each
+ * checkbox is the grant: ticked means the agent may call any tool that
+ * connection publishes; unticked means deny. Tools published by the
+ * connection are listed below the checkbox as muted hints so the admin
+ * can see what they're granting access to.
  *
- * Tool source detection (in priority order):
- *   1. system_tools entries starting with `mcp__` are MCP tools — look up
- *      the connection via mcp_connection_tools.tool_name and read flags.
- *   2. system_tools without that prefix are built-in / system tools —
- *      `Service auth` badge.
- *   3. workflow tool_ids — `Service auth` badge (workflows always run with
- *      the platform service identity).
+ * New agents start with zero grants (deny-by-default). The migration
+ * that introduced the join table backfilled grants for agents that
+ * existed before the rollout, preserving the legacy "every agent in the
+ * org auto-receives every connection's tools" behavior on upgrade.
  *
- * Backend gap: agent runs do not yet expose schedule / webhook trigger
- * subscriptions through the API surface. Until that lands, the warning
- * panel fires whenever the agent has chat-only MCP tools — call out to
- * the user that autonomous runs MAY break, rather than asserting that
- * they will. See report for follow-up endpoint shape.
+ * Hidden entirely when the agent has no organization_id — MCP
+ * connections are strictly per-org so platform-level agents have
+ * nothing to grant.
  */
-function AgentToolAuthSummary({
-	systemToolIds,
-	workflowToolIds,
+function AgentMCPConnectionsPanel({
+	organizationId,
+	value,
+	onChange,
 }: {
-	systemToolIds: string[];
-	workflowToolIds: string[];
+	organizationId: string | null;
+	value: string[];
+	onChange: (next: string[]) => void;
 }) {
-	// Pull connections + their tool catalogs. The list endpoint returns
-	// summaries (no nested tools), so we follow up with per-connection
-	// detail fetches for any connections that surface MCP tools the agent
-	// uses. The enabled list is small in practice (1–3 connections).
+	// Platform-level agents (no org) cannot carry MCP grants — connections
+	// are per-org. Hide the panel entirely rather than show an always-empty
+	// list that would confuse admins.
+	if (!organizationId) {
+		return null;
+	}
+
+	return (
+		<AgentMCPConnectionsPanelInner
+			organizationId={organizationId}
+			value={value}
+			onChange={onChange}
+		/>
+	);
+}
+
+function AgentMCPConnectionsPanelInner({
+	organizationId,
+	value,
+	onChange,
+}: {
+	organizationId: string;
+	value: string[];
+	onChange: (next: string[]) => void;
+}) {
+	// Pull this org's connections + their tool catalogs. The list endpoint
+	// returns summaries (no nested tools), so we follow up with
+	// per-connection detail fetches. The list is small in practice (1–3
+	// connections per org).
 	const { data: connections = [] } = $api.useQuery(
 		"get",
 		"/api/mcp-connections",
-		{ params: { query: {} } },
+		{ params: { query: { scope: organizationId } } },
 	);
 	const { data: servers = [] } = $api.useQuery(
 		"get",
@@ -1331,18 +1370,6 @@ function AgentToolAuthSummary({
 		return map;
 	}, [servers]);
 
-	// Identify mcp__-prefixed system tool entries.
-	const mcpToolNames = useMemo(
-		() => systemToolIds.filter((t) => t.startsWith("mcp__")),
-		[systemToolIds],
-	);
-
-	// We don't have a single backend endpoint that lists "tools available
-	// to this agent's org with their flags" — see the report. As a
-	// reasonable approximation we union all visible connections' tool
-	// catalogs (fetched on demand via `$api.queryOptions` + tanstack
-	// `useQueries`) and look the tool up by name. Cheap because react-query
-	// caches.
 	const connectionDetails = useQueries({
 		queries: connections.map((c) =>
 			$api.queryOptions("get", "/api/mcp-connections/{connection_id}", {
@@ -1351,270 +1378,86 @@ function AgentToolAuthSummary({
 		),
 	});
 
-	// Build a map: tool_name -> { connection, tool, server }. Used both for
-	// per-tool badges and the warning panel.
-	type Resolution = {
-		connectionId: string;
-		serverId: string;
-		serverName: string;
-		availableInChat: boolean;
-		availableToAutonomous: boolean;
-		hasServiceToken: boolean;
-		toolEnabled: boolean;
-		toolDisabledReason: string | null;
-	};
-	const mcpToolResolutions = useMemo(() => {
-		const out = new Map<string, Resolution>();
-		for (const q of connectionDetails) {
-			const conn = q.data;
-			if (!conn) continue;
-			for (const tool of conn.tools ?? []) {
-				// Convention: a system_tools entry of "mcp__<server>__<tool>"
-				// matches a connection tool with tool_name "<tool>" served by
-				// the server. We accept either the bare tool_name OR the full
-				// mcp__-prefixed key for robustness — early phases may emit
-				// either.
-				const directKey = tool.tool_name;
-				const prefixedKey = `mcp__${
-					serverNameById.get(conn.server_id) ?? "unknown"
-				}__${tool.tool_name}`;
-				const payload: Resolution = {
-					connectionId: conn.id,
-					serverId: conn.server_id,
-					serverName: serverNameById.get(conn.server_id) ?? "MCP",
-					availableInChat: conn.available_in_chat,
-					availableToAutonomous: conn.available_to_autonomous,
-					hasServiceToken: conn.service_oauth_token_id != null,
-					toolEnabled: tool.enabled,
-					toolDisabledReason: tool.disabled_reason ?? null,
-				};
-				out.set(directKey, payload);
-				out.set(prefixedKey, payload);
-			}
+	const granted = useMemo(() => new Set(value), [value]);
+
+	function toggle(connectionId: string, next: boolean) {
+		if (next) {
+			if (granted.has(connectionId)) return;
+			onChange([...value, connectionId]);
+		} else {
+			onChange(value.filter((id) => id !== connectionId));
 		}
-		return out;
-	}, [connectionDetails, serverNameById]);
+	}
 
-	// Decide whether the warning panel should fire. Conditions:
-	//   - At least one selected MCP tool whose connection is chat-only
-	//     (available_in_chat=true && available_to_autonomous=false), OR
-	//   - At least one selected MCP tool that is admin-disabled.
-	// (The "agent has a schedule subscription" leg of the spec isn't
-	// available through the current API; we surface it as a permissive
-	// warning instead of a hard block — see report.)
-	const warningCases = useMemo(() => {
-		const chatOnly: { name: string; res: Resolution }[] = [];
-		const disabled: { name: string; res: Resolution }[] = [];
-		for (const name of mcpToolNames) {
-			const res = mcpToolResolutions.get(name);
-			if (!res) continue;
-			if (!res.toolEnabled) {
-				disabled.push({ name, res });
-				continue;
-			}
-			if (
-				res.availableInChat &&
-				!res.availableToAutonomous
-			) {
-				chatOnly.push({ name, res });
-			}
-		}
-		return { chatOnly, disabled };
-	}, [mcpToolNames, mcpToolResolutions]);
-
-	const showWarning =
-		warningCases.chatOnly.length > 0 || warningCases.disabled.length > 0;
-
-	// Don't render anything if the agent has no tools selected — keeps the
-	// settings form quiet for simple agents.
-	if (
-		systemToolIds.length === 0 &&
-		workflowToolIds.length === 0
-	) {
-		return null;
+	if (connections.length === 0) {
+		return (
+			<div
+				className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground"
+				data-testid="agent-mcp-connections-panel-empty"
+			>
+				This organization has no MCP connections. Add one from the MCP
+				servers admin page to grant agents access to external tools.
+			</div>
+		);
 	}
 
 	return (
 		<div
 			className="rounded-md border bg-muted/20 p-3 space-y-3"
-			data-testid="agent-tool-auth-summary"
+			data-testid="agent-mcp-connections-panel"
 		>
-			<div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-				Tool auth context
-			</div>
-
-			{/* System / built-in / non-MCP tools */}
-			{systemToolIds
-				.filter((t) => !t.startsWith("mcp__"))
-				.map((toolId) => (
-					<div
-						key={`sys-${toolId}`}
-						className="flex items-center gap-2 text-xs"
-					>
-						<code className="text-xs">{toolId}</code>
-						<Badge variant="secondary">Service auth</Badge>
-						<Badge
-							variant="default"
-							className="bg-emerald-600 hover:bg-emerald-700"
-						>
-							Any context
-						</Badge>
-					</div>
-				))}
-
-			{/* Workflow tools — uniformly service-authenticated. */}
-			{workflowToolIds.map((toolId) => (
-				<div
-					key={`wf-${toolId}`}
-					className="flex items-center gap-2 text-xs"
-				>
-					<code className="text-xs">{toolId.slice(0, 8)}…</code>
-					<Badge variant="secondary">Service auth</Badge>
-					<Badge
-						variant="default"
-						className="bg-emerald-600 hover:bg-emerald-700"
-					>
-						Any context
-					</Badge>
+			<div>
+				<div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+					External MCP tools
 				</div>
-			))}
-
-			{/* MCP tools — surface per-user / shared-fallback / disabled. */}
-			{mcpToolNames.map((toolName) => {
-				const res = mcpToolResolutions.get(toolName);
-				if (!res) {
+				<p className="mt-1 text-xs text-muted-foreground">
+					Check each connection this agent should be allowed to call.
+					Unchecked connections are denied — the agent will not see any
+					of their tools.
+				</p>
+			</div>
+			<div className="space-y-3">
+				{connections.map((conn, idx) => {
+					const detail = connectionDetails[idx]?.data;
+					const tools = detail?.tools ?? [];
+					const enabledTools = tools.filter((t) => t.enabled);
+					const serverName =
+						serverNameById.get(conn.server_id) ?? "MCP server";
+					const checked = granted.has(conn.id);
 					return (
-						<div
-							key={`mcp-${toolName}`}
-							className="flex items-center gap-2 text-xs"
+						<label
+							key={conn.id}
+							className="flex items-start gap-2 cursor-pointer"
+							data-testid={`agent-mcp-connection-row-${conn.id}`}
 						>
-							<code className="text-xs">{toolName}</code>
-							<Badge
-								variant="default"
-								className="bg-amber-600 hover:bg-amber-700"
-							>
-								Unknown source
-							</Badge>
-						</div>
+							<Checkbox
+								checked={checked}
+								onCheckedChange={(state) =>
+									toggle(conn.id, state === true)
+								}
+								data-testid={`agent-mcp-connection-checkbox-${conn.id}`}
+							/>
+							<div className="flex-1">
+								<div className="text-sm font-medium">
+									{serverName}
+								</div>
+								{enabledTools.length === 0 ? (
+									<div className="text-xs text-muted-foreground">
+										No tools published yet.
+									</div>
+								) : (
+									<div className="text-xs text-muted-foreground">
+										Grants access to: {" "}
+										{enabledTools
+											.map((t) => t.tool_name)
+											.join(", ")}
+									</div>
+								)}
+							</div>
+						</label>
 					);
-				}
-				let authBadge: { label: string; cls: string };
-				let contextBadge: { label: string; cls: string } | null = null;
-				if (!res.toolEnabled) {
-					authBadge = {
-						label: "Disabled",
-						cls: "bg-rose-600 hover:bg-rose-700",
-					};
-					contextBadge = {
-						label: res.toolDisabledReason ?? "Disabled by admin",
-						cls: "bg-muted text-muted-foreground",
-					};
-				} else if (
-					res.availableInChat &&
-					!res.availableToAutonomous
-				) {
-					authBadge = {
-						label: "Per-user delegated",
-						cls: "bg-blue-600 hover:bg-blue-700",
-					};
-					contextBadge = {
-						label: "Chat only by default",
-						cls: "bg-amber-600 hover:bg-amber-700 text-white",
-					};
-				} else if (
-					res.availableInChat ||
-					res.availableToAutonomous
-				) {
-					authBadge = {
-						label: "Shared service auth",
-						cls: "bg-slate-500 hover:bg-slate-600",
-					};
-				} else {
-					authBadge = {
-						label: "Per-user delegated",
-						cls: "bg-blue-600 hover:bg-blue-700",
-					};
-					contextBadge = {
-						label: "Personal-use only",
-						cls: "bg-amber-600 hover:bg-amber-700 text-white",
-					};
-				}
-				return (
-					<div
-						key={`mcp-${toolName}`}
-						className="flex items-center gap-2 text-xs"
-					>
-						<code className="text-xs">{toolName}</code>
-						<span className="text-muted-foreground">·</span>
-						<span className="text-muted-foreground">
-							{res.serverName}
-						</span>
-						<Badge variant="default" className={authBadge.cls}>
-							{authBadge.label}
-						</Badge>
-						{contextBadge ? (
-							<Badge variant="default" className={contextBadge.cls}>
-								{contextBadge.label}
-							</Badge>
-						) : null}
-					</div>
-				);
-			})}
-
-			{showWarning ? (
-				<Alert
-					className="border-amber-300 bg-amber-50/70 dark:bg-amber-950/20"
-					data-testid="agent-publish-warning"
-				>
-					<AlertTriangle className="h-4 w-4 text-amber-600" />
-					<AlertTitle className="text-amber-900 dark:text-amber-200">
-						Publish warning
-					</AlertTitle>
-					<AlertDescription className="space-y-2 text-amber-900 dark:text-amber-200">
-						{warningCases.chatOnly.map(({ name, res }) => (
-							<p key={`warn-chat-${name}`} className="text-sm">
-								This agent has <code>{name}</code> bound, which
-								requires a per-user delegated token. Autonomous runs
-								against this org will only succeed if the connection's
-								<em> Available to autonomous agents </em>
-								flag is on AND the shared service connection is
-								healthy. Otherwise the tool will return{" "}
-								<code>needs_reauth</code> and the run will partially
-								fail.{" "}
-								<a
-									className="underline"
-									href={`/mcp-servers/${res.serverId}/connections/${res.connectionId}/edit`}
-								>
-									Manage {res.serverName} connection
-								</a>
-							</p>
-						))}
-						{warningCases.disabled.map(({ name, res }) => (
-							<p key={`warn-disabled-${name}`} className="text-sm">
-								<code>{name}</code> is currently disabled by your{" "}
-								{res.serverName} admin. Calls to it will fail until
-								it's re-enabled.{" "}
-								<a
-									className="underline"
-									href={`/mcp-servers/${res.serverId}/connections/${res.connectionId}/edit`}
-								>
-									Manage connection
-								</a>
-							</p>
-						))}
-						<div className="pt-1">
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								data-testid="agent-publish-warning-ack"
-							>
-								Acknowledge and publish anyway
-							</Button>
-						</div>
-					</AlertDescription>
-				</Alert>
-			) : null}
+				})}
+			</div>
 		</div>
 	);
 }

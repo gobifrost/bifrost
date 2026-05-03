@@ -20,6 +20,7 @@ from src.models.orm.applications import Application
 from src.models.orm.config import Config
 from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
 from src.models.orm.external_mcp import (
+    AgentMCPConnection,
     MCPConnection,
     MCPConnectionTool,
     MCPServer,
@@ -158,12 +159,14 @@ def serialize_agent(
     roles: list[str] | None = None,
     tool_ids: list[str] | None = None,
     delegated_agent_ids: list[str] | None = None,
+    mcp_connection_ids: list[str] | None = None,
 ) -> ManifestAgent:
     """Serialize an Agent ORM object to ManifestAgent with inline content.
 
-    ``tool_ids`` / ``delegated_agent_ids`` are passed in (rather than read from
-    relationships) so the caller controls eager-loading and ordering — matching
-    the pattern used for workflow/form roles.
+    ``tool_ids`` / ``delegated_agent_ids`` / ``mcp_connection_ids`` are passed
+    in (rather than read from relationships) so the caller controls
+    eager-loading and ordering — matching the pattern used for workflow/form
+    roles.
     """
     return ManifestAgent(
         id=str(agent.id),
@@ -178,6 +181,7 @@ def serialize_agent(
         delegated_agent_ids=delegated_agent_ids or [],
         knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
         system_tools=list(agent.system_tools) if agent.system_tools else [],
+        mcp_connection_ids=mcp_connection_ids or [],
         llm_model=agent.llm_model,
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
@@ -497,9 +501,19 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
             str(ad.child_agent_id)
         )
 
+    # Agent MCP connection grants — sorted for deterministic manifest output.
+    agent_mcp_result = await db.execute(select(AgentMCPConnection))
+    mcp_ids_by_agent: dict[str, list[str]] = {}
+    for amc in agent_mcp_result.scalars().all():
+        mcp_ids_by_agent.setdefault(str(amc.agent_id), []).append(
+            str(amc.connection_id)
+        )
+
     for ids in tool_ids_by_agent.values():
         ids.sort()
     for ids in delegated_ids_by_agent.values():
+        ids.sort()
+    for ids in mcp_ids_by_agent.values():
         ids.sort()
 
     # ------------------------------------------------------------------
@@ -663,6 +677,7 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
                 agent_roles_by_agent.get(str(agent.id), []),
                 tool_ids=tool_ids_by_agent.get(str(agent.id), []),
                 delegated_agent_ids=delegated_ids_by_agent.get(str(agent.id), []),
+                mcp_connection_ids=mcp_ids_by_agent.get(str(agent.id), []),
             )
             for agent in agents_list
         },

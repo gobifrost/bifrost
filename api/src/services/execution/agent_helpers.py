@@ -8,7 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent
-from src.models.orm.external_mcp import MCPConnection, MCPServer
+from src.models.orm.external_mcp import (
+    AgentMCPConnection,
+    MCPConnection,
+    MCPServer,
+)
 from src.services.llm import ToolDefinition
 from src.services.tool_registry import ToolRegistry
 
@@ -209,9 +213,21 @@ async def resolve_agent_tools(
     # tools; per the spec, MCP tools never bind to platform-level
     # agents. Token resolution happens at dispatch — we only filter
     # autonomous runs here when there's no usable service token at all.
+    #
+    # Per-agent grant filter: only connections explicitly bound to this
+    # agent via ``agent_mcp_connections`` are surfaced. Without a grant
+    # the agent gets zero MCP tools, regardless of the connection's
+    # availability flags. The org filter is belt-and-suspenders — grants
+    # should already imply org match, but the join guards against a
+    # stale grant from a recreated connection.
     if agent.organization_id is not None:
         connection_rows = await session.execute(
             select(MCPConnection)
+            .join(
+                AgentMCPConnection,
+                AgentMCPConnection.connection_id == MCPConnection.id,
+            )
+            .where(AgentMCPConnection.agent_id == agent.id)
             .where(MCPConnection.organization_id == agent.organization_id)
             .options(
                 selectinload(MCPConnection.tools),

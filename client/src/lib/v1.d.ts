@@ -8490,6 +8490,11 @@ export interface components {
              */
             system_tools?: string[];
             /**
+             * Mcp Connection Ids
+             * @description MCP connection UUIDs this agent is granted access to. Empty list (default) means the agent receives no external MCP tools. The agent's organization must own each listed connection.
+             */
+            mcp_connection_ids?: string[];
+            /**
              * Llm Model
              * @description Override model (null=use global config)
              */
@@ -8566,6 +8571,11 @@ export interface components {
             knowledge_sources?: string[];
             /** System Tools */
             system_tools?: string[];
+            /**
+             * Mcp Connection Ids
+             * @description MCP connection UUIDs this agent is granted access to.
+             */
+            mcp_connection_ids?: string[];
             /** Llm Model */
             llm_model?: string | null;
             /** Llm Max Tokens */
@@ -8895,6 +8905,12 @@ export interface components {
              * @default 0
              */
             dependency_count: number;
+            /**
+             * Mcp Connection Count
+             * @description Number of MCP connections explicitly granted to this agent.
+             * @default 0
+             */
+            mcp_connection_count: number;
         };
         /**
          * AgentUpdate
@@ -8942,6 +8958,11 @@ export interface components {
              * @description List of system tool names enabled for this agent
              */
             system_tools?: string[] | null;
+            /**
+             * Mcp Connection Ids
+             * @description MCP connection UUIDs this agent is granted access to. Replaces the agent's full grant list when provided; omit to leave grants unchanged. Pass [] to revoke all grants.
+             */
+            mcp_connection_ids?: string[] | null;
             /**
              * Clear Roles
              * @description If true, clear all role assignments (sets to role_based with no roles)
