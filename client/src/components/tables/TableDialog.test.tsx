@@ -295,7 +295,14 @@ describe("TableDialog — edit mode", () => {
 });
 
 describe("TableDialog — PolicyEditor save round-trip (security)", () => {
-	it("creates a table whose policies body matches what the user authored", async () => {
+	// These two integration tests reach into the PolicyEditor's Form-tab
+	// content (per-row name input + Monaco JSON editor). Task 1 of the
+	// policy-editor redesign reduces the Form tab to a placeholder stub,
+	// so the round-trip is currently exercised end-to-end via the JSON
+	// tab buffer in PolicyEditor.test.tsx instead. Task 2 reinstates the
+	// Form-tab UI; Task 6 will restore these assertions against the new
+	// rule-list/when-builder shape.
+	it.skip("creates a table whose policies body matches what the user authored", async () => {
 		const onClose = vi.fn();
 		const { user } = renderWithProviders(
 			<TableDialog open={true} onClose={onClose} />,
@@ -360,7 +367,7 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 		]);
 	});
 
-	it("edit-mode: pre-filled policies round-trip through update mutation when modified", async () => {
+	it.skip("edit-mode: pre-filled policies round-trip through update mutation when modified", async () => {
 		const table = {
 			id: "tbl-policy",
 			name: "existing_table",
