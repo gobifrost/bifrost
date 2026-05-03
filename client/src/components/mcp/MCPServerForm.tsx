@@ -412,16 +412,16 @@ export function MCPServerForm({ onSuccess, onCancel }: MCPServerFormProps = {}) 
 								className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
 							>
 								<option value="authorization_code">
-									Authorization Code (3-legged, user-interactive)
+									Authorization Code — user signs in at the vendor
 								</option>
 								<option value="client_credentials">
-									Client Credentials (2-legged, machine-to-machine)
+									Client Credentials — server-to-server, no user sign-in
 								</option>
 							</select>
 							<p className="text-xs text-muted-foreground">
 								{flowType === "client_credentials"
-									? "Each org enters a client_id+secret on its connection. No popup — Bifrost exchanges credentials for a token directly."
-									: "Standard 3-legged OAuth — admin connects via popup at the vendor's authorize URL."}
+									? "Each org enters a client_id + secret on its connection. Bifrost exchanges those credentials for an access token directly with the vendor — no browser popup, no user sign-in."
+									: "Admin clicks Connect and signs in at the vendor in a popup. Bifrost stores the resulting delegated access token."}
 							</p>
 						</div>
 

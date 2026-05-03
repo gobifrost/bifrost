@@ -9,7 +9,18 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, RefreshCw, Trash2 } from "lucide-react";
+
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,6 +79,34 @@ export function MCPServerDetail() {
 	}, [organizations]);
 
 	const [createOpen, setCreateOpen] = useState(false);
+	const [deleteOpen, setDeleteOpen] = useState(false);
+
+	const deleteServer = $api.useMutation(
+		"delete",
+		"/api/mcp-servers/{server_id}",
+	);
+
+	const handleDelete = async () => {
+		if (!id) return;
+		try {
+			await deleteServer.mutateAsync({
+				params: { path: { server_id: id }, query: { hard: true } },
+			});
+			toast.success("MCP server deleted");
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/mcp-servers"],
+			});
+			navigate("/mcp-servers");
+		} catch (err) {
+			toast.error(
+				err instanceof Error
+					? err.message
+					: "Failed to delete server",
+			);
+		} finally {
+			setDeleteOpen(false);
+		}
+	};
 
 	if (isLoading) {
 		return (
@@ -131,6 +170,15 @@ export function MCPServerDetail() {
 							)}
 						</div>
 					</div>
+					<Button
+						variant="outline"
+						size="sm"
+						className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 border-rose-200"
+						onClick={() => setDeleteOpen(true)}
+					>
+						<Trash2 className="h-4 w-4 mr-1" />
+						Delete server
+					</Button>
 				</div>
 			</div>
 
@@ -359,6 +407,33 @@ export function MCPServerDetail() {
 				onOpenChange={setCreateOpen}
 				serverId={server.id}
 			/>
+
+			<AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Delete this MCP server?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This will permanently remove the server template{" "}
+							<strong>{server.name}</strong> and cascade-delete all{" "}
+							connections, cached tool catalogs, and per-user
+							credentials linked to it. Agents using these tools
+							will lose access immediately. This cannot be undone.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={deleteServer.isPending}>
+							Cancel
+						</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={handleDelete}
+							disabled={deleteServer.isPending}
+							className="bg-rose-600 hover:bg-rose-700 text-white"
+						>
+							{deleteServer.isPending ? "Deleting..." : "Delete server"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }

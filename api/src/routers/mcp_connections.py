@@ -287,7 +287,7 @@ async def _activate_client_credentials(
     connection: MCPConnection,
     provider: OAuthProvider,
 ) -> MCPConnectActivateResponse:
-    """Run the 2-legged ``client_credentials`` token exchange.
+    """Run the ``client_credentials`` token exchange (server-to-server, no user).
 
     The OAuth provider row holds the schema (token_url, scopes, audience,
     flow_type). The actual ``client_id`` and ``client_secret`` come from

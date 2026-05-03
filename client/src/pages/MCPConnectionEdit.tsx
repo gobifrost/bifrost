@@ -12,7 +12,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Loader2, Trash2 } from "lucide-react";
+
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +95,33 @@ export function MCPConnectionEdit() {
 		"post",
 		"/api/mcp-connections/{connection_id}/refresh-tools",
 	);
+	const deleteConnection = $api.useMutation(
+		"delete",
+		"/api/mcp-connections/{connection_id}",
+	);
+	const [deleteOpen, setDeleteOpen] = useState(false);
+
+	const handleDelete = async () => {
+		if (!connectionId) return;
+		try {
+			await deleteConnection.mutateAsync({
+				params: { path: { connection_id: connectionId } },
+			});
+			toast.success("Connection deleted");
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/mcp-servers/{server_id}"],
+			});
+			navigate(`/mcp-servers/${serverId}`);
+		} catch (err) {
+			toast.error(
+				err instanceof Error
+					? err.message
+					: "Failed to delete connection",
+			);
+		} finally {
+			setDeleteOpen(false);
+		}
+	};
 
 	// Local form state — initialised from the connection on first load.
 	const [clientId, setClientId] = useState("");
@@ -602,8 +640,8 @@ export function MCPConnectionEdit() {
 				</CardContent>
 			</Card>
 
-			{/* Save / Cancel */}
-			<div className="flex gap-2 pt-2">
+			{/* Save / Cancel / Delete */}
+			<div className="flex items-center gap-2 pt-2">
 				<Button
 					onClick={handleSave}
 					disabled={updateConnection.isPending}
@@ -623,7 +661,46 @@ export function MCPConnectionEdit() {
 				>
 					Cancel
 				</Button>
+				<div className="ml-auto">
+					<Button
+						variant="outline"
+						className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 border-rose-200"
+						onClick={() => setDeleteOpen(true)}
+					>
+						<Trash2 className="h-4 w-4 mr-1" />
+						Delete connection
+					</Button>
+				</div>
 			</div>
+
+			<AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Delete this connection?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This will permanently remove the connection,{" "}
+							its cached tool catalog, and all per-user
+							credentials linked to it. Agents using these
+							tools will lose access immediately. This cannot
+							be undone.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={deleteConnection.isPending}>
+							Cancel
+						</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={handleDelete}
+							disabled={deleteConnection.isPending}
+							className="bg-rose-600 hover:bg-rose-700 text-white"
+						>
+							{deleteConnection.isPending
+								? "Deleting..."
+								: "Delete connection"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 
 			{!isClientCredentials && (
 				<ConnectServicePopup
