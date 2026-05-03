@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent
-from src.models.orm.external_mcp import MCPConnection
+from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.services.llm import ToolDefinition
 from src.services.tool_registry import ToolRegistry
 
@@ -216,18 +216,45 @@ async def resolve_agent_tools(
             .options(
                 selectinload(MCPConnection.tools),
                 selectinload(MCPConnection.service_oauth_token),
+                selectinload(MCPConnection.server).selectinload(
+                    MCPServer.oauth_provider
+                ),
             )
         )
         for connection in connection_rows.scalars():
-            # Autonomous-run gate: a planning-time hard filter for
-            # connections that could not possibly serve an autonomous
-            # call. The MisconfigError path 5 in auth_resolution exists
-            # to catch planner bugs, not as a normal-operation outcome.
+            # Determine if the connection's OAuth flow allows per-user
+            # delegation. client_credentials has no per-user mode at all —
+            # the only credential is the service token, gated by the two
+            # visibility flags. authorization_code can fall back to
+            # per-user tokens when chat users have OAuth'd individually.
+            provider = (
+                connection.server.oauth_provider
+                if connection.server is not None
+                else None
+            )
+            flow_type = provider.oauth_flow_type if provider else None
+            user_delegation_possible = flow_type != "client_credentials"
+
+            # Autonomous-run gate: connections that can't possibly serve an
+            # autonomous call. The MisconfigError path 5 in auth_resolution
+            # exists to catch planner bugs, not as a normal-operation outcome.
             if caller_user_id is None:
                 if not connection.available_to_autonomous:
                     continue
                 if not _autonomous_service_token_usable(connection):
                     continue
+            else:
+                # Chat-run gate: when no per-user OAuth path is possible
+                # (client_credentials flow), the only available token is
+                # the service token. Skip the connection if neither it can
+                # be used in chat nor would the user be able to OAuth on
+                # their own to acquire one.
+                if not user_delegation_possible:
+                    if not connection.available_in_chat:
+                        continue
+                    if not _autonomous_service_token_usable(connection):
+                        # No service token healthy → can't serve a call.
+                        continue
 
             for catalog_row in connection.tools:
                 if not catalog_row.enabled:

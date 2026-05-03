@@ -251,11 +251,30 @@ async def resolve_token(
             wasn't filtered at planning. This is a Bifrost-side bug, not
             an operator-side misconfig despite the name.
     """
+    # Determine if this connection's OAuth flow allows per-user delegation.
+    # client_credentials has NO per-user mode — there's no user OAuth flow
+    # to invoke; the only credential is the service token.
+    provider = (
+        connection.server.oauth_provider
+        if connection.server is not None
+        else None
+    )
+    flow_type = provider.oauth_flow_type if provider else None
+    user_delegation_possible = flow_type != "client_credentials"
+
     if caller_user_id is not None:
-        # Path 1: per-user credential healthy (chat OR webhook with claim)
-        user_token = await _user_token_healthy(connection, caller_user_id, db)
-        if user_token is not None:
-            return _decode_access_token(user_token), ResolutionPath.USER_TOKEN
+        # Path 1: per-user credential healthy (chat OR webhook with claim).
+        # Only meaningful for authorization_code flow; for client_credentials
+        # there's no user OAuth path so this lookup is skipped.
+        if user_delegation_possible:
+            user_token = await _user_token_healthy(
+                connection, caller_user_id, db
+            )
+            if user_token is not None:
+                return (
+                    _decode_access_token(user_token),
+                    ResolutionPath.USER_TOKEN,
+                )
 
         # Path 2: chat fallback to service token
         if connection.available_in_chat:
@@ -267,7 +286,21 @@ async def resolve_token(
                     ResolutionPath.SERVICE_FALLBACK_CHAT,
                 )
 
-        # Path 3: chat caller, no fallback — needs reauth
+        # Path 3: chat caller, no fallback. For authorization_code flows the
+        # user can recover by re-OAuthing personally → NeedsReauthError. For
+        # client_credentials there's no user-facing recovery; only an admin
+        # can fix by enabling the Available-in-chat flag → MisconfigError.
+        if not user_delegation_possible:
+            raise MisconfigError(
+                connection_id=connection.id,
+                reason=(
+                    f"Connection's OAuth flow is client_credentials "
+                    f"(server-to-server only) and 'Available in user chat' "
+                    f"is disabled. Admin must enable that flag for chat "
+                    f"users to invoke these tools — there is no per-user "
+                    f"OAuth path for this connection."
+                ),
+            )
         raise NeedsReauthError(
             reauth_url=_build_reauth_url(connection),
             connection_id=connection.id,

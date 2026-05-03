@@ -129,10 +129,17 @@ async def _make_connection(
 
 async def _reload_connection(db: AsyncSession, connection_id) -> MCPConnection:
     """Re-fetch the connection so eager-loaded relationships are populated."""
+    from src.models.orm.external_mcp import MCPServer
+
     result = await db.execute(
         select(MCPConnection)
         .where(MCPConnection.id == connection_id)
-        .options(selectinload(MCPConnection.service_oauth_token))
+        .options(
+            selectinload(MCPConnection.service_oauth_token),
+            selectinload(MCPConnection.server).selectinload(
+                MCPServer.oauth_provider
+            ),
+        )
     )
     return result.scalar_one()
 

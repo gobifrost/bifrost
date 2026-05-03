@@ -498,7 +498,7 @@ class AutonomousAgentExecutor:
         recorded in the run's step log. The user can connect the
         missing credential via the chat surface, then retry.
         """
-        from src.models.orm.external_mcp import MCPConnection
+        from src.models.orm.external_mcp import MCPConnection, MCPServer
 
         try:
             async with self._session_factory() as db:
@@ -506,7 +506,9 @@ class AutonomousAgentExecutor:
                     select(MCPConnection)
                     .where(MCPConnection.id == connection_id)
                     .options(
-                        selectinload(MCPConnection.server),
+                        selectinload(MCPConnection.server).selectinload(
+                            MCPServer.oauth_provider
+                        ),
                         selectinload(MCPConnection.service_oauth_token),
                     )
                 )

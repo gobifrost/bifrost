@@ -33,7 +33,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.orm.base import Base
 
 if TYPE_CHECKING:
-    from src.models.orm.oauth import OAuthToken
+    from src.models.orm.oauth import OAuthProvider, OAuthToken
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
 
@@ -89,6 +89,14 @@ class MCPServer(Base):
         back_populates="server",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+    # Optional link to the OAuth provider that owns this server's auth
+    # config (token URL, scopes, audience, oauth_flow_type). Used by the
+    # auth resolver to branch on flow_type so client_credentials connections
+    # don't get treated as if they had a per-user OAuth path.
+    oauth_provider: Mapped["OAuthProvider | None"] = relationship(
+        foreign_keys=[oauth_provider_id],
+        lazy="select",
     )
 
     __table_args__ = (

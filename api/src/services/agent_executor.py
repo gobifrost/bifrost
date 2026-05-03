@@ -1305,7 +1305,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         ``reauth_url`` / ``connection_id`` / ``tool_name`` so the UI can
         render an inline reconnect button without re-querying the API.
         """
-        from src.models.orm.external_mcp import MCPConnection
+        from src.models.orm.external_mcp import MCPConnection, MCPServer
 
         try:
             async with self._db() as session:
@@ -1313,7 +1313,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     select(MCPConnection)
                     .where(MCPConnection.id == connection_id)
                     .options(
-                        selectinload(MCPConnection.server),
+                        selectinload(MCPConnection.server).selectinload(
+                            MCPServer.oauth_provider
+                        ),
                         selectinload(MCPConnection.service_oauth_token),
                     )
                 )
