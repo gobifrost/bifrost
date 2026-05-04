@@ -73,7 +73,7 @@ jinja2
 # =============================================================================
 dulwich
 PyGithub
-GitPython>=3.1.47  # Closes 5 CVEs incl. CVSS 9.8 RCE
+GitPython>=3.1.49  # Closes 5 CVEs incl. CVSS 9.8 RCE
 
 # =============================================================================
 # Background Jobs
