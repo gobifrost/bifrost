@@ -20,7 +20,7 @@ vi.mock("./ws-client", () => ({
   },
 }));
 
-import { useTablePaged } from "./use-table-paged";
+import { useInfiniteTable } from "./use-infinite-table";
 
 function makePage(ids: string[], total: number, table_id = "tbl-uuid") {
   return new Response(
@@ -36,7 +36,7 @@ function makePage(ids: string[], total: number, table_id = "tbl-uuid") {
   );
 }
 
-describe("useTablePaged", () => {
+describe("useInfiniteTable", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     subscribeMock.mockClear();
@@ -48,7 +48,7 @@ describe("useTablePaged", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() =>
-      useTablePaged("t1", { pageSize: 100 }),
+      useInfiniteTable("t1", { pageSize: 100 }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -67,7 +67,7 @@ describe("useTablePaged", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() =>
-      useTablePaged("t1", { pageSize: 2 }),
+      useInfiniteTable("t1", { pageSize: 2 }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.hasMore).toBe(true);
@@ -90,7 +90,7 @@ describe("useTablePaged", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() =>
-      useTablePaged("t1", { pageSize: 2 }),
+      useInfiniteTable("t1", { pageSize: 2 }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -107,7 +107,7 @@ describe("useTablePaged", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderHook(() =>
-      useTablePaged("t1", { where: { status: "active" }, pageSize: 100 }),
+      useInfiniteTable("t1", { where: { status: "active" }, pageSize: 100 }),
     );
     await waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(1));
 
@@ -121,7 +121,7 @@ describe("useTablePaged", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() =>
-      useTablePaged("t1", { pageSize: 100 }),
+      useInfiniteTable("t1", { pageSize: 100 }),
     );
     await waitFor(() => expect(lastOnEvent).not.toBeNull());
 
@@ -137,7 +137,7 @@ describe("useTablePaged", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() =>
-      useTablePaged("t1", { where: { name: { contains: "x" } } }),
+      useInfiniteTable("t1", { where: { name: { contains: "x" } } }),
     );
     await waitFor(() => expect(result.current.error).not.toBeNull());
     expect(result.current.error?.message).toContain("contains");

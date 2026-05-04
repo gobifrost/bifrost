@@ -301,50 +301,58 @@ Props: `role` (string, required), `children` (ReactNode), `fallback` (ReactNode,
 
 ### Table Access (browser SDK)
 
-App-side table reads and writes go through `tables.*` and the `useTable` / `useTablePaged` hooks — same data layer as the Python `tables.*` SDK in workflows, just exposed in React. The `where` filter DSL is identical across both, so authors learn it once.
+App-side table reads and writes go through `tables.*` and the `useTable` / `useInfiniteTable` hooks — same data layer as the Python `tables.*` SDK in workflows, just exposed in React. The `where` filter DSL is identical across both, so authors learn it once.
 
 #### `useTable(name, query?)`
 
-Live-updating table data hook. Loads an initial snapshot via `tables.query` and subscribes to live changes; insert/update/delete events apply automatically.
+Live-updating table data hook with **page-based pagination**. Loads a snapshot of the requested page via `tables.query` and subscribes to live changes; insert/update/delete events apply to the visible page window automatically.
 
 ```tsx
 import { useTable } from "bifrost";
 
-const { rows, loading, error } = useTable("notes", {
+const { rows, total, totalPages, loading, error } = useTable("notes", {
   where: { client_id: clientId },
+  page: 1,
+  pageSize: 100,
 });
 ```
 
-Returns `{ rows, loading, error }`:
+Returns `{ rows, total, totalPages, loading, error }`:
 
-- `rows` — flat row shape: JSONB fields spread to the top level alongside `id`, `created_by`, `created_at`, `updated_at`, `table_id`, `updated_by`. (Matches the websocket event shape so live updates merge cleanly.)
+- `rows` — current page only, flat row shape (JSONB fields spread to the top level alongside `id`, `created_by`, `created_at`, `updated_at`, `table_id`, `updated_by`). Matches the websocket event shape so live updates merge cleanly.
+- `total` — count of matching rows across all pages (server's `total`). Use for "Page X of Y" UI or to detect "more on the server" via `rows.length < total`.
+- `totalPages` — `Math.ceil(total / pageSize)`, or `0` for empty tables (unambiguous empty state).
 - `loading` — true until the snapshot loads.
 - `error` — populated on snapshot failure or subscribe rejection (table not found / policy denied / unsupported `where` operator).
 
 Query options:
 
-| Option | Type | Description |
-|---|---|---|
-| `where` | `DocumentFilter` | Filter conditions, see DSL below |
-| `limit` | `number` | Max rows (1–1000, server cap) |
-| `offset` | `number` | Skip rows |
-| `order_by` | `string` | Field name to sort by (default `updated_at`) |
-| `order_dir` | `"asc" \| "desc"` | Sort direction (default `asc`) |
-| `scope` | `string` | Org scope override; omit to use the running app's org or caller's org |
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `where` | `DocumentFilter` | none | Filter conditions, see DSL below |
+| `page` | `number` | `1` | 1-indexed page number |
+| `pageSize` | `number` | `100` | Rows per page (server cap 1000) |
+| `order_by` | `string` | `updated_at` | Field name to sort by |
+| `order_dir` | `"asc" \| "desc"` | `"asc"` | Sort direction |
+| `scope` | `string` | app's org / caller's org | Org scope override |
 
-Default sort is `updated_at` ascending. Default page is 1000 rows max — past that, use `useTablePaged`.
+Live updates: `insert` events bump `total` and append to the visible window iff there's room (out-of-window inserts trim to `pageSize`); `update` replaces in place; `delete` removes from the window and decrements `total`.
 
-#### `useTablePaged(name, query?)`
+#### `useInfiniteTable(name, query?)`
 
-Same data shape as `useTable` plus `loadMore` for pagination. Use when a table may grow past 1000 rows.
+Same DSL as `useTable` but **accumulates** pages on demand for "Load more" / infinite-scroll UI. Each `loadMore()` call appends the next page to `rows`.
 
 ```tsx
-const { rows, loadMore, hasMore, loading, error } = useTablePaged("contacts", {
+import { useInfiniteTable } from "bifrost";
+
+const { rows, loadMore, hasMore, loading, error } = useInfiniteTable("contacts", {
   pageSize: 100,
 });
 ```
 
 Returns `{ rows, loadMore, hasMore, loading, error }`. `loadMore()` fetches the next page and appends to `rows`. `hasMore` flips false when a partial page comes back. After page 1 the hook automatically uses `skip_count: true` for speed.
+
+Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both wire live updates the same way.
 
 #### `tables.*` direct calls
 

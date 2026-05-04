@@ -23,7 +23,7 @@ import { useAppState } from "./useAppState";
 import { Link, NavLink, Navigate } from "./navigation";
 import { tables } from "../app-sdk/tables";
 import { useTable } from "../app-sdk/use-table";
-import { useTablePaged } from "../app-sdk/use-table-paged";
+import { useInfiniteTable } from "../app-sdk/use-infinite-table";
 
 /**
  * Platform scope object containing all platform APIs
@@ -75,6 +75,6 @@ export function createPlatformScope(): Record<string, unknown> {
 		// Table access
 		tables,
 		useTable,
-		useTablePaged,
+		useInfiniteTable,
 	};
 }

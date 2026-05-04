@@ -1446,9 +1446,17 @@ If you're about to write a workflow just to read/write a table, configure the po
 
 ### useTable
 
-Signature: `useTable(name: string, query?: { where?: DocumentFilter; limit?: number; offset?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; loading: boolean; error: Error | null }`.
+Signature: `useTable(name: string, query?: { where?: DocumentFilter; page?: number; pageSize?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; total: number; totalPages: number; loading: boolean; error: Error | null }`.
 
-Live-updating table data hook. Loads an initial snapshot via `tables.query` and subscribes to live changes via `tables.subscribe`, applying `insert` / `update` / `delete` events to local state. The hook compiles `where` into the policy `Expr` AST internally before passing to subscribe, so the websocket fanout sees the same row visibility as the snapshot.
+Live-updating table data hook with **page-based pagination**. Loads a snapshot of `page` (1-indexed, default 1) at `pageSize` rows per page (default 100, server cap 1000) via `tables.query` and subscribes to live changes via `tables.subscribe`, applying `insert` / `update` / `delete` events to the visible page window. The hook compiles `where` into the policy `Expr` AST internally before passing to subscribe, so the websocket fanout sees the same row visibility as the snapshot.
+
+Returns:
+- `rows` — current page only.
+- `total` — count of matching rows across all pages.
+- `totalPages` — `Math.ceil(total / pageSize)`, or `0` for empty tables.
+- `loading`, `error`.
+
+For "Page X of Y" UI, drive `page` from local state and read `totalPages` from the result. For "more on the server" detection, use `rows.length < total`.
 
 Rows are returned in a **flat** shape — JSONB `data` fields (e.g. `status`, `assignee`) are spread at the top level alongside column-mapped fields (`id`, `created_by`, `updated_by`, `created_at`, `updated_at`, `table_id`). This matches the shape websocket events deliver, so live updates merge cleanly with the snapshot.
 
@@ -1485,17 +1493,17 @@ The hook respects table policies — `rows` only contains rows the policies allo
 
 **Subscribe errors.** If the server rejects the subscribe (table not found / policy denied / unsupported `where` operator), the rejection is surfaced via `error` rather than silently dropped. Before, this case looked like "snapshot loaded fine, no live updates ever arrive" — now it's a visible failure.
 
-### useTablePaged
+### useInfiniteTable
 
-Signature: `useTablePaged(name: string, query?: { where?: DocumentFilter; pageSize?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; loadMore: () => Promise<void>; hasMore: boolean; loading: boolean; error: Error | null }`.
+Signature: `useInfiniteTable(name: string, query?: { where?: DocumentFilter; pageSize?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; loadMore: () => Promise<void>; hasMore: boolean; loading: boolean; error: Error | null }`.
 
-Same data layer as `useTable` but loads rows in pages. Use when a table may grow past the server's 1000-row hard cap on `limit`. The first page fetches with a count; subsequent pages set `skip_count: true` automatically for speed. Pages stop when a partial page comes back (`hasMore` flips false). Live updates apply to whatever's been loaded.
+Same DSL as `useTable` but **accumulates** pages on demand for "Load more" / infinite-scroll UI. Each `loadMore()` call appends the next page to `rows`. The first page fetches with a count; subsequent pages set `skip_count: true` automatically for speed. Pages stop when a partial page comes back (`hasMore` flips false). Live updates apply to whatever's been loaded.
 
 ```tsx
-import { useTablePaged } from "bifrost";
+import { useInfiniteTable } from "bifrost";
 
 export default function Contacts() {
-  const { rows, loadMore, hasMore, loading } = useTablePaged("contacts", {
+  const { rows, loadMore, hasMore, loading } = useInfiniteTable("contacts", {
     pageSize: 100,
   });
   return (
@@ -1507,7 +1515,7 @@ export default function Contacts() {
 }
 ```
 
-For tables where 1000 rows is enough, prefer `useTable` — simpler.
+Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both wire live updates the same way.
 
 ## Global Built-ins
 

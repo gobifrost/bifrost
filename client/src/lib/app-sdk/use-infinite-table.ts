@@ -11,7 +11,7 @@ import {
 
 type Expr = components["schemas"]["Expr"];
 
-export interface UseTablePagedQuery {
+export interface UseInfiniteTableQuery {
   where?: DocumentFilter;
   /** Page size (default 100, server cap 1000). */
   pageSize?: number;
@@ -20,7 +20,7 @@ export interface UseTablePagedQuery {
   scope?: string;
 }
 
-export interface UseTablePagedResult {
+export interface UseInfiniteTableResult {
   rows: TableRow[];
   loadMore: () => Promise<void>;
   hasMore: boolean;
@@ -29,20 +29,21 @@ export interface UseTablePagedResult {
 }
 
 /**
- * Live-updating paginated table data hook.
+ * Live-updating infinite-scroll table data hook.
  *
- * Like `useTable` but loads rows in pages on demand. The first page fetches
- * with a count; subsequent pages set `skip_count: true` (the API already
- * supports this — see `DocumentQuery.skip_count`). Pages stop when a
- * partial page comes back. Live updates apply to whatever's been loaded.
+ * Loads rows in pages on demand and accumulates them: each `loadMore()` call
+ * appends the next page to `rows`. The first page fetches with a count;
+ * subsequent pages set `skip_count: true` (the API supports this — see
+ * `DocumentQuery.skip_count`). Pages stop when a partial page comes back.
+ * Live updates apply to whatever's been loaded.
  *
- * Use this when a table may grow past the server's 1000-row hard cap on
- * `limit`. For tables where 1000 is enough, prefer `useTable` — simpler.
+ * Use this for "Load more" / infinite-scroll UI. For numbered-page UI ("Page
+ * 3 of 14"), prefer `useTable`'s `page` / `pageSize` / `totalPages` surface.
  */
-export function useTablePaged(
+export function useInfiniteTable(
   name: string,
-  query: UseTablePagedQuery = {},
-): UseTablePagedResult {
+  query: UseInfiniteTableQuery = {},
+): UseInfiniteTableResult {
   const [rows, setRows] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);

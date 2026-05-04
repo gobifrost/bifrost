@@ -56,7 +56,7 @@ PLATFORM_EXPORT_NAMES: frozenset[str] = frozenset({
     "useWorkflowQuery", "useWorkflowMutation",
     "RequireRole",
     # Tables SDK
-    "tables", "useTable", "useTablePaged",
+    "tables", "useTable", "useInfiniteTable",
     # Global JS built-ins re-asserted in `$` to win over Lucide icons of the
     # same name (e.g. Lucide ships a `Map` icon — without these entries
     # `new Map()` in user code would resolve to the icon component).
