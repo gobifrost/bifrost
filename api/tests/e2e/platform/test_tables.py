@@ -1015,3 +1015,132 @@ class TestDocumentUpsertVerb:
             },
         )
         assert forge.status_code == 403, forge.text
+
+
+@pytest.mark.e2e
+class TestDocumentQueryPaginationStable:
+    """Pagination must be stable across pages even when the primary sort
+    column has ties.
+
+    Regression for the bug where ``DocumentRepository.query`` ordered by
+    ``created_at`` only — rows inserted in the same transaction shared a
+    timestamp and Postgres returned them in arbitrary order across
+    OFFSET/LIMIT calls, so the same id could appear on adjacent pages or be
+    skipped entirely. The fix appends ``Document.id`` as a secondary sort
+    so OFFSET/LIMIT is deterministic.
+    """
+
+    def _seed(self, e2e_client, platform_admin, n: int) -> tuple[str, list[str]]:
+        """Create a table and batch-insert N rows in one transaction so
+        ``created_at`` is effectively tied across them. Returns
+        ``(table_id, sorted_ids)``."""
+        name = f"pag_{uuid4().hex[:8]}"
+        table_id = _create_table(e2e_client, platform_admin.headers, name)
+
+        b = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
+            headers=platform_admin.headers,
+            json={"documents": [{"data": {"i": i}} for i in range(n)]},
+        )
+        assert b.status_code == 200, b.text
+        assert b.json()["inserted"] == n
+
+        # Pull the canonical id list straight from the DB (one big page) and
+        # sort it the same way the new tiebreaker does. This is what each
+        # paginated walk should reconstruct.
+        full = e2e_client.post(
+            f"/api/tables/{table_id}/documents/query",
+            headers=platform_admin.headers,
+            json={"limit": 1000},
+        )
+        assert full.status_code == 200, full.text
+        ids = [d["id"] for d in full.json()["documents"]]
+        assert len(ids) == n
+        return table_id, ids
+
+    def _walk(
+        self,
+        e2e_client,
+        platform_admin,
+        table_id: str,
+        page_size: int,
+        body_extra: dict,
+    ) -> list[str]:
+        """Walk every page with the given query body extras and return the
+        concatenated id list."""
+        seen: list[str] = []
+        offset = 0
+        while True:
+            page = e2e_client.post(
+                f"/api/tables/{table_id}/documents/query",
+                headers=platform_admin.headers,
+                json={"limit": page_size, "offset": offset, **body_extra},
+            )
+            assert page.status_code == 200, page.text
+            docs = page.json()["documents"]
+            if not docs:
+                break
+            seen.extend(d["id"] for d in docs)
+            if len(docs) < page_size:
+                break
+            offset += page_size
+        return seen
+
+    def test_default_order_paginates_without_duplicates_on_tied_created_at(
+        self, e2e_client, platform_admin
+    ):
+        """Default sort (no ``order_by``) — batch-inserted rows share
+        ``created_at``. Pagination must still cover every row exactly once."""
+        n = 12
+        table_id, full_ids = self._seed(e2e_client, platform_admin, n)
+
+        walked = self._walk(e2e_client, platform_admin, table_id, page_size=4, body_extra={})
+
+        # Every row appears exactly once.
+        assert sorted(walked) == sorted(full_ids), (
+            f"Pagination drift detected. Full set: {sorted(full_ids)}, "
+            f"walked: {walked}"
+        )
+        assert len(walked) == n
+        assert len(set(walked)) == n  # no duplicates
+
+    def test_order_by_jsonb_field_paginates_without_duplicates_on_ties(
+        self, e2e_client, platform_admin
+    ):
+        """When sorting by a JSONB field that has ties (e.g. all rows share
+        the same ``status``), the secondary id tiebreaker keeps pages
+        non-overlapping."""
+        name = f"pag_tie_{uuid4().hex[:8]}"
+        table_id = _create_table(e2e_client, platform_admin.headers, name)
+        n = 10
+
+        # Every row has the same `status` so ordering by it is fully tied.
+        b = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
+            headers=platform_admin.headers,
+            json={
+                "documents": [
+                    {"data": {"i": i, "status": "open"}} for i in range(n)
+                ],
+            },
+        )
+        assert b.status_code == 200, b.text
+
+        full = e2e_client.post(
+            f"/api/tables/{table_id}/documents/query",
+            headers=platform_admin.headers,
+            json={"limit": 1000, "order_by": "status", "order_dir": "asc"},
+        )
+        assert full.status_code == 200, full.text
+        full_ids = [d["id"] for d in full.json()["documents"]]
+        assert len(full_ids) == n
+
+        walked = self._walk(
+            e2e_client,
+            platform_admin,
+            table_id,
+            page_size=3,
+            body_extra={"order_by": "status", "order_dir": "asc"},
+        )
+        assert sorted(walked) == sorted(full_ids)
+        assert len(set(walked)) == n

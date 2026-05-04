@@ -44,21 +44,50 @@ from bifrost.refs import AmbiguousRefError, RefNotFoundError, RefResolver
 _ExitCode = int
 
 
+def _set_json_output(ctx: click.Context, _param: Any, value: bool) -> bool:
+    ctx.ensure_object(dict)
+    # Only overwrite when the flag is explicitly set, so a group-level
+    # ``--json`` isn't reset to False by an unspecified subcommand-level
+    # default. Click's ``Option`` wires this callback even when the user
+    # didn't type ``--json``, so a default-False call comes through too.
+    if value:
+        ctx.obj["json_output"] = True
+    return value
+
+
+def _build_json_option() -> click.Option:
+    """Construct the shared ``--json`` Click Option directly.
+
+    ``json_output_option`` (the decorator form) is what subcommand callbacks
+    use during decoration. For appending the option to a built ``Command``
+    after the fact (see ``_EntityGroup.add_command``) we need the raw
+    ``Option`` object rather than running the decorator against an empty
+    callback.
+    """
+    return click.Option(
+        ["--json", "json_output"],
+        is_flag=True,
+        default=False,
+        expose_value=False,
+        callback=_set_json_output,
+        help="Emit JSON instead of human-readable output.",
+    )
+
+
 def json_output_option(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Add a shared ``--json`` flag that routes through the Click context obj."""
+    """Add a shared ``--json`` flag that routes through the Click context obj.
 
-    def _set(ctx: click.Context, _param: Any, value: bool) -> bool:
-        ctx.ensure_object(dict)
-        ctx.obj["json_output"] = value
-        return value
-
+    Used directly only by the group-level decorator built in ``entity_group``;
+    subcommands get the same flag attached automatically by ``_EntityGroup.add_command``
+    via ``_build_json_option``.
+    """
     return click.option(
         "--json",
         "json_output",
         is_flag=True,
         default=False,
         expose_value=False,
-        callback=_set,
+        callback=_set_json_output,
         help="Emit JSON instead of human-readable output.",
     )(fn)
 
@@ -267,14 +296,36 @@ def pass_resolver(fn: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
+class _EntityGroup(click.Group):
+    """Click group that auto-applies ``--json`` to every subcommand.
+
+    Click's parser only accepts options at the position they're declared,
+    so a flag attached at the group level (``bifrost tables --json list``)
+    won't parse after the subcommand (``bifrost tables list --json``). Most
+    users type the latter. We attach the option at both levels: the group
+    decorator handles the pre-subcommand position, and ``add_command``
+    appends a fresh ``--json`` option to each subcommand so the post-
+    subcommand position also works. Both writes target ``ctx.obj["json_output"]``
+    so ``output_result`` reads a consistent value regardless of position.
+    """
+
+    def add_command(
+        self, cmd: click.Command, name: str | None = None
+    ) -> None:
+        if not any(p.name == "json_output" for p in cmd.params):
+            cmd.params.append(_build_json_option())
+        super().add_command(cmd, name)
+
+
 def entity_group(name: str, help_text: str) -> click.Group:
     """Factory for a Click group with the project's shared conventions.
 
-    Attaches the ``--json`` option at the group level so every sub-command
-    inherits it via ``ctx.obj``.
+    Attaches the ``--json`` option at the group level *and* on every
+    sub-command, so callers can place ``--json`` either before or after the
+    subcommand name.
     """
 
-    @click.group(name=name, help=help_text)
+    @click.group(name=name, help=help_text, cls=_EntityGroup)
     @json_output_option
     @click.pass_context
     def group(ctx: click.Context) -> None:

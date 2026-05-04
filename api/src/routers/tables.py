@@ -590,19 +590,27 @@ class DocumentRepository:
         else:
             total = -1
 
-        # Apply ordering
+        # Apply ordering. Always append `Document.id` as a secondary sort key
+        # so OFFSET/LIMIT pagination is stable when the primary key has ties
+        # (e.g. rows inserted in the same transaction share `created_at`).
+        # Without a tiebreaker, Postgres returns tied rows in arbitrary order
+        # and the same id can appear on adjacent pages — or be skipped entirely.
         if query_params.order_by:
             # Order by JSONB field
             order_expr = Document.data[query_params.order_by].astext
             if query_params.order_dir == "desc":
                 order_expr = order_expr.desc()
-            base_query = base_query.order_by(order_expr)
+            base_query = base_query.order_by(order_expr, Document.id)
         else:
             # Default ordering by created_at
             if query_params.order_dir == "desc":
-                base_query = base_query.order_by(Document.created_at.desc())
+                base_query = base_query.order_by(
+                    Document.created_at.desc(), Document.id
+                )
             else:
-                base_query = base_query.order_by(Document.created_at.asc())
+                base_query = base_query.order_by(
+                    Document.created_at.asc(), Document.id
+                )
 
         # Apply pagination
         base_query = base_query.offset(query_params.offset).limit(query_params.limit)
