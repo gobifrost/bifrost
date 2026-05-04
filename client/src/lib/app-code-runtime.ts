@@ -214,6 +214,15 @@ export const $: Record<string, unknown> = {
 	// override Lucide's Link icon
 	...LucideIcons,
 
+	// Re-assert global built-ins. Lucide ships icons named Map, Set, Type, Filter,
+	// Form, etc. — without this, `new Map()` in user code resolves to the Map
+	// *icon* component and crashes with "Map2 is not a constructor".
+	Map: globalThis.Map,
+	Set: globalThis.Set,
+	WeakMap: globalThis.WeakMap,
+	WeakSet: globalThis.WeakSet,
+	Date: globalThis.Date,
+
 	// Platform APIs (useWorkflowQuery, useWorkflowMutation, navigate, useUser, etc.)
 	// MUST come after Lucide icons to override Link, NavLink, Navigate, useNavigate
 	...createPlatformScope(),

@@ -202,7 +202,10 @@ describe("useTable", () => {
     expect(result.current.rows[0]?.id).toBe("r1");
   });
 
-  it("subscribes with the same filter passed to the initial query", async () => {
+  it("compiles the dict-shorthand `where` to a policy Expr for subscribe", async () => {
+    // Snapshot uses the dict shorthand directly (server's _build_document_filters
+    // expects field-keyed shape). Subscribe needs the operator-keyed Expr AST.
+    // The hook compiles between the two so callers see one DSL.
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -218,12 +221,8 @@ describe("useTable", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const where = { eq: ["status", "active"] } as unknown as Record<
-      string,
-      unknown
-    >;
     const { result } = renderHook(() =>
-      useTable("t1", { where: where as never }),
+      useTable("t1", { where: { status: "active" } }),
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled());
@@ -233,7 +232,12 @@ describe("useTable", () => {
     // the name passed to useTable. This sidesteps cross-org name ambiguity
     // when scope targets a different org.
     expect(tableId).toBe("tbl-uuid");
-    expect(filterArg).toEqual(where);
+    // The compiled Expr is operator-keyed: { eq: [{row: "status"}, "active"] }
+    expect(filterArg).toEqual({ eq: [{ row: "status" }, "active"] });
+
+    // The snapshot POST body should carry the *original* dict-shorthand `where`.
+    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(reqBody.where).toEqual({ status: "active" });
   });
 
   it("plumbs scope through to tables.query (REST snapshot is scope-aware)", async () => {
@@ -292,6 +296,93 @@ describe("useTable", () => {
     const [tableId] = subscribeMock.mock.calls[0];
     expect(tableId).toBe("tbl-uuid-in-target-scope");
     expect(tableId).not.toBe("tickets");
+  });
+
+  it("plumbs order_by/order_dir through to tables.query", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useTable("t1", { order_by: "created_at", order_dir: "desc" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(reqBody.order_by).toBe("created_at");
+    expect(reqBody.order_dir).toBe("desc");
+  });
+
+  it("surfaces subscribe error frames as `error` (no longer silent)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTable("t1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(lastOnEvent).not.toBeNull());
+
+    // Server sends `{type: "error", channel, message}` when a subscribe is
+    // rejected. Before this fix, the hook ignored these and the caller saw
+    // "snapshot loaded fine" with no live updates ever arriving.
+    act(() => {
+      lastOnEvent?.({
+        type: "error",
+        channel: "table:tbl-uuid",
+        message: "Access denied",
+      });
+    });
+
+    expect(result.current.error).not.toBeNull();
+    expect(result.current.error?.message).toBe("Access denied");
+  });
+
+  it("rejects query-only operators in `where` (contains/starts_with/...)", async () => {
+    // The dict-shorthand DSL has more operators than the policy Expr AST.
+    // For ones the AST can't represent, surface a clear error rather than
+    // silently dropping the filter on the subscribe side.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          documents: [],
+          table_id: "tbl-uuid",
+          total: 0,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useTable("t1", { where: { name: { contains: "acme" } } }),
+    );
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.error?.message).toContain("contains");
   });
 
   it("re-runs the effect when scope changes", async () => {
