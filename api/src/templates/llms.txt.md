@@ -299,6 +299,105 @@ Props: `role` (string, required), `children` (ReactNode), `fallback` (ReactNode,
 - `useNavigate()` — programmatic navigation `navigate("/path")`
 - `useLocation()` — current location object
 
+### Table Access (browser SDK)
+
+App-side table reads and writes go through `tables.*` and the `useTable` / `useTablePaged` hooks — same data layer as the Python `tables.*` SDK in workflows, just exposed in React. The `where` filter DSL is identical across both, so authors learn it once.
+
+#### `useTable(name, query?)`
+
+Live-updating table data hook. Loads an initial snapshot via `tables.query` and subscribes to live changes; insert/update/delete events apply automatically.
+
+```tsx
+import { useTable } from "bifrost";
+
+const { rows, loading, error } = useTable("notes", {
+  where: { client_id: clientId },
+});
+```
+
+Returns `{ rows, loading, error }`:
+
+- `rows` — flat row shape: JSONB fields spread to the top level alongside `id`, `created_by`, `created_at`, `updated_at`, `table_id`, `updated_by`. (Matches the websocket event shape so live updates merge cleanly.)
+- `loading` — true until the snapshot loads.
+- `error` — populated on snapshot failure or subscribe rejection (table not found / policy denied / unsupported `where` operator).
+
+Query options:
+
+| Option | Type | Description |
+|---|---|---|
+| `where` | `DocumentFilter` | Filter conditions, see DSL below |
+| `limit` | `number` | Max rows (1–1000, server cap) |
+| `offset` | `number` | Skip rows |
+| `order_by` | `string` | Field name to sort by (default `updated_at`) |
+| `order_dir` | `"asc" \| "desc"` | Sort direction (default `asc`) |
+| `scope` | `string` | Org scope override; omit to use the running app's org or caller's org |
+
+Default sort is `updated_at` ascending. Default page is 1000 rows max — past that, use `useTablePaged`.
+
+#### `useTablePaged(name, query?)`
+
+Same data shape as `useTable` plus `loadMore` for pagination. Use when a table may grow past 1000 rows.
+
+```tsx
+const { rows, loadMore, hasMore, loading, error } = useTablePaged("contacts", {
+  pageSize: 100,
+});
+```
+
+Returns `{ rows, loadMore, hasMore, loading, error }`. `loadMore()` fetches the next page and appends to `rows`. `hasMore` flips false when a partial page comes back. After page 1 the hook automatically uses `skip_count: true` for speed.
+
+#### `tables.*` direct calls
+
+| Method | Purpose |
+|---|---|
+| `tables.get(table, id, scope?)` | Single row read. Returns `null` if missing. Throws `TableAccessDeniedError` on 403. |
+| `tables.insert(table, data \| array, scope?)` | Insert one or many rows. Throws `TableNotFoundError` if the table doesn't exist. |
+| `tables.upsert(table, item \| array, scope?)` | Insert or update by id. |
+| `tables.update(table, id, data, scope?)` | Patch a row's data fields. Returns `null` if missing. |
+| `tables.delete(table, id \| array, scope?)` | Delete by id; single-form is idempotent (returns `false` if missing). |
+| `tables.query(table, q?, scope?)` | One-shot read with `where`/`limit`/`offset`/`order_by`/`order_dir`/`skip_count`. |
+| `tables.count(table, scope?)` | Row count. Throws `TableNotFoundError` if missing. |
+| `tables.subscribe(tableId, filter, onEvent)` | Direct live subscription; advanced — `useTable` covers the common case. |
+
+Errors:
+
+- `TableAccessDeniedError` (403) — policy denied.
+- `TableNotFoundError` (404, table-level ops) — table doesn't exist in scope.
+
+#### Scope behavior
+
+If you don't pass `scope`:
+
+- **Org-scoped apps** default to the app's `organization_id` — the same convention as org-scoped workflows always running as their org.
+- **Global apps** fall back to the server's default (caller's-org behavior).
+
+Cross-org admin tooling can pass an explicit `scope` to override.
+
+#### `where` filter DSL
+
+Field-keyed dict shorthand — same shape the Python SDK uses.
+
+```tsx
+// Equality
+useTable("notes", { where: { client_id: "abc", pinned: true } });
+
+// Comparison operators
+useTable("invoices", { where: { amount: { gte: 100, lt: 1000 } } });
+
+// Substring (case-insensitive)
+useTable("clients", { where: { name: { contains: "acme" } } });
+
+// IN
+useTable("tickets", { where: { status: { in: ["open", "pending"] } } });
+
+// Null check
+useTable("tasks", { where: { deleted_at: { is_null: true } } });
+```
+
+Operators: `eq`, `neq` / `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `is_null`, `has_key`, `contains`, `starts_with`, `ends_with`.
+
+**Live-update caveat.** A few operators are query-only: `contains`, `starts_with`, `ends_with`, `has_key`. Using them in `useTable.where` throws via `error` — the policy `Expr` AST has no equivalent. For these cases use `tables.query()` directly (one-shot read, no live updates) or filter client-side.
+
 ### Pre-included Components (standard shadcn/ui)
 
 These are available from `"bifrost"` without installation. They are standard shadcn/ui components — use them exactly as documented in the shadcn/ui docs.

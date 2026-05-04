@@ -252,8 +252,9 @@ class FileMode(str, Enum):
 async def list_app_files(
     app_id: UUID = Path(..., description="Application UUID"),
     mode: FileMode = FileMode.draft,
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> SimpleFileListResponse:
     """List all files for an application.
 
@@ -316,8 +317,9 @@ async def read_app_file(
     app_id: UUID = Path(..., description="Application UUID"),
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
     mode: FileMode = FileMode.draft,
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> SimpleFileResponse:
     """Read a single file by relative path.
 
@@ -366,8 +368,9 @@ async def write_app_file(
     data: AppFileUpdate,
     app_id: UUID = Path(..., description="Application UUID"),
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    user: CurrentUser,
 ) -> SimpleFileResponse:
     """Create or update a file at the given path.
 
@@ -411,8 +414,9 @@ async def write_app_file(
 async def delete_app_file(
     app_id: UUID = Path(..., description="Application UUID"),
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> None:
     """Delete a file at the given path.
 
@@ -441,8 +445,9 @@ async def delete_app_file(
 async def render_app(
     app_id: UUID = Path(..., description="Application UUID"),
     mode: FileMode = FileMode.draft,
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> AppRenderResponse:
     """Return all files as compiled JS, ready for client-side execution.
 
@@ -535,8 +540,9 @@ async def render_app(
 async def get_bundle_manifest(
     app_id: UUID = Path(..., description="Application UUID"),
     mode: FileMode = FileMode.draft,
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> dict:
     """Return the manifest.json describing the bundled app.
 
@@ -616,6 +622,7 @@ async def get_bundle_manifest(
                             "mode": storage_mode,
                             "dependencies": m.get("dependencies") or (app.dependencies or {}),
                             "migrated": False,
+                            "organization_id": str(app.organization_id) if app.organization_id else None,
                         }
                 except FileNotFoundError:
                     continue
@@ -647,6 +654,7 @@ async def get_bundle_manifest(
             # Surface the banner on the build that actually rewrote source,
             # so the developer knows to pull.
             "migrated": migrated,
+            "organization_id": str(app.organization_id) if app.organization_id else None,
         }
 
     assert manifest_bytes is not None
@@ -658,6 +666,11 @@ async def get_bundle_manifest(
         "mode": storage_mode,
         "dependencies": m.get("dependencies") or (app.dependencies or {}),
         "migrated": False,
+        # Org-scoped app: clients use this to default `scope` for tables.* /
+        # useTable calls inside the app, mirroring how org-scoped workflows
+        # always run as their org. Global apps return null and fall back to
+        # caller's-org behavior.
+        "organization_id": str(app.organization_id) if app.organization_id else None,
     }
 
 
@@ -669,8 +682,9 @@ async def get_bundle_asset(
     app_id: UUID = Path(..., description="Application UUID"),
     filename: str = Path(..., description="Bundle asset filename"),
     mode: FileMode = FileMode.draft,
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ):
     """Stream a bundled asset file from S3.
 
@@ -718,8 +732,9 @@ async def get_bundle_asset(
 )
 async def get_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> dict[str, str]:
     """Return the app's npm dependencies."""
     app = await get_application_or_404(ctx, app_id)
@@ -734,8 +749,9 @@ async def get_dependencies(
 async def put_dependencies(
     deps: dict[str, str],
     app_id: UUID = Path(..., description="Application UUID"),
-    ctx: Context = None,
-    user: CurrentUser = None,
+    *,
+    ctx: Context,
+    _user: CurrentUser,
 ) -> dict[str, str]:
     """Replace the app's npm dependencies.
 

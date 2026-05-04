@@ -2368,8 +2368,7 @@ export interface paths {
          *
          *     Path resolution goes through `shared.file_paths.resolve_s3_key`, so the
          *     URL targets the same key as a `files.read`/`files.write` to the same
-         *     `(location, scope, path)`. For workspace writes, requires the workspace
-         *     to not be a checked-out git repo (`_repo/.git/` absent).
+         *     `(location, scope, path)`.
          */
         post: operations["get_signed_url_api_files_signed_url_post"];
         delete?: never;
@@ -3473,22 +3472,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -12936,6 +12935,11 @@ export interface components {
              * @description Organization ID (null = global resource)
              */
             organization_id?: string | null;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access (ignored if access_level is 'authenticated')
+             */
+            role_ids?: string[];
         };
         /**
          * FormExecuteRequest
@@ -13092,6 +13096,11 @@ export interface components {
             access_level?: components["schemas"]["FormAccessLevel"] | null;
             /** Organization Id */
             organization_id?: string | null;
+            /**
+             * Role Ids
+             * @description Role IDs assigned to this form (for role_based access)
+             */
+            role_ids?: string[];
             /** Is Active */
             is_active: boolean;
             /** Created At */
@@ -13165,6 +13174,11 @@ export interface components {
              * @default false
              */
             clear_roles: boolean;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access (replaces existing roles when provided)
+             */
+            role_ids?: string[] | null;
         };
         /**
          * GenerateSDKRequest
@@ -16947,6 +16961,16 @@ export interface components {
              * @description Organization ID to scope the workflow to, or null for global scope
              */
             organization_id?: string | null;
+            /**
+             * Access Level
+             * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required). Omit to leave at the schema default.
+             */
+            access_level?: string | null;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access. Omit to leave unchanged when reactivating; pass an empty list to clear.
+             */
+            role_ids?: string[] | null;
         };
         /**
          * RegisterWorkflowResponse
@@ -19731,6 +19755,11 @@ export interface components {
              * @default false
              */
             clear_roles: boolean;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access (bulk replaces existing assignments when provided). Mutually exclusive with clear_roles; if both are set, role_ids wins.
+             */
+            role_ids?: string[] | null;
             /**
              * Display Name
              * @description User-facing display name (defaults to code name if not set)
@@ -25396,7 +25425,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -25429,7 +25458,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -25462,7 +25491,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -25495,7 +25524,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
