@@ -2389,6 +2389,10 @@ export interface paths {
         /**
          * Get Signed Url
          * @description Generate a presigned S3 URL for direct file upload or download.
+         *
+         *     Path resolution goes through `shared.file_paths.resolve_s3_key`, so the
+         *     URL targets the same key as a `files.read`/`files.write` to the same
+         *     `(location, scope, path)`.
          */
         post: operations["get_signed_url_api_files_signed_url_post"];
         delete?: never;
@@ -3492,22 +3496,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4167,234 +4171,6 @@ export interface paths {
          * @description List tables via SDK.
          */
         post: operations["cli_list_tables_api_cli_tables_list_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/insert": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Insert a document
-         * @description Insert a document into a table via SDK.
-         *
-         *     Auto-creates the table if it doesn't exist.
-         *     If id is provided, returns 409 Conflict if a document with that id already exists.
-         *     If id is not provided, a UUID will be auto-generated.
-         */
-        post: operations["cli_insert_document_api_cli_tables_documents_insert_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/upsert": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Upsert a document
-         * @description Upsert (create or replace) a document via SDK.
-         *
-         *     Auto-creates the table if it doesn't exist.
-         *     If a document with the given id exists, it is replaced with the new data.
-         *     If not, a new document is created.
-         *
-         *     Uses atomic INSERT ... ON CONFLICT DO UPDATE to prevent race conditions.
-         */
-        post: operations["cli_upsert_document_api_cli_tables_documents_upsert_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/get": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Get a document
-         * @description Get a document by ID via SDK.
-         */
-        post: operations["cli_get_document_api_cli_tables_documents_get_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update a document
-         * @description Update a document via SDK (partial update, merges with existing).
-         */
-        post: operations["cli_update_document_api_cli_tables_documents_update_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete a document
-         * @description Delete a document via SDK.
-         */
-        post: operations["cli_delete_document_api_cli_tables_documents_delete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/insert/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Batch insert documents
-         * @description Batch insert documents into a table via SDK.
-         *
-         *     Auto-creates the table if it doesn't exist.
-         *     All documents are inserted atomically — if any ID conflicts, the entire batch rolls back.
-         */
-        post: operations["cli_insert_documents_batch_api_cli_tables_documents_insert_batch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/upsert/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Batch upsert documents
-         * @description Batch upsert (create or replace) documents via SDK.
-         *
-         *     Auto-creates the table if it doesn't exist.
-         *     Uses atomic INSERT ... ON CONFLICT DO UPDATE for each document.
-         */
-        post: operations["cli_upsert_documents_batch_api_cli_tables_documents_upsert_batch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/delete/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Batch delete documents
-         * @description Batch delete documents via SDK.
-         *
-         *     Returns the IDs of documents that were actually deleted.
-         *     Non-existent IDs are silently skipped.
-         */
-        post: operations["cli_delete_documents_batch_api_cli_tables_documents_delete_batch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/query": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Query documents
-         * @description Query documents with filtering and pagination via SDK.
-         *
-         *     Supports advanced filter operators:
-         *     - Simple equality: {"status": "active"}
-         *     - Comparison: {"amount": {"gt": 100, "lte": 1000}}
-         *     - LIKE patterns: {"name": {"like": "%acme%"}} or {"name": {"ilike": "%ACME%"}}
-         *     - IN lists: {"category": {"in": ["a", "b"]}}
-         *     - NULL checks: {"deleted_at": {"is_null": true}}
-         */
-        post: operations["cli_query_documents_api_cli_tables_documents_query_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cli/tables/documents/count": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Count documents
-         * @description Count documents matching filter via SDK.
-         *
-         *     Supports the same filter operators as query.
-         */
-        post: operations["cli_count_documents_api_cli_tables_documents_count_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6813,6 +6589,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tables/policies/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate a TablePolicies document without persisting it.
+         * @description Runs the same AST validator the table create/update endpoints use, returning structured errors. Used by the policy editor for live feedback. On save, the create/update endpoints validate authoritatively. Always returns 200 — the validation outcome is in the body, not the status code.
+         */
+        post: operations["validate_policies_api_tables_policies_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tables/{table_id}": {
         parameters: {
             query?: never;
@@ -6852,7 +6648,7 @@ export interface paths {
         put?: never;
         /**
          * Insert a document
-         * @description Insert a new document into the table (platform admin only).
+         * @description Insert a new document into the table.
          */
         post: operations["insert_document_api_tables__table_id__documents_post"];
         delete?: never;
@@ -6861,35 +6657,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/tables/{table_id}/documents/{doc_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get a document
-         * @description Get a document by ID (platform admin only).
-         */
-        get: operations["get_document_api_tables__table_id__documents__doc_id__get"];
-        put?: never;
-        post?: never;
-        /**
-         * Delete a document
-         * @description Delete a document (platform admin only).
-         */
-        delete: operations["delete_document_api_tables__table_id__documents__doc_id__delete"];
-        options?: never;
-        head?: never;
-        /**
-         * Update a document
-         * @description Update a document (platform admin only, partial update, merges with existing).
-         */
-        patch: operations["update_document_api_tables__table_id__documents__doc_id__patch"];
-        trace?: never;
-    };
-    "/api/tables/{table_id}/documents/query": {
+    "/api/tables/{table_id}/documents/upsert": {
         parameters: {
             query?: never;
             header?: never;
@@ -6899,12 +6667,21 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Query documents
-         * @description Query documents with filtering and pagination (platform admin only).
+         * Upsert a document by id
+         * @description Atomically upsert a document by id (single ``INSERT ... ON CONFLICT DO UPDATE``).
          *
-         *     Returns 404 if the table doesn't exist.
+         *     On conflict the JSONB ``data`` column is **replaced**, not merged — use
+         *     PATCH ``/{doc_id}`` for partial updates with merge semantics.
+         *
+         *     The candidate row is policy-checked for ``create``; if a row already
+         *     exists, it is also policy-checked for ``update`` against its pre-image.
+         *     Either denial returns 403; the row is not written.
+         *
+         *     NOTE: This route is declared BEFORE ``GET /{table_id}/documents/{doc_id}``
+         *     so the literal ``/upsert`` segment matches first. Reversing the order
+         *     binds ``doc_id="upsert"`` and the endpoint becomes unreachable.
          */
-        post: operations["query_documents_api_tables__table_id__documents_query_post"];
+        post: operations["upsert_document_api_tables__table_id__documents_upsert_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6920,13 +6697,117 @@ export interface paths {
         };
         /**
          * Count documents
-         * @description Count documents in a table (platform admin only).
+         * @description Count documents in a table.
          *
          *     Returns 404 if the table doesn't exist.
+         *
+         *     NOTE: This route is declared BEFORE ``GET /{table_id}/documents/{doc_id}``
+         *     so the literal ``/count`` segment matches first. Reversing the order makes
+         *     FastAPI bind ``doc_id="count"`` and return 404, silently disabling the
+         *     count endpoint.
          */
         get: operations["count_documents_api_tables__table_id__documents_count_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tables/{table_id}/documents/{doc_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a document
+         * @description Get a document by ID.
+         */
+        get: operations["get_document_api_tables__table_id__documents__doc_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a document
+         * @description Delete a document.
+         */
+        delete: operations["delete_document_api_tables__table_id__documents__doc_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a document
+         * @description Update a document (partial update, merges with existing).
+         */
+        patch: operations["update_document_api_tables__table_id__documents__doc_id__patch"];
+        trace?: never;
+    };
+    "/api/tables/{table_id}/documents/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query documents
+         * @description Query documents with filtering and pagination.
+         *
+         *     Returns 404 if the table doesn't exist.
+         */
+        post: operations["query_documents_api_tables__table_id__documents_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tables/{table_id}/documents/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Batch insert or upsert documents
+         * @description Insert (or upsert) multiple documents in a single request.
+         *
+         *     When `upsert=true`, each item with a provided id will be updated if it
+         *     exists, otherwise inserted. Items without an id are always inserted.
+         *
+         *     All-or-nothing on policy denials: any denied row aborts the whole batch
+         *     with a 403 listing every denied index.
+         */
+        post: operations["batch_documents_api_tables__table_id__documents_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tables/{table_id}/documents/batch-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Batch delete documents by ID
+         * @description Delete multiple documents by ID.
+         *
+         *     Skips IDs that don't exist. All-or-nothing on policy denials: any
+         *     denied row aborts the whole batch with a 403 listing every denied index.
+         */
+        post: operations["batch_delete_documents_api_tables__table_id__documents_batch_delete_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11387,6 +11268,92 @@ export interface components {
             message?: string | null;
         };
         /**
+         * DocumentBatchCreate
+         * @description Input for inserting or upserting multiple documents.
+         */
+        DocumentBatchCreate: {
+            /**
+             * Documents
+             * @description Documents to insert or upsert
+             */
+            documents: components["schemas"]["DocumentBatchItem"][];
+            /**
+             * Upsert
+             * @description If true, upsert documents with an id instead of inserting.
+             * @default false
+             */
+            upsert: boolean;
+        };
+        /**
+         * DocumentBatchCreateResponse
+         * @description Response for a batch insert or upsert.
+         */
+        DocumentBatchCreateResponse: {
+            /** Inserted */
+            inserted: number;
+            /** Errors */
+            errors?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Documents
+             * @description Inserted/updated documents in submission order. Lets SDK callers use auto-generated ids without a follow-up fetch.
+             */
+            documents?: components["schemas"]["DocumentPublic"][];
+        };
+        /**
+         * DocumentBatchDeleteRequest
+         * @description Input for deleting multiple documents by ID.
+         */
+        DocumentBatchDeleteRequest: {
+            /**
+             * Ids
+             * @description Document IDs to delete
+             */
+            ids: string[];
+        };
+        /**
+         * DocumentBatchDeleteResponse
+         * @description Response for a batch delete.
+         */
+        DocumentBatchDeleteResponse: {
+            /** Deleted */
+            deleted: number;
+            /**
+             * Deleted Ids
+             * @description IDs of documents that were actually deleted (in submission order, skipping ids that didn't exist).
+             */
+            deleted_ids?: string[];
+        };
+        /**
+         * DocumentBatchItem
+         * @description A single item in a batch insert or upsert.
+         */
+        DocumentBatchItem: {
+            /**
+             * Id
+             * @description Optional document ID. Auto-generated (UUID) if omitted.
+             */
+            id?: string | null;
+            /**
+             * Data
+             * @description Document data (any JSON-serializable dict)
+             */
+            data: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created By
+             * @description Override attribution for created_by. Engine and platform-admin callers only; any item that sends this field from a non-privileged caller fails the whole batch with 403.
+             */
+            created_by?: string | null;
+            /**
+             * Updated By
+             * @description Override attribution for updated_by (upsert-update branch). Engine and platform-admin callers only.
+             */
+            updated_by?: string | null;
+        };
+        /**
          * DocumentCountResponse
          * @description Response for document count.
          */
@@ -11400,18 +11367,44 @@ export interface components {
          */
         DocumentCreate: {
             /**
+             * Id
+             * @description Optional document ID. Auto-generated (UUID) if omitted.
+             */
+            id?: string | null;
+            /**
              * Data
              * @description Document data (any JSON-serializable dict)
              */
             data: {
                 [key: string]: unknown;
             };
+            /**
+             * Upsert
+             * @description If true and id is provided, update the existing document instead of raising a conflict.
+             * @default false
+             */
+            upsert: boolean;
+            /**
+             * Created By
+             * @description Override attribution for created_by. Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            created_by?: string | null;
+            /**
+             * Updated By
+             * @description Override attribution for updated_by (used on the update branch of an upsert). Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            updated_by?: string | null;
         };
         /**
          * DocumentListResponse
          * @description Response for document queries.
          */
         DocumentListResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
             /** Documents */
             documents: components["schemas"]["DocumentPublic"][];
             /** Total */
@@ -11508,6 +11501,39 @@ export interface components {
             data: {
                 [key: string]: unknown;
             };
+            /**
+             * Updated By
+             * @description Override attribution for updated_by. Engine and platform-admin callers only; any other caller that sends this field receives 403. When omitted, defaults to the calling user.
+             */
+            updated_by?: string | null;
+        };
+        /**
+         * DocumentUpsert
+         * @description Input for upserting a document by id (atomic INSERT ... ON CONFLICT DO UPDATE).
+         */
+        DocumentUpsert: {
+            /**
+             * Id
+             * @description Document ID. Required (the upsert conflict key).
+             */
+            id: string;
+            /**
+             * Data
+             * @description Document data (any JSON-serializable dict)
+             */
+            data: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created By
+             * @description Override attribution for created_by (insert path). Engine and platform-admin callers only; any other caller that sends this field receives 403.
+             */
+            created_by?: string | null;
+            /**
+             * Updated By
+             * @description Override attribution for updated_by (insert and update paths). Engine and platform-admin callers only.
+             */
+            updated_by?: string | null;
         };
         /**
          * DryRunPerRun
@@ -12504,6 +12530,13 @@ export interface components {
             ids?: string[];
         };
         /**
+         * Expr
+         * @description Policy expression AST. Validated at construction.
+         */
+        Expr: {
+            [key: string]: unknown;
+        };
+        /**
          * FileChange
          * @description Represents a changed file in Git
          */
@@ -12668,11 +12701,15 @@ export interface components {
             path: string;
             /**
              * Location
-             * @description Storage location
+             * @description Storage location: reserved (workspace, temp, uploads) or freeform
              * @default workspace
-             * @enum {string}
              */
-            location: "workspace" | "temp" | "uploads";
+            location: string;
+            /**
+             * Scope
+             * @description Org scope. Required for non-workspace, non-uploads locations.
+             */
+            scope?: string | null;
             /**
              * Mode
              * @description Storage mode: local or cloud
@@ -12729,11 +12766,15 @@ export interface components {
             path: string;
             /**
              * Location
-             * @description Storage location
+             * @description Storage location: reserved (workspace, temp, uploads) or freeform
              * @default workspace
-             * @enum {string}
              */
-            location: "workspace" | "temp" | "uploads";
+            location: string;
+            /**
+             * Scope
+             * @description Org scope. Required for non-workspace, non-uploads locations.
+             */
+            scope?: string | null;
             /**
              * Mode
              * @description Storage mode: local or cloud
@@ -12780,11 +12821,15 @@ export interface components {
             directory: string;
             /**
              * Location
-             * @description Storage location
+             * @description Storage location: reserved (workspace, temp, uploads) or freeform
              * @default workspace
-             * @enum {string}
              */
-            location: "workspace" | "temp" | "uploads";
+            location: string;
+            /**
+             * Scope
+             * @description Org scope. Required for non-workspace, non-uploads locations.
+             */
+            scope?: string | null;
             /**
              * Mode
              * @description Storage mode: local or cloud
@@ -12924,11 +12969,15 @@ export interface components {
             path: string;
             /**
              * Location
-             * @description Storage location
+             * @description Storage location: reserved (workspace, temp, uploads) or freeform
              * @default workspace
-             * @enum {string}
              */
-            location: "workspace" | "temp" | "uploads";
+            location: string;
+            /**
+             * Scope
+             * @description Org scope. Required for non-workspace, non-uploads locations.
+             */
+            scope?: string | null;
             /**
              * Mode
              * @description Storage mode: local or cloud
@@ -13032,11 +13081,15 @@ export interface components {
             content: string;
             /**
              * Location
-             * @description Storage location
+             * @description Storage location: reserved (workspace, temp, uploads) or freeform
              * @default workspace
-             * @enum {string}
              */
-            location: "workspace" | "temp" | "uploads";
+            location: string;
+            /**
+             * Scope
+             * @description Org scope. Required for non-workspace, non-uploads locations.
+             */
+            scope?: string | null;
             /**
              * Mode
              * @description Storage mode: local or cloud
@@ -13125,6 +13178,11 @@ export interface components {
              * @description Organization ID (null = global resource)
              */
             organization_id?: string | null;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access (ignored if access_level is 'authenticated')
+             */
+            role_ids?: string[];
         };
         /**
          * FormExecuteRequest
@@ -13281,6 +13339,11 @@ export interface components {
             access_level?: components["schemas"]["FormAccessLevel"] | null;
             /** Organization Id */
             organization_id?: string | null;
+            /**
+             * Role Ids
+             * @description Role IDs assigned to this form (for role_based access)
+             */
+            role_ids?: string[];
             /** Is Active */
             is_active: boolean;
             /** Created At */
@@ -13354,6 +13417,11 @@ export interface components {
              * @default false
              */
             clear_roles: boolean;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access (replaces existing roles when provided)
+             */
+            role_ids?: string[] | null;
         };
         /**
          * GenerateSDKRequest
@@ -16608,6 +16676,46 @@ export interface components {
             /** Is Active */
             is_active: boolean;
         };
+        /** Policy */
+        Policy: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Actions */
+            actions: ("read" | "create" | "update" | "delete")[];
+            when?: components["schemas"]["Expr"] | null;
+        };
+        /**
+         * PolicyValidationError
+         * @description Single structured validation error for a policy document.
+         *
+         *     `path` is a JSONPath-like string pointing into the document (e.g.
+         *     ``$.policies[0].when.eq[1]``); `message` is the validator's prose
+         *     error stripped of any embedded path prefix.
+         */
+        PolicyValidationError: {
+            /** Path */
+            path: string;
+            /** Message */
+            message: string;
+        };
+        /**
+         * PolicyValidationResponse
+         * @description Outcome of a `POST /api/tables/policies/validate` call.
+         *
+         *     `ok` mirrors whether the document validated cleanly. On failure, every
+         *     error from the AST validator is surfaced via `errors`. Endpoint always
+         *     returns 200 — callers parse this body to render structured feedback,
+         *     which is why the validator's `ValueError` is not allowed to escape into
+         *     a FastAPI 422.
+         */
+        PolicyValidationResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Errors */
+            errors?: components["schemas"]["PolicyValidationError"][];
+        };
         /**
          * PoolDetail
          * @description Detailed pool information including all processes.
@@ -17267,6 +17375,16 @@ export interface components {
              * @description Organization ID to scope the workflow to, or null for global scope
              */
             organization_id?: string | null;
+            /**
+             * Access Level
+             * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required). Omit to leave at the schema default.
+             */
+            access_level?: string | null;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access. Omit to leave unchanged when reactivating; pass an empty list to clear.
+             */
+            role_ids?: string[] | null;
         };
         /**
          * RegisterWorkflowResponse
@@ -17606,455 +17724,6 @@ export interface components {
             user_ids: string[];
         };
         /**
-         * SDKBatchDeleteResponse
-         * @description Batch delete response.
-         */
-        SDKBatchDeleteResponse: {
-            /**
-             * Deleted Ids
-             * @description IDs of deleted documents
-             */
-            deleted_ids: string[];
-            /**
-             * Count
-             * @description Number of documents deleted
-             */
-            count: number;
-        };
-        /**
-         * SDKBatchDocumentResponse
-         * @description Batch insert/upsert response.
-         */
-        SDKBatchDocumentResponse: {
-            /**
-             * Documents
-             * @description Created/updated documents
-             */
-            documents: components["schemas"]["SDKDocumentData"][];
-            /**
-             * Count
-             * @description Number of documents affected
-             */
-            count: number;
-        };
-        /**
-         * SDKDocumentCountRequest
-         * @description SDK request for counting documents.
-         */
-        SDKDocumentCountRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Where
-             * @description Filter conditions with operators
-             */
-            where?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentData
-         * @description Document data response for SDK.
-         */
-        SDKDocumentData: {
-            /**
-             * Id
-             * @description Document ID (user-provided or auto-generated)
-             */
-            id: string;
-            /**
-             * Table Id
-             * @description Table UUID
-             */
-            table_id: string;
-            /**
-             * Data
-             * @description Document data
-             */
-            data: {
-                [key: string]: unknown;
-            };
-            /**
-             * Created At
-             * @description Creation timestamp (ISO format)
-             */
-            created_at: string;
-            /**
-             * Updated At
-             * @description Last update timestamp (ISO format)
-             */
-            updated_at: string;
-        };
-        /**
-         * SDKDocumentDeleteBatchRequest
-         * @description SDK request for batch deleting documents.
-         */
-        SDKDocumentDeleteBatchRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Doc Ids
-             * @description Document IDs to delete (max 1000)
-             */
-            doc_ids: string[];
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentDeleteRequest
-         * @description SDK request for deleting a document.
-         */
-        SDKDocumentDeleteRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Doc Id
-             * @description Document UUID
-             */
-            doc_id: string;
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentGetRequest
-         * @description SDK request for getting a document.
-         */
-        SDKDocumentGetRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Doc Id
-             * @description Document UUID
-             */
-            doc_id: string;
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentInsertBatchItem
-         * @description Single item in a batch insert request.
-         */
-        SDKDocumentInsertBatchItem: {
-            /**
-             * Id
-             * @description Document ID (optional, auto-generated if not provided)
-             */
-            id?: string | null;
-            /**
-             * Data
-             * @description Document data
-             */
-            data: {
-                [key: string]: unknown;
-            };
-        };
-        /**
-         * SDKDocumentInsertBatchRequest
-         * @description SDK request for batch inserting documents.
-         */
-        SDKDocumentInsertBatchRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Documents
-             * @description Documents to insert (max 1000)
-             */
-            documents: components["schemas"]["SDKDocumentInsertBatchItem"][];
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentInsertRequest
-         * @description SDK request for inserting a document.
-         */
-        SDKDocumentInsertRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Id
-             * @description Document ID (user-provided key). If not provided, a UUID will be auto-generated.
-             */
-            id?: string | null;
-            /**
-             * Data
-             * @description Document data
-             */
-            data: {
-                [key: string]: unknown;
-            };
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentList
-         * @description Document list response for SDK.
-         */
-        SDKDocumentList: {
-            /**
-             * Documents
-             * @description List of documents
-             */
-            documents: components["schemas"]["SDKDocumentData"][];
-            /**
-             * Total
-             * @description Total count
-             */
-            total: number;
-            /**
-             * Limit
-             * @description Limit used
-             */
-            limit: number;
-            /**
-             * Offset
-             * @description Offset used
-             */
-            offset: number;
-        };
-        /**
-         * SDKDocumentQueryRequest
-         * @description SDK request for querying documents with advanced filtering.
-         *
-         *     Filter conditions support:
-         *     - Simple equality: {"status": "active"}
-         *     - Comparison operators: {"amount": {"gt": 100, "lte": 1000}}
-         *     - LIKE patterns: {"name": {"like": "%acme%"}} or {"name": {"ilike": "%ACME%"}}
-         *     - IN lists: {"category": {"in": ["a", "b"]}}
-         *     - NULL checks: {"deleted_at": {"is_null": true}}
-         */
-        SDKDocumentQueryRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Where
-             * @description Filter conditions with operators
-             */
-            where?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Order By
-             * @description Field to order by
-             */
-            order_by?: string | null;
-            /**
-             * Order Dir
-             * @description Sort direction
-             * @default asc
-             * @enum {string}
-             */
-            order_dir: "asc" | "desc";
-            /**
-             * Limit
-             * @description Max documents
-             * @default 100
-             */
-            limit: number;
-            /**
-             * Offset
-             * @description Documents to skip
-             * @default 0
-             */
-            offset: number;
-            /**
-             * Skip Count
-             * @description Skip the total count query (returns total=-1). Use for faster paginated fetches after the first page.
-             * @default false
-             */
-            skip_count: boolean;
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentUpdateRequest
-         * @description SDK request for updating a document.
-         */
-        SDKDocumentUpdateRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Doc Id
-             * @description Document UUID
-             */
-            doc_id: string;
-            /**
-             * Data
-             * @description Fields to update (merged with existing)
-             */
-            data: {
-                [key: string]: unknown;
-            };
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentUpsertBatchItem
-         * @description Single item in a batch upsert request.
-         */
-        SDKDocumentUpsertBatchItem: {
-            /**
-             * Id
-             * @description Document ID (required for upsert)
-             */
-            id: string;
-            /**
-             * Data
-             * @description Document data
-             */
-            data: {
-                [key: string]: unknown;
-            };
-        };
-        /**
-         * SDKDocumentUpsertBatchRequest
-         * @description SDK request for batch upserting documents.
-         */
-        SDKDocumentUpsertBatchRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Documents
-             * @description Documents to upsert (max 1000)
-             */
-            documents: components["schemas"]["SDKDocumentUpsertBatchItem"][];
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
-         * SDKDocumentUpsertRequest
-         * @description SDK request for upserting (create or replace) a document.
-         */
-        SDKDocumentUpsertRequest: {
-            /**
-             * Table
-             * @description Table name
-             */
-            table: string;
-            /**
-             * Id
-             * @description Document ID (required for upsert)
-             */
-            id: string;
-            /**
-             * Data
-             * @description Document data
-             */
-            data: {
-                [key: string]: unknown;
-            };
-            /**
-             * Scope
-             * @description Organization scope
-             */
-            scope?: string | null;
-            /**
-             * App
-             * @description Application UUID
-             */
-            app?: string | null;
-        };
-        /**
          * SDKIntegrationsDeleteMappingRequest
          * @description Request to delete a mapping via SDK.
          */
@@ -18365,11 +18034,6 @@ export interface components {
              * @description Scope: None=context org, 'global'=global, UUID=specific org
              */
             scope?: string | null;
-            /**
-             * App
-             * @description Application UUID to scope table to an app
-             */
-            app?: string | null;
         };
         /**
          * SDKTableInfo
@@ -18391,11 +18055,6 @@ export interface components {
              * @description Organization UUID or null for global
              */
             organization_id?: string | null;
-            /**
-             * Application Id
-             * @description Application UUID if app-scoped
-             */
-            application_id?: string | null;
             /**
              * Table Schema
              * @description Schema hints
@@ -18429,11 +18088,6 @@ export interface components {
              * @description Organization scope
              */
             scope?: string | null;
-            /**
-             * App
-             * @description Filter by application UUID
-             */
-            app?: string | null;
         };
         /**
          * ScheduleOverlapPolicy
@@ -18732,7 +18386,7 @@ export interface components {
         SignedUrlRequest: {
             /**
              * Path
-             * @description File path (scoped automatically by org)
+             * @description File path relative to location root (NOT including scope segment)
              */
             path: string;
             /**
@@ -18749,8 +18403,14 @@ export interface components {
              */
             content_type: string;
             /**
+             * Location
+             * @description Storage location. Defaults to 'uploads' for backwards compatibility with form upload flows.
+             * @default uploads
+             */
+            location: string;
+            /**
              * Scope
-             * @description Organization scope (auto-resolved from context if None)
+             * @description Org scope. Required for non-workspace, non-uploads locations.
              */
             scope?: string | null;
         };
@@ -18936,6 +18596,8 @@ export interface components {
              * @description Organization ID. Null for global table.
              */
             organization_id?: string | null;
+            /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
+            policies?: components["schemas"]["TablePolicies"] | null;
         };
         /**
          * TableListResponse
@@ -18946,6 +18608,11 @@ export interface components {
             tables: components["schemas"]["TablePublic"][];
             /** Total */
             total: number;
+        };
+        /** TablePolicies */
+        TablePolicies: {
+            /** Policies */
+            policies?: components["schemas"]["Policy"][];
         };
         /**
          * TablePublic
@@ -18976,8 +18643,7 @@ export interface components {
             id: string;
             /** Organization Id */
             organization_id: string | null;
-            /** Application Id */
-            application_id: string | null;
+            policies?: components["schemas"]["TablePolicies"] | null;
             /** Created At */
             created_at: string | null;
             /** Updated At */
@@ -19001,8 +18667,8 @@ export interface components {
             schema?: {
                 [key: string]: unknown;
             } | null;
-            /** Application Id */
-            application_id?: string | null;
+            /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
+            policies?: components["schemas"]["TablePolicies"] | null;
         };
         /**
          * Token
@@ -19298,7 +18964,11 @@ export interface components {
         };
         /**
          * UploadedFileMetadata
-         * @description Metadata for uploaded file that workflows can use to access the file
+         * @description Metadata for uploaded file that workflows can use to access the file.
+         *
+         *     `path` is relative to the `uploads` location: pass it directly to
+         *     `files.read(path, location="uploads")` in a workflow and the SDK handles
+         *     scoping. The full S3 key is `uploads/{scope}/{path}`.
          */
         UploadedFileMetadata: {
             /**
@@ -19313,7 +18983,7 @@ export interface components {
             container: string;
             /**
              * Path
-             * @description Blob path within container
+             * @description Path relative to uploads/ (e.g., '{form_id}/{uuid}/{filename}')
              */
             path: string;
             /**
@@ -20504,6 +20174,11 @@ export interface components {
              * @default false
              */
             clear_roles: boolean;
+            /**
+             * Role Ids
+             * @description Role IDs for role_based access (bulk replaces existing assignments when provided). Mutually exclusive with clear_roles; if both are set, role_ids wins.
+             */
+            role_ids?: string[] | null;
             /**
              * Display Name
              * @description User-facing display name (defaults to code name if not set)
@@ -26347,7 +26022,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -26380,7 +26055,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -26413,7 +26088,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -26446,7 +26121,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -27559,336 +27234,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SDKTableInfo"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_insert_document_api_cli_tables_documents_insert_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentInsertRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKDocumentData"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_upsert_document_api_cli_tables_documents_upsert_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentUpsertRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKDocumentData"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_get_document_api_cli_tables_documents_get_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentGetRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKDocumentData"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_update_document_api_cli_tables_documents_update_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKDocumentData"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_delete_document_api_cli_tables_documents_delete_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentDeleteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": boolean;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_insert_documents_batch_api_cli_tables_documents_insert_batch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentInsertBatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKBatchDocumentResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_upsert_documents_batch_api_cli_tables_documents_upsert_batch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentUpsertBatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKBatchDocumentResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_delete_documents_batch_api_cli_tables_documents_delete_batch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentDeleteBatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKBatchDeleteResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_query_documents_api_cli_tables_documents_query_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentQueryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SDKDocumentList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cli_count_documents_api_cli_tables_documents_count_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SDKDocumentCountRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": number;
                 };
             };
             /** @description Validation Error */
@@ -32192,6 +31537,39 @@ export interface operations {
             };
         };
     };
+    validate_policies_api_tables_policies_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyValidationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_table_api_tables__table_id__get: {
         parameters: {
             query?: never;
@@ -32289,7 +31667,10 @@ export interface operations {
     };
     insert_document_api_tables__table_id__documents_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 table_id: string;
@@ -32322,9 +31703,84 @@ export interface operations {
             };
         };
     };
+    upsert_document_api_tables__table_id__documents_upsert_post: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    count_documents_api_tables__table_id__documents_count_get: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentCountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_document_api_tables__table_id__documents__doc_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 table_id: string;
@@ -32356,7 +31812,10 @@ export interface operations {
     };
     delete_document_api_tables__table_id__documents__doc_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 table_id: string;
@@ -32386,7 +31845,10 @@ export interface operations {
     };
     update_document_api_tables__table_id__documents__doc_id__patch: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 table_id: string;
@@ -32422,7 +31884,10 @@ export interface operations {
     };
     query_documents_api_tables__table_id__documents_query_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 table_id: string;
@@ -32455,16 +31920,23 @@ export interface operations {
             };
         };
     };
-    count_documents_api_tables__table_id__documents_count_get: {
+    batch_documents_api_tables__table_id__documents_batch_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 table_id: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentBatchCreate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -32472,7 +31944,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentCountResponse"];
+                    "application/json": components["schemas"]["DocumentBatchCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_delete_documents_api_tables__table_id__documents_batch_delete_post: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentBatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentBatchDeleteResponse"];
                 };
             };
             /** @description Validation Error */
