@@ -122,6 +122,9 @@ async def test_generate_manifest_with_workflow(mock_db):
         empty_result,  # schedule_sources
         empty_result,  # webhook_sources
         empty_result,  # event_subscriptions
+        empty_result,  # mcp_servers
+        empty_result,  # mcp_connections
+        empty_result,  # mcp_connection_tools
     ])
 
     manifest = await generate_manifest(mock_db)
@@ -218,6 +221,9 @@ async def test_generate_manifest_with_roles(mock_db):
         empty_result,       # schedule_sources
         empty_result,       # webhook_sources
         empty_result,       # event_subscriptions
+        empty_result,       # mcp_servers
+        empty_result,       # mcp_connections
+        empty_result,       # mcp_connection_tools
     ])
 
     manifest = await generate_manifest(mock_db)
@@ -284,6 +290,9 @@ async def test_generate_manifest_with_organizations(mock_db):
         empty_result,  # schedule_sources
         empty_result,  # webhook_sources
         empty_result,  # event_subscriptions
+        empty_result,  # mcp_servers
+        empty_result,  # mcp_connections
+        empty_result,  # mcp_connection_tools
     ])
 
     manifest = await generate_manifest(mock_db)
@@ -340,6 +349,9 @@ async def test_generate_manifest_access_levels(mock_db):
         empty_result,   # schedule_sources
         empty_result,   # webhook_sources
         empty_result,   # event_subscriptions
+        empty_result,   # mcp_servers
+        empty_result,   # mcp_connections
+        empty_result,   # mcp_connection_tools
     ])
 
     manifest = await generate_manifest(mock_db)

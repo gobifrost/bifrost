@@ -23,6 +23,7 @@
 import type * as React from "react";
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/api-client";
+import { setDefaultAppScope } from "@/lib/app-sdk/tables";
 import {
 	webSocketService,
 	type AppCodeFileUpdate,
@@ -112,6 +113,10 @@ interface BundleManifest {
 	// under _repo/<app>/. Surfaced as a dismissible info banner so the
 	// developer knows to pull on next workspace sync.
 	migrated?: boolean;
+	// Org-scoped apps carry their organization id; global apps have null.
+	// Mirrors how org-scoped workflows always run as their org regardless
+	// of who triggered them.
+	organization_id?: string | null;
 }
 
 interface BundledAppShellProps {
@@ -133,6 +138,10 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	const [BundledApp, setBundledApp] = useState<BundledAppComponent | null>(null);
 	const [loadedEntry, setLoadedEntry] = useState<string | null>(null);
 	const [cssHref, setCssHref] = useState<string | null>(null);
+	// Org-scoped app: tells the table SDK to default `scope` to the app's
+	// org for `tables.*` and `useTable` calls inside the bundle. Captured
+	// from the first successful manifest fetch.
+	const [appOrgId, setAppOrgId] = useState<string | null>(null);
 
 	const [loadError, setLoadError] = useState<string | null>(null);
 	// Build errors from hot-reload rebuilds. The last-good bundle keeps
@@ -164,6 +173,16 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 		setAppContext(appSlug, isPreview);
 		return () => setAppContext("", false);
 	}, [appSlug, isPreview, setAppContext]);
+
+	// Install the app's org as the default scope for table SDK calls. The
+	// returned cleanup restores the prior value, so navigating between apps
+	// (or to a non-app page) flips the default back. Mirrors how org-scoped
+	// workflows always run as their org regardless of caller.
+	useEffect(() => {
+		if (appOrgId === null) return;
+		const restore = setDefaultAppScope(appOrgId);
+		return restore;
+	}, [appOrgId]);
 
 	// Load-or-reload the bundle. Called on initial mount AND on every
 	// successful rebuild pubsub event. Setting the component state triggers
@@ -209,6 +228,11 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					if (manifest.migrated) {
 						setMigrateNotice(true);
 					}
+
+					// Capture the org for table-SDK scoping. Org-scoped apps
+					// default `scope` to this value; global apps leave it null
+					// and fall back to the caller's-org behavior.
+					setAppOrgId(manifest.organization_id ?? null);
 				}
 
 				if (controller.signal.aborted) return;

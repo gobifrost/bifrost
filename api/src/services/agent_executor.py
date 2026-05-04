@@ -41,8 +41,18 @@ from src.services.llm import (
     ToolDefinition,
     get_llm_client,
 )
-from src.services.execution.agent_helpers import find_delegated_agent, resolve_agent_tools
+from src.services.execution.agent_helpers import (
+    find_delegated_agent,
+    parse_mcp_tool_name,
+    resolve_agent_tools,
+)
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
+from src.services.mcp_client import dispatch as mcp_dispatch
+from src.services.mcp_client.errors import (
+    MisconfigError,
+    NeedsReauthError,
+    ToolDispatchError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +224,19 @@ class AgentExecutor:
             )
 
             # 4. Get tool definitions for this agent (empty if agentless)
-            tool_definitions = await self._get_agent_tools(agent) if agent else []
+            #
+            # ``caller_user_id`` propagates here so MCP tools that bind to
+            # per-user OAuth can be filtered correctly. For chat we always
+            # have a user — the conversation owner. The caller threads
+            # all the way through to ``mcp_dispatch.invoke`` so the
+            # auth-resolution layer makes the user-vs-service decision
+            # exactly once per call.
+            caller_user_id: UUID | None = conversation.user_id
+            tool_definitions = (
+                await self._get_agent_tools(agent, caller_user_id=caller_user_id)
+                if agent
+                else []
+            )
             logger.info(f"Agent '{agent.name if agent else 'None'}' has {len(tool_definitions)} tool definitions")
             if tool_definitions:
                 logger.debug(f"Tools: {[t.name for t in tool_definitions]}")
@@ -434,7 +456,13 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                         )
 
                     # Execute the tool with pre-generated execution_id
-                    tool_result = await self._execute_tool(tc, agent, conversation, execution_id=execution_id)
+                    tool_result = await self._execute_tool(
+                        tc,
+                        agent,
+                        conversation,
+                        execution_id=execution_id,
+                        caller_user_id=caller_user_id,
+                    )
 
                     # Update TOOL_CALL message with result and state
                     await self._update_tool_call_message(
@@ -520,7 +548,12 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 error=str(e),
             )
 
-    async def _get_agent_tools(self, agent: Agent) -> list[ToolDefinition]:
+    async def _get_agent_tools(
+        self,
+        agent: Agent,
+        *,
+        caller_user_id: UUID | None = None,
+    ) -> list[ToolDefinition]:
         """
         Get tool definitions for an agent from its assigned tools.
 
@@ -528,12 +561,15 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         1. System tools (unprefixed, e.g., "execute_workflow", "search_knowledge")
         2. Workflow tools (prefixed, e.g., "halopsa_list_tickets", "wf_add_comment")
         3. Delegation tools (e.g., "delegate_to_agent_name")
+        4. External MCP tools (prefixed ``mcp__<connection_id>__<tool>``)
 
         When a workflow tool's normalized name collides with a system tool,
         the system tool wins and a warning is logged.
         """
         async with self._db() as session:
-            tools, self._tool_workflow_id_map = await resolve_agent_tools(agent, session)
+            tools, self._tool_workflow_id_map = await resolve_agent_tools(
+                agent, session, caller_user_id=caller_user_id
+            )
         return tools
 
     async def _notify_tool_conflicts(
@@ -1131,12 +1167,16 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         agent: Agent | None = None,
         conversation: Conversation | None = None,
         execution_id: str | None = None,
+        *,
+        caller_user_id: UUID | None = None,
     ) -> ToolResult:
         """
-        Execute a tool (workflow, delegation, system tool, or knowledge search) and return the result.
+        Execute a tool (workflow, delegation, system tool, knowledge search,
+        or external MCP tool) and return the result.
 
         This integrates with the existing workflow execution system
-        and handles agent delegation, system tools, and built-in knowledge search.
+        and handles agent delegation, system tools, built-in knowledge
+        search, and remote MCP servers.
         """
         start_time = time.time()
 
@@ -1151,6 +1191,20 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         # Check if this is a system tool call
         if agent and tool_call.name in (agent.system_tools or []):
             return await self._execute_system_tool(tool_call, agent, conversation)
+
+        # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
+        # MCP tools are routed BEFORE workflow tools because workflow lookup
+        # would otherwise fall through to "tool not found" for an MCP name.
+        mcp_route = parse_mcp_tool_name(tool_call.name)
+        if mcp_route is not None:
+            connection_id, remote_tool_name = mcp_route
+            return await self._execute_mcp_tool(
+                tool_call,
+                connection_id=connection_id,
+                remote_tool_name=remote_tool_name,
+                caller_user_id=caller_user_id,
+                start_time=start_time,
+            )
 
         try:
             # Get the workflow for this tool — prefer ID lookup (handles normalized names)
@@ -1226,6 +1280,132 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 tool_name=tool_call.name,
                 result=None,
                 error=str(e),
+                duration_ms=int((time.time() - start_time) * 1000),
+            )
+
+    async def _execute_mcp_tool(
+        self,
+        tool_call: ToolCallRequest,
+        *,
+        connection_id: UUID,
+        remote_tool_name: str,
+        caller_user_id: UUID | None,
+        start_time: float,
+    ) -> ToolResult:
+        """Dispatch an external MCP tool call.
+
+        This is the executor side of the Phase 2 ``mcp_client.dispatch.invoke``
+        path. We load the connection (with its ``server`` and
+        ``service_oauth_token`` relationships), call dispatch, and translate
+        the structured errors into ``ToolResult`` envelopes the chat
+        surface knows how to render.
+
+        ``NeedsReauthError`` becomes a ``ToolResult`` with
+        ``error_type='needs_reauth'`` and a ``metadata`` payload carrying
+        ``reauth_url`` / ``connection_id`` / ``tool_name`` so the UI can
+        render an inline reconnect button without re-querying the API.
+        """
+        from src.models.orm.external_mcp import MCPConnection, MCPServer
+
+        try:
+            async with self._db() as session:
+                result = await session.execute(
+                    select(MCPConnection)
+                    .where(MCPConnection.id == connection_id)
+                    .options(
+                        selectinload(MCPConnection.server).selectinload(
+                            MCPServer.oauth_provider
+                        ),
+                        selectinload(MCPConnection.service_oauth_token),
+                    )
+                )
+                connection = result.scalar_one_or_none()
+                if connection is None:
+                    return ToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        result=None,
+                        error=f"MCP connection {connection_id} not found",
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+
+                envelope = await mcp_dispatch.invoke(
+                    connection=connection,
+                    tool_name=remote_tool_name,
+                    arguments=tool_call.arguments or {},
+                    caller_user_id=caller_user_id,
+                    db=session,
+                )
+
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                result=envelope,
+                error=None,
+                duration_ms=int((time.time() - start_time) * 1000),
+            )
+        except NeedsReauthError as exc:
+            logger.info(
+                "MCP tool %s on connection %s needs reauth",
+                remote_tool_name,
+                connection_id,
+            )
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                result=None,
+                error=str(exc),
+                duration_ms=int((time.time() - start_time) * 1000),
+                error_type="needs_reauth",
+                metadata={
+                    "reauth_url": exc.reauth_url,
+                    "connection_id": str(exc.connection_id),
+                    "tool_name": remote_tool_name,
+                },
+            )
+        except MisconfigError as exc:
+            logger.error(
+                "MCP misconfig on connection %s tool %s: %s",
+                connection_id,
+                remote_tool_name,
+                exc,
+            )
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                result=None,
+                error=str(exc),
+                duration_ms=int((time.time() - start_time) * 1000),
+                error_type="misconfig",
+                metadata={"connection_id": str(connection_id)},
+            )
+        except ToolDispatchError as exc:
+            logger.warning(
+                "MCP dispatch error on connection %s tool %s: %s",
+                connection_id,
+                remote_tool_name,
+                exc,
+            )
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                result=None,
+                error=str(exc),
+                duration_ms=int((time.time() - start_time) * 1000),
+            )
+        except Exception as exc:
+            logger.error(
+                "Unexpected MCP error on connection %s tool %s: %s",
+                connection_id,
+                remote_tool_name,
+                exc,
+                exc_info=True,
+            )
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                result=None,
+                error=str(exc),
                 duration_ms=int((time.time() - start_time) * 1000),
             )
 

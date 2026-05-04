@@ -31,7 +31,16 @@ from src.models.contracts.agents import (
     AccessibleKnowledgeSource,
     AccessibleTool,
 )
-from src.models.orm import Agent, AgentDelegation, AgentRole, AgentTool, Role, Workflow
+from src.models.orm import (
+    Agent,
+    AgentDelegation,
+    AgentMCPConnection,
+    AgentRole,
+    AgentTool,
+    MCPConnection,
+    Role,
+    Workflow,
+)
 from src.repositories.agents import AgentRepository
 from src.routers.tools import get_system_tool_ids
 from src.services.agent_stats import get_agent_stats, get_fleet_stats
@@ -202,6 +211,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         role_ids=[str(r.id) for r in agent.roles],
         knowledge_sources=agent.knowledge_sources or [],
         system_tools=[t for t in (agent.system_tools or []) if t in valid_system_tool_ids],
+        mcp_connection_ids=sorted(str(c.id) for c in (agent.mcp_connections or [])),
         llm_model=agent.llm_model,
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
@@ -269,6 +279,7 @@ async def list_agents(
     # Batch-compute dependency counts (tool count per agent)
     agent_ids = [a.id for a in agents]
     dep_counts: dict[UUID, int] = {}
+    mcp_counts: dict[UUID, int] = {}
     if agent_ids:
         from sqlalchemy import func
         count_result = await db.execute(
@@ -278,10 +289,18 @@ async def list_agents(
         )
         dep_counts = {row[0]: row[1] for row in count_result.all()}
 
+        mcp_count_result = await db.execute(
+            select(AgentMCPConnection.agent_id, func.count())
+            .where(AgentMCPConnection.agent_id.in_(agent_ids))
+            .group_by(AgentMCPConnection.agent_id)
+        )
+        mcp_counts = {row[0]: row[1] for row in mcp_count_result.all()}
+
     result = []
     for a in agents:
         summary = AgentSummary.model_validate(a)
         summary.dependency_count = dep_counts.get(a.id, 0)
+        summary.mcp_connection_count = mcp_counts.get(a.id, 0)
         result.append(summary)
 
     return result
@@ -311,6 +330,9 @@ async def create_agent(
         agent_data.knowledge_sources = []
         agent_data.delegated_agent_ids = []
         agent_data.role_ids = []
+        # Non-admins cannot grant MCP connections — those are an
+        # org-admin tool. Private agents simply don't surface MCP tools.
+        agent_data.mcp_connection_ids = []
 
     # Validate references before creating the agent
     await _validate_agent_references(
@@ -409,6 +431,26 @@ async def create_agent(
             except ValueError:
                 logger.warning(f"Invalid role ID: {log_safe(role_id)}")
 
+    # Add MCP connection grants. Connections must belong to the same org
+    # as the agent — connections are strictly per-org so a grant from
+    # another org is silently dropped here. Platform-level agents
+    # (organization_id IS NULL) cannot carry MCP grants.
+    if agent_data.mcp_connection_ids and agent_data.organization_id is not None:
+        valid_result = await db.execute(
+            select(MCPConnection.id).where(
+                MCPConnection.id.in_(agent_data.mcp_connection_ids),
+                MCPConnection.organization_id == agent_data.organization_id,
+            )
+        )
+        valid_ids = {row[0] for row in valid_result.all()}
+        for cid in agent_data.mcp_connection_ids:
+            if cid in valid_ids:
+                db.add(AgentMCPConnection(
+                    agent_id=agent_id,
+                    connection_id=cid,
+                    granted_by=user.user_id,
+                ))
+
     await db.flush()
 
     # Reload with relationships
@@ -419,6 +461,7 @@ async def create_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
+            selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
     )
@@ -552,6 +595,7 @@ async def update_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
+            selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
     )
@@ -594,6 +638,10 @@ async def update_agent(
         agent_data.knowledge_sources = None
         agent_data.delegated_agent_ids = None
         agent_data.role_ids = None
+        # Non-admins cannot manage MCP connection grants — those are an
+        # org-admin tool. Silently drop the field rather than 403 so the
+        # UI can submit a single payload regardless of role.
+        agent_data.mcp_connection_ids = None
 
     # Validate references being updated
     await _validate_agent_references(
@@ -710,6 +758,21 @@ async def update_agent(
             except ValueError:
                 logger.warning(f"Invalid role ID: {log_safe(role_id)}")
 
+    # Sync MCP connection grants if provided. ``mcp_connection_ids=None``
+    # means "leave grants alone"; an empty list explicitly revokes all.
+    if agent_data.mcp_connection_ids is not None:
+        repo = AgentRepository(
+            session=db,
+            org_id=user.organization_id,
+            user_id=user.user_id,
+            is_superuser=is_admin,
+        )
+        await repo.set_mcp_connection_grants(
+            agent_id,
+            agent_data.mcp_connection_ids,
+            granted_by=user.user_id,
+        )
+
     await db.flush()
 
     # Reload with relationships
@@ -720,6 +783,7 @@ async def update_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
+            selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
     )

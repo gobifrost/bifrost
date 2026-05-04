@@ -211,23 +211,23 @@ class TestOrgUserRestrictions:
             f"Org user should not get table: {response.status_code}"
 
     def test_org_user_cannot_query_documents(self, e2e_client, org1_user):
-        """Org user cannot query documents (403)."""
+        """Org user cannot query documents on a non-existent table (404 hides existence)."""
         response = e2e_client.post(
             "/api/tables/00000000-0000-0000-0000-000000000000/documents/query",
             headers=org1_user.headers,
             json={"limit": 10},
         )
-        assert response.status_code == 403, \
+        assert response.status_code in (403, 404), \
             f"Org user should not query documents: {response.status_code}"
 
     def test_org_user_cannot_insert_documents(self, e2e_client, org1_user):
-        """Org user cannot insert documents (403)."""
+        """Org user cannot insert documents on a non-existent table (404 hides existence)."""
         response = e2e_client.post(
             "/api/tables/00000000-0000-0000-0000-000000000000/documents",
             headers=org1_user.headers,
             json={"data": {"key": "value"}},
         )
-        assert response.status_code == 403, \
+        assert response.status_code in (403, 404), \
             f"Org user should not insert documents: {response.status_code}"
 
     # =========================================================================

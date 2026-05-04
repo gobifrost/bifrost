@@ -19,6 +19,12 @@ from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.config import Config
 from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
+from src.models.orm.external_mcp import (
+    AgentMCPConnection,
+    MCPConnection,
+    MCPConnectionTool,
+    MCPServer,
+)
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
 from src.models.orm.oauth import OAuthProvider
@@ -38,9 +44,13 @@ from bifrost.manifest import (
     ManifestIntegration,
     ManifestIntegrationConfigSchema,
     ManifestIntegrationMapping,
+    ManifestMCPConnection,
+    ManifestMCPConnectionTool,
+    ManifestMCPServer,
     ManifestOAuthProvider,
     ManifestOrganization,
     ManifestRole,
+    ManifestPolicy,
     ManifestTable,
     ManifestWorkflow,
 )
@@ -150,12 +160,14 @@ def serialize_agent(
     roles: list[str] | None = None,
     tool_ids: list[str] | None = None,
     delegated_agent_ids: list[str] | None = None,
+    mcp_connection_ids: list[str] | None = None,
 ) -> ManifestAgent:
     """Serialize an Agent ORM object to ManifestAgent with inline content.
 
-    ``tool_ids`` / ``delegated_agent_ids`` are passed in (rather than read from
-    relationships) so the caller controls eager-loading and ordering — matching
-    the pattern used for workflow/form roles.
+    ``tool_ids`` / ``delegated_agent_ids`` / ``mcp_connection_ids`` are passed
+    in (rather than read from relationships) so the caller controls
+    eager-loading and ordering — matching the pattern used for workflow/form
+    roles.
     """
     return ManifestAgent(
         id=str(agent.id),
@@ -170,6 +182,7 @@ def serialize_agent(
         delegated_agent_ids=delegated_agent_ids or [],
         knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
         system_tools=list(agent.system_tools) if agent.system_tools else [],
+        mcp_connection_ids=mcp_connection_ids or [],
         llm_model=agent.llm_model,
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
@@ -262,13 +275,27 @@ def serialize_config(cfg: Config) -> ManifestConfig:
 
 
 def serialize_table(table: Table) -> ManifestTable:
-    """Serialize a Table ORM object to ManifestTable."""
+    """Serialize a Table ORM object to ManifestTable.
+
+    Unwraps the JSONB ``Table.access`` payload (shape: ``{"policies": [...]}``)
+    into a flat list of :class:`ManifestPolicy`. Tables with no access blob
+    (legacy rows from before Task 9 seeded admin_bypass on create) serialize
+    with ``policies=None``; the importer reseeds those on the next
+    round-trip.
+    """
+    access = table.access if isinstance(table.access, dict) else None
+    raw_policies = access.get("policies") if access else None
+    policies = (
+        [ManifestPolicy.model_validate(p) for p in raw_policies]
+        if raw_policies
+        else None
+    )
     return ManifestTable(
         id=str(table.id),
         name=table.name,
         description=table.description,
         organization_id=str(table.organization_id) if table.organization_id else None,
-        application_id=str(table.application_id) if table.application_id else None,
+        policies=policies,
         **{"schema": table.schema},  # type: ignore[arg-type]  # alias for table_schema
     )
 
@@ -321,6 +348,76 @@ def serialize_event_source(
             )
             for sub in (subscriptions or [])
         ],
+    )
+
+
+def serialize_mcp_connection_tool(
+    tool: MCPConnectionTool,
+) -> ManifestMCPConnectionTool:
+    """Serialize an MCPConnectionTool ORM row to its manifest model."""
+    return ManifestMCPConnectionTool(
+        tool_name=tool.tool_name,
+        tool_schema=tool.tool_schema or {},
+        enabled=tool.enabled,
+        disabled_reason=tool.disabled_reason,
+    )
+
+
+def serialize_mcp_connection(
+    connection: MCPConnection,
+    tools: list[MCPConnectionTool] | None = None,
+) -> ManifestMCPConnection:
+    """Serialize an MCPConnection ORM row to its manifest model.
+
+    ``encrypted_client_secret`` is intentionally omitted — secrets are
+    gitignored, the same treatment Config secrets get today.
+    """
+    return ManifestMCPConnection(
+        organization_id=str(connection.organization_id),
+        client_id=connection.client_id,
+        server_url_override=connection.server_url_override,
+        available_in_chat=connection.available_in_chat,
+        available_to_autonomous=connection.available_to_autonomous,
+        service_oauth_token_id=(
+            str(connection.service_oauth_token_id)
+            if connection.service_oauth_token_id
+            else None
+        ),
+        tools=[serialize_mcp_connection_tool(t) for t in (tools or [])],
+    )
+
+
+def serialize_mcp_server(
+    server: MCPServer,
+    connections_by_id: dict[str, MCPConnection] | None = None,
+    tools_by_connection: dict[str, list[MCPConnectionTool]] | None = None,
+) -> ManifestMCPServer:
+    """Serialize an MCPServer ORM row to its manifest model.
+
+    Connections nested under the server keyed by connection UUID; each
+    connection carries its own tool catalog inline.
+    """
+    connections = connections_by_id or {}
+    tools_lookup = tools_by_connection or {}
+    return ManifestMCPServer(
+        id=str(server.id),
+        name=server.name,
+        server_url=server.server_url,
+        oauth_provider_id=(
+            str(server.oauth_provider_id) if server.oauth_provider_id else None
+        ),
+        redirect_url=server.redirect_url,
+        discovery_metadata=server.discovery_metadata,
+        organization_id=(
+            str(server.organization_id) if server.organization_id else None
+        ),
+        is_active=server.is_active,
+        connections={
+            cid: serialize_mcp_connection(
+                conn, tools_lookup.get(cid, [])
+            )
+            for cid, conn in connections.items()
+        },
     )
 
 
@@ -419,9 +516,19 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
             str(ad.child_agent_id)
         )
 
+    # Agent MCP connection grants — sorted for deterministic manifest output.
+    agent_mcp_result = await db.execute(select(AgentMCPConnection))
+    mcp_ids_by_agent: dict[str, list[str]] = {}
+    for amc in agent_mcp_result.scalars().all():
+        mcp_ids_by_agent.setdefault(str(amc.agent_id), []).append(
+            str(amc.connection_id)
+        )
+
     for ids in tool_ids_by_agent.values():
         ids.sort()
     for ids in delegated_ids_by_agent.values():
+        ids.sort()
+    for ids in mcp_ids_by_agent.values():
         ids.sort()
 
     # ------------------------------------------------------------------
@@ -508,6 +615,34 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
         subs_by_source.setdefault(str(sub.event_source_id), []).append(sub)
 
     # ------------------------------------------------------------------
+    # External MCP servers, connections, and per-connection tool catalogs
+    # ------------------------------------------------------------------
+    mcp_server_result = await db.execute(
+        select(MCPServer).order_by(MCPServer.name)
+    )
+    mcp_servers_list = mcp_server_result.scalars().unique().all()
+
+    mcp_conn_result = await db.execute(
+        select(MCPConnection).order_by(
+            MCPConnection.server_id, MCPConnection.organization_id
+        )
+    )
+    connections_by_server: dict[str, dict[str, MCPConnection]] = {}
+    for conn in mcp_conn_result.scalars().all():
+        connections_by_server.setdefault(str(conn.server_id), {})[
+            str(conn.id)
+        ] = conn
+
+    mcp_tool_result = await db.execute(
+        select(MCPConnectionTool).order_by(
+            MCPConnectionTool.connection_id, MCPConnectionTool.tool_name
+        )
+    )
+    tools_by_connection: dict[str, list[MCPConnectionTool]] = {}
+    for tool in mcp_tool_result.scalars().all():
+        tools_by_connection.setdefault(str(tool.connection_id), []).append(tool)
+
+    # ------------------------------------------------------------------
     # Build manifest using per-entity serialization functions
     # ------------------------------------------------------------------
     manifest = Manifest(
@@ -557,12 +692,21 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
                 agent_roles_by_agent.get(str(agent.id), []),
                 tool_ids=tool_ids_by_agent.get(str(agent.id), []),
                 delegated_agent_ids=delegated_ids_by_agent.get(str(agent.id), []),
+                mcp_connection_ids=mcp_ids_by_agent.get(str(agent.id), []),
             )
             for agent in agents_list
         },
         apps={
             str(app.id): serialize_app(app, app_roles_by_app.get(str(app.id), []))
             for app in apps_list
+        },
+        mcp_servers={
+            str(server.id): serialize_mcp_server(
+                server,
+                connections_by_id=connections_by_server.get(str(server.id), {}),
+                tools_by_connection=tools_by_connection,
+            )
+            for server in mcp_servers_list
         },
     )
 
@@ -571,7 +715,8 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
         f"{len(manifest.forms)} forms, {len(manifest.agents)} agents, "
         f"{len(manifest.apps)} apps, {len(manifest.integrations)} integrations, "
         f"{len(manifest.configs)} configs, {len(manifest.tables)} tables, "
-        f"{len(manifest.events)} events"
+        f"{len(manifest.events)} events, "
+        f"{len(manifest.mcp_servers)} mcp_servers"
     )
 
     return manifest

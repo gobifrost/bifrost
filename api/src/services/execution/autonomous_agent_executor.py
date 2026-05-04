@@ -27,8 +27,19 @@ from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
-from src.services.execution.agent_helpers import build_agent_system_prompt, find_delegated_agent, resolve_agent_tools
+from src.services.execution.agent_helpers import (
+    build_agent_system_prompt,
+    find_delegated_agent,
+    parse_mcp_tool_name,
+    resolve_agent_tools,
+)
 from src.services.llm import LLMMessage, ToolCallRequest, get_llm_client
+from src.services.mcp_client import dispatch as mcp_dispatch
+from src.services.mcp_client.errors import (
+    MisconfigError,
+    NeedsReauthError,
+    ToolDispatchError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +77,11 @@ class AutonomousAgentExecutor:
         self._tool_workflow_id_map: dict[str, UUID] = {}
         self._current_run_id: str = ""
         self._last_delegation_run_id: str | None = None
+        # Caller_user_id for the active run, threaded into MCP dispatch.
+        # ``None`` means the run is autonomous (scheduled / webhook /
+        # event-trigger), in which case dispatch resolves to the
+        # service token only.
+        self._caller_user_id: UUID | None = None
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
@@ -95,6 +111,25 @@ class AutonomousAgentExecutor:
         run_id = run_id or str(uuid4())
         self._current_run_id = run_id
 
+        # Resolve caller_user_id from _caller metadata. If a webhook ran
+        # without a signed user claim, _caller is either absent or has no
+        # ``user_id`` and the run is treated as autonomous (None) — auth
+        # resolution will then route to the service token, gated by the
+        # connection's ``available_to_autonomous`` flag.
+        caller_user_id: UUID | None = None
+        if _caller and _caller.get("user_id"):
+            try:
+                caller_user_id = UUID(str(_caller["user_id"]))
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Autonomous run %s: _caller.user_id %r is not a valid UUID; "
+                    "treating run as fully autonomous",
+                    run_id,
+                    _caller.get("user_id"),
+                )
+                caller_user_id = None
+        self._caller_user_id = caller_user_id
+
         # Short-circuit if agent is paused. Runs already past this point continue
         # normally — this check only gates new runs at entry.
         if not agent.is_active:
@@ -114,9 +149,16 @@ class AutonomousAgentExecutor:
         max_iterations = min(agent.max_iterations or 50, MAX_ITERATIONS)
         max_tokens = agent.max_token_budget or 100000
 
-        # Resolve tools and get LLM client (brief DB reads, then release)
+        # Resolve tools and get LLM client (brief DB reads, then release).
+        # ``caller_user_id`` controls MCP-tool inclusion at planning:
+        # autonomous runs (None) only see MCP tools whose connection
+        # is flagged ``available_to_autonomous`` AND has a usable
+        # service token. Chat-claim webhooks that pass a user_id see
+        # all enabled MCP tools in the agent's org.
         async with self._session_factory() as db:
-            tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(agent, db)
+            tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(
+                agent, db, caller_user_id=caller_user_id
+            )
             llm_client = await get_llm_client(db)
 
         # Build initial messages
@@ -387,6 +429,22 @@ class AutonomousAgentExecutor:
         if tool_call.name in (agent.system_tools or []):
             return await self._execute_system_tool(tool_call, agent)
 
+        # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
+        # Routed BEFORE workflow tools because the workflow id_map maps
+        # MCP qualified names to ``MCPConnection.id`` and dispatch needs
+        # to go through ``mcp_dispatch.invoke`` rather than the workflow
+        # execution service. The threaded ``self._caller_user_id`` is
+        # what differentiates a chat-claim webhook (per-user OAuth) from
+        # a fully autonomous run (service token only).
+        mcp_route = parse_mcp_tool_name(tool_call.name)
+        if mcp_route is not None:
+            connection_id, remote_tool_name = mcp_route
+            return await self._execute_mcp_tool(
+                tool_call,
+                connection_id=connection_id,
+                remote_tool_name=remote_tool_name,
+            )
+
         # Workflow tools
         workflow_id = self._tool_workflow_id_map.get(tool_call.name)
         if not workflow_id:
@@ -415,6 +473,75 @@ class AutonomousAgentExecutor:
         if isinstance(response.result, (dict, list)):
             return json.dumps(response.result, default=str)
         return str(response.result)
+
+    async def _execute_mcp_tool(
+        self,
+        tool_call: ToolCallRequest,
+        *,
+        connection_id: UUID,
+        remote_tool_name: str,
+    ) -> str:
+        """Dispatch an external MCP tool call from an autonomous run.
+
+        Mirrors ``AgentExecutor._execute_mcp_tool`` but returns the
+        plain-string envelope the autonomous loop expects rather than
+        the chat-surface ``ToolResult``.
+
+        For autonomous runs ``self._caller_user_id`` is typically
+        ``None`` — auth resolution then routes to the connection's
+        service token, gated by ``available_to_autonomous``. Webhook
+        deliveries that pass a user_id (signed claim) get user-token
+        resolution.
+
+        ``NeedsReauthError`` and ``MisconfigError`` cannot be remediated
+        by an autonomous run, so they're raised as ``ToolError`` and
+        recorded in the run's step log. The user can connect the
+        missing credential via the chat surface, then retry.
+        """
+        from src.models.orm.external_mcp import MCPConnection, MCPServer
+
+        try:
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(MCPConnection)
+                    .where(MCPConnection.id == connection_id)
+                    .options(
+                        selectinload(MCPConnection.server).selectinload(
+                            MCPServer.oauth_provider
+                        ),
+                        selectinload(MCPConnection.service_oauth_token),
+                    )
+                )
+                connection = result.scalar_one_or_none()
+                if connection is None:
+                    raise ToolError(
+                        f"MCP connection {connection_id} not found"
+                    )
+
+                envelope = await mcp_dispatch.invoke(
+                    connection=connection,
+                    tool_name=remote_tool_name,
+                    arguments=tool_call.arguments or {},
+                    caller_user_id=self._caller_user_id,
+                    db=db,
+                )
+        except NeedsReauthError as exc:
+            raise ToolError(
+                f"MCP tool {remote_tool_name!r} on connection "
+                f"{connection_id} needs reauth: {exc}"
+            ) from exc
+        except MisconfigError as exc:
+            raise ToolError(
+                f"MCP tool {remote_tool_name!r} on connection "
+                f"{connection_id} misconfigured: {exc}"
+            ) from exc
+        except ToolDispatchError as exc:
+            raise ToolError(
+                f"MCP dispatch error on connection {connection_id} "
+                f"tool {remote_tool_name!r}: {exc}"
+            ) from exc
+
+        return json.dumps(envelope, default=str)
 
     async def _execute_knowledge_search(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute knowledge search using the agent's configured namespaces."""

@@ -1403,3 +1403,135 @@ Signature: `twMerge(...classLists: string[]): string` — dedupes/conflict-resol
 import { twMerge } from "bifrost";
 twMerge("px-2 px-4");  // "px-4"
 ```
+
+### tables
+
+Web SDK for the Bifrost Tables API. Direct browser-to-API calls, no workflow required.
+
+Surface (one-line each):
+- `tables.get(table, id)` — fetch one row by id
+- `tables.insert(table, data | dataArray)` — single object → one row; array → batch
+- `tables.update(table, id, data)` — patch one row
+- `tables.upsert(table, item | itemArray)` — insert-or-update; array → batch
+- `tables.delete(table, id | idArray)` — delete one row OR a batch by ids
+- `tables.query(table, query?)` — list with filter/limit/offset
+- `tables.count(table)` — count rows
+- `tables.subscribe(tableId, filter, onEvent)` — live updates (lower-level; prefer `useTable`)
+
+```tsx
+import { tables, useTable } from "bifrost";
+
+// Single insert
+await tables.insert("clients", { name: "Acme", status: "active" });
+
+// Batch insert
+await tables.insert("clients", [
+  { data: { name: "A" } },
+  { data: { name: "B" } },
+]);
+
+// Live query — preferred React surface
+const { rows, loading, error } = useTable("clients", {
+  where: { eq: [{ row: "status" }, "active"] },
+});
+```
+
+**Prerequisite:** the table must have policies that grant the action. A freshly-created table is seeded with an `admin_bypass` policy — admins work, but non-admins are denied unless other policies grant them access. Edit the table's policies in the admin UI (Tables → click table → Policies) or via the API.
+
+**SDK vs Workflow:**
+- **SDK** (`tables.*`, `useTable`) — when policies allow the user; lower latency; no execution record. Use for browser apps doing CRUD on policy-gated rows.
+- **Workflow** — complex multi-step logic, side effects, state-transition guards. Note that policies are checked against the **pre-update** state, so policies cannot enforce "can't unfinalize" — use a workflow for that.
+
+If you're about to write a workflow just to read/write a table, configure the policies and use the SDK directly.
+
+### useTable
+
+Signature: `useTable(name: string, query?: { where?: DocumentFilter; limit?: number; offset?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; loading: boolean; error: Error | null }`.
+
+Live-updating table data hook. Loads an initial snapshot via `tables.query` and subscribes to live changes via `tables.subscribe`, applying `insert` / `update` / `delete` events to local state. The hook compiles `where` into the policy `Expr` AST internally before passing to subscribe, so the websocket fanout sees the same row visibility as the snapshot.
+
+Rows are returned in a **flat** shape — JSONB `data` fields (e.g. `status`, `assignee`) are spread at the top level alongside column-mapped fields (`id`, `created_by`, `updated_by`, `created_at`, `updated_at`, `table_id`). This matches the shape websocket events deliver, so live updates merge cleanly with the snapshot.
+
+The `where` filter uses the **dict-shorthand DSL** — same shape the Python SDK uses. Examples:
+
+```tsx
+useTable("notes",    { where: { client_id: clientId } });
+useTable("invoices", { where: { amount: { gte: 100, lt: 1000 } } });
+useTable("clients",  { where: { name: { contains: "acme" } } });
+useTable("tickets",  { where: { status: { in: ["open", "pending"] } } });
+useTable("tasks",    { where: { deleted_at: { is_null: true } } });
+```
+
+Operators: `eq`, `neq` / `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `is_null`, `has_key`, `contains`, `starts_with`, `ends_with`. The last four are query-only (no policy `Expr` equivalent) — using them in `useTable.where` raises a clear error via `error`. For those, use `tables.query` for one-shot reads or filter client-side.
+
+```tsx
+import { useTable } from "bifrost";
+
+export default function Tasks() {
+  const { rows, loading, error } = useTable("my_tasks", {
+    where: { status: "open" },
+    order_by: "created_at",
+    order_dir: "desc",
+  });
+  if (loading) return <div>Loading…</div>;
+  if (error) return <div>Error: {error.message}</div>;
+  return <ul>{rows.map((r) => <li key={r.id}>{r.title as string}</li>)}</ul>;
+}
+```
+
+The hook respects table policies — `rows` only contains rows the policies allow the current user to read. Inserts that transition into visibility appear; updates that transition out generate `delete` events.
+
+**Scope.** When called inside an org-scoped app (`app.organization_id` is set), `scope` defaults to the app's org — same convention as org-scoped workflows always running as their org. Global apps fall back to caller's-org behavior. Pass `scope` explicitly to override (provider admins only).
+
+**Subscribe errors.** If the server rejects the subscribe (table not found / policy denied / unsupported `where` operator), the rejection is surfaced via `error` rather than silently dropped. Before, this case looked like "snapshot loaded fine, no live updates ever arrive" — now it's a visible failure.
+
+### useTablePaged
+
+Signature: `useTablePaged(name: string, query?: { where?: DocumentFilter; pageSize?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; loadMore: () => Promise<void>; hasMore: boolean; loading: boolean; error: Error | null }`.
+
+Same data layer as `useTable` but loads rows in pages. Use when a table may grow past the server's 1000-row hard cap on `limit`. The first page fetches with a count; subsequent pages set `skip_count: true` automatically for speed. Pages stop when a partial page comes back (`hasMore` flips false). Live updates apply to whatever's been loaded.
+
+```tsx
+import { useTablePaged } from "bifrost";
+
+export default function Contacts() {
+  const { rows, loadMore, hasMore, loading } = useTablePaged("contacts", {
+    pageSize: 100,
+  });
+  return (
+    <>
+      <ul>{rows.map((r) => <li key={r.id}>{r.name as string}</li>)}</ul>
+      {hasMore && <button onClick={loadMore} disabled={loading}>Load more</button>}
+    </>
+  );
+}
+```
+
+For tables where 1000 rows is enough, prefer `useTable` — simpler.
+
+## Global Built-ins
+
+JavaScript built-in constructors are exposed on the bifrost scope to win the spread order over Lucide icons of the same name. Without this, a bare `new Map()` in user code would resolve to the Lucide `Map` icon (a React component, not a constructor) and crash at runtime with `TypeError: Map2 is not a constructor`.
+
+Importing these from `"bifrost"` is rare — they're already global. The entries exist so the bare references resolve correctly.
+
+### Map
+
+The native `Map` constructor (`globalThis.Map`). Without this entry, Lucide's `Map` icon would shadow it inside the platform scope. `import { Map } from "bifrost"` resolves to the constructor; for the icon, import a more specific name (e.g. `MapPin`) or import from `"lucide-react"` directly.
+
+### Set
+
+The native `Set` constructor (`globalThis.Set`). Lucide also ships a `Set` icon — same shadowing concern as `Map`.
+
+### WeakMap
+
+The native `WeakMap` constructor (`globalThis.WeakMap`). Re-asserted for symmetry with `Map`.
+
+### WeakSet
+
+The native `WeakSet` constructor (`globalThis.WeakSet`). Re-asserted for symmetry with `Set`.
+
+### Date
+
+The native `Date` constructor (`globalThis.Date`). Lucide ships a `Calendar`-adjacent icon set — re-asserted to keep `new Date()` resolving to the constructor.
+

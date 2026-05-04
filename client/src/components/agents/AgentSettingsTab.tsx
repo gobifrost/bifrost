@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -86,6 +87,7 @@ import { useKnowledgeNamespaces } from "@/hooks/useKnowledge";
 import { useLLMModels } from "@/hooks/useLLMConfig";
 import { useRoles } from "@/hooks/useRoles";
 import { useToolsGrouped } from "@/hooks/useTools";
+import { $api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
@@ -126,6 +128,7 @@ const formSchema = z.object({
 	delegated_agent_ids: z.array(z.string()),
 	role_ids: z.array(z.string()),
 	knowledge_sources: z.array(z.string()),
+	mcp_connection_ids: z.array(z.string()),
 	llm_model: z.string().nullable(),
 	llm_max_tokens: z.number().min(1).max(200_000).nullable(),
 	max_iterations: z.number().min(1).max(200).nullable(),
@@ -191,6 +194,7 @@ export function AgentSettingsTab({
 			const a = agent as AgentPublic & {
 				organization_id?: string | null;
 				system_tools?: string[];
+				mcp_connection_ids?: string[];
 				llm_model?: string | null;
 				llm_max_tokens?: number | null;
 				max_iterations?: number | null;
@@ -210,6 +214,7 @@ export function AgentSettingsTab({
 				delegated_agent_ids: a.delegated_agent_ids ?? [],
 				role_ids: a.role_ids ?? [],
 				knowledge_sources: a.knowledge_sources ?? [],
+				mcp_connection_ids: a.mcp_connection_ids ?? [],
 				llm_model: a.llm_model ?? null,
 				llm_max_tokens: a.llm_max_tokens ?? null,
 				max_iterations: a.max_iterations ?? null,
@@ -229,6 +234,7 @@ export function AgentSettingsTab({
 			delegated_agent_ids: [],
 			role_ids: [],
 			knowledge_sources: [],
+			mcp_connection_ids: [],
 			llm_model: null,
 			llm_max_tokens: null,
 			max_iterations: null,
@@ -328,6 +334,7 @@ export function AgentSettingsTab({
 			delegated_agent_ids: values.delegated_agent_ids,
 			role_ids: values.role_ids,
 			knowledge_sources: values.knowledge_sources,
+			mcp_connection_ids: values.mcp_connection_ids,
 			llm_model: values.llm_model,
 			...(isPlatformAdmin
 				? {
@@ -944,6 +951,30 @@ export function AgentSettingsTab({
 						</FormDescription>
 					</FormItem>
 
+					{/*
+					 * External MCP tools — per-connection grants. An admin
+					 * checks each connection the agent should be allowed to
+					 * call, and the tools published by that connection are
+					 * shown as muted hints below the checkbox so it's clear
+					 * what's being granted. New agents start with zero
+					 * grants (deny-by-default); the migration that
+					 * introduced this surface backfilled grants for agents
+					 * that existed prior to the rollout. Hidden entirely
+					 * for platform-level (organization_id=null) agents
+					 * since MCP connections are strictly per-org.
+					 */}
+					<FormField
+						control={form.control}
+						name="mcp_connection_ids"
+						render={({ field }) => (
+							<AgentMCPConnectionsPanel
+								organizationId={watchedOrgId}
+								value={field.value ?? []}
+								onChange={field.onChange}
+							/>
+						)}
+					/>
+
 					<FormField
 						control={form.control}
 						name="delegated_agent_ids"
@@ -1262,5 +1293,171 @@ export function AgentSettingsTab({
 				</div>
 			</form>
 		</Form>
+	);
+}
+
+
+/**
+ * AgentMCPConnectionsPanel — per-agent MCP connection grants.
+ *
+ * Lists every MCP connection in the agent's org with a checkbox. Each
+ * checkbox is the grant: ticked means the agent may call any tool that
+ * connection publishes; unticked means deny. Tools published by the
+ * connection are listed below the checkbox as muted hints so the admin
+ * can see what they're granting access to.
+ *
+ * New agents start with zero grants (deny-by-default). The migration
+ * that introduced the join table backfilled grants for agents that
+ * existed before the rollout, preserving the legacy "every agent in the
+ * org auto-receives every connection's tools" behavior on upgrade.
+ *
+ * Hidden entirely when the agent has no organization_id — MCP
+ * connections are strictly per-org so platform-level agents have
+ * nothing to grant.
+ */
+function AgentMCPConnectionsPanel({
+	organizationId,
+	value,
+	onChange,
+}: {
+	organizationId: string | null;
+	value: string[];
+	onChange: (next: string[]) => void;
+}) {
+	// Platform-level agents (no org) cannot carry MCP grants — connections
+	// are per-org. Hide the panel entirely rather than show an always-empty
+	// list that would confuse admins.
+	if (!organizationId) {
+		return null;
+	}
+
+	return (
+		<AgentMCPConnectionsPanelInner
+			organizationId={organizationId}
+			value={value}
+			onChange={onChange}
+		/>
+	);
+}
+
+function AgentMCPConnectionsPanelInner({
+	organizationId,
+	value,
+	onChange,
+}: {
+	organizationId: string;
+	value: string[];
+	onChange: (next: string[]) => void;
+}) {
+	// Pull this org's connections + their tool catalogs. The list endpoint
+	// returns summaries (no nested tools), so we follow up with
+	// per-connection detail fetches. The list is small in practice (1–3
+	// connections per org).
+	const { data: connections = [] } = $api.useQuery(
+		"get",
+		"/api/mcp-connections",
+		{ params: { query: { scope: organizationId } } },
+	);
+	const { data: servers = [] } = $api.useQuery(
+		"get",
+		"/api/mcp-servers",
+		{ params: { query: { active_only: false } } },
+	);
+
+	const serverNameById = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const s of servers) map.set(s.id, s.name);
+		return map;
+	}, [servers]);
+
+	const connectionDetails = useQueries({
+		queries: connections.map((c) =>
+			$api.queryOptions("get", "/api/mcp-connections/{connection_id}", {
+				params: { path: { connection_id: c.id } },
+			}),
+		),
+	});
+
+	const granted = useMemo(() => new Set(value), [value]);
+
+	function toggle(connectionId: string, next: boolean) {
+		if (next) {
+			if (granted.has(connectionId)) return;
+			onChange([...value, connectionId]);
+		} else {
+			onChange(value.filter((id) => id !== connectionId));
+		}
+	}
+
+	if (connections.length === 0) {
+		return (
+			<div
+				className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground"
+				data-testid="agent-mcp-connections-panel-empty"
+			>
+				This organization has no MCP connections. Add one from the MCP
+				servers admin page to grant agents access to external tools.
+			</div>
+		);
+	}
+
+	return (
+		<div
+			className="rounded-md border bg-muted/20 p-3 space-y-3"
+			data-testid="agent-mcp-connections-panel"
+		>
+			<div>
+				<div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+					External MCP tools
+				</div>
+				<p className="mt-1 text-xs text-muted-foreground">
+					Check each connection this agent should be allowed to call.
+					Unchecked connections are denied — the agent will not see any
+					of their tools.
+				</p>
+			</div>
+			<div className="space-y-3">
+				{connections.map((conn, idx) => {
+					const detail = connectionDetails[idx]?.data;
+					const tools = detail?.tools ?? [];
+					const enabledTools = tools.filter((t) => t.enabled);
+					const serverName =
+						serverNameById.get(conn.server_id) ?? "MCP server";
+					const checked = granted.has(conn.id);
+					return (
+						<label
+							key={conn.id}
+							className="flex items-start gap-2 cursor-pointer"
+							data-testid={`agent-mcp-connection-row-${conn.id}`}
+						>
+							<Checkbox
+								checked={checked}
+								onCheckedChange={(state) =>
+									toggle(conn.id, state === true)
+								}
+								data-testid={`agent-mcp-connection-checkbox-${conn.id}`}
+							/>
+							<div className="flex-1">
+								<div className="text-sm font-medium">
+									{serverName}
+								</div>
+								{enabledTools.length === 0 ? (
+									<div className="text-xs text-muted-foreground">
+										No tools published yet.
+									</div>
+								) : (
+									<div className="text-xs text-muted-foreground">
+										Grants access to: {" "}
+										{enabledTools
+											.map((t) => t.tool_name)
+											.join(", ")}
+									</div>
+								)}
+							</div>
+						</label>
+					);
+				})}
+			</div>
+		</div>
 	);
 }

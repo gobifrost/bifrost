@@ -352,6 +352,37 @@ export declare function useAppState<T>(
 ): [T, (value: T) => void];
 
 // =============================================================================
+// Table Access SDK
+// =============================================================================
+
+export declare const tables: typeof import("./app-sdk/tables").tables;
+
+/**
+ * Live-updating table data hook.
+ *
+ * Loads an initial snapshot and subscribes to live row changes (insert,
+ * update, delete) for the given table. The subscribe filter is the same
+ * `where` expression passed to the initial query, so the websocket fanout
+ * sees exactly the same row visibility as the snapshot.
+ *
+ * @param name - Table name (or id) to query and subscribe to
+ * @param query - Optional `where` / `limit` / `offset` query parameters
+ * @returns `{ rows, loading, error }`
+ *
+ * @example
+ * ```tsx
+ * const { rows, loading, error } = useTable("tickets", {
+ *   where: { eq: ["status", "open"] },
+ * });
+ *
+ * if (loading) return <Skeleton />;
+ * if (error) return <Alert>{error.message}</Alert>;
+ * return <TicketList rows={rows} />;
+ * ```
+ */
+export declare const useTable: typeof import("./app-sdk/use-table").useTable;
+
+// =============================================================================
 // Platform Utilities
 // =============================================================================
 
@@ -686,6 +717,10 @@ export interface PlatformScope {
 	useNavigate: typeof useNavigate;
 	useAppState: typeof useAppState;
 	useLocation: typeof useLocation;
+
+	// Table access
+	tables: typeof import("./app-sdk/tables").tables;
+	useTable: typeof import("./app-sdk/use-table").useTable;
 
 	// Platform utilities
 	navigate: typeof navigate;

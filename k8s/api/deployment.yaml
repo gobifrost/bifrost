@@ -8,7 +8,12 @@ metadata:
     app.kubernetes.io/component: api
     app.kubernetes.io/part-of: bifrost
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bifrost-api
@@ -32,7 +37,19 @@ spec:
       containers:
         - name: api
           image: jackmusick/bifrost-api:latest
-          command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          command:
+            - uvicorn
+            - src.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --timeout-graceful-shutdown
+            - "30"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
           ports:
             - containerPort: 8000
               name: http
@@ -58,12 +75,14 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
+      # Shutdown budget: preStop (5s) + uvicorn graceful shutdown (30s) + cleanup margin (5s)
+      terminationGracePeriodSeconds: 40
       # Run as non-root user (matches Dockerfile)
       securityContext:
         runAsUser: 1000

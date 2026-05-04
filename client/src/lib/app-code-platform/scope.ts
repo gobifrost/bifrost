@@ -21,6 +21,9 @@ import { useUser } from "./useUser";
 import { RequireRole } from "./RequireRole";
 import { useAppState } from "./useAppState";
 import { Link, NavLink, Navigate } from "./navigation";
+import { tables } from "../app-sdk/tables";
+import { useTable } from "../app-sdk/use-table";
+import { useTablePaged } from "../app-sdk/use-table-paged";
 
 /**
  * Platform scope object containing all platform APIs
@@ -68,5 +71,10 @@ export function createPlatformScope(): Record<string, unknown> {
 
 		// App state
 		useAppState,
+
+		// Table access
+		tables,
+		useTable,
+		useTablePaged,
 	};
 }

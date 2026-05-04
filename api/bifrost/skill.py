@@ -1,7 +1,12 @@
 """Implementation of ``bifrost skill`` — install/update/remove agent skills.
 
-Skills live in the bifrost repo at ``.claude/skills/<name>/`` and need to be
-copied into the user's workspace at:
+Skills live in the bifrost repo at ``.claude/skills/<name>/``. Only those
+exposed by the Claude Code plugin manifest (i.e. symlinked from the top-level
+``skills/`` directory) are considered public and installed by this command —
+internal maintainer skills like ``bifrost-debug``/``bifrost-secaudit`` stay
+in the repo where they belong.
+
+Public skills are copied into the user's workspace at:
 
 * ``<cwd>/.claude/skills/<name>/`` — picked up by Claude Code.
 * ``<cwd>/.agents/skills/<name>/`` — the cross-harness portable convention
@@ -40,7 +45,7 @@ work across Claude Code, Copilot CLI, Cursor, Codex, and Gemini CLI:
 
 Subcommands:
   list                    List installed skills in the current workspace
-  update                  Install / update ALL Bifrost skills from GitHub
+  update                  Install / update all public Bifrost skills from GitHub
   remove <name>           Remove an installed skill from both locations
 
 Options for update:
@@ -193,12 +198,18 @@ def _handle_update(args: list[str]) -> int:
 
 
 def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
-    """Fetch the repo tarball and return ``{relpath: contents}`` for skill files.
+    """Fetch the repo tarball and return ``{relpath: contents}`` for public skill files.
 
     ``relpath`` is repo-relative under ``.claude/skills/`` (e.g.
-    ``bifrost-build/SKILL.md``). Excludes ``.claude/`` siblings (commands,
-    agents, hooks) — those install via the Claude Code plugin, not via this
-    command.
+    ``bifrost-build/SKILL.md``).
+
+    Only skills exposed by the repo's Claude Code plugin manifest are returned —
+    determined by the symlinks in the top-level ``skills/`` directory. Internal
+    skills under ``.claude/skills/`` that are NOT symlinked from ``skills/`` are
+    excluded so end users don't end up with maintainer-only skills like
+    ``bifrost-debug`` or ``bifrost-secaudit``. The ``skills/`` symlinks are the
+    same allowlist consumed by the plugin loader, so the CLI and the plugin stay
+    in lockstep automatically.
     """
     url = f"https://codeload.github.com/{repo}/tar.gz/refs/heads/{ref}"
     # Try the branch URL first, fall back to tag URL on 404.
@@ -208,12 +219,35 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
         response = httpx.get(url, timeout=60.0, follow_redirects=True)
     response.raise_for_status()
 
+    public_skills: set[str] = set()
     files: dict[str, bytes] = {}
     with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as tar:
-        for member in tar.getmembers():
+        members = tar.getmembers()
+
+        # First pass: read top-level skills/ symlinks to build the allowlist.
+        for member in members:
+            parts = member.name.split("/", 1)
+            if len(parts) != 2:
+                continue
+            inner = parts[1]
+            if not inner.startswith("skills/") or inner == "skills/":
+                continue
+            name = inner[len("skills/"):].rstrip("/")
+            if not name or "/" in name:
+                continue
+            if member.issym() or member.islnk():
+                public_skills.add(name)
+
+        if not public_skills:
+            raise ValueError(
+                f"No public skills found under skills/ in {repo}@{ref}. "
+                "The repo may not expose a Claude Code plugin manifest."
+            )
+
+        # Second pass: extract content for allowlisted skills only.
+        for member in members:
             if not member.isfile():
                 continue
-            # Member names start with "<repo>-<sha>/...", strip that prefix.
             parts = member.name.split("/", 1)
             if len(parts) != 2:
                 continue
@@ -223,6 +257,9 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
                 continue
             relpath = inner[len(prefix):]
             if not relpath:
+                continue
+            skill_name = relpath.split("/", 1)[0]
+            if skill_name not in public_skills:
                 continue
             extracted = tar.extractfile(member)
             if extracted is None:

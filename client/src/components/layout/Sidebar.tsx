@@ -22,6 +22,7 @@ import {
 	AppWindow,
 	Network,
 	BookOpen,
+	ServerCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -122,6 +123,12 @@ const navSections: NavSection[] = [
 				title: "Integrations",
 				href: "/integrations",
 				icon: Plug,
+				requiresPlatformAdmin: true,
+			},
+			{
+				title: "MCP Servers",
+				href: "/mcp-servers",
+				icon: ServerCog,
 				requiresPlatformAdmin: true,
 			},
 			{

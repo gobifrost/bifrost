@@ -461,7 +461,6 @@ class SDKTableCreateRequest(BaseModel):
         default=None,
         description="Scope: None=context org, 'global'=global, UUID=specific org",
     )
-    app: str | None = Field(default=None, description="Application UUID to scope table to an app")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -469,7 +468,6 @@ class SDKTableCreateRequest(BaseModel):
 class SDKTableListRequest(BaseModel):
     """SDK request for listing tables."""
     scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Filter by application UUID")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -480,7 +478,6 @@ class SDKTableInfo(BaseModel):
     id: str = Field(..., description="Table UUID")
     name: str = Field(..., description="Table name")
     organization_id: str | None = Field(None, description="Organization UUID or null for global")
-    application_id: str | None = Field(None, description="Application UUID if app-scoped")
     table_schema: dict[str, Any] | None = Field(None, description="Schema hints")
     description: str | None = Field(None, description="Table description")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
@@ -489,179 +486,3 @@ class SDKTableInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class SDKDocumentInsertRequest(BaseModel):
-    """SDK request for inserting a document."""
-    table: str = Field(..., description="Table name")
-    id: str | None = Field(default=None, description="Document ID (user-provided key). If not provided, a UUID will be auto-generated.")
-    data: dict[str, Any] = Field(..., description="Document data")
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentUpsertRequest(BaseModel):
-    """SDK request for upserting (create or replace) a document."""
-    table: str = Field(..., description="Table name")
-    id: str = Field(..., description="Document ID (required for upsert)")
-    data: dict[str, Any] = Field(..., description="Document data")
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentGetRequest(BaseModel):
-    """SDK request for getting a document."""
-    table: str = Field(..., description="Table name")
-    doc_id: str = Field(..., description="Document UUID")
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentUpdateRequest(BaseModel):
-    """SDK request for updating a document."""
-    table: str = Field(..., description="Table name")
-    doc_id: str = Field(..., description="Document UUID")
-    data: dict[str, Any] = Field(..., description="Fields to update (merged with existing)")
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentDeleteRequest(BaseModel):
-    """SDK request for deleting a document."""
-    table: str = Field(..., description="Table name")
-    doc_id: str = Field(..., description="Document UUID")
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentQueryRequest(BaseModel):
-    """SDK request for querying documents with advanced filtering.
-
-    Filter conditions support:
-    - Simple equality: {"status": "active"}
-    - Comparison operators: {"amount": {"gt": 100, "lte": 1000}}
-    - LIKE patterns: {"name": {"like": "%acme%"}} or {"name": {"ilike": "%ACME%"}}
-    - IN lists: {"category": {"in": ["a", "b"]}}
-    - NULL checks: {"deleted_at": {"is_null": true}}
-    """
-    table: str = Field(..., description="Table name")
-    where: dict[str, Any] | None = Field(default=None, description="Filter conditions with operators")
-    order_by: str | None = Field(default=None, description="Field to order by")
-    order_dir: Literal["asc", "desc"] = Field(default="asc", description="Sort direction")
-    limit: int = Field(default=100, ge=1, le=1000, description="Max documents")
-    offset: int = Field(default=0, ge=0, description="Documents to skip")
-    skip_count: bool = Field(
-        default=False,
-        description="Skip the total count query (returns total=-1). Use for faster paginated fetches after the first page.",
-    )
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentCountRequest(BaseModel):
-    """SDK request for counting documents."""
-    table: str = Field(..., description="Table name")
-    where: dict[str, Any] | None = Field(default=None, description="Filter conditions with operators")
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentInsertBatchItem(BaseModel):
-    """Single item in a batch insert request."""
-    id: str | None = Field(default=None, description="Document ID (optional, auto-generated if not provided)")
-    data: dict[str, Any] = Field(..., description="Document data")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentInsertBatchRequest(BaseModel):
-    """SDK request for batch inserting documents."""
-    table: str = Field(..., description="Table name")
-    documents: list[SDKDocumentInsertBatchItem] = Field(
-        ..., max_length=1000, description="Documents to insert (max 1000)"
-    )
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentUpsertBatchItem(BaseModel):
-    """Single item in a batch upsert request."""
-    id: str = Field(..., description="Document ID (required for upsert)")
-    data: dict[str, Any] = Field(..., description="Document data")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentUpsertBatchRequest(BaseModel):
-    """SDK request for batch upserting documents."""
-    table: str = Field(..., description="Table name")
-    documents: list[SDKDocumentUpsertBatchItem] = Field(
-        ..., max_length=1000, description="Documents to upsert (max 1000)"
-    )
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentDeleteBatchRequest(BaseModel):
-    """SDK request for batch deleting documents."""
-    table: str = Field(..., description="Table name")
-    doc_ids: list[str] = Field(
-        ..., max_length=1000, description="Document IDs to delete (max 1000)"
-    )
-    scope: str | None = Field(default=None, description="Organization scope")
-    app: str | None = Field(default=None, description="Application UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKBatchDocumentResponse(BaseModel):
-    """Batch insert/upsert response."""
-    documents: list["SDKDocumentData"] = Field(..., description="Created/updated documents")
-    count: int = Field(..., description="Number of documents affected")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKBatchDeleteResponse(BaseModel):
-    """Batch delete response."""
-    deleted_ids: list[str] = Field(..., description="IDs of deleted documents")
-    count: int = Field(..., description="Number of documents deleted")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentData(BaseModel):
-    """Document data response for SDK."""
-    id: str = Field(..., description="Document ID (user-provided or auto-generated)")
-    table_id: str = Field(..., description="Table UUID")
-    data: dict[str, Any] = Field(..., description="Document data")
-    created_at: str = Field(..., description="Creation timestamp (ISO format)")
-    updated_at: str = Field(..., description="Last update timestamp (ISO format)")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKDocumentList(BaseModel):
-    """Document list response for SDK."""
-    documents: list[SDKDocumentData] = Field(..., description="List of documents")
-    total: int = Field(..., description="Total count")
-    limit: int = Field(..., description="Limit used")
-    offset: int = Field(..., description="Offset used")
-
-    model_config = ConfigDict(from_attributes=True)

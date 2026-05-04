@@ -155,6 +155,14 @@ Commands: `tables list / get / create / update / delete`.
 Example: `bifrost tables create --name clients --application app-ref --schema @schema.yaml`.
 
 Non-obvious semantics:
+- Tables use **policy rules** for row-level access. Default: a freshly-created table is seeded with an `admin_bypass` policy (visible/editable in the policy editor). Without other rules, only platform admins can read/write.
+- Resolution is **additive OR**: any rule that allows = allow. Default deny.
+- Per-action scoping: each policy lists which actions it grants (`read` / `create` / `update` / `delete`).
+- `update` is checked against the **pre-update** row state. To prevent state-transition (e.g. cannot move from done → open), use a workflow.
+- The policy `when` is a JSON AST. Operators: `and`/`or`/`not`, `eq`/`neq`/`lt`/`lte`/`gt`/`gte`, `in`, `is_null`, `call`. References: `{row: "field"}`, `{user: "field"}`. Functions: `has_role(name_or_uuid)`.
+- Browser apps call tables directly via `import { tables, useTable } from "bifrost"`. SDK calls return what the policy permits; no execution records.
+- Workflow SDK auto-attributes `created_by`/`updated_by` from `context.user_id`; pass `created_by=` to override.
+- Subscriptions: `useTable(name, query?)` is the unified live-query hook. Lower-level `tables.subscribe(tableId, filter, onEvent)` for non-React code. Server filters per-policy AND per-user-filter; the four-way fanout emits insert/update/delete including transitions into and out of visibility.
 - `update --name` prints a warning to stderr about workflow SDK references (SDK calls like `sdk.tables.get("clients")` reference tables by name). It does not block — the author must grep the workspace before pushing.
 - `--application` accepts app slug / UUID / name.
 

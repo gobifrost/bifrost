@@ -28,7 +28,6 @@ def make_table(name: str, org_id=None) -> Table:
         id=uuid4(),
         name=name,
         organization_id=org_id,
-        application_id=None,
         schema=None,
         description=None,
     )

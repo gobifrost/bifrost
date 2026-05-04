@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentSuperuser
 from src.core.database import DbSession
+from shared.policies.probe import make_seed_admin_bypass
 from src.core.security import decrypt_with_key, encrypt_secret
 from src.models.enums import ConfigType
 from src.models.orm.config import Config
@@ -656,11 +657,15 @@ async def import_tables(
                     result.skipped += 1
                     result.details.append(ImportResultItem(name=item.name, status="skipped"))
             else:
+                # Default seed: admin_bypass so platform admins aren't locked out.
+                # Task 16 will extend TableExportItem to carry policies through
+                # this path; until then, imported tables get the seed.
                 new_table = Table(
                     name=item.name,
                     description=item.description,
                     schema=item.schema_def,
                     organization_id=org_id,
+                    access=make_seed_admin_bypass(),
                     created_by=str(user.user_id),
                 )
                 db.add(new_table)

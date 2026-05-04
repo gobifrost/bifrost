@@ -9,6 +9,11 @@ metadata:
     app.kubernetes.io/part-of: bifrost
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bifrost-worker
@@ -46,6 +51,12 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+      # Drain budget: drain deadline (300s) + cleanup margin (60s)
+      terminationGracePeriodSeconds: 360
       # Run as non-root user (matches Dockerfile)
       securityContext:
         runAsUser: 1000

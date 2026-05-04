@@ -103,7 +103,7 @@ function DocumentDialogInner({
 				params: {
 					path: { table_id: tableId },
 				},
-				body: { data },
+				body: { data, upsert: false },
 			});
 		}
 		onClose();

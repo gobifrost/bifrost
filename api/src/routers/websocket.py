@@ -7,22 +7,353 @@ Replaces Azure Web PubSub with native FastAPI WebSockets.
 
 import asyncio
 import logging
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from shared.policies.probe import is_subscribe_authorized
+from shared.policies.subscription import decide_visibility_change
+from shared.role_cache import get_user_roles
 from src.core.auth import UserPrincipal, get_current_user_ws
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
+from src.models.contracts.policies import Expr, TablePolicies
 from src.models.orm import Agent
 from src.models.orm.applications import Application
+from src.models.orm.tables import Table as TableOrm
 
 logger = logging.getLogger(__name__)
+
+
+class WSError(Exception):
+    """Subscribe-protocol error surfaced as an `error` ack to the client."""
+
+
+@dataclass
+class ChannelSpec:
+    """Parsed channel-subscription request.
+
+    `name` is the channel name (e.g. `table:<uuid>`). `filter` is an optional
+    user-supplied filter expression that further narrows visibility on `table:`
+    channels; it is ignored on other channels.
+    """
+
+    name: str
+    filter: Expr | None
+
+
+def _parse_channels(channels_raw: list) -> list[ChannelSpec]:
+    """Accept either string or {name, filter} channel specs."""
+    out: list[ChannelSpec] = []
+    for ch in channels_raw:
+        if isinstance(ch, str):
+            out.append(ChannelSpec(name=ch, filter=None))
+        elif isinstance(ch, dict) and "name" in ch:
+            filter_dict = ch.get("filter")
+            filter_expr: Expr | None = None
+            if filter_dict is not None:
+                try:
+                    filter_expr = Expr.model_validate(filter_dict)
+                except ValidationError as e:
+                    raise WSError(f"invalid filter: {e}")
+            out.append(ChannelSpec(name=ch["name"], filter=filter_expr))
+        else:
+            raise WSError("channel must be a string or {name, filter} object")
+    return out
+
+
+async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
+    """Resolve a table reference (UUID string or name) to its canonical UUID,
+    enforcing the same org gate as the REST `get_table_or_404` helper:
+    a non-superuser may only resolve to tables in their own org or global.
+
+    Returns None if no table matches OR the resolved table is outside the
+    user's org reach (404-style — callers translate to the user-visible
+    "Table not found" error).
+    """
+    async with get_db_context() as db:
+        try:
+            table_uuid = UUID(name_or_id)
+            stmt = select(TableOrm.id, TableOrm.organization_id).where(
+                TableOrm.id == table_uuid,
+            )
+        except ValueError:
+            stmt = select(TableOrm.id, TableOrm.organization_id).where(
+                TableOrm.name == name_or_id,
+            )
+            # Non-superusers' name lookups are restricted to their own org
+            # (cascade with global) — superusers see all orgs.
+            if not user.is_superuser:
+                stmt = stmt.where(
+                    (TableOrm.organization_id == user.organization_id)
+                    | (TableOrm.organization_id.is_(None))
+                )
+        result = await db.execute(stmt)
+        row = result.one_or_none()
+
+    if row is None:
+        return None
+
+    table_id, table_org = row[0], row[1]
+
+    # Org gate for UUID lookups (name lookups already constrained above).
+    if not user.is_superuser:
+        if table_org is not None and table_org != user.organization_id:
+            return None
+
+    return str(table_id)
+
+
+# In-process policy cache for the document_change fanout hot path.
+#
+# Each `document_change` event reaches every WS subscriber's local handler,
+# which previously did a fresh DB load + Pydantic validate per event per
+# subscriber. For high-fanout tables (many subscribers + frequent updates)
+# that's O(subs × updates) DB queries. The cache collapses it to one load
+# per (table, generation) pair.
+#
+# Invalidation is event-driven: `policy_changed` messages bump the table's
+# generation in `_invalidate_table_policy_cache`, forcing a reload on next
+# read. Worker processes that don't subscribe to `policy_changed` for a
+# given table will hold a stale entry until the table is re-resolved — but
+# they also won't be evaluating that table's policies, so the staleness is
+# moot. (When a new subscriber arrives, the subscribe path goes through
+# `is_subscribe_authorized` with a fresh load, sidestepping the cache.)
+_table_policy_cache: dict[str, TablePolicies | None] = {}
+# Bounded to keep memory predictable under high table churn. Eviction is
+# FIFO — for a hot working set of <_POLICY_CACHE_MAX tables, every read is
+# a hit; cold reads pay one DB load.
+_POLICY_CACHE_MAX = 256
+
+
+def _invalidate_table_policy_cache(table_id: str) -> None:
+    """Drop the cached policies for a table; next read reloads from DB."""
+    _table_policy_cache.pop(table_id, None)
+
+
+async def _load_policies_for_table(table_id: str) -> TablePolicies | None:
+    """Load policies for a table by id (UUID) or name. Returns None if missing.
+
+    Cache-first for UUID lookups (the hot path during `document_change`
+    fanout). Name lookups bypass the cache because the same name can resolve
+    to different tables in different orgs; UUIDs are unambiguous.
+    """
+    # UUID lookups go through the cache. Name lookups bypass it because the
+    # same name can resolve to different tables in different orgs.
+    is_uuid = False
+    try:
+        UUID(table_id)
+        is_uuid = True
+    except ValueError:
+        # Not a UUID — `table_id` is a name lookup (handled below). The
+        # exception itself carries no information we need; the boolean is
+        # the signal.
+        pass
+
+    if is_uuid and table_id in _table_policy_cache:
+        return _table_policy_cache[table_id]
+
+    async with get_db_context() as db:
+        if is_uuid:
+            stmt = select(TableOrm.access).where(TableOrm.id == UUID(table_id))
+        else:
+            stmt = select(TableOrm.access).where(TableOrm.name == table_id)
+        result = await db.execute(stmt)
+        row = result.one_or_none()
+
+    if row is None:
+        policies: TablePolicies | None = None
+    elif row[0] is None:
+        policies = TablePolicies()
+    else:
+        policies = TablePolicies.model_validate(row[0])
+
+    if is_uuid:
+        # Bounded FIFO eviction — pop arbitrary entry when full.
+        if len(_table_policy_cache) >= _POLICY_CACHE_MAX:
+            _table_policy_cache.pop(next(iter(_table_policy_cache)), None)
+        _table_policy_cache[table_id] = policies
+
+    return policies
+
+
+async def _populate_user_roles(user: UserPrincipal) -> None:
+    """Hydrate `role_ids` / `role_names` on the principal if not already loaded.
+
+    `get_current_user_ws` does not hit the DB for roles (the JWT carries only
+    the `roles` claim, not the `user_roles` rows the policy evaluator's
+    `has_role` reads). Call this once per connection before the first
+    table-subscription policy check. Reads go through the per-user role cache
+    (Redis); DB is fallback on miss.
+    """
+    if user.role_ids or user.role_names:
+        return
+
+    async with get_db_context() as db:
+        role_ids, role_names = await get_user_roles(user.user_id, db)
+        user.role_ids = role_ids
+        user.role_names = role_names
+
+
+def _make_table_dispatcher(websocket: WebSocket, user: UserPrincipal) -> Any:
+    """Return an async dispatcher that filters table-channel messages for this WS.
+
+    Attached to the WebSocket as `_table_dispatcher` and invoked by the pubsub
+    manager's `_send_local` for every `table:` message destined for this
+    connection. The dispatcher consults the per-connection
+    `table_subscriptions` state to decide what (if anything) to forward.
+    """
+
+    async def dispatcher(channel_name: str, payload: dict[str, Any]) -> None:
+        await _handle_table_message(websocket, user, channel_name, payload)
+
+    return dispatcher
+
+
+async def _handle_table_message(
+    websocket: WebSocket,
+    user: UserPrincipal,
+    channel_name: str,
+    payload: dict[str, Any],
+) -> None:
+    """Apply the four-way visibility decision and emit the right action.
+
+    `policy_changed` triggers a re-evaluation; if the user no longer satisfies
+    `is_subscribe_authorized`, a `subscription_revoked` notice is sent and the
+    subscription state is cleared.
+    """
+    table_id = channel_name.split(":", 1)[1]
+    table_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "table_subscriptions", {})
+    sub = table_subs.get(table_id)
+    if sub is None:
+        return  # no longer subscribed
+
+    msg_type = payload.get("type")
+
+    if msg_type == "policy_changed":
+        # Drop the in-process policy cache for this table so the
+        # re-evaluation (and every subsequent document_change for this
+        # table on this process) sees the fresh policies.
+        _invalidate_table_policy_cache(table_id)
+        await _re_evaluate_subscription(websocket, user, table_id)
+        return
+
+    if msg_type != "document_change":
+        return
+
+    policies = await _load_policies_for_table(table_id)
+    if policies is None:
+        return
+
+    decision = decide_visibility_change(
+        old_row=payload.get("old_row"),
+        new_row=payload.get("new_row"),
+        policies=policies,
+        user=user,
+        user_filter=sub.get("filter"),
+    )
+    if decision is None:
+        return
+
+    action, body = decision
+    if action == "delete":
+        await websocket.send_json({
+            "type": "document_change",
+            "action": "delete",
+            "table_id": table_id,
+            "row_id": body,
+        })
+    else:
+        await websocket.send_json({
+            "type": "document_change",
+            "action": action,
+            "table_id": table_id,
+            "row": body,
+        })
+
+
+async def _re_evaluate_subscription(
+    websocket: WebSocket,
+    user: UserPrincipal,
+    table_id: str,
+) -> None:
+    """Re-run subscribe-time authorization after a policy edit; revoke if no."""
+    policies = await _load_policies_for_table(table_id)
+    if policies is None or not is_subscribe_authorized(policies, user):
+        await websocket.send_json({
+            "type": "subscription_revoked",
+            "channel": f"table:{table_id}",
+        })
+        table_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "table_subscriptions", {})
+        table_subs.pop(table_id, None)
+        # The pubsub manager unsubscribes on disconnect; for a partial revoke,
+        # we just stop processing future messages on this table by clearing
+        # the per-connection subscription state. The dispatcher early-exits
+        # for unknown table_ids.
+
+
+async def _authorize_table_subscribe(
+    websocket: WebSocket,
+    user: UserPrincipal,
+    spec: ChannelSpec,
+) -> str | None:
+    """Run the subscribe-time policy probe and register per-connection state.
+
+    Resolves the user-supplied `table:<name-or-id>` to the canonical
+    `table:<uuid>` channel — the publisher only ever emits on UUID-keyed
+    channels, so subscriptions registered under a name would never receive
+    messages. On success, returns the canonical channel string and populates
+    `websocket.state.table_subscriptions[uuid]`. On failure, sends an `error`
+    ack and returns None.
+    """
+    name_or_id = spec.name.split(":", 1)[1]
+    canonical_id = await _resolve_table_id(name_or_id, user)
+    if canonical_id is None:
+        await websocket.send_json({
+            "type": "error",
+            "channel": spec.name,
+            "message": "Table not found",
+        })
+        return None
+
+    # Drop any stale cache entry: between this process's last sub
+    # disconnecting and now, a `policy_changed` event for this table
+    # would NOT have reached us (no subscriber to fan out to). Force a
+    # fresh load on subscribe to close that staleness window.
+    _invalidate_table_policy_cache(canonical_id)
+    policies = await _load_policies_for_table(canonical_id)
+    if policies is None:
+        await websocket.send_json({
+            "type": "error",
+            "channel": spec.name,
+            "message": "Table not found",
+        })
+        return None
+
+    await _populate_user_roles(user)
+    if not is_subscribe_authorized(policies, user):
+        await websocket.send_json({
+            "type": "error",
+            "channel": spec.name,
+            "message": "Access denied",
+        })
+        return None
+
+    canonical_channel = f"table:{canonical_id}"
+    table_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "table_subscriptions", None) or {}
+    table_subs[canonical_id] = {"filter": spec.filter, "channel_name": canonical_channel}
+    websocket.state.table_subscriptions = table_subs
+
+    if not hasattr(websocket, "_table_dispatcher"):
+        websocket._table_dispatcher = _make_table_dispatcher(websocket, user)  # type: ignore[attr-defined]
+    return canonical_channel
 
 
 async def can_access_conversation(user: UserPrincipal, conversation_id: str) -> tuple[bool, Conversation | None]:
@@ -270,6 +601,11 @@ async def websocket_connect(
             # File activity channel - platform admins only
             if user.is_superuser:
                 allowed_channels.append(channel)
+        elif channel.startswith("table:"):
+            # Table channels carry a per-connection user filter that cannot be
+            # expressed in a query string. Require runtime `subscribe` messages
+            # for table channels — query-string subscription is rejected.
+            continue
         elif channel == "system":
             allowed_channels.append(channel)
         elif channel.startswith("agent-run:"):
@@ -297,6 +633,10 @@ async def websocket_connect(
     active_chat_tasks: dict[str, asyncio.Task] = {}
     pending_messages: dict[str, tuple[str, str | None]] = {}  # conversation_id -> (message, local_id)
 
+    # Per-connection state for policy-driven table subscriptions.
+    # Populated by `_authorize_table_subscribe`; consulted by the dispatcher.
+    websocket.state.table_subscriptions = {}
+
     try:
         await manager.connect(websocket, allowed_channels)
         logger.info(f"WebSocket connected for user {user.user_id}, channels: {log_safe(allowed_channels)}")
@@ -314,8 +654,17 @@ async def websocket_connect(
 
             # Handle subscription changes
             if data.get("type") == "subscribe":
-                new_channels = data.get("channels", [])
-                for channel in new_channels:
+                new_channels_raw = data.get("channels", [])
+                try:
+                    parsed_specs = _parse_channels(new_channels_raw)
+                except WSError as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e),
+                    })
+                    continue
+                for spec in parsed_specs:
+                    channel = spec.name
                     # Validate and add subscription
                     if channel.startswith("execution:"):
                         # Validate execution access before subscribing
@@ -457,15 +806,57 @@ async def websocket_connect(
                                 "channel": channel,
                                 "message": "Access denied"
                             })
+                    elif channel.startswith("table:"):
+                        # Policy-driven subscribe: probe authorization, resolve
+                        # the user-supplied name-or-id to the canonical UUID
+                        # channel (publisher always emits on `table:{uuid}`),
+                        # then register per-connection state for the four-way
+                        # fanout filter under that canonical key.
+                        canonical_channel = await _authorize_table_subscribe(
+                            websocket, user, spec
+                        )
+                        if canonical_channel is None:
+                            continue
+                        if canonical_channel not in manager.connections:
+                            manager.connections[canonical_channel] = set()
+                        manager.connections[canonical_channel].add(websocket)
+                        # Echo the canonical channel back so client + server
+                        # agree on a single name for subsequent unsubscribe
+                        # / revocation messages.
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "channel": canonical_channel
+                        })
 
             elif data.get("type") == "unsubscribe":
                 channel = data.get("channel")
-                if channel and channel in manager.connections:
-                    manager.connections[channel].discard(websocket)
-                    await websocket.send_json({
-                        "type": "unsubscribed",
-                        "channel": channel
-                    })
+                if channel:
+                    # Table channels may be subscribed by name but registered
+                    # under the canonical UUID channel. Resolve before pop.
+                    if channel.startswith("table:"):
+                        name_or_id = channel.split(":", 1)[1]
+                        canonical_id = await _resolve_table_id(name_or_id, user)
+                        canonical_channel = (
+                            f"table:{canonical_id}"
+                            if canonical_id is not None
+                            else channel
+                        )
+                        if canonical_channel in manager.connections:
+                            manager.connections[canonical_channel].discard(websocket)
+                        if canonical_id is not None:
+                            table_subs = getattr(websocket.state, "table_subscriptions", None)
+                            if table_subs is not None:
+                                table_subs.pop(canonical_id, None)
+                        await websocket.send_json({
+                            "type": "unsubscribed",
+                            "channel": canonical_channel,
+                        })
+                    elif channel in manager.connections:
+                        manager.connections[channel].discard(websocket)
+                        await websocket.send_json({
+                            "type": "unsubscribed",
+                            "channel": channel
+                        })
 
             elif data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})

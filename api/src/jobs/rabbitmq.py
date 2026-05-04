@@ -119,6 +119,9 @@ class BaseConsumer(ABC):
         self._channel: AbstractRobustChannel | None = None
         self._queue: aio_pika.Queue | None = None
         self._running = False
+        self._inflight: set[asyncio.Task] = set()
+        self._consumer_tag: str | None = None
+        self._draining: bool = False
 
     async def start(self) -> None:
         """Start consuming messages."""
@@ -160,11 +163,14 @@ class BaseConsumer(ABC):
 
         logger.info(f"Consumer started for queue: {self.queue_name}")
 
-        # Start consuming
-        await queue.consume(self._on_message)
+        # Start consuming, capturing the consumer tag so drain() can cancel it.
+        self._consumer_tag = await queue.consume(self._on_message)
 
     async def stop(self) -> None:
-        """Stop consuming messages."""
+        """Stop consuming messages (hard close — does NOT wait for in-flight).
+
+        For graceful shutdown, call drain() instead.
+        """
         self._running = False
         if self._channel:
             await self._channel.close()
@@ -172,15 +178,72 @@ class BaseConsumer(ABC):
             await self._connection_ctx.__aexit__(None, None, None)
         logger.info(f"Consumer stopped for queue: {self.queue_name}")
 
+    async def drain(self, deadline: float = 300.0) -> None:
+        """Stop new deliveries, wait on in-flight tasks, then close.
+
+        Cancels the consumer tag (RabbitMQ stops sending new messages on this
+        channel) but keeps the channel open so in-flight tasks can ack their
+        work. After the deadline expires (or all tasks finish), calls stop()
+        to close the channel + connection.
+
+        Idempotent — calling twice is a no-op on the second call.
+
+        Args:
+            deadline: Max seconds to wait for in-flight tasks before giving up.
+        """
+        if self._draining:
+            return  # idempotent
+        self._draining = True
+
+        try:
+            # Cancel the consumer: stops new deliveries, keeps channel open.
+            if self._queue is not None and self._consumer_tag is not None:
+                try:
+                    await self._queue.cancel(self._consumer_tag)
+                    logger.info(f"Cancelled consumer for {self.queue_name}")
+                except Exception as e:
+                    logger.warning(f"Error cancelling consumer for {self.queue_name}: {e}")
+
+            # Snapshot is intentional: any message that races past the _draining
+            # flag gets nacked + requeued in _on_message and never enters _inflight.
+            if self._inflight:
+                pending = list(self._inflight)
+                logger.info(
+                    f"Draining {len(pending)} in-flight on {self.queue_name} "
+                    f"(deadline={deadline}s)"
+                )
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*pending, return_exceptions=True),
+                        timeout=deadline,
+                    )
+                    logger.info(f"Drain complete for {self.queue_name}")
+                except asyncio.TimeoutError:
+                    still_running = [t for t in pending if not t.done()]
+                    logger.warning(
+                        f"Drain deadline exceeded on {self.queue_name}: "
+                        f"{len(still_running)} task(s) still running"
+                    )
+        finally:
+            # Always close channel + connection, even if cancelled mid-drain.
+            await self.stop()
+
     async def _on_message(self, message: IncomingMessage) -> None:
         """
         Handle incoming message.
 
         Spawns a task to process each message concurrently, allowing
         multiple messages to be processed in parallel up to prefetch_count.
+        Tracks in-flight tasks so drain() can wait for them.
         """
-        # Create task for concurrent processing - don't await here
-        asyncio.create_task(self._process_message_with_ack(message))
+        if self._draining:
+            # Consumer was cancelled but a message slipped through; nack to
+            # requeue so another worker picks it up.
+            await message.nack(requeue=True)
+            return
+        task = asyncio.create_task(self._process_message_with_ack(message))
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
 
     async def _process_message_with_ack(self, message: IncomingMessage) -> None:
         """
@@ -256,6 +319,9 @@ class BroadcastConsumer(ABC):
         self._queue: aio_pika.Queue | None = None
         self._running = False
         self._connection_ctx = None
+        self._inflight: set[asyncio.Task] = set()
+        self._consumer_tag: str | None = None
+        self._draining: bool = False
 
     @property
     def queue_name(self) -> str:
@@ -297,11 +363,14 @@ class BroadcastConsumer(ABC):
 
         logger.info(f"Broadcast consumer started for exchange: {self.exchange_name}")
 
-        # Start consuming
-        await queue.consume(self._on_message)
+        # Start consuming, capturing the consumer tag so drain() can cancel it.
+        self._consumer_tag = await queue.consume(self._on_message)
 
     async def stop(self) -> None:
-        """Stop consuming messages."""
+        """Stop consuming messages (hard close — does NOT wait for in-flight).
+
+        For graceful shutdown, call drain() instead.
+        """
         self._running = False
         if self._channel:
             await self._channel.close()
@@ -309,9 +378,69 @@ class BroadcastConsumer(ABC):
             await self._connection_ctx.__aexit__(None, None, None)
         logger.info(f"Broadcast consumer stopped for exchange: {self.exchange_name}")
 
+    async def drain(self, deadline: float = 300.0) -> None:
+        """Stop new deliveries, wait on in-flight tasks, then close.
+
+        Cancels the consumer tag (RabbitMQ stops sending new messages on this
+        channel) but keeps the channel open so in-flight tasks can ack their
+        work. After the deadline expires (or all tasks finish), calls stop()
+        to close the channel + connection.
+
+        Idempotent — calling twice is a no-op on the second call.
+
+        Args:
+            deadline: Max seconds to wait for in-flight tasks before giving up.
+        """
+        if self._draining:
+            return  # idempotent
+        self._draining = True
+
+        try:
+            # Cancel the consumer: stops new deliveries, keeps channel open.
+            if self._queue is not None and self._consumer_tag is not None:
+                try:
+                    await self._queue.cancel(self._consumer_tag)
+                    logger.info(f"Cancelled consumer for {self.queue_name}")
+                except Exception as e:
+                    logger.warning(f"Error cancelling consumer for {self.queue_name}: {e}")
+
+            # Snapshot is intentional: any message that races past the _draining
+            # flag gets nacked + requeued in _on_message and never enters _inflight.
+            if self._inflight:
+                pending = list(self._inflight)
+                logger.info(
+                    f"Draining {len(pending)} in-flight on {self.queue_name} "
+                    f"(deadline={deadline}s)"
+                )
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*pending, return_exceptions=True),
+                        timeout=deadline,
+                    )
+                    logger.info(f"Drain complete for {self.queue_name}")
+                except asyncio.TimeoutError:
+                    still_running = [t for t in pending if not t.done()]
+                    logger.warning(
+                        f"Drain deadline exceeded on {self.queue_name}: "
+                        f"{len(still_running)} task(s) still running"
+                    )
+        finally:
+            # Always close channel + connection, even if cancelled mid-drain.
+            await self.stop()
+
     async def _on_message(self, message: IncomingMessage) -> None:
-        """Handle incoming message."""
-        asyncio.create_task(self._process_message_with_ack(message))
+        """Handle incoming message.
+
+        Tracks in-flight tasks so drain() can wait for them. While draining,
+        slipped-through messages are nacked + requeued so another worker
+        picks them up.
+        """
+        if self._draining:
+            await message.nack(requeue=True)
+            return
+        task = asyncio.create_task(self._process_message_with_ack(message))
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
 
     async def _process_message_with_ack(self, message: IncomingMessage) -> None:
         """Process a message with proper acknowledgment handling."""

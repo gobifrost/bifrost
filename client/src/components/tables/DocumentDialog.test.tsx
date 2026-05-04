@@ -79,7 +79,7 @@ describe("DocumentDialog — create mode", () => {
 		await waitFor(() => expect(mockInsertMutate).toHaveBeenCalled());
 		expect(mockInsertMutate.mock.calls[0]![0]).toEqual({
 			params: { path: { table_id: "tbl-1" } },
-			body: { data: { foo: "bar" } },
+			body: { data: { foo: "bar" }, upsert: false },
 		});
 		expect(onClose).toHaveBeenCalled();
 	});

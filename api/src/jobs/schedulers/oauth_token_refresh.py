@@ -75,8 +75,32 @@ async def run_refresh_job(
     }
 
     try:
-        # Phase 1: Load tokens needing refresh (short-lived session)
+        # Phase 1: Load tokens needing refresh (short-lived session).
+        #
+        # The WHERE clause sweeps three populations of tokens that need
+        # to stay refreshed:
+        #
+        # 1. Anything with a refresh_token — classic authorization_code
+        #    flow tokens for both Integrations and per-user MCP creds
+        #    (``user_mcp_credentials.oauth_token_id`` always points at a
+        #    refresh-bearing token).
+        # 2. ``client_credentials`` flow tokens — no refresh_token, but
+        #    the scheduler can mint a new access_token by re-presenting
+        #    the client credentials. Halopsa-mcp's service token is the
+        #    forcing example.
+        # 3. Tokens explicitly referenced by ``mcp_connections.service_oauth_token_id``
+        #    or ``user_mcp_credentials.oauth_token_id``. (1)+(2) already
+        #    cover these in practice, but the explicit subqueries are
+        #    self-documenting and defend against future flow types
+        #    being added without the scheduler being updated.
+        from src.models.orm.external_mcp import MCPConnection, UserMCPCredential
+
         async with get_db_context() as db:
+            mcp_service_token_ids = select(MCPConnection.service_oauth_token_id).where(
+                MCPConnection.service_oauth_token_id.isnot(None)
+            )
+            user_mcp_token_ids = select(UserMCPCredential.oauth_token_id)
+
             query = (
                 select(OAuthToken)
                 .join(OAuthToken.provider)
@@ -85,6 +109,8 @@ async def run_refresh_job(
                     or_(
                         OAuthToken.encrypted_refresh_token.isnot(None),
                         OAuthProvider.oauth_flow_type == "client_credentials",
+                        OAuthToken.id.in_(mcp_service_token_ids),
+                        OAuthToken.id.in_(user_mcp_token_ids),
                     )
                 )
             )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -28,6 +28,11 @@ import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCreateTable, useUpdateTable } from "@/services/tables";
 import type { TablePublic } from "@/services/tables";
+import type { components } from "@/lib/v1";
+import { PolicyEditor } from "./PolicyEditor";
+import { CodeEditor } from "./CodeEditor";
+
+type TablePolicies = components["schemas"]["TablePolicies"];
 
 const tableNameRegex = /^[a-z][a-z0-9_-]*$/;
 
@@ -76,6 +81,21 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 			organization_id: defaultOrgId,
 		},
 	});
+
+	const [policies, setPolicies] = useState<TablePolicies | null>(
+		table?.policies ?? null,
+	);
+	// Track the entity identity we last initialized policies from so we can
+	// reset render-phase (rather than in an effect) when the dialog is
+	// reopened for a different table.
+	const [lastPolicyKey, setLastPolicyKey] = useState<string>(
+		table?.id ?? "__new__",
+	);
+	const currentPolicyKey = open ? (table?.id ?? "__new__") : lastPolicyKey;
+	if (currentPolicyKey !== lastPolicyKey) {
+		setLastPolicyKey(currentPolicyKey);
+		setPolicies(table?.policies ?? null);
+	}
 
 	// Watch organization_id to detect scope changes
 	const watchedOrgId = useWatch({ control: form.control, name: "organization_id" });
@@ -127,6 +147,7 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 				body: {
 					description: values.description || null,
 					schema: parsedSchema,
+					policies,
 				},
 			});
 		} else {
@@ -138,6 +159,7 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 					name: values.name,
 					description: values.description || null,
 					schema: parsedSchema,
+					policies,
 				},
 			});
 		}
@@ -148,7 +170,7 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 
 	return (
 		<Dialog open={open} onOpenChange={onClose}>
-			<DialogContent className="sm:max-w-[500px]">
+			<DialogContent className="sm:max-w-[760px] max-h-[90vh] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>
 						{isEditing ? "Edit Table" : "Create Table"}
@@ -251,11 +273,15 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 								<FormItem>
 									<FormLabel>Schema (Optional)</FormLabel>
 									<FormControl>
-										<Textarea
-											placeholder='{"type": "object", "properties": {...}}'
-											className="font-mono text-sm"
-											rows={5}
-											{...field}
+										<CodeEditor
+											mode="json"
+											text={field.value ?? ""}
+											onChange={(next) =>
+												field.onChange(next)
+											}
+											path="table-schema.json"
+											height="200px"
+											data-testid="table-schema-editor"
 										/>
 									</FormControl>
 									<FormDescription>
@@ -266,6 +292,13 @@ export function TableDialog({ table, open, onClose }: TableDialogProps) {
 								</FormItem>
 							)}
 						/>
+
+						<div className="border-t pt-4">
+							<PolicyEditor
+								value={policies}
+								onChange={setPolicies}
+							/>
+						</div>
 
 						<DialogFooter>
 							<Button

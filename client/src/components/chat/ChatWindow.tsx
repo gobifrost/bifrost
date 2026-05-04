@@ -14,6 +14,7 @@ import { ToolExecutionBadge } from "./ToolExecutionBadge";
 import { ToolExecutionGroup } from "./ToolExecutionGroup";
 import { ChatSystemEvent, type SystemEvent } from "./ChatSystemEvent";
 import { AskUserQuestionCard } from "./AskUserQuestionCard";
+import { NeedsReauthCard, extractNeedsReauth } from "./NeedsReauthCard";
 import { TodoList } from "./TodoList";
 import { useChatStore, useTodos } from "@/stores/chatStore";
 import { useMessages } from "@/hooks/useChat";
@@ -81,22 +82,47 @@ function MessageWithToolCards({
 		<div className="space-y-1">
 			{/* SDK Tools - compact badges with vertical connecting line */}
 			{allSDKTools ? (
-				<ToolExecutionGroup>
-					{toolsInfo.map(({ tc, savedExecution, resultMsg }) => (
-						<ToolExecutionBadge
-							key={tc.id}
-							toolCall={tc}
-							status={
-								savedExecution?.status ??
-								(resultMsg ? "success" : "pending")
-							}
-							result={savedExecution?.result}
-							error={savedExecution?.error}
-							durationMs={savedExecution?.durationMs}
-							logs={savedExecution?.logs}
-						/>
-					))}
-				</ToolExecutionGroup>
+				<>
+					<ToolExecutionGroup>
+						{toolsInfo.map(({ tc, savedExecution, resultMsg }) => (
+							<ToolExecutionBadge
+								key={tc.id}
+								toolCall={tc}
+								status={
+									savedExecution?.status ??
+									(resultMsg ? "success" : "pending")
+								}
+								result={savedExecution?.result}
+								error={savedExecution?.error}
+								durationMs={savedExecution?.durationMs}
+								logs={savedExecution?.logs}
+							/>
+						))}
+					</ToolExecutionGroup>
+					{/*
+					 * needs_reauth (mockup §9). Tool dispatcher returns a
+					 * ``ToolResult`` envelope with ``error_type=needs_reauth``
+					 * and ``metadata.connection_id`` when the caller has no
+					 * personal credential and there is no service fallback.
+					 * Render an inline reconnect prompt for each affected tool
+					 * — the message-level retry is the user's existing chat
+					 * input.
+					 */}
+					{toolsInfo.map(({ tc, savedExecution, resultMsg }) => {
+						const sourceResult =
+							savedExecution?.result ??
+							(resultMsg as { tool_result?: unknown } | undefined)
+								?.tool_result;
+						const reauth = extractNeedsReauth(sourceResult);
+						if (!reauth) return null;
+						return (
+							<NeedsReauthCard
+								key={`reauth-${tc.id}`}
+								metadata={reauth}
+							/>
+						);
+					})}
+				</>
 			) : (
 				/* Workflow Tools - full cards with vertical connecting line */
 				<ToolExecutionGroup>
@@ -372,32 +398,45 @@ export function ChatWindow({
 
 						if (item.type === "tool_group") {
 							return (
-								<ToolExecutionGroup key={`tools-${item.data[0].id}`}>
-									{item.data.map((tc) => (
-										<ToolExecutionBadge
-											key={tc.id}
-											toolCall={{
-												id: tc.tool_call_id || tc.id,
-												name: tc.tool_name || "unknown",
-												arguments: tc.tool_input || {},
-											}}
-											status={
-												tc.tool_state === "completed"
-													? "success"
-													: tc.tool_state === "error"
-														? "failed"
-														: "pending"
-											}
-											result={tc.tool_result}
-											error={
-												tc.tool_state === "error"
-													? (tc.tool_result as { error?: string })?.error
-													: undefined
-											}
-											durationMs={tc.duration_ms || undefined}
-										/>
-									))}
-								</ToolExecutionGroup>
+								<div key={`tools-${item.data[0].id}`}>
+									<ToolExecutionGroup>
+										{item.data.map((tc) => (
+											<ToolExecutionBadge
+												key={tc.id}
+												toolCall={{
+													id: tc.tool_call_id || tc.id,
+													name: tc.tool_name || "unknown",
+													arguments: tc.tool_input || {},
+												}}
+												status={
+													tc.tool_state === "completed"
+														? "success"
+														: tc.tool_state === "error"
+															? "failed"
+															: "pending"
+												}
+												result={tc.tool_result}
+												error={
+													tc.tool_state === "error"
+														? (tc.tool_result as { error?: string })?.error
+														: undefined
+												}
+												durationMs={tc.duration_ms || undefined}
+											/>
+										))}
+									</ToolExecutionGroup>
+									{/* Inline reconnect prompts for any needs_reauth result. */}
+									{item.data.map((tc) => {
+										const reauth = extractNeedsReauth(tc.tool_result);
+										if (!reauth) return null;
+										return (
+											<NeedsReauthCard
+												key={`reauth-${tc.id}`}
+												metadata={reauth}
+											/>
+										);
+									})}
+								</div>
 							);
 						}
 

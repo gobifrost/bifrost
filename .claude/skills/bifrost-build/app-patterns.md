@@ -409,3 +409,48 @@ The bundler emits the per-app Tailwind output ahead of any other user CSS in the
 
 - Tailwind plugins beyond `@tailwindcss/typography` (which the host already provides via the preload). The bundler's compile pass uses the default v4 plugin set; per-app `plugins: [...]` arrays in `tailwind.config.ts` are ignored.
 - `@source` directives to scan files outside the app root. The bundler scans the app's own materialized source tree only.
+
+## 11. CRUD-with-live-updates app (own-row policy)
+
+For apps where each user manages their own rows, configure the table with an `own_row` policy and use `useTable` in the app.
+
+Step 1: create the table with policies
+```bash
+bifrost tables create my_tasks --policies '{"policies":[
+  {"name":"admin_bypass","actions":["read","create","update","delete"],"when":{"user":"is_platform_admin"}},
+  {"name":"own_row","actions":["read","create","update","delete"],"when":{"eq":[{"row":"created_by"},{"user":"user_id"}]}}
+]}'
+```
+
+Step 2: build the app
+```tsx
+import { tables, useTable, Button, Input } from "bifrost";
+import { useState } from "react";
+
+export default function MyTasks() {
+  const [draft, setDraft] = useState("");
+  const { rows, loading } = useTable("my_tasks");
+
+  if (loading) return <div>Loading…</div>;
+
+  return (
+    <div>
+      <Input value={draft} onChange={(e) => setDraft(e.target.value)} />
+      <Button onClick={async () => {
+        await tables.insert("my_tasks", { title: draft });
+        setDraft("");
+      }}>Add</Button>
+      <ul>
+        {rows.map((r) => (
+          <li key={r.id}>
+            {r.title}
+            <Button variant="ghost" onClick={() => tables.delete("my_tasks", r.id)}>Delete</Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+The `created_by` is auto-stamped by the API. The `own_row` policy ensures each user only sees and mutates their own rows. The `useTable` hook keeps the rendered list in sync via websocket — when the user inserts via `tables.insert`, the local state updates from the server's `insert` event (no manual refresh).

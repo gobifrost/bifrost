@@ -9,7 +9,16 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+)
+
+from src.models.contracts.policies import TablePolicies
 
 
 # ==================== TABLE MODELS ====================
@@ -43,6 +52,13 @@ class TableCreate(TableBase):
         default=None,
         description="Organization ID. Null for global table.",
     )
+    policies: TablePolicies | None = Field(
+        default=None,
+        description=(
+            "Optional row-level access policies. See "
+            "docs/superpowers/specs/2026-04-30-table-policies-design.md."
+        ),
+    )
 
 
 class TableUpdate(BaseModel):
@@ -56,7 +72,13 @@ class TableUpdate(BaseModel):
     )
     description: str | None = None
     schema: dict[str, Any] | None = None
-    application_id: UUID | None = None
+    policies: TablePolicies | None = Field(
+        default=None,
+        description=(
+            "Optional row-level access policies. See "
+            "docs/superpowers/specs/2026-04-30-table-policies-design.md."
+        ),
+    )
 
 
 class TablePublic(TableBase):
@@ -66,7 +88,10 @@ class TablePublic(TableBase):
 
     id: UUID
     organization_id: UUID | None
-    application_id: UUID | None
+    policies: TablePolicies | None = Field(
+        default=None,
+        validation_alias=AliasChoices("policies", "access"),
+    )
     created_at: datetime
     updated_at: datetime
     created_by: str | None
@@ -89,13 +114,137 @@ class TableListResponse(BaseModel):
 class DocumentCreate(BaseModel):
     """Input for creating a document."""
 
+    id: str | None = Field(
+        default=None,
+        description="Optional document ID. Auto-generated (UUID) if omitted.",
+    )
     data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+    upsert: bool = Field(
+        default=False,
+        description="If true and id is provided, update the existing document instead of raising a conflict.",
+    )
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for created_by. Engine and platform-admin callers only; "
+            "any other caller that sends this field receives 403. When omitted, defaults to "
+            "the calling user."
+        ),
+    )
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by (used on the update branch of an upsert). "
+            "Engine and platform-admin callers only; any other caller that sends this field "
+            "receives 403. When omitted, defaults to the calling user."
+        ),
+    )
+
+
+class DocumentUpsert(BaseModel):
+    """Input for upserting a document by id (atomic INSERT ... ON CONFLICT DO UPDATE)."""
+
+    id: str = Field(..., description="Document ID. Required (the upsert conflict key).")
+    data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for created_by (insert path). Engine and platform-admin "
+            "callers only; any other caller that sends this field receives 403."
+        ),
+    )
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by (insert and update paths). "
+            "Engine and platform-admin callers only."
+        ),
+    )
+
+
+class DocumentBatchItem(BaseModel):
+    """A single item in a batch insert or upsert."""
+
+    id: str | None = Field(
+        default=None,
+        description="Optional document ID. Auto-generated (UUID) if omitted.",
+    )
+    data: dict[str, Any] = Field(..., description="Document data (any JSON-serializable dict)")
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for created_by. Engine and platform-admin callers only; "
+            "any item that sends this field from a non-privileged caller fails the whole batch with 403."
+        ),
+    )
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by (upsert-update branch). "
+            "Engine and platform-admin callers only."
+        ),
+    )
+
+
+class DocumentBatchCreate(BaseModel):
+    """Input for inserting or upserting multiple documents."""
+
+    documents: list[DocumentBatchItem] = Field(..., description="Documents to insert or upsert")
+    upsert: bool = Field(
+        default=False,
+        description="If true, upsert documents with an id instead of inserting.",
+    )
+
+
+class DocumentBatchCreateResponse(BaseModel):
+    """Response for a batch insert or upsert."""
+
+    inserted: int
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    documents: list["DocumentPublic"] = Field(
+        default_factory=list,
+        description=(
+            "Inserted/updated documents in submission order. Lets SDK callers "
+            "use auto-generated ids without a follow-up fetch."
+        ),
+    )
+
+
+class DocumentBatchUpsertResponse(BaseModel):
+    """Response for a batch upsert."""
+
+    upserted: int
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DocumentBatchDeleteRequest(BaseModel):
+    """Input for deleting multiple documents by ID."""
+
+    ids: list[str] = Field(..., description="Document IDs to delete")
+
+
+class DocumentBatchDeleteResponse(BaseModel):
+    """Response for a batch delete."""
+
+    deleted: int
+    deleted_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of documents that were actually deleted (in submission order, skipping ids that didn't exist).",
+    )
 
 
 class DocumentUpdate(BaseModel):
     """Input for updating a document (partial update, merges with existing)."""
 
     data: dict[str, Any] = Field(..., description="Fields to update (merged with existing data)")
+    updated_by: str | None = Field(
+        default=None,
+        description=(
+            "Override attribution for updated_by. Engine and platform-admin callers only; "
+            "any other caller that sends this field receives 403. When omitted, defaults to "
+            "the calling user."
+        ),
+    )
 
 
 class DocumentPublic(BaseModel):
@@ -213,6 +362,7 @@ class DocumentQuery(BaseModel):
 class DocumentListResponse(BaseModel):
     """Response for document queries."""
 
+    table_id: UUID
     documents: list[DocumentPublic]
     total: int
     limit: int
@@ -255,60 +405,5 @@ class SDKTableListRequest(BaseModel):
 
 
 
-class SDKDocumentInsertRequest(BaseModel):
-    """SDK request for inserting a document."""
-
-    table: str
-    data: dict[str, Any]
-    scope: str | None = None
-    app: str | None = None
-
-
-class SDKDocumentGetRequest(BaseModel):
-    """SDK request for getting a document."""
-
-    table: str
-    doc_id: str
-    scope: str | None = None
-    app: str | None = None
-
-
-class SDKDocumentUpdateRequest(BaseModel):
-    """SDK request for updating a document."""
-
-    table: str
-    doc_id: str
-    data: dict[str, Any]
-    scope: str | None = None
-    app: str | None = None
-
-
-class SDKDocumentDeleteRequest(BaseModel):
-    """SDK request for deleting a document."""
-
-    table: str
-    doc_id: str
-    scope: str | None = None
-    app: str | None = None
-
-
-class SDKDocumentQueryRequest(BaseModel):
-    """SDK request for querying documents."""
-
-    table: str
-    where: dict[str, Any] | None = None
-    order_by: str | None = None
-    order_dir: Literal["asc", "desc"] = "asc"
-    limit: int = Field(default=100, ge=1, le=1000)
-    offset: int = Field(default=0, ge=0)
-    scope: str | None = None
-    app: str | None = None
-
-
-class SDKDocumentCountRequest(BaseModel):
-    """SDK request for counting documents."""
-
-    table: str
-    where: dict[str, Any] | None = None
-    scope: str | None = None
-    app: str | None = None
+# Resolve forward reference (DocumentBatchCreateResponse → DocumentPublic).
+DocumentBatchCreateResponse.model_rebuild()

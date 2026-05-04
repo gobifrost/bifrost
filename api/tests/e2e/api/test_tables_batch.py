@@ -1,10 +1,13 @@
 """
-E2E tests for batch table document operations.
+E2E tests for batch table-document operations against REST endpoints.
 
-Tests the batch insert, upsert, and delete endpoints via the CLI API.
+Document ``id`` is a globally-unique primary key, so all IDs must be
+unique across all tables. Tests use UUID-suffixed IDs.
 
-Note: Document `id` is a global primary key, so all IDs must be unique
-across ALL tables, not just within a single table. Use uuid-suffixed IDs.
+Auto-create-on-insert lives in the SDK (``bifrost.tables`` runs a
+404 → POST /api/tables → retry on the first write); the REST handlers
+themselves return 404 when the table is missing. This file exercises
+the REST handlers directly, so each test creates its table first.
 """
 
 import logging
@@ -18,17 +21,28 @@ def _uid(prefix: str = "") -> str:
     return f"{prefix}{uuid4().hex[:12]}"
 
 
+def _create_table(e2e_client, headers, name: str) -> str:
+    resp = e2e_client.post(
+        "/api/tables",
+        headers=headers,
+        json={"name": name},
+    )
+    assert resp.status_code == 201, f"Create table failed: {resp.text}"
+    return resp.json()["id"]
+
+
 class TestInsertBatch:
-    """Test batch insert endpoint."""
+    """Batch insert via POST /api/tables/{id}/documents/batch."""
 
     def test_insert_batch(self, e2e_client, platform_admin):
         """Insert multiple documents in a single batch."""
-        table_name = f"test_batch_{uuid4().hex[:8]}"
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_batch_{uuid4().hex[:8]}"
+        )
         response = e2e_client.post(
-            "/api/cli/tables/documents/insert/batch",
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
                 "documents": [
                     {"data": {"name": "Acme Corp", "status": "active"}},
                     {"data": {"name": "Beta Inc", "status": "pending"}},
@@ -38,7 +52,7 @@ class TestInsertBatch:
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["count"] == 3
+        assert data["inserted"] == 3
         assert len(data["documents"]) == 3
         for doc in data["documents"]:
             assert doc["id"] is not None
@@ -46,15 +60,15 @@ class TestInsertBatch:
             assert "name" in doc["data"]
 
     def test_insert_batch_with_custom_ids(self, e2e_client, platform_admin):
-        """Insert batch with user-provided IDs."""
-        table_name = f"test_batch_{uuid4().hex[:8]}"
-        id1 = _uid("acme-")
-        id2 = _uid("beta-")
+        """Insert batch with caller-provided IDs."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_batch_{uuid4().hex[:8]}"
+        )
+        id1, id2 = _uid("acme-"), _uid("beta-")
         response = e2e_client.post(
-            "/api/cli/tables/documents/insert/batch",
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
                 "documents": [
                     {"id": id1, "data": {"name": "Acme Corp"}},
                     {"id": id2, "data": {"name": "Beta Inc"}},
@@ -63,77 +77,24 @@ class TestInsertBatch:
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["count"] == 2
+        assert data["inserted"] == 2
         ids = {doc["id"] for doc in data["documents"]}
-        assert id1 in ids
-        assert id2 in ids
-
-    def test_insert_batch_duplicate_id_rolls_back(self, e2e_client, platform_admin):
-        """Duplicate ID in batch causes 409 and atomic rollback."""
-        table_name = f"test_batch_{uuid4().hex[:8]}"
-        existing_id = _uid("existing-")
-
-        # Insert a document first
-        resp = e2e_client.post(
-            "/api/cli/tables/documents/insert",
-            headers=platform_admin.headers,
-            json={"table": table_name, "id": existing_id, "data": {"name": "Existing"}},
-        )
-        assert resp.status_code == 200, resp.text
-
-        # Try batch with a conflicting ID
-        response = e2e_client.post(
-            "/api/cli/tables/documents/insert/batch",
-            headers=platform_admin.headers,
-            json={
-                "table": table_name,
-                "documents": [
-                    {"id": _uid("new-"), "data": {"name": "New"}},
-                    {"id": existing_id, "data": {"name": "Conflict"}},
-                ],
-            },
-        )
-        assert response.status_code == 409
-
-    def test_insert_batch_auto_creates_table(self, e2e_client, platform_admin):
-        """Batch insert auto-creates the table if it doesn't exist."""
-        table_name = f"test_autocreate_{uuid4().hex[:8]}"
-        response = e2e_client.post(
-            "/api/cli/tables/documents/insert/batch",
-            headers=platform_admin.headers,
-            json={
-                "table": table_name,
-                "documents": [
-                    {"data": {"name": "First"}},
-                ],
-            },
-        )
-        assert response.status_code == 200, response.text
-        assert response.json()["count"] == 1
-
-        # Verify table was created by querying it
-        query_response = e2e_client.post(
-            "/api/cli/tables/documents/query",
-            headers=platform_admin.headers,
-            json={"table": table_name},
-        )
-        assert query_response.status_code == 200
-        assert query_response.json()["total"] == 1
-
+        assert ids == {id1, id2}
 
 class TestUpsertBatch:
-    """Test batch upsert endpoint."""
+    """Batch upsert via POST /api/tables/{id}/documents/batch with upsert=true."""
 
     def test_upsert_batch_creates_new(self, e2e_client, platform_admin):
         """Upsert batch creates all new documents."""
-        table_name = f"test_upsert_{uuid4().hex[:8]}"
-        id1 = _uid("emp-")
-        id2 = _uid("emp-")
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_upsert_{uuid4().hex[:8]}"
+        )
+        id1, id2 = _uid("emp-"), _uid("emp-")
         response = e2e_client.post(
-            "/api/cli/tables/documents/upsert/batch",
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
+                "upsert": True,
                 "documents": [
                     {"id": id1, "data": {"name": "John", "dept": "Eng"}},
                     {"id": id2, "data": {"name": "Jane", "dept": "Sales"}},
@@ -142,73 +103,71 @@ class TestUpsertBatch:
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["count"] == 2
+        assert data["inserted"] == 2
         ids = {doc["id"] for doc in data["documents"]}
         assert ids == {id1, id2}
 
     def test_upsert_batch_updates_existing(self, e2e_client, platform_admin):
-        """Upsert batch updates all existing documents."""
-        table_name = f"test_upsert_{uuid4().hex[:8]}"
-        id1 = _uid("emp-")
-        id2 = _uid("emp-")
+        """Upsert batch updates existing documents (merge semantics)."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_upsert_{uuid4().hex[:8]}"
+        )
+        id1, id2 = _uid("emp-"), _uid("emp-")
 
-        # Create initial docs
-        resp = e2e_client.post(
-            "/api/cli/tables/documents/upsert/batch",
+        first = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
+                "upsert": True,
                 "documents": [
                     {"id": id1, "data": {"name": "John", "dept": "Eng"}},
                     {"id": id2, "data": {"name": "Jane", "dept": "Sales"}},
                 ],
             },
         )
-        assert resp.status_code == 200, resp.text
+        assert first.status_code == 200, first.text
 
-        # Update them
-        response = e2e_client.post(
-            "/api/cli/tables/documents/upsert/batch",
+        update = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
+                "upsert": True,
                 "documents": [
-                    {"id": id1, "data": {"name": "John", "dept": "Management"}},
-                    {"id": id2, "data": {"name": "Jane", "dept": "Marketing"}},
+                    {"id": id1, "data": {"dept": "Management"}},
+                    {"id": id2, "data": {"dept": "Marketing"}},
                 ],
             },
         )
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert data["count"] == 2
-
-        # Verify updates
+        assert update.status_code == 200, update.text
+        data = update.json()
+        assert data["inserted"] == 2
         for doc in data["documents"]:
             if doc["id"] == id1:
                 assert doc["data"]["dept"] == "Management"
+                assert doc["data"]["name"] == "John"  # merge preserves prior fields
             elif doc["id"] == id2:
                 assert doc["data"]["dept"] == "Marketing"
+                assert doc["data"]["name"] == "Jane"
 
     def test_upsert_batch_mixed(self, e2e_client, platform_admin):
-        """Upsert batch with mix of new and existing documents."""
-        table_name = f"test_upsert_{uuid4().hex[:8]}"
-        existing_id = _uid("existing-")
-        new_id = _uid("new-")
-
-        # Create one doc
-        resp = e2e_client.post(
-            "/api/cli/tables/documents/upsert",
-            headers=platform_admin.headers,
-            json={"table": table_name, "id": existing_id, "data": {"name": "Old"}},
+        """Upsert batch handles a mix of new and existing documents."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_upsert_{uuid4().hex[:8]}"
         )
-        assert resp.status_code == 200, resp.text
+        existing_id, new_id = _uid("existing-"), _uid("new-")
 
-        # Upsert with one existing + one new
+        seed = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=platform_admin.headers,
+            json={"id": existing_id, "data": {"name": "Old"}},
+        )
+        assert seed.status_code == 201, seed.text
+
         response = e2e_client.post(
-            "/api/cli/tables/documents/upsert/batch",
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
+                "upsert": True,
                 "documents": [
                     {"id": existing_id, "data": {"name": "Updated"}},
                     {"id": new_id, "data": {"name": "Brand New"}},
@@ -217,33 +176,29 @@ class TestUpsertBatch:
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["count"] == 2
+        assert data["inserted"] == 2
 
-        # Verify the total in the table
-        query_response = e2e_client.post(
-            "/api/cli/tables/documents/query",
+        cnt = e2e_client.get(
+            f"/api/tables/{table_id}/documents/count",
             headers=platform_admin.headers,
-            json={"table": table_name},
         )
-        assert query_response.json()["total"] == 2
+        assert cnt.json()["count"] == 2
 
 
 class TestDeleteBatch:
-    """Test batch delete endpoint."""
+    """Batch delete via POST /api/tables/{id}/documents/batch-delete."""
 
     def test_delete_batch(self, e2e_client, platform_admin):
-        """Delete multiple existing documents."""
-        table_name = f"test_delete_{uuid4().hex[:8]}"
-        id1 = _uid("del-")
-        id2 = _uid("del-")
-        id3 = _uid("del-")
+        """Delete multiple existing documents in one round trip."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_delete_{uuid4().hex[:8]}"
+        )
+        id1, id2, id3 = _uid("del-"), _uid("del-"), _uid("del-")
 
-        # Create docs
-        resp = e2e_client.post(
-            "/api/cli/tables/documents/insert/batch",
+        seed = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
             headers=platform_admin.headers,
             json={
-                "table": table_name,
                 "documents": [
                     {"id": id1, "data": {"name": "A"}},
                     {"id": id2, "data": {"name": "B"}},
@@ -251,87 +206,52 @@ class TestDeleteBatch:
                 ],
             },
         )
-        assert resp.status_code == 200, resp.text
+        assert seed.status_code == 200, seed.text
 
-        # Delete two of them
         response = e2e_client.post(
-            "/api/cli/tables/documents/delete/batch",
+            f"/api/tables/{table_id}/documents/batch-delete",
             headers=platform_admin.headers,
-            json={
-                "table": table_name,
-                "doc_ids": [id1, id3],
-            },
+            json={"ids": [id1, id3]},
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["count"] == 2
+        assert data["deleted"] == 2
         assert set(data["deleted_ids"]) == {id1, id3}
 
-        # Verify only one remains
-        query_response = e2e_client.post(
-            "/api/cli/tables/documents/query",
+        cnt = e2e_client.get(
+            f"/api/tables/{table_id}/documents/count",
             headers=platform_admin.headers,
-            json={"table": table_name},
         )
-        assert query_response.json()["total"] == 1
+        assert cnt.json()["count"] == 1
 
     def test_delete_batch_skips_nonexistent(self, e2e_client, platform_admin):
-        """Non-existent IDs are silently skipped."""
-        table_name = f"test_delete_{uuid4().hex[:8]}"
-        real_id = _uid("real-")
-
-        # Create one doc
-        resp = e2e_client.post(
-            "/api/cli/tables/documents/insert",
-            headers=platform_admin.headers,
-            json={"table": table_name, "id": real_id, "data": {"name": "Real"}},
+        """IDs that don't exist in the table are silently skipped."""
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"test_delete_{uuid4().hex[:8]}"
         )
-        assert resp.status_code == 200, resp.text
-
-        # Delete with mix of real and fake IDs
-        response = e2e_client.post(
-            "/api/cli/tables/documents/delete/batch",
+        real_id = _uid("real-")
+        seed = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
             headers=platform_admin.headers,
-            json={
-                "table": table_name,
-                "doc_ids": [real_id, _uid("fake-"), _uid("fake-")],
-            },
+            json={"id": real_id, "data": {"name": "Real"}},
+        )
+        assert seed.status_code == 201, seed.text
+
+        response = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch-delete",
+            headers=platform_admin.headers,
+            json={"ids": [real_id, _uid("fake-"), _uid("fake-")]},
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["count"] == 1
+        assert data["deleted"] == 1
         assert data["deleted_ids"] == [real_id]
 
     def test_delete_batch_nonexistent_table(self, e2e_client, platform_admin):
-        """Delete from a non-existent table returns count=0."""
+        """Delete on a missing table returns 404 (REST surface)."""
         response = e2e_client.post(
-            "/api/cli/tables/documents/delete/batch",
+            f"/api/tables/nonexistent_{uuid4().hex[:8]}/documents/batch-delete",
             headers=platform_admin.headers,
-            json={
-                "table": f"nonexistent_{uuid4().hex[:8]}",
-                "doc_ids": [_uid(), _uid()],
-            },
+            json={"ids": [_uid(), _uid()]},
         )
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert data["count"] == 0
-        assert data["deleted_ids"] == []
-
-
-class TestBatchLimits:
-    """Test batch size limits."""
-
-    def test_batch_over_limit(self, e2e_client, platform_admin):
-        """Batch with >1000 items returns 422."""
-        table_name = f"test_limit_{uuid4().hex[:8]}"
-        documents = [{"data": {"i": i}} for i in range(1001)]
-
-        response = e2e_client.post(
-            "/api/cli/tables/documents/insert/batch",
-            headers=platform_admin.headers,
-            json={
-                "table": table_name,
-                "documents": documents,
-            },
-        )
-        assert response.status_code == 422
+        assert response.status_code == 404

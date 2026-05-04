@@ -9,3 +9,17 @@ paths-ignore:
   - "scripts/docs/**"  # docs-pipeline tooling; not shipped
   - "**/__pycache__/**"
   - "**/.venv/**"
+
+query-filters:
+  # SQLAlchemy declarative ORM intentionally uses TYPE_CHECKING-guarded
+  # cross-module imports for relationship() forward references (Mapped[
+  # "ClassName"]). The static import graph is cyclic by design but no cycle
+  # is ever evaluated at import time. CodeQL's py/cyclic-import doesn't model
+  # TYPE_CHECKING blocks (PEP 563 / from __future__ import annotations
+  # doesn't help either), so it flags every ORM module participating in
+  # the relationship graph. CodeQL's `exclude` filter only supports
+  # id/kind/precision/severity/tags — there's no path-scoped form — so
+  # this disables the rule globally. The query is acknowledged to misfire
+  # on Python's TYPE_CHECKING pattern; not a productive signal here.
+  - exclude:
+      id: py/cyclic-import

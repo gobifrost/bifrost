@@ -29,6 +29,87 @@ consumeEmbedTokenFromHash();
 // Buffer time before expiration to trigger refresh (60 seconds)
 const TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
+// Transient 5xx statuses that warrant a client-side retry. Limited to the
+// classic LB/proxy "pod just dropped" responses — 500/501/505 indicate
+// server-side bugs we should surface, not paper over.
+const TRANSIENT_5XX = new Set([502, 503, 504]);
+
+// Retry only methods that are safe to replay. POST/PATCH may have already
+// taken effect server-side even when the response was a 5xx; auto-retrying
+// would create duplicate resources.
+const IDEMPOTENT_METHODS = new Set([
+	"GET",
+	"PUT",
+	"DELETE",
+	"HEAD",
+	"OPTIONS",
+]);
+
+// Backoff schedule (ms) between retry attempts. Up to 3 retries on top of
+// the initial attempt, totaling ~3s of additional latency in the worst case.
+const RETRY_BACKOFF_MS = [250, 750, 2000];
+
+function isTransient5xx(status: number): boolean {
+	return TRANSIENT_5XX.has(status);
+}
+
+function isIdempotent(method: string): boolean {
+	return IDEMPOTENT_METHODS.has(method.toUpperCase());
+}
+
+/**
+ * Wrap a fetch operation with retry on transient 5xx (502/503/504) for
+ * idempotent methods. Non-idempotent requests (POST/PATCH) pass through
+ * unchanged.
+ *
+ * The `doFetch` callback MUST produce a fresh Request each call — if a
+ * Request with a body is reused, its body stream will be consumed after
+ * the first attempt.
+ */
+async function withTransient5xxRetry(
+	method: string,
+	doFetch: () => Promise<Response>,
+): Promise<Response> {
+	if (!isIdempotent(method)) return doFetch();
+	let response = await doFetch();
+	for (const delay of RETRY_BACKOFF_MS) {
+		if (!isTransient5xx(response.status)) return response;
+		await new Promise((resolve) => setTimeout(resolve, delay));
+		response = await doFetch();
+	}
+	// Out of retries — caller sees the last 5xx.
+	return response;
+}
+
+/**
+ * Continue retrying after an initial fetch already produced a transient 5xx.
+ * Used in the openapi-fetch middleware paths where the framework fires the
+ * first request for us, so we react to the response rather than wrapping the
+ * full lifecycle.
+ */
+async function retryAfterTransient5xx(
+	method: string,
+	baseRequest: Request,
+	initialResponse: Response,
+): Promise<Response> {
+	if (!isIdempotent(method)) return initialResponse;
+	let response = initialResponse;
+	for (const delay of RETRY_BACKOFF_MS) {
+		if (!isTransient5xx(response.status)) return response;
+		await new Promise((resolve) => setTimeout(resolve, delay));
+		response = await fetch(baseRequest.clone());
+	}
+	return response;
+}
+
+/**
+ * Cache of pre-send Request clones, keyed by the live Request object that
+ * openapi-fetch hands to onRequest/onResponse. Stashed in onRequest before
+ * the body stream is consumed so 5xx retry in onResponse can replay
+ * requests with bodies (e.g. PUT).
+ */
+const _requestClones = new WeakMap<Request, Request>();
+
 // Endpoints that should skip token refresh check
 const AUTH_ENDPOINTS = [
 	"/auth/login",
@@ -249,6 +330,13 @@ baseClient.use({
 			}
 		}
 
+		// Stash a pre-send clone so onResponse can replay this request on
+		// transient 5xx (idempotent methods only — POST/PATCH bodies would
+		// just hold memory we never use).
+		if (isIdempotent(request.method)) {
+			_requestClones.set(request, request.clone());
+		}
+
 		return request;
 	},
 	async onResponse({ request, response }) {
@@ -282,6 +370,18 @@ baseClient.use({
 		}
 		// 403 Forbidden = permission issue, don't redirect (user is authenticated)
 		// Let the calling code handle displaying an appropriate error message
+
+		// Retry transient 5xx (502/503/504) on idempotent methods. Rides
+		// through brief windows during a rolling API deploy where a pod is
+		// dropping out of the LB.
+		if (isTransient5xx(response.status) && isIdempotent(request.method)) {
+			const baseRequest = _requestClones.get(request) ?? request;
+			return retryAfterTransient5xx(
+				request.method,
+				baseRequest,
+				response,
+			);
+		}
 
 		return response;
 	},
@@ -376,10 +476,28 @@ export function withUserContext(userId: string) {
 				}
 			}
 
+			// Stash a pre-send clone for transient 5xx replay (idempotent
+			// methods only).
+			if (isIdempotent(request.method)) {
+				_requestClones.set(request, request.clone());
+			}
+
 			return request;
 		},
 		async onResponse({ request, response }) {
-			return handleAuthResponse(request, response);
+			const finalResponse = await handleAuthResponse(request, response);
+			if (
+				isTransient5xx(finalResponse.status) &&
+				isIdempotent(request.method)
+			) {
+				const baseRequest = _requestClones.get(request) ?? request;
+				return retryAfterTransient5xx(
+					request.method,
+					baseRequest,
+					finalResponse,
+				);
+			}
+			return finalResponse;
 		},
 	});
 
@@ -461,8 +579,10 @@ export async function authFetch(
 		credentials: "same-origin",
 	});
 
-	const response = await fetch(request.clone());
-
-	// Handle 429 and 401 with retry support
-	return handleAuthResponse(request, response);
+	// Wrap the fetch + auth-handling in transient-5xx retry. Each attempt
+	// clones the assembled Request so any body stream is fresh.
+	return withTransient5xxRetry(method, async () => {
+		const response = await fetch(request.clone());
+		return handleAuthResponse(request.clone(), response);
+	});
 }

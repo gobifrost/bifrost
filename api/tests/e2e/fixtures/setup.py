@@ -305,6 +305,141 @@ def org2_user(
     return user
 
 
+@pytest.fixture(scope="session")
+def non_admin_user(
+    e2e_client: httpx.Client,
+    platform_admin: E2EUser,
+    org1: dict,
+) -> E2EUser:
+    """
+    Session-scoped non-admin user in org1.
+
+    Regular (non-superuser) user for access-control testing.
+    """
+    user = E2EUser(
+        email="non-admin@gobifrost.com",
+        password="NonAdminPass123!",
+        name="Non Admin",
+        organization_id=UUID(org1["id"]),
+    )
+
+    response = e2e_client.post(
+        "/api/users",
+        headers=platform_admin.headers,
+        json={
+            "email": user.email,
+            "name": user.name,
+            "organization_id": org1["id"],
+            "is_superuser": False,
+        },
+    )
+    assert response.status_code == 201, f"Create user failed: {response.text}"
+    user.user_id = UUID(response.json()["id"])
+
+    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user.organization_id = UUID(org1["id"])
+
+    response = e2e_client.put(
+        "/api/cli/context",
+        headers=user.headers,
+        json={"default_org_id": org1["id"]},
+    )
+    assert response.status_code == 200, f"Set developer context failed: {response.text}"
+
+    logger.info(f"Created non_admin_user: {user.email}")
+    return user
+
+
+@pytest.fixture(scope="session")
+def alice_user(
+    e2e_client: httpx.Client,
+    platform_admin: E2EUser,
+    org1: dict,
+) -> E2EUser:
+    """
+    Session-scoped Alice user in org1.
+
+    Distinct regular user for multi-user access-control tests.
+    """
+    user = E2EUser(
+        email="alice@gobifrost.com",
+        password="AlicePass123!",
+        name="Alice Table",
+        organization_id=UUID(org1["id"]),
+    )
+
+    response = e2e_client.post(
+        "/api/users",
+        headers=platform_admin.headers,
+        json={
+            "email": user.email,
+            "name": user.name,
+            "organization_id": org1["id"],
+            "is_superuser": False,
+        },
+    )
+    assert response.status_code == 201, f"Create user failed: {response.text}"
+    user.user_id = UUID(response.json()["id"])
+
+    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user.organization_id = UUID(org1["id"])
+
+    response = e2e_client.put(
+        "/api/cli/context",
+        headers=user.headers,
+        json={"default_org_id": org1["id"]},
+    )
+    assert response.status_code == 200, f"Set developer context failed: {response.text}"
+
+    logger.info(f"Created alice_user: {user.email}")
+    return user
+
+
+@pytest.fixture(scope="session")
+def bob_user(
+    e2e_client: httpx.Client,
+    platform_admin: E2EUser,
+    org1: dict,
+) -> E2EUser:
+    """
+    Session-scoped Bob user in org1.
+
+    Distinct regular user for multi-user access-control tests.
+    """
+    user = E2EUser(
+        email="bob@gobifrost.com",
+        password="BobPass123!",
+        name="Bob Table",
+        organization_id=UUID(org1["id"]),
+    )
+
+    response = e2e_client.post(
+        "/api/users",
+        headers=platform_admin.headers,
+        json={
+            "email": user.email,
+            "name": user.name,
+            "organization_id": org1["id"],
+            "is_superuser": False,
+        },
+    )
+    assert response.status_code == 201, f"Create user failed: {response.text}"
+    user.user_id = UUID(response.json()["id"])
+
+    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user.organization_id = UUID(org1["id"])
+
+    response = e2e_client.put(
+        "/api/cli/context",
+        headers=user.headers,
+        json={"default_org_id": org1["id"]},
+    )
+    assert response.status_code == 200, f"Set developer context failed: {response.text}"
+
+    logger.info(f"Created bob_user: {user.email}")
+    return user
+
+
 # =============================================================================
 # Helper Fixtures (function-scoped)
 # =============================================================================

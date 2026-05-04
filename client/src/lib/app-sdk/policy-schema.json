@@ -1,0 +1,229 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Expr",
+  "description": "Policy expression AST. A boolean expression evaluated against the calling user and (optionally) a table row. Composed of literals, references ({\"row\": \"...\"} / {\"user\": \"...\"}), and single-key operator nodes.",
+  "definitions": {
+    "RowRef": {
+      "type": "object",
+      "title": "Row reference",
+      "description": "Reference to a field on the row being evaluated. Use 'id', 'created_by', 'organization_id', or 'data.<field>' to reach into the document data.",
+      "required": ["row"],
+      "additionalProperties": false,
+      "properties": {
+        "row": {
+          "type": "string",
+          "description": "Field path on the row, e.g. 'created_by', 'organization_id', 'data.status'."
+        }
+      }
+    },
+    "UserRef": {
+      "type": "object",
+      "title": "User reference",
+      "description": "Reference to a field on the calling user.",
+      "required": ["user"],
+      "additionalProperties": false,
+      "properties": {
+        "user": {
+          "type": "string",
+          "enum": [
+            "user_id",
+            "email",
+            "organization_id",
+            "is_platform_admin",
+            "role_ids",
+            "role_names"
+          ],
+          "description": "USER field. Allowed: user_id, email, organization_id, is_platform_admin, role_ids, role_names."
+        }
+      }
+    },
+    "Call": {
+      "type": "object",
+      "title": "Function call",
+      "description": "Invoke a registered policy function. Currently: has_role(role_name).",
+      "required": ["call"],
+      "additionalProperties": false,
+      "properties": {
+        "call": {
+          "type": "string",
+          "description": "Function name. Available: has_role."
+        },
+        "args": {
+          "type": "array",
+          "description": "Function arguments. Literals or references."
+        }
+      }
+    },
+    "Operand": {
+      "description": "Anything that can appear as an argument to an operator: literal, reference, or nested expression.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "type": "array" },
+        { "$ref": "#/definitions/RowRef" },
+        { "$ref": "#/definitions/UserRef" },
+        { "$ref": "#/definitions/Call" },
+        { "$ref": "#" }
+      ]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/RowRef" },
+    { "$ref": "#/definitions/UserRef" },
+    { "$ref": "#/definitions/Call" },
+    {
+      "type": "object",
+      "title": "and",
+      "description": "Logical AND. All operands must be truthy. Requires at least 2 operands.",
+      "required": ["and"],
+      "additionalProperties": false,
+      "properties": {
+        "and": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "or",
+      "description": "Logical OR. At least one operand must be truthy. Requires at least 2 operands.",
+      "required": ["or"],
+      "additionalProperties": false,
+      "properties": {
+        "or": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "not",
+      "description": "Logical NOT of a single operand.",
+      "required": ["not"],
+      "additionalProperties": false,
+      "properties": {
+        "not": { "$ref": "#/definitions/Operand" }
+      }
+    },
+    {
+      "type": "object",
+      "title": "eq",
+      "description": "Equality: [left, right] — true when left == right.",
+      "required": ["eq"],
+      "additionalProperties": false,
+      "properties": {
+        "eq": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "neq",
+      "description": "Inequality: [left, right] — true when left != right.",
+      "required": ["neq"],
+      "additionalProperties": false,
+      "properties": {
+        "neq": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "lt",
+      "description": "Less than: [left, right] — true when left < right.",
+      "required": ["lt"],
+      "additionalProperties": false,
+      "properties": {
+        "lt": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "lte",
+      "description": "Less than or equal: [left, right] — true when left <= right.",
+      "required": ["lte"],
+      "additionalProperties": false,
+      "properties": {
+        "lte": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "gt",
+      "description": "Greater than: [left, right] — true when left > right.",
+      "required": ["gt"],
+      "additionalProperties": false,
+      "properties": {
+        "gt": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "gte",
+      "description": "Greater than or equal: [left, right] — true when left >= right.",
+      "required": ["gte"],
+      "additionalProperties": false,
+      "properties": {
+        "gte": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/Operand" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "in",
+      "description": "Membership: [operand, [literal, literal, ...]] — true when operand is in the literal list.",
+      "required": ["in"],
+      "additionalProperties": false,
+      "properties": {
+        "in": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    {
+      "type": "object",
+      "title": "is_null",
+      "description": "True when the operand resolves to null.",
+      "required": ["is_null"],
+      "additionalProperties": false,
+      "properties": {
+        "is_null": { "$ref": "#/definitions/Operand" }
+      }
+    }
+  ]
+}

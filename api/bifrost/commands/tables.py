@@ -10,14 +10,14 @@ Implements Task 5i of the CLI mutation surface plan:
   :class:`TableUpdate`; unset flags omitted by :func:`assemble_body`)
 * ``bifrost tables delete <ref>`` → ``DELETE /api/tables/{uuid}``
 
-``--schema`` accepts either a JSON literal or a ``@path/to/schema.yaml``
-reference — the dict loader in :func:`load_dict_value` handles both shapes
-and is used for both ``create`` and ``update``.
+``--schema`` and ``--policies`` accept either a JSON literal or a
+``@path/to/file.yaml`` reference — the dict loader in
+:func:`load_dict_value` handles both shapes and is used for both
+``create`` and ``update``.
 
 Ref-lookup fields surface as user-friendly flags:
 
 * ``--organization`` (org ref) — ``TableCreate``
-* ``--application`` (app ref, UUID or slug) — ``TableUpdate``
 
 Rename safety: ``update`` fetches the current table first and, if ``--name``
 changes it, emits a prominent warning to stderr telling the user to grep
@@ -109,7 +109,9 @@ async def create_table(
     """Create a new table.
 
     ``--schema`` accepts a JSON literal or ``@path/to/schema.yaml`` — the
-    file is loaded and embedded as the table schema dict.
+    file is loaded and embedded as the table schema dict. ``--policies``
+    accepts the same shape and embeds row-level access policies; see
+    ``docs/superpowers/specs/2026-04-30-table-policies-design.md``.
     """
     body = await assemble_body(TableCreate, fields, resolver=resolver)
     response = await client.post("/api/tables", json=body)

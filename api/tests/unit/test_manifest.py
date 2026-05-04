@@ -532,7 +532,6 @@ def full_manifest_data():
                     "name": "ticket_cache",
                     "description": "Cached ticket data",
                     "organization_id": org_id,
-                    "application_id": app_id,
                     "schema": {
                         "columns": [
                             {"name": "ticket_id", "type": "string"},
@@ -791,7 +790,6 @@ class TestTableManifest:
         assert table.name == "ticket_cache"
         assert table.description == "Cached ticket data"
         assert table.organization_id == full_manifest_data["org_id"]
-        assert table.application_id == full_manifest_data["app_id"]
         assert table.table_schema is not None
         assert "columns" in table.table_schema
         assert len(table.table_schema["columns"]) == 2
@@ -838,6 +836,206 @@ class TestTableManifest:
         assert table_id in table_data["tables"]
         # Alias should appear in YAML
         assert "schema" in table_data["tables"][table_id]
+
+
+class TestTablePoliciesManifest:
+    """Tests for Table.access policies round-tripping through the manifest."""
+
+    def test_table_policies_round_trip(self):
+        """Policies field on a table parses, serializes, and parses again with no drift."""
+        from bifrost.manifest import (
+            ManifestPolicy,
+            ManifestTable,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        table_id = str(uuid4())
+        raw = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "tickets",
+                    "policies": [
+                        {
+                            "name": "admin_bypass",
+                            "description": "Platform admins bypass.",
+                            "actions": ["read", "create", "update", "delete"],
+                            "when": {"user": "is_platform_admin"},
+                        },
+                        {
+                            "name": "owner_can_write",
+                            "actions": ["update", "delete"],
+                            "when": {
+                                "eq": [{"row": "owner_id"}, {"user": "user_id"}],
+                            },
+                        },
+                    ],
+                },
+            },
+        }
+
+        manifest = parse_manifest(yaml.dump(raw, default_flow_style=False))
+        table = manifest.tables[table_id]
+        assert table.policies is not None
+        assert len(table.policies) == 2
+        first = table.policies[0]
+        assert isinstance(first, ManifestPolicy)
+        assert first.name == "admin_bypass"
+        assert first.actions == ["read", "create", "update", "delete"]
+        assert first.when == {"user": "is_platform_admin"}
+
+        # Round-trip through YAML
+        output = serialize_manifest(manifest)
+        restored = parse_manifest(output)
+        restored_table = restored.tables[table_id]
+        assert restored_table.policies is not None
+        assert len(restored_table.policies) == 2
+        assert restored_table.policies[0].name == "admin_bypass"
+        assert restored_table.policies[1].when == {
+            "eq": [{"row": "owner_id"}, {"user": "user_id"}],
+        }
+
+        # Direct constructor path also works
+        direct = ManifestTable(
+            id=table_id,
+            name="t",
+            policies=[
+                ManifestPolicy(
+                    name="p",
+                    actions=["read"],
+                    when={"call": "has_role", "args": ["00000000-0000-0000-0000-000000000000"]},
+                ),
+            ],
+        )
+        dumped = direct.model_dump(mode="json")
+        assert dumped["policies"][0]["when"] == {
+            "call": "has_role",
+            "args": ["00000000-0000-0000-0000-000000000000"],
+        }
+
+    def test_table_policies_omitted_when_none(self):
+        """Tables without policies serialize cleanly (no `policies: null` noise)."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestTable,
+            serialize_manifest,
+        )
+
+        table_id = str(uuid4())
+        manifest = Manifest(tables={
+            table_id: ManifestTable(id=table_id, name="t1"),
+        })
+        output = serialize_manifest(manifest)
+        # exclude_defaults=True is set in serialize_manifest, so policies=None
+        # should not appear in the YAML output.
+        assert "policies:" not in output
+
+
+class TestPortableHasRoleRewrite:
+    """Tests for has_role role-name rewrite in portable bundles."""
+
+    def test_has_role_role_name_rewrite_round_trip(self):
+        """has_role(<uuid>) → @<name> on export, restored on import against target env."""
+        from bifrost.portable import (
+            _rewrite_has_role_in_table_policies,
+            _rewrite_role_names_to_ids,
+        )
+
+        role_id = str(uuid4())
+        table_id = str(uuid4())
+        manifest = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "t1",
+                    "policies": [
+                        {
+                            "name": "admins_only",
+                            "actions": ["read"],
+                            "when": {"call": "has_role", "args": [role_id]},
+                        },
+                    ],
+                },
+            },
+            "roles": [{"id": role_id, "name": "admin"}],
+        }
+
+        # Forward: id → @name
+        from copy import deepcopy
+        portable = deepcopy(manifest)
+        visited = _rewrite_has_role_in_table_policies(portable, {role_id: "admin"})
+        assert visited == 1
+        when = portable["tables"][table_id]["policies"][0]["when"]
+        assert when == {"call": "has_role", "args": ["@admin"]}
+
+        # Inverse: @name → id (target env may have different role UUID)
+        new_role_id = str(uuid4())
+        rewritten = _rewrite_role_names_to_ids(portable, {"admin": new_role_id})
+        when_back = rewritten["tables"][table_id]["policies"][0]["when"]
+        assert when_back == {"call": "has_role", "args": [new_role_id]}
+
+    def test_has_role_walks_nested_ast(self):
+        """has_role inside and/or/not is rewritten at any depth."""
+        from bifrost.portable import (
+            _rewrite_has_role_in_expr,
+            _restore_has_role_in_expr,
+        )
+
+        role_a = str(uuid4())
+        role_b = str(uuid4())
+        nested = {
+            "or": [
+                {"call": "has_role", "args": [role_a]},
+                {
+                    "and": [
+                        {"not": {"call": "has_role", "args": [role_b]}},
+                        {"eq": [{"row": "status"}, "active"]},
+                    ],
+                },
+            ],
+        }
+
+        names = {role_a: "admin", role_b: "viewer"}
+        rewritten = _rewrite_has_role_in_expr(nested, names)
+        # Walk the result to find both has_role calls were rewritten.
+        assert rewritten["or"][0]["args"] == ["@admin"]
+        assert rewritten["or"][1]["and"][0]["not"]["args"] == ["@viewer"]
+        # Non-has_role nodes (eq with row reference) survive unchanged.
+        assert rewritten["or"][1]["and"][1] == {"eq": [{"row": "status"}, "active"]}
+
+        # Inverse round trip
+        ids_by_name = {"admin": role_a, "viewer": role_b}
+        back = _restore_has_role_in_expr(rewritten, ids_by_name)
+        assert back == nested
+
+    def test_scrub_pipeline_rewrites_has_role(self):
+        """The public `scrub` function emits the has_role rewrite rule."""
+        from bifrost.portable import scrub
+
+        role_id = str(uuid4())
+        table_id = str(uuid4())
+        manifest = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "t1",
+                    "policies": [
+                        {
+                            "name": "p",
+                            "actions": ["read"],
+                            "when": {"call": "has_role", "args": [role_id]},
+                        },
+                    ],
+                },
+            },
+        }
+        scrubbed, rules = scrub(manifest, role_names_by_id={role_id: "admin"})
+        when = scrubbed["tables"][table_id]["policies"][0]["when"]
+        assert when == {"call": "has_role", "args": ["@admin"]}
+        assert any("has_role" in rule for rule in rules)
+        # Original input must be untouched (deep-copied internally).
+        assert manifest["tables"][table_id]["policies"][0]["when"]["args"] == [role_id]
 
 
 class TestEventManifest:
@@ -1064,17 +1262,6 @@ class TestValidateManifestNewTypes:
         manifest = parse_manifest(yaml_str)
         errors = validate_manifest(manifest)
         assert any("organization" in e.lower() for e in errors)
-
-    def test_table_bad_app_ref(self, full_manifest_data):
-        """Table referencing unknown application is caught."""
-        from bifrost.manifest import parse_manifest, validate_manifest
-
-        data = full_manifest_data["manifest"]
-        data["tables"][full_manifest_data["table_id"]]["application_id"] = str(uuid4())
-        yaml_str = yaml.dump(data, default_flow_style=False)
-        manifest = parse_manifest(yaml_str)
-        errors = validate_manifest(manifest)
-        assert any("application" in e.lower() for e in errors)
 
     def test_event_bad_org_ref(self, full_manifest_data):
         """Event source referencing unknown org is caught."""
@@ -1853,6 +2040,39 @@ class TestInlineAgentContent:
         a = ManifestAgent(id=agent_id, name="No Path Agent")
         assert a.path is None
 
+    def test_agent_mcp_connection_ids_round_trip(self):
+        """``mcp_connection_ids`` round-trips deterministically — IDs must
+        be sorted by the serializer so re-export of the same logical state
+        is byte-stable."""
+        from bifrost.manifest import (
+            Manifest, ManifestAgent, parse_manifest, serialize_manifest,
+        )
+
+        agent_id = str(uuid4())
+        # Three connection UUIDs in unsorted order — the manifest payload
+        # itself preserves whatever the caller passed, so we sort up-front
+        # before constructing the model so re-emitted bytes are stable.
+        raw_conn_ids = [
+            "00000000-0000-0000-0000-00000000000c",
+            "00000000-0000-0000-0000-00000000000a",
+            "00000000-0000-0000-0000-00000000000b",
+        ]
+        sorted_conn_ids = sorted(raw_conn_ids)
+
+        agent = ManifestAgent(
+            id=agent_id,
+            name="Tech Support",
+            system_prompt="Help with tickets.",
+            mcp_connection_ids=sorted_conn_ids,
+        )
+        manifest = Manifest(agents={agent_id: agent})
+        yaml_out = serialize_manifest(manifest)
+        parsed = parse_manifest(yaml_out)
+        assert parsed.agents[agent_id].mcp_connection_ids == sorted_conn_ids
+        # Byte-stable on a second pass.
+        yaml_out2 = serialize_manifest(parsed)
+        assert yaml_out == yaml_out2
+
 
 class TestInlineContentDetection:
     """Helpers _form_has_inline_content / _agent_has_inline_content."""
@@ -1978,3 +2198,245 @@ class TestBackCompatSeparateFile:
             return None
 
         assert await _resolve_form_content(mform, read_fn) is None
+
+
+# ============================================================================
+# External MCP client (server template + connection + tool catalog) tests
+# ============================================================================
+
+
+@pytest.fixture
+def mcp_manifest_data():
+    """Manifest fixture with two MCP servers (one platform, one org-scoped),
+    each with one connection, each connection with two tools."""
+    org_id = str(uuid4())
+    platform_server_id = str(uuid4())
+    platform_conn_id = str(uuid4())
+    org_server_id = str(uuid4())
+    org_conn_id = str(uuid4())
+
+    return {
+        "org_id": org_id,
+        "platform_server_id": platform_server_id,
+        "platform_conn_id": platform_conn_id,
+        "org_server_id": org_server_id,
+        "org_conn_id": org_conn_id,
+        "manifest": {
+            "organizations": [{"id": org_id, "name": "TestOrg"}],
+            "mcp_servers": {
+                platform_server_id: {
+                    "id": platform_server_id,
+                    "name": "Microsoft 365 Copilot",
+                    "server_url": "https://graph.microsoft.com/.../mcp",
+                    "redirect_url": "https://bifrost.example.com/api/mcp/oauth/callback",
+                    "discovery_metadata": {
+                        "authorization_url": "https://login.microsoftonline.com/.../authorize",
+                        "token_url": "https://login.microsoftonline.com/.../token",
+                        "scopes": "Files.Read.All Sites.Read.All offline_access",
+                    },
+                    "organization_id": None,
+                    "is_active": True,
+                    "connections": {
+                        platform_conn_id: {
+                            "organization_id": org_id,
+                            "client_id": "client-abc",
+                            "available_in_chat": True,
+                            "available_to_autonomous": False,
+                            "tools": [
+                                {
+                                    "tool_name": "graph_search",
+                                    "tool_schema": {
+                                        "type": "object",
+                                        "properties": {"q": {"type": "string"}},
+                                    },
+                                    "enabled": True,
+                                },
+                                {
+                                    "tool_name": "send_email",
+                                    "tool_schema": {
+                                        "type": "object",
+                                        "properties": {"to": {"type": "string"}},
+                                    },
+                                    "enabled": False,
+                                    "disabled_reason": "Disabled by admin",
+                                },
+                            ],
+                        },
+                    },
+                },
+                org_server_id: {
+                    "id": org_server_id,
+                    "name": "halopsa-mcp",
+                    "server_url": "https://bifrost.spiretech.com/halopsa-mcp/mcp",
+                    "organization_id": org_id,
+                    "is_active": True,
+                    "connections": {
+                        org_conn_id: {
+                            "organization_id": org_id,
+                            "client_id": "halopsa-client",
+                            "available_in_chat": False,
+                            "available_to_autonomous": True,
+                            "tools": [
+                                {
+                                    "tool_name": "tickets_list",
+                                    "tool_schema": {
+                                        "type": "object",
+                                    },
+                                    "enabled": True,
+                                },
+                                {
+                                    "tool_name": "tickets_get",
+                                    "tool_schema": {
+                                        "type": "object",
+                                        "properties": {"id": {"type": "integer"}},
+                                    },
+                                    "enabled": True,
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+class TestMCPServerManifest:
+    """MCP server / connection / tool round-trip and validation tests."""
+
+    def test_parse_mcp_servers(self, mcp_manifest_data):
+        from bifrost.manifest import parse_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+
+        assert len(manifest.mcp_servers) == 2
+        platform_server_id = mcp_manifest_data["platform_server_id"]
+        platform_conn_id = mcp_manifest_data["platform_conn_id"]
+        platform = manifest.mcp_servers[platform_server_id]
+
+        assert platform.name == "Microsoft 365 Copilot"
+        assert platform.organization_id is None
+        assert platform.is_active is True
+        assert platform.discovery_metadata is not None
+        assert "scopes" in platform.discovery_metadata
+
+        assert platform_conn_id in platform.connections
+        conn = platform.connections[platform_conn_id]
+        assert conn.organization_id == mcp_manifest_data["org_id"]
+        assert conn.available_in_chat is True
+        assert conn.available_to_autonomous is False
+        assert len(conn.tools) == 2
+        assert {t.tool_name for t in conn.tools} == {"graph_search", "send_email"}
+
+    def test_mcp_server_round_trip(self, mcp_manifest_data):
+        """Servers + connections + tools survive serialize → parse round-trip."""
+        from bifrost.manifest import parse_manifest, serialize_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        original = parse_manifest(yaml_str)
+        output = serialize_manifest(original)
+        restored = parse_manifest(output)
+
+        assert len(restored.mcp_servers) == len(original.mcp_servers)
+        for sid, original_server in original.mcp_servers.items():
+            restored_server = restored.mcp_servers[sid]
+            assert restored_server.name == original_server.name
+            assert restored_server.server_url == original_server.server_url
+            assert restored_server.organization_id == original_server.organization_id
+            assert len(restored_server.connections) == len(original_server.connections)
+            for cid, original_conn in original_server.connections.items():
+                restored_conn = restored_server.connections[cid]
+                assert restored_conn.organization_id == original_conn.organization_id
+                assert restored_conn.client_id == original_conn.client_id
+                assert restored_conn.available_in_chat == original_conn.available_in_chat
+                assert restored_conn.available_to_autonomous == original_conn.available_to_autonomous
+                assert len(restored_conn.tools) == len(original_conn.tools)
+
+    def test_mcp_server_round_trip_byte_identical(self, mcp_manifest_data):
+        """Two-pass serialize → parse → serialize is byte-stable.
+
+        Sort_keys + exclude_defaults must produce identical YAML on each
+        round-trip — the round-trip "stability" property the integration
+        and event tests already verify, asserted for MCP entities.
+        """
+        from bifrost.manifest import parse_manifest, serialize_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        first = serialize_manifest(manifest)
+        second = serialize_manifest(parse_manifest(first))
+        assert first == second
+
+    def test_mcp_server_split_file(self, mcp_manifest_data):
+        """MCP servers serialize to mcp-servers.yaml in split format."""
+        from bifrost.manifest import (
+            parse_manifest,
+            parse_manifest_dir,
+            serialize_manifest_dir,
+        )
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        files = serialize_manifest_dir(manifest)
+
+        assert "mcp-servers.yaml" in files
+        data = yaml.safe_load(files["mcp-servers.yaml"])
+        assert "mcp_servers" in data
+        platform_id = mcp_manifest_data["platform_server_id"]
+        assert platform_id in data["mcp_servers"]
+
+        # Round-trip through split files
+        restored = parse_manifest_dir(files)
+        assert platform_id in restored.mcp_servers
+        assert (
+            mcp_manifest_data["platform_conn_id"]
+            in restored.mcp_servers[platform_id].connections
+        )
+
+    def test_mcp_secret_not_in_manifest(self, mcp_manifest_data):
+        """encrypted_client_secret is never in the serialized manifest output."""
+        from bifrost.manifest import parse_manifest, serialize_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        output = serialize_manifest(manifest)
+        assert "encrypted_client_secret" not in output
+
+    def test_mcp_server_validation_unknown_org(self, mcp_manifest_data):
+        """Validation catches a connection whose organization_id is missing
+        from the organizations list."""
+        from bifrost.manifest import parse_manifest, validate_manifest
+
+        # Strip organizations to make the manifest reference a missing org
+        manifest_data = dict(mcp_manifest_data["manifest"])
+        manifest_data["organizations"] = []
+        yaml_str = yaml.dump(manifest_data, default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        errors = validate_manifest(manifest)
+        # Both servers' connections reference the missing org, plus the
+        # org-scoped server itself
+        assert any("MCP server" in e and "unknown organization" in e for e in errors)
+        assert any("MCP connection" in e and "unknown organization" in e for e in errors)
+
+    def test_mcp_server_validation_valid(self, mcp_manifest_data):
+        """Validation passes when all org refs resolve."""
+        from bifrost.manifest import parse_manifest, validate_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        errors = validate_manifest(manifest)
+        assert errors == []
+
+    def test_mcp_get_all_entity_ids(self, mcp_manifest_data):
+        """get_all_entity_ids includes server IDs and connection IDs."""
+        from bifrost.manifest import get_all_entity_ids, parse_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        ids = get_all_entity_ids(manifest)
+
+        assert mcp_manifest_data["platform_server_id"] in ids
+        assert mcp_manifest_data["platform_conn_id"] in ids
+        assert mcp_manifest_data["org_server_id"] in ids
+        assert mcp_manifest_data["org_conn_id"] in ids

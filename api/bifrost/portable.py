@@ -57,7 +57,7 @@ _EVENT_SOURCE_RUNTIME_FIELDS: frozenset[str] = frozenset({
     "state",
 })
 
-# Top-level manifest sections that hold role-id lists on each entity.
+# Top-level manifest sections that hold role-id lists on each entity (top-level ``roles`` field).
 _ROLE_ID_SECTIONS: tuple[str, ...] = ("forms", "agents", "apps")
 
 
@@ -210,6 +210,12 @@ def _rewrite_role_ids_to_names(
     rather than silently dropping the binding.
 
     Returns a per-section count of entities that had role IDs rewritten.
+
+    Note: the parallel rewrite for ``has_role`` arguments inside table policy
+    ASTs lives in :func:`_rewrite_has_role_in_table_policies`. The two are
+    structurally distinct (list-of-UUIDs vs. inline AST literal) so they're
+    serialized using different markers — bare names in a separate field for
+    role lists, ``@<name>`` prefix for inline AST args.
     """
     counts: dict[str, int] = {}
     for section in _ROLE_ID_SECTIONS:
@@ -240,7 +246,127 @@ def _rewrite_role_ids_to_names(
             rewritten += 1
         if rewritten:
             counts[section] = rewritten
+
     return counts
+
+
+def _rewrite_has_role_in_table_policies(
+    manifest: dict[str, Any],
+    role_names_by_id: dict[str, str],
+) -> int:
+    """Walk every table policy AST and rewrite ``has_role`` UUID args to ``@<name>``.
+
+    Returns the number of policies (across all tables) whose ``when`` AST was
+    visited. This is used for the rules_applied summary; not the count of
+    actual UUID rewrites because a single policy may contain multiple
+    ``has_role`` calls or none at all.
+    """
+    tables = manifest.get("tables")
+    if not isinstance(tables, dict):
+        return 0
+    visited = 0
+    for table in tables.values():
+        if not isinstance(table, dict):
+            continue
+        policy_list = table.get("policies")
+        if not isinstance(policy_list, list):
+            continue
+        for policy in policy_list:
+            if not isinstance(policy, dict):
+                continue
+            when = policy.get("when")
+            if when is None:
+                continue
+            policy["when"] = _rewrite_has_role_in_expr(when, role_names_by_id)
+            visited += 1
+    return visited
+
+
+def _rewrite_has_role_in_expr(
+    node: Any,
+    role_names_by_id: dict[str, str],
+) -> Any:
+    """Recursively rewrite ``has_role`` UUID args to ``@<name>`` markers.
+
+    Walks the policy AST in place-style (returning a new dict at each level so
+    callers don't accidentally observe partial rewrites). ``has_role`` calls may
+    appear at any depth — wrapped in ``and`` / ``or`` / ``not``, nested under
+    comparisons, etc. — so we recurse through every dict and list value.
+
+    UUIDs that don't appear in ``role_names_by_id`` are left untouched so the
+    inverse rewriter can either match them (if the bundle is being imported
+    into the same env) or surface them as unresolved.
+    """
+    if isinstance(node, dict):
+        if node.get("call") == "has_role":
+            args = node.get("args", [])
+            new_args: list[Any] = []
+            for arg in args:
+                if isinstance(arg, str):
+                    name = role_names_by_id.get(arg)
+                    new_args.append(f"@{name}" if name else arg)
+                else:
+                    new_args.append(_rewrite_has_role_in_expr(arg, role_names_by_id))
+            return {**node, "args": new_args}
+        return {k: _rewrite_has_role_in_expr(v, role_names_by_id) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_rewrite_has_role_in_expr(item, role_names_by_id) for item in node]
+    return node
+
+
+def _rewrite_role_names_to_ids(
+    manifest: dict[str, Any],
+    role_ids_by_name: dict[str, str],
+) -> dict[str, Any]:
+    """Inverse of :func:`_rewrite_role_ids_to_names` for ``has_role`` AST args.
+
+    Walks every ``tables[*].policies[*].when`` AST and rewrites
+    ``"@<name>"`` markers back to the role UUID against the target environment's
+    role table. Names that don't resolve are left as-is (still prefixed) so the
+    server-side importer can fail loud rather than silently swap in a wrong UUID.
+
+    Mutates ``manifest`` in place and also returns it for convenience.
+    """
+    tables = manifest.get("tables")
+    if not isinstance(tables, dict):
+        return manifest
+    for table in tables.values():
+        if not isinstance(table, dict):
+            continue
+        policy_list = table.get("policies")
+        if not isinstance(policy_list, list):
+            continue
+        for policy in policy_list:
+            if not isinstance(policy, dict):
+                continue
+            when = policy.get("when")
+            if when is None:
+                continue
+            policy["when"] = _restore_has_role_in_expr(when, role_ids_by_name)
+    return manifest
+
+
+def _restore_has_role_in_expr(
+    node: Any,
+    role_ids_by_name: dict[str, str],
+) -> Any:
+    """Inverse of :func:`_rewrite_has_role_in_expr`."""
+    if isinstance(node, dict):
+        if node.get("call") == "has_role":
+            args = node.get("args", [])
+            new_args: list[Any] = []
+            for arg in args:
+                if isinstance(arg, str) and arg.startswith("@"):
+                    name = arg[1:]
+                    role_id = role_ids_by_name.get(name)
+                    new_args.append(role_id if role_id else arg)
+                else:
+                    new_args.append(_restore_has_role_in_expr(arg, role_ids_by_name))
+            return {**node, "args": new_args}
+        return {k: _restore_has_role_in_expr(v, role_ids_by_name) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_restore_has_role_in_expr(item, role_ids_by_name) for item in node]
+    return node
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +447,12 @@ def scrub(
     for section, count in role_counts.items():
         rules_applied.append(
             f"rewrote {count} role_ids -> role_names on {section}"
+        )
+
+    has_role_visited = _rewrite_has_role_in_table_policies(working, role_names_by_id)
+    if has_role_visited:
+        rules_applied.append(
+            f"rewrote has_role role IDs to @-names in {has_role_visited} table policy expression(s)"
         )
 
     return working, rules_applied

@@ -56,16 +56,6 @@ def _create_table_via_api(e2e_client, headers, name: str) -> str:
     return resp.json()["id"]
 
 
-def _create_app_via_api(e2e_client, headers, slug: str) -> str:
-    resp = e2e_client.post(
-        "/api/applications",
-        headers=headers,
-        json={"name": slug, "slug": slug},
-    )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
-
-
 @pytest.mark.e2e
 class TestCliTables:
     """End-to-end coverage for ``bifrost tables`` commands."""
@@ -148,50 +138,6 @@ class TestCliTables:
         delete_result = _invoke(["--json", "delete", renamed])
         assert delete_result.exit_code == 0, delete_result.output
         assert json.loads(delete_result.stdout)["deleted"] == created_id
-
-    def test_update_reassigns_application_via_app_ref(
-        self,
-        cli_client,
-        _invoke,
-        e2e_client,
-        platform_admin,
-    ):
-        """``--application <slug>`` resolves via the app ref resolver."""
-        table_name = f"cli_tbl_asg_{uuid4().hex[:8]}"
-        app_slug = f"cli-tbl-app-{uuid4().hex[:8]}"
-
-        table_id = _create_table_via_api(
-            e2e_client, platform_admin.headers, table_name
-        )
-        app_id = _create_app_via_api(
-            e2e_client, platform_admin.headers, app_slug
-        )
-
-        update_result = _invoke([
-            "--json",
-            "update", table_name,
-            "--application", app_slug,
-        ])
-        assert update_result.exit_code == 0, update_result.output
-        updated = json.loads(update_result.stdout)
-        assert str(updated["id"]) == table_id
-        assert str(updated["application_id"]) == app_id
-
-        # Reassign by UUID ref too — both forms must work.
-        app2_slug = f"cli-tbl-app2-{uuid4().hex[:8]}"
-        app2_id = _create_app_via_api(
-            e2e_client, platform_admin.headers, app2_slug
-        )
-        update2 = _invoke([
-            "--json",
-            "update", str(table_id),
-            "--application", str(app2_id),
-        ])
-        assert update2.exit_code == 0, update2.output
-        assert str(json.loads(update2.stdout)["application_id"]) == app2_id
-
-        # Cleanup.
-        _invoke(["--json", "delete", str(table_id)])
 
     def test_list_returns_wrapped_payload(
         self,

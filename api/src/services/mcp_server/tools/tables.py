@@ -42,33 +42,21 @@ async def list_tables(
             # Apply scope filter if provided
             if scope == "global":
                 query = query.where(Table.organization_id.is_(None))
-                query = query.where(Table.application_id.is_(None))
             elif scope == "organization":
                 query = query.where(Table.organization_id.isnot(None))
-                query = query.where(Table.application_id.is_(None))
-            elif scope == "application":
-                query = query.where(Table.application_id.isnot(None))
 
             result = await db.execute(query.order_by(Table.name))
             tables = result.scalars().all()
 
             tables_data = []
             for table in tables:
-                # Determine scope
-                if table.application_id:
-                    table_scope = "application"
-                elif table.organization_id:
-                    table_scope = "organization"
-                else:
-                    table_scope = "global"
-
+                table_scope = "organization" if table.organization_id else "global"
                 tables_data.append({
                     "id": str(table.id),
                     "name": table.name,
                     "description": table.description,
                     "scope": table_scope,
                     "organization_id": str(table.organization_id) if table.organization_id else None,
-                    "application_id": str(table.application_id) if table.application_id else None,
                     "created_at": table.created_at.isoformat() if table.created_at else None,
                 })
 
@@ -125,13 +113,7 @@ async def get_table(
             count_result = await db.execute(count_query)
             document_count = count_result.scalar() or 0
 
-            # Determine scope
-            if table.application_id:
-                table_scope = "application"
-            elif table.organization_id:
-                table_scope = "organization"
-            else:
-                table_scope = "global"
+            table_scope = "organization" if table.organization_id else "global"
 
             # Extract columns from schema if available
             columns = []
@@ -144,7 +126,6 @@ async def get_table(
                 "description": table.description,
                 "scope": table_scope,
                 "organization_id": str(table.organization_id) if table.organization_id else None,
-                "application_id": str(table.application_id) if table.application_id else None,
                 "schema": table.schema,
                 "columns": columns,
                 "document_count": document_count,
@@ -176,13 +157,12 @@ async def get_table_schema(context: Any) -> ToolResult:  # noqa: ARG001
     context_docs = """
 ## Table Scope
 
-Tables can be scoped at three levels:
+Tables can be scoped at two levels:
 
-| Scope | organization_id | application_id | Visibility |
-|-------|-----------------|----------------|------------|
-| **global** | NULL | NULL | All organizations |
-| **organization** | UUID | NULL | Single organization |
-| **application** | UUID | UUID | Single application |
+| Scope | organization_id | Visibility |
+|-------|-----------------|------------|
+| **global** | NULL | All organizations |
+| **organization** | UUID | Single organization |
 
 ## Column Types
 
@@ -221,7 +201,7 @@ Each column can have these properties:
 - **Platform admins**: See all tables
 - **Regular users**: See global tables + their organization's tables
 
-When creating: Set `scope` to 'global', 'organization', or 'application'
+When creating: Set `scope` to 'global' or 'organization'
 """
 
     schema_doc = model_docs + context_docs
@@ -234,12 +214,12 @@ async def create_table(
     description: str | None = None,
     scope: str = "organization",
     organization_id: str | None = None,
-    application_id: str | None = None,
     columns: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
     """Create a new table with explicit scope."""
     from sqlalchemy import select
 
+    from shared.policies.probe import make_seed_admin_bypass
     from src.models.orm.tables import Table
 
     logger.info(f"MCP create_table called with name={name}, scope={scope}")
@@ -255,33 +235,20 @@ async def create_table(
                 organization_id = str(context.org_id)
             else:
                 return error_result("organization_id is required for organization scope")
-    elif scope == "application":
-        if not application_id:
-            return error_result("application_id is required for application scope")
-        if not organization_id:
-            return error_result("organization_id is required for application scope")
     elif scope == "global":
         # Global tables can only be created by platform admins
         if not context.is_platform_admin:
             return error_result("Only platform admins can create global tables")
         organization_id = None
-        application_id = None
 
     # Parse UUIDs
     org_uuid: UUID | None = None
-    app_uuid: UUID | None = None
 
     if organization_id:
         try:
             org_uuid = UUID(organization_id)
         except ValueError:
             return error_result(f"Invalid organization_id format: {organization_id}")
-
-    if application_id:
-        try:
-            app_uuid = UUID(application_id)
-        except ValueError:
-            return error_result(f"Invalid application_id format: {application_id}")
 
     # Non-admins can only create tables in their own org
     if not context.is_platform_admin and context.org_id:
@@ -297,11 +264,6 @@ async def create_table(
             else:
                 query = query.where(Table.organization_id.is_(None))
 
-            if app_uuid:
-                query = query.where(Table.application_id == app_uuid)
-            else:
-                query = query.where(Table.application_id.is_(None))
-
             existing = await db.execute(query)
             if existing.scalar_one_or_none():
                 return error_result(f"Table with name '{name}' already exists in this scope")
@@ -312,13 +274,15 @@ async def create_table(
                 schema = {"columns": columns}
 
             # Create table
+            # Default seed: admin_bypass so platform admins aren't locked out.
+            # Task 18 will wire policies into the MCP create path.
             table = Table(
                 id=uuid4(),
                 name=name,
                 description=description,
                 organization_id=org_uuid,
-                application_id=app_uuid,
                 schema=schema,
+                access=make_seed_admin_bypass(),
                 created_by=str(context.user_id),
             )
             db.add(table)
@@ -331,7 +295,6 @@ async def create_table(
                 "name": table.name,
                 "scope": scope,
                 "organization_id": str(org_uuid) if org_uuid else None,
-                "application_id": str(app_uuid) if app_uuid else None,
             })
 
     except Exception as e:
@@ -398,7 +361,6 @@ async def update_table(
 
                 if scope == "global":
                     table.organization_id = None
-                    table.application_id = None
                     updates_made.append("scope")
                 elif scope == "organization":
                     if organization_id:
@@ -412,10 +374,7 @@ async def update_table(
                             table.organization_id = context.org_id
                         else:
                             return error_result("organization_id required for organization scope")
-                    table.application_id = None
                     updates_made.append("scope")
-                elif scope == "application":
-                    return error_result("Cannot change to application scope via update_table. Create a new table instead.")
 
             if columns is not None:
                 if table.schema is None:
@@ -428,13 +387,7 @@ async def update_table(
 
             await db.commit()
 
-            # Determine current scope
-            if table.application_id:
-                current_scope = "application"
-            elif table.organization_id:
-                current_scope = "organization"
-            else:
-                current_scope = "global"
+            current_scope = "organization" if table.organization_id else "global"
 
             display_text = f"Updated table: {table.name} ({', '.join(updates_made)})"
             return success_result(display_text, {

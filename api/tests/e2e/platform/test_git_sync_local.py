@@ -2024,6 +2024,174 @@ class TestSplitManifestFormat:
         assert table.schema is not None
         assert len(table.schema["columns"]) == 2
 
+    async def test_pull_table_with_policies_round_trip(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Pull a table with non-trivial policies → DB row has policies in `access`,
+        and the AST round-trips back to the YAML manifest unchanged.
+
+        Covers Task F: prove that table policies survive a full manifest cycle
+        (manifest → DB → manifest), including a role-gated policy authored
+        with the canonical ``{"call": "has_role", "args": [...]}`` form. The
+        manifest import path validates the AST through ``TablePolicies``
+        before persisting, so non-canonical shorthand (e.g. ``{"has_role":
+        "support"}``) is rejected — see the parallel
+        ``test_pull_table_with_invalid_policy_when_clause_is_rejected``.
+        """
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.tables import Table
+
+        work_dir = Path(working_clone.working_dir)
+        table_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "tables.yaml").write_text(yaml.dump({
+            "tables": {
+                "with_policies": {
+                    "id": table_id,
+                    "description": "Table with non-trivial policies",
+                    "policies": [
+                        {
+                            "name": "admin_bypass",
+                            "actions": ["read", "create", "update", "delete"],
+                            "when": {"user": "is_platform_admin"},
+                        },
+                        {
+                            "name": "own_row",
+                            "actions": ["read", "update", "delete"],
+                            "when": {"eq": [{"row": "created_by"}, {"user": "user_id"}]},
+                        },
+                        {
+                            "name": "support_read",
+                            "actions": ["read"],
+                            "when": {"call": "has_role", "args": ["support"]},
+                        },
+                    ],
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add([".bifrost/tables.yaml"])
+        working_clone.index.commit("table with policies")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+
+        # 1) DB row carries the policies in `access` JSONB
+        table = await db_session.get(Table, UUIDType(table_id))
+        assert table is not None
+        assert table.access is not None
+        policy_names = [p["name"] for p in table.access["policies"]]
+        assert "admin_bypass" in policy_names
+        assert "own_row" in policy_names
+        assert "support_read" in policy_names
+
+        # AST is preserved verbatim — the row-vs-user equality check
+        own = next(p for p in table.access["policies"] if p["name"] == "own_row")
+        assert own["when"] == {"eq": [{"row": "created_by"}, {"user": "user_id"}]}
+        assert sorted(own["actions"]) == ["delete", "read", "update"]
+
+        # The has_role call form is what the evaluator/compiler accepts;
+        # the function registry matches the literal arg against role_names
+        # OR role_ids at evaluation time.
+        support = next(p for p in table.access["policies"] if p["name"] == "support_read")
+        assert support["when"] == {"call": "has_role", "args": ["support"]}
+        assert support["actions"] == ["read"]
+
+        # 2) Round-trip back to manifest: serialize the DB row and verify the
+        # policies block survives unchanged.
+        from src.services.manifest_generator import serialize_table
+
+        round_tripped = serialize_table(table)
+        assert round_tripped.policies is not None
+        rt_dump = [p.model_dump(mode="json") for p in round_tripped.policies]
+        rt_names = [p["name"] for p in rt_dump]
+        assert rt_names == ["admin_bypass", "own_row", "support_read"]
+
+        rt_own = next(p for p in rt_dump if p["name"] == "own_row")
+        assert rt_own["when"] == {"eq": [{"row": "created_by"}, {"user": "user_id"}]}
+        assert sorted(rt_own["actions"]) == ["delete", "read", "update"]
+
+        rt_support = next(p for p in rt_dump if p["name"] == "support_read")
+        assert rt_support["when"] == {"call": "has_role", "args": ["support"]}
+
+    async def test_pull_table_with_invalid_policy_when_clause_is_rejected(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Manifest carrying an unparseable policy AST is rejected at import.
+
+        Security boundary: ``ManifestPolicy.when`` is ``dict | None`` — the
+        manifest model does NOT validate the AST. Without revalidation at the
+        DB-write boundary, a malformed ``tables.yaml`` would land an
+        unparseable policy in ``Table.access`` (later crashing the evaluator
+        or — worse — being silently treated as deny-all). The import path
+        revalidates through ``TablePolicies`` so this fails loudly with
+        ``success=False``, and the table is NOT created.
+        """
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.tables import Table
+
+        work_dir = Path(working_clone.working_dir)
+        table_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "tables.yaml").write_text(yaml.dump({
+            "tables": {
+                "bad_policy": {
+                    "id": table_id,
+                    "description": "Has an unparseable when AST",
+                    "policies": [
+                        {
+                            "name": "broken",
+                            "actions": ["read"],
+                            # INVALID_OP is not a known operator — the
+                            # AST validator must reject this.
+                            "when": {"INVALID_OP": []},
+                        },
+                    ],
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add([".bifrost/tables.yaml"])
+        working_clone.index.commit("table with bad policy")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        # Sync as a whole must fail — no silent success that landed bad data.
+        assert result.success is False, (
+            f"Malformed policy must be rejected; got success result: {result}"
+        )
+        # Error string mentions either the unknown operator or validation.
+        err = (result.error or "").lower()
+        assert (
+            "invalid_op" in err
+            or "unknown operator" in err
+            or "validation error" in err
+        ), f"Error should identify the AST problem; got: {result.error!r}"
+
+        # Side-effect check: the table was NOT created in the DB. Sync uses a
+        # nested transaction around _import_all_entities (see desktop_sync
+        # step 4); the ValidationError raised inside that block aborts the
+        # whole import — so the bad row never lands.
+        await db_session.rollback()
+        table = await db_session.get(Table, UUIDType(table_id))
+        assert table is None, (
+            f"Bad policy must not produce a Table row; found {table!r}"
+        )
+
     async def test_pull_event_source_from_manifest(
         self,
         db_session: AsyncSession,
@@ -3977,71 +4145,6 @@ class TestRoleAssignmentSync:
 class TestImportOrder:
     """Dependency chain correctness."""
 
-    async def test_table_with_application_id(
-        self, db_session: AsyncSession, sync_service, working_clone,
-    ):
-        """Table refs app, both in manifest → no FK error (apps before tables)."""
-        from src.models.orm.tables import Table
-
-        org_id = uuid4()
-        app_id = str(uuid4())
-        table_id = str(uuid4())
-
-        from src.models.orm.organizations import Organization
-        db_session.add(Organization(id=org_id, name="TableOrg", is_active=True, created_by="git-sync"))
-        await db_session.commit()
-
-        work_dir = Path(working_clone.working_dir)
-        bifrost_dir = work_dir / ".bifrost"
-        bifrost_dir.mkdir(exist_ok=True)
-
-        # Write app layout file
-        app_dir = work_dir / "apps" / "testapp"
-        app_dir.mkdir(parents=True, exist_ok=True)
-        (app_dir / "_layout.tsx").write_text("export default function Layout({ children }) { return <>{children}</>; }\n")
-
-        (bifrost_dir / "organizations.yaml").write_text(yaml.dump({
-            "organizations": [{"id": str(org_id), "name": "TableOrg"}]
-        }, default_flow_style=False))
-        (bifrost_dir / "apps.yaml").write_text(yaml.dump({
-            "apps": {
-                "testapp": {
-                    "id": app_id,
-                    "path": "apps/testapp",
-                    "slug": "testapp",
-                    "name": "TestApp",
-                    "organization_id": str(org_id),
-                }
-            }
-        }, default_flow_style=False))
-        (bifrost_dir / "tables.yaml").write_text(yaml.dump({
-            "tables": {
-                "TestTable": {
-                    "id": table_id,
-                    "organization_id": str(org_id),
-                    "application_id": app_id,
-                }
-            }
-        }, default_flow_style=False))
-
-        working_clone.index.add([
-            "apps/testapp/_layout.tsx",
-            ".bifrost/organizations.yaml",
-            ".bifrost/apps.yaml",
-            ".bifrost/tables.yaml",
-        ])
-        working_clone.index.commit("Table with app ref")
-        working_clone.remotes.origin.push("main")
-
-        result = await sync_service.desktop_sync(confirm_deletes=True)
-        assert result.success, f"Sync failed: {result.error}"
-
-        row = (await db_session.execute(
-            select(Table).where(Table.id == table_id)
-        )).scalar_one_or_none()
-        assert row is not None, "Table not created"
-        assert str(row.application_id) == app_id
-
     async def test_event_sub_workflow_ref_by_path(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
@@ -4299,7 +4402,6 @@ class TestImportOrder:
                 "FullTable": {
                     "id": table_id,
                     "organization_id": org_id,
-                    "application_id": app_id,
                 }
             }
         }, default_flow_style=False))
@@ -4376,7 +4478,6 @@ class TestImportOrder:
             select(Table).where(Table.id == table_id)
         )).scalar_one_or_none()
         assert table is not None, "Table not created"
-        assert str(table.application_id) == app_id
 
 
 @pytest.mark.e2e

@@ -9,6 +9,13 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { OrgScopeQueryInvalidator } from "./components/OrgScopeQueryInvalidator";
 import { configureMonaco } from "./lib/monaco-setup";
 import { initReactShim } from "./lib/esm-react-shim";
+import { handleVitePreloadError } from "@/lib/preload-error-handler";
+
+// After a deploy, hashed JS chunks vanish and dynamic imports for old chunk
+// names start 404'ing. Vite emits `vite:preloadError` for those — reload once
+// to pull the fresh bundle, with a sessionStorage guard so a chronically
+// broken deploy can't trap the user in a reload loop.
+window.addEventListener("vite:preloadError", handleVitePreloadError);
 
 // Expose platform React via import map so esm.sh packages use the same instance
 initReactShim();

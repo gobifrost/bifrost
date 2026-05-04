@@ -23,6 +23,11 @@ export type DocumentListResponse =
 	components["schemas"]["DocumentListResponse"];
 export type DocumentCountResponse =
 	components["schemas"]["DocumentCountResponse"];
+export type TablePolicies = components["schemas"]["TablePolicies"];
+export type PolicyValidationResponse =
+	components["schemas"]["PolicyValidationResponse"];
+export type PolicyValidationError =
+	components["schemas"]["PolicyValidationError"];
 
 // Query filter operators (JSON-native, user-friendly)
 export type QueryOperator =
@@ -425,6 +430,38 @@ export async function deleteDocument(
 		},
 	);
 	if (error) throw new Error("Failed to delete document");
+}
+
+/**
+ * Validate a TablePolicies document without persisting it.
+ *
+ * The endpoint always returns 200 — validation outcome is in the body.
+ * Errors come back as `{path, message}` entries; an `ok: true` response
+ * has an empty `errors` array. Used by `PolicyEditor` to render
+ * server-authoritative semantic errors inline below the parse-error row.
+ *
+ * The body parameter is `unknown` so the editor can hand the parsed AST
+ * straight through without a redundant type narrowing — the server runs
+ * the same validator either way and is the source of truth here.
+ */
+export async function validatePolicies(
+	body: TablePolicies | unknown,
+	options: { signal?: AbortSignal } = {},
+): Promise<PolicyValidationResponse> {
+	const { data, error } = await apiClient.POST(
+		"/api/tables/policies/validate",
+		{
+			body: body as TablePolicies,
+			signal: options.signal,
+		},
+	);
+	if (error) {
+		throw new Error(
+			(error as { detail?: string }).detail ||
+				"Failed to validate policies",
+		);
+	}
+	return data;
 }
 
 /**

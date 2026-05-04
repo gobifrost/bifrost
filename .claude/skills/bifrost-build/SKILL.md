@@ -351,6 +351,8 @@ These patterns are required for every data-fetching page. Full code examples in 
 - Custom components go in `components/<Name>.tsx`, imported relatively.
 - Heavy routes: split with `React.lazy(() => import("./pages/heavy"))` + `<Suspense>`.
 
+**Tables:** When you need to read or write structured data from an app, use the `tables.*` SDK + `useTable` hook directly (see [platform-api.md](platform-api.md) → tables). **If you're about to write a workflow just to read/write a table, configure policies and use the SDK directly.** See [app-patterns.md](app-patterns.md) §11 for the CRUD-with-live-updates pattern.
+
 ### Platform API Reference
 
 Every name exported by the `"bifrost"` package is listed in [platform-api.md](platform-api.md) with signature and usage example. The canonical list lives in `api/bifrost/platform_names.py` (`PLATFORM_EXPORT_NAMES`) and a drift test enforces docs match the set.

@@ -49,7 +49,7 @@ from src.models.contracts.organizations import (  # noqa: E402
     OrganizationCreate,
     OrganizationUpdate,
 )
-from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
+from src.models.contracts.tables import TableCreate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
 
@@ -228,17 +228,6 @@ async def test_uuid_passthrough_for_ref_fields() -> None:
         resolver=resolver,  # type: ignore[arg-type]
     )
     assert body == {"workflow_id": WORKFLOW_UUID}
-
-
-@pytest.mark.asyncio
-async def test_table_update_resolves_application_id() -> None:
-    resolver = _resolver()
-    body = await assemble_body(
-        TableUpdate,
-        _parsed(TableUpdate, {"application_id": "my-app"}),
-        resolver=resolver,  # type: ignore[arg-type]
-    )
-    assert body == {"application_id": APP_UUID}
 
 
 @pytest.mark.asyncio

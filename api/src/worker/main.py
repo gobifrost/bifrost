@@ -66,6 +66,7 @@ class Worker:
         self.running = False
         self._shutdown_event = asyncio.Event()
         self._consumers: list = []
+        self._stopping = False
 
     async def start(self) -> None:
         """Start the worker.
@@ -148,28 +149,58 @@ class Worker:
                 raise
 
     async def stop(self) -> None:
-        """Stop the worker gracefully."""
-        logger.info("Stopping Bifrost Worker...")
+        """Stop the worker gracefully (drain in-flight, then close).
+
+        Each consumer cancels its consumer tag (so RabbitMQ stops handing
+        it new messages), waits for in-flight tasks to finish (up to the
+        drain deadline), then closes its channel. The deadline is tunable
+        via BIFROST_DRAIN_DEADLINE_SECONDS (default 300s) and should be
+        less than the K8s terminationGracePeriodSeconds with margin for
+        connection cleanup.
+        """
+        if self._stopping:
+            return
+        self._stopping = True
+        logger.info("Stopping Bifrost Worker (graceful drain)...")
         self.running = False
 
-        # Stop consumers
-        for consumer in self._consumers:
-            try:
-                await consumer.stop()
-                logger.info(f"Stopped consumer: {consumer.queue_name}")
-            except Exception as e:
-                logger.error(f"Error stopping consumer {consumer.queue_name}: {e}")
+        # Drain consumers in parallel — each cancels its consumer tag, waits on
+        # its in-flight tasks, then closes its channel.
+        deadline_str = os.environ.get("BIFROST_DRAIN_DEADLINE_SECONDS", "300")
+        try:
+            drain_deadline = float(deadline_str)
+            if drain_deadline <= 0:
+                raise ValueError(f"must be positive, got {drain_deadline}")
+        except ValueError as e:
+            logger.warning(
+                f"Invalid BIFROST_DRAIN_DEADLINE_SECONDS={deadline_str!r}: {e}; "
+                f"falling back to 300s"
+            )
+            drain_deadline = 300.0
+        results = await asyncio.gather(
+            *(self._drain_consumer(consumer, drain_deadline) for consumer in self._consumers),
+            return_exceptions=True,
+        )
+        for consumer, result in zip(self._consumers, results):
+            if isinstance(result, Exception):
+                logger.error(f"Error draining consumer {consumer.queue_name}: {result}")
+            else:
+                logger.info(f"Drained consumer: {consumer.queue_name}")
 
-        # Close RabbitMQ connections
+        # Close RabbitMQ pools (idempotent if already closed).
         await rabbitmq.close()
         logger.info("RabbitMQ connections closed")
 
-        # Close database connections
+        # Close database connections.
         await close_db()
         logger.info("Database connections closed")
 
         self._shutdown_event.set()
         logger.info("Bifrost Worker stopped")
+
+    async def _drain_consumer(self, consumer, deadline: float) -> None:
+        """Helper: drain one consumer with the given deadline."""
+        await consumer.drain(deadline=deadline)
 
     def handle_signal(self, signum: int, frame) -> None:
         """Handle shutdown signals."""

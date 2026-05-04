@@ -13,7 +13,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -95,16 +95,32 @@ class ConnectionManager:
             await self._send_local(channel, message)
 
     async def _send_local(self, channel: str, message: dict[str, Any]) -> None:
-        """Send message to local WebSocket connections."""
+        """Send message to local WebSocket connections.
+
+        For `table:` channels, the connection MUST have a per-message dispatcher
+        attached (via the websocket router for policy-driven filtering). The
+        dispatcher receives the raw message and decides what — if anything — to
+        deliver to the client. Without a dispatcher, the connection simply does
+        not receive table updates: subscribing to `table:` outside the
+        policy-aware router is not supported.
+        """
         if channel not in self.connections:
             return
 
         dead_connections = set()
-        message_json = json.dumps(message)
+        is_table_channel = channel.startswith("table:")
+        message_json = json.dumps(message) if not is_table_channel else None
 
         for websocket in self.connections[channel]:
             try:
-                await websocket.send_text(message_json)
+                if is_table_channel:
+                    dispatcher = getattr(websocket, "_table_dispatcher", None)
+                    if dispatcher is None:
+                        continue
+                    await dispatcher(channel, message)
+                else:
+                    assert message_json is not None
+                    await websocket.send_text(message_json)
             except Exception:
                 dead_connections.add(websocket)
 
@@ -895,3 +911,55 @@ async def publish_file_activity(
     if data is not None:
         payload["data"] = data
     await manager.broadcast("file-activity", payload)
+
+
+# =============================================================================
+# Table Pub/Sub
+# =============================================================================
+
+
+class _Publisher:
+    """Thin publish helper that delegates to the global ConnectionManager.
+
+    Exists so callers (and tests) have a stable seam — `pubsub.publisher.publish`
+    — for emitting channel messages, independent of the concrete transport.
+    """
+
+    async def publish(self, channel: str, payload: dict[str, Any]) -> None:
+        await manager.broadcast(channel, payload)
+
+
+publisher = _Publisher()
+
+
+async def publish_document_change(
+    table_id: str,
+    action: Literal["insert", "update", "delete"],
+    old_row: dict | None,
+    new_row: dict | None,
+) -> None:
+    """Emit a document-change event with both pre/post row states.
+
+    Subscribers compare old_row and new_row visibility to compute the
+    four-way (still-visible / became-visible / no-longer-visible / still-hidden)
+    fanout decision.
+    """
+    payload = {
+        "type": "document_change",
+        "table_id": table_id,
+        "action": action,
+        "old_row": old_row,
+        "new_row": new_row,
+    }
+    channel = f"table:{table_id}"
+    await publisher.publish(channel, payload=payload)
+
+
+async def publish_policy_changed(table_id: str) -> None:
+    """Notify subscribers that the table's policies were edited.
+
+    The websocket layer re-runs subscription authorization on each message
+    of this type and may emit subscription_revoked.
+    """
+    channel = f"table:{table_id}"
+    await publisher.publish(channel, payload={"type": "policy_changed", "table_id": table_id})

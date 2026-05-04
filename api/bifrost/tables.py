@@ -9,10 +9,41 @@ All methods are async and must be awaited.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlencode
 
 from .client import get_client, raise_for_status_with_detail
 from .models import TableInfo, DocumentData, DocumentList, BatchResult, BatchDeleteResult
-from ._context import resolve_scope
+from ._context import resolve_scope, _execution_context
+
+
+def _current_context():
+    """Return the active ExecutionContext, or None if not in a workflow execution."""
+    return _execution_context.get()
+
+
+def _scope_query(scope: str | None) -> str:
+    """Build the ``?scope=`` querystring fragment for REST table-document URLs.
+
+    Returns ``""`` when scope is None so the URL ends cleanly.
+    """
+    return f"?{urlencode({'scope': scope})}" if scope else ""
+
+
+async def _ensure_table_exists(table: str, scope: str | None) -> None:
+    """Create the table if it doesn't already exist (auto-create-on-insert).
+
+    This used to live in the CLI handler (``_find_or_create_table_for_sdk``);
+    moved here so the SDK and web UI share one document-write code path.
+    Idempotent: a 409 from a concurrent creator is treated as success.
+    """
+    client = get_client()
+    response = await client.post(
+        f"/api/tables{_scope_query(scope)}",
+        json={"name": table},
+    )
+    if response.status_code == 409:
+        return
+    raise_for_status_with_detail(response)
 
 
 class tables:
@@ -170,52 +201,46 @@ class tables:
         data: dict[str, Any],
         id: str | None = None,
         scope: str | None = None,
-        app: str | None = None,
+        created_by: str | None = None,
     ) -> DocumentData:
         """
         Insert a document into a table.
 
-        Auto-creates the table if it doesn't exist.
+        Auto-creates the table on the first write (404 → POST /api/tables → retry).
 
         Args:
-            table: Table name
-            data: Document data (JSON-serializable dict)
-            id: Document ID (user-provided key). If not provided, a UUID is auto-generated.
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            data: Document data (JSON-serializable dict).
+            id: Document ID (user-provided key). If not provided, a UUID is
+                auto-generated server-side.
+            scope: Organization scope. Defaults to the execution context org.
+            created_by: Override attribution. Engine and platform-admin
+                callers only. Defaults to the workflow's calling user.
 
         Returns:
-            DocumentData: Created document with ID and timestamps
-
-        Raises:
-            RuntimeError: If not authenticated
-            HTTPError: If document with id already exists (409 Conflict)
+            DocumentData: Created document with ID and timestamps.
 
         Example:
             >>> from bifrost import tables
-            >>> # Auto-generated ID
-            >>> doc = await tables.insert("customers", {
-            ...     "name": "Acme Corp",
-            ...     "email": "info@acme.com",
-            ... })
-            >>> # User-provided ID
-            >>> doc = await tables.insert("customers", id="acme-001", data={
-            ...     "name": "Acme Corp",
-            ...     "email": "info@acme.com",
-            ... })
+            >>> doc = await tables.insert("customers", {"name": "Acme Corp"})
+            >>> doc = await tables.insert("customers", id="acme-001", data={...})
         """
-        client = get_client()
+        if created_by is None:
+            ctx = _current_context()
+            if ctx is not None and getattr(ctx, "user_id", None) is not None:
+                created_by = str(ctx.user_id)
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            "/api/cli/tables/documents/insert",
-            json={
-                "table": table,
-                "data": data,
-                "id": id,
-                "scope": effective_scope,
-                "app": app,
-            }
-        )
+        body: dict[str, Any] = {"data": data, "id": id}
+        if created_by is not None:
+            body["created_by"] = created_by
+
+        client = get_client()
+        url = f"/api/tables/{table}/documents{_scope_query(effective_scope)}"
+        response = await client.post(url, json=body)
+        if response.status_code == 404:
+            # Table doesn't exist — auto-create then retry.
+            await _ensure_table_exists(table, effective_scope)
+            response = await client.post(url, json=body)
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
 
@@ -225,47 +250,49 @@ class tables:
         id: str,
         data: dict[str, Any],
         scope: str | None = None,
-        app: str | None = None,
+        created_by: str | None = None,
+        updated_by: str | None = None,
     ) -> DocumentData:
         """
-        Upsert (create or replace) a document.
+        Upsert (create or replace) a document atomically by id.
 
-        Auto-creates the table if it doesn't exist.
-        If a document with the given id exists, it is replaced with the new data.
-        If not, a new document is created.
+        Auto-creates the table on the first write. On conflict the JSONB
+        ``data`` column is **replaced**, not merged — use ``update`` for
+        partial updates with merge semantics.
 
         Args:
-            table: Table name
-            id: Document ID (required for upsert)
-            data: Document data (JSON-serializable dict)
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            id: Document ID (the upsert conflict key — required).
+            data: Document data (JSON-serializable dict).
+            scope: Organization scope.
+            created_by: Override attribution on insert. Engine/admin only.
+            updated_by: Override attribution on insert and update. Engine/admin only.
 
         Returns:
-            DocumentData: Created or updated document with ID and timestamps
-
-        Raises:
-            RuntimeError: If not authenticated
+            DocumentData: Created or updated document.
 
         Example:
-            >>> from bifrost import tables
-            >>> doc = await tables.upsert("employees", id="john@example.com", data={
-            ...     "name": "John Doe",
-            ...     "department": "Engineering",
-            ... })
+            >>> doc = await tables.upsert("employees", id="john@example.com",
+            ...                            data={"name": "John Doe"})
         """
-        client = get_client()
+        ctx = _current_context()
+        if created_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            created_by = str(ctx.user_id)
+        if updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            updated_by = str(ctx.user_id)
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            "/api/cli/tables/documents/upsert",
-            json={
-                "table": table,
-                "id": id,
-                "data": data,
-                "scope": effective_scope,
-                "app": app,
-            }
-        )
+        body: dict[str, Any] = {"id": id, "data": data}
+        if created_by is not None:
+            body["created_by"] = created_by
+        if updated_by is not None:
+            body["updated_by"] = updated_by
+
+        client = get_client()
+        url = f"/api/tables/{table}/documents/upsert{_scope_query(effective_scope)}"
+        response = await client.post(url, json=body)
+        if response.status_code == 404:
+            await _ensure_table_exists(table, effective_scope)
+            response = await client.post(url, json=body)
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
 
@@ -274,37 +301,25 @@ class tables:
         table: str,
         doc_id: str,
         scope: str | None = None,
-        app: str | None = None,
     ) -> DocumentData | None:
         """
         Get a document by ID.
 
         Args:
-            table: Table name
-            doc_id: Document ID (user-provided or auto-generated)
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            doc_id: Document ID.
+            scope: Organization scope.
 
         Returns:
-            DocumentData if found, None if not found
-
-        Raises:
-            RuntimeError: If not authenticated
+            DocumentData if found, None if not found.
 
         Example:
-            >>> from bifrost import tables
             >>> doc = await tables.get("customers", "acme-001")
         """
         client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            "/api/cli/tables/documents/get",
-            json={
-                "table": table,
-                "doc_id": doc_id,
-                "scope": effective_scope,
-                "app": app,
-            }
+        response = await client.get(
+            f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
         )
         if response.status_code == 404:
             return None
@@ -320,39 +335,36 @@ class tables:
         doc_id: str,
         data: dict[str, Any],
         scope: str | None = None,
-        app: str | None = None,
+        updated_by: str | None = None,
     ) -> DocumentData | None:
         """
-        Update a document (partial update, merges with existing).
+        Update a document (partial update, merges with existing data).
 
         Args:
-            table: Table name
-            doc_id: Document UUID
-            data: Fields to update (merged with existing data)
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            doc_id: Document ID.
+            data: Fields to update (merged with the existing JSONB data).
+            scope: Organization scope.
+            updated_by: Override attribution. Engine and platform-admin only.
 
         Returns:
-            DocumentData if updated, None if not found
-
-        Raises:
-            RuntimeError: If not authenticated
+            DocumentData if updated, None if not found.
 
         Example:
-            >>> from bifrost import tables
-            >>> doc = await tables.update("customers", "uuid-here", {"status": "inactive"})
+            >>> doc = await tables.update("customers", "acme-001", {"status": "inactive"})
         """
+        if updated_by is None:
+            ctx = _current_context()
+            if ctx is not None and getattr(ctx, "user_id", None) is not None:
+                updated_by = str(ctx.user_id)
         client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            "/api/cli/tables/documents/update",
-            json={
-                "table": table,
-                "doc_id": doc_id,
-                "data": data,
-                "scope": effective_scope,
-                "app": app,
-            }
+        body: dict[str, Any] = {"data": data}
+        if updated_by is not None:
+            body["updated_by"] = updated_by
+        response = await client.patch(
+            f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
+            json=body,
         )
         if response.status_code == 404:
             return None
@@ -367,37 +379,25 @@ class tables:
         table: str,
         doc_id: str,
         scope: str | None = None,
-        app: str | None = None,
     ) -> bool:
         """
         Delete a document.
 
         Args:
-            table: Table name
-            doc_id: Document UUID
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            doc_id: Document ID.
+            scope: Organization scope.
 
         Returns:
-            bool: True if deleted, False if not found
-
-        Raises:
-            RuntimeError: If not authenticated
+            bool: True if deleted, False if not found.
 
         Example:
-            >>> from bifrost import tables
-            >>> deleted = await tables.delete_document("customers", "uuid-here")
+            >>> deleted = await tables.delete_document("customers", "acme-001")
         """
         client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            "/api/cli/tables/documents/delete",
-            json={
-                "table": table,
-                "doc_id": doc_id,
-                "scope": effective_scope,
-                "app": app,
-            }
+        response = await client.delete(
+            f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
         )
         if response.status_code == 404:
             return False
@@ -413,70 +413,39 @@ class tables:
         table: str,
         documents: list[dict[str, Any]],
         scope: str | None = None,
-        app: str | None = None,
+        created_by: str | None = None,
     ) -> BatchResult:
         """
         Batch insert multiple documents into a table.
 
-        Auto-creates the table if it doesn't exist.
-        All documents are inserted atomically — if any ID conflicts, the entire batch rolls back.
+        Auto-creates the table on the first write. All-or-nothing on policy
+        denials: a single denied row fails the whole batch with 403.
 
         Args:
-            table: Table name
+            table: Table name or UUID.
             documents: List of documents to insert. Each dict can be:
                 - A raw data dict (ID will be auto-generated)
                 - A dict with "id" and "data" keys for explicit ID control
-            scope: Organization scope
-            app: Application UUID
+            scope: Organization scope.
+            created_by: Override attribution applied to every item.
+                Engine and platform-admin only.
 
         Returns:
-            BatchResult: Created documents and count
-
-        Raises:
-            RuntimeError: If not authenticated
-            HTTPError: If any document ID already exists (409 Conflict)
-            HTTPError: If more than 1000 documents (422)
+            BatchResult: Inserted documents and count.
 
         Example:
-            >>> from bifrost import tables
-            >>> # Auto-generated IDs
             >>> result = await tables.insert_batch("customers", [
             ...     {"name": "Acme Corp", "status": "active"},
-            ...     {"name": "Beta Inc", "status": "pending"},
-            ... ])
-            >>> print(result.count)  # 2
-            >>>
-            >>> # Explicit IDs
-            >>> result = await tables.insert_batch("customers", [
-            ...     {"id": "acme-001", "data": {"name": "Acme Corp"}},
             ...     {"id": "beta-001", "data": {"name": "Beta Inc"}},
             ... ])
         """
-        client = get_client()
-        effective_scope = resolve_scope(scope)
-
-        # Normalize items: if no "data" key, the entire dict becomes the data
-        items = []
-        for doc in documents:
-            if "data" in doc and isinstance(doc["data"], dict):
-                items.append({"id": doc.get("id"), "data": doc["data"]})
-            else:
-                items.append({"id": None, "data": doc})
-
-        response = await client.post(
-            "/api/cli/tables/documents/insert/batch",
-            json={
-                "table": table,
-                "documents": items,
-                "scope": effective_scope,
-                "app": app,
-            }
-        )
-        raise_for_status_with_detail(response)
-        body = response.json()
-        return BatchResult(
-            documents=[DocumentData.model_validate(d) for d in body["documents"]],
-            count=body["count"],
+        return await tables._batch_write(
+            table=table,
+            documents=documents,
+            scope=scope,
+            upsert=False,
+            created_by=created_by,
+            updated_by=None,
         )
 
     @staticmethod
@@ -484,54 +453,87 @@ class tables:
         table: str,
         documents: list[dict[str, Any]],
         scope: str | None = None,
-        app: str | None = None,
+        created_by: str | None = None,
+        updated_by: str | None = None,
     ) -> BatchResult:
         """
-        Batch upsert (create or replace) multiple documents.
+        Batch upsert (create or update on conflict) multiple documents.
 
-        Auto-creates the table if it doesn't exist.
-        Each document must have an "id" and "data" key.
+        Auto-creates the table on the first write. Each document must have
+        an "id" and "data" key. All-or-nothing on policy denials.
 
         Args:
-            table: Table name
-            documents: List of dicts, each with "id" (str) and "data" (dict) keys
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            documents: List of dicts, each with "id" (str) and "data" (dict).
+            scope: Organization scope.
+            created_by: Override attribution on insert paths. Engine/admin only.
+            updated_by: Override attribution on insert and update paths.
+                Engine/admin only.
 
         Returns:
-            BatchResult: Created/updated documents and count
-
-        Raises:
-            RuntimeError: If not authenticated
-            HTTPError: If more than 1000 documents (422)
+            BatchResult: Inserted/updated documents and count.
 
         Example:
-            >>> from bifrost import tables
             >>> result = await tables.upsert_batch("employees", [
-            ...     {"id": "john@co.com", "data": {"name": "John", "dept": "Eng"}},
-            ...     {"id": "jane@co.com", "data": {"name": "Jane", "dept": "Sales"}},
+            ...     {"id": "john@co.com", "data": {"name": "John"}},
+            ...     {"id": "jane@co.com", "data": {"name": "Jane"}},
             ... ])
-            >>> print(result.count)  # 2
         """
-        client = get_client()
+        return await tables._batch_write(
+            table=table,
+            documents=documents,
+            scope=scope,
+            upsert=True,
+            created_by=created_by,
+            updated_by=updated_by,
+        )
+
+    @staticmethod
+    async def _batch_write(
+        table: str,
+        documents: list[dict[str, Any]],
+        scope: str | None,
+        upsert: bool,
+        created_by: str | None,
+        updated_by: str | None,
+    ) -> BatchResult:
+        """Shared insert+upsert batch path against ``POST /documents/batch``.
+
+        404 → auto-create table → retry once. The created_by/updated_by
+        override is applied per-item so the engine can attribute writes to
+        the workflow's calling user.
+        """
+        ctx = _current_context()
+        if created_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            created_by = str(ctx.user_id)
+        if upsert and updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
+            updated_by = str(ctx.user_id)
         effective_scope = resolve_scope(scope)
 
-        items = [{"id": doc["id"], "data": doc["data"]} for doc in documents]
+        items: list[dict[str, Any]] = []
+        for doc in documents:
+            if "data" in doc and isinstance(doc["data"], dict):
+                item: dict[str, Any] = {"id": doc.get("id"), "data": doc["data"]}
+            else:
+                item = {"id": None, "data": doc}
+            if created_by is not None:
+                item["created_by"] = created_by
+            if upsert and updated_by is not None:
+                item["updated_by"] = updated_by
+            items.append(item)
 
-        response = await client.post(
-            "/api/cli/tables/documents/upsert/batch",
-            json={
-                "table": table,
-                "documents": items,
-                "scope": effective_scope,
-                "app": app,
-            }
-        )
+        req_body: dict[str, Any] = {"documents": items, "upsert": upsert}
+        client = get_client()
+        url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
+        response = await client.post(url, json=req_body)
+        if response.status_code == 404:
+            await _ensure_table_exists(table, effective_scope)
+            response = await client.post(url, json=req_body)
         raise_for_status_with_detail(response)
         body = response.json()
         return BatchResult(
-            documents=[DocumentData.model_validate(d) for d in body["documents"]],
-            count=body["count"],
+            documents=[DocumentData.model_validate(d) for d in body.get("documents", [])],
+            count=body["inserted"],
         )
 
     @staticmethod
@@ -539,48 +541,37 @@ class tables:
         table: str,
         doc_ids: list[str],
         scope: str | None = None,
-        app: str | None = None,
     ) -> BatchDeleteResult:
         """
         Batch delete multiple documents by ID.
 
-        Non-existent IDs are silently skipped.
+        Non-existent IDs are silently skipped. All-or-nothing on policy
+        denials: a single denied id fails the whole batch with 403.
 
         Args:
-            table: Table name
-            doc_ids: List of document IDs to delete
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            doc_ids: List of document IDs to delete.
+            scope: Organization scope.
 
         Returns:
-            BatchDeleteResult: Deleted IDs and count
-
-        Raises:
-            RuntimeError: If not authenticated
-            HTTPError: If more than 1000 IDs (422)
+            BatchDeleteResult: Deleted IDs and count.
 
         Example:
-            >>> from bifrost import tables
             >>> result = await tables.delete_batch("customers", ["acme-001", "beta-001"])
-            >>> print(result.count)  # 2
-            >>> print(result.deleted_ids)  # ["acme-001", "beta-001"]
         """
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/cli/tables/documents/delete/batch",
-            json={
-                "table": table,
-                "doc_ids": doc_ids,
-                "scope": effective_scope,
-                "app": app,
-            }
+            f"/api/tables/{table}/documents/batch-delete{_scope_query(effective_scope)}",
+            json={"ids": doc_ids},
         )
+        if response.status_code == 404:
+            return BatchDeleteResult(deleted_ids=[], count=0)
         raise_for_status_with_detail(response)
         body = response.json()
         return BatchDeleteResult(
-            deleted_ids=body["deleted_ids"],
-            count=body["count"],
+            deleted_ids=body.get("deleted_ids", []),
+            count=body["deleted"],
         )
 
     @staticmethod
@@ -592,7 +583,6 @@ class tables:
         limit: int = 100,
         offset: int = 0,
         scope: str | None = None,
-        app: str | None = None,
     ) -> DocumentList:
         """
         Query documents with filtering and pagination.
@@ -600,60 +590,38 @@ class tables:
         Supports advanced filter operators:
         - Simple equality: {"status": "active"}
         - Comparison: {"amount": {"gt": 100, "lte": 1000}}
-        - LIKE patterns: {"name": {"like": "%acme%"}} or {"name": {"ilike": "%ACME%"}}
-        - IN lists: {"category": {"in": ["a", "b"]}}
+        - LIKE patterns: {"name": {"contains": "acme"}}
+        - IN lists: {"category": {"in_": ["a", "b"]}}
         - NULL checks: {"deleted_at": {"is_null": True}}
 
         Args:
-            table: Table name
-            where: Filter conditions with optional operators
-            order_by: Field name to order by (JSONB field)
-            order_dir: "asc" or "desc"
-            limit: Maximum documents to return (default 100)
-            offset: Number of documents to skip
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            where: Filter conditions with optional operators.
+            order_by: Field name to order by (JSONB field).
+            order_dir: "asc" or "desc".
+            limit: Maximum documents to return (default 100).
+            offset: Number of documents to skip.
+            scope: Organization scope.
 
         Returns:
-            DocumentList: Query results with documents, total count, and pagination info.
-            Returns empty list if table doesn't exist.
-
-        Raises:
-            RuntimeError: If not authenticated
+            DocumentList: Query results with documents, total count, and
+            pagination info. Returns an empty list if the table doesn't exist.
 
         Example:
-            >>> from bifrost import tables
-            >>> # Simple equality filter
             >>> results = await tables.query("customers", where={"status": "active"})
-            >>>
-            >>> # Range query
-            >>> results = await tables.query(
-            ...     "orders",
-            ...     where={"amount": {"gte": 100, "lt": 1000}}
-            ... )
-            >>>
-            >>> # Case-insensitive search
-            >>> results = await tables.query(
-            ...     "customers",
-            ...     where={"name": {"ilike": "%acme%"}}
-            ... )
         """
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/cli/tables/documents/query",
+            f"/api/tables/{table}/documents/query{_scope_query(effective_scope)}",
             json={
-                "table": table,
                 "where": where,
                 "order_by": order_by,
                 "order_dir": order_dir,
                 "limit": limit,
                 "offset": offset,
-                "scope": effective_scope,
-                "app": app,
-            }
+            },
         )
-        # Return empty result if table doesn't exist
         if response.status_code == 404:
             return DocumentList(documents=[], total=0, limit=limit, offset=offset)
         raise_for_status_with_detail(response)
@@ -664,48 +632,38 @@ class tables:
         table: str,
         where: dict[str, Any] | None = None,
         scope: str | None = None,
-        app: str | None = None,
     ) -> int:
         """
         Count documents in a table, optionally with filtering.
 
-        Supports the same filter operators as query():
-        - Simple equality: {"status": "active"}
-        - Comparison: {"amount": {"gt": 100, "lte": 1000}}
-        - LIKE patterns: {"name": {"like": "%acme%"}} or {"name": {"ilike": "%ACME%"}}
-        - IN lists: {"category": {"in": ["a", "b"]}}
-        - NULL checks: {"deleted_at": {"is_null": True}}
-
         Args:
-            table: Table name
-            where: Filter conditions with optional operators
-            scope: Organization scope
-            app: Application UUID
+            table: Table name or UUID.
+            where: Filter conditions (same operators as ``query``).
+            scope: Organization scope.
 
         Returns:
-            int: Number of matching documents. Returns 0 if table doesn't exist.
-
-        Raises:
-            RuntimeError: If not authenticated
+            int: Number of matching documents. Returns 0 if the table
+            doesn't exist.
 
         Example:
-            >>> from bifrost import tables
             >>> total = await tables.count("customers")
             >>> active = await tables.count("customers", where={"status": "active"})
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            "/api/cli/tables/documents/count",
-            json={
-                "table": table,
-                "where": where,
-                "scope": effective_scope,
-                "app": app,
-            }
+        client = get_client()
+        if where is None:
+            # Unfiltered count: hit GET /count which avoids row scanning.
+            response = await client.get(
+                f"/api/tables/{table}/documents/count{_scope_query(effective_scope)}",
+            )
+            if response.status_code == 404:
+                return 0
+            raise_for_status_with_detail(response)
+            return response.json()["count"]
+
+        # Filtered count: REST /count doesn't accept where, so fall back to
+        # query with limit=1 (the response carries the matched total).
+        result = await tables.query(
+            table=table, where=where, limit=1, scope=scope,
         )
-        # Return 0 if table doesn't exist
-        if response.status_code == 404:
-            return 0
-        raise_for_status_with_detail(response)
-        return response.json()
+        return result.total

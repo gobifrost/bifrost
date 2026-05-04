@@ -29,6 +29,23 @@ class ToolResult(BaseModel):
     result: Any = Field(..., description="Result from tool execution")
     error: str | None = Field(default=None, description="Error message if tool failed")
     duration_ms: int | None = Field(default=None, description="Execution duration in milliseconds")
+    error_type: str | None = Field(
+        default=None,
+        description=(
+            "Optional structured error class. Used by the chat surface to "
+            "render specialized recovery UIs (e.g. 'needs_reauth' shows an "
+            "inline reconnect button instead of a plain error message)."
+        ),
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional structured payload that travels alongside the error. "
+            "For 'needs_reauth' this carries 'reauth_url', 'connection_id', "
+            "and 'tool_name' so the chat surface can build the reconnect "
+            "button without re-querying."
+        ),
+    )
 
 
 # ==================== AGENT MODELS ====================
@@ -49,6 +66,14 @@ class AgentCreate(BaseModel):
     role_ids: list[str] = Field(default_factory=list, description="List of role IDs that can access this agent (for role_based access)")
     knowledge_sources: list[str] = Field(default_factory=list, description="List of knowledge namespaces this agent can search")
     system_tools: list[str] = Field(default_factory=list, description="List of system tool names enabled for this agent")
+    mcp_connection_ids: list[UUID] = Field(
+        default_factory=list,
+        description=(
+            "MCP connection UUIDs this agent is granted access to. Empty list "
+            "(default) means the agent receives no external MCP tools. The "
+            "agent's organization must own each listed connection."
+        ),
+    )
     llm_model: str | None = Field(default=None, description="Override model (null=use global config)")
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
@@ -71,6 +96,14 @@ class AgentUpdate(BaseModel):
     role_ids: list[str] | None = Field(default=None, description="List of role IDs that can access this agent (for role_based access)")
     knowledge_sources: list[str] | None = Field(default=None, description="List of knowledge namespaces this agent can search")
     system_tools: list[str] | None = Field(default=None, description="List of system tool names enabled for this agent")
+    mcp_connection_ids: list[UUID] | None = Field(
+        default=None,
+        description=(
+            "MCP connection UUIDs this agent is granted access to. Replaces "
+            "the agent's full grant list when provided; omit to leave grants "
+            "unchanged. Pass [] to revoke all grants."
+        ),
+    )
     clear_roles: bool = Field(default=False, description="If true, clear all role assignments (sets to role_based with no roles)")
     llm_model: str | None = Field(default=None, description="Override model (null=use global config)")
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
@@ -128,6 +161,10 @@ class AgentPublic(BaseModel):
     role_ids: list[str] = Field(default_factory=list)
     knowledge_sources: list[str] = Field(default_factory=list)
     system_tools: list[str] = Field(default_factory=list)
+    mcp_connection_ids: list[str] = Field(
+        default_factory=list,
+        description="MCP connection UUIDs this agent is granted access to.",
+    )
     llm_model: str | None = None
     llm_max_tokens: int | None = None
     max_iterations: int | None = None
@@ -161,6 +198,10 @@ class AgentSummary(BaseModel):
     created_at: datetime
     llm_model: str | None = None
     dependency_count: int = Field(default=0, description="Number of tool dependencies this agent uses")
+    mcp_connection_count: int = Field(
+        default=0,
+        description="Number of MCP connections explicitly granted to this agent.",
+    )
 
     @field_serializer("id")
     def serialize_id(self, v: UUID) -> str:

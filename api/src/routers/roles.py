@@ -38,6 +38,14 @@ from src.models import (
     AssignAgentsToRoleRequest,
 )
 
+# Per-user role cache (Redis-backed, used by table-policy `has_role` lookups
+# in `get_execution_context` / WS `_populate_user_roles`). Aliased on import
+# because `invalidate_role` collides with the same-named function in
+# `src.core.cache.invalidation` (which clears the global roles list, a
+# different cache).
+from shared.role_cache import invalidate_role as invalidate_user_role_cache_for_role
+from shared.role_cache import invalidate_user as invalidate_user_role_cache
+
 # Import cache invalidation
 try:
     from src.core.cache import (
@@ -192,6 +200,10 @@ async def update_role(
     if CACHE_INVALIDATION_AVAILABLE and invalidate_role:
         await invalidate_role(None, str(role_id))
 
+    # Per-user role cache: a rename changes role_names for every user holding
+    # this role, so sweep all entries containing role_id.
+    await invalidate_user_role_cache_for_role(role_id)
+
     changed_fields = [
         k for k, v in request.model_dump(exclude_unset=True).items() if v is not None
     ]
@@ -253,6 +265,10 @@ async def delete_role(
     if CACHE_INVALIDATION_AVAILABLE and invalidate_role:
         await invalidate_role(None, str(role_id))
 
+    # Per-user role cache: deleting a role means every user holding it loses
+    # the membership; clear all entries containing role_id.
+    await invalidate_user_role_cache_for_role(role_id)
+
     await emit_audit(
         db,
         "role.delete",
@@ -300,6 +316,9 @@ async def assign_users_to_role(
 ) -> None:
     """Assign users to a role."""
     now = datetime.now(timezone.utc)
+    # Track newly-assigned users so we can invalidate the per-user role cache.
+    # Skip users already assigned (no cache impact) and users that didn't resolve.
+    affected_user_ids: list[UUID] = []
 
     for user_id_str in request.user_ids:
         # Try to parse as UUID, otherwise lookup by email
@@ -331,6 +350,7 @@ async def assign_users_to_role(
             assigned_at=now,
         )
         db.add(user_role)
+        affected_user_ids.append(user_uuid)
 
     await db.flush()
     logger.info(f"Assigned users to role {log_safe(role_id)}")
@@ -338,6 +358,11 @@ async def assign_users_to_role(
     # Invalidate cache (roles are global, no org_id needed)
     if CACHE_INVALIDATION_AVAILABLE and invalidate_role_users:
         await invalidate_role_users(None, str(role_id))
+
+    # Per-user role cache: drop entries for each newly-assigned user so the
+    # next read sees the new role membership.
+    for affected in affected_user_ids:
+        await invalidate_user_role_cache(affected)
 
     await emit_audit(
         db,
@@ -390,6 +415,10 @@ async def remove_user_from_role(
     # Invalidate cache (roles are global, no org_id needed)
     if CACHE_INVALIDATION_AVAILABLE and invalidate_role_users:
         await invalidate_role_users(None, str(role_id))
+
+    # Per-user role cache: drop this user's entry so the next read sees the
+    # post-unassignment membership.
+    await invalidate_user_role_cache(user_uuid)
 
     await emit_audit(
         db,

@@ -69,20 +69,6 @@ from src.models.contracts.cli import (
     SDKTableCreateRequest,
     SDKTableListRequest,
     SDKTableInfo,
-    SDKDocumentInsertRequest,
-    SDKDocumentUpsertRequest,
-    SDKDocumentGetRequest,
-    SDKDocumentUpdateRequest,
-    SDKDocumentDeleteRequest,
-    SDKDocumentQueryRequest,
-    SDKDocumentCountRequest,
-    SDKDocumentData,
-    SDKDocumentList,
-    SDKDocumentInsertBatchRequest,
-    SDKDocumentUpsertBatchRequest,
-    SDKDocumentDeleteBatchRequest,
-    SDKBatchDocumentResponse,
-    SDKBatchDeleteResponse,
 )
 from src.core.pubsub import publish_cli_session_update, publish_execution_log, publish_execution_update, publish_history_update
 from src.repositories.cli_sessions import CLISessionRepository
@@ -371,6 +357,12 @@ async def _get_cli_org_id(
 
     Returns:
         Organization UUID string, or None for global scope
+
+    Raises:
+        HTTPException 422: If ``scope`` is a non-empty string that is
+            neither ``"global"`` nor a valid UUID. Without this gate the
+            value flows into raw SQL and surfaces as a downstream
+            asyncpg type error (500).
     """
     # "global" scope means no org resolution
     if scope == "global":
@@ -378,6 +370,13 @@ async def _get_cli_org_id(
 
     # If scope is a UUID, use it directly as the org_id
     if scope:
+        try:
+            UUID(scope)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"scope must be 'global', a UUID, or null; got {scope!r}",
+            ) from None
         return scope
 
     # Fall back to developer context default org
@@ -2505,13 +2504,11 @@ async def cli_create_table(
 
     org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
 
-    # Check if table exists (same name, org, and app)
+    # Check if table exists in the same scope.
     stmt = select(Table).where(
         Table.name == request.name,
         Table.organization_id == org_uuid,
-        Table.application_id == app_uuid,
     )
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -2522,13 +2519,18 @@ async def cli_create_table(
             detail=f"Table '{request.name}' already exists",
         )
 
+    # Seed admin_bypass so platform admins can still operate on tables
+    # created via the SDK. SDK callers can override this later by setting
+    # explicit policies through the REST `PATCH /api/tables/{id}` endpoint.
+    from shared.policies.probe import make_seed_admin_bypass
+
     table = Table(
         name=request.name,
         description=request.description,
         schema=request.table_schema,
         organization_id=org_uuid,
-        application_id=app_uuid,
         created_by=current_user.email,
+        access=make_seed_admin_bypass(),
     )
     db.add(table)
     await db.commit()
@@ -2540,7 +2542,6 @@ async def cli_create_table(
         id=str(table.id),
         name=table.name,
         organization_id=str(table.organization_id) if table.organization_id else None,
-        application_id=str(table.application_id) if table.application_id else None,
         table_schema=table.schema,
         description=table.description,
         created_at=table.created_at.isoformat(),
@@ -2563,7 +2564,6 @@ async def cli_list_tables(
 
     org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
 
     # Build query with cascade scoping (org + global)
     stmt = select(Table)
@@ -2577,10 +2577,6 @@ async def cli_list_tables(
     else:
         stmt = stmt.where(Table.organization_id.is_(None))
 
-    # Filter by application if specified
-    if app_uuid:
-        stmt = stmt.where(Table.application_id == app_uuid)
-
     stmt = stmt.order_by(Table.name)
     result = await db.execute(stmt)
     tables = result.scalars().all()
@@ -2590,7 +2586,6 @@ async def cli_list_tables(
             id=str(t.id),
             name=t.name,
             organization_id=str(t.organization_id) if t.organization_id else None,
-            application_id=str(t.application_id) if t.application_id else None,
             table_schema=t.schema,
             description=t.description,
             created_at=t.created_at.isoformat(),
@@ -2600,758 +2595,3 @@ async def cli_list_tables(
     ]
 
 
-async def _find_table_for_sdk(
-    db: AsyncSession,
-    table_name: str,
-    org_uuid: UUID | None,
-    app_uuid: UUID | None,
-) -> Any:
-    """Find a table by name with cascade scoping: org-specific first, then global fallback.
-
-    Resolution order:
-    1. Exact org match (organization_id = org_uuid)
-    2. Global fallback (organization_id IS NULL)
-    3. None (not found)
-
-    Args:
-        db: Database session
-        table_name: Table name to find
-        org_uuid: Organization UUID (None for global scope)
-        app_uuid: Application UUID filter (optional)
-
-    Returns:
-        Table ORM object or None
-    """
-    from src.models.orm.tables import Table
-    from sqlalchemy import select
-
-    def build_query(org_filter: UUID | None) -> Any:
-        stmt = select(Table).where(Table.name == table_name)
-        if org_filter is not None:
-            stmt = stmt.where(Table.organization_id == org_filter)
-        else:
-            stmt = stmt.where(Table.organization_id.is_(None))
-        if app_uuid:
-            stmt = stmt.where(Table.application_id == app_uuid)
-        return stmt
-
-    # Step 1: Try org-specific lookup
-    if org_uuid:
-        result = await db.execute(build_query(org_uuid))
-        table = result.scalar_one_or_none()
-        if table:
-            return table
-
-    # Step 2: Fall back to global
-    result = await db.execute(build_query(None))
-    return result.scalar_one_or_none()
-
-
-async def _find_or_create_table_for_sdk(
-    db: AsyncSession,
-    table_name: str,
-    org_uuid: UUID | None,
-    app_uuid: UUID | None,
-    created_by: str | None = None,
-) -> Any:
-    """Find or create a table by name.
-
-    Auto-creates the table if it doesn't exist. Used by insert/upsert endpoints.
-
-    Args:
-        db: Database session
-        table_name: Table name to find or create
-        org_uuid: Organization UUID (None for global scope)
-        app_uuid: Application UUID (optional)
-        created_by: Email of user creating the table (for audit)
-
-    Returns:
-        Table ORM object (existing or newly created)
-    """
-    from src.models.orm.tables import Table
-
-    # First try to find existing table
-    table = await _find_table_for_sdk(db, table_name, org_uuid, app_uuid)
-
-    if table:
-        return table
-
-    # Create new table
-    table = Table(
-        name=table_name,
-        organization_id=org_uuid,
-        application_id=app_uuid,
-        created_by=created_by,
-    )
-    db.add(table)
-    await db.flush()  # Get the ID without committing
-    logger.info(f"Auto-created table '{log_safe(table_name)}' for org={org_uuid}, app={app_uuid}")
-
-    return table
-
-
-def _escape_like(value: str) -> str:
-    """Escape LIKE/ILIKE wildcard characters in user input."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _build_jsonb_filters(
-    base_query: Any,
-    where: dict[str, Any] | None,
-    data_column: Any,
-) -> Any:
-    """Build SQLAlchemy filters from where clause with JSON-native operators.
-
-    Supports:
-    - Simple equality: {"status": "active"}
-    - Comparison operators: {"amount": {"gt": 100, "lte": 1000}}
-    - Contains: {"name": {"contains": "acme"}} (case-insensitive substring)
-    - Starts/ends with: {"name": {"starts_with": "a"}}
-    - IN lists: {"category": {"in": ["a", "b"]}}
-    - NULL checks: {"deleted_at": {"is_null": true}}
-    - Has key: {"field": {"has_key": true}}
-
-    Args:
-        base_query: SQLAlchemy query to add filters to
-        where: Filter conditions dict
-        data_column: JSONB column to filter on (e.g., Document.data)
-
-    Returns:
-        Query with filters applied
-    """
-    from sqlalchemy import String, cast
-
-    if not where:
-        return base_query
-
-    for key, value in where.items():
-        json_field = data_column[key]
-
-        if isinstance(value, dict):
-            # Operator-based filter
-            for op, op_value in value.items():
-                if op == "eq":
-                    if isinstance(op_value, (bool, int, float)):
-                        base_query = base_query.where(data_column.contains({key: op_value}))
-                    else:
-                        base_query = base_query.where(json_field.astext == str(op_value))
-                elif op == "ne":
-                    if isinstance(op_value, (bool, int, float)):
-                        base_query = base_query.where(~data_column.contains({key: op_value}))
-                    else:
-                        base_query = base_query.where(json_field.astext != str(op_value))
-                elif op == "contains":
-                    # Case-insensitive substring search
-                    escaped = _escape_like(str(op_value))
-                    base_query = base_query.where(
-                        json_field.astext.ilike(f"%{escaped}%")
-                    )
-                elif op == "starts_with":
-                    escaped = _escape_like(str(op_value))
-                    base_query = base_query.where(
-                        json_field.astext.ilike(f"{escaped}%")
-                    )
-                elif op == "ends_with":
-                    escaped = _escape_like(str(op_value))
-                    base_query = base_query.where(
-                        json_field.astext.ilike(f"%{escaped}")
-                    )
-                elif op == "gt":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) > str(op_value)
-                    )
-                elif op == "gte":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) >= str(op_value)
-                    )
-                elif op == "lt":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) < str(op_value)
-                    )
-                elif op == "lte":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) <= str(op_value)
-                    )
-                elif op in ("in", "in_"):
-                    if isinstance(op_value, list):
-                        def _jsonb_text(v: Any) -> str:
-                            if isinstance(v, bool):
-                                return str(v).lower()  # True -> "true", False -> "false"
-                            return str(v)
-                        base_query = base_query.where(
-                            json_field.astext.in_([_jsonb_text(v) for v in op_value])
-                        )
-                elif op == "is_null":
-                    if op_value:
-                        base_query = base_query.where(json_field.astext.is_(None))
-                    else:
-                        base_query = base_query.where(json_field.astext.isnot(None))
-                elif op == "has_key":
-                    if op_value:
-                        base_query = base_query.where(data_column.has_key(key))
-                    else:
-                        base_query = base_query.where(~data_column.has_key(key))
-        else:
-            # Simple equality — use JSONB containment for type-safe comparison
-            # This handles booleans, numbers, and strings correctly
-            if isinstance(value, (bool, int, float)):
-                base_query = base_query.where(data_column.contains({key: value}))
-            else:
-                base_query = base_query.where(json_field.astext == str(value))
-
-    return base_query
-
-
-@router.post(
-    "/tables/documents/insert",
-    summary="Insert a document",
-)
-async def cli_insert_document(
-    request: SDKDocumentInsertRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKDocumentData:
-    """Insert a document into a table via SDK.
-
-    Auto-creates the table if it doesn't exist.
-    If id is provided, returns 409 Conflict if a document with that id already exists.
-    If id is not provided, a UUID will be auto-generated.
-    """
-    from src.models.orm.tables import Document
-    from sqlalchemy import select
-    from sqlalchemy.exc import IntegrityError
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    # Auto-create table if it doesn't exist
-    table = await _find_or_create_table_for_sdk(
-        db, request.table, org_uuid, app_uuid, current_user.email
-    )
-
-    # Check if document with this ID already exists (if ID provided)
-    if request.id:
-        stmt = select(Document).where(
-            Document.table_id == table.id,
-            Document.id == request.id,
-        )
-        result = await db.execute(stmt)
-        existing = result.scalar_one_or_none()
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Document with id '{request.id}' already exists in table '{request.table}'",
-            )
-
-    doc = Document(
-        id=request.id if request.id else str(uuid4()),
-        table_id=table.id,
-        data=request.data,
-        created_by=current_user.email,
-    )
-    db.add(doc)
-
-    try:
-        await db.commit()
-        await db.refresh(doc)
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Document with id '{request.id}' already exists in table '{request.table}'",
-        )
-
-    return SDKDocumentData(
-        id=doc.id,
-        table_id=str(doc.table_id),
-        data=doc.data,
-        created_at=doc.created_at.isoformat(),
-        updated_at=doc.updated_at.isoformat(),
-    )
-
-
-@router.post(
-    "/tables/documents/upsert",
-    summary="Upsert a document",
-)
-async def cli_upsert_document(
-    request: SDKDocumentUpsertRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKDocumentData:
-    """Upsert (create or replace) a document via SDK.
-
-    Auto-creates the table if it doesn't exist.
-    If a document with the given id exists, it is replaced with the new data.
-    If not, a new document is created.
-
-    Uses atomic INSERT ... ON CONFLICT DO UPDATE to prevent race conditions.
-    """
-    from sqlalchemy.dialects.postgresql import insert
-
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    # Auto-create table if it doesn't exist
-    table = await _find_or_create_table_for_sdk(
-        db, request.table, org_uuid, app_uuid, current_user.email
-    )
-
-    now = datetime.now(timezone.utc)
-
-    # Atomic upsert using PostgreSQL's INSERT ... ON CONFLICT DO UPDATE
-    stmt = insert(Document).values(
-        id=request.id,
-        table_id=table.id,
-        data=request.data,
-        created_by=current_user.email,
-        created_at=now,
-        updated_at=now,
-    ).on_conflict_do_update(
-        index_elements=["table_id", "id"],
-        set_={
-            "data": request.data,
-            "updated_by": current_user.email,
-            "updated_at": now,
-        },
-    ).returning(Document)
-
-    result = await db.execute(stmt)
-    doc = result.scalar_one()
-    await db.commit()
-
-    return SDKDocumentData(
-        id=doc.id,
-        table_id=str(doc.table_id),
-        data=doc.data,
-        created_at=doc.created_at.isoformat(),
-        updated_at=doc.updated_at.isoformat(),
-    )
-
-
-@router.post(
-    "/tables/documents/get",
-    summary="Get a document",
-)
-async def cli_get_document(
-    request: SDKDocumentGetRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKDocumentData | None:
-    """Get a document by ID via SDK."""
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_table_for_sdk(db, request.table, org_uuid, app_uuid)
-
-    if not table:
-        return None
-
-    # Get the document by string ID
-    doc_stmt = select(Document).where(
-        Document.id == request.doc_id,
-        Document.table_id == table.id,
-    )
-    doc_result = await db.execute(doc_stmt)
-    doc = doc_result.scalar_one_or_none()
-
-    if not doc:
-        return None
-
-    return SDKDocumentData(
-        id=doc.id,
-        table_id=str(doc.table_id),
-        data=doc.data,
-        created_at=doc.created_at.isoformat(),
-        updated_at=doc.updated_at.isoformat(),
-    )
-
-
-@router.post(
-    "/tables/documents/update",
-    summary="Update a document",
-)
-async def cli_update_document(
-    request: SDKDocumentUpdateRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKDocumentData | None:
-    """Update a document via SDK (partial update, merges with existing)."""
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_table_for_sdk(db, request.table, org_uuid, app_uuid)
-
-    if not table:
-        return None
-
-    # Get the document by string ID
-    doc_stmt = select(Document).where(
-        Document.id == request.doc_id,
-        Document.table_id == table.id,
-    )
-    doc_result = await db.execute(doc_stmt)
-    doc = doc_result.scalar_one_or_none()
-
-    if not doc:
-        return None
-
-    # Merge data
-    merged_data = {**doc.data, **request.data}
-    doc.data = merged_data
-    doc.updated_by = current_user.email
-
-    await db.commit()
-    await db.refresh(doc)
-
-    return SDKDocumentData(
-        id=doc.id,
-        table_id=str(doc.table_id),
-        data=doc.data,
-        created_at=doc.created_at.isoformat(),
-        updated_at=doc.updated_at.isoformat(),
-    )
-
-
-@router.post(
-    "/tables/documents/delete",
-    summary="Delete a document",
-)
-async def cli_delete_document(
-    request: SDKDocumentDeleteRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> bool:
-    """Delete a document via SDK."""
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_table_for_sdk(db, request.table, org_uuid, app_uuid)
-
-    if not table:
-        return False
-
-    # Get and delete the document by string ID
-    doc_stmt = select(Document).where(
-        Document.id == request.doc_id,
-        Document.table_id == table.id,
-    )
-    doc_result = await db.execute(doc_stmt)
-    doc = doc_result.scalar_one_or_none()
-
-    if not doc:
-        return False
-
-    await db.delete(doc)
-    await db.commit()
-
-    return True
-
-
-# =========================================================================
-# Batch Document Operations
-# =========================================================================
-
-
-@router.post(
-    "/tables/documents/insert/batch",
-    summary="Batch insert documents",
-)
-async def cli_insert_documents_batch(
-    request: SDKDocumentInsertBatchRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKBatchDocumentResponse:
-    """Batch insert documents into a table via SDK.
-
-    Auto-creates the table if it doesn't exist.
-    All documents are inserted atomically — if any ID conflicts, the entire batch rolls back.
-    """
-    from sqlalchemy.dialects.postgresql import insert
-    from sqlalchemy.exc import IntegrityError
-
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_or_create_table_for_sdk(
-        db, request.table, org_uuid, app_uuid, current_user.email
-    )
-
-    now = datetime.now(timezone.utc)
-    values = [
-        {
-            "id": item.id if item.id else str(uuid4()),
-            "table_id": table.id,
-            "data": item.data,
-            "created_by": current_user.email,
-            "created_at": now,
-            "updated_at": now,
-        }
-        for item in request.documents
-    ]
-
-    stmt = insert(Document).values(values).returning(Document)
-
-    try:
-        result = await db.execute(stmt)
-        docs = result.scalars().all()
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Duplicate document ID in batch for table '{request.table}'",
-        )
-
-    doc_responses = [
-        SDKDocumentData(
-            id=doc.id,
-            table_id=str(doc.table_id),
-            data=doc.data,
-            created_at=doc.created_at.isoformat(),
-            updated_at=doc.updated_at.isoformat(),
-        )
-        for doc in docs
-    ]
-    return SDKBatchDocumentResponse(documents=doc_responses, count=len(doc_responses))
-
-
-@router.post(
-    "/tables/documents/upsert/batch",
-    summary="Batch upsert documents",
-)
-async def cli_upsert_documents_batch(
-    request: SDKDocumentUpsertBatchRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKBatchDocumentResponse:
-    """Batch upsert (create or replace) documents via SDK.
-
-    Auto-creates the table if it doesn't exist.
-    Uses atomic INSERT ... ON CONFLICT DO UPDATE for each document.
-    """
-    from sqlalchemy.dialects.postgresql import insert
-
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_or_create_table_for_sdk(
-        db, request.table, org_uuid, app_uuid, current_user.email
-    )
-
-    now = datetime.now(timezone.utc)
-    values = [
-        {
-            "id": item.id,
-            "table_id": table.id,
-            "data": item.data,
-            "created_by": current_user.email,
-            "created_at": now,
-            "updated_at": now,
-        }
-        for item in request.documents
-    ]
-
-    insert_stmt = insert(Document).values(values)
-    stmt = insert_stmt.on_conflict_do_update(
-        index_elements=["table_id", "id"],
-        set_={
-            "data": insert_stmt.excluded.data,
-            "updated_by": current_user.email,
-            "updated_at": now,
-        },
-    ).returning(Document)
-
-    result = await db.execute(stmt)
-    docs = result.scalars().all()
-    await db.commit()
-
-    doc_responses = [
-        SDKDocumentData(
-            id=doc.id,
-            table_id=str(doc.table_id),
-            data=doc.data,
-            created_at=doc.created_at.isoformat(),
-            updated_at=doc.updated_at.isoformat(),
-        )
-        for doc in docs
-    ]
-    return SDKBatchDocumentResponse(documents=doc_responses, count=len(doc_responses))
-
-
-@router.post(
-    "/tables/documents/delete/batch",
-    summary="Batch delete documents",
-)
-async def cli_delete_documents_batch(
-    request: SDKDocumentDeleteBatchRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKBatchDeleteResponse:
-    """Batch delete documents via SDK.
-
-    Returns the IDs of documents that were actually deleted.
-    Non-existent IDs are silently skipped.
-    """
-    from sqlalchemy import delete
-
-    from src.models.orm.tables import Document
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_table_for_sdk(db, request.table, org_uuid, app_uuid)
-
-    if not table:
-        return SDKBatchDeleteResponse(deleted_ids=[], count=0)
-
-    stmt = (
-        delete(Document)
-        .where(Document.table_id == table.id, Document.id.in_(request.doc_ids))
-        .returning(Document.id)
-    )
-    result = await db.execute(stmt)
-    deleted_ids = [row[0] for row in result.fetchall()]
-    await db.commit()
-
-    return SDKBatchDeleteResponse(deleted_ids=deleted_ids, count=len(deleted_ids))
-
-
-@router.post(
-    "/tables/documents/query",
-    summary="Query documents",
-)
-async def cli_query_documents(
-    request: SDKDocumentQueryRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> SDKDocumentList:
-    """Query documents with filtering and pagination via SDK.
-
-    Supports advanced filter operators:
-    - Simple equality: {"status": "active"}
-    - Comparison: {"amount": {"gt": 100, "lte": 1000}}
-    - LIKE patterns: {"name": {"like": "%acme%"}} or {"name": {"ilike": "%ACME%"}}
-    - IN lists: {"category": {"in": ["a", "b"]}}
-    - NULL checks: {"deleted_at": {"is_null": true}}
-    """
-    from src.models.orm.tables import Document
-    from sqlalchemy import func
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_table_for_sdk(db, request.table, org_uuid, app_uuid)
-
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{request.table}' not found",
-        )
-
-    # Build document query
-    doc_query = select(Document).where(Document.table_id == table.id)
-
-    # Apply where filters with operator support
-    doc_query = _build_jsonb_filters(doc_query, request.where, Document.data)
-
-    # Get total count (skip if caller doesn't need it)
-    if not request.skip_count:
-        count_query = doc_query.with_only_columns(func.count()).order_by(None)
-        count_result = await db.execute(count_query)
-        total = count_result.scalar() or 0
-    else:
-        total = -1
-
-    # Apply ordering
-    if request.order_by:
-        order_expr = Document.data[request.order_by].astext
-        if request.order_dir == "desc":
-            order_expr = order_expr.desc()
-        doc_query = doc_query.order_by(order_expr)
-    else:
-        if request.order_dir == "desc":
-            doc_query = doc_query.order_by(Document.created_at.desc())
-        else:
-            doc_query = doc_query.order_by(Document.created_at.asc())
-
-    # Apply pagination
-    doc_query = doc_query.offset(request.offset).limit(request.limit)
-
-    doc_result = await db.execute(doc_query)
-    documents = doc_result.scalars().all()
-
-    return SDKDocumentList(
-        documents=[
-            SDKDocumentData(
-                id=d.id,
-                table_id=str(d.table_id),
-                data=d.data,
-                created_at=d.created_at.isoformat(),
-                updated_at=d.updated_at.isoformat(),
-            )
-            for d in documents
-        ],
-        total=total,
-        limit=request.limit,
-        offset=request.offset,
-    )
-
-
-@router.post(
-    "/tables/documents/count",
-    summary="Count documents",
-)
-async def cli_count_documents(
-    request: SDKDocumentCountRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> int:
-    """Count documents matching filter via SDK.
-
-    Supports the same filter operators as query.
-    """
-    from src.models.orm.tables import Document
-    from sqlalchemy import func
-
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    app_uuid = UUID(request.app) if request.app else None
-
-    table = await _find_table_for_sdk(db, request.table, org_uuid, app_uuid)
-
-    if not table:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{request.table}' not found",
-        )
-
-    # Build count query
-    count_query = select(func.count()).where(Document.table_id == table.id)
-
-    # Apply where filters with operator support
-    count_query = _build_jsonb_filters(count_query, request.where, Document.data)
-
-    count_result = await db.execute(count_query)
-    return count_result.scalar() or 0
