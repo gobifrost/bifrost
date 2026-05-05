@@ -210,7 +210,7 @@ Do not use `bifrost api POST /api/workflows/execute` directly — it returns imm
 
 ### Python Workflow Dependencies
 
-Workflow `.py` files run on platform workers, which install Python packages from a single workspace-wide `requirements.txt`. App `app.yaml` `dependencies:` are for npm packages only — they have nothing to do with Python imports.
+Workflow `.py` files run on platform workers, which install Python packages from a single workspace-wide `requirements.txt`. App npm dependencies (`bifrost apps update --deps`) are unrelated — those are browser-side packages bundled into apps, not Python imports.
 
 If a workflow imports a third-party Python package, that package must be in `requirements.txt` and the workers must have recycled to pick it up. Symptom of a missing dep: `ModuleNotFoundError: No module named 'reportlab'` (or whichever package).
 
@@ -336,7 +336,7 @@ Before writing any app code, design what you're building.
 3. **Workflow hooks:** Always use UUIDs, never names — `useWorkflowQuery("uuid-here")`. Resolve UUIDs with `bifrost workflows list --json` or `bifrost workflows get <ref> --json`.
 4. **Fixed-height container:** Your app renders in a fixed-height box — manage your own scrolling (see [app-patterns.md](app-patterns.md) "Custom components" for layout patterns).
 5. **Styling:** Tailwind v4 with the full feature set — arbitrary values (`bg-[color:var(--x)]`, `lg:grid-cols-[1fr_360px]`), `@apply` and `@layer components` in `styles.css`, optional per-app `tailwind.config.{ts,js,mjs,cjs}` for custom theme tokens. Dark mode via `.dark` selector. See [app-patterns.md](app-patterns.md) §10.
-6. **Dependencies:** Declare npm packages in `app.yaml` (max 20, loaded from esm.sh at runtime — no `package.json` required).
+6. **Dependencies:** Declare npm packages with `bifrost apps create --deps`, `bifrost apps update <ref> --deps`, or `bifrost apps set-deps <ref> --deps` (max 20, loaded from esm.sh at runtime — no `package.json` required at runtime, though `--deps @package.json` works for one-shot import).
 7. **Default exports:** Every page file MUST have a default export. Components under `components/` may be default or named; the bundler detects which.
 8. **Migrating an older app:** run `bifrost migrate-imports` from the workspace root, then **review the diff** before applying. See [import-patterns.md](import-patterns.md) "Migration notes".
 
@@ -389,7 +389,7 @@ After writing all app files, verify:
 
 1. `_layout.tsx` exists and uses `<Outlet />`
 2. `pages/index.tsx` exists
-3. Every npm import matches an entry in `app.yaml` dependencies (see [import-patterns.md](import-patterns.md) "User npm deps"; pre-included packages exempt).
+3. Every npm import matches an entry in the app's declared dependencies (`bifrost apps get <ref> --json | jq .dependencies`; see [import-patterns.md](import-patterns.md) "User npm deps"; pre-included packages exempt).
 4. Every `useWorkflowQuery`/`useWorkflowMutation` uses a valid UUID returned by `bifrost workflows get <ref>` or visible in `bifrost workflows list --json` — do NOT grep `.bifrost/workflows.yaml`.
 5. Every `<PascalCase />` JSX tag and every referenced identifier has a matching import — no auto-injection. Cross-reference against [import-patterns.md](import-patterns.md):
    - Platform names → `"bifrost"`

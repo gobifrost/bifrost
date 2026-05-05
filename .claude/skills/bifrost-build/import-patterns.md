@@ -10,7 +10,7 @@ Every name referenced in app code needs an explicit import. There is no auto-inj
 | Lucide icons | `"lucide-react"` | ~1000 `<Icon />` components (Phone, Mail, ChevronRight, …) |
 | React Router | `"react-router-dom"` | `Link`, `NavLink`, `Navigate`, `useNavigate`, `Outlet`, etc. |
 | User components | Relative path | Files under `components/*.tsx` in the current app |
-| User npm deps | Bare specifier | Packages declared in `app.yaml` dependencies (resolved via esm.sh at runtime) |
+| User npm deps | Bare specifier | Packages declared on the app via `bifrost apps update --deps` / `bifrost apps set-deps` (resolved via esm.sh at runtime) |
 
 ## Rules
 
@@ -58,12 +58,16 @@ import { format } from "date-fns";
 import { LineChart, Line, XAxis, YAxis } from "recharts";
 ```
 
-- Declared in `app.yaml` under `dependencies:` (max 20).
+- Declared on the `Application` record (max 20). Inspect with `bifrost apps get <ref> --json | jq .dependencies`; modify with one of:
+  - `bifrost apps create --slug my-app --name "My App" --deps '{"recharts":"^2.12.0"}'`
+  - `bifrost apps create --slug my-app --name "My App" --deps @package.json` (extracts the `dependencies` block)
+  - `bifrost apps update <ref> --deps '{"recharts":"^2.12.0"}'`
+  - `bifrost apps set-deps <ref> --deps '{"recharts":"^2.12.0"}'` (full replace)
 - Resolved at runtime via the host's import map pointing at esm.sh.
 - No `package.json` / no `npm install` / no `node_modules` in the workspace.
-- Always declare the dep in `app.yaml` BEFORE writing the import — otherwise the browser import map won't include it and the module load 404s.
+- Always declare the dep on the app record BEFORE writing the import — otherwise the browser import map won't include it and the module load 404s.
 
-Pre-included (do NOT declare in `app.yaml`): `react`, `react-dom`, `react-router-dom`, `lucide-react`, `clsx`, `tailwind-merge`, `date-fns`.
+Pre-included (do NOT declare): `react`, `react-dom`, `react-router-dom`, `lucide-react`, `clsx`, `tailwind-merge`, `date-fns`.
 
 ## Full example — a page combining every source
 
@@ -121,7 +125,7 @@ export default function ClientsPage() {
 - Do NOT import icons from `"bifrost"`. Use `"lucide-react"`.
 - Do NOT write `import X from "bifrost/Button"` — `"bifrost"` is a single module with named exports.
 - Do NOT rely on auto-injection — every `<PascalCase>` tag and every referenced identifier needs an explicit import.
-- Do NOT add a `package.json` or `node_modules/` to the app directory — user deps are declared in `app.yaml` and resolved via esm.sh.
+- Do NOT add a `package.json` or `node_modules/` to the app directory at runtime — user deps live on the `Application` record (set via `bifrost apps update --deps` / `bifrost apps set-deps`) and resolve via esm.sh. (`--deps @package.json` is a one-shot import helper, not a per-app config file.)
 - Do NOT wrap the app in your own `<BrowserRouter>` — the shell already does this with the correct `basename`.
 
 ## Migration notes
