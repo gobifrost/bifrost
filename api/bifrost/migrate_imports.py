@@ -206,14 +206,14 @@ def _render_named_import(specs: list[_ParsedSpecifier], module: str) -> str:
 def _is_app_dir(p: pathlib.Path) -> bool:
     if not p.is_dir():
         return False
-    return (p / "_layout.tsx").exists() or (p / "app.yaml").exists()
+    return (p / "_layout.tsx").exists()
 
 
 def discover_apps(root: pathlib.Path) -> list[pathlib.Path]:
     """
     Given a root path:
       - If root is an app dir, return [root].
-      - If root contains apps/<something>/ with _layout.tsx or app.yaml, return those.
+      - If root contains apps/<something>/ with _layout.tsx, return those.
       - Otherwise, treat root itself as the app (may contain zero TSX files; caller handles).
     """
     root = root.resolve()

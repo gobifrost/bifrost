@@ -35,7 +35,7 @@ def _write(p: pathlib.Path, content: str) -> None:
 def _make_app(tmp_path: pathlib.Path, components: dict[str, str] | None = None) -> pathlib.Path:
     """Create a minimal app dir at tmp_path/apps/my-app. Returns the app dir."""
     app_dir = tmp_path / "apps" / "my-app"
-    _write(app_dir / "app.yaml", "name: my-app\n")
+    _write(app_dir / "_layout.tsx", "export default () => null;\n")
     for name, body in (components or {}).items():
         _write(app_dir / "components" / f"{name}.tsx", body)
     return app_dir
@@ -261,7 +261,7 @@ def test_discover_apps_single_app(tmp_path: pathlib.Path) -> None:
 def test_discover_apps_workspace(tmp_path: pathlib.Path) -> None:
     app1 = tmp_path / "apps" / "a"
     app2 = tmp_path / "apps" / "b"
-    _write(app1 / "app.yaml", "name: a\n")
+    _write(app1 / "_layout.tsx", "export default () => null;\n")
     _write(app2 / "_layout.tsx", "export default () => null;\n")
     found = discover_apps(tmp_path)
     assert sorted([p.name for p in found]) == ["a", "b"]
