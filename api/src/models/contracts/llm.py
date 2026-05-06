@@ -117,10 +117,11 @@ class EmbeddingConfigResponse(BaseModel):
     """Embedding configuration response (API key is never returned)."""
 
     model: str = "text-embedding-3-small"
-    dimensions: int = 1536
+    dimensions: int = 1536  # Last-known vector size; informational only.
+    endpoint: str | None = None  # Resolved endpoint (dedicated, inherited, or null = OpenAI default).
     is_configured: bool = True
     api_key_set: bool = False
-    uses_llm_key: bool = False  # True if using LLM config's OpenAI key
+    uses_llm_key: bool = False  # True if falling back to LLM provider's key.
 
 
 class EmbeddingConfigRequest(BaseModel):
@@ -128,17 +129,41 @@ class EmbeddingConfigRequest(BaseModel):
 
     api_key: str | None = Field(
         None,
-        description="OpenAI API key for embeddings. Omit to preserve existing key.",
+        description="API key for embeddings. Omit to preserve existing key.",
     )
     model: str = Field(
         "text-embedding-3-small",
-        description="Embedding model (text-embedding-3-small or text-embedding-3-large)",
+        description="Embedding model identifier",
     )
-    dimensions: int = Field(
-        1536,
-        ge=256,
-        le=3072,
-        description="Embedding dimensions (1536 for small, up to 3072 for large)",
+    endpoint: str | None = Field(
+        None,
+        description="Custom OpenAI-compatible endpoint URL. Null/empty means OpenAI default.",
+    )
+    confirm_reindex: bool = Field(
+        default=False,
+        description=(
+            "When the new model's vector dimension differs from the saved one and "
+            "knowledge_store has existing rows, the first POST returns "
+            "needs_reindex_confirmation. Re-POST with this flag set to true to "
+            "persist the new config and trigger a reindex."
+        ),
+    )
+
+
+class EmbeddingTestRequest(BaseModel):
+    """Request to test an embedding configuration before saving."""
+
+    api_key: str | None = Field(
+        None,
+        description="API key to test. Omit to use the saved key.",
+    )
+    model: str = Field(
+        "text-embedding-3-small",
+        description="Embedding model identifier",
+    )
+    endpoint: str | None = Field(
+        None,
+        description="Endpoint URL to test against. Null/empty means OpenAI default.",
     )
 
 
@@ -148,5 +173,55 @@ class EmbeddingTestResponse(BaseModel):
     success: bool
     message: str
     dimensions: int | None = None
+    models: list[str] | None = None  # Embedding-capable model ids when endpoint exposes them.
+
+
+class EmbeddingReindexResponse(BaseModel):
+    """Response from triggering an on-demand embedding reindex."""
+
+    notification_id: str = Field(
+        ...,
+        description=(
+            "Notification ID — subscribe via WebSocket on `notification:{user_id}` "
+            "to track progress, cancel via DELETE /api/notifications/{id}."
+        ),
+    )
+    row_count: int = Field(
+        ...,
+        description="Number of knowledge_store rows that will be re-embedded.",
+    )
+
+
+class EmbeddingConfigSaveResponse(BaseModel):
+    """
+    Response from POST /embedding-config.
+
+    Two shapes:
+    - Save persisted: `saved=True`, `config` populated, `notification_id` set if
+      a reindex was kicked off (dim change confirmed).
+    - Confirmation needed: `saved=False`, `needs_reindex_confirmation=True`,
+      and the dim-change details populated. Re-POST with `confirm_reindex: true`
+      to proceed.
+    """
+
+    saved: bool
+    config: EmbeddingConfigResponse | None = None
+    notification_id: str | None = Field(
+        default=None,
+        description="Set when a reindex was triggered alongside the save.",
+    )
+    needs_reindex_confirmation: bool = False
+    reason: str | None = Field(
+        default=None,
+        description="Why confirmation is required (e.g. 'dim_change').",
+    )
+    old_dim: int | None = None
+    new_dim: int | None = None
+    old_model: str | None = None
+    new_model: str | None = None
+    row_count: int | None = Field(
+        default=None,
+        description="Rows that would be re-embedded if confirmed.",
+    )
 
 

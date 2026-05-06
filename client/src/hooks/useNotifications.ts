@@ -19,9 +19,6 @@ import {
 	dismissNotification as dismissNotificationApi,
 } from "@/services/notifications";
 
-// Auto-remove completed notifications after this delay
-const AUTO_DISMISS_DELAY = 5000; // 5 seconds
-
 export function useNotifications() {
 	const { user, isAuthenticated } = useAuth();
 
@@ -80,38 +77,6 @@ export function useNotifications() {
 			}
 		};
 	}, [isAuthenticated, user?.id, user?.isSuperuser]);
-
-	// Auto-dismiss completed notifications after delay
-	useEffect(() => {
-		const completedNotifications = notifications.filter(
-			isCompleteNotification,
-		);
-
-		const timers = completedNotifications.map((notification) => {
-			// Calculate time since completion
-			const completedAt = new Date(notification.updatedAt).getTime();
-			const now = Date.now();
-			const elapsed = now - completedAt;
-
-			// If already past the delay, dismiss immediately
-			if (elapsed >= AUTO_DISMISS_DELAY) {
-				removeNotification(notification.id);
-				return null;
-			}
-
-			// Otherwise, set timer for remaining time
-			const remainingTime = AUTO_DISMISS_DELAY - elapsed;
-			return setTimeout(() => {
-				removeNotification(notification.id);
-			}, remainingTime);
-		});
-
-		return () => {
-			timers.forEach((timer) => {
-				if (timer) clearTimeout(timer);
-			});
-		};
-	}, [notifications, removeNotification]);
 
 	// Dismiss handler
 	const dismiss = useCallback(

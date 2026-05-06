@@ -63,8 +63,13 @@ class KnowledgeStore(Base):
         "metadata", JSONB, nullable=False, default=dict
     )
 
-    # Vector embedding (1536 dimensions for text-embedding-3-small)
-    embedding: Mapped[list] = mapped_column(Vector(1536), nullable=False)
+    # Vector embedding — unconstrained dim so any embedding model works.
+    # Search relies on the *currently configured* embedder being the one used
+    # at store time (otherwise stored vectors live in a different vector space
+    # than the query, and similarity is meaningless even at matching dims).
+    # No fixed-dim ANN index because pgvector's HNSW/IVFFlat both require a
+    # known dimension; sequential scan is fine at our scale.
+    embedding: Mapped[list] = mapped_column(Vector(), nullable=False)
 
     # Audit
     created_at: Mapped[datetime] = mapped_column(
