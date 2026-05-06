@@ -1412,21 +1412,20 @@ function EmbeddingConfigCard({
 						<DialogHeader>
 							<DialogTitle>Re-embed knowledge store?</DialogTitle>
 							<DialogDescription>
-								The new model produces{" "}
-								<strong>{reindexConfirm?.new_dim ?? "?"}-dim</strong>{" "}
-								vectors but{" "}
 								{reindexConfirm?.row_count ?? 0} existing row
-								{reindexConfirm?.row_count === 1 ? "" : "s"} were
-								embedded with{" "}
-								<strong>{reindexConfirm?.old_dim ?? "?"}-dim</strong>{" "}
-								vectors{" "}
+								{reindexConfirm?.row_count === 1 ? "" : "s"}{" "}
+								{reindexConfirm?.row_count === 1 ? "is" : "are"}{" "}
+								embedded with vectors that don't match the new
+								model's{" "}
+								<strong>{reindexConfirm?.new_dim ?? "?"}-dim</strong>{" "}
+								output
 								{reindexConfirm?.old_model
-									? `(${reindexConfirm.old_model})`
+									? ` (previously ${reindexConfirm.old_model})`
 									: ""}
-								. Search will not work against the existing rows
-								until they are re-embedded with the new model.
-								Re-embedding runs in the background and you can
-								cancel from the notification center.
+								. Search won't work against those rows until
+								they're re-embedded. Re-embedding runs in the
+								background and you can cancel from the
+								notification center.
 							</DialogDescription>
 						</DialogHeader>
 						<DialogFooter>

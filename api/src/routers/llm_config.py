@@ -390,7 +390,9 @@ async def set_embedding_config(
     from src.models.orm import SystemConfig
     from src.services.embeddings.base import EmbeddingConfig as EmbeddingClientConfig
     from src.services.embeddings.openai_client import OpenAIEmbeddingClient
-    from src.services.embeddings.reindex import count_knowledge_rows
+    from src.services.embeddings.reindex import (
+        count_knowledge_rows_at_other_dims,
+    )
     from src.services.notification_service import get_notification_service
 
     settings = get_settings()
@@ -488,30 +490,31 @@ async def set_embedding_config(
     # to old rows when dims differ, and even at matching dims the two models
     # live in different vector spaces (similarity scores are noise).
     #
-    # Reindex policy:
-    #   - dim matches saved dim → skip reindex (deliberate trade-off; the
-    #     "Reindex knowledge store" button is right there if the user wants it).
-    #   - dim differs AND rows > 0 → require confirm_reindex=true; otherwise
-    #     return needs_reindex_confirmation and don't persist.
+    # Reindex policy: ground the prompt in *DB state*, not config diff.
+    # If the table has any row at a dim other than the new one — whether
+    # left over from a previous failed reindex, a never-completed migration,
+    # or a config that was saved without recording its dim — fire the
+    # confirmation. The previous config-vs-config diff missed the resave
+    # case (issue #198): same config saved twice with stale rows still in
+    # the table never prompted.
     old_dim: int | None = None
     old_model: str | None = None
     if existing and existing.value_json:
         old_dim = existing.value_json.get("dimensions")
         old_model = existing.value_json.get("model")
 
-    dim_changed = old_dim is not None and old_dim != dimensions
-    if dim_changed and not request.confirm_reindex:
-        row_count = await count_knowledge_rows()
-        if row_count > 0:
+    if not request.confirm_reindex:
+        stale_count = await count_knowledge_rows_at_other_dims(dimensions)
+        if stale_count > 0:
             return EmbeddingConfigSaveResponse(
                 saved=False,
                 needs_reindex_confirmation=True,
-                reason="dim_change",
+                reason="stale_rows",
                 old_dim=old_dim,
                 new_dim=dimensions,
                 old_model=old_model,
                 new_model=request.model,
-                row_count=row_count,
+                row_count=stale_count,
             )
 
     config_data: dict[str, object] = {
@@ -553,10 +556,12 @@ async def set_embedding_config(
         uses_llm_key=False,
     )
 
-    # Trigger reindex when the user confirmed a dim change.
+    # Trigger reindex when the user clicked through the confirmation dialog.
+    # The gate above already verified there are stale rows at non-`dimensions`
+    # dims; re-check here so we don't fire a notification for a clean DB.
     notification_id: str | None = None
-    if dim_changed and request.confirm_reindex:
-        row_count = await count_knowledge_rows()
+    if request.confirm_reindex:
+        row_count = await count_knowledge_rows_at_other_dims(dimensions)
         if row_count > 0:
             notif_service = get_notification_service()
             notification = await notif_service.create_notification(

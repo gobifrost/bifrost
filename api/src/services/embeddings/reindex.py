@@ -94,6 +94,7 @@ async def run_reindex(notification_id: str) -> None:
     processed = 0
     total = 0
     failed_batches = 0
+    total_batches = 0
 
     try:
         async with get_db_context() as db:
@@ -128,6 +129,8 @@ async def run_reindex(notification_id: str) -> None:
 
             client = await get_embedding_client(db)
 
+            total_batches = (total + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE
+
             # Embedding API calls happen in batches (round-trip efficiency).
             # Progress notifications fire per-row so the UI sees real-time motion.
             # Cancellation is checked between embed-batches.
@@ -145,6 +148,7 @@ async def run_reindex(notification_id: str) -> None:
                                 "processed": processed,
                                 "total": total,
                                 "failed_batches": failed_batches,
+                                "total_batches": total_batches,
                                 "cancelled": True,
                             },
                         ),
@@ -174,7 +178,10 @@ async def run_reindex(notification_id: str) -> None:
                         f"failed: {e}"
                     )
                     # Skip the batch; the rows keep their old embeddings.
-                    processed += len(batch_rows)
+                    # Do NOT bump `processed` — that counter reflects rows
+                    # whose embedding was actually rewritten. Bumping it on
+                    # failure produced the "Reindexed N/N" lie that hid the
+                    # original incident (issue #198).
                     await _push_progress(
                         notif_service, notification_id, processed, total
                     )
@@ -195,26 +202,50 @@ async def run_reindex(notification_id: str) -> None:
                         notif_service, notification_id, processed, total
                     )
 
-            await notif_service.update_notification(
-                notification_id,
-                NotificationUpdate(
-                    status=NotificationStatus.COMPLETED,
-                    description=(
-                        f"Reindexed {processed}/{total} rows."
-                        + (
-                            f" ({failed_batches} batches failed and were skipped.)"
-                            if failed_batches
-                            else ""
-                        )
+            # Terminal status reflects the real outcome:
+            #   all batches failed   → FAILED (no rows rewritten)
+            #   some batches failed  → COMPLETED, partial-state message
+            #   all batches succeeded → COMPLETED
+            if failed_batches and failed_batches >= total_batches:
+                await notif_service.update_notification(
+                    notification_id,
+                    NotificationUpdate(
+                        status=NotificationStatus.FAILED,
+                        error=(
+                            f"All {failed_batches} batches failed; no rows were "
+                            "re-embedded. Check scheduler logs and the embedding "
+                            "configuration."
+                        ),
+                        description=f"Reindex failed: 0/{total} rows re-embedded.",
+                        result={
+                            "processed": processed,
+                            "total": total,
+                            "failed_batches": failed_batches,
+                            "total_batches": total_batches,
+                        },
                     ),
-                    percent=100.0,
-                    result={
-                        "processed": processed,
-                        "total": total,
-                        "failed_batches": failed_batches,
-                    },
-                ),
-            )
+                )
+            else:
+                description = f"Reindexed {processed}/{total} rows."
+                if failed_batches:
+                    description += (
+                        f" ({failed_batches}/{total_batches} batches failed; "
+                        f"{total - processed} row(s) kept their old embedding.)"
+                    )
+                await notif_service.update_notification(
+                    notification_id,
+                    NotificationUpdate(
+                        status=NotificationStatus.COMPLETED,
+                        description=description,
+                        percent=100.0,
+                        result={
+                            "processed": processed,
+                            "total": total,
+                            "failed_batches": failed_batches,
+                            "total_batches": total_batches,
+                        },
+                    ),
+                )
 
     except Exception as e:
         logger.exception("Reindex job failed")
@@ -258,6 +289,35 @@ async def count_knowledge_rows() -> int:
         return cast(int, result.scalar_one())
 
 
+async def count_knowledge_rows_at_other_dims(target_dim: int) -> int:
+    """
+    Return the number of `knowledge_store` rows whose embedding dimension
+    is NOT ``target_dim``.
+
+    The embedding-config save gate uses this to ground its reindex prompt
+    in actual DB state instead of the persisted config, which closes two
+    holes:
+
+    1. **Resave with stale rows.** If the persisted config already says
+       3072 but the DB still has 1536-dim rows from before the previous
+       (failed) reindex, a config-vs-config diff would say "no change"
+       and skip the prompt. A DB-grounded check still fires.
+    2. **First save with no recorded ``dimensions``.** Same shape — the
+       diff has nothing to compare against and silently passes.
+    """
+    from sqlalchemy import func, text
+
+    async with get_db_context() as db:
+        # vector_dims() is a pgvector function; SQLAlchemy doesn't model it,
+        # so we drop down to a literal text expression.
+        result = await db.execute(
+            select(func.count()).where(
+                text("vector_dims(embedding) <> :td").bindparams(td=target_dim)
+            ).select_from(KnowledgeStore)
+        )
+        return cast(int, result.scalar_one())
+
+
 __all__ = [
     "EMBED_BATCH_SIZE",
     "run_reindex",
@@ -265,4 +325,5 @@ __all__ = [
     "mark_cancelled",
     "clear_cancel_flag",
     "count_knowledge_rows",
+    "count_knowledge_rows_at_other_dims",
 ]
