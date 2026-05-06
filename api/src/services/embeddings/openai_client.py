@@ -24,7 +24,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
 
     def __init__(self, config: EmbeddingConfig):
         super().__init__(config)
-        self._client = AsyncOpenAI(api_key=config.api_key)
+        self._client = AsyncOpenAI(api_key=config.api_key, base_url=config.endpoint or None)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """
@@ -49,10 +49,15 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
             texts = texts[:2048]
 
         try:
+            # Force `encoding_format="float"` rather than letting the SDK
+            # default to base64. Google AI Studio (and OpenRouter's pass-through
+            # to it) explicitly rejects base64 with a 200-shaped error body
+            # the SDK then silently turns into "No embedding data received".
+            # Plain floats work everywhere.
             response = await self._client.embeddings.create(
                 input=texts,
                 model=self.config.model,
-                dimensions=self.config.dimensions,
+                encoding_format="float",
             )
 
             # Sort by index to ensure order matches input

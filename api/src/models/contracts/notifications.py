@@ -22,6 +22,7 @@ class NotificationCategory(str, Enum):
     GITHUB_SYNC = "github_sync"  # Pull/push operations
     FILE_UPLOAD = "file_upload"  # File uploads from editor
     PACKAGE_INSTALL = "package_install"  # Package installations
+    EMBEDDING_REINDEX = "embedding_reindex"  # Re-embed knowledge_store rows after model swap
     SYSTEM = "system"  # System-level notifications
 
 

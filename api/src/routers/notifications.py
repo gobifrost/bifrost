@@ -99,13 +99,40 @@ async def dismiss_notification(
 
     Only the owner can dismiss their notification.
 
+    For embedding-reindex notifications that are still running, this also sets
+    the Redis cancellation flag the scheduler polls between batches — so the
+    reindex job stops cleanly with partial state rather than running to
+    completion after the notification is gone.
+
     Args:
         notification_id: Notification ID to dismiss
 
     Raises:
         404 if not found or not owned by user
     """
+    from src.models.contracts.notifications import (
+        NotificationCategory,
+        NotificationStatus,
+    )
+    from src.services.embeddings.reindex import mark_cancelled
+
     service = get_notification_service()
+
+    # Check if this is a running embedding-reindex BEFORE dismissing —
+    # we need the category and status to decide whether to set the cancel flag.
+    notification = await service.get_notification(notification_id)
+    if (
+        notification is not None
+        and notification.user_id == str(user.user_id)
+        and notification.category == NotificationCategory.EMBEDDING_REINDEX
+        and notification.status == NotificationStatus.RUNNING
+    ):
+        await mark_cancelled(notification_id)
+        # Don't dismiss the notification yet — the reindex job will flip it
+        # to CANCELLED with partial-state metadata, and the COMPLETED_TTL
+        # will let the user see the final state in the UI before it disappears.
+        return
+
     dismissed = await service.dismiss_notification(
         notification_id=notification_id,
         user_id=str(user.user_id),

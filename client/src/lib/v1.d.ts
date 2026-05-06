@@ -3472,22 +3472,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4206,6 +4206,11 @@ export interface paths {
          * @description Dismiss (delete) a notification.
          *
          *     Only the owner can dismiss their notification.
+         *
+         *     For embedding-reindex notifications that are still running, this also sets
+         *     the Redis cancellation flag the scheduler polls between batches — so the
+         *     reindex job stops cleanly with partial state rather than running to
+         *     completion after the notification is gone.
          *
          *     Args:
          *         notification_id: Notification ID to dismiss
@@ -5183,7 +5188,8 @@ export interface paths {
          * @description Get current embedding configuration.
          *
          *     Returns the configuration and indicates whether it uses a dedicated key
-         *     or falls back to the LLM provider's OpenAI key.
+         *     or falls back to the LLM provider's key. The `endpoint` field is the
+         *     resolved endpoint (dedicated → inherited LLM → null = OpenAI default).
          *     Requires platform admin access.
          */
         get: operations["get_embedding_config_endpoint_api_admin_llm_embedding_config_get"];
@@ -5192,8 +5198,14 @@ export interface paths {
          * Set Embedding Config
          * @description Set dedicated embedding configuration.
          *
-         *     This allows using a separate OpenAI key for embeddings,
-         *     useful when the main LLM provider is Anthropic.
+         *     Validates the configuration by running a live embedding call before
+         *     persisting; captures the returned vector dimensions.
+         *
+         *     If the new model's output dimension differs from the currently-saved
+         *     dimension AND knowledge_store has existing rows, the response carries
+         *     `needs_reindex_confirmation=True` and persistence is skipped — re-POST
+         *     with `confirm_reindex: true` to commit the new config and trigger a
+         *     reindex via the scheduler.
          *     Requires platform admin access.
          */
         post: operations["set_embedding_config_api_admin_llm_embedding_config_post"];
@@ -5211,6 +5223,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/llm/embedding-reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Embedding Reindex
+         * @description Re-embed every knowledge_store row against the currently-saved embedding config.
+         *
+         *     Returns immediately with a notification_id; progress is delivered over the
+         *     `notification:{user_id}` WebSocket channel. Cancel via
+         *     DELETE /api/notifications/{notification_id}.
+         *
+         *     No-op when knowledge_store is empty (returns row_count=0 and no notification
+         *     is created).
+         *     Requires platform admin access.
+         */
+        post: operations["trigger_embedding_reindex_api_admin_llm_embedding_reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/llm/embedding-test": {
         parameters: {
             query?: never;
@@ -5222,11 +5262,18 @@ export interface paths {
         put?: never;
         /**
          * Test Embedding Connection
-         * @description Test embedding connection with provided credentials.
+         * @description Validate credentials and list embedding-capable models.
          *
-         *     Tests the connection without saving the configuration.
-         *     If no API key is provided, uses the saved embedding key.
-         *     Requires platform admin access.
+         *     Symmetric with the LLM /test endpoint: this is the "does the key work,
+         *     what models are available" call. It does NOT issue an embedding — that's
+         *     Save's job. Save runs the real embeddings.create() against the chosen
+         *     model and rejects with 400 on failure.
+         *
+         *     Credential resolution order:
+         *     1. request.api_key + request.endpoint when provided
+         *     2. saved dedicated embedding config (decrypt stored key, use stored endpoint)
+         *     3. LLM provider config — only when provider is openai (Anthropic doesn't
+         *        have embeddings). Inherits both key and endpoint.
          */
         post: operations["test_embedding_connection_api_admin_llm_embedding_test_post"];
         delete?: never;
@@ -11856,21 +11903,26 @@ export interface components {
         EmbeddingConfigRequest: {
             /**
              * Api Key
-             * @description OpenAI API key for embeddings. Omit to preserve existing key.
+             * @description API key for embeddings. Omit to preserve existing key.
              */
             api_key?: string | null;
             /**
              * Model
-             * @description Embedding model (text-embedding-3-small or text-embedding-3-large)
+             * @description Embedding model identifier
              * @default text-embedding-3-small
              */
             model: string;
             /**
-             * Dimensions
-             * @description Embedding dimensions (1536 for small, up to 3072 for large)
-             * @default 1536
+             * Endpoint
+             * @description Custom OpenAI-compatible endpoint URL. Null/empty means OpenAI default.
              */
-            dimensions: number;
+            endpoint?: string | null;
+            /**
+             * Confirm Reindex
+             * @description When the new model's vector dimension differs from the saved one and knowledge_store has existing rows, the first POST returns needs_reindex_confirmation. Re-POST with this flag set to true to persist the new config and trigger a reindex.
+             * @default false
+             */
+            confirm_reindex: boolean;
         };
         /**
          * EmbeddingConfigResponse
@@ -11887,6 +11939,8 @@ export interface components {
              * @default 1536
              */
             dimensions: number;
+            /** Endpoint */
+            endpoint?: string | null;
             /**
              * Is Configured
              * @default true
@@ -11904,6 +11958,88 @@ export interface components {
             uses_llm_key: boolean;
         };
         /**
+         * EmbeddingConfigSaveResponse
+         * @description Response from POST /embedding-config.
+         *
+         *     Two shapes:
+         *     - Save persisted: `saved=True`, `config` populated, `notification_id` set if
+         *       a reindex was kicked off (dim change confirmed).
+         *     - Confirmation needed: `saved=False`, `needs_reindex_confirmation=True`,
+         *       and the dim-change details populated. Re-POST with `confirm_reindex: true`
+         *       to proceed.
+         */
+        EmbeddingConfigSaveResponse: {
+            /** Saved */
+            saved: boolean;
+            config?: components["schemas"]["EmbeddingConfigResponse"] | null;
+            /**
+             * Notification Id
+             * @description Set when a reindex was triggered alongside the save.
+             */
+            notification_id?: string | null;
+            /**
+             * Needs Reindex Confirmation
+             * @default false
+             */
+            needs_reindex_confirmation: boolean;
+            /**
+             * Reason
+             * @description Why confirmation is required (e.g. 'dim_change').
+             */
+            reason?: string | null;
+            /** Old Dim */
+            old_dim?: number | null;
+            /** New Dim */
+            new_dim?: number | null;
+            /** Old Model */
+            old_model?: string | null;
+            /** New Model */
+            new_model?: string | null;
+            /**
+             * Row Count
+             * @description Rows that would be re-embedded if confirmed.
+             */
+            row_count?: number | null;
+        };
+        /**
+         * EmbeddingReindexResponse
+         * @description Response from triggering an on-demand embedding reindex.
+         */
+        EmbeddingReindexResponse: {
+            /**
+             * Notification Id
+             * @description Notification ID — subscribe via WebSocket on `notification:{user_id}` to track progress, cancel via DELETE /api/notifications/{id}.
+             */
+            notification_id: string;
+            /**
+             * Row Count
+             * @description Number of knowledge_store rows that will be re-embedded.
+             */
+            row_count: number;
+        };
+        /**
+         * EmbeddingTestRequest
+         * @description Request to test an embedding configuration before saving.
+         */
+        EmbeddingTestRequest: {
+            /**
+             * Api Key
+             * @description API key to test. Omit to use the saved key.
+             */
+            api_key?: string | null;
+            /**
+             * Model
+             * @description Embedding model identifier
+             * @default text-embedding-3-small
+             */
+            model: string;
+            /**
+             * Endpoint
+             * @description Endpoint URL to test against. Null/empty means OpenAI default.
+             */
+            endpoint?: string | null;
+        };
+        /**
          * EmbeddingTestResponse
          * @description Response from testing embedding configuration.
          */
@@ -11914,6 +12050,8 @@ export interface components {
             message: string;
             /** Dimensions */
             dimensions?: number | null;
+            /** Models */
+            models?: string[] | null;
         };
         /**
          * EndpointExecuteResponse
@@ -15829,7 +15967,7 @@ export interface components {
          * @description Categories for grouping notifications.
          * @enum {string}
          */
-        NotificationCategory: "github_setup" | "github_sync" | "file_upload" | "package_install" | "system";
+        NotificationCategory: "github_setup" | "github_sync" | "file_upload" | "package_install" | "embedding_reindex" | "system";
         /**
          * NotificationListResponse
          * @description Response containing list of notifications.
@@ -26206,7 +26344,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -26239,7 +26377,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -26272,7 +26410,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -26305,7 +26443,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29161,7 +29299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EmbeddingConfigResponse"];
+                    "application/json": components["schemas"]["EmbeddingConfigSaveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -29193,6 +29331,26 @@ export interface operations {
             };
         };
     };
+    trigger_embedding_reindex_api_admin_llm_embedding_reindex_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingReindexResponse"];
+                };
+            };
+        };
+    };
     test_embedding_connection_api_admin_llm_embedding_test_post: {
         parameters: {
             query?: never;
@@ -29202,7 +29360,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EmbeddingConfigRequest"];
+                "application/json": components["schemas"]["EmbeddingTestRequest"];
             };
         };
         responses: {

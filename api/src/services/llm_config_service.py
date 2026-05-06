@@ -230,22 +230,22 @@ class LLMConfigService:
 
     async def test_connection(self) -> LLMTestResult:
         """
-        Test connection to the configured LLM provider.
+        Validate credentials and list available models.
 
-        Returns:
-            LLMTestResult with success status and available models
+        Symmetric with the embedding /test endpoint: this confirms the key
+        reaches the provider and returns a model list, but does NOT issue a
+        completion. The completion gate runs at Save time (see
+        `verify_completion`), which is the action that persists.
         """
         from src.services.llm.factory import get_llm_config
 
         try:
-            # Get and validate config
             config = await get_llm_config(self.session)
 
-            # Try to create a minimal completion to test the connection
             if config.provider == "openai":
-                return await self._test_openai(config.api_key, config.model, config.endpoint)
+                return await self._list_openai(config.api_key, config.endpoint)
             elif config.provider == "anthropic":
-                return await self._test_anthropic(config.api_key, config.model, config.endpoint)
+                return await self._list_anthropic(config.api_key, config.endpoint)
             else:
                 return LLMTestResult(
                     success=False,
@@ -258,158 +258,175 @@ class LLMConfigService:
             logger.error(f"LLM connection test failed: {e}")
             return LLMTestResult(success=False, message=f"Connection test failed: {e}")
 
-    async def _test_openai(self, api_key: str, model: str, endpoint: str | None = None) -> LLMTestResult:
-        """Test OpenAI-compatible connection and verify chat completions work.
-
-        List-models succeeds on many keys that can't actually complete chats
-        (e.g. OpenAI project-scoped keys without explicit model permissions,
-        which return "User not found" on ``/v1/chat/completions``). We run a
-        1-token completion here to catch that before an admin goes and runs
-        a backfill against a key that silently fails every real call.
+    async def verify_completion(self) -> LLMTestResult:
         """
+        Issue a 1-token completion against the saved config to confirm the
+        chosen model actually works for inference. Called by /config Save.
+
+        A key may list models fine but be rejected on chat completions
+        (project-scoped keys, missing model permissions). Without this gate,
+        Save would persist a broken config.
+        """
+        from src.services.llm.factory import get_llm_config
+
+        try:
+            config = await get_llm_config(self.session)
+
+            if config.provider == "openai":
+                return await self._complete_openai(
+                    config.api_key, config.model, config.endpoint
+                )
+            elif config.provider == "anthropic":
+                return await self._complete_anthropic(
+                    config.api_key, config.model, config.endpoint
+                )
+            else:
+                return LLMTestResult(
+                    success=False,
+                    message=f"Unknown provider: {config.provider}",
+                )
+
+        except ValueError as e:
+            return LLMTestResult(success=False, message=str(e))
+        except Exception as e:
+            logger.error(f"LLM completion verify failed: {e}")
+            return LLMTestResult(success=False, message=f"Completion test failed: {e}")
+
+    async def _list_openai(self, api_key: str, endpoint: str | None = None) -> LLMTestResult:
+        """List models from an OpenAI-compatible endpoint."""
         try:
             from openai import AsyncOpenAI
 
             client = AsyncOpenAI(api_key=api_key, base_url=endpoint or None)
-
             endpoint_label = endpoint or "https://api.openai.com/v1"
 
-            # Try to list models (some custom endpoints may not support this)
-            model_infos: list[LLMModelInfo] = []
-            model_available = False
             try:
                 models_response = await client.models.list()
-
-                all_model_ids: list[str] = []
-                for m in sorted(models_response.data, key=lambda x: x.id):
-                    all_model_ids.append(m.id)
-                    model_infos.append(LLMModelInfo(id=m.id, display_name=m.id))
-
-                model_available = model in all_model_ids
-            except Exception as e:
-                error_str = str(e).lower()
-                # Auth errors should fail the connection test, not be silently swallowed
-                if "401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str or "authentication" in error_str or "invalid" in error_str:
-                    raise  # Re-raise to outer handler which returns success=False
-                logger.info(f"Model listing not supported at {endpoint_label}: {e}")
-
-            # Actually exercise the completions endpoint. A key may list models
-            # fine but be rejected on chat completions (scoped keys, missing
-            # model permissions). Without this, Test shows green but every
-            # summarizer/tuning call dies with "User not found".
-            try:
-                await client.chat.completions.create(
-                    model=model,
-                    max_tokens=1,
-                    messages=[{"role": "user", "content": "ping"}],
-                )
-            except Exception as e:
-                return LLMTestResult(
-                    success=False,
-                    message=(
-                        f"Connected to {endpoint_label} and listed models, but the "
-                        f"configured model '{model}' rejected a test completion: {e}. "
-                        "For OpenAI project keys, enable this model under Project Settings → Model Permissions."
-                    ),
-                    models=model_infos or None,
-                )
-
-            if model_infos:
+                model_infos = [
+                    LLMModelInfo(id=m.id, display_name=m.id)
+                    for m in sorted(models_response.data, key=lambda x: x.id)
+                ]
                 return LLMTestResult(
                     success=True,
-                    message=f"Connected to {endpoint_label}. Model '{model}' {'is' if model_available else 'may not be'} available; test completion succeeded.",
+                    message=f"Connected to {endpoint_label}. Listed {len(model_infos)} model(s).",
                     models=model_infos,
                 )
-            else:
+            except Exception as e:
+                error_str = str(e).lower()
+                if any(
+                    tok in error_str
+                    for tok in ("401", "403", "unauthorized", "forbidden", "authentication", "invalid")
+                ):
+                    return LLMTestResult(
+                        success=False,
+                        message=f"Authentication failed at {endpoint_label}: {e}",
+                    )
+                # Listing not supported — that's OK, key still seems live.
+                logger.info(f"Model listing not supported at {endpoint_label}: {e}")
                 return LLMTestResult(
                     success=True,
-                    message=f"Connected to {endpoint_label}. Test completion succeeded — model listing not available.",
+                    message=f"Connected to {endpoint_label}. Model listing not available — enter the model id manually.",
                     models=None,
                 )
-
         except Exception as e:
             return LLMTestResult(success=False, message=f"OpenAI connection failed: {e}")
 
-    async def _test_anthropic(self, api_key: str, model: str, endpoint: str | None = None) -> LLMTestResult:
-        """Test Anthropic connection and verify message completions work.
-
-        Symmetric with ``_test_openai``: list models, then issue a 1-token
-        ``messages.create`` so keys that can enumerate but can't actually
-        complete are caught here rather than silently failing every
-        summarizer/tuning call downstream.
-        """
+    async def _list_anthropic(self, api_key: str, endpoint: str | None = None) -> LLMTestResult:
+        """List models from Anthropic."""
         try:
             from anthropic import AsyncAnthropic
 
             client = AsyncAnthropic(api_key=api_key, base_url=endpoint or None)
-
             endpoint_label = endpoint or "https://api.anthropic.com"
 
-            # Try to list models (custom endpoints may not support this)
-            model_infos: list[LLMModelInfo] = []
-            model_available = False
             try:
                 models_response = await client.models.list()
-
-                # Anthropic API returns display_name directly
                 seen_display_names: set[str] = set()
-
-                # Sort by ID descending to get newest versions first
+                model_infos: list[LLMModelInfo] = []
                 for m in sorted(models_response.data, key=lambda x: x.id, reverse=True):
                     display_name = getattr(m, "display_name", m.id)
-
-                    # Only include the newest version of each model
                     if display_name in seen_display_names:
                         continue
-
                     seen_display_names.add(display_name)
                     model_infos.append(LLMModelInfo(id=m.id, display_name=display_name))
-
-                # Sort by display name for consistent ordering
                 model_infos.sort(key=lambda x: x.display_name)
 
-                # Check if the configured model is available
-                all_model_ids = [m.id for m in models_response.data]
-                model_available = model in all_model_ids
-            except Exception as e:
-                error_str = str(e).lower()
-                # Auth errors should fail the connection test, not be silently swallowed
-                if "401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str or "authentication" in error_str or "invalid" in error_str:
-                    raise  # Re-raise to outer handler which returns success=False
-                logger.info(f"Model listing not supported at {endpoint_label}: {e}")
-
-            # Actually exercise the messages endpoint — see _test_openai for rationale.
-            try:
-                await client.messages.create(
-                    model=model,
-                    max_tokens=1,
-                    messages=[{"role": "user", "content": "ping"}],
-                )
-            except Exception as e:
-                return LLMTestResult(
-                    success=False,
-                    message=(
-                        f"Connected to {endpoint_label} and listed models, but the "
-                        f"configured model '{model}' rejected a test completion: {e}."
-                    ),
-                    models=model_infos or None,
-                )
-
-            if model_infos:
                 return LLMTestResult(
                     success=True,
-                    message=f"Connected to {endpoint_label}. Model '{model}' {'is' if model_available else 'may not be'} available; test completion succeeded.",
+                    message=f"Connected to {endpoint_label}. Listed {len(model_infos)} model(s).",
                     models=model_infos,
                 )
-            else:
+            except Exception as e:
+                error_str = str(e).lower()
+                if any(
+                    tok in error_str
+                    for tok in ("401", "403", "unauthorized", "forbidden", "authentication", "invalid")
+                ):
+                    return LLMTestResult(
+                        success=False,
+                        message=f"Authentication failed at {endpoint_label}: {e}",
+                    )
+                logger.info(f"Model listing not supported at {endpoint_label}: {e}")
                 return LLMTestResult(
                     success=True,
-                    message=f"Connected to {endpoint_label}. Test completion succeeded — model listing not available.",
+                    message=f"Connected to {endpoint_label}. Model listing not available — enter the model id manually.",
                     models=None,
                 )
-
         except Exception as e:
             return LLMTestResult(success=False, message=f"Anthropic connection failed: {e}")
+
+    async def _complete_openai(
+        self, api_key: str, model: str, endpoint: str | None = None
+    ) -> LLMTestResult:
+        """Issue a 1-token chat completion against an OpenAI-compatible endpoint."""
+        try:
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(api_key=api_key, base_url=endpoint or None)
+            endpoint_label = endpoint or "https://api.openai.com/v1"
+
+            await client.chat.completions.create(
+                model=model,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return LLMTestResult(
+                success=True,
+                message=f"Completion succeeded on {endpoint_label} with model '{model}'.",
+            )
+        except Exception as e:
+            return LLMTestResult(
+                success=False,
+                message=(
+                    f"Model '{model}' rejected a test completion: {e}. "
+                    "For OpenAI project keys, enable this model under Project Settings → Model Permissions."
+                ),
+            )
+
+    async def _complete_anthropic(
+        self, api_key: str, model: str, endpoint: str | None = None
+    ) -> LLMTestResult:
+        """Issue a 1-token messages.create against Anthropic."""
+        try:
+            from anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(api_key=api_key, base_url=endpoint or None)
+            endpoint_label = endpoint or "https://api.anthropic.com"
+
+            await client.messages.create(
+                model=model,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return LLMTestResult(
+                success=True,
+                message=f"Completion succeeded on {endpoint_label} with model '{model}'.",
+            )
+        except Exception as e:
+            return LLMTestResult(
+                success=False,
+                message=f"Model '{model}' rejected a test completion: {e}.",
+            )
 
     async def list_models(self) -> list[LLMModelInfo] | None:
         """
