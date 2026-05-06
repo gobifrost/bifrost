@@ -5088,11 +5088,36 @@ export interface paths {
          * Update Conversation
          * @description Update mutable fields on a conversation.
          *
-         *     Today the only editable field is ``workspace_id``: this powers the
-         *     "Move to workspace" affordance. Set ``workspace_id`` to ``null`` to move
-         *     the chat back to the general pool.
+         *     Editable fields:
+         *     - ``workspace_id``: "Move to workspace" affordance. Null = general pool.
+         *     - ``current_model``: per-conversation model selection set by the picker.
+         *     - ``instructions``: per-conversation custom instructions appended to
+         *       the system prompt. Null clears.
+         *
+         *     Fields use ``model_dump(exclude_unset=True)`` semantics: a field absent
+         *     from the request body is preserved; ``null`` in the body clears it.
          */
         patch: operations["update_conversation_api_chat_conversations__conversation_id__patch"];
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/active-leaf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch Active Leaf
+         * @description Switch the conversation's active leaf — sibling navigation.
+         */
+        post: operations["switch_active_leaf_api_chat_conversations__conversation_id__active_leaf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/chat/conversations/{conversation_id}/messages": {
@@ -10847,6 +10872,10 @@ export interface components {
             user_id: string;
             /** Workspace Id */
             workspace_id?: string | null;
+            /** Active Leaf Message Id */
+            active_leaf_message_id?: string | null;
+            /** Instructions */
+            instructions?: string | null;
             /** Current Model */
             current_model?: string | null;
             /** Channel */
@@ -10901,6 +10930,11 @@ export interface components {
              * @description Model to use for this conversation going forward. Set by the chat picker. Resolved through the cascade — must be in the user's allowed set.
              */
             current_model?: string | null;
+            /**
+             * Instructions
+             * @description Per-conversation custom instructions appended to the system prompt.
+             */
+            instructions?: string | null;
         };
         /**
          * ConversationUsage
@@ -16069,6 +16103,18 @@ export interface components {
             sequence: number;
             /** Created At */
             created_at: string;
+            /** Parent Message Id */
+            parent_message_id?: string | null;
+            /**
+             * Sibling Count
+             * @default 1
+             */
+            sibling_count: number;
+            /**
+             * Sibling Index
+             * @default 0
+             */
+            sibling_index: number;
         };
         /**
          * MessageRole
@@ -19287,6 +19333,18 @@ export interface components {
             created_at: string;
             /** Completed At */
             completed_at?: string | null;
+        };
+        /**
+         * SwitchBranchRequest
+         * @description Switch the conversation's active leaf to another message id.
+         */
+        SwitchBranchRequest: {
+            /**
+             * Message Id
+             * Format: uuid
+             * @description Target message id (must belong to this conversation).
+             */
+            message_id: string;
         };
         /**
          * SyncRequest
@@ -29540,6 +29598,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ConversationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    switch_active_leaf_api_chat_conversations__conversation_id__active_leaf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchBranchRequest"];
             };
         };
         responses: {

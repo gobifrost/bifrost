@@ -157,6 +157,8 @@ export function useChatStream({
 							content: "",
 							sequence: Date.now(),
 							created_at: new Date().toISOString(),
+							sibling_count: 1,
+							sibling_index: 0,
 							isStreaming: true,
 							isOptimistic: false, // Not optimistic - we have server ID
 						};
@@ -203,6 +205,8 @@ export function useChatStream({
 								content: chunk.content,
 								sequence: Date.now(),
 								created_at: new Date().toISOString(),
+								sibling_count: 1,
+								sibling_index: 0,
 								isStreaming: true,
 								isOptimistic: false,
 							};
@@ -236,6 +240,8 @@ export function useChatStream({
 								execution_id: chunk.execution_id || null,
 								sequence: Date.now(),
 								created_at: new Date().toISOString(),
+								sibling_count: 1,
+								sibling_index: 0,
 							};
 							addMessage(convId, toolCallMessage);
 						}
@@ -433,6 +439,8 @@ export function useChatStream({
 				content: message,
 				sequence: Date.now(),
 				created_at: now,
+				sibling_count: 1,
+				sibling_index: 0,
 				isOptimistic: true,
 				localId: userMessageId, // Use same ID as localId for dedup
 			};

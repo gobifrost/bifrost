@@ -293,6 +293,8 @@ export function useSendMessage() {
 					content: message,
 					sequence: Date.now(),
 					created_at: new Date().toISOString(),
+					sibling_count: 1,
+					sibling_index: 0,
 				};
 				addMessage(conversationId, userMessage);
 			},
@@ -314,6 +316,8 @@ export function useSendMessage() {
 					duration_ms: response.duration_ms ?? undefined,
 					sequence: Date.now() + 1,
 					created_at: new Date().toISOString(),
+					sibling_count: 1,
+					sibling_index: 0,
 				};
 				addMessage(conversationId, assistantMessage);
 
