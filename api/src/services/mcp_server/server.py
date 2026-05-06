@@ -218,6 +218,8 @@ async def _get_context_with_namespaces() -> MCPContext:
 
     user_roles = token.claims.get("roles", [])
     is_superuser = token.claims.get("is_superuser", False)
+    user_id = token.claims.get("user_id")
+    org_id = token.claims.get("org_id")
 
     # Query accessible namespaces from agents
     accessible_namespaces: list[str] = []
@@ -227,6 +229,8 @@ async def _get_context_with_namespaces() -> MCPContext:
             result = await service.get_accessible_tools(
                 user_roles=user_roles,
                 is_superuser=is_superuser,
+                user_id=user_id,
+                org_id=org_id,
             )
             accessible_namespaces = result.accessible_namespaces
     except Exception as e:

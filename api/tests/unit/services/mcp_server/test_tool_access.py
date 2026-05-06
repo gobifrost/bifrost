@@ -84,6 +84,53 @@ def mock_query_result(agents: list):
     return mock_result
 
 
+@pytest.fixture(autouse=True)
+def patch_workflow_repo_passthrough():
+    """Make the per-workflow gate a pass-through for unit tests by default.
+
+    ``MCPToolAccessService`` now gates ``agent.tools`` through
+    ``WorkflowRepository.get(id=...)`` so MCP listing uses the same access
+    rule as the executor. Most existing unit tests mock the SQLAlchemy
+    session at a low level and don't care about that gate — they assert
+    that workflows attached to a visible agent appear in the result.
+
+    Patch ``_build_workflow_repo`` to return a mock repo whose ``.get``
+    looks up the workflow in the test's seeded agent fixtures and returns
+    it. Tests that exercise the gate's deny semantics live in the e2e
+    access matrix (``tests/e2e/mcp/test_mcp_tool_access_matrix.py``)
+    against the real DB.
+    """
+    seen_workflows: dict = {}
+
+    async def _fake_get(*, id, **_):
+        return seen_workflows.get(id)
+
+    fake_repo = AsyncMock()
+    fake_repo.get = _fake_get
+
+    def _build(self, **_):
+        # Walk the test's mock-agent return value to populate the workflow
+        # lookup. We grab whatever the latest session.execute call resolved
+        # to (the agents list) and harvest all attached workflows.
+        try:
+            agents = (
+                self.session.execute.return_value.scalars.return_value
+                .unique.return_value.all.return_value
+            )
+            if isinstance(agents, list):
+                for agent in agents:
+                    for wf in (getattr(agent, "tools", None) or []):
+                        seen_workflows[wf.id] = wf
+        except AttributeError:
+            pass
+        return fake_repo
+
+    with patch.object(
+        MCPToolAccessService, "_build_workflow_repo", autospec=True, side_effect=_build
+    ) as mock_build:
+        yield mock_build
+
+
 # ==================== Agent Access Tests ====================
 
 
