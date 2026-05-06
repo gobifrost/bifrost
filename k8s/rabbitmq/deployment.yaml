@@ -44,22 +44,22 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+          # TCP probes on the AMQP port. "Can a client connect to 5672" is
+          # what consumers actually need; rabbitmq-diagnostics check_running
+          # measured ~1s at idle and routinely exceeded the 5s readiness
+          # timeout under load, flapping the pod out of the Service.
           livenessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - check_running
+            tcpSocket:
+              port: amqp
             initialDelaySeconds: 30
             periodSeconds: 10
-            timeoutSeconds: 10
+            timeoutSeconds: 5
           readinessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - check_running
+            tcpSocket:
+              port: amqp
             initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 5
+            timeoutSeconds: 3
           volumeMounts:
             - name: rabbitmq-data
               mountPath: /var/lib/rabbitmq
