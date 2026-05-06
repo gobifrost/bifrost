@@ -112,6 +112,11 @@ def patch_workflow_repo_passthrough():
         # Walk the test's mock-agent return value to populate the workflow
         # lookup. We grab whatever the latest session.execute call resolved
         # to (the agents list) and harvest all attached workflows.
+        # Tests can use any depth of mock chaining (or none); if any link
+        # in the chain isn't a MagicMock with the expected attribute, fall
+        # through and leave seen_workflows empty — which gives the per-test
+        # repo a deny-all default. That's safe: tests that need workflows
+        # visible already populate the chain before calling the service.
         try:
             agents = (
                 self.session.execute.return_value.scalars.return_value
@@ -122,6 +127,8 @@ def patch_workflow_repo_passthrough():
                     for wf in (getattr(agent, "tools", None) or []):
                         seen_workflows[wf.id] = wf
         except AttributeError:
+            # Mock chain didn't reach .all — leave seen_workflows empty.
+            # Not an error condition, just "no agents seeded for this test".
             pass
         return fake_repo
 

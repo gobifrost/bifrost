@@ -277,14 +277,15 @@ class TestConversationsAccessControl:
                 f"Status: {resp.status_code}, body: {resp.text[:300]}"
             )
         finally:
-            # Best-effort cleanup
+            # Best-effort cleanup — never let teardown fail the test. The
+            # state-reset between e2e runs will scrub anything left behind.
             try:
                 e2e_client.delete(
                     f"/api/agents/{agent['id']}",
                     headers=platform_admin.headers,
                 )
-            except Exception:
-                pass
+            except Exception as cleanup_exc:
+                logger.debug(f"agent cleanup skipped: {cleanup_exc}")
 
 
 # =============================================================================
