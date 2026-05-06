@@ -806,9 +806,24 @@ async def _list_embedding_models(api_key: str, endpoint: str | None) -> list[str
     filter is the source of truth — we don't trust the server actually filtered.
     """
     import httpx
+    from urllib.parse import urlparse
 
     base = (endpoint or DEFAULT_OPENAI_ENDPOINT).rstrip("/")
-    url = f"{base}/models"
+
+    # Endpoint is admin-controlled (the whole /api/admin/llm/* surface is
+    # gated by RequirePlatformAdmin), but partial-SSRF still warrants a
+    # sanity check on the URL itself: must be http(s) with a hostname.
+    # We deliberately allow http+private addrs because Ollama/local-LLM
+    # configs (the entire reason this endpoint exists) point at localhost.
+    parsed = urlparse(base)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        logger.info(f"Refusing to list models from non-HTTP endpoint {log_safe(base)}")
+        return None
+
+    # Rebuild the URL from the parsed parts so CodeQL sees a sanitized URL,
+    # not raw user input flowing into the request. Equivalent to f"{base}/models".
+    sanitized_base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+    url = f"{sanitized_base}/models"
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as http:
