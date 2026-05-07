@@ -175,8 +175,9 @@ jobs:
   # Dev Build - Every push to main, gated by unit tests only
   # =============================================================================
   build-dev:
-    if: github.ref == 'refs/heads/main'
-    needs: [test-unit, lint]
+    # Only fires on push: main — branch protection + merge queue
+    # already gated this commit, so no needs: here.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Build Dev Images
     permissions:
@@ -336,7 +337,8 @@ jobs:
   # GitHub's built-in workflow-failure email (no extra wiring).
   # =============================================================================
   deploy-dev:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Fires only after build-dev lands a new image on push: main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build-dev]
     runs-on: ubuntu-latest
     name: Deploy Dev to DigitalOcean
