@@ -89,12 +89,6 @@ interface ModelInfo {
 	display_name: string;
 }
 
-// Default models for each provider (fallback if API doesn't return models)
-const DEFAULT_MODELS: Record<Provider, string> = {
-	openai: "gpt-4o",
-	anthropic: "claude-sonnet-4-20250514",
-};
-
 // Default API endpoints for each provider
 const DEFAULT_ENDPOINTS: Record<Provider, string> = {
 	openai: "https://api.openai.com/v1",
@@ -104,7 +98,7 @@ const DEFAULT_ENDPOINTS: Record<Provider, string> = {
 export function LLMConfig() {
 	// Form state
 	const [provider, setProvider] = useState<Provider>("openai");
-	const [model, setModel] = useState(DEFAULT_MODELS.openai);
+	const [model, setModel] = useState("");
 	const [apiKey, setApiKey] = useState("");
 	const [endpoint, setEndpoint] = useState(DEFAULT_ENDPOINTS.openai);
 	const [maxTokens, setMaxTokens] = useState(4096);
@@ -180,6 +174,10 @@ export function LLMConfig() {
 					// Cast to ModelInfo[] since API now returns objects
 					const models = result.models as unknown as ModelInfo[];
 					setAvailableModels(models);
+					const modelIds = models.map((m) => m.id);
+					setModel((current) =>
+						modelIds.includes(current) ? current : models[0].id,
+					);
 				}
 				setModelsLoaded(true);
 			} catch {
@@ -194,7 +192,7 @@ export function LLMConfig() {
 	// Handle provider change
 	const handleProviderChange = (newProvider: Provider) => {
 		setProvider(newProvider);
-		setModel(DEFAULT_MODELS[newProvider]);
+		setModel("");
 		setEndpoint(DEFAULT_ENDPOINTS[newProvider]);
 		setTestResult(null);
 		setAvailableModels([]);
@@ -219,14 +217,20 @@ export function LLMConfig() {
 				result = await testMutation.mutateAsync({
 					body: {
 						provider,
-						model: model || DEFAULT_MODELS[provider],
 						api_key: apiKey,
 						endpoint: isDefaultEndpoint ? undefined : endpoint || undefined,
 					},
 				});
 			} else {
-				// Test saved configuration
-				result = await testSavedMutation.mutateAsync({});
+				// Test current form settings with the saved API key.
+				const isDefaultEndpoint = endpoint === DEFAULT_ENDPOINTS[provider];
+				result = await testMutation.mutateAsync({
+					body: {
+						provider,
+						api_key: undefined,
+						endpoint: isDefaultEndpoint ? undefined : endpoint || undefined,
+					},
+				});
 			}
 
 			setTestResult({ success: result.success, message: result.message });
@@ -242,9 +246,9 @@ export function LLMConfig() {
 					setAvailableModels(models);
 					// If current model is not in list, select first available
 					const modelIds = models.map((m) => m.id);
-					if (!modelIds.includes(model)) {
-						setModel(models[0].id);
-					}
+					setModel((current) =>
+						modelIds.includes(current) ? current : models[0].id,
+					);
 				}
 				setModelsLoaded(true);
 			} else {
@@ -321,7 +325,7 @@ export function LLMConfig() {
 
 			// Reset form
 			setProvider("openai");
-			setModel(DEFAULT_MODELS.openai);
+			setModel("");
 			setApiKey("");
 			setEndpoint(DEFAULT_ENDPOINTS.openai);
 			setMaxTokens(16384);

@@ -70,15 +70,15 @@ class LLMTestRequest(BaseModel):
         ...,
         description="LLM provider type",
     )
-    model: str = Field(
-        ...,
+    model: str | None = Field(
+        None,
         min_length=1,
-        description="Model identifier",
+        description="Optional model identifier. Connection tests list provider models without probing a guessed default.",
     )
-    api_key: str = Field(
-        ...,
+    api_key: str | None = Field(
+        None,
         min_length=1,
-        description="API key to test",
+        description="API key to test. Omit to test current form settings with the saved key.",
     )
     endpoint: str | None = Field(
         None,
@@ -223,5 +223,4 @@ class EmbeddingConfigSaveResponse(BaseModel):
         default=None,
         description="Rows that would be re-embedded if confirmed.",
     )
-
 

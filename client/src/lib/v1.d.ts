@@ -15019,14 +15019,14 @@ export interface components {
             provider: "openai" | "anthropic";
             /**
              * Model
-             * @description Model identifier
+             * @description Optional model identifier. Connection tests list provider models without probing a guessed default.
              */
-            model: string;
+            model?: string | null;
             /**
              * Api Key
-             * @description API key to test
+             * @description API key to test. Omit to test current form settings with the saved key.
              */
-            api_key: string;
+            api_key?: string | null;
             /**
              * Endpoint
              * @description Custom API endpoint URL

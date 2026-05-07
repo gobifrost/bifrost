@@ -258,6 +258,51 @@ class LLMConfigService:
             logger.error(f"LLM connection test failed: {e}")
             return LLMTestResult(success=False, message=f"Connection test failed: {e}")
 
+    async def test_credentials(
+        self,
+        provider: Literal["openai", "anthropic"],
+        api_key: str | None = None,
+        endpoint: str | None = None,
+    ) -> LLMTestResult:
+        """Validate explicit credentials by listing provider models."""
+        try:
+            resolved_api_key = api_key or await self._get_saved_api_key()
+
+            if provider == "openai":
+                return await self._list_openai(resolved_api_key, endpoint)
+            elif provider == "anthropic":
+                return await self._list_anthropic(resolved_api_key, endpoint)
+            else:
+                return LLMTestResult(
+                    success=False,
+                    message=f"Unknown provider: {provider}",
+                )
+        except ValueError as e:
+            return LLMTestResult(success=False, message=str(e))
+        except Exception as e:
+            logger.error(f"LLM credential test failed: {e}")
+            return LLMTestResult(success=False, message=f"Connection test failed: {e}")
+
+    async def _get_saved_api_key(self) -> str:
+        """Decrypt the saved LLM API key for unsaved form connection tests."""
+        result = await self.session.execute(
+            select(SystemConfig).where(
+                SystemConfig.category == LLM_CONFIG_CATEGORY,
+                SystemConfig.key == LLM_CONFIG_KEY,
+                SystemConfig.organization_id.is_(None),
+            )
+        )
+        config = result.scalars().first()
+        if not config or not config.value_json:
+            raise ValueError("API key is required for connection test")
+
+        encrypted_api_key = config.value_json.get("encrypted_api_key")
+        if not encrypted_api_key:
+            raise ValueError("API key is required for connection test")
+
+        fernet = self._get_fernet()
+        return fernet.decrypt(encrypted_api_key.encode()).decode()
+
     async def verify_completion(self) -> LLMTestResult:
         """
         Issue a 1-token completion against the saved config to confirm the
