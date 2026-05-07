@@ -326,9 +326,9 @@ class TestGetBlobContent:
         encoded = base64.b64encode(content).decode("ascii")
 
         api_response = {
-            "sha": "blob-sha",
+            "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "size": len(content),
-            "url": "https://api.github.com/repos/owner/repo/git/blobs/blob-sha",
+            "url": "https://api.github.com/repos/owner/repo/git/blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "content": encoded,
             "encoding": "base64",
         }
@@ -336,11 +336,11 @@ class TestGetBlobContent:
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = api_response
 
-            result = await client.get_blob_content("owner/repo", "blob-sha")
+            result = await client.get_blob_content("owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
             assert result == content
             mock_request.assert_called_once_with(
-                "GET", "/repos/owner/repo/git/blobs/blob-sha"
+                "GET", "/repos/owner/repo/git/blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             )
 
     @pytest.mark.asyncio
@@ -352,9 +352,9 @@ class TestGetBlobContent:
         encoded_with_newlines = "\n".join([encoded[i : i + 10] for i in range(0, len(encoded), 10)])
 
         api_response = {
-            "sha": "blob-sha",
+            "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "size": len(content),
-            "url": "https://api.github.com/repos/owner/repo/git/blobs/blob-sha",
+            "url": "https://api.github.com/repos/owner/repo/git/blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "content": encoded_with_newlines,
             "encoding": "base64",
         }
@@ -362,7 +362,7 @@ class TestGetBlobContent:
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = api_response
 
-            result = await client.get_blob_content("owner/repo", "blob-sha")
+            result = await client.get_blob_content("owner/repo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
             assert result == content
 
@@ -382,8 +382,8 @@ class TestCreateBlob:
         encoded = base64.b64encode(content).decode("ascii")
 
         api_response = {
-            "sha": "new-blob-sha",
-            "url": "https://api.github.com/repos/owner/repo/git/blobs/new-blob-sha",
+            "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "url": "https://api.github.com/repos/owner/repo/git/blobs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         }
 
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
@@ -391,7 +391,7 @@ class TestCreateBlob:
 
             result = await client.create_blob("owner/repo", content)
 
-            assert result == "new-blob-sha"
+            assert result == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             mock_request.assert_called_once_with(
                 "POST",
                 "/repos/owner/repo/git/blobs",
@@ -485,8 +485,8 @@ class TestCreateCommit:
     async def test_creates_commit(self, client):
         """Test creating a commit."""
         api_response = {
-            "sha": "new-commit-sha",
-            "url": "https://api.github.com/repos/owner/repo/git/commits/new-commit-sha",
+            "sha": "dddddddddddddddddddddddddddddddddddddddd",
+            "url": "https://api.github.com/repos/owner/repo/git/commits/dddddddddddddddddddddddddddddddddddddddd",
             "tree": {"sha": "tree-sha", "url": "tree-url"},
             "parents": [{"sha": "parent-sha", "url": "parent-url"}],
             "author": {"name": "Test", "email": "test@example.com", "date": "2024-01-08T00:00:00Z"},
@@ -504,7 +504,7 @@ class TestCreateCommit:
                 parents=["parent-sha"],
             )
 
-            assert result == "new-commit-sha"
+            assert result == "dddddddddddddddddddddddddddddddddddddddd"
             mock_request.assert_called_once_with(
                 "POST",
                 "/repos/owner/repo/git/commits",
@@ -519,8 +519,8 @@ class TestCreateCommit:
     async def test_creates_commit_with_author(self, client):
         """Test creating a commit with custom author."""
         api_response = {
-            "sha": "new-commit-sha",
-            "url": "https://api.github.com/repos/owner/repo/git/commits/new-commit-sha",
+            "sha": "dddddddddddddddddddddddddddddddddddddddd",
+            "url": "https://api.github.com/repos/owner/repo/git/commits/dddddddddddddddddddddddddddddddddddddddd",
             "tree": {"sha": "tree-sha", "url": "tree-url"},
             "parents": [],
             "author": {"name": "Custom", "email": "custom@example.com", "date": "2024-01-08T00:00:00Z"},
@@ -559,9 +559,9 @@ class TestGetRef:
             "ref": "refs/heads/main",
             "url": "https://api.github.com/repos/owner/repo/git/refs/heads/main",
             "object": {
-                "sha": "commit-sha",
+                "sha": "cccccccccccccccccccccccccccccccccccccccc",
                 "type": "commit",
-                "url": "https://api.github.com/repos/owner/repo/git/commits/commit-sha",
+                "url": "https://api.github.com/repos/owner/repo/git/commits/cccccccccccccccccccccccccccccccccccccccc",
             },
         }
 
@@ -570,7 +570,7 @@ class TestGetRef:
 
             result = await client.get_ref("owner/repo", "heads/main")
 
-            assert result == "commit-sha"
+            assert result == "cccccccccccccccccccccccccccccccccccccccc"
             mock_request.assert_called_once_with(
                 "GET", "/repos/owner/repo/git/ref/heads/main"
             )
@@ -591,22 +591,22 @@ class TestUpdateRef:
             "ref": "refs/heads/main",
             "url": "https://api.github.com/repos/owner/repo/git/refs/heads/main",
             "object": {
-                "sha": "new-commit-sha",
+                "sha": "dddddddddddddddddddddddddddddddddddddddd",
                 "type": "commit",
-                "url": "https://api.github.com/repos/owner/repo/git/commits/new-commit-sha",
+                "url": "https://api.github.com/repos/owner/repo/git/commits/dddddddddddddddddddddddddddddddddddddddd",
             },
         }
 
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = api_response
 
-            await client.update_ref("owner/repo", "heads/main", "new-commit-sha")
+            await client.update_ref("owner/repo", "heads/main", "dddddddddddddddddddddddddddddddddddddddd")
 
             mock_request.assert_called_once_with(
                 "PATCH",
                 "/repos/owner/repo/git/refs/heads/main",
                 json_data={
-                    "sha": "new-commit-sha",
+                    "sha": "dddddddddddddddddddddddddddddddddddddddd",
                     "force": False,
                 },
             )
@@ -618,16 +618,16 @@ class TestUpdateRef:
             "ref": "refs/heads/main",
             "url": "https://api.github.com/repos/owner/repo/git/refs/heads/main",
             "object": {
-                "sha": "new-commit-sha",
+                "sha": "dddddddddddddddddddddddddddddddddddddddd",
                 "type": "commit",
-                "url": "https://api.github.com/repos/owner/repo/git/commits/new-commit-sha",
+                "url": "https://api.github.com/repos/owner/repo/git/commits/dddddddddddddddddddddddddddddddddddddddd",
             },
         }
 
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = api_response
 
-            await client.update_ref("owner/repo", "heads/main", "new-commit-sha", force=True)
+            await client.update_ref("owner/repo", "heads/main", "dddddddddddddddddddddddddddddddddddddddd", force=True)
 
             call_args = mock_request.call_args
             json_data = call_args[1]["json_data"]
@@ -657,20 +657,20 @@ class TestHighLevelHelpers:
     async def test_update_branch(self, client):
         """Test update_branch convenience method."""
         with patch.object(client, "update_ref", new_callable=AsyncMock) as mock_update_ref:
-            await client.update_branch("owner/repo", "main", "new-sha")
+            await client.update_branch("owner/repo", "main", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
 
             mock_update_ref.assert_called_once_with(
-                "owner/repo", "heads/main", "new-sha", force=False
+                "owner/repo", "heads/main", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", force=False
             )
 
     @pytest.mark.asyncio
     async def test_update_branch_with_force(self, client):
         """Test update_branch with force flag."""
         with patch.object(client, "update_ref", new_callable=AsyncMock) as mock_update_ref:
-            await client.update_branch("owner/repo", "main", "new-sha", force=True)
+            await client.update_branch("owner/repo", "main", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", force=True)
 
             mock_update_ref.assert_called_once_with(
-                "owner/repo", "heads/main", "new-sha", force=True
+                "owner/repo", "heads/main", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", force=True
             )
 
 
@@ -686,8 +686,8 @@ class TestGetCommit:
     async def test_gets_commit(self, client):
         """Test getting a commit."""
         api_response = {
-            "sha": "commit-sha",
-            "url": "https://api.github.com/repos/owner/repo/git/commits/commit-sha",
+            "sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "url": "https://api.github.com/repos/owner/repo/git/commits/cccccccccccccccccccccccccccccccccccccccc",
             "tree": {"sha": "tree-sha", "url": "tree-url"},
             "parents": [{"sha": "parent-sha", "url": "parent-url"}],
             "author": {"name": "Author", "email": "author@example.com", "date": "2024-01-08T00:00:00Z"},
@@ -698,9 +698,9 @@ class TestGetCommit:
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = api_response
 
-            result = await client.get_commit("owner/repo", "commit-sha")
+            result = await client.get_commit("owner/repo", "cccccccccccccccccccccccccccccccccccccccc")
 
-            assert result.sha == "commit-sha"
+            assert result.sha == "cccccccccccccccccccccccccccccccccccccccc"
             assert result.tree.sha == "tree-sha"
             assert len(result.parents) == 1
             assert result.parents[0].sha == "parent-sha"
@@ -708,7 +708,7 @@ class TestGetCommit:
             assert result.author.name == "Author"
 
             mock_request.assert_called_once_with(
-                "GET", "/repos/owner/repo/git/commits/commit-sha"
+                "GET", "/repos/owner/repo/git/commits/cccccccccccccccccccccccccccccccccccccccc"
             )
 
 
@@ -812,8 +812,8 @@ class TestListCommits:
         """Test listing commits for a specific branch."""
         api_response = [
             {
-                "sha": "commit-sha",
-                "url": "https://api.github.com/repos/owner/repo/commits/commit-sha",
+                "sha": "cccccccccccccccccccccccccccccccccccccccc",
+                "url": "https://api.github.com/repos/owner/repo/commits/cccccccccccccccccccccccccccccccccccccccc",
                 "commit": {
                     "message": "Commit on feature branch",
                     "author": {"name": "Author", "email": "author@example.com", "date": "2024-01-08T00:00:00Z"},
@@ -883,3 +883,176 @@ class TestTreeItem:
 
         assert item.path == "deleted.py"
         assert item.sha is None
+
+
+class TestPathSegmentValidators:
+    """Tests for the path-segment validators that close py/partial-ssrf (#217).
+
+    These validators sit between user input (router query params) and
+    f-string-built GitHub API URLs. They enforce shape *and* return a
+    quote()-cleansed value so CodeQL recognizes the data flow as
+    sanitized.
+    """
+
+    def test_validate_repo_accepts_simple_owner_name(self):
+        from src.services.github_api import _validate_repo
+
+        assert _validate_repo("octocat/Hello-World") == "octocat/Hello-World"
+
+    def test_validate_repo_preserves_separator_slash(self):
+        from src.services.github_api import _validate_repo
+
+        # The single owner/name slash must remain unencoded so the URL
+        # still parses to the right path. The validator uses quote(safe="/").
+        result = _validate_repo("a.b_c-d/e.f_g-h")
+        assert result == "a.b_c-d/e.f_g-h"
+        assert "%2F" not in result
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "../../etc/passwd",
+            "owner/../etc",
+            "owner/repo/extra",  # too many segments
+            "owner",  # no slash
+            "/owner/repo",  # leading slash
+            "owner/repo/",  # trailing slash
+            "owner/repo;@evil.com",
+            "owner/repo space",
+            "owner/repo?query=1",
+            "owner/repo#frag",
+            "owner/repo:8080",
+            "..",
+            "",
+        ],
+    )
+    def test_validate_repo_rejects_unsafe(self, bad):
+        from src.services.github_api import _validate_repo
+
+        with pytest.raises(ValueError, match="Invalid GitHub repo"):
+            _validate_repo(bad)
+
+    @pytest.mark.parametrize(
+        "good",
+        [
+            "abc1234",  # 7-char abbreviated
+            "abc1234abc1234abc1234abc1234abc1234abcd",  # 40-char SHA-1
+            "0" * 64,  # 64-char SHA-256
+            "DEADBEEFCAFE" * 4 + "abcd",  # mixed case still hex
+        ],
+    )
+    def test_validate_sha_accepts_hex(self, good):
+        from src.services.github_api import _validate_sha
+
+        assert _validate_sha(good) == good
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "abc",  # too short
+            "g" * 40,  # non-hex
+            "abc1234..xyz",
+            "/abc1234",
+            "abc1234/branch",
+            "",
+        ],
+    )
+    def test_validate_sha_rejects_unsafe(self, bad):
+        from src.services.github_api import _validate_sha
+
+        with pytest.raises(ValueError, match="Invalid git SHA"):
+            _validate_sha(bad)
+
+    def test_validate_ref_accepts_branch_and_tag_paths(self):
+        from src.services.github_api import _validate_ref
+
+        assert _validate_ref("main") == "main"
+        assert _validate_ref("heads/main") == "heads/main"
+        assert _validate_ref("tags/v1.0.0") == "tags/v1.0.0"
+        assert _validate_ref("feature/foo-bar") == "feature/foo-bar"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "../escape",
+            "main/../etc",
+            "-flag",
+            "/leading-slash",
+            "trailing-slash/",
+            "name with space",
+            "name?query",
+            "name#frag",
+            "name@{0}",  # git ref reflog suffix
+            "",
+        ],
+    )
+    def test_validate_ref_rejects_unsafe(self, bad):
+        from src.services.github_api import _validate_ref
+
+        with pytest.raises(ValueError, match="Invalid git ref"):
+            _validate_ref(bad)
+
+    @pytest.mark.parametrize(
+        "good",
+        ["octocat", "github", "a", "a-b-c", "Org123"],
+    )
+    def test_validate_org_accepts_logins(self, good):
+        from src.services.github_api import _validate_org
+
+        assert _validate_org(good) == good
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "-leading-dash",
+            "has space",
+            "has/slash",
+            "has.dot",
+            "has_underscore",
+            "x" * 40,  # too long
+            "",
+        ],
+    )
+    def test_validate_org_rejects_unsafe(self, bad):
+        from src.services.github_api import _validate_org
+
+        with pytest.raises(ValueError, match="Invalid GitHub organization"):
+            _validate_org(bad)
+
+    def test_validators_use_quote_for_codeql_sanitizer_recognition(self):
+        """Regression guard for #217.
+
+        Each validator must call urllib.parse.quote() on its return value.
+        CodeQL's py/partial-ssrf sanitizer model recognizes quote() return
+        as cleansed input — without it, the data-flow path from router
+        query params to httpx.AsyncClient.request(url=...) re-opens.
+
+        A future refactor that drops quote() would close this test AND
+        silently re-introduce the SSRF alert.
+        """
+        import ast
+        import inspect
+
+        from src.services import github_api
+
+        for name in ("_validate_repo", "_validate_sha", "_validate_ref", "_validate_org"):
+            fn = getattr(github_api, name)
+            src = inspect.getsource(fn)
+            tree = ast.parse(src.lstrip())
+            func = tree.body[0]
+            assert isinstance(func, ast.FunctionDef)
+
+            return_stmts = [n for n in ast.walk(func) if isinstance(n, ast.Return)]
+            assert return_stmts, f"{name} must have a return statement"
+
+            # Final return must be a call to quote() — CodeQL only sees
+            # quote()'s return as cleansed, not raw f-string concatenation.
+            final_return = return_stmts[-1]
+            assert isinstance(final_return.value, ast.Call), (
+                f"{name} final return must call quote()"
+            )
+            callee = final_return.value.func
+            assert isinstance(callee, ast.Name) and callee.id == "quote", (
+                f"{name} final return must call quote() — see #217 for why "
+                f"raw value passthrough re-opens py/partial-ssrf. Got: {callee}"
+            )
