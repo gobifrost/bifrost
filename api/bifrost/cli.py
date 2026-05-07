@@ -155,7 +155,7 @@ def _check_cli_version() -> None:
             from dotenv import find_dotenv, load_dotenv
             load_dotenv(find_dotenv(usecwd=True), override=False)
         except ImportError:
-            pass
+            pass  # python-dotenv is optional; without it, only os.environ is consulted
 
         # Use credentials._resolve_url (not get_credentials) because the version
         # check only needs the URL — get_credentials returns None unless full

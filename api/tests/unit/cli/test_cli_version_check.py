@@ -53,9 +53,7 @@ def _patch_version(monkeypatch, value: str) -> None:
     ``_check_cli_version`` does ``from bifrost import __version__`` inside
     its body, so we have to monkeypatch the attribute on the package itself.
     """
-    import bifrost
-
-    monkeypatch.setattr(bifrost, "__version__", value, raising=False)
+    monkeypatch.setattr("bifrost.__version__", value, raising=False)
 
 
 def _make_url_response(payload: dict) -> object:
