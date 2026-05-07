@@ -30,10 +30,3 @@ def test_get_version_git_fallback(monkeypatch):
     with patch("subprocess.check_output", return_value="v2.0.0-12-gabc1234\n"):
         v = _reload_version()
         assert v.get_version() == "v2.0.0-12-gabc1234"
-
-
-def test_min_cli_version_is_string(monkeypatch):
-    monkeypatch.setenv("BIFROST_VERSION", "2.0.0")
-    v = _reload_version()
-    assert isinstance(v.MIN_CLI_VERSION, str)
-    assert v.MIN_CLI_VERSION  # non-empty

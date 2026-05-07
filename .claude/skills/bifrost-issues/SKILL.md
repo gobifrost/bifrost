@@ -153,27 +153,66 @@ gh api repos/jackmusick/bifrost/branches/main/protection \
 
 If the count is ≥1, `--auto` is safe. Otherwise it isn't (a `--auto` merge would fire the moment GitHub considers the PR mergeable, which without required checks is *immediately*).
 
-**Path A — protection exists (preferred):**
+**Watch reviews and CI together — `gh pr checks` alone will miss code review comments.**
+
+Once a PR is open, three independent signals can come in: CI check transitions, code-review comments (CodeQL bot, human reviewers, copilot/Anthropic), and merge-state changes. The watcher must cover all three. Don't just `tail -f` `gh pr checks` — that silently misses CodeQL findings until they're already old, and an auto-merge queued PR can sit forever blocked on an "actionable" review you never noticed.
+
+**Combined watcher pattern (use this, not a checks-only loop):**
+
+```bash
+# Hash reviews + check states + comments together; emit only on change.
+# Terminal condition is INTENTIONALLY narrow: only state==MERGED|CLOSED.
+# Don't try to be clever with "BLOCKED + all checks done" — mergeStateStatus
+# is BLOCKED from the moment a PR opens against a protected branch, and
+# `statusCheckRollup` may briefly contain entries with empty conclusion+state
+# while checks are being scheduled, which makes the "all done" predicate
+# fire prematurely. Watch until merge or close; the user can interrupt.
+prev=""
+prev_c=""
+while true; do
+  s=$(gh pr view <N> --repo jackmusick/bifrost \
+        --json reviews,statusCheckRollup,reviewDecision,mergeStateStatus,state 2>/dev/null) || { sleep 60; continue; }
+  c=$(gh api repos/jackmusick/bifrost/pulls/<N>/comments --jq '.[] | "\(.user.login):\(.id):\(.path):\(.line):\(.body|gsub("\n";" ")|.[0:100])"' 2>/dev/null | sort)
+  cur=$(printf '%s\n%s' "$s" "$c" | sha256sum | cut -d' ' -f1)
+  if [ "$cur" != "$prev" ]; then
+    echo "=== $(date -u +%H:%M:%S) PR <N> update ==="
+    jq -r '"  reviewDecision: \(.reviewDecision // "(none)")\n  mergeStateStatus: \(.mergeStateStatus)\n  state: \(.state)\nchecks:", (.statusCheckRollup[] | "  \(.name // .context // "?"): \(.conclusion // .state // "queued")"), "reviews:", (.reviews[] | "  \(.author.login) \(.state)")' <<<"$s"
+    if [ -n "$prev_c" ] && [ "$c" != "$prev_c" ]; then
+      echo "NEW review comments:"
+      diff <(echo "$prev_c") <(echo "$c") | grep '^>' | head -10
+    fi
+    prev_c=$c
+    prev=$cur
+  fi
+  st=$(jq -r '.state' <<<"$s")
+  case "$st" in MERGED|CLOSED) echo "PR is $st"; break ;; esac
+  sleep 60
+done
+```
+
+**When a review comment lands** (CodeQL, copilot, human): pull the body and address it before merging. CodeQL findings on this repo's pre-push hook are usually real — see `feedback_codeql_friendly_idioms.md` in memory. Never queue `--auto` and walk away from a fresh review.
+
+**Path A — protection exists (preferred for ship-when-green):**
 
 1. Confirm with the user once ("Queue auto-merge so it ships when CI is green?").
-2. On approval: `gh pr merge <N> --auto --squash --delete-branch=false` (keep the remote branch; the worktree still references it, cleanup in step 8).
-3. **Stop here.** No CI watcher needed — GitHub merges automatically when checks pass. Tell the user they'll see the merge land in their notifications and can return for cleanup whenever.
-4. The contributor's value of this path is bigger than the admin's: contributors with no merge perms can still queue `--auto`, walk away, and the merge fires the moment approval + checks both arrive — they don't have to come back to click merge.
-5. If a review is required (`required_pull_request_reviews` is set) and the user isn't admin, surface that the merge is gated on approval and offer to request reviewers via `gh pr edit <N> --add-reviewer <login>`. Don't pick reviewers unprompted.
+2. On approval: `gh pr merge <N> --auto --squash --delete-branch=false` (keep the remote branch; worktree still references it, cleanup in step 8).
+3. **Arm the combined watcher above.** `--auto` does not exempt you from picking up review comments — CodeQL still fires after queueing, and the auto-merge will not proceed past a `BLOCKED`/`DIRTY` mergeStateStatus.
+4. If a review is required (`required_pull_request_reviews` is set) and the user isn't admin, surface that the merge is gated on approval and offer to request reviewers via `gh pr edit <N> --add-reviewer <login>`. Don't pick reviewers unprompted.
 
 **Path B — no protection (fallback):**
 
-1. **Watch CI.** Snapshot status with `gh pr checks <N> --repo jackmusick/bifrost` once, then arm a session-length watcher via the `loop` skill in dynamic mode (no interval, event-gated) — it knows how to set up a Monitor on `gh pr checks` plus a heartbeat fallback. Don't roll your own polling loop.
-2. **If CI fails:** stay in the existing worktree on the existing branch — fixes are additional commits to `<issue-num>-<slug>`, not a fresh worktree. The PR auto-updates on push. New worktree only if the branch is being abandoned entirely.
-3. **If CI passes:** check `gh pr view <N> --json viewerCanAdminister,reviewDecision,mergeStateStatus` to decide.
-   - `viewerCanAdminister: true` → self-merge: confirm once ("CI's green — merge?"), then `gh pr merge <N> --squash --delete-branch=false`.
-   - Otherwise → contributor needs review: surface reviewer-request as in Path A step 5.
+1. Arm the combined watcher above.
+2. **If CI fails or a review comment lands:** stay in the existing worktree on the existing branch — fixes are additional commits to `<issue-num>-<slug>`, not a fresh worktree. The PR auto-updates on push. New worktree only if the branch is being abandoned entirely.
+3. **If CI passes and reviews are clean:** check `gh pr view <N> --json viewerCanAdminister,reviewDecision,mergeStateStatus` to decide.
+   - `viewerCanAdminister: true` → self-merge: confirm once ("CI's green and reviews are clean — merge?"), then `gh pr merge <N> --squash --delete-branch=false`.
+   - Otherwise → contributor needs review: surface reviewer-request as in Path A step 4.
 4. **Never `--auto` on Path B.** Without required checks, it would fire before CI completes.
 
 **Both paths:**
 
 - Don't merge unprompted. "Merge?" or "queue auto-merge?" is the user's decision — confirm, never assume.
 - If CI is already failing on the PR when you reach this step, surface the failure and don't offer merge until it's fixed.
+- **Review comments are not optional.** A `gh pr checks` watcher that doesn't also poll reviews/comments will leave the user thinking nothing is happening while CodeQL has been waiting on you for 20 minutes.
 
 ### 8. Cleanup (after merge)
 

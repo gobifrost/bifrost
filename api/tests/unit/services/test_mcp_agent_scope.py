@@ -167,7 +167,11 @@ class TestGetToolsForAgent:
         assert result.agent_name == "Test Agent"
         assert result.system_prompt == "You are a helpful assistant."
         assert result.accessible_namespaces == ["docs", "wiki"]
-        assert len(result.tools) == 2  # execute_workflow and list_workflows
+        # execute_workflow and list_workflows from system_tools, plus
+        # search_knowledge auto-injected because knowledge_sources is non-empty
+        # (mirrors the native chat path in agent_helpers.py).
+        tool_ids = {t.id for t in result.tools}
+        assert tool_ids == {"execute_workflow", "list_workflows", "search_knowledge"}
 
     @pytest.mark.asyncio
     async def test_returns_none_for_nonexistent_agent(self):

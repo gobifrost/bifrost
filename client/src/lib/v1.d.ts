@@ -19813,8 +19813,6 @@ export interface components {
         VersionResponse: {
             /** Version */
             version: string;
-            /** Min Cli Version */
-            min_cli_version: string;
         };
         /**
          * WatchSessionRequest
