@@ -72,7 +72,7 @@ When drafting an issue body:
 
 Once the issue exists:
 
-> **CRITICAL: Use absolute paths in every Bash call.** The Bash tool's CWD leaks between calls — once you `cd` somewhere (e.g. for `npm ci`), subsequent calls silently inherit that CWD. A relative `cp .env worktree/.env` from the wrong dir will appear to succeed (no error printed) while copying nothing. **Always** write the full path: `cp /home/jack/GitHub/bifrost/.env /home/jack/GitHub/bifrost/.worktrees/<slug>/.env`. After any copy, verify with an absolute-path `ls -la /home/jack/GitHub/bifrost/.worktrees/<slug>/.env*` — do not trust echo'd success.
+> **CRITICAL: Use absolute paths in every Bash call.** The Bash tool's CWD leaks between calls — once you `cd` somewhere (e.g. for `npm ci`), subsequent calls silently inherit that CWD. **Always** write the full worktree path explicitly. Don't trust `cd <worktree>` to stick.
 
 ```bash
 # Preflight: make sure main isn't stale
@@ -82,16 +82,6 @@ git log --oneline main..origin/main   # if non-empty, warn and offer to pull
 # Create the worktree (absolute path)
 git worktree add -b <issue-num>-<short-slug> \
   /home/jack/GitHub/bifrost/.worktrees/<issue-num>-<short-slug> origin/main
-
-# Copy env files — ABSOLUTE paths on both sides. Copy every env file the
-# dev/test stacks read: .env, .env.test, and optionally .env.local.
-cp /home/jack/GitHub/bifrost/.env       /home/jack/GitHub/bifrost/.worktrees/<slug>/.env
-cp /home/jack/GitHub/bifrost/.env.test  /home/jack/GitHub/bifrost/.worktrees/<slug>/.env.test
-[ -f /home/jack/GitHub/bifrost/.env.local ] && \
-  cp /home/jack/GitHub/bifrost/.env.local /home/jack/GitHub/bifrost/.worktrees/<slug>/.env.local
-
-# VERIFY — absolute path. Do not trust the cp's exit code alone.
-ls -la /home/jack/GitHub/bifrost/.worktrees/<slug>/.env*
 
 # Node deps in the worktree (needed for vitest/tsc/lint).
 # This `cd` will leak into later Bash calls — keep using absolute paths after.
@@ -103,7 +93,7 @@ cd /home/jack/GitHub/bifrost/.worktrees/<slug>/client && npm ci
 - Branch name and worktree dir use `<issue-num>-<short-slug>`. Slug is hyphenated, ≤40 chars.
 - `.worktrees/` is already gitignored in this repo — verify once, warn if not.
 - Base from `origin/main`, not local `main` (local can be stale; origin is the shared truth).
-- Env files in this repo: `.env`, `.env.test`, optionally `.env.local`. `.env.test` is required for `./test.sh`.
+- **Do not copy `.env` / `.env.test` files** — `./test.sh` and `./debug.sh` find them on their own. Copying creates drift between worktrees and is a footgun.
 
 ### 3. Migration-drift check
 
