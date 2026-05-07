@@ -155,7 +155,13 @@ What we're looking for:
 - No `Lint & Type Check` / `Unit Tests` / `E2E Tests` re-run on `push: main`.
 - Multiple PRs queued at once batch into a single combined run.
 
+## Audit results (2026-05-07)
+
+Branch protection ruleset id `15329014` ("Protect Branch") on `main`:
+
+- Required status checks: `Lint & Type Check`, `Unit Tests`, `E2E Tests`. **CodeQL is NOT a required check** → no edit needed for `codeql.yml` (Task 4 of the plan is skipped).
+- `strict_required_status_checks_policy: true` — this is the "branches must be up to date" toggle that causes the cascade. Disabling it is part of the rollout (Task 9, Step 9.2).
+
 ## Open questions
 
-- **Is CodeQL currently a required check?** Need to confirm during rollout step 2 (the required-checks audit). If yes, add `merge_group:` to `codeql.yml`. If no, leave it.
 - **Build concurrency: 1 or higher?** Starting at 1 for predictability. Can raise later if multiple batches per day become common.
