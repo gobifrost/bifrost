@@ -161,21 +161,31 @@ Once a PR is open, three independent signals can come in: CI check transitions, 
 
 ```bash
 # Hash reviews + check states + comments together; emit only on change.
+# Terminal condition is INTENTIONALLY narrow: only state==MERGED|CLOSED.
+# Don't try to be clever with "BLOCKED + all checks done" — mergeStateStatus
+# is BLOCKED from the moment a PR opens against a protected branch, and
+# `statusCheckRollup` may briefly contain entries with empty conclusion+state
+# while checks are being scheduled, which makes the "all done" predicate
+# fire prematurely. Watch until merge or close; the user can interrupt.
 prev=""
+prev_c=""
 while true; do
   s=$(gh pr view <N> --repo jackmusick/bifrost \
-        --json reviews,statusCheckRollup,reviewDecision,mergeStateStatus 2>/dev/null) || { sleep 60; continue; }
-  c=$(gh api repos/jackmusick/bifrost/pulls/<N>/comments --jq '.[] | "\(.user.login):\(.id)"' 2>/dev/null | sort)
+        --json reviews,statusCheckRollup,reviewDecision,mergeStateStatus,state 2>/dev/null) || { sleep 60; continue; }
+  c=$(gh api repos/jackmusick/bifrost/pulls/<N>/comments --jq '.[] | "\(.user.login):\(.id):\(.path):\(.line):\(.body|gsub("\n";" ")|.[0:100])"' 2>/dev/null | sort)
   cur=$(printf '%s\n%s' "$s" "$c" | sha256sum | cut -d' ' -f1)
   if [ "$cur" != "$prev" ]; then
-    echo "=== $(date -u +%H:%M:%S) state changed ==="
-    jq -r '"reviewDecision: \(.reviewDecision)\nmergeStateStatus: \(.mergeStateStatus)\nchecks:", (.statusCheckRollup[] | "  \(.name // .context): \(.conclusion // .state)"), "reviews:", (.reviews[] | "  \(.author.login) \(.state) \(.submittedAt)")' <<<"$s"
-    echo "inline comments: $(echo "$c" | wc -l)"
+    echo "=== $(date -u +%H:%M:%S) PR <N> update ==="
+    jq -r '"  reviewDecision: \(.reviewDecision // "(none)")\n  mergeStateStatus: \(.mergeStateStatus)\n  state: \(.state)\nchecks:", (.statusCheckRollup[] | "  \(.name // .context // "?"): \(.conclusion // .state // "queued")"), "reviews:", (.reviews[] | "  \(.author.login) \(.state)")' <<<"$s"
+    if [ -n "$prev_c" ] && [ "$c" != "$prev_c" ]; then
+      echo "NEW review comments:"
+      diff <(echo "$prev_c") <(echo "$c") | grep '^>' | head -10
+    fi
+    prev_c=$c
     prev=$cur
   fi
-  # Stop when terminal: merged, closed, or fully checked-and-decided.
-  jq -e '.mergeStateStatus == "CLEAN" or .mergeStateStatus == "BLOCKED" or .mergeStateStatus == "DIRTY"' <<<"$s" >/dev/null && \
-    jq -e '[.statusCheckRollup[] | (.conclusion // .state)] | all(. != "PENDING" and . != "IN_PROGRESS" and . != "QUEUED")' <<<"$s" >/dev/null && break
+  st=$(jq -r '.state' <<<"$s")
+  case "$st" in MERGED|CLOSED) echo "PR is $st"; break ;; esac
   sleep 60
 done
 ```
