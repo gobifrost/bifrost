@@ -4,7 +4,7 @@
 
 **Goal:** Replace the "branches must be up to date" auto-merge precaution with GitHub's native merge queue, so N concurrent PRs collapse into one combined CI run instead of N sequential 15-min cycles.
 
-**Architecture:** Add `merge_group:` triggers to every workflow that produces a required status check (`ci.yml`, `ci-noop.yml`, conditionally `codeql.yml`). Make `lint`/`test-unit`/`test-e2e` skip on `push: main` (the queue covers them). Drop `needs:` from `build-dev` for `push: main` only (the queue already gated the commit). Then flip branch protection: enable merge queue, disable "require up to date." This work itself ships through the **current** auto-merge flow — that PR is the last manual-flow merge before the queue takes over.
+**Architecture:** Add `merge_group:` trigger to `ci.yml` so required status checks fire on the merge queue's synthetic ref. `ci-noop.yml` and `codeql.yml` stay unchanged (CodeQL isn't a required check; `merge_group:` doesn't support `paths:` so the docs-skip stub can't be conditionally fired on the queue — `ci.yml`'s real jobs cover docs-only PRs that hit the queue at the cost of ~15 min of real CI). Make `lint`/`test-unit`/`test-e2e` skip on `push: main` (the queue covers them). Drop `needs:` from `build-dev` for `push: main` only (the queue already gated the commit). Then flip branch protection: enable merge queue, disable "require up to date." This work itself ships through the **current** auto-merge flow — that PR is the last manual-flow merge before the queue takes over.
 
 **Tech Stack:** GitHub Actions (`pull_request`, `push`, `merge_group` events), GitHub branch-protection rulesets, GitHub merge queue.
 
@@ -17,8 +17,8 @@
 | File | Change | Responsibility |
 |---|---|---|
 | `.github/workflows/ci.yml` | Modify | Add `merge_group:` trigger; gate `lint`/`test-unit`/`test-e2e` to PR + queue events only; drop `needs:` for `build-dev`/`deploy-dev` on `push: main`. |
-| `.github/workflows/ci-noop.yml` | Modify | Add `merge_group:` trigger with the same `paths:` filter so docs-only PRs report required checks on the queue ref. |
-| `.github/workflows/codeql.yml` | Conditionally modify | Add `merge_group:` only if CodeQL is currently a required status check. (Decision deferred to Task 1.) |
+| `.github/workflows/ci-noop.yml` | **Unchanged** | `merge_group:` doesn't accept `paths:` filter, so the stub jobs can't be made to fire only on docs-only queue entries. `ci.yml` covers the queue ref for both docs-only and code changes. See Task 3. |
+| `.github/workflows/codeql.yml` | **Unchanged** | CodeQL is not a required status check on `main` per the audit (Task 1). No queue trigger needed. See Task 4. |
 | Branch protection ruleset on `main` | Modify (GitHub UI / `gh api`) | Enable "Require merge queue"; disable "Require branches to be up to date"; queue settings (concurrency, batch size, timeouts). |
 
 No source-code or test-suite files change. This is CI-config-only.
@@ -145,7 +145,7 @@ on:
   workflow_dispatch:
 ```
 
-Note: `merge_group:` takes no `branches:` or `paths-ignore:` — it always fires on the queue ref, which is what we want. Docs-only changes inherit the queue too; `ci-noop.yml` (Task 3) handles the stub jobs.
+Note: `merge_group:` does not accept `branches:`, `paths:`, or `paths-ignore:` filters. It always fires on the queue ref. That means **the full `ci.yml` real jobs run on every queue entry, including docs-only PRs**. We accept this regression: docs-only PRs going through the queue cost ~15 min of real CI instead of `ci-noop`'s 5-second stubs. Docs-only PRs are rare; the cost is bounded; correctness is unaffected. See Task 3 for why `ci-noop.yml` is intentionally NOT given a `merge_group:` trigger.
 
 - [ ] **Step 2.2: Validate YAML parses**
 
@@ -170,215 +170,54 @@ forever waiting on absent statuses."
 
 ---
 
-## Task 3: Add `merge_group:` trigger to `ci-noop.yml`
+## Task 3: Document why `ci-noop.yml` stays unchanged on the queue
 
-`ci-noop.yml` reports stub-green for docs-only PRs so branch protection sees the required check names. The same logic applies on the queue ref — docs-only PRs queue too, and the stubs need to fire there.
+**Reversal from spec/initial plan.** Research during execution (2026-05-07) confirmed via the official GitHub Actions docs that the `merge_group:` trigger does **NOT** support `paths:`, `paths-ignore:`, or `branches:` filters — only `types: [checks_requested]`. Adding `paths:` under `merge_group:` would either be rejected as invalid schema or fire on every queue ref regardless of paths.
 
-**Files:**
-- Modify: `.github/workflows/ci-noop.yml` (lines 23-48)
+Since `ci-noop.yml`'s purpose is to provide stub-green status checks **specifically for docs-only changes**, it cannot be made to fire conditionally on the queue. Two options:
 
-- [ ] **Step 3.1: Add `merge_group:` with byte-identical paths filter**
+| Option | Outcome |
+|---|---|
+| Add unconditional `merge_group:` to `ci-noop.yml` | Stub jobs fire on EVERY queue entry alongside `ci.yml`'s real jobs. Both report the same check names. Branch protection requires **all reports green**, so safety is preserved, but you get duplicate reports. Confusing. |
+| **Leave `ci-noop.yml` unchanged** | On the queue, only `ci.yml`'s real jobs fire. Required checks (`Lint & Type Check`, `Unit Tests`, `E2E Tests`) report from the real run. Docs-only PRs going through the queue pay ~15 min of real CI instead of 5s of stubs. ✅ |
 
-Find:
+We pick option 2. The cost — running real CI on docs-only PRs that hit the queue — is bounded (docs-only PRs are rare) and arguably correct (a docs-only change passing real CI is strictly safer than a stub-green report).
 
-```yaml
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "**/*.md"
-      # ... existing list ...
-      - ".idea/**"
-```
+**Files:** none (intentional no-op)
 
-Replace with:
-
-```yaml
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "**/*.md"
-      - "**/*.txt"
-      - "**/*.png"
-      - "**/*.jpg"
-      - "**/*.jpeg"
-      - "**/*.gif"
-      - "**/*.svg"
-      - "**/*.webp"
-      - "**/*.ico"
-      - ".claude/**"
-      - "docs/**"
-      - "LICENSE"
-      - ".github/CODEOWNERS"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/dependabot.yml"
-      - ".gitignore"
-      - ".gitattributes"
-      - ".editorconfig"
-      - ".prettierrc*"
-      - ".prettierignore"
-      - ".vscode/**"
-      - ".idea/**"
-  # Mirror the pull_request paths on the queue ref so stub jobs
-  # report required check names on docs-only PRs that have
-  # entered the merge queue.
-  merge_group:
-    paths:
-      - "**/*.md"
-      - "**/*.txt"
-      - "**/*.png"
-      - "**/*.jpg"
-      - "**/*.jpeg"
-      - "**/*.gif"
-      - "**/*.svg"
-      - "**/*.webp"
-      - "**/*.ico"
-      - ".claude/**"
-      - "docs/**"
-      - "LICENSE"
-      - ".github/CODEOWNERS"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/dependabot.yml"
-      - ".gitignore"
-      - ".gitattributes"
-      - ".editorconfig"
-      - ".prettierrc*"
-      - ".prettierignore"
-      - ".vscode/**"
-      - ".idea/**"
-```
-
-The two lists MUST stay byte-identical to `ci.yml`'s `paths-ignore:`. The header comment block at the top of the file already documents this rule — don't remove it.
-
-- [ ] **Step 3.2: Update the file's header comment to mention the queue**
-
-Edit the comment block at lines 1-19. After the line:
-
-```
-# This workflow has the INVERSE trigger (paths: matches the same set
-# that ci.yml's paths-ignore: skips) and reports the same status-check
-# names with always-green stub jobs. GitHub branch protection looks up
-# checks by name only, so it accepts these as satisfying the requirement.
-```
-
-Add a new paragraph:
-
-```
-#
-# The merge_group: trigger mirrors pull_request: so the stub jobs also
-# fire when a docs-only PR enters the merge queue — required status
-# checks must report on the queue's synthetic ref or the queue blocks
-# forever waiting.
-```
-
-- [ ] **Step 3.3: Validate YAML parses and paths lists match**
-
-Run from the worktree root:
+- [ ] **Step 3.1: Confirm `ci-noop.yml` is unchanged**
 
 ```bash
-python -c "import yaml; yaml.safe_load(open('.github/workflows/ci-noop.yml'))" && echo OK
+git diff origin/main -- .github/workflows/ci-noop.yml
 ```
 
-Expected: `OK`.
-
-Then verify the two paths lists are byte-identical:
+Expected: empty output. If the file has been modified, restore it:
 
 ```bash
-python <<'PY'
-import yaml
-noop = yaml.safe_load(open('.github/workflows/ci-noop.yml'))
-pr_paths = noop['on']['pull_request']['paths']
-mg_paths = noop['on']['merge_group']['paths']
-assert pr_paths == mg_paths, f"drift: {set(pr_paths) ^ set(mg_paths)}"
-
-ci = yaml.safe_load(open('.github/workflows/ci.yml'))
-ci_ignore = ci['on']['pull_request']['paths-ignore']
-assert pr_paths == ci_ignore, f"drift vs ci.yml: {set(pr_paths) ^ set(ci_ignore)}"
-print("OK: ci-noop pull_request, merge_group, and ci.yml paths-ignore all match")
-PY
+git restore --source=origin/main -- .github/workflows/ci-noop.yml
 ```
 
-Expected: `OK: ci-noop pull_request, merge_group, and ci.yml paths-ignore all match`.
-
-- [ ] **Step 3.4: Commit**
-
-```bash
-git add .github/workflows/ci-noop.yml
-git commit -m "ci: mirror merge_group trigger on ci-noop stub jobs
-
-Docs-only PRs that enter the merge queue must still see the
-required status-check names (Lint & Type Check, Unit Tests,
-E2E Tests) report green on the queue ref, or the queue blocks
-forever. Mirror the pull_request paths filter on merge_group
-to match ci.yml's paths-ignore list."
-```
+- [ ] **Step 3.2: No commit** — this is a "decided not to change" task. The reasoning is captured in this plan and in the spec's "Failure modes" / audit sections.
 
 ---
 
-## Task 4: Conditionally add `merge_group:` to `codeql.yml`
+## Task 4: `codeql.yml` stays unchanged
 
-**Decision rule:** if Task 1 found CodeQL (`Analyze (python)` and/or `Analyze (javascript-typescript)`) in the required-checks list, do this task. If not, **skip Task 4 entirely** and proceed to Task 5.
+Audit (Task 1, committed `bb8567fd`) confirmed CodeQL is NOT a required status check on `main`. The required checks are exactly: `Lint & Type Check`, `Unit Tests`, `E2E Tests` — all from `ci.yml`.
 
-**Files:**
-- Modify: `.github/workflows/codeql.yml` (lines 7-15)
+CodeQL still runs on `pull_request` (PR-level scanning, surfaces in the Security tab) and on `push: main` (post-merge scan), and weekly via cron. None of those triggers are gated on the queue. No edit needed.
 
-- [ ] **Step 4.1: Determine whether to apply this task**
+**Files:** none (intentional no-op)
 
-Read Task 1's audit output (committed in Step 1.4). If CodeQL checks are required, continue to Step 4.2. Otherwise mark this task complete with a comment noting "skipped — CodeQL not required" and move to Task 5.
-
-- [ ] **Step 4.2: Add `merge_group:` trigger**
-
-Find:
-
-```yaml
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Weekly run catches CVEs in newly-published advisories that match
-    # existing code patterns (CodeQL queries are updated by GitHub).
-    - cron: "0 9 * * 1"
-  workflow_dispatch:
-```
-
-Replace with:
-
-```yaml
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  # CodeQL is a required status check — run on the merge queue ref
-  # so the queue doesn't block waiting on a check that never fires.
-  merge_group:
-  schedule:
-    # Weekly run catches CVEs in newly-published advisories that match
-    # existing code patterns (CodeQL queries are updated by GitHub).
-    - cron: "0 9 * * 1"
-  workflow_dispatch:
-```
-
-- [ ] **Step 4.3: Validate YAML parses**
+- [ ] **Step 4.1: Confirm `codeql.yml` is unchanged**
 
 ```bash
-python -c "import yaml; yaml.safe_load(open('.github/workflows/codeql.yml'))" && echo OK
+git diff origin/main -- .github/workflows/codeql.yml
 ```
 
-Expected: `OK`.
+Expected: empty output.
 
-- [ ] **Step 4.4: Commit**
-
-```bash
-git add .github/workflows/codeql.yml
-git commit -m "ci: add merge_group trigger to codeql.yml
-
-CodeQL Analyze checks are required for merge per branch protection,
-so they must fire on the queue's synthetic ref."
-```
+- [ ] **Step 4.2: No commit** — covered by the audit commit (Step 1.4 / `bb8567fd`).
 
 ---
 
@@ -596,8 +435,8 @@ git diff origin/main -- .github/workflows/
 
 Expected diff scope:
 - `ci.yml`: `merge_group:` added; three `if:` guards added on `lint`/`test-unit`/`test-e2e`; `build-dev` and `deploy-dev` `if:` and `needs:` adjusted.
-- `ci-noop.yml`: `merge_group:` paths block added; comment updated.
-- `codeql.yml`: `merge_group:` added (only if Task 4 applied).
+- `ci-noop.yml`: **no change** (Task 3 explanation).
+- `codeql.yml`: **no change** (Task 4 — CodeQL not required).
 
 If any unexpected change appears, revert it with `git restore --source=origin/main -- <file>` and re-do the relevant task.
 
@@ -619,7 +458,7 @@ Expected (subset):
 - `Build Client Image`
 - `Create Release`
 
-`Lint & Type Check`, `Unit Tests`, `E2E Tests` MUST appear in **both** `ci.yml` and `ci-noop.yml` exactly as shown. Any drift breaks branch protection.
+`Lint & Type Check`, `Unit Tests`, `E2E Tests` MUST still appear in **both** `ci.yml` and `ci-noop.yml` exactly as shown — even though we didn't edit `ci-noop.yml`, the names are how branch protection matches docs-only PR checks today. Any drift in `ci.yml` (the file we did edit) would break branch protection.
 
 ---
 
@@ -643,7 +482,8 @@ Expected: branch pushed, GitHub prints a "Create PR" URL.
 gh pr create --base main --title "ci: adopt GitHub merge queue" --body "$(cat <<'EOF'
 ## Summary
 
-- Add `merge_group:` trigger to `ci.yml`, `ci-noop.yml`, and (conditionally) `codeql.yml` so required checks fire on the merge queue's synthetic ref.
+- Add `merge_group:` trigger to `ci.yml` so required checks (`Lint & Type Check`, `Unit Tests`, `E2E Tests`) fire on the merge queue's synthetic ref.
+- `ci-noop.yml` and `codeql.yml` deliberately unchanged — `merge_group:` doesn't accept `paths:` filters, and CodeQL isn't a required check (audit `bb8567fd`). Trade-off documented in plan Task 3.
 - Skip `lint`/`test-unit`/`test-e2e` on `push: main` — the queue's run already covered the commit.
 - Drop `needs:` from `build-dev` for `push: main` (queue + branch protection are the gate). Tag-release jobs untouched.
 
@@ -666,7 +506,7 @@ Expected: PR URL printed.
 
 - [ ] **Step 8.3: Wait for PR-level CI to pass**
 
-PR CI runs `Lint & Type Check`, `Unit Tests`, `E2E Tests`, plus CodeQL (and `ci-noop` won't fire — these are workflow file changes, which don't match the docs paths filter). Watch:
+PR CI runs `Lint & Type Check`, `Unit Tests`, `E2E Tests`, plus CodeQL. Note: this PR also touches `docs/` (the spec and plan), so `ci-noop` may fire too — branch protection treats duplicate-named green reports as collectively required, which is fine. Watch:
 
 ```bash
 gh pr checks --watch
@@ -760,7 +600,7 @@ Edit `docs/superpowers/specs/2026-05-07-merge-queue-design.md` and add a single 
 <!-- Merge queue smoke-tested 2026-05-07 -->
 ```
 
-(Docs-only on purpose — exercises the `ci-noop.yml` path on the queue ref.)
+(Docs-only PR — exercises the queue end-to-end. Note: PR-level checks come from `ci-noop` stubs (fast). Queue-level checks come from `ci.yml`'s real jobs (~15 min) since `merge_group:` doesn't support `paths:` filters and `ci-noop.yml` doesn't have a `merge_group:` trigger. This is the documented trade-off in Task 3.)
 
 - [ ] **Step 10.2: Push and open PR**
 
@@ -796,7 +636,7 @@ gh run list --workflow=ci.yml --limit 5
 gh run list --workflow=ci-noop.yml --limit 5
 ```
 
-Expected within ~5 min: a new run on a `gh-readonly-queue/main/pr-<N>-...` ref. For this docs-only PR, `ci-noop.yml` runs the stub jobs on the queue ref. The PR lands on `main` once the queue check is green.
+Expected within ~5 min: a new run on a `gh-readonly-queue/main/pr-<N>-...` ref. **`ci.yml` runs the real jobs** (`Lint & Type Check`, `Unit Tests`, `E2E Tests`) on the queue ref — not stubs. `ci-noop.yml` does NOT fire on the queue. Total queue run: ~15 min. The PR lands on `main` once the queue check is green.
 
 - [ ] **Step 10.6: Verify post-merge behavior on `main`**
 
