@@ -43,6 +43,11 @@ on:
       - ".prettierignore"
       - ".vscode/**"
       - ".idea/**"
+  # GitHub merge queue runs CI on a synthetic ref containing
+  # main + queued PRs stacked in queue order. Required status
+  # checks must fire on this event or the queue blocks forever
+  # waiting on absent statuses.
+  merge_group:
   workflow_dispatch:
 
 env:
