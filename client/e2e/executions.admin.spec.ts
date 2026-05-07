@@ -7,7 +7,95 @@
  * Mirrors: api/tests/e2e/api/test_executions.py
  */
 
-import { test, expect } from "@playwright/test";
+import {
+	test,
+	expect,
+	type AuthedApi,
+} from "./fixtures/api-fixture";
+import type { Page } from "@playwright/test";
+
+interface CompletedExecution {
+	executionId: string;
+	workflowName: string;
+}
+
+let completedExecution: CompletedExecution;
+
+function rowForWorkflow(page: Page, workflowName: string) {
+	return page
+		.locator("table tbody tr")
+		.filter({ hasText: workflowName });
+}
+
+async function createCompletedExecution(
+	api: AuthedApi,
+	workflowName: string,
+): Promise<CompletedExecution> {
+	const code = `
+import logging
+
+logger = logging.getLogger(__name__)
+logger.info("history page e2e log line")
+
+result = {"ok": True, "workflow": "${workflowName}"}
+`.trim();
+
+	const response = await api.post("/api/workflows/execute", {
+		data: {
+			workflow_id: null,
+			input_data: {},
+			form_id: null,
+			transient: false,
+			code,
+			script_name: workflowName,
+		},
+	});
+	expect(response.ok(), await response.text()).toBe(true);
+	const body = await response.json();
+	const executionId = body.execution_id as string;
+	expect(executionId).toBeTruthy();
+
+	await expect
+		.poll(
+			async () => {
+				const details = await api.get(`/api/executions/${executionId}`);
+				if (!details.ok()) {
+					return `HTTP ${details.status()}`;
+				}
+				const execution = await details.json();
+				return execution.status as string;
+			},
+			{
+				timeout: 60_000,
+				intervals: [1_000],
+				message: "execution did not complete before history assertions",
+			},
+		)
+		.toBe("Success");
+
+	return { executionId, workflowName };
+}
+
+async function openExecutionDrawer(page: Page) {
+	await page.goto("/history");
+
+	const row = rowForWorkflow(page, completedExecution.workflowName);
+	await expect(row).toBeVisible({ timeout: 15_000 });
+	await row.click();
+
+	const drawer = page.getByRole("dialog", { name: /execution details/i });
+	await expect(drawer).toBeVisible({ timeout: 10_000 });
+	return drawer;
+}
+
+test.beforeAll(async ({ api }, testInfo) => {
+	testInfo.setTimeout(90_000);
+	const suffix = `${Date.now()}_${testInfo.workerIndex}_${Math.floor(
+		Math.random() * 10000,
+	)}`;
+	const workflowName = `e2e_history_${suffix}`;
+	completedExecution = await createCompletedExecution(api, workflowName);
+});
 
 test.describe("Execution History", () => {
 	test("should display execution history page", async ({ page }) => {
@@ -26,18 +114,9 @@ test.describe("Execution History", () => {
 			page.getByRole("heading", { name: /history|executions/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Either we have executions or an empty state
-		const executionContent = page.locator(
-			"table tbody tr, [data-testid='execution-row'], [data-testid='execution-card']",
-		);
-
-		const hasExecutions = await executionContent.count().catch(() => 0);
-		const hasEmptyState = await page
-			.getByText(/no executions|empty|run a workflow/i)
-			.isVisible()
-			.catch(() => false);
-
-		expect(hasExecutions > 0 || hasEmptyState).toBe(true);
+		await expect(
+			rowForWorkflow(page, completedExecution.workflowName),
+		).toBeVisible({ timeout: 15_000 });
 	});
 
 	test("should show execution status badges", async ({ page }) => {
@@ -47,105 +126,44 @@ test.describe("Execution History", () => {
 			page.getByRole("heading", { name: /history|executions/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Look for status indicators
-		const statusBadge = page.locator(
-			"[data-testid='status-badge'], .badge, [class*='status']",
-		);
-
-		// If we have executions, we should have status badges
-		const hasExecutions =
-			(await page
-				.locator("table tbody tr, [data-testid='execution-row']")
-				.count()
-				.catch(() => 0)) > 0;
-
-		if (hasExecutions) {
-			await expect(statusBadge.first()).toBeVisible();
-		}
+		await expect(
+			rowForWorkflow(page, completedExecution.workflowName).getByText(
+				"Completed",
+				{ exact: true },
+			),
+		).toBeVisible({ timeout: 15_000 });
 	});
 });
 
 test.describe("Execution Details", () => {
-	test("should navigate to execution details", async ({ page }) => {
-		await page.goto("/history");
+	test("should open execution details from history", async ({ page }) => {
+	const drawer = await openExecutionDrawer(page);
 
+	await expect(
+		drawer.getByRole("heading", {
+			name: completedExecution.workflowName,
+		}),
+	).toBeVisible({ timeout: 10_000 });
 		await expect(
-			page.getByRole("heading", { name: /history|executions/i }).first(),
-		).toBeVisible({ timeout: 10000 });
-
-		// Find an execution row
-		const executionRow = page
-			.locator(
-				"table tbody tr, [data-testid='execution-row'], [data-testid='execution-card']",
-			)
-			.first();
-
-		if (await executionRow.isVisible().catch(() => false)) {
-			await executionRow.click();
-
-			// Should navigate to execution details
-			await page.waitForURL(/\/history\/[a-f0-9-]+/, { timeout: 5000 });
-
-			// Should show execution details
-			await expect(
-				page.getByText(/status|result|output|logs/i),
-			).toBeVisible({ timeout: 5000 });
-		}
+			drawer.getByText("Completed", { exact: true }),
+		).toBeVisible();
 	});
 
 	test("should show execution output/results", async ({ page }) => {
-		await page.goto("/history");
+		const drawer = await openExecutionDrawer(page);
 
 		await expect(
-			page.getByRole("heading", { name: /history|executions/i }).first(),
-		).toBeVisible({ timeout: 10000 });
-
-		// Find an execution
-		const executionRow = page
-			.locator(
-				"table tbody tr, [data-testid='execution-row'], [data-testid='execution-card']",
-			)
-			.first();
-
-		if (await executionRow.isVisible().catch(() => false)) {
-			await executionRow.click();
-			await page.waitForURL(/\/history\/[a-f0-9-]+/, { timeout: 5000 });
-
-			// Should show output section
-			await expect(page.getByText(/output|result|response/i)).toBeVisible(
-				{ timeout: 5000 },
-			);
-		}
+			drawer.getByText("Workflow execution result"),
+		).toBeVisible({ timeout: 10_000 });
+		await expect(drawer.getByText("Ok", { exact: true })).toBeVisible();
 	});
 
 	test("should show execution logs", async ({ page }) => {
-		await page.goto("/history");
+		const drawer = await openExecutionDrawer(page);
 
 		await expect(
-			page.getByRole("heading", { name: /history|executions/i }).first(),
-		).toBeVisible({ timeout: 10000 });
-
-		// Find an execution
-		const executionRow = page
-			.locator(
-				"table tbody tr, [data-testid='execution-row'], [data-testid='execution-card']",
-			)
-			.first();
-
-		if (await executionRow.isVisible().catch(() => false)) {
-			await executionRow.click();
-			await page.waitForURL(/\/history\/[a-f0-9-]+/, { timeout: 5000 });
-
-			// Look for logs tab/section
-			const logsTab = page.getByRole("tab", { name: /logs/i });
-			const logsSection = page.getByText(/logs|console/i);
-
-			const hasLogs =
-				(await logsTab.isVisible().catch(() => false)) ||
-				(await logsSection.isVisible().catch(() => false));
-
-			expect(hasLogs).toBe(true);
-		}
+			drawer.getByText("history page e2e log line"),
+		).toBeVisible({ timeout: 10_000 });
 	});
 });
 
@@ -157,20 +175,10 @@ test.describe("Execution Filtering", () => {
 			page.getByRole("heading", { name: /history|executions/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Look for status filter
-		const statusFilter = page
-			.getByRole("combobox", { name: /status/i })
-			.or(page.locator("[data-testid='status-filter']"))
-			.or(page.getByLabel(/status/i));
-
-		if (await statusFilter.isVisible().catch(() => false)) {
-			await statusFilter.click();
-
-			// Should show filter options
-			await expect(
-				page.getByText(/completed|failed|running|pending/i),
-			).toBeVisible({ timeout: 3000 });
-		}
+		await page.getByRole("tab", { name: "Completed" }).click();
+		await expect(
+			rowForWorkflow(page, completedExecution.workflowName),
+		).toBeVisible({ timeout: 10_000 });
 	});
 
 	test("should search executions", async ({ page }) => {
@@ -186,10 +194,11 @@ test.describe("Execution Filtering", () => {
 			.or(page.getByRole("searchbox"));
 
 		if (await searchInput.isVisible().catch(() => false)) {
-			await searchInput.fill("test");
+			await searchInput.fill(completedExecution.workflowName);
 
-			// Results should update
-			await expect(page.locator("main")).toBeVisible();
+			await expect(
+				rowForWorkflow(page, completedExecution.workflowName),
+			).toBeVisible({ timeout: 10_000 });
 		}
 	});
 });
@@ -229,22 +238,9 @@ test.describe("Execution Actions", () => {
 			page.getByRole("heading", { name: /history|executions/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Find a completed execution
-		const completedRow = page
-			.locator("table tbody tr, [data-testid='execution-row']")
-			.filter({ hasText: /completed|success|failed/i })
-			.first();
-
-		if (await completedRow.isVisible().catch(() => false)) {
-			// Look for re-run button
-			const rerunButton = page
-				.getByRole("button", { name: /re-?run|retry/i })
-				.first();
-
-			// Re-run functionality may or may not be implemented
-			const _hasRerun = await rerunButton.isVisible().catch(() => false);
-			// Just checking the page works, not requiring re-run feature
-			expect(true).toBe(true);
-		}
+		const drawer = await openExecutionDrawer(page);
+		await expect(drawer.getByTitle("Rerun")).toBeVisible({
+			timeout: 10_000,
+		});
 	});
 });

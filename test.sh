@@ -281,7 +281,11 @@ client_e2e() {
             playwright-runner npx playwright test "${passthrough[@]}"
     else
         docker compose -f "$COMPOSE_FILE" --profile client run --rm "${env_args[@]}" \
-            playwright-runner
+            playwright-runner npx playwright test --reporter=list,html \
+                --project=platform-admin \
+                --project=org-user \
+                --project=unauthenticated \
+                --project=chromium
     fi
 }
 
