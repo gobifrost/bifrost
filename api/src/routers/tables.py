@@ -684,7 +684,10 @@ async def get_table_or_404(
         table = await repo.get(id=table_uuid)
     except ValueError:
         # Not a UUID — fall through to name-based lookup
-        logger.debug(f"table identifier {name_or_id!r} is not a UUID, falling back to name lookup")
+        logger.debug(
+            f"table identifier {log_safe(name_or_id)!r} is not a UUID, "
+            "falling back to name lookup"
+        )
 
     # Fall back to name lookup (cascade scoping: org-specific then global)
     if not table:
