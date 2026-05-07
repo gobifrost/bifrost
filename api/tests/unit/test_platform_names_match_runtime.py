@@ -315,6 +315,35 @@ def _keys_from_object_literal(src: str, open_brace_end: int) -> set[str]:
 _SPREAD_SKIPS = {"React", "LucideIcons"}
 
 
+# Names provided by `...React` in the runtime `$` registry. The parser skips
+# `...React` (see _SPREAD_SKIPS) because enumerating every React export is
+# fragile, but PLATFORM_EXPORT_NAMES *does* list these explicitly so that
+# the bundler/classifier can route them. They are wired into the runtime
+# via the React namespace spread; the reverse-direction drift test below
+# excludes them from its check.
+#
+# Keep this in sync with the "React" block at the top of
+# bifrost/platform_names.py. If a new React API is added there, add it here
+# too — or move it out of the React block if it has its own runtime entry.
+_REACT_NAMESPACE_NAMES: frozenset[str] = frozenset({
+    "React", "Fragment", "Suspense", "lazy", "memo", "forwardRef",
+    "useState", "useEffect", "useCallback", "useMemo", "useRef",
+    "useContext", "useReducer", "useLayoutEffect", "useId",
+    "useTransition", "useDeferredValue", "useImperativeHandle",
+})
+
+
+# Names that PLATFORM_EXPORT_NAMES lists but are intentionally provided via
+# the `...LucideIcons` spread rather than a discrete entry in the `$` registry.
+# The parser skips `...LucideIcons` (see _SPREAD_SKIPS), so the reverse-direction
+# drift test must explicitly excuse these. Documented in platform_names.py.
+_LUCIDE_PROVIDED_NAMES: frozenset[str] = frozenset({
+    # `Calendar` from "bifrost" resolves to the Lucide calendar icon, NOT a
+    # picker component. Apps that want a date picker import `CalendarPicker`.
+    "Calendar",
+})
+
+
 def _resolve_registry_keys() -> set[str]:
     """Return every key present in the client's `$` registry.
 
@@ -414,6 +443,40 @@ def test_every_runtime_registry_key_is_in_platform_export_names() -> None:
         + ", ".join(sorted(missing))
         + "\nAdd them to PLATFORM_EXPORT_NAMES (or update this test's "
         "_SPREAD_SKIPS / resolver if they're intentionally excluded)."
+    )
+
+
+def test_every_platform_export_name_is_in_runtime_registry() -> None:
+    """Every PLATFORM_EXPORT_NAMES entry must be wired into the `$` registry.
+
+    The reverse direction of the check above. When this fails: a name was
+    declared in `bifrost/platform_names.py` (so the validator allows
+    `import { X } from "bifrost"` and the bundler routes it through the
+    platform scope), but the runtime `$` registry doesn't actually inject
+    it — so `X` resolves to `undefined` at runtime and any call site throws.
+
+    This is exactly how `toast` shipped broken (issue #203): listed in
+    PLATFORM_EXPORT_NAMES, imported in app-code-platform/components.ts,
+    documented in platform-api.md and llms.txt — but never added to the
+    `$` registry's Utilities section. The original one-way check passed
+    vacuously.
+
+    React-namespace names (`useState`, `useEffect`, …) are excluded because
+    they're injected via `...React` in the registry; the parser skips that
+    spread (see `_SPREAD_SKIPS`).
+    """
+    runtime_keys = _resolve_registry_keys()
+    expected = PLATFORM_EXPORT_NAMES - _REACT_NAMESPACE_NAMES - _LUCIDE_PROVIDED_NAMES
+
+    missing = expected - runtime_keys
+    assert not missing, (
+        "The following names are listed in PLATFORM_EXPORT_NAMES but are "
+        "missing from the client's `$` platform-scope registry "
+        "(client/src/lib/app-code-runtime.ts):\n  "
+        + ", ".join(sorted(missing))
+        + "\nEither wire them into the `$` registry (so apps that import "
+        "them actually get a value), or remove them from PLATFORM_EXPORT_NAMES "
+        "if they were never meant to ship."
     )
 
 

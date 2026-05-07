@@ -191,6 +191,9 @@ import * as DateRangePickerModule from "@/components/ui/date-range-picker";
 // Utilities - date-fns
 import { format } from "date-fns";
 
+// Toast notifications via Sonner — <Toaster /> is mounted in main.tsx.
+import { toast } from "sonner";
+
 /**
  * The $ registry - contains EVERYTHING available to user code
  *
@@ -274,6 +277,9 @@ export const $: Record<string, unknown> = {
 
 	// Utilities - date-fns
 	format,
+
+	// Toast notifications (Sonner)
+	toast,
 };
 
 /**
