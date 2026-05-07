@@ -14,6 +14,7 @@ import {
 	Cog,
 	Play,
 	FileCode,
+	Database,
 } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ const categoryIcons: Record<NotificationCategory, IconComponent> = {
 	github_sync: Github,
 	file_upload: Upload,
 	package_install: Package,
+	embedding_reindex: Database,
 	system: Cog,
 };
 
@@ -248,7 +250,9 @@ function ProgressNotificationItem({
 					{new Date(notification.updatedAt).toLocaleString()}
 				</p>
 			</div>
-			{/* Dismiss button - show for non-active states (completed, failed, awaiting_action) */}
+			{/* Dismiss button - show for non-active states (completed, failed, awaiting_action).
+			    Embedding-reindex while running gets a Cancel button instead — DELETE on the
+			    notification sets the cancel flag the scheduler polls between batches. */}
 			{!isActive && (
 				<Button
 					variant="ghost"
@@ -257,6 +261,16 @@ function ProgressNotificationItem({
 					onClick={onDismiss}
 				>
 					<X className="h-3 w-3" />
+				</Button>
+			)}
+			{isActive && notification.category === "embedding_reindex" && (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-6 px-2 text-xs flex-shrink-0"
+					onClick={onDismiss}
+				>
+					Cancel
 				</Button>
 			)}
 		</div>

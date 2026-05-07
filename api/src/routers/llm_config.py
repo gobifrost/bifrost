@@ -15,6 +15,9 @@ from src.core.log_safety import log_safe
 from src.models.contracts.llm import (
     EmbeddingConfigRequest,
     EmbeddingConfigResponse,
+    EmbeddingConfigSaveResponse,
+    EmbeddingReindexResponse,
+    EmbeddingTestRequest,
     EmbeddingTestResponse,
     LLMConfigRequest,
     LLMConfigResponse,
@@ -26,7 +29,8 @@ from src.models.contracts.llm import (
 from src.services.embeddings.factory import (
     EMBEDDING_CONFIG_CATEGORY,
     EMBEDDING_CONFIG_KEY,
-    get_embedding_config,
+    LLM_CONFIG_CATEGORY,
+    LLM_CONFIG_KEY,
 )
 from src.services.llm_config_service import LLMConfigService
 
@@ -97,6 +101,19 @@ async def set_llm_config(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Gate: run a real 1-token completion before committing. If the chosen
+    # model can't actually complete (project-scoped key, missing permission,
+    # wrong model id), bail loudly here rather than persisting a broken config
+    # that silently fails every downstream summarizer/tuning call.
+    await db.flush()
+    completion_result = await service.verify_completion()
+    if not completion_result.success:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Configuration not saved — {completion_result.message}",
+        )
 
     await db.commit()
 
@@ -276,6 +293,19 @@ async def list_llm_models(
 # =============================================================================
 
 
+DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1"
+
+
+def _normalize_endpoint(value: str | None) -> str | None:
+    """Empty string and OpenAI's default URL both collapse to None."""
+    if not value:
+        return None
+    trimmed = value.rstrip("/")
+    if trimmed == DEFAULT_OPENAI_ENDPOINT.rstrip("/"):
+        return None
+    return trimmed
+
+
 @router.get("/embedding-config")
 async def get_embedding_config_endpoint(
     db: DbSession,
@@ -285,7 +315,8 @@ async def get_embedding_config_endpoint(
     Get current embedding configuration.
 
     Returns the configuration and indicates whether it uses a dedicated key
-    or falls back to the LLM provider's OpenAI key.
+    or falls back to the LLM provider's key. The `endpoint` field is the
+    resolved endpoint (dedicated → inherited LLM → null = OpenAI default).
     Requires platform admin access.
     """
     from sqlalchemy import select
@@ -304,33 +335,27 @@ async def get_embedding_config_endpoint(
     if embedding_config and embedding_config.value_json:
         config_data = embedding_config.value_json
         return EmbeddingConfigResponse(
-            model=config_data.get("model", "text-embedding-3-small"),
+            model=config_data.get("model", ""),
             dimensions=config_data.get("dimensions", 1536),
+            endpoint=config_data.get("endpoint"),
             is_configured=True,
             api_key_set=bool(config_data.get("encrypted_api_key")),
             uses_llm_key=False,
         )
 
-    # Check if we can fall back to LLM config
-    try:
-        await get_embedding_config(db)
-        # If we get here, we're using the LLM key
-        return EmbeddingConfigResponse(
-            model="text-embedding-3-small",
-            dimensions=1536,
-            is_configured=True,
-            api_key_set=True,
-            uses_llm_key=True,
-        )
-    except ValueError:
-        # No config available
-        return EmbeddingConfigResponse(
-            model="text-embedding-3-small",
-            dimensions=1536,
-            is_configured=False,
-            api_key_set=False,
-            uses_llm_key=False,
-        )
+    # No dedicated embedding config. Don't claim "configured" based on the
+    # factory's runtime fallback — the fallback uses an imposed model id the
+    # user never picked, which is wrong for any non-stock-OpenAI endpoint and
+    # confusing even on stock OpenAI. The UI determines inheritance separately
+    # via the LLM provider field; this endpoint just reports "no dedicated".
+    return EmbeddingConfigResponse(
+        model="",
+        dimensions=1536,
+        endpoint=None,
+        is_configured=False,
+        api_key_set=False,
+        uses_llm_key=False,
+    )
 
 
 @router.post("/embedding-config", status_code=status.HTTP_200_OK)
@@ -338,19 +363,37 @@ async def set_embedding_config(
     request: EmbeddingConfigRequest,
     db: DbSession,
     user: CurrentActiveUser,
-) -> EmbeddingConfigResponse:
+) -> EmbeddingConfigSaveResponse:
     """
     Set dedicated embedding configuration.
 
-    This allows using a separate OpenAI key for embeddings,
-    useful when the main LLM provider is Anthropic.
+    Validates the configuration by running a live embedding call before
+    persisting; captures the returned vector dimensions.
+
+    If the new model's output dimension differs from the currently-saved
+    dimension AND knowledge_store has existing rows, the response carries
+    `needs_reindex_confirmation=True` and persistence is skipped — re-POST
+    with `confirm_reindex: true` to commit the new config and trigger a
+    reindex via the scheduler.
     Requires platform admin access.
     """
     import base64
     from cryptography.fernet import Fernet
     from sqlalchemy import select
     from src.config import get_settings
+    from src.models.contracts.notifications import (
+        NotificationCategory,
+        NotificationCreate,
+        NotificationStatus,
+    )
+    from src.core.pubsub import publish_embedding_reindex_request
     from src.models.orm import SystemConfig
+    from src.services.embeddings.base import EmbeddingConfig as EmbeddingClientConfig
+    from src.services.embeddings.openai_client import OpenAIEmbeddingClient
+    from src.services.embeddings.reindex import (
+        count_knowledge_rows_at_other_dims,
+    )
+    from src.services.notification_service import get_notification_service
 
     settings = get_settings()
 
@@ -364,24 +407,123 @@ async def set_embedding_config(
     )
     existing = result.scalars().first()
 
-    # Determine encrypted API key
+    # Determine encrypted API key + decrypted key for the live test.
+    # Resolution order matches /embedding-test:
+    #   1. request.api_key (user typed a key in override mode)
+    #   2. existing dedicated saved key (re-saving an existing config)
+    #   3. LLM provider key — only when provider is openai (inherit mode)
+    key_bytes = settings.secret_key.encode()[:32].ljust(32, b"0")
+    fernet = Fernet(base64.urlsafe_b64encode(key_bytes))
+    normalized_endpoint = _normalize_endpoint(request.endpoint)
+
     if request.api_key:
-        key_bytes = settings.secret_key.encode()[:32].ljust(32, b"0")
-        fernet = Fernet(base64.urlsafe_b64encode(key_bytes))
         encrypted_key = fernet.encrypt(request.api_key.encode()).decode()
+        decrypted_key = request.api_key
     elif existing and existing.value_json and existing.value_json.get("encrypted_api_key"):
         encrypted_key = existing.value_json["encrypted_api_key"]
+        decrypted_key = fernet.decrypt(encrypted_key.encode()).decode()
     else:
+        # Inherit from LLM provider when openai-compatible.
+        from sqlalchemy import select as sa_select
+
+        llm_result = await db.execute(
+            sa_select(SystemConfig).where(
+                SystemConfig.category == LLM_CONFIG_CATEGORY,
+                SystemConfig.key == LLM_CONFIG_KEY,
+                SystemConfig.organization_id.is_(None),
+            )
+        )
+        llm_row = llm_result.scalars().first()
+        if (
+            llm_row
+            and llm_row.value_json
+            and llm_row.value_json.get("provider") == "openai"
+            and llm_row.value_json.get("encrypted_api_key")
+        ):
+            encrypted_key = llm_row.value_json["encrypted_api_key"]
+            decrypted_key = fernet.decrypt(encrypted_key.encode()).decode()
+            # If the user didn't override the endpoint, inherit it too.
+            if request.endpoint is None:
+                normalized_endpoint = _normalize_endpoint(
+                    llm_row.value_json.get("endpoint")
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="API key is required for initial embedding configuration",
+            )
+
+    # SSRF guard: reject endpoints that resolve to private/loopback addresses
+    # unless the host is explicitly opted-in via EMBEDDING_ALLOWED_HOSTS.
+    # See url_safety.validate_embedding_endpoint for rationale.
+    if normalized_endpoint:
+        from src.services.embeddings.url_safety import validate_embedding_endpoint
+
+        try:
+            validate_embedding_endpoint(normalized_endpoint)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Embedding endpoint rejected: {e}",
+            ) from e
+
+    # Live-test the config before saving so we never persist something that doesn't work.
+    try:
+        client = OpenAIEmbeddingClient(
+            EmbeddingClientConfig(
+                api_key=decrypted_key,
+                model=request.model,
+                endpoint=normalized_endpoint,
+            )
+        )
+        embedding = await client.embed_single("test connection")
+        dimensions = len(embedding)
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="API key is required for initial embedding configuration",
-        )
+            detail=f"Embedding test failed; configuration not saved: {e}",
+        ) from e
 
-    config_data = {
+    # knowledge_store.embedding is unconstrained `vector` (migration
+    # 20260506_knowledge_dim), so any dim *stores* fine. The real failure mode
+    # is at *query* time: a query embedded with the new model can't be compared
+    # to old rows when dims differ, and even at matching dims the two models
+    # live in different vector spaces (similarity scores are noise).
+    #
+    # Reindex policy: ground the prompt in *DB state*, not config diff.
+    # If the table has any row at a dim other than the new one — whether
+    # left over from a previous failed reindex, a never-completed migration,
+    # or a config that was saved without recording its dim — fire the
+    # confirmation. The previous config-vs-config diff missed the resave
+    # case (issue #198): same config saved twice with stale rows still in
+    # the table never prompted.
+    old_dim: int | None = None
+    old_model: str | None = None
+    if existing and existing.value_json:
+        old_dim = existing.value_json.get("dimensions")
+        old_model = existing.value_json.get("model")
+
+    if not request.confirm_reindex:
+        stale_count = await count_knowledge_rows_at_other_dims(dimensions)
+        if stale_count > 0:
+            return EmbeddingConfigSaveResponse(
+                saved=False,
+                needs_reindex_confirmation=True,
+                reason="stale_rows",
+                old_dim=old_dim,
+                new_dim=dimensions,
+                old_model=old_model,
+                new_model=request.model,
+                row_count=stale_count,
+            )
+
+    config_data: dict[str, object] = {
         "model": request.model,
-        "dimensions": request.dimensions,
+        "dimensions": dimensions,
         "encrypted_api_key": encrypted_key,
     }
+    if normalized_endpoint:
+        config_data["endpoint"] = normalized_endpoint
 
     api_key_set = bool(encrypted_key)
 
@@ -400,14 +542,56 @@ async def set_embedding_config(
 
     await db.commit()
 
-    logger.info(f"Embedding config updated by {user.email}: model={log_safe(request.model)}")
+    logger.info(
+        f"Embedding config updated by {user.email}: model={log_safe(request.model)}, "
+        f"endpoint={log_safe(normalized_endpoint or 'default')}"
+    )
 
-    return EmbeddingConfigResponse(
+    saved_config = EmbeddingConfigResponse(
         model=request.model,
-        dimensions=request.dimensions,
+        dimensions=dimensions,
+        endpoint=normalized_endpoint,
         is_configured=True,
         api_key_set=api_key_set,
         uses_llm_key=False,
+    )
+
+    # Trigger reindex when the user clicked through the confirmation dialog.
+    # The gate above already verified there are stale rows at non-`dimensions`
+    # dims; re-check here so we don't fire a notification for a clean DB.
+    notification_id: str | None = None
+    if request.confirm_reindex:
+        row_count = await count_knowledge_rows_at_other_dims(dimensions)
+        if row_count > 0:
+            notif_service = get_notification_service()
+            notification = await notif_service.create_notification(
+                user_id=str(user.user_id),
+                request=NotificationCreate(
+                    category=NotificationCategory.EMBEDDING_REINDEX,
+                    title="Re-embedding knowledge store",
+                    description=f"Queued — {row_count} rows to re-embed.",
+                    percent=0.0,
+                    metadata={
+                        "row_count": row_count,
+                        "old_model": old_model,
+                        "new_model": request.model,
+                        "old_dim": old_dim,
+                        "new_dim": dimensions,
+                    },
+                ),
+                for_admins=False,
+                initial_status=NotificationStatus.PENDING,
+            )
+            notification_id = notification.id
+            await publish_embedding_reindex_request(notification_id)
+            logger.info(
+                f"Embedding reindex triggered after save: notification_id={notification_id}, rows={row_count}"
+            )
+
+    return EmbeddingConfigSaveResponse(
+        saved=True,
+        config=saved_config,
+        notification_id=notification_id,
     )
 
 
@@ -447,32 +631,121 @@ async def delete_embedding_config(
     logger.info(f"Embedding config deleted by {user.email}")
 
 
+@router.post("/embedding-reindex", response_model=EmbeddingReindexResponse)
+async def trigger_embedding_reindex(
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> EmbeddingReindexResponse:
+    """
+    Re-embed every knowledge_store row against the currently-saved embedding config.
+
+    Returns immediately with a notification_id; progress is delivered over the
+    `notification:{user_id}` WebSocket channel. Cancel via
+    DELETE /api/notifications/{notification_id}.
+
+    No-op when knowledge_store is empty (returns row_count=0 and no notification
+    is created).
+    Requires platform admin access.
+    """
+    from sqlalchemy import select
+    from src.core.pubsub import publish_embedding_reindex_request
+    from src.models.contracts.notifications import (
+        NotificationCategory,
+        NotificationCreate,
+        NotificationStatus,
+    )
+    from src.models.orm import SystemConfig
+    from src.services.embeddings.reindex import count_knowledge_rows
+    from src.services.notification_service import get_notification_service
+
+    # Confirm an embedding config exists — reindex against nothing is a no-op.
+    config_result = await db.execute(
+        select(SystemConfig).where(
+            SystemConfig.category == EMBEDDING_CONFIG_CATEGORY,
+            SystemConfig.key == EMBEDDING_CONFIG_KEY,
+            SystemConfig.organization_id.is_(None),
+        )
+    )
+    embedding_config = config_result.scalars().first()
+    if not embedding_config or not embedding_config.value_json:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No embedding configuration to reindex against. Save a config first.",
+        )
+
+    row_count = await count_knowledge_rows()
+    if row_count == 0:
+        # Nothing to do — return a synthetic empty notification id so the
+        # caller can short-circuit without confusing UI.
+        return EmbeddingReindexResponse(notification_id="", row_count=0)
+
+    notif_service = get_notification_service()
+    notification = await notif_service.create_notification(
+        user_id=str(user.user_id),
+        request=NotificationCreate(
+            category=NotificationCategory.EMBEDDING_REINDEX,
+            title="Re-embedding knowledge store",
+            description=f"Queued — {row_count} rows to re-embed.",
+            percent=0.0,
+            metadata={
+                "row_count": row_count,
+                "model": embedding_config.value_json.get("model"),
+                "dim": embedding_config.value_json.get("dimensions"),
+                "trigger": "on_demand",
+            },
+        ),
+        for_admins=False,
+        initial_status=NotificationStatus.PENDING,
+    )
+    await publish_embedding_reindex_request(notification.id)
+    logger.info(
+        f"On-demand embedding reindex triggered by {user.email}: "
+        f"notification_id={notification.id}, rows={row_count}"
+    )
+
+    return EmbeddingReindexResponse(
+        notification_id=notification.id,
+        row_count=row_count,
+    )
+
+
 @router.post("/embedding-test")
 async def test_embedding_connection(
-    request: EmbeddingConfigRequest,
+    request: EmbeddingTestRequest,
     db: DbSession,
     user: CurrentActiveUser,
 ) -> EmbeddingTestResponse:
     """
-    Test embedding connection with provided credentials.
+    Validate credentials and list embedding-capable models.
 
-    Tests the connection without saving the configuration.
-    If no API key is provided, uses the saved embedding key.
-    Requires platform admin access.
+    Symmetric with the LLM /test endpoint: this is the "does the key work,
+    what models are available" call. It does NOT issue an embedding — that's
+    Save's job. Save runs the real embeddings.create() against the chosen
+    model and rejects with 400 on failure.
+
+    Credential resolution order:
+    1. request.api_key + request.endpoint when provided
+    2. saved dedicated embedding config (decrypt stored key, use stored endpoint)
+    3. LLM provider config — only when provider is openai (Anthropic doesn't
+       have embeddings). Inherits both key and endpoint.
     """
     import base64
     from cryptography.fernet import Fernet
     from src.config import get_settings
-    from src.services.embeddings.base import EmbeddingConfig
-    from src.services.embeddings.openai_client import OpenAIEmbeddingClient
 
     try:
         api_key = request.api_key
+        normalized_endpoint = _normalize_endpoint(request.endpoint)
+
         if not api_key:
-            # Try to use the saved embedding key
             from sqlalchemy import select as sa_select
             from src.models.orm import SystemConfig
 
+            settings = get_settings()
+            key_bytes = settings.secret_key.encode()[:32].ljust(32, b"0")
+            fernet = Fernet(base64.urlsafe_b64encode(key_bytes))
+
+            # Saved dedicated embedding config first.
             result = await db.execute(
                 sa_select(SystemConfig).where(
                     SystemConfig.category == EMBEDDING_CONFIG_CATEGORY,
@@ -482,31 +755,59 @@ async def test_embedding_connection(
             )
             existing = result.scalars().first()
             if existing and existing.value_json and existing.value_json.get("encrypted_api_key"):
-                settings = get_settings()
-                key_bytes = settings.secret_key.encode()[:32].ljust(32, b"0")
-                fernet = Fernet(base64.urlsafe_b64encode(key_bytes))
                 api_key = fernet.decrypt(existing.value_json["encrypted_api_key"].encode()).decode()
+                if request.endpoint is None:
+                    normalized_endpoint = existing.value_json.get("endpoint")
             else:
+                # Inherit from LLM provider when it's an OpenAI-compatible config.
+                llm_result = await db.execute(
+                    sa_select(SystemConfig).where(
+                        SystemConfig.category == LLM_CONFIG_CATEGORY,
+                        SystemConfig.key == LLM_CONFIG_KEY,
+                        SystemConfig.organization_id.is_(None),
+                    )
+                )
+                llm_row = llm_result.scalars().first()
+                if (
+                    llm_row
+                    and llm_row.value_json
+                    and llm_row.value_json.get("provider") == "openai"
+                    and llm_row.value_json.get("encrypted_api_key")
+                ):
+                    api_key = fernet.decrypt(
+                        llm_row.value_json["encrypted_api_key"].encode()
+                    ).decode()
+                    if request.endpoint is None:
+                        normalized_endpoint = llm_row.value_json.get("endpoint")
+                else:
+                    return EmbeddingTestResponse(
+                        success=False,
+                        message="No API key provided and no saved key found",
+                        dimensions=None,
+                    )
+
+        # SSRF guard before any outbound call. _list_embedding_models also
+        # validates internally for defense-in-depth, but failing here gives
+        # the user a clear error message instead of a silent empty model list.
+        if normalized_endpoint:
+            from src.services.embeddings.url_safety import validate_embedding_endpoint
+
+            try:
+                validate_embedding_endpoint(normalized_endpoint)
+            except ValueError as ve:
                 return EmbeddingTestResponse(
                     success=False,
-                    message="No API key provided and no saved key found",
+                    message=f"Endpoint rejected: {ve}",
                     dimensions=None,
                 )
 
-        config = EmbeddingConfig(
-            api_key=api_key,
-            model=request.model,
-            dimensions=request.dimensions,
-        )
-        client = OpenAIEmbeddingClient(config)
-
-        # Test with a simple embedding
-        embedding = await client.embed_single("test connection")
+        models = await _list_embedding_models(api_key, normalized_endpoint)
 
         return EmbeddingTestResponse(
             success=True,
-            message="Successfully connected and generated test embedding",
-            dimensions=len(embedding),
+            message="Endpoint reachable.",
+            dimensions=None,
+            models=models,
         )
     except Exception as e:
         logger.warning(f"Embedding test failed: {e}")
@@ -515,6 +816,94 @@ async def test_embedding_connection(
             message=f"Connection failed: {str(e)}",
             dimensions=None,
         )
+
+
+async def _list_embedding_models(api_key: str, endpoint: str | None) -> list[str] | None:
+    """
+    List embedding-capable models from an OpenAI-compatible endpoint.
+
+    We do the filtering ourselves rather than trusting a server query param:
+
+    - OpenRouter exposes `architecture.output_modalities` on every entry (e.g.
+      `["text"]` for chat, `["embeddings"]` for embeddings). If we see that
+      field on ANY model, we treat the response as capability-aware and filter
+      to entries that advertise embeddings.
+    - OpenAI / Azure / Ollama don't expose modality fields. The absence of
+      `output_modalities` does NOT mean "no embedding models" — it means we
+      don't know. In that case we return the full id list and let the user
+      pick. The test call is the final gate; wrong picks fail there.
+    - On any HTTP/parse error, return None so the UI falls back to free-text.
+
+    NOTE: OpenRouter's `/v1/models` excludes embedding-only models from its
+    default response. We pass `?output_modalities=embeddings` to surface them;
+    OpenAI/others ignore the unknown param per HTTP convention. The Python
+    filter is the source of truth — we don't trust the server actually filtered.
+    """
+    import httpx
+
+    from src.services.embeddings.url_safety import validate_embedding_endpoint
+
+    base = (endpoint or DEFAULT_OPENAI_ENDPOINT).rstrip("/")
+
+    # Defense-in-depth on top of admin auth: validate that the endpoint
+    # resolves to a public address (or is in EMBEDDING_ALLOWED_HOSTS).
+    # Use the validator's return value (not the input `base`) so CodeQL's
+    # data-flow analysis sees a cleansed URL flowing into http.get,
+    # closing py/partial-ssrf.
+    try:
+        safe_base = validate_embedding_endpoint(base).rstrip("/")
+    except ValueError as e:
+        logger.info(f"Refusing to list models from {log_safe(base)}: {e}")
+        return None
+
+    url = f"{safe_base}/models"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            response = await http.get(
+                url,
+                params={"output_modalities": "embeddings"},
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as e:
+        logger.info(f"Could not list models from {log_safe(base)}: {e}")
+        return None
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return None
+
+    # Capability-aware iff at least one entry exposes architecture.output_modalities.
+    # Absent on every entry = the endpoint doesn't tell us; we can't filter.
+    capability_aware = any(
+        isinstance(item, dict)
+        and isinstance(item.get("architecture"), dict)
+        and "output_modalities" in item["architecture"]
+        for item in data
+    )
+
+    ids: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if not isinstance(model_id, str):
+            continue
+        if capability_aware:
+            arch = item.get("architecture") or {}
+            modalities = arch.get("output_modalities") or []
+            if not isinstance(modalities, list):
+                continue
+            if not any(
+                isinstance(m, str) and m.lower() == "embeddings"
+                for m in modalities
+            ):
+                continue
+        ids.append(model_id)
+
+    return ids or None
 
 
 # =============================================================================

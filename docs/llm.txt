@@ -204,7 +204,7 @@ Examples:
 
 Non-obvious semantics:
 - All install/remove operations recycle workers asynchronously; returns immediately. Wait a few seconds before re-running the workflow that needed the package.
-- App `app.yaml` `dependencies:` are unrelated — those are npm packages bundled into the app, not Python deps.
+- App npm dependencies (`bifrost apps update --deps` / `bifrost apps set-deps`) are unrelated — those are browser-side packages bundled into the app, not Python deps.
 
 ---
 

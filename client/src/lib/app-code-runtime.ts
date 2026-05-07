@@ -191,6 +191,9 @@ import * as DateRangePickerModule from "@/components/ui/date-range-picker";
 // Utilities - date-fns
 import { format } from "date-fns";
 
+// Toast notifications via Sonner — <Toaster /> is mounted in main.tsx.
+import { toast } from "sonner";
+
 /**
  * The $ registry - contains EVERYTHING available to user code
  *
@@ -213,6 +216,15 @@ export const $: Record<string, unknown> = {
 	// MUST come before platform scope so Link/NavLink/Navigate navigation components
 	// override Lucide's Link icon
 	...LucideIcons,
+
+	// Re-assert global built-ins. Lucide ships icons named Map, Set, Type, Filter,
+	// Form, etc. — without this, `new Map()` in user code resolves to the Map
+	// *icon* component and crashes with "Map2 is not a constructor".
+	Map: globalThis.Map,
+	Set: globalThis.Set,
+	WeakMap: globalThis.WeakMap,
+	WeakSet: globalThis.WeakSet,
+	Date: globalThis.Date,
 
 	// Platform APIs (useWorkflowQuery, useWorkflowMutation, navigate, useUser, etc.)
 	// MUST come after Lucide icons to override Link, NavLink, Navigate, useNavigate
@@ -265,6 +277,9 @@ export const $: Record<string, unknown> = {
 
 	// Utilities - date-fns
 	format,
+
+	// Toast notifications (Sonner)
+	toast,
 };
 
 /**

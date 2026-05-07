@@ -70,7 +70,8 @@ import {
 	ArrowRight,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { $api } from "@/lib/api-client";
+import { $api, authFetch } from "@/lib/api-client";
+import { useNotificationStore } from "@/stores/notificationStore";
 import {
 	listPricing,
 	createPricing,
@@ -253,8 +254,7 @@ export function LLMConfig() {
 				setModelsLoaded(false);
 			}
 		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : "Unknown error";
+			const message = extractErrorMessage(error);
 			setTestResult({ success: false, message });
 			toast.error("Connection test failed", { description: message });
 			setModelsLoaded(false);
@@ -304,8 +304,7 @@ export function LLMConfig() {
 			setPricingRefreshKey((k) => k + 1);
 		} catch (error) {
 			toast.error("Failed to save configuration", {
-				description:
-					error instanceof Error ? error.message : "Unknown error",
+				description: extractErrorMessage(error),
 			});
 		} finally {
 			setSaving(false);
@@ -340,8 +339,7 @@ export function LLMConfig() {
 			refetch();
 		} catch (error) {
 			toast.error("Failed to delete configuration", {
-				description:
-					error instanceof Error ? error.message : "Unknown error",
+				description: extractErrorMessage(error),
 			});
 		} finally {
 			setSaving(false);
@@ -701,7 +699,10 @@ export function LLMConfig() {
 			</Card>
 
 			{/* Embedding Configuration Card */}
-			<EmbeddingConfigCard llmProvider={config?.provider} />
+			<EmbeddingConfigCard
+				llmProvider={config?.provider}
+				llmEndpoint={config?.endpoint ?? null}
+			/>
 
 			{/* Model Pricing Card */}
 			<ModelPricingCard refreshKey={pricingRefreshKey} />
@@ -770,22 +771,70 @@ export function LLMConfig() {
 /**
  * Embedding Configuration Component
  *
- * Separate configuration for embeddings (used by Knowledge Store/RAG).
- * If using Anthropic as LLM provider, a dedicated OpenAI API key is required
- * since Anthropic doesn't provide embeddings.
+ * Configures embeddings (used by the Knowledge Store / RAG). Supports any
+ * OpenAI-compatible endpoint via an `endpoint` override (e.g. OpenRouter,
+ * Azure, Ollama). When the LLM provider is OpenAI-compatible, this card can
+ * inherit its key + endpoint without an explicit dedicated config.
  */
-function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
+const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1";
+
+function isDefaultOpenAIEndpoint(value: string | null | undefined): boolean {
+	if (!value) return true;
+	return value.replace(/\/+$/, "") === DEFAULT_OPENAI_ENDPOINT.replace(/\/+$/, "");
+}
+
+/**
+ * Pull a human-friendly message off whatever the API client throws.
+ * openapi-react-query throws the parsed body for HTTP errors, which is the
+ * `{ detail: "..." }` shape FastAPI returns. Native Error instances (network
+ * failures, etc.) carry .message. Fall back to JSON stringify so we never
+ * say "unknown error" when the server told us something specific.
+ */
+function extractErrorMessage(error: unknown): string {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { detail?: unknown; message?: unknown };
+		if (typeof body.detail === "string") return body.detail;
+		if (typeof body.message === "string") return body.message;
+	}
+	if (error instanceof Error) return error.message;
+	if (typeof error === "string") return error;
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return "Unknown error";
+	}
+}
+
+function EmbeddingConfigCard({
+	llmProvider,
+	llmEndpoint,
+}: {
+	llmProvider?: string;
+	llmEndpoint?: string | null;
+}) {
 	const navigate = useNavigate();
 	const [apiKey, setApiKey] = useState("");
-	const [model, setModel] = useState("text-embedding-3-small");
-	const [dimensions, setDimensions] = useState(1536);
+	const [model, setModel] = useState("");
+	const [endpoint, setEndpoint] = useState("");
+	// `override` flips on when the user explicitly wants their own endpoint+key
+	// (not inheriting from the LLM card). Whole-config: both endpoint and key
+	// inputs become editable, key clears, Test button appears.
+	const [override, setOverride] = useState(false);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [modelsLoaded, setModelsLoaded] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [testing, setTesting] = useState(false);
-	const [testResult, setTestResult] = useState<{
-		success: boolean;
-		message: string;
-	} | null>(null);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+	// Reindex confirmation dialog: server returns this payload when the new
+	// model's dim differs from the saved one and there are existing rows.
+	const [reindexConfirm, setReindexConfirm] = useState<{
+		row_count: number;
+		old_dim: number | null;
+		new_dim: number | null;
+		old_model: string | null;
+		new_model: string | null;
+	} | null>(null);
+	const [reindexing, setReindexing] = useState(false);
 
 	// Load current embedding configuration
 	const {
@@ -810,77 +859,207 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 		"/api/admin/llm/embedding-test",
 	);
 
-	// Determine if dedicated config is needed
 	const needsDedicatedKey = llmProvider === "anthropic";
+	const hasSavedConfig = config?.is_configured === true && !config?.uses_llm_key;
+	// Inheritance is available iff the LLM provider is OpenAI-compatible
+	// (i.e. provider === "openai"). Anthropic has no embeddings endpoint.
+	const inheritAvailable = llmProvider === "openai";
+	// Inherit when: inheritance is available, no dedicated config exists, and
+	// the user hasn't clicked Override.
+	const inheritActive = inheritAvailable && !hasSavedConfig && !override;
+	// Endpoint+key inputs are editable when the user is actively configuring
+	// (no saved config and no inheritance, OR explicit Override). Otherwise
+	// they're disabled and show the resolved current value.
+	const editingCredentials = override || (!hasSavedConfig && !inheritActive);
 
-	// Test connection
+	// Sync local state from loaded config — runs whenever the config object
+	// identity changes (so refetch() after save resets the form).
+	const [prevConfigRef, setPrevConfigRef] = useState<typeof config>(undefined);
+	if (config && prevConfigRef !== config) {
+		setPrevConfigRef(config);
+		setModel(config.model ?? "");
+		setEndpoint(config.endpoint ?? "");
+		setApiKey("");
+		setAvailableModels([]);
+		setModelsLoaded(false);
+	}
+
+	// Auto-load model list when we have credentials we can use without the
+	// user typing anything: inherit-mode (LLM provider is openai) or there's
+	// a saved dedicated config. Fires on mount and whenever the credential
+	// surface changes.
+	const canAutoLoadModels =
+		(inheritActive || (hasSavedConfig && !override)) && !modelsLoaded && !testing;
+	if (canAutoLoadModels) {
+		// Trigger via the test mutation; backend resolves to inherited or saved key.
+		void (async () => {
+			try {
+				setTesting(true);
+				const result = await testMutation.mutateAsync({
+					body: {
+						api_key: undefined,
+						model: "",
+						endpoint: undefined,
+					},
+				});
+				if (result.success) {
+					setAvailableModels(result.models ?? []);
+				}
+			} catch {
+				// Silent — user can still type a model id manually.
+			} finally {
+				setModelsLoaded(true);
+				setTesting(false);
+			}
+		})();
+	}
+
+	// Compute the endpoint value to send: empty/default → null.
+	const endpointToSend = (() => {
+		const trimmed = endpoint.trim();
+		if (!trimmed || isDefaultOpenAIEndpoint(trimmed)) return null;
+		return trimmed;
+	})();
+
+	// Manual Test (override mode only — in inherit mode we trust the LLM
+	// card's own validation and just auto-list models).
 	const handleTest = async () => {
-		if (!apiKey && !config?.api_key_set) {
+		if (!apiKey) {
 			toast.error("Please enter an API key");
 			return;
 		}
 
 		setTesting(true);
-		setTestResult(null);
 
 		try {
 			const result = await testMutation.mutateAsync({
 				body: {
-					api_key: apiKey || undefined,
-					model,
-					dimensions,
+					api_key: apiKey,
+					model: "",
+					endpoint: endpointToSend,
 				},
 			});
 
-			setTestResult({ success: result.success, message: result.message });
-
 			if (result.success) {
-				toast.success("Embedding connection successful", {
-					description: `Dimensions: ${result.dimensions}`,
+				toast.success("Endpoint reachable", {
+					description: result.models
+						? `Found ${result.models.length} embedding model(s).`
+						: result.message,
 				});
+				setAvailableModels(result.models ?? []);
+				setModelsLoaded(true);
 			} else {
-				toast.error("Embedding test failed", {
+				toast.error("Test failed", {
 					description: result.message,
 				});
+				setModelsLoaded(false);
 			}
 		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : "Unknown error";
-			setTestResult({ success: false, message });
-			toast.error("Embedding test failed", { description: message });
+			toast.error("Test failed", { description: extractErrorMessage(error) });
+			setModelsLoaded(false);
 		} finally {
 			setTesting(false);
 		}
 	};
 
-	// Save configuration
-	const handleSave = async () => {
-		if (!apiKey && !config?.api_key_set) {
-			toast.error("Please enter an API key");
-			return;
-		}
-
+	// Save runs the live embedding test on the backend; 400 surfaces here as
+	// a thrown error.
+	// Save runs the live embedding test on the backend; 400 surfaces here as
+	// a thrown error. When the new model's dim differs from the saved one and
+	// knowledge_store has existing rows, the response carries
+	// needs_reindex_confirmation=true and we open a dialog instead of toasting.
+	const performSave = async (confirmReindex: boolean) => {
 		setSaving(true);
 		try {
-			await saveMutation.mutateAsync({
+			const result = (await saveMutation.mutateAsync({
 				body: {
 					api_key: apiKey || undefined,
 					model,
-					dimensions,
+					endpoint: endpointToSend,
+					confirm_reindex: confirmReindex,
 				},
-			});
+			})) as unknown as {
+				saved: boolean;
+				notification_id?: string | null;
+				needs_reindex_confirmation?: boolean;
+				row_count?: number | null;
+				old_dim?: number | null;
+				new_dim?: number | null;
+				old_model?: string | null;
+				new_model?: string | null;
+			};
 
-			toast.success("Embedding configuration saved");
-			setApiKey("");
-			setTestResult(null);
-			refetch();
+			if (result.needs_reindex_confirmation) {
+				setReindexConfirm({
+					row_count: result.row_count ?? 0,
+					old_dim: result.old_dim ?? null,
+					new_dim: result.new_dim ?? null,
+					old_model: result.old_model ?? null,
+					new_model: result.new_model ?? null,
+				});
+				return;
+			}
+
+			if (result.saved) {
+				if (result.notification_id) {
+					toast.success("Embedding configuration saved", {
+						description:
+							"Re-indexing the knowledge store — track progress in the notification center.",
+					});
+				} else {
+					toast.success("Embedding configuration saved");
+				}
+				await refetch();
+				setOverride(false);
+				setReindexConfirm(null);
+			}
 		} catch (error) {
 			toast.error("Failed to save embedding configuration", {
-				description:
-					error instanceof Error ? error.message : "Unknown error",
+				description: extractErrorMessage(error),
 			});
 		} finally {
 			setSaving(false);
+		}
+	};
+
+	const handleSave = async () => {
+		if (!model) {
+			toast.error("Please select a model");
+			return;
+		}
+		await performSave(false);
+	};
+
+	// Trigger an on-demand reindex against the saved config (no save).
+	const handleReindex = async () => {
+		setReindexing(true);
+		try {
+			const response = await authFetch("/api/admin/llm/embedding-reindex", {
+				method: "POST",
+			});
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}));
+				throw new Error(errorData.detail ?? "Reindex failed");
+			}
+			const data = (await response.json()) as {
+				notification_id: string;
+				row_count: number;
+			};
+			if (data.row_count === 0) {
+				toast.info("Knowledge store is empty — nothing to reindex.");
+			} else {
+				toast.success("Reindex started", {
+					description: `Re-embedding ${data.row_count} row${
+						data.row_count === 1 ? "" : "s"
+					} — progress in the notification center.`,
+				});
+			}
+		} catch (error) {
+			toast.error("Failed to start reindex", {
+				description: extractErrorMessage(error),
+			});
+		} finally {
+			setReindexing(false);
 		}
 	};
 
@@ -892,20 +1071,34 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 		try {
 			await deleteMutation.mutateAsync({});
 			setApiKey("");
-			setModel("text-embedding-3-small");
-			setDimensions(1536);
-			setTestResult(null);
+			setModel("");
+			setEndpoint("");
+			setOverride(false);
+			setAvailableModels([]);
+			setModelsLoaded(false);
 			toast.success("Embedding configuration removed");
-			refetch();
+			await refetch();
 		} catch (error) {
 			toast.error("Failed to remove embedding configuration", {
-				description:
-					error instanceof Error ? error.message : "Unknown error",
+				description: extractErrorMessage(error),
 			});
 		} finally {
 			setSaving(false);
 		}
 	};
+
+	// Reindex button is disabled while a running reindex notification exists
+	// for this user — prevents double-trigger. Hook must be called before
+	// any conditional returns. Returning a boolean (not a derived array) keeps
+	// Zustand's referential-equality check stable across renders — selectors
+	// that build new arrays each call cause an infinite re-render loop.
+	const hasActiveReindexNotification = useNotificationStore((state) =>
+		state.notifications.some(
+			(n) =>
+				n.category === "embedding_reindex" &&
+				(n.status === "running" || n.status === "pending"),
+		),
+	);
 
 	if (isLoading) {
 		return (
@@ -917,9 +1110,15 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 		);
 	}
 
-	const isVerified = testResult?.success === true;
-	const hasValidConfig = config?.api_key_set && !apiKey;
-	const canSave = !saving && (isVerified || hasValidConfig);
+	// Save is allowed when:
+	// - A model has been picked, AND
+	// - We have credentials available (inherited via LLM, or typed/saved).
+	// The backend's POST runs the real embed test before persisting, so we
+	// don't need to gate Save on a separate Test click here.
+	const haveCredentials = inheritActive || apiKey.length > 0 || (hasSavedConfig && !override);
+	const canSave = !saving && model.length > 0 && haveCredentials;
+
+	const reindexInFlight = hasActiveReindexNotification || reindexing;
 
 	return (
 		<Card>
@@ -929,11 +1128,12 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 					<CardTitle>Embedding Configuration</CardTitle>
 				</div>
 				<CardDescription>
-					Configure OpenAI embeddings for the Knowledge Store (RAG).
+					Configure embeddings for the Knowledge Store (RAG). Works with
+					any OpenAI-compatible endpoint.
 					{needsDedicatedKey && (
 						<span className="block mt-1 text-amber-600 dark:text-amber-400">
-							Anthropic doesn't provide embeddings - a dedicated
-							OpenAI key is required.
+							Anthropic doesn't provide embeddings — a dedicated
+							OpenAI-compatible key is required.
 						</span>
 					)}
 				</CardDescription>
@@ -960,25 +1160,39 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 									Index Docs
 									<ArrowRight className="h-4 w-4 ml-1" />
 								</Button>
-								{!config.uses_llm_key && (
+								{!override && (
 									<Button
-										variant="ghost"
+										variant="outline"
 										size="sm"
-										onClick={() =>
-											setShowDeleteConfirm(true)
-										}
-										className="text-destructive hover:text-destructive"
+										onClick={() => {
+											setOverride(true);
+											setEndpoint(config?.endpoint ?? "");
+											setAvailableModels([]);
+											setModelsLoaded(false);
+										}}
 									>
-										<Trash2 className="h-4 w-4 mr-1" />
-										Remove
+										Override
 									</Button>
 								)}
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() =>
+										setShowDeleteConfirm(true)
+									}
+									className="text-destructive hover:text-destructive"
+								>
+									<Trash2 className="h-4 w-4 mr-1" />
+									Remove
+								</Button>
 							</div>
 						</div>
 						<p className="mt-1 text-sm text-green-700 dark:text-green-300">
-							{config.uses_llm_key
-								? "Using LLM provider's OpenAI API key"
-								: `Dedicated key configured (${config.model})`}
+							{`Dedicated key configured (${config.model}${
+								isDefaultOpenAIEndpoint(config.endpoint)
+									? ", default OpenAI endpoint"
+									: `, endpoint: ${config.endpoint}`
+							})`}
 						</p>
 					</div>
 				) : (
@@ -996,137 +1210,248 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 					</div>
 				)}
 
-				{/* Only show form if dedicated config is needed or already set */}
-				{(needsDedicatedKey || (config && !config.uses_llm_key)) && (
-					<>
-						{/* API Key */}
-						<div className="space-y-2">
-							<Label htmlFor="embedding-api-key">
-								OpenAI API Key
-							</Label>
-							<div className="flex gap-2">
-								<Input
-									id="embedding-api-key"
-									type="password"
-									autoComplete="off"
-									placeholder={
-										config?.api_key_set
+				{/* Inherit-mode informational row with Override action */}
+				{inheritActive && (
+					<div className="flex items-start justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+						<p className="text-sm text-muted-foreground">
+							Inheriting endpoint and key from your LLM
+							provider. Pick an embedding model below — Save
+							runs a real embedding to confirm it works.
+						</p>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => {
+								setOverride(true);
+								// Prefill endpoint with what we'd otherwise inherit
+								// so the user can edit instead of starting blank.
+								setEndpoint(llmEndpoint ?? "");
+								setApiKey("");
+								setAvailableModels([]);
+								setModelsLoaded(false);
+							}}
+						>
+							Override
+						</Button>
+					</div>
+				)}
+
+				{/* Endpoint */}
+				<div className="space-y-2">
+					<Label htmlFor="embedding-endpoint">API Endpoint</Label>
+					<Input
+						id="embedding-endpoint"
+						placeholder={DEFAULT_OPENAI_ENDPOINT}
+						value={
+							editingCredentials
+								? endpoint
+								: inheritActive
+									? (llmEndpoint ?? DEFAULT_OPENAI_ENDPOINT)
+									: (config?.endpoint ?? DEFAULT_OPENAI_ENDPOINT)
+						}
+						onChange={(e) => {
+							setEndpoint(e.target.value);
+							setModelsLoaded(false);
+							setAvailableModels([]);
+						}}
+						disabled={!editingCredentials}
+					/>
+					{editingCredentials && (
+						<p className="text-xs text-muted-foreground">
+							Leave blank or set to {DEFAULT_OPENAI_ENDPOINT} for the default OpenAI endpoint.
+						</p>
+					)}
+				</div>
+
+				{/* API Key (+ Test button only when editing credentials) */}
+				<div className="space-y-2">
+					<Label htmlFor="embedding-api-key">API Key</Label>
+					<div className="flex gap-2">
+						<Input
+							id="embedding-api-key"
+							type="password"
+							autoComplete="off"
+							placeholder={
+								inheritActive
+									? "(inherited from LLM provider)"
+									: hasSavedConfig && !override
+										? "(saved — click Override to change)"
+										: config?.api_key_set
 											? "API key saved - enter new key to change"
 											: "sk-..."
-									}
-									value={apiKey}
-									onChange={(e) => {
-										setApiKey(e.target.value);
-										setTestResult(null);
-									}}
-								/>
-								<Button
-									variant="secondary"
-									onClick={handleTest}
-									disabled={
-										testing ||
-										(!apiKey && !config?.api_key_set)
-									}
-								>
-									{testing ? (
-										<>
-											<Loader2 className="h-4 w-4 mr-2 animate-spin" />
-											Testing...
-										</>
-									) : testResult?.success ? (
-										<>
-											<CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-											Verified
-										</>
-									) : testResult?.success === false ? (
-										<>
-											<AlertCircle className="h-4 w-4 mr-2 text-destructive" />
-											Failed
-										</>
-									) : (
-										<>
-											<Zap className="h-4 w-4 mr-2" />
-											Test
-										</>
-									)}
-								</Button>
-							</div>
-						</div>
-
-						{/* Model Selection */}
-						<div className="space-y-2">
-							<Label htmlFor="embedding-model">Model</Label>
-							<Select value={model} onValueChange={setModel}>
-								<SelectTrigger id="embedding-model">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="text-embedding-3-small">
-										text-embedding-3-small (recommended)
-									</SelectItem>
-									<SelectItem value="text-embedding-3-large">
-										text-embedding-3-large (higher quality)
-									</SelectItem>
-								</SelectContent>
-							</Select>
-						</div>
-
-						{/* Dimensions */}
-						<div className="space-y-2">
-							<Label htmlFor="embedding-dimensions">
-								Dimensions
-							</Label>
-							<Select
-								value={dimensions.toString()}
-								onValueChange={(v) =>
-									setDimensions(parseInt(v))
-								}
+							}
+							value={apiKey}
+							onChange={(e) => {
+								setApiKey(e.target.value);
+								setModelsLoaded(false);
+								setAvailableModels([]);
+							}}
+							disabled={!editingCredentials}
+						/>
+						{editingCredentials && (
+							<Button
+								variant="secondary"
+								onClick={handleTest}
+								disabled={testing || !apiKey}
 							>
-								<SelectTrigger id="embedding-dimensions">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="512">512</SelectItem>
-									<SelectItem value="1024">1024</SelectItem>
-									<SelectItem value="1536">
-										1536 (default)
-									</SelectItem>
-									{model === "text-embedding-3-large" && (
-										<SelectItem value="3072">
-											3072
-										</SelectItem>
-									)}
-								</SelectContent>
-							</Select>
-							<p className="text-xs text-muted-foreground">
-								Higher dimensions = better quality, more storage
-							</p>
-						</div>
+								{testing ? (
+									<>
+										<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+										Testing...
+									</>
+								) : (
+									<>
+										<Zap className="h-4 w-4 mr-2" />
+										Test
+									</>
+								)}
+							</Button>
+						)}
+					</div>
+				</div>
 
-						{/* Save Button */}
-						<div className="flex justify-end pt-2">
-							<Button onClick={handleSave} disabled={!canSave}>
+				{/* Model Selection */}
+				<div className="space-y-2">
+					<Label htmlFor="embedding-model">
+						Model
+						{!modelsLoaded && !inheritActive && !hasSavedConfig && (
+							<span className="text-muted-foreground font-normal ml-2">
+								(test endpoint first)
+							</span>
+						)}
+					</Label>
+					{availableModels.length > 0 ? (
+						<Combobox
+							id="embedding-model"
+							value={model}
+							onValueChange={setModel}
+							placeholder="Select model..."
+							searchPlaceholder="Search models..."
+							emptyText="No models found."
+							options={availableModels.map((m) => ({
+								value: m,
+								label: m,
+							}))}
+						/>
+					) : (
+						<Input
+							id="embedding-model"
+							placeholder="e.g. text-embedding-3-small"
+							value={model}
+							onChange={(e) => setModel(e.target.value)}
+						/>
+					)}
+					{modelsLoaded && availableModels.length === 0 && (
+						<p className="text-xs text-muted-foreground">
+							Endpoint didn't return a model list. Enter the model id manually.
+						</p>
+					)}
+				</div>
+
+				{/* Save / Reindex / Cancel */}
+				<div className="flex items-center justify-between gap-2 pt-2">
+					<div className="flex items-center gap-2">
+						{override && hasSavedConfig && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									setOverride(false);
+									setApiKey("");
+									setEndpoint(config?.endpoint ?? "");
+									setModel(config?.model ?? "");
+									setAvailableModels([]);
+									setModelsLoaded(false);
+								}}
+							>
+								Cancel
+							</Button>
+						)}
+						{hasSavedConfig && (
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={handleReindex}
+								disabled={reindexInFlight}
+								title="Re-embed every knowledge store row against the saved embedding config."
+							>
+								{reindexInFlight ? (
+									<>
+										<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+										Reindexing...
+									</>
+								) : (
+									<>
+										<Database className="h-4 w-4 mr-2" />
+										Reindex knowledge store
+									</>
+								)}
+							</Button>
+						)}
+					</div>
+					<Button onClick={handleSave} disabled={!canSave}>
+						{saving ? (
+							<>
+								<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+								Saving...
+							</>
+						) : (
+							"Save Embedding Config"
+						)}
+					</Button>
+				</div>
+
+				{/* Reindex Confirmation Dialog (dim-changed save) */}
+				<Dialog
+					open={reindexConfirm !== null}
+					onOpenChange={(open) => {
+						if (!open) setReindexConfirm(null);
+					}}
+				>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>Re-embed knowledge store?</DialogTitle>
+							<DialogDescription>
+								{reindexConfirm?.row_count ?? 0} existing row
+								{reindexConfirm?.row_count === 1 ? "" : "s"}{" "}
+								{reindexConfirm?.row_count === 1 ? "is" : "are"}{" "}
+								embedded with vectors that don't match the new
+								model's{" "}
+								<strong>{reindexConfirm?.new_dim ?? "?"}-dim</strong>{" "}
+								output
+								{reindexConfirm?.old_model
+									? ` (previously ${reindexConfirm.old_model})`
+									: ""}
+								. Search won't work against those rows until
+								they're re-embedded. Re-embedding runs in the
+								background and you can cancel from the
+								notification center.
+							</DialogDescription>
+						</DialogHeader>
+						<DialogFooter>
+							<Button
+								variant="outline"
+								onClick={() => setReindexConfirm(null)}
+								disabled={saving}
+							>
+								Cancel
+							</Button>
+							<Button
+								onClick={() => performSave(true)}
+								disabled={saving}
+							>
 								{saving ? (
 									<>
 										<Loader2 className="h-4 w-4 mr-2 animate-spin" />
 										Saving...
 									</>
 								) : (
-									"Save Embedding Config"
+									"Save and re-embed"
 								)}
 							</Button>
-						</div>
-					</>
-				)}
-
-				{/* Info about fallback */}
-				{config?.uses_llm_key && (
-					<p className="text-sm text-muted-foreground">
-						To use a separate API key for embeddings, configure one
-						above. This is useful for usage tracking or if your main
-						LLM key doesn't have embedding access.
-					</p>
-				)}
+						</DialogFooter>
+					</DialogContent>
+				</Dialog>
 
 				{/* Delete Confirmation */}
 				<Dialog
@@ -1139,9 +1464,9 @@ function EmbeddingConfigCard({ llmProvider }: { llmProvider?: string }) {
 								Remove Embedding Configuration
 							</DialogTitle>
 							<DialogDescription>
-								Remove the dedicated embedding API key? If you
-								have an OpenAI LLM configuration, embeddings
-								will fall back to using that key.
+								Remove the dedicated embedding API key? If your
+								LLM provider supports embeddings, the card will
+								fall back to inheriting its key.
 							</DialogDescription>
 						</DialogHeader>
 						<DialogFooter>

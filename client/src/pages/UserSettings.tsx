@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BasicInfo } from "@/pages/user-settings/BasicInfo";
 import { Security } from "@/pages/user-settings/Security";
 import { DeveloperSettings } from "@/pages/user-settings/Developer";
+import { UserMCPConnections } from "@/components/user/UserMCPConnections";
 
 export function UserSettings() {
 	const navigate = useNavigate();
@@ -31,7 +32,8 @@ export function UserSettings() {
 					User Settings
 				</h1>
 				<p className="mt-2 text-muted-foreground">
-					Manage your profile, security, and developer settings
+					Manage your profile, security, connections, and developer
+					settings
 				</p>
 			</div>
 
@@ -39,6 +41,7 @@ export function UserSettings() {
 				<TabsList>
 					<TabsTrigger value="basic-info">Basic Info</TabsTrigger>
 					<TabsTrigger value="security">Security</TabsTrigger>
+					<TabsTrigger value="connections">Connections</TabsTrigger>
 					<TabsTrigger value="developer">Developer</TabsTrigger>
 				</TabsList>
 
@@ -48,6 +51,10 @@ export function UserSettings() {
 
 				<TabsContent value="security" className="mt-6">
 					<Security />
+				</TabsContent>
+
+				<TabsContent value="connections" className="mt-6">
+					<UserMCPConnections />
 				</TabsContent>
 
 				<TabsContent value="developer" className="mt-6">

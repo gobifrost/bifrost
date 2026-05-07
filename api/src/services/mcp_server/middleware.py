@@ -70,6 +70,8 @@ class ToolFilterMiddleware(Middleware):
 
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
+        user_id = token.claims.get("user_id")
+        org_id = token.claims.get("org_id")
 
         try:
             from src.core.database import get_db_context
@@ -81,6 +83,8 @@ class ToolFilterMiddleware(Middleware):
                     agent_id=agent_id,
                     user_roles=user_roles,
                     is_superuser=is_superuser,
+                    user_id=user_id,
+                    org_id=org_id,
                 )
 
             if agent_result and agent_result.system_prompt:
@@ -121,6 +125,8 @@ class ToolFilterMiddleware(Middleware):
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
         user_email = token.claims.get("email", "unknown")
+        user_id = token.claims.get("user_id")
+        org_id = token.claims.get("org_id")
 
         agent_id = _get_agent_id_from_scope()
 
@@ -143,6 +149,8 @@ class ToolFilterMiddleware(Middleware):
                         agent_id=agent_id,
                         user_roles=user_roles,
                         is_superuser=is_superuser,
+                        user_id=user_id,
+                        org_id=org_id,
                     )
                     if agent_result is None:
                         logger.warning(
@@ -156,6 +164,8 @@ class ToolFilterMiddleware(Middleware):
                     result = await service.get_accessible_tools(
                         user_roles=user_roles,
                         is_superuser=is_superuser,
+                        user_id=user_id,
+                        org_id=org_id,
                     )
                     accessible_ids = {t.id for t in result.tools}
 
@@ -206,6 +216,8 @@ class ToolFilterMiddleware(Middleware):
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
         user_email = token.claims.get("email", "unknown")
+        user_id = token.claims.get("user_id")
+        org_id = token.claims.get("org_id")
 
         agent_id = _get_agent_id_from_scope()
 
@@ -223,6 +235,8 @@ class ToolFilterMiddleware(Middleware):
                         agent_id=agent_id,
                         user_roles=user_roles,
                         is_superuser=is_superuser,
+                        user_id=user_id,
+                        org_id=org_id,
                     )
                     if agent_result is None:
                         raise ToolError(
@@ -234,6 +248,8 @@ class ToolFilterMiddleware(Middleware):
                     result = await service.get_accessible_tools(
                         user_roles=user_roles,
                         is_superuser=is_superuser,
+                        user_id=user_id,
+                        org_id=org_id,
                     )
                     accessible_ids = {t.id for t in result.tools}
 

@@ -1265,7 +1265,13 @@ async def register_workflow(
     )
     workflow = result.scalar_one()
 
-    # Refresh MCP tool registry so new tools appear immediately
+    # Commit before refreshing MCP tools. refresh_workflow_tools() opens its
+    # own session via get_db_context(), and at READ COMMITTED it cannot see
+    # this request's still-uncommitted INSERT — leaving the freshly-registered
+    # workflow missing from FastMCP's in-memory registry until the next API
+    # restart. update_workflow / delete_workflow already follow this pattern.
+    await db.commit()
+
     try:
         from src.services.mcp_server.server import refresh_workflow_tools
         await refresh_workflow_tools()

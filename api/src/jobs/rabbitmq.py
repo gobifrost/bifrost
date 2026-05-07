@@ -637,41 +637,53 @@ async def consume_from_exchange(
         await connection_ctx.__aexit__(None, None, None)
 
 
-async def publish_message(
+_PUBLISH_RETRY_DELAYS_S = (0.1, 0.3, 1.0)
+
+# Connection/channel drops worth retrying (rabbitmq pod briefly out of the
+# Service endpoints, broker restarting, etc.).
+_PUBLISH_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    aio_pika.exceptions.AMQPConnectionError,
+    aio_pika.exceptions.ChannelClosed,
+)
+
+# Subclasses of AMQPConnectionError that are NOT transient — auth/protocol
+# failures will not get better with retry, so propagate immediately.
+_PUBLISH_FATAL_ERRORS: tuple[type[BaseException], ...] = (
+    aio_pika.exceptions.AuthenticationError,
+    aio_pika.exceptions.ProbableAuthenticationError,
+    aio_pika.exceptions.IncompatibleProtocolError,
+    aio_pika.exceptions.ProtocolSyntaxError,
+)
+
+
+def _is_transient_publish_error(exc: BaseException) -> bool:
+    if isinstance(exc, _PUBLISH_FATAL_ERRORS):
+        return False
+    return isinstance(exc, _PUBLISH_TRANSIENT_ERRORS)
+
+
+async def _publish_once(
     queue_name: str,
     message: dict[str, Any],
-    priority: int = 0,
+    priority: int,
 ) -> None:
-    """
-    Publish a message to a queue.
-
-    Args:
-        queue_name: Target queue name
-        message: Message body (will be JSON encoded)
-        priority: Message priority (0-9, higher = more important)
-    """
-    await rabbitmq.init_pools()
     async with rabbitmq.get_connection() as connection:
         channel = await connection.channel()
-
         try:
             dead_letter_exchange = f"{queue_name}-dlx"
 
-            # Declare dead letter exchange
             await channel.declare_exchange(
                 dead_letter_exchange,
                 aio_pika.ExchangeType.DIRECT,
                 durable=True,
             )
 
-            # Declare dead letter queue
             dlq = await channel.declare_queue(
                 f"{queue_name}-poison",
                 durable=True,
             )
             await dlq.bind(dead_letter_exchange, routing_key=queue_name)
 
-            # Declare main queue with dead letter routing (matches consumer)
             await channel.declare_queue(
                 queue_name,
                 durable=True,
@@ -681,7 +693,6 @@ async def publish_message(
                 },
             )
 
-            # Publish message
             await channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps(message).encode(),
@@ -692,6 +703,48 @@ async def publish_message(
             )
 
             logger.debug(f"Published message to {queue_name}")
-
         finally:
             await channel.close()
+
+
+async def publish_message(
+    queue_name: str,
+    message: dict[str, Any],
+    priority: int = 0,
+) -> None:
+    """
+    Publish a message to a queue.
+
+    Retries on transient broker errors (connection drops, channel close) so a
+    brief readiness flap on the rabbitmq pod doesn't surface as a workflow
+    failure. Real failures (auth, malformed message, broker rejecting the
+    publish) are not retried and propagate immediately.
+
+    Args:
+        queue_name: Target queue name
+        message: Message body (will be JSON encoded)
+        priority: Message priority (0-9, higher = more important)
+    """
+    await rabbitmq.init_pools()
+    last_exc: BaseException | None = None
+    for attempt, delay in enumerate((*_PUBLISH_RETRY_DELAYS_S, None)):
+        try:
+            await _publish_once(queue_name, message, priority)
+            return
+        except Exception as exc:
+            if not _is_transient_publish_error(exc):
+                raise
+            last_exc = exc
+            if delay is None:
+                break
+            logger.warning(
+                "Transient AMQP error publishing to %s (attempt %d/%d, sleeping %.2fs): %s",
+                queue_name,
+                attempt + 1,
+                len(_PUBLISH_RETRY_DELAYS_S) + 1,
+                delay,
+                type(exc).__name__,
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc

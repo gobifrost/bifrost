@@ -35,11 +35,9 @@ describe("VersionUpdateBanner", () => {
 
 		try {
 			render(<VersionUpdateBanner />);
-			expect(
-				screen.getByText(/A new version of Bifrost is available/i),
-			).toBeInTheDocument();
-
-			fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+			fireEvent.click(
+				screen.getByRole("button", { name: /update available/i }),
+			);
 			expect(reload).toHaveBeenCalledTimes(1);
 		} finally {
 			Object.defineProperty(window, "location", {

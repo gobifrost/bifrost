@@ -1,17 +1,29 @@
 /**
  * Bundled App Shell — loads an app via esbuild-produced bundle.
  *
- * Fetches /api/applications/{id}/bundle-manifest, populates globalThis.$bifrost
- * with the platform scope so the bundle's `import { X } from "bifrost"` resolves,
- * then dynamically imports the entry module and calls its mount() export.
+ * Fetches /api/applications/{id}/bundle-manifest, then dynamically imports
+ * the entry module and mounts its default export inline so the bundled
+ * subtree inherits the host SPA's context providers.
  *
  * This is the "normal React app" path — the bundle is a real ES module with
  * real source maps, real component names in DevTools, and browser-level caching.
+ *
+ * Resolving bare imports inside the bundle:
+ * - Platform externals (react, react-dom, react-router-dom, lucide-react,
+ *   react/jsx-runtime, react/jsx-dev-runtime, react-dom/client) resolve via
+ *   the static import map in `client/index.html` to small stubs that read
+ *   from `globalThis.__bifrost_*` populated by `initReactShim()` at boot.
+ * - User-declared dependencies (Application.dependencies) only have map
+ *   entries when the app actually has user deps. Since we can't append to
+ *   the static map, we lazy-load es-module-shims and use shim mode for
+ *   the dynamic import — shim mode supports late importmap registration.
+ *   Apps with no user deps pay zero polyfill cost.
  */
 
+import type * as React from "react";
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/api-client";
-import { $ as platformScope } from "@/lib/app-code-runtime";
+import { setDefaultAppScope } from "@/lib/app-sdk/tables";
 import {
 	webSocketService,
 	type AppCodeFileUpdate,
@@ -20,75 +32,77 @@ import {
 import { useAppBuilderStore } from "@/stores/app-builder.store";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
 
-/**
- * Set the platform-scope global the bundler reads at runtime.
- *
- * The bundler synthesizes a `node_modules/bifrost/index.js` whose body emits
- * `globalThis.__bifrost_platform[...]` accesses. We populate that global
- * here. (The shared-host React/Router/Lucide modules are wired up at app
- * startup by `initReactShim` and live in a single import map; this module
- * only needs to ensure the platform-scope global is in place plus an
- * import-map entry for any per-app npm deps.)
- */
-function setPlatformScope(): void {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	(globalThis as any).__bifrost_platform = platformScope;
+// jsDelivr — JSPM's CDN 404s on floating tags (`@2`), only exact versions
+// resolve. Pinned to an exact version for reproducible loads.
+const ESM_SHIMS_URL = "https://cdn.jsdelivr.net/npm/es-module-shims@2.8.0/dist/es-module-shims.js";
+// Force esm.sh to leave React/Router as bare specifiers in its own response so
+// they resolve back through our static import map to the host's copies. Same
+// instance everywhere -> no "two Reacts" hooks failure when a user dep calls
+// useContext/useState.
+const REACT_EXTERNALS =
+	"react,react-dom,react-dom/client,react/jsx-runtime,react-router-dom";
+
+// Browser-side shape that es-module-shims adds to window once loaded.
+interface ImportShimWindow {
+	importShim?: (specifier: string) => Promise<unknown>;
+	esmsInitOptions?: { shimMode?: boolean };
 }
 
-/**
- * Ensure user-declared npm dependencies resolve via esm.sh in the browser.
- *
- * The host shim's import map already covers React, React Router, Lucide,
- * and the JSX runtimes; this function only writes a SECOND map for
- * per-app user dependencies (e.g. `recharts`, `react-quill-new`). No
- * specifier overlaps with the shim's map, so the browser merges both maps
- * cleanly without "rule was removed, conflicted with an existing rule"
- * warnings.
- *
- * Import maps are immutable once a module that matches has been resolved,
- * so if the user's deps change between apps within the same page-lifetime,
- * we trigger a full reload — the next load installs the deps map from the
- * start.
- */
-function ensureUserDepsImportMap(dependencies: Record<string, string>): void {
-	const depKeys = Object.keys(dependencies);
-	if (depKeys.length === 0) return;
-
-	const existing = document.querySelector<HTMLScriptElement>(
-		"script[data-bifrost-deps-import-map]",
-	);
-	if (existing) {
-		try {
-			const current = JSON.parse(existing.textContent || "{}");
-			const missing = depKeys.filter((k) => !current.imports?.[k]);
-			if (missing.length > 0) {
-				location.reload();
-			}
-		} catch {
-			/* ignore */
+let esModuleShimsPromise: Promise<void> | null = null;
+function ensureEsModuleShimsLoaded(): Promise<void> {
+	if (esModuleShimsPromise) return esModuleShimsPromise;
+	esModuleShimsPromise = new Promise<void>((resolve, reject) => {
+		const w = window as unknown as ImportShimWindow;
+		if (typeof w.importShim === "function") {
+			resolve();
+			return;
 		}
-		return;
-	}
+		// shimMode: true so the shim handles ALL module loads it can see —
+		// including <script type="importmap-shim"> entries we register below
+		// for user deps. Native modules continue to load natively unless they
+		// reference a shim-mode specifier.
+		w.esmsInitOptions = { shimMode: true };
+		const script = document.createElement("script");
+		script.async = true;
+		script.src = ESM_SHIMS_URL;
+		script.onload = () => resolve();
+		script.onerror = () =>
+			reject(new Error(`Failed to load es-module-shims from ${ESM_SHIMS_URL}`));
+		document.head.appendChild(script);
+	});
+	return esModuleShimsPromise;
+}
 
-	// esm.sh bundles its own copy of React by default, which produces a
-	// dual-React hazard: libraries like recharts call useContext from their
-	// bundled React, but host context providers live in the host's React —
-	// null mismatch. `?external=...` tells esm.sh to leave those specifiers
-	// as bare imports at runtime, which the host shim's import map then
-	// points at the host's shared copies.
-	const REACT_EXTERNALS =
-		"react,react-dom,react-dom/client,react/jsx-runtime,react-router-dom";
-	const userDepImports: Record<string, string> = {};
+// Track which user-dep maps we've already registered. The shim accepts late
+// registration but we don't need to keep adding the same entries.
+const registeredUserDepMaps = new Set<string>();
+
+function registerUserDepImportMap(dependencies: Record<string, string>): void {
+	if (Object.keys(dependencies).length === 0) return;
+
+	// Always include the platform keys in the shim-mode map too — shim-mode
+	// modules can't see the native importmap, so they need their own copy.
+	const imports: Record<string, string> = {
+		"react": "/__bifrost_modules/react.js",
+		"react-dom": "/__bifrost_modules/react-dom.js",
+		"react-dom/client": "/__bifrost_modules/react-dom-client.js",
+		"react/jsx-runtime": "/__bifrost_modules/react-jsx-runtime.js",
+		"react/jsx-dev-runtime": "/__bifrost_modules/react-jsx-dev-runtime.js",
+		"react-router-dom": "/__bifrost_modules/react-router-dom.js",
+		"lucide-react": "/__bifrost_modules/lucide-react.js",
+	};
 	for (const [name, version] of Object.entries(dependencies)) {
-		userDepImports[name] = `https://esm.sh/${name}@${version}?external=${REACT_EXTERNALS}`;
+		imports[name] = `https://esm.sh/${name}@${version}?external=${REACT_EXTERNALS}`;
 	}
 
-	const scriptEl = document.createElement("script");
-	scriptEl.type = "importmap";
-	scriptEl.dataset.bifrostDepsImportMap = "true";
-	scriptEl.textContent = JSON.stringify({ imports: userDepImports });
-	// Import maps must be inserted before any module scripts that use them.
-	document.head.insertBefore(scriptEl, document.head.firstChild);
+	const key = JSON.stringify(imports);
+	if (registeredUserDepMaps.has(key)) return;
+	registeredUserDepMaps.add(key);
+
+	const script = document.createElement("script");
+	script.type = "importmap-shim";
+	script.textContent = JSON.stringify({ imports });
+	document.head.appendChild(script);
 }
 
 interface BundleManifest {
@@ -101,6 +115,10 @@ interface BundleManifest {
 	// under _repo/<app>/. Surfaced as a dismissible info banner so the
 	// developer knows to pull on next workspace sync.
 	migrated?: boolean;
+	// Org-scoped apps carry their organization id; global apps have null.
+	// Mirrors how org-scoped workflows always run as their org regardless
+	// of who triggered them.
+	organization_id?: string | null;
 }
 
 interface BundledAppShellProps {
@@ -122,6 +140,10 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	const [BundledApp, setBundledApp] = useState<BundledAppComponent | null>(null);
 	const [loadedEntry, setLoadedEntry] = useState<string | null>(null);
 	const [cssHref, setCssHref] = useState<string | null>(null);
+	// Org-scoped app: tells the table SDK to default `scope` to the app's
+	// org for `tables.*` and `useTable` calls inside the bundle. Captured
+	// from the first successful manifest fetch.
+	const [appOrgId, setAppOrgId] = useState<string | null>(null);
 
 	const [loadError, setLoadError] = useState<string | null>(null);
 	// Build errors from hot-reload rebuilds. The last-good bundle keeps
@@ -153,6 +175,16 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 		setAppContext(appSlug, isPreview);
 		return () => setAppContext("", false);
 	}, [appSlug, isPreview, setAppContext]);
+
+	// Install the app's org as the default scope for table SDK calls. The
+	// returned cleanup restores the prior value, so navigating between apps
+	// (or to a non-app page) flips the default back. Mirrors how org-scoped
+	// workflows always run as their org regardless of caller.
+	useEffect(() => {
+		if (appOrgId === null) return;
+		const restore = setDefaultAppScope(appOrgId);
+		return restore;
+	}, [appOrgId]);
 
 	// Load-or-reload the bundle. Called on initial mount AND on every
 	// successful rebuild pubsub event. Setting the component state triggers
@@ -198,14 +230,12 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					if (manifest.migrated) {
 						setMigrateNotice(true);
 					}
-				}
 
-				// Make sure the platform-scope global is populated and any
-				// user-declared npm deps are reachable via esm.sh. The shared
-				// host modules (React, Router, Lucide, JSX runtimes) live in
-				// the import map installed by initReactShim at startup.
-				setPlatformScope();
-				ensureUserDepsImportMap(dependencies);
+					// Capture the org for table-SDK scoping. Org-scoped apps
+					// default `scope` to this value; global apps leave it null
+					// and fall back to the caller's-org behavior.
+					setAppOrgId(manifest.organization_id ?? null);
+				}
 
 				if (controller.signal.aborted) return;
 				if (loadedEntry === entry) return;
@@ -213,12 +243,32 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				const entryUrl = `${baseUrl}/${entry}?mode=${mode}`;
 				const nextCssHref = css ? `${baseUrl}/${css}?mode=${mode}` : null;
 
+				// User-dep apps go through es-module-shims so that the user-dep
+				// importmap can be registered after page load. Apps with only
+				// platform externals use the native dynamic import, which
+				// resolves through the static map in index.html.
+				const hasUserDeps = Object.keys(dependencies).length > 0;
+				let dynamicImport: (url: string) => Promise<{ default?: unknown }>;
+				if (hasUserDeps) {
+					await ensureEsModuleShimsLoaded();
+					registerUserDepImportMap(dependencies);
+					const w = window as unknown as ImportShimWindow;
+					if (typeof w.importShim !== "function") {
+						throw new Error("es-module-shims loaded but importShim is undefined");
+					}
+					const importShim = w.importShim;
+					dynamicImport = (url) =>
+						importShim(url) as Promise<{ default?: unknown }>;
+				} else {
+					dynamicImport = (url) =>
+						import(/* @vite-ignore */ url) as Promise<{ default?: unknown }>;
+				}
+
 				// Load JS and CSS in parallel, but don't commit either until
 				// BOTH have resolved — otherwise the component renders for a
 				// tick before the <link> attaches and we get a FOUC.
 				const [module] = await Promise.all([
-					// @vite-ignore: runtime URL, don't try to resolve at build time.
-					import(/* @vite-ignore */ entryUrl),
+					dynamicImport(entryUrl),
 					nextCssHref ? preloadStylesheet(nextCssHref, controller.signal) : Promise.resolve(),
 				]);
 

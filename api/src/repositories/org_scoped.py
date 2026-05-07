@@ -76,8 +76,8 @@ class OrgScopedRepository(Generic[ModelT]):
     def __init__(
         self,
         session: AsyncSession,
-        org_id: UUID | None,
-        user_id: UUID | None = None,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
         is_superuser: bool = False,
     ):
         """
@@ -85,13 +85,16 @@ class OrgScopedRepository(Generic[ModelT]):
 
         Args:
             session: SQLAlchemy async session
-            org_id: Organization UUID for scoping (None for global-only scope)
-            user_id: User UUID for role checks (None for system/superuser)
+            org_id: Organization UUID for scoping (None for global-only scope).
+                Strings are coerced to UUID — `UUID == str` is False in Python,
+                so an unconverted string here silently fails the in-scope check.
+            user_id: User UUID for role checks (None for system/superuser).
+                Same string-coercion contract as org_id.
             is_superuser: If True, bypasses role checks (trusts scope)
         """
         self.session = session
-        self.org_id = org_id
-        self.user_id = user_id
+        self.org_id = UUID(org_id) if isinstance(org_id, str) else org_id
+        self.user_id = UUID(user_id) if isinstance(user_id, str) else user_id
         self.is_superuser = is_superuser
 
     # =========================================================================

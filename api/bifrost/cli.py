@@ -131,35 +131,60 @@ WATCH_HEARTBEAT_SECONDS = 60
 
 
 def _check_cli_version() -> None:
-    """Warn if the installed CLI is older than the API's minimum required version."""
+    """Hard-block the command if the installed CLI doesn't match the deployed server.
+
+    Mirrors the policy in ``client/src/hooks/useVersionCheck.ts``: compare the
+    baked-in build version against ``data.version`` from ``GET /api/version``
+    via string equality, treat ``"unknown"`` / ``"0.0.0+source"`` as dev installs
+    and skip. The CLI diverges from the SPA only by ``sys.exit(1)``-ing on
+    mismatch instead of showing a banner — the user must upgrade before any
+    command runs.
+    """
     try:
         import urllib.request
         import json as _json
         from bifrost import __version__
 
-        config_path = pathlib.Path.home() / ".bifrost" / "config.json"
-        if not config_path.exists():
-            return
-        config = _json.loads(config_path.read_text())
-        api_url = config.get("api_url", "").rstrip("/")
+        installed = __version__.lstrip("v")
+        if installed in ("unknown", "0.0.0+source"):
+            return  # dev/source install — nothing to compare against
+
+        # Re-load dotenv so a CWD-local .env's BIFROST_API_URL is honored even
+        # if bifrost.client's import-time load happened against a different cwd.
+        try:
+            from dotenv import find_dotenv, load_dotenv
+            load_dotenv(find_dotenv(usecwd=True), override=False)
+        except ImportError:
+            pass  # python-dotenv is optional; without it, only os.environ is consulted
+
+        # Use credentials._resolve_url (not get_credentials) because the version
+        # check only needs the URL — get_credentials returns None unless full
+        # tokens are present too, which would skip the check on a logged-out CLI.
+        api_url = credentials._resolve_url(None)
         if not api_url:
             return
 
         with urllib.request.urlopen(f"{api_url}/api/version", timeout=3) as resp:
             data = _json.loads(resp.read())
 
-        min_ver = data.get("min_cli_version", "")
-        installed = __version__.lstrip("v")
-        if min_ver and installed != "unknown" and installed < min_ver:
+        server_version = (data.get("version") or "").lstrip("v")
+        if not server_version:
+            return  # server didn't tell us its version — best-effort skip
+
+        if server_version != installed:
             print(
-                f"\033[33mWarning: CLI version {installed} is older than the "
-                f"minimum required {min_ver}. Run:\n"
-                f"  pipx install {api_url}/api/cli/download\n\033[0m",
+                f"\033[33mYour CLI ({installed}) is out of date. "
+                f"Server is on {server_version}.\nRun:\n"
+                f"  pipx install --force {api_url}/api/cli/download\n\033[0m",
                 file=sys.stderr,
             )
+            sys.exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
-        # Best-effort version check on every CLI invocation — no network, malformed config,
-        # or non-200 response should ever break the CLI flow
+        # Best-effort: network errors, malformed JSON, missing credentials store,
+        # etc. should never block the user. The exit-on-mismatch above is the
+        # only intentional bail-out.
         logger.debug(f"CLI version check skipped: {e}")
 
 
@@ -2808,62 +2833,6 @@ def _collect_push_files(
     return files, skipped
 
 
-
-async def _sync_app_yaml_dependencies(
-    client: "BifrostClient",
-    slug: str,
-    local_yaml: pathlib.Path,
-) -> bool:
-    """Push app.yaml's `dependencies` block to Application.dependencies if changed.
-
-    Returns True iff a PUT was issued and accepted.
-
-    Behavior:
-    - Missing local file or missing/non-dict `dependencies` block → no-op.
-    - App not yet created (404) → no-op (the file push may have been the
-      first half of a create-then-deps flow).
-    - Server-side dependencies match the YAML → no-op.
-    - Otherwise: PUT /api/applications/{id}/dependencies and print a notice.
-
-    Raised exceptions are surfaced to the caller for one centralized error
-    line, so this function never silently swallows non-recoverable errors.
-    """
-    if not local_yaml.exists():
-        return False
-
-    try:
-        import yaml as _yaml
-    except ImportError as e:  # pragma: no cover - PyYAML ships with the SDK
-        raise RuntimeError(f"PyYAML not available: {e}") from e
-
-    parsed = _yaml.safe_load(local_yaml.read_text(encoding="utf-8")) or {}
-    yaml_deps = parsed.get("dependencies") if isinstance(parsed, dict) else None
-    if not isinstance(yaml_deps, dict):
-        return False
-    yaml_deps_str = {str(k): str(v) for k, v in yaml_deps.items()}
-
-    app_resp = await client.get(f"/api/applications/{slug}")
-    if app_resp.status_code == 404:
-        return False
-    if app_resp.status_code != 200:
-        raise RuntimeError(f"lookup HTTP {app_resp.status_code}")
-
-    app_data = app_resp.json()
-    app_id = app_data.get("id")
-    current_deps = app_data.get("dependencies") or {}
-    if not app_id or current_deps == yaml_deps_str:
-        return False
-
-    deps_resp = await client.put(
-        f"/api/applications/{app_id}/dependencies",
-        json=yaml_deps_str,
-    )
-    if deps_resp.status_code != 200:
-        raise RuntimeError(f"PUT HTTP {deps_resp.status_code}")
-    print(f"  ✓ Synced dependencies for '{slug}' from app.yaml")
-    return True
-
-
 async def _sync_files(
     local_path: str,
     repo_prefix: str = "",
@@ -3161,26 +3130,6 @@ async def _sync_files(
         print(f"\n  Errors ({len(errors)}):")
         for error in errors:
             print(textwrap.fill(f"- {error}", width=_cols, initial_indent="    ", subsequent_indent="      "))
-
-    # ── 6b. Sync app.yaml `dependencies` blocks to Application.dependencies ─
-    # File pushes don't automatically reflect into Application.dependencies (a
-    # model column read by the validator and bundler). Without this step,
-    # editing `dependencies:` in apps/<slug>/app.yaml updates the YAML on the
-    # server but leaves the model untouched, so the validator continues to
-    # see the old set and fails on newly-added imports.
-    pushed_app_yamls: list[tuple[str, pathlib.Path]] = []  # (slug, local_path)
-    for item in result.push:
-        rel = item.get("rel", "")
-        if rel.endswith("/app.yaml") and rel.startswith("apps/"):
-            slug = rel.split("/", 2)[1]
-            if slug:
-                pushed_app_yamls.append((slug, path / rel))
-
-    for slug, local_yaml in pushed_app_yamls:
-        try:
-            await _sync_app_yaml_dependencies(client, slug, local_yaml)
-        except Exception as e:
-            print(f"  Skipping deps sync for '{slug}': {e}", file=sys.stderr)
 
     # Validate if requested
     if validate and repo_prefix:

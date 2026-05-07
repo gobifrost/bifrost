@@ -20,6 +20,7 @@ class EmbeddingConfig:
     api_key: str
     model: str = DEFAULT_EMBEDDING_MODEL
     dimensions: int = EMBEDDING_DIMENSIONS
+    endpoint: str | None = None
 
 
 class BaseEmbeddingClient(ABC):

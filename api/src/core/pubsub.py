@@ -834,6 +834,19 @@ async def publish_reimport_request(job_id: str) -> None:
     await manager._publish_to_redis("scheduler:reimport", {"action": "reimport", "job_id": job_id})
 
 
+async def publish_embedding_reindex_request(notification_id: str) -> None:
+    """Publish an embedding-reindex request to the scheduler.
+
+    The scheduler reads the saved embedding config and re-embeds every
+    knowledge_store row, pushing progress through the notification at
+    `notification_id`.
+    """
+    await manager._publish_to_redis(
+        "scheduler:embedding-reindex",
+        {"action": "embedding_reindex", "notification_id": notification_id},
+    )
+
+
 async def publish_pool_progress(
     worker_id: str,
     action: str,

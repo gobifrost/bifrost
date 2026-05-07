@@ -96,6 +96,19 @@ class Agent(Base):
         secondary="agent_roles",
         back_populates="agents",
     )
+    # External MCP connections this agent has been explicitly granted access
+    # to. Default for new agents is empty (deny-by-default); the migration
+    # that introduces ``agent_mcp_connections`` backfills grants for existing
+    # rows so the rollout preserves current behavior.
+    #
+    # Untyped on purpose: importing MCPConnection (even under TYPE_CHECKING)
+    # closes a CodeQL-flagged cycle through external_mcp → organizations →
+    # agents. SQLAlchemy resolves the string class name at mapper config
+    # time, so the runtime is unaffected.
+    mcp_connections = relationship(
+        "MCPConnection",
+        secondary="agent_mcp_connections",
+    )
 
     __table_args__ = (
         Index("ix_agents_organization_id", "organization_id"),
@@ -118,6 +131,11 @@ class Agent(Base):
     def role_ids(self) -> list[str]:
         """List of role IDs that can access this agent."""
         return [str(r.id) for r in self.roles]
+
+    @property
+    def mcp_connection_ids(self) -> list[str]:
+        """List of MCP connection UUIDs granted to this agent."""
+        return [str(c.id) for c in self.mcp_connections]
 
 
 class AgentTool(Base):

@@ -2040,6 +2040,39 @@ class TestInlineAgentContent:
         a = ManifestAgent(id=agent_id, name="No Path Agent")
         assert a.path is None
 
+    def test_agent_mcp_connection_ids_round_trip(self):
+        """``mcp_connection_ids`` round-trips deterministically — IDs must
+        be sorted by the serializer so re-export of the same logical state
+        is byte-stable."""
+        from bifrost.manifest import (
+            Manifest, ManifestAgent, parse_manifest, serialize_manifest,
+        )
+
+        agent_id = str(uuid4())
+        # Three connection UUIDs in unsorted order — the manifest payload
+        # itself preserves whatever the caller passed, so we sort up-front
+        # before constructing the model so re-emitted bytes are stable.
+        raw_conn_ids = [
+            "00000000-0000-0000-0000-00000000000c",
+            "00000000-0000-0000-0000-00000000000a",
+            "00000000-0000-0000-0000-00000000000b",
+        ]
+        sorted_conn_ids = sorted(raw_conn_ids)
+
+        agent = ManifestAgent(
+            id=agent_id,
+            name="Tech Support",
+            system_prompt="Help with tickets.",
+            mcp_connection_ids=sorted_conn_ids,
+        )
+        manifest = Manifest(agents={agent_id: agent})
+        yaml_out = serialize_manifest(manifest)
+        parsed = parse_manifest(yaml_out)
+        assert parsed.agents[agent_id].mcp_connection_ids == sorted_conn_ids
+        # Byte-stable on a second pass.
+        yaml_out2 = serialize_manifest(parsed)
+        assert yaml_out == yaml_out2
+
 
 class TestInlineContentDetection:
     """Helpers _form_has_inline_content / _agent_has_inline_content."""
@@ -2165,3 +2198,245 @@ class TestBackCompatSeparateFile:
             return None
 
         assert await _resolve_form_content(mform, read_fn) is None
+
+
+# ============================================================================
+# External MCP client (server template + connection + tool catalog) tests
+# ============================================================================
+
+
+@pytest.fixture
+def mcp_manifest_data():
+    """Manifest fixture with two MCP servers (one platform, one org-scoped),
+    each with one connection, each connection with two tools."""
+    org_id = str(uuid4())
+    platform_server_id = str(uuid4())
+    platform_conn_id = str(uuid4())
+    org_server_id = str(uuid4())
+    org_conn_id = str(uuid4())
+
+    return {
+        "org_id": org_id,
+        "platform_server_id": platform_server_id,
+        "platform_conn_id": platform_conn_id,
+        "org_server_id": org_server_id,
+        "org_conn_id": org_conn_id,
+        "manifest": {
+            "organizations": [{"id": org_id, "name": "TestOrg"}],
+            "mcp_servers": {
+                platform_server_id: {
+                    "id": platform_server_id,
+                    "name": "Microsoft 365 Copilot",
+                    "server_url": "https://graph.microsoft.com/.../mcp",
+                    "redirect_url": "https://bifrost.example.com/api/mcp/oauth/callback",
+                    "discovery_metadata": {
+                        "authorization_url": "https://login.microsoftonline.com/.../authorize",
+                        "token_url": "https://login.microsoftonline.com/.../token",
+                        "scopes": "Files.Read.All Sites.Read.All offline_access",
+                    },
+                    "organization_id": None,
+                    "is_active": True,
+                    "connections": {
+                        platform_conn_id: {
+                            "organization_id": org_id,
+                            "client_id": "client-abc",
+                            "available_in_chat": True,
+                            "available_to_autonomous": False,
+                            "tools": [
+                                {
+                                    "tool_name": "graph_search",
+                                    "tool_schema": {
+                                        "type": "object",
+                                        "properties": {"q": {"type": "string"}},
+                                    },
+                                    "enabled": True,
+                                },
+                                {
+                                    "tool_name": "send_email",
+                                    "tool_schema": {
+                                        "type": "object",
+                                        "properties": {"to": {"type": "string"}},
+                                    },
+                                    "enabled": False,
+                                    "disabled_reason": "Disabled by admin",
+                                },
+                            ],
+                        },
+                    },
+                },
+                org_server_id: {
+                    "id": org_server_id,
+                    "name": "halopsa-mcp",
+                    "server_url": "https://bifrost.spiretech.com/halopsa-mcp/mcp",
+                    "organization_id": org_id,
+                    "is_active": True,
+                    "connections": {
+                        org_conn_id: {
+                            "organization_id": org_id,
+                            "client_id": "halopsa-client",
+                            "available_in_chat": False,
+                            "available_to_autonomous": True,
+                            "tools": [
+                                {
+                                    "tool_name": "tickets_list",
+                                    "tool_schema": {
+                                        "type": "object",
+                                    },
+                                    "enabled": True,
+                                },
+                                {
+                                    "tool_name": "tickets_get",
+                                    "tool_schema": {
+                                        "type": "object",
+                                        "properties": {"id": {"type": "integer"}},
+                                    },
+                                    "enabled": True,
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+class TestMCPServerManifest:
+    """MCP server / connection / tool round-trip and validation tests."""
+
+    def test_parse_mcp_servers(self, mcp_manifest_data):
+        from bifrost.manifest import parse_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+
+        assert len(manifest.mcp_servers) == 2
+        platform_server_id = mcp_manifest_data["platform_server_id"]
+        platform_conn_id = mcp_manifest_data["platform_conn_id"]
+        platform = manifest.mcp_servers[platform_server_id]
+
+        assert platform.name == "Microsoft 365 Copilot"
+        assert platform.organization_id is None
+        assert platform.is_active is True
+        assert platform.discovery_metadata is not None
+        assert "scopes" in platform.discovery_metadata
+
+        assert platform_conn_id in platform.connections
+        conn = platform.connections[platform_conn_id]
+        assert conn.organization_id == mcp_manifest_data["org_id"]
+        assert conn.available_in_chat is True
+        assert conn.available_to_autonomous is False
+        assert len(conn.tools) == 2
+        assert {t.tool_name for t in conn.tools} == {"graph_search", "send_email"}
+
+    def test_mcp_server_round_trip(self, mcp_manifest_data):
+        """Servers + connections + tools survive serialize → parse round-trip."""
+        from bifrost.manifest import parse_manifest, serialize_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        original = parse_manifest(yaml_str)
+        output = serialize_manifest(original)
+        restored = parse_manifest(output)
+
+        assert len(restored.mcp_servers) == len(original.mcp_servers)
+        for sid, original_server in original.mcp_servers.items():
+            restored_server = restored.mcp_servers[sid]
+            assert restored_server.name == original_server.name
+            assert restored_server.server_url == original_server.server_url
+            assert restored_server.organization_id == original_server.organization_id
+            assert len(restored_server.connections) == len(original_server.connections)
+            for cid, original_conn in original_server.connections.items():
+                restored_conn = restored_server.connections[cid]
+                assert restored_conn.organization_id == original_conn.organization_id
+                assert restored_conn.client_id == original_conn.client_id
+                assert restored_conn.available_in_chat == original_conn.available_in_chat
+                assert restored_conn.available_to_autonomous == original_conn.available_to_autonomous
+                assert len(restored_conn.tools) == len(original_conn.tools)
+
+    def test_mcp_server_round_trip_byte_identical(self, mcp_manifest_data):
+        """Two-pass serialize → parse → serialize is byte-stable.
+
+        Sort_keys + exclude_defaults must produce identical YAML on each
+        round-trip — the round-trip "stability" property the integration
+        and event tests already verify, asserted for MCP entities.
+        """
+        from bifrost.manifest import parse_manifest, serialize_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        first = serialize_manifest(manifest)
+        second = serialize_manifest(parse_manifest(first))
+        assert first == second
+
+    def test_mcp_server_split_file(self, mcp_manifest_data):
+        """MCP servers serialize to mcp-servers.yaml in split format."""
+        from bifrost.manifest import (
+            parse_manifest,
+            parse_manifest_dir,
+            serialize_manifest_dir,
+        )
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        files = serialize_manifest_dir(manifest)
+
+        assert "mcp-servers.yaml" in files
+        data = yaml.safe_load(files["mcp-servers.yaml"])
+        assert "mcp_servers" in data
+        platform_id = mcp_manifest_data["platform_server_id"]
+        assert platform_id in data["mcp_servers"]
+
+        # Round-trip through split files
+        restored = parse_manifest_dir(files)
+        assert platform_id in restored.mcp_servers
+        assert (
+            mcp_manifest_data["platform_conn_id"]
+            in restored.mcp_servers[platform_id].connections
+        )
+
+    def test_mcp_secret_not_in_manifest(self, mcp_manifest_data):
+        """encrypted_client_secret is never in the serialized manifest output."""
+        from bifrost.manifest import parse_manifest, serialize_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        output = serialize_manifest(manifest)
+        assert "encrypted_client_secret" not in output
+
+    def test_mcp_server_validation_unknown_org(self, mcp_manifest_data):
+        """Validation catches a connection whose organization_id is missing
+        from the organizations list."""
+        from bifrost.manifest import parse_manifest, validate_manifest
+
+        # Strip organizations to make the manifest reference a missing org
+        manifest_data = dict(mcp_manifest_data["manifest"])
+        manifest_data["organizations"] = []
+        yaml_str = yaml.dump(manifest_data, default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        errors = validate_manifest(manifest)
+        # Both servers' connections reference the missing org, plus the
+        # org-scoped server itself
+        assert any("MCP server" in e and "unknown organization" in e for e in errors)
+        assert any("MCP connection" in e and "unknown organization" in e for e in errors)
+
+    def test_mcp_server_validation_valid(self, mcp_manifest_data):
+        """Validation passes when all org refs resolve."""
+        from bifrost.manifest import parse_manifest, validate_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        errors = validate_manifest(manifest)
+        assert errors == []
+
+    def test_mcp_get_all_entity_ids(self, mcp_manifest_data):
+        """get_all_entity_ids includes server IDs and connection IDs."""
+        from bifrost.manifest import get_all_entity_ids, parse_manifest
+
+        yaml_str = yaml.dump(mcp_manifest_data["manifest"], default_flow_style=False)
+        manifest = parse_manifest(yaml_str)
+        ids = get_all_entity_ids(manifest)
+
+        assert mcp_manifest_data["platform_server_id"] in ids
+        assert mcp_manifest_data["platform_conn_id"] in ids
+        assert mcp_manifest_data["org_server_id"] in ids
+        assert mcp_manifest_data["org_conn_id"] in ids

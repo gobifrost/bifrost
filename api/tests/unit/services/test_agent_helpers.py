@@ -26,6 +26,9 @@ class TestResolveAgentTools:
         mock_session = MagicMock()
         mock_agent = MagicMock()
         mock_agent.id = uuid4()
+        # organization_id=None skips the MCP-tool query path so this test
+        # stays focused on the system-tool tier without needing a real DB.
+        mock_agent.organization_id = None
         mock_agent.tools = []
         mock_agent.system_tools = ["execute_workflow"]
         mock_agent.knowledge_sources = []
@@ -51,6 +54,9 @@ class TestResolveAgentTools:
         mock_session = MagicMock()
         mock_agent = MagicMock()
         mock_agent.id = uuid4()
+        # organization_id=None skips the MCP-tool query path so this test
+        # stays focused on the system-tool tier without needing a real DB.
+        mock_agent.organization_id = None
         mock_agent.tools = []
         mock_agent.system_tools = []
         mock_agent.knowledge_sources = ["docs"]
@@ -67,6 +73,9 @@ class TestResolveAgentTools:
         mock_session = MagicMock()
         mock_agent = MagicMock()
         mock_agent.id = uuid4()
+        # organization_id=None skips the MCP-tool query path so this test
+        # stays focused on the system-tool tier without needing a real DB.
+        mock_agent.organization_id = None
         mock_agent.tools = []
         mock_agent.system_tools = []
         mock_agent.knowledge_sources = []

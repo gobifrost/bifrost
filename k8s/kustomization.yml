@@ -9,6 +9,5 @@ resources:
   - client/service.yaml
   - worker/deployment.yaml
   - scheduler/deployment.yaml
-  - coding-agent/deployment.yaml
   - rabbitmq/deployment.yaml
   - rabbitmq/service.yaml

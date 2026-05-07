@@ -223,6 +223,70 @@ class TestConversationsAccessControl:
         )
         assert response.status_code == 404
 
+    def test_user_cannot_create_conversation_with_cross_org_agent(
+        self,
+        e2e_client,
+        platform_admin,
+        org1,
+        org2_user,
+    ):
+        """A user must not be able to chat with an agent in another org.
+
+        Pins the cross-tenant rule: even if the agent is access_level=
+        ``authenticated`` (which used to mean "any logged-in user can
+        access"), the org boundary still applies. The agent is created in
+        Org 1 by an admin. A user from Org 2 attempts to start a
+        conversation with it. Must be rejected with 403.
+
+        Before the chat ``_check_agent_access`` was rerouted through
+        ``AgentRepository`` (commit f4184ef5+), this scenario succeeded
+        because the helper checked access_level + roles but not
+        organization_id.
+        """
+        # Admin creates an Org 1 agent that's "authenticated" (the most
+        # permissive non-public access level).
+        agent_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": "Cross-Org Leak Test Agent",
+                "description": "Should not be reachable from Org 2",
+                "system_prompt": "Test only.",
+                "channels": ["chat"],
+                "access_level": "authenticated",
+                "organization_id": org1["id"],
+            },
+            headers=platform_admin.headers,
+        )
+        assert agent_resp.status_code == 201, agent_resp.text
+        agent = agent_resp.json()
+
+        try:
+            # Org 2 user attempts to create a conversation with this agent.
+            resp = e2e_client.post(
+                "/api/chat/conversations",
+                json={
+                    "agent_id": agent["id"],
+                    "channel": "chat",
+                    "title": "Should not work",
+                },
+                headers=org2_user.headers,
+            )
+            assert resp.status_code == 403, (
+                f"CROSS-TENANT LEAK: Org 2 user was able to create a "
+                f"conversation with an Org 1 'authenticated' agent. "
+                f"Status: {resp.status_code}, body: {resp.text[:300]}"
+            )
+        finally:
+            # Best-effort cleanup — never let teardown fail the test. The
+            # state-reset between e2e runs will scrub anything left behind.
+            try:
+                e2e_client.delete(
+                    f"/api/agents/{agent['id']}",
+                    headers=platform_admin.headers,
+                )
+            except Exception as cleanup_exc:
+                logger.debug(f"agent cleanup skipped: {cleanup_exc}")
+
 
 # =============================================================================
 # Message Tests

@@ -3,12 +3,16 @@ import type { components } from "@/lib/v1";
 type Expr = components["schemas"]["Expr"];
 
 export type TableChangeMessage = {
-  type: "document_change" | "subscription_revoked";
+  type: "document_change" | "subscription_revoked" | "error";
   table_id?: string;
   action?: "insert" | "update" | "delete";
   row?: Record<string, unknown> | null;
   row_id?: string | null;
   channel?: string;
+  // Populated on `type: "error"` frames — server sends these when a
+  // subscribe is rejected (table not found / policy missing / access denied).
+  // See `_authorize_table_subscribe` in api/src/routers/websocket.py.
+  message?: string;
 };
 
 export function subscribeToTable(

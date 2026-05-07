@@ -46,6 +46,8 @@ def register_tool_with_context(
 
     async def wrapper(**kwargs: Any) -> ToolResult:
         ctx = get_context_fn()
+        if inspect.isawaitable(ctx):
+            ctx = await ctx
         return await func(ctx, **kwargs)
 
     # Set function metadata for FastMCP

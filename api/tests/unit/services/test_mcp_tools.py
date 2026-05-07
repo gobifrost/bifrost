@@ -17,7 +17,7 @@ We test the tool functions directly.
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -1277,3 +1277,34 @@ class TestRegisterWorkflow:
         data = result.structured_content
         assert "error" in data
         assert "No @workflow/@tool/@data_provider decorated function" in data["error"]
+
+
+class TestMCPContextInputCoercion:
+    """JWT claims arrive at MCPContext as strings (`token.claims.get("org_id")`
+    returns `str` because auth.py wraps `str(user.organization_id)` when
+    minting the token). Downstream callers pass these to OrgScopedRepository,
+    which compares against UUID-typed ORM columns. `UUID == str` is False
+    in Python — that mismatch caused every non-admin MCP tool execution to
+    fail with 'Workflow not found'. Coerce at the boundary."""
+
+    def test_string_org_id_coerced_to_uuid(self):
+        org = UUID("00000000-0000-0000-0000-000000000002")
+        ctx = MCPContext(user_id=str(uuid4()), org_id=str(org))
+        assert ctx.org_id == org
+        assert isinstance(ctx.org_id, UUID)
+
+    def test_string_user_id_coerced_to_uuid(self):
+        user = uuid4()
+        ctx = MCPContext(user_id=str(user))
+        assert ctx.user_id == user
+        assert isinstance(ctx.user_id, UUID)
+
+    def test_uuid_inputs_passed_through(self):
+        user, org = uuid4(), uuid4()
+        ctx = MCPContext(user_id=user, org_id=org)
+        assert ctx.user_id is user
+        assert ctx.org_id is org
+
+    def test_none_org_id_remains_none(self):
+        ctx = MCPContext(user_id=uuid4(), org_id=None)
+        assert ctx.org_id is None

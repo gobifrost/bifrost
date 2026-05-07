@@ -718,49 +718,23 @@ async def _check_form_access(
     """
     Check if user has access to execute a form.
 
-    Access control:
-    1. Org scoping: User can only access forms in their org or global (null org_id) forms
-    2. Access levels:
-       - 'authenticated': Any logged-in user can access
-       - 'role_based': User must be assigned to a role that has this form
+    Delegates to ``FormRepository.get(id=...)``, which is the single
+    org+role+access_level gate shared with the UI listing path and every
+    other org-scoped entity (workflows, agents, tables, etc.). Returning
+    None from the repo means "form doesn't exist OR caller doesn't have
+    access" — for an existing form (the caller already loaded it via raw
+    select), None definitively means "access denied".
     """
-    # Platform admins always have access
-    if is_superuser:
-        return True
+    from src.repositories.forms import FormRepository
 
-    # Check org scoping - user can only access their org's forms + global forms
-    if form.organization_id is not None and form.organization_id != user_org_id:
-        return False  # Form belongs to a different organization
-
-    access_level = form.access_level or "authenticated"
-
-    if access_level == "authenticated":
-        return True  # User is already authenticated to reach this point
-
-    if access_level == "role_based":
-        # Check if user has a role that is assigned to this form
-        # 1. Get all roles the user has
-        user_roles_query = select(UserRoleORM.role_id).where(
-            UserRoleORM.user_id == user_id
-        )
-        user_roles_result = await db.execute(user_roles_query)
-        user_role_ids = list(user_roles_result.scalars().all())
-
-        if not user_role_ids:
-            return False
-
-        # 2. Check if any of those roles have this form assigned
-        form_role_query = select(FormRoleORM).where(
-            FormRoleORM.form_id == form.id,
-            FormRoleORM.role_id.in_(user_role_ids),
-        )
-        form_role_result = await db.execute(form_role_query)
-        has_access = form_role_result.scalar_one_or_none() is not None
-
-        return has_access
-
-    # Unknown access level - deny by default
-    return False
+    repo = FormRepository(
+        db,
+        org_id=user_org_id,
+        user_id=user_id,
+        is_superuser=is_superuser,
+    )
+    accessible = await repo.get(id=form.id)
+    return accessible is not None
 
 
 @router.post(

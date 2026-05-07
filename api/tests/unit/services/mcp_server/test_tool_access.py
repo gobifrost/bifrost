@@ -84,6 +84,60 @@ def mock_query_result(agents: list):
     return mock_result
 
 
+@pytest.fixture(autouse=True)
+def patch_workflow_repo_passthrough():
+    """Make the per-workflow gate a pass-through for unit tests by default.
+
+    ``MCPToolAccessService`` now gates ``agent.tools`` through
+    ``WorkflowRepository.get(id=...)`` so MCP listing uses the same access
+    rule as the executor. Most existing unit tests mock the SQLAlchemy
+    session at a low level and don't care about that gate — they assert
+    that workflows attached to a visible agent appear in the result.
+
+    Patch ``_build_workflow_repo`` to return a mock repo whose ``.get``
+    looks up the workflow in the test's seeded agent fixtures and returns
+    it. Tests that exercise the gate's deny semantics live in the e2e
+    access matrix (``tests/e2e/mcp/test_mcp_tool_access_matrix.py``)
+    against the real DB.
+    """
+    seen_workflows: dict = {}
+
+    async def _fake_get(*, id, **_):
+        return seen_workflows.get(id)
+
+    fake_repo = AsyncMock()
+    fake_repo.get = _fake_get
+
+    def _build(self, **_):
+        # Walk the test's mock-agent return value to populate the workflow
+        # lookup. We grab whatever the latest session.execute call resolved
+        # to (the agents list) and harvest all attached workflows.
+        # Tests can use any depth of mock chaining (or none); if any link
+        # in the chain isn't a MagicMock with the expected attribute, fall
+        # through and leave seen_workflows empty — which gives the per-test
+        # repo a deny-all default. That's safe: tests that need workflows
+        # visible already populate the chain before calling the service.
+        try:
+            agents = (
+                self.session.execute.return_value.scalars.return_value
+                .unique.return_value.all.return_value
+            )
+            if isinstance(agents, list):
+                for agent in agents:
+                    for wf in (getattr(agent, "tools", None) or []):
+                        seen_workflows[wf.id] = wf
+        except AttributeError:
+            # Mock chain didn't reach .all — leave seen_workflows empty.
+            # Not an error condition, just "no agents seeded for this test".
+            pass
+        return fake_repo
+
+    with patch.object(
+        MCPToolAccessService, "_build_workflow_repo", autospec=True, side_effect=_build
+    ) as mock_build:
+        yield mock_build
+
+
 # ==================== Agent Access Tests ====================
 
 
@@ -696,3 +750,162 @@ class TestKnowledgeNamespaceAccess:
             )
 
         assert result.accessible_namespaces == []
+
+
+# ==================== search_knowledge Auto-Injection Tests ====================
+
+
+class TestSearchKnowledgeAutoInjection:
+    """search_knowledge must be auto-injected when an agent has knowledge_sources.
+
+    Mirrors the native chat path in agent_helpers.py so MCP listing matches
+    what the agent executor exposes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_accessible_tools_injects_search_knowledge(
+        self, service, mock_session, mock_agent
+    ):
+        """get_accessible_tools includes search_knowledge when agent has
+        knowledge_sources, even if system_tools doesn't list it."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],  # explicitly empty
+            knowledge_sources=["docs"],
+        )
+
+        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_accessible_tools_does_not_inject_without_namespaces(
+        self, service, mock_session, mock_agent
+    ):
+        """No auto-injection when knowledge_sources is empty."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],
+            knowledge_sources=[],
+        )
+
+        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" not in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_accessible_tools_no_duplicate_when_explicit(
+        self, service, mock_session, mock_agent
+    ):
+        """Auto-injection must not duplicate search_knowledge if already
+        listed in system_tools explicitly."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=["search_knowledge"],
+            knowledge_sources=["docs"],
+        )
+
+        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        sk_tools = [t for t in result.tools if t.id == "search_knowledge"]
+        assert len(sk_tools) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_tools_for_agent_injects_search_knowledge(
+        self, service, mock_session, mock_agent
+    ):
+        """get_tools_for_agent (the agent-scoped path) auto-injects too."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],
+            knowledge_sources=["docs"],
+        )
+        agent.system_prompt = "You search docs."
+
+        # get_tools_for_agent uses scalars().unique().first() (single agent),
+        # not the .all() shape used elsewhere in this file.
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_tools_for_agent(
+                agent_id=agent.id,
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        assert result is not None
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_tools_for_agent_no_inject_without_namespaces(
+        self, service, mock_session, mock_agent
+    ):
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],
+            knowledge_sources=[],
+        )
+        agent.system_prompt = ""
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_tools_for_agent(
+                agent_id=agent.id,
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        assert result is not None
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" not in tool_ids

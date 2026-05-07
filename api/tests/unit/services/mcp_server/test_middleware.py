@@ -160,11 +160,16 @@ class TestOnListTools:
 
             await middleware.on_list_tools(context, call_next)
 
-        # Verify service was called with correct arguments
-        mock_service_instance.get_accessible_tools.assert_called_once_with(
-            user_roles=user_roles,
-            is_superuser=True,
-        )
+        # Verify service was called with the user's roles + identity claims.
+        # The service uses ``user_id`` and ``org_id`` to build a
+        # WorkflowRepository for per-workflow gating (see
+        # MCPToolAccessService._build_workflow_repo). The middleware now
+        # forwards these from the JWT, so the call must include them.
+        call_kwargs = mock_service_instance.get_accessible_tools.call_args.kwargs
+        assert call_kwargs["user_roles"] == user_roles
+        assert call_kwargs["is_superuser"] is True
+        assert "user_id" in call_kwargs
+        assert "org_id" in call_kwargs
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_service_error(

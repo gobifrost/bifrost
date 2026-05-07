@@ -280,6 +280,7 @@ class Scheduler:
             channels=[
                 "bifrost:scheduler:git-op",
                 "bifrost:scheduler:reimport",
+                "bifrost:scheduler:embedding-reindex",
             ],
             on_message=self._handle_pubsub_message,
         )
@@ -292,8 +293,27 @@ class Scheduler:
             await self._handle_git_operation(data)
         elif channel == "bifrost:scheduler:reimport":
             await self._handle_reimport(data)
+        elif channel == "bifrost:scheduler:embedding-reindex":
+            await self._handle_embedding_reindex(data)
         else:
             logger.warning(f"Unknown channel: {channel}")
+
+    async def _handle_embedding_reindex(self, data: dict) -> None:
+        """Re-embed every knowledge_store row against the saved embedding config."""
+        from src.services.embeddings.reindex import run_reindex
+
+        notification_id = data.get("notification_id")
+        if not notification_id:
+            logger.error("embedding-reindex message missing notification_id")
+            return
+
+        logger.info(f"Starting embedding reindex (notification_id={notification_id})")
+        try:
+            await run_reindex(notification_id)
+        except Exception as e:
+            # run_reindex handles its own notification updates on failure;
+            # this catch is just so a crashed handler doesn't kill the listener.
+            logger.exception(f"Embedding reindex job crashed: {e}")
 
     @staticmethod
     def _build_clone_url_from_config(config) -> str:

@@ -43,6 +43,11 @@ on:
       - ".prettierignore"
       - ".vscode/**"
       - ".idea/**"
+  # GitHub merge queue runs CI on a synthetic ref containing
+  # main + queued PRs stacked in queue order. Required status
+  # checks must fire on this event or the queue blocks forever
+  # waiting on absent statuses.
+  merge_group:
   workflow_dispatch:
 
 env:
@@ -58,6 +63,9 @@ jobs:
   # Lint & Type Check - Fast, gates all builds alongside unit tests
   # =============================================================================
   lint:
+    # Skip on push: main — the merge_group run already covered this
+    # commit. Still runs on PRs, queue, tag pushes, and workflow_dispatch.
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Lint & Type Check
     steps:
@@ -117,6 +125,8 @@ jobs:
   # Unit Tests - Fast, gates all builds
   # =============================================================================
   test-unit:
+    # Skip on push: main — covered by the merge_group run.
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Unit Tests
     steps:
@@ -144,6 +154,8 @@ jobs:
   # E2E Tests - Slow, only gates tag releases
   # =============================================================================
   test-e2e:
+    # Skip on push: main — covered by the merge_group run.
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
@@ -163,8 +175,9 @@ jobs:
   # Dev Build - Every push to main, gated by unit tests only
   # =============================================================================
   build-dev:
-    if: github.ref == 'refs/heads/main'
-    needs: [test-unit, lint]
+    # Only fires on push: main — branch protection + merge queue
+    # already gated this commit, so no needs: here.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Build Dev Images
     permissions:
@@ -182,7 +195,7 @@ jobs:
       - name: Compute version
         id: version
         run: |
-          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+          VERSION=$(./scripts/compute-dev-version.sh)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
@@ -324,7 +337,8 @@ jobs:
   # GitHub's built-in workflow-failure email (no extra wiring).
   # =============================================================================
   deploy-dev:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Fires only after build-dev lands a new image on push: main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build-dev]
     runs-on: ubuntu-latest
     name: Deploy Dev to DigitalOcean

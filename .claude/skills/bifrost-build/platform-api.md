@@ -1446,18 +1446,40 @@ If you're about to write a workflow just to read/write a table, configure the po
 
 ### useTable
 
-Signature: `useTable(name: string, query?: { where?: Expr; limit?: number; offset?: number }): { rows: TableRow[]; loading: boolean; error: Error | null }`.
+Signature: `useTable(name: string, query?: { where?: DocumentFilter; page?: number; pageSize?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; total: number; totalPages: number; loading: boolean; error: Error | null }`.
 
-Live-updating table data hook. Loads an initial snapshot via `tables.query` and subscribes to live changes via `tables.subscribe`, applying `insert` / `update` / `delete` events to local state. The subscribe filter is the same `where` expression passed to the initial query, so the websocket fanout sees exactly the same row visibility as the snapshot.
+Live-updating table data hook with **page-based pagination**. Loads a snapshot of `page` (1-indexed, default 1) at `pageSize` rows per page (default 100, server cap 1000) via `tables.query` and subscribes to live changes via `tables.subscribe`, applying `insert` / `update` / `delete` events to the visible page window. The hook compiles `where` into the policy `Expr` AST internally before passing to subscribe, so the websocket fanout sees the same row visibility as the snapshot.
+
+Returns:
+- `rows` — current page only.
+- `total` — count of matching rows across all pages.
+- `totalPages` — `Math.ceil(total / pageSize)`, or `0` for empty tables.
+- `loading`, `error`.
+
+For "Page X of Y" UI, drive `page` from local state and read `totalPages` from the result. For "more on the server" detection, use `rows.length < total`.
 
 Rows are returned in a **flat** shape — JSONB `data` fields (e.g. `status`, `assignee`) are spread at the top level alongside column-mapped fields (`id`, `created_by`, `updated_by`, `created_at`, `updated_at`, `table_id`). This matches the shape websocket events deliver, so live updates merge cleanly with the snapshot.
+
+The `where` filter uses the **dict-shorthand DSL** — same shape the Python SDK uses. Examples:
+
+```tsx
+useTable("notes",    { where: { client_id: clientId } });
+useTable("invoices", { where: { amount: { gte: 100, lt: 1000 } } });
+useTable("clients",  { where: { name: { contains: "acme" } } });
+useTable("tickets",  { where: { status: { in: ["open", "pending"] } } });
+useTable("tasks",    { where: { deleted_at: { is_null: true } } });
+```
+
+Operators: `eq`, `neq` / `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `is_null`, `has_key`, `contains`, `starts_with`, `ends_with`. The last four are query-only (no policy `Expr` equivalent) — using them in `useTable.where` raises a clear error via `error`. For those, use `tables.query` for one-shot reads or filter client-side.
 
 ```tsx
 import { useTable } from "bifrost";
 
 export default function Tasks() {
   const { rows, loading, error } = useTable("my_tasks", {
-    where: { eq: [{ row: "status" }, "open"] },
+    where: { status: "open" },
+    order_by: "created_at",
+    order_dir: "desc",
   });
   if (loading) return <div>Loading…</div>;
   if (error) return <div>Error: {error.message}</div>;
@@ -1466,4 +1488,58 @@ export default function Tasks() {
 ```
 
 The hook respects table policies — `rows` only contains rows the policies allow the current user to read. Inserts that transition into visibility appear; updates that transition out generate `delete` events.
+
+**Scope.** When called inside an org-scoped app (`app.organization_id` is set), `scope` defaults to the app's org — same convention as org-scoped workflows always running as their org. Global apps fall back to caller's-org behavior. Pass `scope` explicitly to override (provider admins only).
+
+**Subscribe errors.** If the server rejects the subscribe (table not found / policy denied / unsupported `where` operator), the rejection is surfaced via `error` rather than silently dropped. Before, this case looked like "snapshot loaded fine, no live updates ever arrive" — now it's a visible failure.
+
+### useInfiniteTable
+
+Signature: `useInfiniteTable(name: string, query?: { where?: DocumentFilter; pageSize?: number; order_by?: string; order_dir?: "asc" | "desc"; scope?: string }): { rows: TableRow[]; loadMore: () => Promise<void>; hasMore: boolean; loading: boolean; error: Error | null }`.
+
+Same DSL as `useTable` but **accumulates** pages on demand for "Load more" / infinite-scroll UI. Each `loadMore()` call appends the next page to `rows`. The first page fetches with a count; subsequent pages set `skip_count: true` automatically for speed. Pages stop when a partial page comes back (`hasMore` flips false). Live updates apply to whatever's been loaded.
+
+```tsx
+import { useInfiniteTable } from "bifrost";
+
+export default function Contacts() {
+  const { rows, loadMore, hasMore, loading } = useInfiniteTable("contacts", {
+    pageSize: 100,
+  });
+  return (
+    <>
+      <ul>{rows.map((r) => <li key={r.id}>{r.name as string}</li>)}</ul>
+      {hasMore && <button onClick={loadMore} disabled={loading}>Load more</button>}
+    </>
+  );
+}
+```
+
+Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both wire live updates the same way.
+
+## Global Built-ins
+
+JavaScript built-in constructors are exposed on the bifrost scope to win the spread order over Lucide icons of the same name. Without this, a bare `new Map()` in user code would resolve to the Lucide `Map` icon (a React component, not a constructor) and crash at runtime with `TypeError: Map2 is not a constructor`.
+
+Importing these from `"bifrost"` is rare — they're already global. The entries exist so the bare references resolve correctly.
+
+### Map
+
+The native `Map` constructor (`globalThis.Map`). Without this entry, Lucide's `Map` icon would shadow it inside the platform scope. `import { Map } from "bifrost"` resolves to the constructor; for the icon, import a more specific name (e.g. `MapPin`) or import from `"lucide-react"` directly.
+
+### Set
+
+The native `Set` constructor (`globalThis.Set`). Lucide also ships a `Set` icon — same shadowing concern as `Map`.
+
+### WeakMap
+
+The native `WeakMap` constructor (`globalThis.WeakMap`). Re-asserted for symmetry with `Map`.
+
+### WeakSet
+
+The native `WeakSet` constructor (`globalThis.WeakSet`). Re-asserted for symmetry with `Set`.
+
+### Date
+
+The native `Date` constructor (`globalThis.Date`). Lucide ships a `Calendar`-adjacent icon set — re-asserted to keep `new Date()` resolving to the constructor.
 

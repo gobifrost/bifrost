@@ -1,11 +1,31 @@
-import { describe, expect, it, vi } from "vitest";
-import { tables } from "./tables";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  TableAccessDeniedError,
+  TableNotFoundError,
+  setDefaultAppScope,
+  tables,
+} from "./tables";
+
+afterEach(() => {
+  // Always reset module-level state so tests don't bleed defaultScope.
+  setDefaultAppScope(null);
+});
 
 describe("tables web SDK", () => {
-  it("get returns null on 403", async () => {
+  it("get throws TableAccessDeniedError on 403", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(new Response(null, { status: 403 }));
+      .mockResolvedValue(new Response("policy denied", { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(tables.get("t1", "row-1")).rejects.toBeInstanceOf(
+      TableAccessDeniedError,
+    );
+  });
+
+  it("get returns null on 404 (row-level URL — could be missing row OR table)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await tables.get("t1", "row-1");
     expect(result).toBeNull();
@@ -308,6 +328,168 @@ describe("tables web SDK", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       await tables.count("t1", "");
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).not.toContain("scope=");
+    });
+  });
+
+  describe("error model", () => {
+    it("query throws TableNotFoundError on 404 (table-level URL)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(new Response("no such table", { status: 404 })),
+      );
+      await expect(tables.query("missing")).rejects.toBeInstanceOf(
+        TableNotFoundError,
+      );
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(new Response("no such table", { status: 404 })),
+      );
+      await expect(tables.query("missing")).rejects.toThrow("no such table");
+    });
+
+    it("count throws TableNotFoundError on 404 (no longer silently 0)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+      );
+      await expect(tables.count("missing")).rejects.toBeInstanceOf(
+        TableNotFoundError,
+      );
+    });
+
+    it("insert(single) throws TableNotFoundError on 404", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+      );
+      await expect(
+        tables.insert("missing", { x: 1 }),
+      ).rejects.toBeInstanceOf(TableNotFoundError);
+    });
+
+    it("delete(batch) throws TableNotFoundError on 404", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+      );
+      await expect(
+        tables.delete("missing", ["a", "b"]),
+      ).rejects.toBeInstanceOf(TableNotFoundError);
+    });
+
+    it("query throws TableAccessDeniedError on 403 with body", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(new Response("policy denied", { status: 403 })),
+      );
+      await expect(tables.query("notes")).rejects.toBeInstanceOf(
+        TableAccessDeniedError,
+      );
+    });
+
+    it("update returns null on 404 (row-level URL — could be missing row OR table)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+      );
+      const result = await tables.update("t1", "row-1", { x: 1 });
+      expect(result).toBeNull();
+    });
+
+    it("delete(single) returns false on 404 (idempotent)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+      );
+      const result = await tables.delete("t1", "row-1");
+      expect(result).toBe(false);
+    });
+
+    it("error classes are distinguishable", () => {
+      const denied = new TableAccessDeniedError();
+      const missing = new TableNotFoundError();
+      expect(denied).toBeInstanceOf(TableAccessDeniedError);
+      expect(denied).not.toBeInstanceOf(TableNotFoundError);
+      expect(missing).toBeInstanceOf(TableNotFoundError);
+      expect(missing).not.toBeInstanceOf(TableAccessDeniedError);
+      expect(denied.name).toBe("TableAccessDeniedError");
+      expect(missing.name).toBe("TableNotFoundError");
+    });
+  });
+
+  describe("default app scope", () => {
+    function okJson(body: unknown) {
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    it("auto-applies the configured app scope when caller omits scope", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(okJson({ id: "row-1", data: {} }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      setDefaultAppScope("app-org-uuid");
+      await tables.get("notes", "row-1");
+
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).toContain("?scope=app-org-uuid");
+    });
+
+    it("explicit caller scope wins over the default", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(okJson({ id: "row-1", data: {} }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      setDefaultAppScope("app-org-uuid");
+      await tables.get("notes", "row-1", "explicit-other-org");
+
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).toContain("?scope=explicit-other-org");
+      expect(url).not.toContain("app-org-uuid");
+    });
+
+    it("setDefaultAppScope returns a cleanup that restores the prior value", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(okJson({ count: 0 })));
+      vi.stubGlobal("fetch", fetchMock);
+
+      setDefaultAppScope("outer-org");
+      const restoreInner = setDefaultAppScope("inner-org");
+
+      await tables.count("t1");
+      expect((fetchMock.mock.calls[0][0] as string)).toContain(
+        "scope=inner-org",
+      );
+
+      restoreInner();
+      await tables.count("t1");
+      expect((fetchMock.mock.calls[1][0] as string)).toContain(
+        "scope=outer-org",
+      );
+    });
+
+    it("global app (default scope null) emits no scope param", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(okJson({ count: 0 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      setDefaultAppScope(null);
+      await tables.count("t1");
+
       const url = fetchMock.mock.calls[0][0] as string;
       expect(url).not.toContain("scope=");
     });

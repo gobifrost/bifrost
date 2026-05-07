@@ -264,6 +264,7 @@ def _agent_has_inline_content(magent) -> bool:
             "delegated_agent_ids",
             "knowledge_sources",
             "system_tools",
+            "mcp_connection_ids",
             "llm_model",
             "llm_max_tokens",
         )
@@ -305,6 +306,8 @@ def _agent_content_from_manifest(magent) -> bytes:
         data["knowledge_sources"] = list(magent.knowledge_sources)
     if magent.system_tools:
         data["system_tools"] = list(magent.system_tools)
+    if getattr(magent, "mcp_connection_ids", None):
+        data["mcp_connection_ids"] = list(magent.mcp_connection_ids)
     if magent.llm_model is not None:
         data["llm_model"] = magent.llm_model
     if magent.llm_max_tokens is not None:
@@ -1055,6 +1058,27 @@ class ManifestResolver:
                         await op.execute(self.db)
                 all_ops.extend(agent_ops)
 
+        # 9. Resolve MCP servers (with nested connections + tools)
+        imported_server_ids: set[str] = set()
+        for server_key, mserver in manifest.mcp_servers.items():
+            if changed_ids is not None and mserver.id not in changed_ids:
+                imported_server_ids.add(mserver.id)
+                continue
+            await _prog(f"Importing MCP server: {mserver.name or server_key}")
+            if not dry_run:
+                await self._resolve_mcp_server(
+                    mserver.name or server_key, mserver
+                )
+            imported_server_ids.add(mserver.id)
+
+            for conn_id, mconn in mserver.connections.items():
+                if changed_ids is not None and conn_id not in changed_ids:
+                    continue
+                if not dry_run:
+                    await self._resolve_mcp_connection(
+                        conn_id, mconn, imported_server_ids, server_id=mserver.id
+                    )
+
         return all_ops
 
     async def _index_forms_from_manifest(
@@ -1208,6 +1232,39 @@ class ManifestResolver:
                 post_values["updated_at"] = datetime.now(timezone.utc)
                 await self.db.execute(
                     sa_update(Agent).where(Agent.id == agent_id_uuid).values(**post_values)
+                )
+
+            # Sync MCP connection grants. The manifest carries the grants
+            # the agent had at export time; round-trip is byte-stable
+            # because the IDs are sorted in the serializer. Connections
+            # whose UUIDs aren't present in the target environment are
+            # silently skipped — the manifest cannot create connections,
+            # only grant existing ones.
+            mcp_ids = list(getattr(magent, "mcp_connection_ids", None) or [])
+            if mcp_ids or _agent_has_inline_content(magent):
+                from src.repositories.agents import AgentRepository
+
+                repo = AgentRepository(
+                    session=self.db,
+                    org_id=org_id_uuid,
+                    user_id=None,
+                    is_superuser=True,
+                )
+                try:
+                    parsed_ids = [UUID(cid) for cid in mcp_ids]
+                except ValueError:
+                    logger.warning(
+                        "Invalid MCP connection UUID in manifest for agent %s",
+                        magent.id,
+                    )
+                    parsed_ids = []
+                # ``granted_by=None`` flags the grant as system-driven so
+                # the audit log distinguishes manifest sync from explicit
+                # admin grants.
+                await repo.set_mcp_connection_grants(
+                    agent_id_uuid,
+                    parsed_ids,
+                    granted_by=None,
                 )
 
         return modified
@@ -1531,6 +1588,12 @@ class ManifestResolver:
         from src.models.orm.applications import Application
         from src.models.orm.config import Config
         from src.models.orm.events import EventSource, EventSubscription
+        from src.models.orm.external_mcp import (
+            MCPConnection,
+            MCPConnectionTool,
+            MCPServer,
+            UserMCPCredential,
+        )
         from src.models.orm.forms import Form
         from src.models.orm.integrations import Integration
         from src.models.orm.organizations import Organization
@@ -1598,6 +1661,15 @@ class ManifestResolver:
                 present_sub_uuids.append(UUID(msub.id))
         present_org_uuids = [UUID(m.id) for m in manifest.organizations]
         present_role_uuids = [UUID(m.id) for m in manifest.roles]
+
+        # MCP servers and their nested connections + tools
+        present_mcp_server_uuids: list[UUID] = [
+            UUID(s.id) for s in manifest.mcp_servers.values()
+        ]
+        present_mcp_connection_uuids: list[UUID] = []
+        for s in manifest.mcp_servers.values():
+            for cid in s.connections.keys():
+                present_mcp_connection_uuids.append(UUID(cid))
 
         entity_changes: list[EntityChange] = []
         now = datetime.now(timezone.utc)
@@ -1733,6 +1805,66 @@ class ManifestResolver:
 
         # Delete apps not in manifest
         await _bulk_delete(Application, [], present_app_uuids, "applications")
+
+        # External MCP cleanup. Delete leaves first, then connections, then
+        # servers — although CASCADE FKs on the schema make later deletes
+        # idempotent if leaves already vanished.
+
+        # Tool catalog: delete any (connection_id, tool_name) row whose
+        # connection is in-manifest but whose tool_name is not present in
+        # the manifest's tool list for that connection. Tools for orphaned
+        # connections are reaped by the connection delete below via CASCADE.
+        if present_mcp_connection_uuids:
+            present_tool_keys: set[tuple[UUID, str]] = set()
+            for mserver in manifest.mcp_servers.values():
+                for cid, mconn in mserver.connections.items():
+                    cid_uuid = UUID(cid)
+                    for mtool in mconn.tools:
+                        present_tool_keys.add((cid_uuid, mtool.tool_name))
+
+            tool_q = select(MCPConnectionTool.id, MCPConnectionTool.tool_name, MCPConnectionTool.connection_id).where(
+                MCPConnectionTool.connection_id.in_(present_mcp_connection_uuids)
+            )
+            tool_rows = (await self.db.execute(tool_q)).all()
+            stale_tool_ids: list[UUID] = []
+            for row in tool_rows:
+                if (row[2], row[1]) not in present_tool_keys:
+                    stale_tool_ids.append(row[0])
+                    logger.info(
+                        f"Deleting mcp_connection_tools {row[0]} ({row[1]}) — removed from manifest"
+                    )
+                    entity_changes.append(EntityChange(
+                        action="removed",
+                        entity_type="mcp_connection_tools",
+                        name=row[1] or str(row[0]),
+                    ))
+            if stale_tool_ids and not dry_run:
+                await self.db.execute(
+                    sa_delete(MCPConnectionTool).where(
+                        MCPConnectionTool.id.in_(stale_tool_ids)
+                    )
+                )
+
+        # Delete connections not in manifest (cascades to tools + user creds)
+        await _bulk_delete(
+            MCPConnection,
+            [],
+            present_mcp_connection_uuids,
+            "mcp_connections",
+        )
+        # Delete servers not in manifest (cascades to connections, tools, creds)
+        await _bulk_delete(
+            MCPServer,
+            [],
+            present_mcp_server_uuids,
+            "mcp_servers",
+        )
+        # ``user_mcp_credentials`` rows are user-owned, not manifest-owned —
+        # they're created via the per-user OAuth connect flow. CASCADE on
+        # connection_id handles cleanup when a connection is removed above;
+        # we never bulk-delete by manifest absence. Reference the model so
+        # the import isn't flagged as unused.
+        _ = UserMCPCredential
 
         # Soft-delete organizations not in manifest (only when manifest has orgs)
         if present_org_uuids:
@@ -2389,6 +2521,150 @@ class ManifestResolver:
             await self.db.execute(sub_stmt)
 
         return []
+
+    async def _resolve_mcp_server(self, server_name: str, mserver) -> None:
+        """Resolve an MCP server template from manifest by UUID upsert.
+
+        Always upserts on the UUID — never the natural key. This avoids the
+        ``_resolve_integration`` cache bug filed as
+        jackmusick/bifrost#148: name-keyed upserts collide with cascade-
+        migrated rows that share a name across orgs.
+        """
+        from uuid import UUID
+
+        from sqlalchemy.dialects.postgresql import insert
+
+        from src.models.orm.external_mcp import MCPServer
+
+        server_id = UUID(mserver.id)
+
+        stmt = insert(MCPServer).values(
+            id=server_id,
+            name=server_name,
+            server_url=mserver.server_url,
+            oauth_provider_id=(
+                UUID(mserver.oauth_provider_id) if mserver.oauth_provider_id else None
+            ),
+            redirect_url=mserver.redirect_url,
+            discovery_metadata=mserver.discovery_metadata,
+            organization_id=(
+                UUID(mserver.organization_id) if mserver.organization_id else None
+            ),
+            is_active=mserver.is_active,
+        ).on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "name": server_name,
+                "server_url": mserver.server_url,
+                "oauth_provider_id": (
+                    UUID(mserver.oauth_provider_id) if mserver.oauth_provider_id else None
+                ),
+                "redirect_url": mserver.redirect_url,
+                "discovery_metadata": mserver.discovery_metadata,
+                "organization_id": (
+                    UUID(mserver.organization_id) if mserver.organization_id else None
+                ),
+                "is_active": mserver.is_active,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+        await self.db.execute(stmt)
+
+    async def _resolve_mcp_connection(
+        self,
+        connection_id: str,
+        mconn,
+        imported_server_ids: set[str],
+        *,
+        server_id: str,
+    ) -> None:
+        """Resolve a per-org MCP connection from manifest by UUID upsert.
+
+        Skips connections whose parent server wasn't imported in this run
+        to avoid FK violations (mirrors the workflow-skip pattern in
+        ``_resolve_event_source``).
+
+        ``encrypted_client_secret`` is NEVER carried in the manifest —
+        existing rows keep the previously-stored secret on update; new rows
+        get an empty placeholder that the connect-popup OAuth flow must
+        overwrite before the connection can be used.
+        """
+        from uuid import UUID
+
+        from sqlalchemy.dialects.postgresql import insert
+
+        from src.models.orm.external_mcp import (
+            MCPConnection,
+            MCPConnectionTool,
+        )
+
+        if server_id not in imported_server_ids:
+            logger.warning(
+                f"MCP connection {connection_id}: parent server {server_id} "
+                f"not imported, skipping"
+            )
+            return
+
+        conn_uuid = UUID(connection_id)
+        org_uuid = UUID(mconn.organization_id)
+        server_uuid = UUID(server_id)
+
+        # Insert: empty secret placeholder (the connect popup must overwrite).
+        # Update: keep existing encrypted_client_secret intact.
+        stmt = insert(MCPConnection).values(
+            id=conn_uuid,
+            server_id=server_uuid,
+            organization_id=org_uuid,
+            client_id=mconn.client_id,
+            encrypted_client_secret="",
+            server_url_override=mconn.server_url_override,
+            available_in_chat=mconn.available_in_chat,
+            available_to_autonomous=mconn.available_to_autonomous,
+            service_oauth_token_id=(
+                UUID(mconn.service_oauth_token_id)
+                if mconn.service_oauth_token_id
+                else None
+            ),
+        ).on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "server_id": server_uuid,
+                "organization_id": org_uuid,
+                "client_id": mconn.client_id,
+                "server_url_override": mconn.server_url_override,
+                "available_in_chat": mconn.available_in_chat,
+                "available_to_autonomous": mconn.available_to_autonomous,
+                "service_oauth_token_id": (
+                    UUID(mconn.service_oauth_token_id)
+                    if mconn.service_oauth_token_id
+                    else None
+                ),
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+        await self.db.execute(stmt)
+
+        # Upsert each tool by (connection_id, tool_name) — that's the
+        # unique constraint on the catalog table.
+        for mtool in mconn.tools:
+            tool_stmt = insert(MCPConnectionTool).values(
+                connection_id=conn_uuid,
+                tool_name=mtool.tool_name,
+                tool_schema=mtool.tool_schema,
+                enabled=mtool.enabled,
+                disabled_reason=mtool.disabled_reason,
+                last_seen_at=datetime.now(timezone.utc),
+            ).on_conflict_do_update(
+                index_elements=["connection_id", "tool_name"],
+                set_={
+                    "tool_schema": mtool.tool_schema,
+                    "enabled": mtool.enabled,
+                    "disabled_reason": mtool.disabled_reason,
+                    "last_seen_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            )
+            await self.db.execute(tool_stmt)
 
     def _resolve_form(self, mform, content: bytes) -> "list[SyncOp]":
         """Resolve form metadata from manifest into SyncOps.
