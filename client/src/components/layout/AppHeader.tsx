@@ -22,6 +22,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationCenter } from "@/components/layout/NotificationCenter";
+import { VersionUpdateBanner } from "@/components/layout/VersionUpdateBanner";
 import { useAuth } from "@/contexts/AuthContext";
 import { APP_VERSION } from "@/lib/version";
 import { useProfile } from "@/hooks/useProfile";
@@ -101,8 +102,11 @@ export function AppHeader({ appName, isPreview = false }: AppHeaderProps) {
 				{/* Spacer */}
 				<div className="flex-1" />
 
-				{/* Right: Search, Notifications, Theme, Profile */}
+				{/* Right: Version banner, Search, Notifications, Theme, Profile */}
 				<div className="flex items-center gap-1">
+					{/* Version Update Banner — only renders on version mismatch */}
+					<VersionUpdateBanner />
+
 					{/* Search Button */}
 					<Button
 						variant="ghost"

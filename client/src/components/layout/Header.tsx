@@ -27,6 +27,7 @@ import { APP_VERSION } from "@/lib/version";
 import { useEditorStore } from "@/stores/editorStore";
 import { useQuickAccessStore } from "@/stores/quickAccessStore";
 import { NotificationCenter } from "@/components/layout/NotificationCenter";
+import { VersionUpdateBanner } from "@/components/layout/VersionUpdateBanner";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
 import { webSocketService } from "@/services/websocket";
@@ -149,6 +150,12 @@ export function Header({
 
 				{/* Spacer */}
 				<div className="flex-1" />
+
+				{/* Version Update Banner — only renders when /api/version
+				    differs from the baked-in client version. */}
+				<div className="mr-4">
+					<VersionUpdateBanner />
+				</div>
 
 				{/* File Activity Indicator (Platform Admin only) */}
 				{isPlatformAdmin && <FileActivityIndicator />}
