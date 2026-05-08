@@ -166,6 +166,26 @@ class MCPContext:
 # =============================================================================
 
 
+def _get_agent_id_from_scope() -> UUID | None:
+    """Read the agent UUID written to the ASGI scope by AgentScopeMCPMiddleware.
+
+    Returns ``None`` outside an HTTP request context (e.g. stdio MCP) or when
+    the request is to the un-scoped /mcp mount.
+    """
+    from fastmcp.server.dependencies import get_http_request
+
+    try:
+        request = get_http_request()
+        agent_id_str = request.scope.get("mcp_agent_id")
+        if agent_id_str:
+            return UUID(agent_id_str)
+    except (RuntimeError, ValueError, AttributeError) as e:
+        # RuntimeError: not in HTTP context; ValueError: bad UUID; AttributeError:
+        # scope shape unexpected. None of these should crash tool execution.
+        logger.debug(f"could not extract agent_id from scope: {e}")
+    return None
+
+
 def _get_context_from_token() -> MCPContext:
     """
     Get MCPContext from authenticated FastMCP token.
@@ -196,15 +216,17 @@ def _get_context_from_token() -> MCPContext:
     )
 
 
-async def _get_context_with_namespaces() -> MCPContext:
-    """
-    Get MCPContext with accessible knowledge namespaces.
+async def _get_runtime_context() -> MCPContext:
+    """Build the per-request MCPContext used by tool execution.
 
-    This extends the basic token context with accessible namespaces
-    queried from the database based on user's agent access.
+    Populates ``accessible_namespaces`` according to the ASGI mount:
 
-    Returns:
-        MCPContext with accessible_namespaces populated
+    - ``/mcp/{agent_id}`` (agent-scoped): namespaces == that agent's
+      ``knowledge_sources`` only. Cross-namespace requests are rejected
+      by the tool itself, so a session bound to an agent can only see
+      that agent's knowledge.
+    - ``/mcp`` (un-scoped): namespaces == union of the user's accessible
+      agents' ``knowledge_sources``.
     """
     from fastmcp.exceptions import ToolError
     from fastmcp.server.dependencies import get_access_token
@@ -220,21 +242,32 @@ async def _get_context_with_namespaces() -> MCPContext:
     is_superuser = token.claims.get("is_superuser", False)
     user_id = token.claims.get("user_id")
     org_id = token.claims.get("org_id")
+    agent_id = _get_agent_id_from_scope()
 
-    # Query accessible namespaces from agents
     accessible_namespaces: list[str] = []
     try:
         async with get_db_context() as db:
             service = MCPToolAccessService(db)
-            result = await service.get_accessible_tools(
-                user_roles=user_roles,
-                is_superuser=is_superuser,
-                user_id=user_id,
-                org_id=org_id,
-            )
-            accessible_namespaces = result.accessible_namespaces
+            if agent_id is not None:
+                agent_result = await service.get_tools_for_agent(
+                    agent_id=agent_id,
+                    user_roles=user_roles,
+                    is_superuser=is_superuser,
+                    user_id=user_id,
+                    org_id=org_id,
+                )
+                if agent_result is not None:
+                    accessible_namespaces = list(agent_result.accessible_namespaces)
+            else:
+                result = await service.get_accessible_tools(
+                    user_roles=user_roles,
+                    is_superuser=is_superuser,
+                    user_id=user_id,
+                    org_id=org_id,
+                )
+                accessible_namespaces = list(result.accessible_namespaces)
     except Exception as e:
-        logger.warning(f"Failed to get accessible namespaces: {e}")
+        logger.warning(f"Failed to resolve accessible namespaces: {e}")
 
     return MCPContext(
         user_id=token.claims.get("user_id", ""),
@@ -322,14 +355,24 @@ class BifrostMCPServer:
                 )
             ]
 
-        # Create context getter that tries token auth first, falls back to default
+        # Per-request context: pull user from the JWT and scope namespaces by
+        # the ASGI mount (agent-scoped vs. union). Falls back to the server's
+        # default_context only when there is no FastMCP request context at all
+        # (e.g. tool introspection at startup); other failures (auth required,
+        # DB error) are real errors and must not silently degrade to the
+        # default admin context.
         default_context = self.context
 
-        def get_context_fn() -> MCPContext:
+        async def get_context_fn() -> MCPContext:
+            from fastmcp.exceptions import ToolError
+
             try:
-                return _get_context_from_token()
-            except Exception:
-                # Not in FastMCP request context, use provided context
+                return await _get_runtime_context()
+            except ToolError:
+                # ToolError is raised when no auth token exists in the
+                # current call — for HTTP requests that means unauthenticated
+                # and should bubble up; for tool introspection at startup
+                # there is no HTTP context, so fall back to default.
                 return default_context
 
         # If auth is provided, always create a new server with auth

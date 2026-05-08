@@ -48,7 +48,11 @@ export type ActionSpec =
   | { wait_for: string }
   | { wait_for_hidden: string }
   | { wait_ms: number }
-  | { scroll_into_view: string };
+  | { scroll_into_view: string }
+  // Push a path via the SPA's history without a hard reload. Use after a
+  // nav_via sidebar click to deep-link further (e.g. into /mcp-servers/<id>)
+  // without re-triggering Vite proxy rules that hard navigation would hit.
+  | { goto_spa: string };
 
 export interface CaptureSpec {
   selector?: string;
@@ -76,6 +80,12 @@ export interface ManifestEntry {
   seed?: string;
   viewport?: { width: number; height: number };
   capture?: CaptureSpec;
+  // Optional SPA navigation. When set, the spec navigates to `from` first,
+  // then clicks the named link/element to reach `route` via in-app routing.
+  // Use this for routes that share a prefix with a Vite proxy rule (e.g.
+  // /mcp-servers collides with the /mcp proxy in dev builds), where a hard
+  // page.goto() would be intercepted before the SPA can handle it.
+  nav_via?: { from: string; click: string };
   diataxis: Diataxis;
   source_globs?: string[];
   captured_at?: { bifrost_sha: string | null; timestamp: string | null } | null;

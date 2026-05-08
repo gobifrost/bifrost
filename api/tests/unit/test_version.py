@@ -32,8 +32,9 @@ def test_get_version_git_fallback(monkeypatch):
         assert v.get_version() == "v2.0.0-12-gabc1234"
 
 
-def test_min_cli_version_is_string(monkeypatch):
-    monkeypatch.setenv("BIFROST_VERSION", "2.0.0")
+def test_get_version_accepts_semver_dev_format(monkeypatch):
+    """Regression: the new CI format `<X>.<Y>.<Z>-dev.<N>` must round-trip
+    through BIFROST_VERSION unchanged."""
+    monkeypatch.setenv("BIFROST_VERSION", "0.8.1-dev.47")
     v = _reload_version()
-    assert isinstance(v.MIN_CLI_VERSION, str)
-    assert v.MIN_CLI_VERSION  # non-empty
+    assert v.get_version() == "0.8.1-dev.47"
