@@ -35,6 +35,8 @@ import {
 	Info,
 } from "lucide-react";
 import { $api } from "@/lib/api-client";
+import { EmailTestDialog } from "@/components/settings/EmailTestDialog";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function Email() {
 	// Form state
@@ -50,6 +52,8 @@ export function Email() {
 		extra_required_params?: string[];
 	} | null>(null);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+	const [showTestDialog, setShowTestDialog] = useState(false);
+	const { user: currentUser } = useAuth();
 
 	// Load current configuration
 	const {
@@ -87,8 +91,8 @@ export function Email() {
 		setValidationResult(null);
 	};
 
-	// Validate workflow signature
-	const handleValidate = async () => {
+	// Test workflow: validate + (optionally) dispatch a real test send
+	const runTest = async (recipient: string | null) => {
 		if (!selectedWorkflowId) {
 			toast.error("Please select a workflow");
 			return;
@@ -100,6 +104,7 @@ export function Email() {
 		try {
 			const result = await validateMutation.mutateAsync({
 				params: { path: { workflow_id: selectedWorkflowId } },
+				body: recipient ? { recipient } : null,
 			});
 
 			setValidationResult({
@@ -110,12 +115,24 @@ export function Email() {
 					result.extra_required_params ?? undefined,
 			});
 
-			if (result.valid) {
-				toast.success("Workflow validated", {
+			if (!result.valid) {
+				toast.error("Workflow validation failed", {
 					description: result.message,
 				});
+				return;
+			}
+
+			if (recipient) {
+				if (result.email_sent) {
+					toast.success(`Test email dispatched to ${recipient}`);
+					setShowTestDialog(false);
+				} else {
+					toast.error("Test email failed", {
+						description: result.send_error ?? "Unknown send error",
+					});
+				}
 			} else {
-				toast.error("Workflow validation failed", {
+				toast.success("Workflow validated", {
 					description: result.message,
 				});
 			}
@@ -123,10 +140,18 @@ export function Email() {
 			const message =
 				error instanceof Error ? error.message : "Unknown error";
 			setValidationResult({ valid: false, message });
-			toast.error("Validation failed", { description: message });
+			toast.error("Test failed", { description: message });
 		} finally {
 			setValidating(false);
 		}
+	};
+
+	const handleOpenTestDialog = () => {
+		if (!selectedWorkflowId) {
+			toast.error("Please select a workflow");
+			return;
+		}
+		setShowTestDialog(true);
 	};
 
 	// Save configuration
@@ -137,7 +162,7 @@ export function Email() {
 		}
 
 		if (!validationResult?.valid) {
-			toast.error("Please validate the workflow first");
+			toast.error("Please test the workflow first");
 			return;
 		}
 
@@ -271,13 +296,13 @@ export function Email() {
 							/>
 							<Button
 								variant="secondary"
-								onClick={handleValidate}
+								onClick={handleOpenTestDialog}
 								disabled={validating || !selectedWorkflowId}
 							>
 								{validating ? (
 									<>
 										<Loader2 className="h-4 w-4 mr-2 animate-spin" />
-										Validating...
+										Testing...
 									</>
 								) : validationResult?.valid ? (
 									<>
@@ -292,7 +317,7 @@ export function Email() {
 								) : (
 									<>
 										<Zap className="h-4 w-4 mr-2" />
-										Validate
+										Test
 									</>
 								)}
 							</Button>
@@ -335,7 +360,7 @@ export function Email() {
 							!validationResult?.valid &&
 							!isUnchangedConfig && (
 								<p className="text-xs text-muted-foreground">
-									Validate the workflow before saving
+									Test the workflow before saving
 								</p>
 							)}
 						<Button onClick={handleSave} disabled={!canSave}>
@@ -467,6 +492,14 @@ def send_email(
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+
+			<EmailTestDialog
+				open={showTestDialog}
+				onOpenChange={setShowTestDialog}
+				currentUserEmail={currentUser?.email ?? ""}
+				onTest={(recipient) => runTest(recipient)}
+				isPending={validating}
+			/>
 		</div>
 	);
 }

@@ -53,6 +53,7 @@ function CreateUserDialogContent({
 	const [displayName, setDisplayName] = useState("");
 	const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
 	const [orgId, setOrgId] = useState<string>("");
+	const [sendInvite, setSendInvite] = useState(true);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(new Set());
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
@@ -138,6 +139,7 @@ function CreateUserDialogContent({
 					is_active: true,
 					is_superuser: isPlatformAdmin,
 					organization_id: orgId || null,
+					invite: sendInvite,
 				},
 			});
 
@@ -155,7 +157,9 @@ function CreateUserDialogContent({
 			}
 
 			toast.success("User created successfully", {
-				description: `${displayName} (${email}) has been added to the platform`,
+				description: sendInvite
+					? `Invite email sent to ${email}`
+					: `${displayName} (${email}) has been added to the platform`,
 			});
 
 			onOpenChange(false);
@@ -361,6 +365,19 @@ function CreateUserDialogContent({
 						</p>
 					</div>
 				)}
+
+				<div className="flex items-center gap-2 pt-1">
+					<input
+						id="sendInvite"
+						type="checkbox"
+						className="h-4 w-4 rounded border-input"
+						checked={sendInvite}
+						onChange={(e) => setSendInvite(e.target.checked)}
+					/>
+					<Label htmlFor="sendInvite" className="cursor-pointer text-sm font-normal">
+						Send invite email
+					</Label>
+				</div>
 
 				{isPlatformAdmin && (
 					<Alert>

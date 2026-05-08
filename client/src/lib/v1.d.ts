@@ -689,6 +689,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/register-from-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register From Invite
+         * @description Consume a single-use invite token and complete user registration.
+         *
+         *     This endpoint is intentionally unauthenticated — the token IS the
+         *     credential. On success the user is marked is_registered=True and (if a
+         *     password was supplied) their hashed_password is set.
+         */
+        post: operations["register_from_invite_auth_register_from_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/mfa/status": {
         parameters: {
             query?: never;
@@ -1272,6 +1296,66 @@ export interface paths {
          */
         post: operations["create_user_api_users_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/invite/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend invite
+         * @description Generate a fresh invite token and email it to the user.
+         */
+        post: operations["resend_invite_api_users__user_id__invite_resend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/invite/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate invite link
+         * @description Generate a fresh invite token without sending an email; returns the URL.
+         */
+        post: operations["regenerate_invite_api_users__user_id__invite_regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke invite
+         * @description Revoke any active invite for the user.
+         */
+        delete: operations["revoke_invite_api_users__user_id__invite_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3472,22 +3556,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5937,11 +6021,14 @@ export interface paths {
         put?: never;
         /**
          * Validate Email Workflow
-         * @description Validate a workflow for use as email provider.
+         * @description Validate a workflow for use as email provider, optionally dispatching a test send.
          *
          *     Checks that the workflow has the required signature:
          *     - Required: recipient (str), subject (str), body (str)
          *     - Optional: html_body (str | None)
+         *
+         *     If `request.recipient` is set, also dispatches a real test message to that recipient
+         *     via the configured email workflow.
          *
          *     Requires platform admin access.
          */
@@ -10750,6 +10837,28 @@ export interface components {
             subscription_id: string;
         };
         /**
+         * CreateInviteResponse
+         * @description Returned only at creation/regeneration — contains the raw registration link.
+         */
+        CreateInviteResponse: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Registration Url */
+            registration_url: string;
+            /** Email Sent */
+            email_sent: boolean;
+            /** Email Error */
+            email_error?: string | null;
+        };
+        /**
          * CreateOAuthConnectionRequest
          * @description Request model for creating a new OAuth connection
          *     POST /api/oauth/connections
@@ -11776,6 +11885,14 @@ export interface components {
             error?: string | null;
         };
         /**
+         * EmailTestRequest
+         * @description Request to test an email workflow with an optional real send.
+         */
+        EmailTestRequest: {
+            /** Recipient */
+            recipient?: string | null;
+        };
+        /**
          * EmailWorkflowConfigRequest
          * @description Request to set the email workflow.
          */
@@ -11820,6 +11937,15 @@ export interface components {
             missing_params?: string[] | null;
             /** Extra Required Params */
             extra_required_params?: string[] | null;
+            /**
+             * Email Sent
+             * @default false
+             */
+            email_sent: boolean;
+            /** Send Error */
+            send_error?: string | null;
+            /** Execution Id */
+            execution_id?: string | null;
         };
         /**
          * EmbedSecretCreate
@@ -17816,6 +17942,18 @@ export interface components {
             mfa_code: string;
         };
         /**
+         * RegisterFromInviteRequest
+         * @description Invitee submits this to consume the token and set up auth.
+         */
+        RegisterFromInviteRequest: {
+            /** Token */
+            token: string;
+            /** Name */
+            name?: string | null;
+            /** Password */
+            password?: string | null;
+        };
+        /**
          * RegisterWorkflowRequest
          * @description Request model for explicit workflow registration.
          */
@@ -19662,6 +19800,11 @@ export interface components {
             created_at: string | null;
             /** Updated At */
             updated_at: string | null;
+            /**
+             * Invite Status
+             * @default active
+             */
+            invite_status: string;
         };
         /**
          * UserResponse
@@ -20902,6 +21045,11 @@ export interface components {
             is_superuser: boolean;
             /** Organization Id */
             organization_id?: string | null;
+            /**
+             * Invite
+             * @default false
+             */
+            invite: boolean;
         };
         /**
          * MFASetupResponse
@@ -21563,6 +21711,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_from_invite_auth_register_from_invite_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterFromInviteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPublic"];
                 };
             };
             /** @description Validation Error */
@@ -22340,6 +22521,97 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UserPublic"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resend_invite_api_users__user_id__invite_resend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateInviteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regenerate_invite_api_users__user_id__invite_regenerate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateInviteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_invite_api_users__user_id__invite_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -26342,7 +26614,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26375,7 +26647,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26408,7 +26680,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26441,7 +26713,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30648,7 +30920,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EmailTestRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

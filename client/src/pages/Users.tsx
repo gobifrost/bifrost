@@ -54,12 +54,19 @@ import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { CreateUserDialog } from "@/components/users/CreateUserDialog";
 import { EditUserDialog } from "@/components/users/EditUserDialog";
+import { InviteActionsMenu } from "@/components/users/InviteActionsMenu";
+import { UserStatusBadge } from "@/components/users/UserStatusBadge";
+import {
+	useRegenerateInvite,
+	useResendInvite,
+	useRevokeInvite,
+} from "@/hooks/useUserInvites";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
 
-type SortColumn = "organization" | "name" | "email" | "type" | "created" | "last_login";
+type SortColumn = "organization" | "name" | "email" | "type" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
 
 function SortIcon({ column, sortColumn, sortDirection }: { column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }) {
@@ -99,6 +106,9 @@ export function Users() {
 	);
 	const deleteMutation = useDeleteUser();
 	const updateMutation = useUpdateUser();
+	const resendMutation = useResendInvite();
+	const regenerateMutation = useRegenerateInvite();
+	const revokeMutation = useRevokeInvite();
 
 	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
@@ -140,6 +150,11 @@ export function Users() {
 					const aVal = a.is_superuser ? 1 : 0;
 					const bVal = b.is_superuser ? 1 : 0;
 					return dir * (aVal - bVal);
+				}
+				case "status": {
+					const aVal = a.invite_status ?? "active";
+					const bVal = b.invite_status ?? "active";
+					return dir * aVal.localeCompare(bVal);
 				}
 				case "created": {
 					const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -394,6 +409,13 @@ export function Users() {
 								</DataTableHead>
 								<DataTableHead
 									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("status")}
+								>
+									Status
+									<SortIcon column="status" sortColumn={sortColumn} sortDirection={sortDirection} />
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
 									onClick={() => handleSort("last_login")}
 								>
 									Last Login
@@ -460,6 +482,11 @@ export function Users() {
 												).toLocaleDateString()
 											: "N/A"}
 									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<UserStatusBadge
+											status={user.invite_status ?? "active"}
+										/>
+									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
 										{user.last_login
 											? new Date(
@@ -501,6 +528,58 @@ export function Users() {
 															: "Disabled — click to enable"}
 												</TooltipContent>
 											</Tooltip>
+											<InviteActionsMenu
+												userId={user.id}
+												status={user.invite_status ?? "active"}
+												onResend={() =>
+													resendMutation.mutate(user.id, {
+														onSuccess: (res) => {
+															toast.success(
+																res.email_sent
+																	? `Invite resent to ${user.email}`
+																	: "Invite generated (email failed — copy link from regenerate)",
+															);
+														},
+														onError: (e: unknown) =>
+															toast.error(
+																e instanceof Error ? e.message : "Failed to resend invite",
+															),
+													})
+												}
+												onRegenerate={() =>
+													regenerateMutation.mutate(user.id, {
+														onSuccess: (res) => {
+															void navigator.clipboard.writeText(res.registration_url);
+															toast.success("New invite link generated and copied");
+														},
+														onError: (e: unknown) =>
+															toast.error(
+																e instanceof Error ? e.message : "Failed to regenerate link",
+															),
+													})
+												}
+												onCopyLink={() =>
+													regenerateMutation.mutate(user.id, {
+														onSuccess: (res) => {
+															void navigator.clipboard.writeText(res.registration_url);
+															toast.success("Registration link copied");
+														},
+														onError: (e: unknown) =>
+															toast.error(
+																e instanceof Error ? e.message : "Failed to copy link",
+															),
+													})
+												}
+												onRevoke={() =>
+													revokeMutation.mutate(user.id, {
+														onSuccess: () => toast.success("Invite revoked"),
+														onError: (e: unknown) =>
+															toast.error(
+																e instanceof Error ? e.message : "Failed to revoke invite",
+															),
+													})
+												}
+											/>
 											<Button
 												variant="ghost"
 												size="icon"
