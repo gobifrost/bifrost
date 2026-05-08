@@ -7,18 +7,19 @@ Requires platform admin access.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Body, HTTPException, status
 from pydantic import BaseModel, Field
 
 from src.core.auth import CurrentActiveUser, CurrentSuperuser, RequirePlatformAdmin
 from src.core.database import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.email import (
+    EmailTestRequest,
     EmailWorkflowConfigRequest,
     EmailWorkflowConfigResponse,
     EmailWorkflowValidationResponse,
 )
-from src.services.email_service import EmailService
+from src.services.email_service import EmailService, send_email
 
 logger = logging.getLogger(__name__)
 
@@ -120,26 +121,49 @@ async def validate_email_workflow(
     workflow_id: str,
     db: DbSession,
     user: CurrentActiveUser,
+    request: EmailTestRequest | None = Body(default=None),
 ) -> EmailWorkflowValidationResponse:
     """
-    Validate a workflow for use as email provider.
+    Validate a workflow for use as email provider, optionally dispatching a test send.
 
     Checks that the workflow has the required signature:
     - Required: recipient (str), subject (str), body (str)
     - Optional: html_body (str | None)
+
+    If `request.recipient` is set, also dispatches a real test message to that recipient
+    via the configured email workflow.
 
     Requires platform admin access.
     """
     service = EmailService(db)
     result = await service.validate_workflow(workflow_id)
 
-    return EmailWorkflowValidationResponse(
+    response = EmailWorkflowValidationResponse(
         valid=result.valid,
         message=result.message,
         workflow_name=result.workflow_name,
         missing_params=result.missing_params,
         extra_required_params=result.extra_required_params,
+        email_sent=False,
+        send_error=None,
+        execution_id=None,
     )
+
+    if not result.valid or request is None or not request.recipient:
+        return response
+
+    send_result = await send_email(
+        recipient=request.recipient,
+        subject="Bifrost — email configuration test",
+        body=(
+            "This is a test message from Bifrost.\n\n"
+            "If you received this, the configured email workflow is delivering messages correctly."
+        ),
+    )
+    response.email_sent = send_result.success
+    response.send_error = send_result.error
+    response.execution_id = send_result.execution_id
+    return response
 
 
 # SDK-facing router for email operations (uses superuser auth, not admin auth)

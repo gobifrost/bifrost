@@ -42,6 +42,32 @@ class TestEmailConfigEndpoints:
         data = response.json()
         assert data["valid"] is False
         assert "not found" in data["message"].lower()
+        assert data["email_sent"] is False
+
+    def test_validate_with_recipient_does_not_send_when_invalid(
+        self, e2e_client, platform_admin
+    ):
+        """Validate with recipient on a missing workflow short-circuits (no send attempt)."""
+        response = e2e_client.post(
+            "/api/admin/email/validate/00000000-0000-0000-0000-000000000000",
+            json={"recipient": "test@example.com"},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is False
+        assert data["email_sent"] is False
+        assert data["execution_id"] is None
+
+    def test_validate_with_no_body_does_not_send(self, e2e_client, platform_admin):
+        """Validate with no body keeps backward-compat behavior (validation only)."""
+        response = e2e_client.post(
+            "/api/admin/email/validate/00000000-0000-0000-0000-000000000000",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email_sent"] is False
 
     def test_delete_config_returns_404_when_not_exists(
         self, e2e_client, platform_admin

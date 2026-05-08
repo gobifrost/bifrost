@@ -28,6 +28,12 @@ class EmailWorkflowConfigResponse(BaseModel):
     configured_by: str | None = None
 
 
+class EmailTestRequest(BaseModel):
+    """Request to test an email workflow with an optional real send."""
+
+    recipient: str | None = None  # None = signature validation only; set = real send
+
+
 class EmailWorkflowValidationResponse(BaseModel):
     """Response from validating a workflow for email sending."""
 
@@ -36,3 +42,6 @@ class EmailWorkflowValidationResponse(BaseModel):
     workflow_name: str | None = None
     missing_params: list[str] | None = None
     extra_required_params: list[str] | None = None
+    email_sent: bool = False
+    send_error: str | None = None
+    execution_id: str | None = None
