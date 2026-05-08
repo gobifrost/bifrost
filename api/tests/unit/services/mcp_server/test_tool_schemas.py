@@ -1,11 +1,12 @@
 """
-Tests for tool schema generation — additionalProperties constraints.
+Tests for tool schema generation — additionalProperties + array items.
 
-Ensures outer schemas have additionalProperties: false and inner
-dict/object params signal freeform keys to the LLM.
+Ensures outer schemas have additionalProperties: false, inner dict/object
+params signal freeform keys to the LLM, and every array param carries an
+`items` field (Gemini rejects array schemas without `items`).
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 
 class TestPythonTypeToJsonSchema:
@@ -46,7 +47,16 @@ class TestPythonTypeToJsonSchema:
                     schema["additionalProperties"] = True
                 return schema
             elif annotation is list or origin is list:
-                return {"type": "array"}
+                array_schema: dict[str, Any] = {"type": "array"}
+                if origin is list:
+                    args = get_args(annotation)
+                    if args:
+                        array_schema["items"] = python_type_to_json_schema(args[0])
+                    else:
+                        array_schema["items"] = {"type": "string"}
+                else:
+                    array_schema["items"] = {"type": "string"}
+                return array_schema
             return {"type": "string"}
 
         return python_type_to_json_schema(annotation)
@@ -67,6 +77,35 @@ class TestPythonTypeToJsonSchema:
         result = self._convert(Optional[dict[str, str]])
         assert result == {"type": "object", "additionalProperties": {"type": "string"}}
 
+    def test_bare_list_has_string_items(self):
+        result = self._convert(list)
+        assert result == {"type": "array", "items": {"type": "string"}}
+
+    def test_list_str_has_string_items(self):
+        result = self._convert(list[str])
+        assert result == {"type": "array", "items": {"type": "string"}}
+
+    def test_list_int_has_integer_items(self):
+        result = self._convert(list[int])
+        assert result == {"type": "array", "items": {"type": "integer"}}
+
+    def test_list_dict_has_object_items(self):
+        # dict[str, Any] is a parameterized dict so it hits the typed-value
+        # branch; Any falls through to the default {"type": "string"}, giving
+        # additionalProperties: {"type": "string"} rather than `True`.
+        result = self._convert(list[dict[str, Any]])
+        assert result == {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+            },
+        }
+
+    def test_optional_list_unwraps_correctly(self):
+        result = self._convert(Optional[list[str]])
+        assert result == {"type": "array", "items": {"type": "string"}}
+
 
 class TestSystemToolsOuterSchema:
     """Verify get_system_tools adds additionalProperties: false to outer schemas."""
@@ -83,3 +122,24 @@ class TestSystemToolsOuterSchema:
                 f"Tool {tool['name']} ({tool['id']}) outer schema missing "
                 f"additionalProperties: false"
             )
+
+    def test_all_array_params_declare_items(self):
+        """Every `type: array` schema must carry an `items` field.
+
+        Gemini (Google AI Studio) rejects function declarations whose array
+        parameters are missing `items`, while OpenAI and Anthropic accept the
+        field. Emitting `items` unconditionally keeps all three providers
+        happy — see the fix in get_system_tools' python_type_to_json_schema.
+        """
+        from src.services.mcp_server.server import get_system_tools
+
+        offenders: list[str] = []
+        for tool in get_system_tools():
+            for prop_name, prop_schema in tool["parameters"]["properties"].items():
+                if prop_schema.get("type") == "array" and "items" not in prop_schema:
+                    offenders.append(f"{tool['id']}.{prop_name}")
+
+        assert not offenders, (
+            "Found array params missing `items` (Gemini rejects these): "
+            + ", ".join(offenders)
+        )
