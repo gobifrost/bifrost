@@ -111,8 +111,8 @@ async function runActions(
         await page.locator(action.scroll_into_view).scrollIntoViewIfNeeded();
       } else if ("goto_spa" in action) {
         await page.evaluate((path) => {
-          window.history.pushState({}, "", path);
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          globalThis.history.pushState({}, "", path);
+          globalThis.dispatchEvent(new PopStateEvent("popstate"));
         }, action.goto_spa);
       } else {
         throw new Error(`unknown action shape: ${JSON.stringify(action)}`);

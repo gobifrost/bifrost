@@ -12,6 +12,66 @@ from src.models.orm.agents import Agent, Conversation
 from src.models.orm.ai_usage import AIUsage
 
 
+def _to_decimal(value: Decimal | int | None) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    return value if isinstance(value, Decimal) else Decimal(value)
+
+
+async def _sum_run_cost(db: AsyncSession, runs: list[AgentRun]) -> Decimal:
+    if not runs:
+        return Decimal("0")
+
+    cost_q = select(func.coalesce(func.sum(AIUsage.cost), 0)).where(
+        AIUsage.agent_run_id.in_([r.id for r in runs])
+    )
+    return _to_decimal((await db.execute(cost_q)).scalar())
+
+
+def _build_runs_by_day(
+    runs: list[AgentRun],
+    *,
+    window_days: int,
+    now: datetime,
+) -> list[int]:
+    buckets = [0] * window_days
+    for run in runs:
+        day_offset = (now - run.created_at).days
+        if 0 <= day_offset < window_days:
+            buckets[window_days - 1 - day_offset] += 1
+    return buckets
+
+
+async def _get_chat_rollup(
+    agent_id: UUID,
+    db: AsyncSession,
+    cutoff: datetime,
+) -> tuple[int, Decimal, datetime | None]:
+    chat_count_q = select(func.count(Conversation.id)).where(
+        Conversation.agent_id == agent_id,
+        Conversation.updated_at >= cutoff,
+    )
+    chat_runs_count = (await db.execute(chat_count_q)).scalar() or 0
+
+    chat_cost_q = (
+        select(func.coalesce(func.sum(AIUsage.cost), 0))
+        .join(Conversation, Conversation.id == AIUsage.conversation_id)
+        .where(
+            Conversation.agent_id == agent_id,
+            AIUsage.timestamp >= cutoff,
+        )
+    )
+    chat_cost = _to_decimal((await db.execute(chat_cost_q)).scalar())
+
+    last_chat_q = select(func.max(Conversation.updated_at)).where(
+        Conversation.agent_id == agent_id,
+        Conversation.updated_at >= cutoff,
+    )
+    last_chat_at = (await db.execute(last_chat_q)).scalar()
+
+    return chat_runs_count, chat_cost, last_chat_at
+
+
 async def get_agent_stats(
     agent_id: UUID,
     db: AsyncSession,
@@ -50,59 +110,26 @@ async def get_agent_stats(
     durations = [r.duration_ms for r in runs if r.duration_ms is not None]
     avg_duration_ms = int(sum(durations) / len(durations)) if durations else 0
 
-    if runs:
-        cost_q = select(func.coalesce(func.sum(AIUsage.cost), 0)).where(
-            AIUsage.agent_run_id.in_([r.id for r in runs])
-        )
-        total_cost = (await db.execute(cost_q)).scalar() or Decimal("0")
-    else:
-        total_cost = Decimal("0")
-
     last_run_at = max((r.created_at for r in runs), default=None)
 
-    # Per-day bucket counts (oldest first; index 0 = window_days days ago,
-    # index -1 = today).
-    buckets = [0] * window_days
-    now = datetime.now(timezone.utc)
-    for r in runs:
-        day_offset = (now - r.created_at).days
-        if 0 <= day_offset < window_days:
-            buckets[window_days - 1 - day_offset] += 1
-
-    total_cost_decimal = (
-        total_cost if isinstance(total_cost, Decimal) else Decimal(total_cost)
+    buckets = _build_runs_by_day(
+        runs,
+        window_days=window_days,
+        now=datetime.now(timezone.utc),
     )
 
     # Chat-channel rollup. Both queries hit ix_conversations_agent_id +
     # ix_ai_usage_conversation; the cost query also benefits from
     # ix_ai_usage_timestamp.
-    chat_count_q = select(func.count(Conversation.id)).where(
-        Conversation.agent_id == agent_id,
-        Conversation.updated_at >= cutoff,
+    chat_runs_count, chat_cost, last_chat_at = await _get_chat_rollup(
+        agent_id,
+        db,
+        cutoff,
     )
-    chat_runs_count = (await db.execute(chat_count_q)).scalar() or 0
-
-    chat_cost_q = (
-        select(func.coalesce(func.sum(AIUsage.cost), 0))
-        .join(Conversation, Conversation.id == AIUsage.conversation_id)
-        .where(
-            Conversation.agent_id == agent_id,
-            AIUsage.timestamp >= cutoff,
-        )
-    )
-    chat_cost = (await db.execute(chat_cost_q)).scalar() or Decimal("0")
-    chat_cost_decimal = (
-        chat_cost if isinstance(chat_cost, Decimal) else Decimal(chat_cost)
-    )
-
-    last_chat_q = select(func.max(Conversation.updated_at)).where(
-        Conversation.agent_id == agent_id,
-        Conversation.updated_at >= cutoff,
-    )
-    last_chat_at = (await db.execute(last_chat_q)).scalar()
 
     runs_count += chat_runs_count
-    total_cost_decimal += chat_cost_decimal
+    total_cost_decimal = await _sum_run_cost(db, runs)
+    total_cost_decimal += chat_cost
     if last_chat_at is not None:
         last_run_at = (
             last_chat_at if last_run_at is None else max(last_run_at, last_chat_at)

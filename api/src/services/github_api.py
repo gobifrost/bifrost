@@ -51,7 +51,7 @@ _SHA_RE = re.compile(r"^[a-fA-F0-9]{7,64}$")
 _REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,250}$")
 
 # GitHub org/user login: alphanumeric + dash, no leading dash, 1-39 chars.
-_ORG_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 
 
 def _validate_repo(repo: str) -> str:

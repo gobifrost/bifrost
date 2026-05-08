@@ -153,7 +153,7 @@ def _knowledge_scoping_setup(e2e_client, platform_admin, _embedding_config):
                     "namespace": ns,
                     "key": key,
                     "metadata": {},
-                    "scope": None,  # global scope
+                    "scope": None,
                 },
             )
             assert resp.status_code == 200, (
