@@ -34,22 +34,24 @@ Report: any uncommitted changes, how many commits ahead of origin.
 
 ### 3. Documentation freshness check
 
-Compare the last commit timestamp on the bifrost repo vs `bifrost-integrations-docs` to spot drift early:
+Run the helper script — it compares last-commit timestamps on `bifrost` vs `bifrost-integrations-docs` and lists any user-facing files changed since docs were last updated:
 
 ```bash
-BIFROST_LAST=$(cd /home/jack/GitHub/bifrost && git log -1 --format=%cI origin/main)
-DOCS_LAST=$(cd /home/jack/GitHub/bifrost-integrations-docs 2>/dev/null && git log -1 --format=%cI origin/main || echo "missing")
-echo "bifrost last main commit:  $BIFROST_LAST"
-echo "docs    last main commit:  $DOCS_LAST"
+./scripts/release/check-docs-freshness.sh
 ```
 
-If the docs repo is missing locally, clone it: `git clone git@github.com:jackmusick/bifrost-integrations-docs.git ~/GitHub/bifrost-integrations-docs`.
+Exit codes:
 
-**If bifrost is ahead of docs by >7 days OR any commits since `DOCS_LAST` touch user-facing surface area** (`api/src/handlers/`, `client/src/`, `api/shared/models.py`, CLI, MCP tools), surface this to the user:
+- `0` — docs are current (at or ahead of bifrost, OR no user-facing surface-area changes). Proceed.
+- `1` — drift detected. Surface to the user with the script's output:
 
-> "Docs were last updated `<DOCS_LAST>`, bifrost main has moved since (`<N>` commits). Want me to run the **bifrost-documentation** skill in `diff` mode before pushing? It'll re-capture screenshots for any pages whose source globs changed and open a docs PR."
+  > "Docs were last updated `<DOCS_LAST>`, bifrost main has moved since (`<N>` commits, `<M>` user-facing files touched — see list above). Want me to run the **bifrost-documentation** skill in `diff` mode before pushing? It'll re-capture screenshots for any pages whose source globs changed and open a docs PR."
 
-If yes, invoke the `bifrost-documentation` skill (`diff` mode) and wait for the docs PR before continuing. If no, note it and proceed — but record this in the dev-push commit summary.
+  If yes, invoke the `bifrost-documentation` skill (`diff` mode) and wait for the docs PR before continuing. If no, note it and proceed.
+
+- `2` — error (missing docs repo). The script prints the clone command. Run it and re-run the check.
+
+The script's `USER_FACING_PATTERNS` array is the source of truth for what counts as user-facing — when adding new dirs that affect docs/screenshots (e.g., a new public router, a new MCP-tool family), update that list.
 
 ### 4. Summarize commits since last release
 
@@ -109,22 +111,19 @@ The tag must start with `v` — e.g., `v2.1.0`.
 
 ### 1b. Documentation freshness check (REQUIRED for full release)
 
-A versioned release should ship with current docs. Compare timestamps:
+A versioned release should ship with current docs. Run:
 
 ```bash
-BIFROST_LAST=$(cd /home/jack/GitHub/bifrost && git log -1 --format=%cI origin/main)
-DOCS_LAST=$(cd /home/jack/GitHub/bifrost-integrations-docs 2>/dev/null && git log -1 --format=%cI origin/main || echo "missing")
-echo "bifrost last main commit:  $BIFROST_LAST"
-echo "docs    last main commit:  $DOCS_LAST"
+./scripts/release/check-docs-freshness.sh
 ```
 
-If the docs repo is missing locally, clone it: `git clone git@github.com:jackmusick/bifrost-integrations-docs.git ~/GitHub/bifrost-integrations-docs`.
-
-For a full release, **always offer to dispatch the `bifrost-documentation` skill** (`diff` mode) before tagging — even if timestamps look close, screenshots may be stale. Frame it:
+For a **full release**, always offer to dispatch the `bifrost-documentation` skill (`diff` mode) before tagging — even if the script returns 0, screenshots can drift in subtle ways (theme tweaks, copy changes) that the timestamp comparison won't catch. Frame it:
 
 > "Docs were last updated `<DOCS_LAST>`. Before I cut `<tag>`, want me to run **bifrost-documentation** in `diff` mode to refresh anything that drifted? This opens a separate docs PR; we can tag bifrost in parallel."
 
 If the user opts in, invoke that skill and let it run (the docs PR is independent of the bifrost tag). If they decline, note it explicitly and continue.
+
+If the script exits `2` (missing docs repo), follow its instructions to clone before proceeding.
 
 ### 2. Summarize commits since last release
 
