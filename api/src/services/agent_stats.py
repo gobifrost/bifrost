@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.contracts.agent_stats import AgentStatsResponse, FleetStatsResponse
 from src.models.orm.agent_runs import AgentRun
-from src.models.orm.agents import Agent
+from src.models.orm.agents import Agent, Conversation
 from src.models.orm.ai_usage import AIUsage
 
 
@@ -24,6 +24,18 @@ async def get_agent_stats(
     timestamp, a per-day bucket histogram, and verdict-derived review
     counts. ``runs_by_day`` is oldest-first (index 0 = ``window_days`` days
     ago, index ``-1`` = today).
+
+    Chat-channel rollup (issue #200): the chat executor doesn't write
+    ``AgentRun`` rows — its ``AIUsage`` rows are tagged with
+    ``conversation_id`` only. To keep dashboard cards honest for chat
+    agents, this also counts each ``Conversation`` (windowed on
+    ``updated_at``) as one run and adds chat ``AIUsage.cost`` (windowed on
+    ``timestamp``, since cost is incurred at LLM-call time) to
+    ``total_cost_7d``. Fields without a chat-side analog
+    (``success_rate``, ``avg_duration_ms``, ``runs_by_day``,
+    ``needs_review``, ``unreviewed``) intentionally stay keyed on
+    ``AgentRun`` only — the deferred "tuning + chat conversations"
+    follow-up will revisit those.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
     runs_q = select(AgentRun).where(
@@ -61,6 +73,41 @@ async def get_agent_stats(
         total_cost if isinstance(total_cost, Decimal) else Decimal(total_cost)
     )
 
+    # Chat-channel rollup. Both queries hit ix_conversations_agent_id +
+    # ix_ai_usage_conversation; the cost query also benefits from
+    # ix_ai_usage_timestamp.
+    chat_count_q = select(func.count(Conversation.id)).where(
+        Conversation.agent_id == agent_id,
+        Conversation.updated_at >= cutoff,
+    )
+    chat_runs_count = (await db.execute(chat_count_q)).scalar() or 0
+
+    chat_cost_q = (
+        select(func.coalesce(func.sum(AIUsage.cost), 0))
+        .join(Conversation, Conversation.id == AIUsage.conversation_id)
+        .where(
+            Conversation.agent_id == agent_id,
+            AIUsage.timestamp >= cutoff,
+        )
+    )
+    chat_cost = (await db.execute(chat_cost_q)).scalar() or Decimal("0")
+    chat_cost_decimal = (
+        chat_cost if isinstance(chat_cost, Decimal) else Decimal(chat_cost)
+    )
+
+    last_chat_q = select(func.max(Conversation.updated_at)).where(
+        Conversation.agent_id == agent_id,
+        Conversation.updated_at >= cutoff,
+    )
+    last_chat_at = (await db.execute(last_chat_q)).scalar()
+
+    runs_count += chat_runs_count
+    total_cost_decimal += chat_cost_decimal
+    if last_chat_at is not None:
+        last_run_at = (
+            last_chat_at if last_run_at is None else max(last_run_at, last_chat_at)
+        )
+
     return AgentStatsResponse(
         agent_id=agent_id,
         runs_7d=runs_count,
@@ -86,6 +133,12 @@ async def get_fleet_stats(
 
     Optionally scoped to a single organization (org_id=None means
     cross-org, only allowed for superusers — the router enforces that).
+
+    Chat-channel rollup mirrors :func:`get_agent_stats`: each
+    ``Conversation`` updated in window counts as one run, and chat
+    ``AIUsage`` cost (windowed on ``AIUsage.timestamp``) is added to the
+    fleet spend. ``avg_success_rate`` stays keyed on ``AgentRun`` only —
+    there is no "success" concept on a chat conversation.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
 
@@ -131,10 +184,33 @@ async def get_fleet_stats(
         total_cost if isinstance(total_cost, Decimal) else Decimal(total_cost)
     )
 
+    # Chat-channel rollup. Org scope is via the conversation's agent.
+    chat_conv_q = (
+        select(func.count(Conversation.id))
+        .join(Agent, Agent.id == Conversation.agent_id)
+        .where(Conversation.updated_at >= cutoff)
+    )
+    if org_id is not None:
+        chat_conv_q = chat_conv_q.where(Agent.organization_id == org_id)
+    chat_runs = (await db.execute(chat_conv_q)).scalar() or 0
+
+    chat_cost_q = (
+        select(func.coalesce(func.sum(AIUsage.cost), 0))
+        .join(Conversation, Conversation.id == AIUsage.conversation_id)
+        .join(Agent, Agent.id == Conversation.agent_id)
+        .where(AIUsage.timestamp >= cutoff)
+    )
+    if org_id is not None:
+        chat_cost_q = chat_cost_q.where(Agent.organization_id == org_id)
+    chat_cost = (await db.execute(chat_cost_q)).scalar() or Decimal("0")
+    chat_cost_decimal = (
+        chat_cost if isinstance(chat_cost, Decimal) else Decimal(chat_cost)
+    )
+
     return FleetStatsResponse(
-        total_runs=total_runs,
+        total_runs=total_runs + chat_runs,
         avg_success_rate=(completed / total_runs) if total_runs else 0.0,
-        total_cost_7d=total_cost_decimal,
+        total_cost_7d=total_cost_decimal + chat_cost_decimal,
         active_agents=active_agents,
         needs_review=needs_review,
     )

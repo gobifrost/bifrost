@@ -195,7 +195,7 @@ jobs:
       - name: Compute version
         id: version
         run: |
-          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+          VERSION=$(./scripts/compute-dev-version.sh)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 

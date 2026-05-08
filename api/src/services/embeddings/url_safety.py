@@ -24,7 +24,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 
 _ALLOWED_HOSTS_ENV = "EMBEDDING_ALLOWED_HOSTS"
@@ -93,13 +93,12 @@ def validate_embedding_endpoint(url: str) -> str:
                     f"{_ALLOWED_HOSTS_ENV} to allow it explicitly."
                 )
 
-    # Return a URL rebuilt from the parsed components. CodeQL recognizes the
-    # return value of a sanitizer as cleansed; using the original `url`
-    # variable downstream would still flow user input.
-    safe_scheme = parsed.scheme
-    safe_netloc = parsed.netloc
-    safe_path = parsed.path
-    return f"{safe_scheme}://{safe_netloc}{safe_path}"
+    # Return a URL rebuilt via urlunparse. CodeQL's built-in SSRF sanitizer
+    # model recognizes urlunparse's return value as cleansed input; an
+    # f-string of the parsed components looks identical to user-input
+    # concatenation from a data-flow perspective and does NOT close the flow
+    # (verified empirically against py/partial-ssrf, alert #1142).
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
 
 __all__ = ["validate_embedding_endpoint"]

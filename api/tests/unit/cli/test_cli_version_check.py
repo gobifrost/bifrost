@@ -233,6 +233,41 @@ class TestVersionComparison:
                 cli._check_cli_version()
             assert excinfo.value.code == 1
 
+    def test_passes_with_semver_dev_format(self, monkeypatch):
+        """Regression: the new CI dev-version format `0.8.1-dev.47` must
+        match itself through the strict-equality check, just like any other
+        string. The check is format-agnostic — this test pins the new
+        format so future refactors don't accidentally introduce format
+        validation that breaks it."""
+        _patch_version(monkeypatch, "0.8.1-dev.47")
+        from bifrost import cli
+
+        with patch(
+            "bifrost.credentials._resolve_url",
+            return_value="http://server.example",
+        ), patch(
+            "urllib.request.urlopen",
+            return_value=_make_url_response({"version": "0.8.1-dev.47"}),
+        ):
+            cli._check_cli_version()  # no SystemExit
+
+    def test_exits_on_dev_count_mismatch(self, monkeypatch):
+        """Regression: two dev builds with different commit counts must
+        be treated as different versions, even though they share a base."""
+        _patch_version(monkeypatch, "0.8.1-dev.47")
+        from bifrost import cli
+
+        with patch(
+            "bifrost.credentials._resolve_url",
+            return_value="http://server.example",
+        ), patch(
+            "urllib.request.urlopen",
+            return_value=_make_url_response({"version": "0.8.1-dev.48"}),
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                cli._check_cli_version()
+            assert excinfo.value.code == 1
+
 
 # --------------------------------------------------------------------------- #
 # URL resolution: .env / env-var path
