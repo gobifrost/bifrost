@@ -117,13 +117,40 @@ A versioned release should ship with current docs. Run:
 ./scripts/release/check-docs-freshness.sh
 ```
 
-For a **full release**, always offer to dispatch the `bifrost-documentation` skill (`diff` mode) before tagging — even if the script returns 0, screenshots can drift in subtle ways (theme tweaks, copy changes) that the timestamp comparison won't catch. Frame it:
-
-> "Docs were last updated `<DOCS_LAST>`. Before I cut `<tag>`, want me to run **bifrost-documentation** in `diff` mode to refresh anything that drifted? This opens a separate docs PR; we can tag bifrost in parallel."
-
-If the user opts in, invoke that skill and let it run (the docs PR is independent of the bifrost tag). If they decline, note it explicitly and continue.
-
 If the script exits `2` (missing docs repo), follow its instructions to clone before proceeding.
+
+#### 1b-i. Identify net-new feature surface (REQUIRED)
+
+`diff` mode only re-captures entries that **already exist** in the docs manifest. A versioned release frequently ships **brand-new feature surface** that has no MDX page or manifest entry yet — `diff` mode will miss it entirely.
+
+Before invoking the docs skill, scan the commits since the last tag for **net-new feature surface**:
+
+```bash
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
+git log ${LAST_TAG}..HEAD --pretty=format:'%h %s' | grep -iE '^[a-f0-9]+ feat[(!:]'
+```
+
+For each `feat:` / `feat!:` commit, ask: does the changed code introduce **new client routes, new admin pages, or new user-facing surfaces** that aren't already documented? Quick heuristic — `git show <sha> --stat | grep -E 'client/src/pages/|client/src/components/[a-z]+/[A-Z][A-Za-z]+\.tsx'`. If the diff adds a file there, the docs probably need a new MDX page.
+
+If you find any, surface them to the user **before** invoking the docs skill:
+
+> "I see `feat: external MCP client (#177)` since `<last-tag>`, which adds 5 new admin/user pages. The bifrost-documentation skill in `diff` mode won't author docs for new features — only refresh existing ones. Want to:
+>
+> **A.** Author the new docs now (3 MDX pages + manifest entries + capture). ~1-2 hours of focused work, requires brainstorming the page structure with you.
+> **B.** Punt to a follow-up issue and ship `<tag>` with the new feature undocumented. Acceptable if the feature is infra-only or has clear in-app affordances.
+> **C.** Hybrid — write a single bare-bones how-to that points users at the UI, defer deeper coverage to a follow-up.
+>
+> Either way, after that decision I'll run the docs skill in `diff` mode for screenshot drift on existing entries."
+
+Proceed only after the user picks one of those paths.
+
+#### 1b-ii. Run the docs skill in `diff` mode
+
+For drift on **existing** entries, dispatch the docs skill regardless of the freshness-check exit code — screenshots can drift in subtle ways (theme tweaks, copy changes) that timestamp comparison won't catch:
+
+> "Docs were last updated `<DOCS_LAST>`. Running **bifrost-documentation** in `diff` mode now to refresh anything that drifted on existing pages. New-feature docs are handled separately above."
+
+Let it run. The docs PR is independent of the bifrost tag — you can tag in parallel after the docs PR is open.
 
 ### 2. Summarize commits since last release
 
@@ -144,18 +171,58 @@ Present the summary as:
 
 Show this to the user and confirm they want to proceed with tagging.
 
-### 2b. Credit external contributors
+### 2b. Credit external contributors (REQUIRED — gate before drafting notes)
 
-Find PRs merged since the last release that were authored by someone other than the repo owner — they must be credited in the release notes.
+Every PR landed in this release must be checked for authorship. Missing a contributor — especially on a headline feature — is the most common and most embarrassing failure mode of the release flow. **Prior failures:** v0.9.0 nearly shipped with @sdc53's external-MCP-client headline feature uncredited because the original `gh pr list --search merged:>=...` filter quietly missed PRs that were merged into the merge queue rather than directly to main. Don't trust a single query.
+
+Use this **two-query cross-check** — get the canonical PR list from git history (which never lies), then query each PR's author directly:
 
 ```bash
-LAST_TAG_DATE=$(git log -1 --format=%cI $(git describe --tags --abbrev=0))
-gh pr list --state merged --base main --search "merged:>=${LAST_TAG_DATE}" \
-    --limit 200 --json number,title,author,mergedAt \
-    | jq -r '.[] | select(.author.login != "jackmusick") | "#\(.number) @\(.author.login) — \(.title)"'
+LAST_TAG=$(git describe --tags --abbrev=0)
+
+# Step 1: Extract every PR number from squash-merge subjects since LAST_TAG.
+# git log is the source of truth — it captures every PR that actually landed,
+# regardless of merge mechanism (direct merge, merge queue, rebase, squash).
+git log ${LAST_TAG}..HEAD --format='%s' \
+    | grep -oE '\(#[0-9]+\)' | grep -oE '[0-9]+' | sort -u > /tmp/pr-nums.txt
+echo "PRs to check: $(wc -l < /tmp/pr-nums.txt)"
+
+# Step 2: Fetch author for each PR (one gh call per PR, ~1-2s each).
+# The output line goes into /tmp/pr-authors.txt: "<num>\t<author>\t<title>"
+> /tmp/pr-authors.txt
+while read num; do
+    gh pr view "$num" --json number,title,author 2>/dev/null \
+        | jq -r --arg n "$num" 'select(.author.login != null) | "\(.number)\t\(.author.login)\t\(.title)"' \
+        >> /tmp/pr-authors.txt
+done < /tmp/pr-nums.txt
+
+# Step 3: Group by author. Anyone who is NOT jackmusick AND NOT a bot is an
+# external contributor and MUST be credited.
+awk -F'\t' '{print $2}' /tmp/pr-authors.txt | sort | uniq -c | sort -rn
+
+# Step 4: Print just the external-contributor PRs (excludes you and bots).
+grep -vE $'\t(jackmusick|app/dependabot|app/renovate|github-actions\\[bot\\])\t' /tmp/pr-authors.txt
 ```
 
-Include a **Contributors** section in the release notes listing each PR with author attribution (e.g., `- #22 by @sdc53 — embed token sessionStorage fix`). If a PR's change maps to a bullet you've already written elsewhere in the notes, append the `(#NN by @user)` credit to that bullet too.
+**Sanity checks before proceeding** (do these every release, no exceptions):
+
+1. **Counts match.** The PR-numbers count from step 1 should match the line count in `/tmp/pr-authors.txt`. If not, some PRs failed to fetch — re-run step 2 and investigate.
+2. **The headline feature has an author.** Look at the `feat:` / `feat!:` commits since the last tag. For each, confirm its author appears in `/tmp/pr-authors.txt`. If a major feature was authored by someone other than `jackmusick`, that name must appear in your final Contributors section. Spot-checking the highest-impact PR every release is mandatory.
+3. **Spec PRs count too.** A spec/design PR (`docs(spec):`) authored by a contributor is part of their contribution to the feature — credit it alongside the implementation PR.
+
+**Then build the credits section:**
+
+- Include a **Contributors** section in the release notes listing each external contributor's PRs with attribution. Lead with the most impactful contribution per person, not chronological.
+- **Per-bullet credits are mandatory, not optional.** For every feature/fix/security bullet elsewhere in the notes that maps to an external contributor's PR, append `(#NN by @user)` directly to that bullet. The Contributors section is *additional* attribution, not a replacement — credit appears both where the change is described AND in the Contributors roll-up.
+- For a feature whose spec was authored separately from the implementation, list both PRs on the same Contributors line (e.g., `**@sdc53** — designed and implemented the external MCP client (#176 spec, #177 implementation)`).
+- Bots (dependabot, renovate, github-actions) are NOT credited as contributors — they're a different category. If their PRs land security or dep updates worth highlighting, those go under "Security & Supply-Chain Hardening" without an `@bot` credit.
+
+**Anti-patterns to avoid:**
+
+- ❌ Writing "None in this release — solo-maintained cycle" without running the two-query cross-check.
+- ❌ Trusting a single `gh pr list --search` query. Squash-merge subjects in `git log` are the canonical record; everything else is a derived view that can have edge-case gaps (merge queue, force-pushes, deleted branches).
+- ❌ Crediting only in the Contributors section without per-bullet `(#NN by @user)` markers. Readers scanning the feature list shouldn't have to scroll to find out who shipped it.
+- ❌ Putting external contributors as a footnote. They led the work — lead with their name on the bullet that describes it.
 
 ### 3. Run pre-tag checks
 
@@ -192,7 +259,10 @@ CI's `create-release` job in `.github/workflows/ci.yml` writes a templated body 
    - Developer Experience
    - Features
    - Breaking Changes
-3. **Contributors** — REQUIRED. Credit every external contributor whose PR landed in this release. Use the list you generated in step 2b. Format: `- #NN by @login — short description`. If a contributor's PR maps to a bullet in another section, also append `(#NN by @login)` to that bullet. If there were zero external contributions, write "None in this release — solo-maintained cycle."
+3. **Contributors** — REQUIRED, and you MUST cross-check this against step 2b's two-query scan. If the scan found ANY non-jackmusick / non-bot author, this section is non-empty.
+   - **Lead each contributor's line with their highest-impact PR**, not chronological order. Format: `**@login** — <verb-led description of what they shipped> (#NN <role>, #MM <role>)`. Roles: `spec` for design PRs, `implementation` for the matching feature PR. For a single-PR contribution: `**@login** — <description> (#NN)`.
+   - **Per-bullet credits are mandatory in OTHER sections**, not just this one. For every feature/fix/security bullet whose underlying PR was authored externally, the bullet must end with `(#NN by @login)` (or `(#NN spec, #MM implementation by @login)` for paired PRs). The Contributors section is *additive* — readers scanning Features should see attribution inline, AND there should be a Contributors roll-up at the bottom.
+   - Only write "None in this release — solo-maintained cycle" after step 2b's scan has been re-run AND its sanity checks (counts match, headline feature has an author) all pass with zero external authors.
 4. **Fixed CVEs** — REQUIRED. Cross-reference commits via `git log <prev-tag>..HEAD --grep='CVE\|GHSA\|PYSEC\|vuln\|security'` and read the bodies of dep-bump PRs (`gh pr view <num> --json body`) for specific CVE/GHSA IDs. List each package bumped and the specific CVEs/GHSAs the bump closed. If nothing was fixed, write "None in this release". **Do NOT fabricate IDs** — if a bump didn't list a specific CVE, say "multiple Dependabot security advisories closed via dep bumps; see commit log for details" rather than inventing one.
 5. **Breaking Changes** — REQUIRED. If none, write "None in this release". If anything moved, was renamed, or changed install/upgrade procedure, document the migration step.
 6. **Docker Images / Type Stubs / Signed Artifacts** — keep the corresponding blocks from CI's template body (the verification commands matter for users).
