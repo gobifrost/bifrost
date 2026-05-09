@@ -250,8 +250,7 @@ if (!fs.existsSync(manifestPath)) {
 
         // Navigation. Default: hard page.goto to entry.route. If the entry
         // declares nav_via, instead hard-load the `from` page (SPA shell)
-        // and click the named link (matching the manifest contract) to
-        // navigate via in-app routing — this
+        // and click the named link or button to navigate via in-app routing — this
         // sidesteps Vite proxy rules that prefix-match SPA paths in dev.
         // Deeper destinations are reached afterward via the goto_spa action.
         if (entry.nav_via) {
@@ -261,10 +260,18 @@ if (!fs.existsSync(manifestPath)) {
             timeout: 20000,
           });
           await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => undefined);
-          await page
-            .getByRole("link", { name: entry.nav_via.click, exact: true })
-            .first()
-            .click({ timeout: 10000 });
+          const link = page.getByRole("link", {
+            name: entry.nav_via.click,
+            exact: true,
+          });
+          if (await link.count()) {
+            await link.first().click({ timeout: 10000 });
+          } else {
+            await page
+              .getByRole("button", { name: entry.nav_via.click, exact: true })
+              .first()
+              .click({ timeout: 10000 });
+          }
         } else {
           const url = `${BASE_URL}${entry.route.startsWith("/") ? entry.route : "/" + entry.route}`;
           await page.goto(url, {

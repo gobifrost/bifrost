@@ -41,7 +41,7 @@ export interface MockSpec {
  *   - { wait_for_hidden: "<selector>" }    → page.locator(selector).waitFor({ state: 'hidden' })
  *   - { wait_ms: <number> }                → page.waitForTimeout(ms)
  *   - { scroll_into_view: "<selector>" }   → page.locator(selector).scrollIntoViewIfNeeded()
- *   - { goto_spa: "<path>" }               → history.pushState() without a hard reload
+ *   - { goto_spa: "<path>" }               → history.pushState(), then wait_for/wait_ms
  */
 export type ActionSpec =
   | { click: string }
@@ -83,7 +83,7 @@ export interface ManifestEntry {
   viewport?: { width: number; height: number };
   capture?: CaptureSpec;
   // Optional SPA navigation. When set, the spec navigates to `from` first,
-  // then clicks the named link to reach `route` via in-app routing.
+  // then clicks the named link or button to reach `route` via in-app routing.
   // Use this for routes that share a prefix with a Vite proxy rule (e.g.
   // /mcp-servers collides with the /mcp proxy in dev builds), where a hard
   // page.goto() would be intercepted before the SPA can handle it.

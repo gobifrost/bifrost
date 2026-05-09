@@ -566,8 +566,8 @@ is the integration point that the unit tests can't fully cover.
 
 These intentionally aren't in this plan. Each is its own change.
 
-1. **Re-enable Flux `ImageUpdateAutomation` against `:dev` semver tags** in
-   the cluster config repository. Requires `ImageRepository`,
+1. **Re-enable Flux `ImageUpdateAutomation` against `:dev` semver tags** in the
+   Kubernetes repository. Requires `ImageRepository`,
    `ImagePolicy` (range `>=0.0.0-0`), `ImageUpdateAutomation`, and
    removing `imagePullPolicy: Always` once tag pinning takes over.
    The previous attempt was reverted in commit `310b9cd`; re-do it

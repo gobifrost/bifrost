@@ -281,8 +281,9 @@ async def _get_runtime_context() -> MCPContext:
                 accessible_namespaces = list(result.accessible_namespaces)
     except ToolError:
         raise
-    except SQLAlchemyError:
+    except SQLAlchemyError as exc:
         logger.exception("Failed to resolve accessible namespaces")
+        raise ToolError("Failed to resolve accessible namespaces") from exc
     except Exception:
         logger.exception("Unexpected error resolving accessible namespaces")
         raise

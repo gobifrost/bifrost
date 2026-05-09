@@ -207,10 +207,7 @@ async def get_fleet_stats(
         .join(AgentRun, AgentRun.id == AIUsage.agent_run_id)
         .where(*run_filter)
     )
-    total_cost = (await db.execute(total_cost_q)).scalar() or Decimal("0")
-    total_cost_decimal = (
-        total_cost if isinstance(total_cost, Decimal) else Decimal(total_cost)
-    )
+    total_cost_decimal = _to_decimal((await db.execute(total_cost_q)).scalar())
 
     # Chat-channel rollup. Org scope is via the conversation's agent.
     chat_conv_q = (
@@ -233,10 +230,7 @@ async def get_fleet_stats(
     )
     if org_id is not None:
         chat_cost_q = chat_cost_q.where(Agent.organization_id == org_id)
-    chat_cost = (await db.execute(chat_cost_q)).scalar() or Decimal("0")
-    chat_cost_decimal = (
-        chat_cost if isinstance(chat_cost, Decimal) else Decimal(chat_cost)
-    )
+    chat_cost_decimal = _to_decimal((await db.execute(chat_cost_q)).scalar())
 
     return FleetStatsResponse(
         total_runs=total_runs + chat_runs,
