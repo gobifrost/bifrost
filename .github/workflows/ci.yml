@@ -52,8 +52,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  API_IMAGE: mtg-thomas/bifrost-api
-  CLIENT_IMAGE: mtg-thomas/bifrost-client
+  IMAGE_NAMESPACE: mtg-thomas
+  API_IMAGE: bifrost-api
+  CLIENT_IMAGE: bifrost-client
 
 permissions:
   contents: read
@@ -225,9 +226,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ env.API_IMAGE }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ env.API_IMAGE }}:dev
-            ghcr.io/${{ env.API_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}:dev
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
           build-args: |
             BIFROST_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
@@ -238,12 +239,12 @@ jobs:
           COSIGN_EXPERIMENTAL: "true"
         run: |
           cosign sign --yes \
-            ghcr.io/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
 
       - name: Attest API dev image provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-name: ghcr.io/${{ env.API_IMAGE }}
+          subject-name: ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}
           subject-digest: ${{ steps.build-api.outputs.digest }}
           push-to-registry: true
 
@@ -257,9 +258,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ env.CLIENT_IMAGE }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ env.CLIENT_IMAGE }}:dev
-            ghcr.io/${{ env.CLIENT_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:dev
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
           build-args: |
             VITE_BIFROST_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
@@ -270,12 +271,12 @@ jobs:
           COSIGN_EXPERIMENTAL: "true"
         run: |
           cosign sign --yes \
-            ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
 
       - name: Attest client dev image provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-name: ghcr.io/${{ env.CLIENT_IMAGE }}
+          subject-name: ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}
           subject-digest: ${{ steps.build-client.outputs.digest }}
           push-to-registry: true
 
@@ -459,7 +460,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.API_IMAGE }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}
           tags: |
             # Semantic version tags
             type=semver,pattern={{version}}
@@ -489,12 +490,12 @@ jobs:
           COSIGN_EXPERIMENTAL: "true"
         run: |
           cosign sign --yes \
-            ghcr.io/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
 
       - name: Attest API image provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-name: ghcr.io/${{ env.API_IMAGE }}
+          subject-name: ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}
           subject-digest: ${{ steps.build-api.outputs.digest }}
           push-to-registry: true
 
@@ -541,7 +542,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.CLIENT_IMAGE }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}
           tags: |
             # Semantic version tags
             type=semver,pattern={{version}}
@@ -572,12 +573,12 @@ jobs:
           COSIGN_EXPERIMENTAL: "true"
         run: |
           cosign sign --yes \
-            ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
 
       - name: Attest client image provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-name: ghcr.io/${{ env.CLIENT_IMAGE }}
+          subject-name: ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}
           subject-digest: ${{ steps.build-client.outputs.digest }}
           push-to-registry: true
 
@@ -683,12 +684,12 @@ jobs:
 
             **API:**
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.API_IMAGE }}:${{ steps.get_version.outputs.version }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}:${{ steps.get_version.outputs.version }}
             ```
 
             **Client:**
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.CLIENT_IMAGE }}:${{ steps.get_version.outputs.version }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:${{ steps.get_version.outputs.version }}
             ```
 
             ### Type Stubs for IDEs
@@ -716,7 +717,7 @@ jobs:
 
             ```bash
             gh attestation verify bifrost-${{ steps.get_version.outputs.version }}-source.tar.gz \
-              --owner jackmusick
+              --owner MTG-Thomas
             ```
 
           draft: false

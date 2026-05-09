@@ -54,6 +54,14 @@ run_test "release sets next dev cycle floor" \
   'git commit --allow-empty -m init -q && git tag -a v0.8.0 -m v0.8.0 && git commit --allow-empty -m c1 -q && git tag -a v0.9.0 -m v0.9.0 && git commit --allow-empty -m c2 -q' \
   '0.9.1-dev.1' 0
 
+run_test "fork release tag is ignored for next dev version" \
+  'git commit --allow-empty -m init -q && git tag -a v0.9.0 -m v0.9.0 && git commit --allow-empty -m fork-release -q && git tag -a v0.9.1-mtg.1 -m v0.9.1-mtg.1 && git commit --allow-empty -m next -q' \
+  '0.9.1-dev.2' 0
+
+run_test "only fork release tags still fails without stable base" \
+  'git commit --allow-empty -m init -q && git tag -a v0.9.1-mtg.1 -m v0.9.1-mtg.1' \
+  '' 1
+
 run_test "minor with double-digit patch" \
   'git commit --allow-empty -m init -q && git tag -a v1.2.10 -m v1.2.10 && git commit --allow-empty -m c1 -q' \
   '1.2.11-dev.1' 0
