@@ -8,6 +8,7 @@ File operations with two storage modes:
 Auth: CurrentSuperuser (platform admins and workflow engine)
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -927,10 +928,21 @@ async def delete_file_editor(
         children = await repo.list(folder_prefix)
 
         if children:
-            # Folder delete: delete each child; any failure should fail request
-            for child_path in children:
-                await storage.delete_file(child_path)
-            await repo.delete(folder_prefix)
+            # Folder delete: drain the prefix. Some S3-compatible stores can
+            # report folder markers briefly after child deletion.
+            for attempt in range(5):
+                for child_path in sorted(set(children)):
+                    if child_path.endswith("/"):
+                        await repo.delete(child_path)
+                    else:
+                        await storage.delete_file(child_path)
+                await repo.delete(folder_prefix)
+
+                children = await repo.list(folder_prefix)
+                if not children:
+                    break
+                if attempt < 4:
+                    await asyncio.sleep(0.1)
         else:
             # Single file delete
             await storage.delete_file(path)
