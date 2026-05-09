@@ -930,6 +930,7 @@ async def delete_file_editor(
             # Folder delete: delete each child; any failure should fail request
             for child_path in children:
                 await storage.delete_file(child_path)
+            await repo.delete(folder_prefix)
         else:
             # Single file delete
             await storage.delete_file(path)
