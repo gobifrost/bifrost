@@ -607,6 +607,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "image_tag=${VERSION#v}" >> $GITHUB_OUTPUT
           # Check if this is a pre-release (contains hyphen like v1.0.0-beta)
           if [[ "$VERSION" == *-* ]]; then
             echo "prerelease=true" >> $GITHUB_OUTPUT
@@ -684,12 +685,12 @@ jobs:
 
             **API:**
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}:${{ steps.get_version.outputs.version }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}:${{ steps.get_version.outputs.image_tag }}
             ```
 
             **Client:**
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:${{ steps.get_version.outputs.version }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:${{ steps.get_version.outputs.image_tag }}
             ```
 
             ### Type Stubs for IDEs

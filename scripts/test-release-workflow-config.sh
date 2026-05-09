@@ -10,17 +10,20 @@ fail() {
   exit 1
 }
 
-grep -q "IMAGE_NAMESPACE: mtg-thomas" "$workflow" \
+grep -Fq "IMAGE_NAMESPACE: mtg-thomas" "$workflow" \
   || fail "ci.yml must publish fork images under ghcr.io/mtg-thomas"
 
 if grep -q "jackmusick/bifrost-\(api\|client\)" "$workflow"; then
   fail "ci.yml still publishes Bifrost images under jackmusick"
 fi
 
-grep -q 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}' "$workflow" \
+grep -Fq 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}' "$workflow" \
   || fail "API image refs must use IMAGE_NAMESPACE + API_IMAGE"
 
-grep -q 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}' "$workflow" \
+grep -Fq 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}' "$workflow" \
   || fail "client image refs must use IMAGE_NAMESPACE + CLIENT_IMAGE"
+
+grep -Fq "image_tag=" "$workflow" \
+  || fail "release notes must use image tags without the leading v prefix"
 
 echo "release workflow config checks passed"
