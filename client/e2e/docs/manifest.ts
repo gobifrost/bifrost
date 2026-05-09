@@ -34,13 +34,14 @@ export interface MockSpec {
 /**
  * One UI action to perform after the page settles, before the screenshot.
  * Mirrors the docs repo's Zod schema (scripts/manifest/schema.mjs). Each
- * action is exactly one of these six shapes:
+ * action is exactly one of these seven shapes:
  *   - { click: "<selector>" }              → page.locator(selector).click()
  *   - { fill: { selector, value } }        → page.locator(selector).fill(value)
  *   - { wait_for: "<selector>" }           → page.locator(selector).waitFor({ state: 'visible' })
  *   - { wait_for_hidden: "<selector>" }    → page.locator(selector).waitFor({ state: 'hidden' })
  *   - { wait_ms: <number> }                → page.waitForTimeout(ms)
  *   - { scroll_into_view: "<selector>" }   → page.locator(selector).scrollIntoViewIfNeeded()
+ *   - { goto_spa: "<path>" }               → history.pushState(), then wait_for/wait_ms
  */
 export type ActionSpec =
   | { click: string }
@@ -48,7 +49,12 @@ export type ActionSpec =
   | { wait_for: string }
   | { wait_for_hidden: string }
   | { wait_ms: number }
-  | { scroll_into_view: string };
+  | { scroll_into_view: string }
+  // Push a path via the SPA's history without a hard reload. Use after a
+  // nav_via sidebar click to deep-link further (e.g. into /mcp-servers/<id>)
+  // without re-triggering Vite proxy rules that hard navigation would hit. Always
+  // follow goto_spa with wait_for or wait_ms so React Router can commit the route.
+  | { goto_spa: string };
 
 export interface CaptureSpec {
   selector?: string;
@@ -76,6 +82,12 @@ export interface ManifestEntry {
   seed?: string;
   viewport?: { width: number; height: number };
   capture?: CaptureSpec;
+  // Optional SPA navigation. When set, the spec navigates to `from` first,
+  // then clicks the named link or button to reach `route` via in-app routing.
+  // Use this for routes that share a prefix with a Vite proxy rule (e.g.
+  // /mcp-servers collides with the /mcp proxy in dev builds), where a hard
+  // page.goto() would be intercepted before the SPA can handle it.
+  nav_via?: { from: string; click: string };
   diataxis: Diataxis;
   source_globs?: string[];
   captured_at?: { bifrost_sha: string | null; timestamp: string | null } | null;

@@ -107,8 +107,10 @@ class MCPToolAccessService:
         )
 
         for agent in accessible_agents:
-            # Add system tools from agent.system_tools
-            for system_tool_id in agent.system_tools or []:
+            # Add system tools from agent.system_tools, plus search_knowledge
+            # auto-injected when the agent has knowledge_sources. Mirrors the
+            # native chat path in agent_helpers.py so MCP listing matches.
+            for system_tool_id in self._effective_system_tool_ids(agent):
                 if system_tool_id in seen_tool_ids:
                     continue
                 seen_tool_ids.add(system_tool_id)
@@ -203,7 +205,7 @@ class MCPToolAccessService:
         # Collect tools from this agent
         tools: list[ToolInfo] = []
 
-        for system_tool_id in agent.system_tools or []:
+        for system_tool_id in self._effective_system_tool_ids(agent):
             if system_tool_id in self._SYSTEM_TOOL_MAP:
                 tools.append(self._SYSTEM_TOOL_MAP[system_tool_id])
             else:
@@ -315,6 +317,20 @@ class MCPToolAccessService:
                 )
             )
         return infos
+
+    @staticmethod
+    def _effective_system_tool_ids(agent: Agent) -> list[str]:
+        """Return ``agent.system_tools`` with ``search_knowledge`` auto-appended
+        when the agent has knowledge sources.
+
+        Mirrors the native chat path in
+        ``api/src/services/execution/agent_helpers.py`` so that MCP listing
+        and the agent executor agree on what an agent's tools are.
+        """
+        ids = list(agent.system_tools or [])
+        if agent.knowledge_sources and "search_knowledge" not in ids:
+            ids.append("search_knowledge")
+        return ids
 
     @staticmethod
     def _check_agent_access(

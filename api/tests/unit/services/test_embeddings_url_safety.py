@@ -101,3 +101,41 @@ def test_allowlist_does_not_match_unrelated_host(monkeypatch):
     with patch.object(url_safety.socket, "getaddrinfo", return_value=_addr_info("127.0.0.1")):
         with pytest.raises(ValueError, match="non-public"):
             url_safety.validate_embedding_endpoint("http://other.local")
+
+
+def test_return_value_uses_urlunparse_not_fstring():
+    """Regression guard for #213.
+
+    The validator must build its return value via urlunparse(), not an
+    f-string of parsed components. CodeQL's built-in py/partial-ssrf
+    sanitizer model recognizes urlunparse's return as cleansed input;
+    an f-string of the same components is taint-preserving from a
+    data-flow perspective and re-opens the SSRF alert at every site
+    that calls into this validator.
+
+    A future refactor that swaps urlunparse back to f-string concatenation
+    would close this test AND silently re-introduce the SSRF alert.
+    """
+    import ast
+    import inspect
+
+    src = inspect.getsource(url_safety.validate_embedding_endpoint)
+    tree = ast.parse(src.lstrip())
+    func = tree.body[0]
+    assert isinstance(func, ast.FunctionDef)
+
+    # The function must end with a `return urlunparse(...)` — not a return
+    # of an f-string or string concatenation of parsed components. CodeQL's
+    # SSRF sanitizer model only recognizes the former as cleansed.
+    return_stmts = [n for n in ast.walk(func) if isinstance(n, ast.Return)]
+    assert return_stmts, "validator must have a return statement"
+    final_return = return_stmts[-1]
+    assert isinstance(final_return.value, ast.Call), (
+        "final return must be a call to urlunparse, got "
+        f"{ast.dump(final_return.value) if final_return.value else 'None'}"
+    )
+    callee = final_return.value.func
+    assert isinstance(callee, ast.Name) and callee.id == "urlunparse", (
+        "final return must call urlunparse() — see #213 for why "
+        f"f-string component concat re-opens py/partial-ssrf. Got: {callee}"
+    )

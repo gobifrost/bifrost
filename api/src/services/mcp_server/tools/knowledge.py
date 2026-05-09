@@ -16,6 +16,8 @@ from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
 
+SEARCH_KNOWLEDGE_NAMESPACE_DENIED_CODE = "search_knowledge_namespace_denied"
+
 
 async def search_knowledge(
     context: Any,
@@ -53,7 +55,10 @@ async def search_knowledge(
 
     if namespace:
         if namespace not in accessible:
-            return error_result(f"Access denied: namespace '{namespace}' is not accessible.")
+            return error_result(
+                f"Access denied: namespace '{namespace}' is not accessible.",
+                {"code": SEARCH_KNOWLEDGE_NAMESPACE_DENIED_CODE},
+            )
         namespaces_to_search = [namespace]
     else:
         namespaces_to_search = accessible

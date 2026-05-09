@@ -2,8 +2,6 @@ import os
 import subprocess
 from functools import lru_cache
 
-MIN_CLI_VERSION = "2.0.0"
-
 
 @lru_cache(maxsize=1)
 def get_version() -> str:

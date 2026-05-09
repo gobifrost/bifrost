@@ -750,3 +750,162 @@ class TestKnowledgeNamespaceAccess:
             )
 
         assert result.accessible_namespaces == []
+
+
+# ==================== search_knowledge Auto-Injection Tests ====================
+
+
+class TestSearchKnowledgeAutoInjection:
+    """search_knowledge must be auto-injected when an agent has knowledge_sources.
+
+    Mirrors the native chat path in agent_helpers.py so MCP listing matches
+    what the agent executor exposes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_accessible_tools_injects_search_knowledge(
+        self, service, mock_session, mock_agent
+    ):
+        """get_accessible_tools includes search_knowledge when agent has
+        knowledge_sources, even if system_tools doesn't list it."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],  # explicitly empty
+            knowledge_sources=["docs"],
+        )
+
+        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_accessible_tools_does_not_inject_without_namespaces(
+        self, service, mock_session, mock_agent
+    ):
+        """No auto-injection when knowledge_sources is empty."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],
+            knowledge_sources=[],
+        )
+
+        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" not in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_accessible_tools_no_duplicate_when_explicit(
+        self, service, mock_session, mock_agent
+    ):
+        """Auto-injection must not duplicate search_knowledge if already
+        listed in system_tools explicitly."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=["search_knowledge"],
+            knowledge_sources=["docs"],
+        )
+
+        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        sk_tools = [t for t in result.tools if t.id == "search_knowledge"]
+        assert len(sk_tools) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_tools_for_agent_injects_search_knowledge(
+        self, service, mock_session, mock_agent
+    ):
+        """get_tools_for_agent (the agent-scoped path) auto-injects too."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],
+            knowledge_sources=["docs"],
+        )
+        agent.system_prompt = "You search docs."
+
+        # get_tools_for_agent uses scalars().unique().first() (single agent),
+        # not the .all() shape used elsewhere in this file.
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_tools_for_agent(
+                agent_id=agent.id,
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        assert result is not None
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_tools_for_agent_no_inject_without_namespaces(
+        self, service, mock_session, mock_agent
+    ):
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            system_tools=[],
+            knowledge_sources=[],
+        )
+        agent.system_prompt = ""
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_tools_for_agent(
+                agent_id=agent.id,
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        assert result is not None
+        tool_ids = {t.id for t in result.tools}
+        assert "search_knowledge" not in tool_ids

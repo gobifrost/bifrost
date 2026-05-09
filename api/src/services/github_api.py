@@ -10,7 +10,9 @@ eliminating multi-container issues with local git folders.
 
 import base64
 import logging
+import re
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,6 +20,152 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.core.log_safety import log_safe
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class GitHubAPIError(Exception):
+    """Exception raised when GitHub API operations fail."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        response_body: dict | None = None,
+    ):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.response_body = response_body or {}
+
+    def __str__(self) -> str:
+        if self.status_code:
+            return f"GitHubAPIError({self.status_code}): {self.message}"
+        return f"GitHubAPIError: {self.message}"
+
+
+class GitHubRateLimitError(GitHubAPIError):
+    """Exception raised when GitHub API rate limit is exceeded."""
+
+    pass
+
+
+class GitHubNotFoundError(GitHubAPIError):
+    """Exception raised when a GitHub resource is not found."""
+
+    pass
+
+
+class GitHubAuthError(GitHubAPIError):
+    """Exception raised when GitHub authentication fails."""
+
+    pass
+
+
+# =============================================================================
+# Path-segment validators
+# =============================================================================
+#
+# User-controlled identifiers (repo, sha, ref, organization) flow into
+# f-string-built URLs that hit api.github.com. Without sanitization this is
+# partial SSRF: a value like "../../malicious" or "evil/repo;@victim.com"
+# can redirect requests to other GitHub endpoints — or off-host entirely.
+#
+# We validate each kind against its GitHub-documented shape, then route
+# the cleansed value through urllib.parse.quote(safe=""). CodeQL's
+# py/partial-ssrf model recognizes quote() return values as cleansed input.
+# Matches the urlunparse pattern used in services/embeddings/url_safety.py.
+
+# GitHub repo: owner/name. Each segment 1-100 chars of [A-Za-z0-9._-].
+# (GitHub's published limit is 39 for owners, 100 for repos; we go loose
+# on owners since enterprise instances allow longer names.)
+_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$")
+
+# Git SHA: 7-64 hex chars, case-insensitive (full SHA-1 is 40, SHA-256 is
+# 64; GitHub also accepts 7+ as abbreviated).
+_SHA_RE = re.compile(r"^[a-fA-F0-9]{7,64}$")
+
+# Git ref: branch, tag, or "heads/<name>" / "tags/<name>". Disallow:
+# starting with -, containing .., @{, control chars, spaces, ~^:?*[\
+# Per git-check-ref-format(1) — simplified for paths we accept here.
+_REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,250}$")
+
+# GitHub org/user login: alphanumeric + dash, no leading dash, 1-39 chars.
+_ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
+
+
+def _validate_repo(repo: str) -> str:
+    """Validate `owner/name` shape and return URL-quoted form.
+
+    Returns urllib.parse.quote(repo, safe='/') — CodeQL recognizes the
+    quote() return as cleansed input for py/partial-ssrf, closing the
+    data-flow path from user input to httpx.AsyncClient.request(url=...).
+    """
+    if not _REPO_RE.match(repo) or ".." in repo:
+        raise GitHubAPIError(
+            f"Invalid GitHub repo identifier (expected 'owner/name'): {log_safe(repo)!r}"
+        )
+    return quote(repo, safe="/")
+
+
+def _validate_sha(sha: str) -> str:
+    """Validate hex SHA and return URL-quoted form."""
+    if not _SHA_RE.match(sha):
+        raise GitHubAPIError(f"Invalid git SHA: {log_safe(sha)!r}")
+    return quote(sha, safe="")
+
+
+def _validate_ref(ref: str) -> str:
+    """Validate git ref shape and return URL-quoted form.
+
+    Note: refs can legitimately contain `/` (e.g. `heads/main`,
+    `tags/v1.0`), so we keep `/` unencoded.
+    """
+    if (
+        not _REF_RE.match(ref)
+        or ".." in ref
+        or ref.startswith("-")
+        or ref.startswith("/")
+        or ref.endswith("/")
+    ):
+        raise GitHubAPIError(f"Invalid git ref: {log_safe(ref)!r}")
+    return quote(ref, safe="/")
+
+
+def _validate_org(org: str) -> str:
+    """Validate GitHub org/user login shape and return URL-quoted form."""
+    if not _ORG_RE.match(org):
+        raise GitHubAPIError(
+            f"Invalid GitHub organization/user login: {log_safe(org)!r}"
+        )
+    return quote(org, safe="")
+
+
+def _validate_pagination_value(
+    name: str,
+    value: int,
+    min_value: int,
+    max_value: int | None = None,
+) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise GitHubAPIError(f"Invalid {name}: {log_safe(value)!r}") from exc
+
+    if normalized < min_value or (
+        max_value is not None and normalized > max_value
+    ):
+        if max_value is None:
+            expected = f">= {min_value}"
+        else:
+            expected = f"between {min_value} and {max_value}"
+        raise GitHubAPIError(
+            f"Invalid {name}: {log_safe(value)!r} (expected {expected})"
+        )
+    return normalized
 
 
 # =============================================================================
@@ -236,49 +384,6 @@ class TreeItem:
 
 
 # =============================================================================
-# Exceptions
-# =============================================================================
-
-
-class GitHubAPIError(Exception):
-    """Exception raised when GitHub API returns an error."""
-
-    def __init__(
-        self,
-        message: str,
-        status_code: int | None = None,
-        response_body: dict | None = None,
-    ):
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
-        self.response_body = response_body or {}
-
-    def __str__(self) -> str:
-        if self.status_code:
-            return f"GitHubAPIError({self.status_code}): {self.message}"
-        return f"GitHubAPIError: {self.message}"
-
-
-class GitHubRateLimitError(GitHubAPIError):
-    """Exception raised when GitHub API rate limit is exceeded."""
-
-    pass
-
-
-class GitHubNotFoundError(GitHubAPIError):
-    """Exception raised when a GitHub resource is not found."""
-
-    pass
-
-
-class GitHubAuthError(GitHubAPIError):
-    """Exception raised when GitHub authentication fails."""
-
-    pass
-
-
-# =============================================================================
 # GitHub API Client
 # =============================================================================
 
@@ -428,17 +533,20 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/trees/{sha}"
+        # GitHub's GET /repos/.../git/trees/{tree_sha} accepts a SHA *or*
+        # a ref name (branch/tag) here; use the ref validator since its
+        # char set is a superset of hex.
+        endpoint = f"/repos/{_validate_repo(repo)}/git/trees/{_validate_ref(sha)}"
         if recursive:
             endpoint += "?recursive=1"
 
-        logger.debug(f"Fetching tree: {repo} @ {sha} (recursive={recursive})")
+        logger.debug(f"Fetching tree: {log_safe(repo)} @ {log_safe(sha)} (recursive={recursive})")
 
         data = await self._request("GET", endpoint)
         tree = GitHubTree.model_validate(data)
 
         if tree.truncated:
-            logger.warning(f"Tree response was truncated for {repo}@{sha}")
+            logger.warning(f"Tree response was truncated for {log_safe(repo)}@{log_safe(sha)}")
 
         # Return only blobs (files), not trees (directories)
         return {
@@ -459,8 +567,8 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/commits/{sha}"
-        logger.debug(f"Fetching commit: {repo} @ {sha}")
+        endpoint = f"/repos/{_validate_repo(repo)}/git/commits/{_validate_sha(sha)}"
+        logger.debug(f"Fetching commit: {log_safe(repo)} @ {log_safe(sha)}")
 
         data = await self._request("GET", endpoint)
         return GitHubCommit.model_validate(data)
@@ -483,8 +591,8 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/blobs/{sha}"
-        logger.debug(f"Fetching blob: {repo} @ {sha}")
+        endpoint = f"/repos/{_validate_repo(repo)}/git/blobs/{_validate_sha(sha)}"
+        logger.debug(f"Fetching blob: {log_safe(repo)} @ {log_safe(sha)}")
 
         data = await self._request("GET", endpoint)
         blob = GitHubBlob.model_validate(data)
@@ -511,8 +619,8 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/blobs"
-        logger.debug(f"Creating blob in {repo} ({len(content)} bytes)")
+        endpoint = f"/repos/{_validate_repo(repo)}/git/blobs"
+        logger.debug(f"Creating blob in {log_safe(repo)} ({len(content)} bytes)")
 
         data = await self._request(
             "POST",
@@ -550,8 +658,8 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/trees"
-        logger.debug(f"Creating tree in {repo} with {len(tree_items)} items")
+        endpoint = f"/repos/{_validate_repo(repo)}/git/trees"
+        logger.debug(f"Creating tree in {log_safe(repo)} with {len(tree_items)} items")
 
         # Build tree array for API
         tree_array = []
@@ -608,8 +716,8 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/commits"
-        logger.debug(f"Creating commit in {repo}")
+        endpoint = f"/repos/{_validate_repo(repo)}/git/commits"
+        logger.debug(f"Creating commit in {log_safe(repo)}")
 
         request_data: dict = {
             "message": message,
@@ -625,7 +733,7 @@ class GitHubAPIClient:
         data = await self._request("POST", endpoint, json_data=request_data)
 
         response = GitHubCreateCommitResponse.model_validate(data)
-        logger.info(f"Created commit {response.sha[:8]} in {repo}")
+        logger.info(f"Created commit {response.sha[:8]} in {log_safe(repo)}")
         return response.sha
 
     # =========================================================================
@@ -646,8 +754,8 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/ref/{ref}"
-        logger.debug(f"Fetching ref: {repo} @ {ref}")
+        endpoint = f"/repos/{_validate_repo(repo)}/git/ref/{_validate_ref(ref)}"
+        logger.debug(f"Fetching ref: {log_safe(repo)} @ {log_safe(ref)}")
 
         data = await self._request("GET", endpoint)
         ref_obj = GitHubRef.model_validate(data)
@@ -672,19 +780,22 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/git/refs/{ref}"
-        logger.debug(f"Updating ref: {repo} @ {ref} -> {sha[:8]}")
+        validated_repo = _validate_repo(repo)
+        validated_ref = _validate_ref(ref)
+        validated_sha = _validate_sha(sha)
+        endpoint = f"/repos/{validated_repo}/git/refs/{validated_ref}"
+        logger.debug(f"Updating ref: {log_safe(repo)} @ {log_safe(ref)} -> {validated_sha[:8]}")
 
         await self._request(
             "PATCH",
             endpoint,
             json_data={
-                "sha": sha,
+                "sha": validated_sha,
                 "force": force,
             },
         )
 
-        logger.info(f"Updated ref {ref} to {sha[:8]} in {repo}")
+        logger.info(f"Updated ref {log_safe(ref)} to {validated_sha[:8]} in {log_safe(repo)}")
 
     # =========================================================================
     # High-Level Helpers
@@ -756,20 +867,28 @@ class GitHubAPIClient:
         Raises:
             GitHubAPIError: On API errors
         """
-        endpoint = f"/repos/{repo}/commits"
+        endpoint = f"/repos/{_validate_repo(repo)}/commits"
         params = []
+        validated_per_page = _validate_pagination_value("per_page", per_page, 1, 100)
+        validated_page = _validate_pagination_value("page", page, 1)
 
         if sha:
-            params.append(f"sha={sha}")
-        if per_page != 30:
-            params.append(f"per_page={per_page}")
-        if page != 1:
-            params.append(f"page={page}")
+            # `sha` here can be a branch name or a commit SHA; the ref
+            # validator covers both shapes safely.
+            params.append(f"sha={_validate_ref(sha)}")
+        if validated_per_page != 30:
+            params.append(f"per_page={validated_per_page}")
+        if validated_page != 1:
+            params.append(f"page={validated_page}")
 
         if params:
             endpoint += "?" + "&".join(params)
 
-        logger.debug(f"Listing commits: {repo} (sha={sha}, per_page={per_page}, page={page})")
+        logger.debug(
+            f"Listing commits: {log_safe(repo)} "
+            f"(sha={log_safe(sha) if sha else None}, "
+            f"per_page={validated_per_page}, page={validated_page})"
+        )
 
         data = await self._request("GET", endpoint)
 
@@ -848,7 +967,7 @@ class GitHubAPIClient:
         """
         logger.debug(f"Listing branches for {log_safe(repo)}")
 
-        endpoint = f"/repos/{repo}/branches?per_page=100"
+        endpoint = f"/repos/{_validate_repo(repo)}/branches?per_page=100"
         data = await self._request("GET", endpoint)
 
         branches = []
@@ -895,7 +1014,7 @@ class GitHubAPIClient:
         }
 
         if organization:
-            endpoint = f"/orgs/{organization}/repos"
+            endpoint = f"/orgs/{_validate_org(organization)}/repos"
         else:
             endpoint = "/user/repos"
 
