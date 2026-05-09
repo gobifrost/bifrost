@@ -936,6 +936,7 @@ async def delete_file_editor(
                         await repo.delete(child_path)
                     else:
                         await storage.delete_file(child_path)
+                await repo.delete(path.rstrip("/"))
                 await repo.delete(folder_prefix)
 
                 children = await repo.list(folder_prefix)
