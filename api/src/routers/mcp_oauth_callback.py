@@ -24,6 +24,8 @@ Behavior:
 
 from __future__ import annotations
 
+import html
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -64,6 +66,16 @@ router = APIRouter(prefix="/api/mcp/oauth", tags=["MCP Connections"])
 # =============================================================================
 
 
+def _json_for_inline_script(payload: dict[str, str]) -> str:
+    """Serialize JSON so it is safe inside an inline script element."""
+    return (
+        json.dumps(payload)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
 def _popup_response(*, success: bool, connection_id: str, error: str | None = None) -> HTMLResponse:
     """Render the popup-closing page that posts back to the opener.
 
@@ -77,26 +89,25 @@ def _popup_response(*, success: bool, connection_id: str, error: str | None = No
     on slow browsers. Inline JS sidesteps it.
     """
     if success:
-        message = (
-            "{type: 'mcp_oauth_success', connection_id: '"
-            + connection_id
-            + "'}"
+        message = _json_for_inline_script(
+            {
+                "type": "mcp_oauth_success",
+                "connection_id": connection_id,
+            }
         )
         body_text = "Connected. You can close this window."
     else:
-        # Escape any quotes the error string might carry; the simple
-        # repr->slice trick works because error is server-controlled.
-        safe_error = (error or "Unknown error").replace("'", "\\'")
-        message = (
-            "{type: 'mcp_oauth_error', connection_id: '"
-            + connection_id
-            + "', error: '"
-            + safe_error
-            + "'}"
+        error_text = error or "Unknown error"
+        message = _json_for_inline_script(
+            {
+                "type": "mcp_oauth_error",
+                "connection_id": connection_id,
+                "error": error_text,
+            }
         )
-        body_text = f"Connection failed: {error or 'Unknown error'}"
+        body_text = f"Connection failed: {html.escape(error_text)}"
 
-    html = f"""<!doctype html>
+    html_doc = f"""<!doctype html>
 <html><head><title>MCP OAuth</title></head>
 <body>
 <p>{body_text}</p>
@@ -113,7 +124,7 @@ def _popup_response(*, success: bool, connection_id: str, error: str | None = No
 }})();
 </script>
 </body></html>"""
-    return HTMLResponse(content=html, status_code=200 if success else 400)
+    return HTMLResponse(content=html_doc, status_code=200 if success else 400)
 
 
 # =============================================================================
@@ -307,11 +318,15 @@ async def mcp_oauth_callback(
     """Handle the vendor's redirect after the user consents (or refuses)."""
     # Vendor-side error: surface immediately without any state work.
     if error:
-        logger.info("MCP OAuth callback received vendor error: %s", log_safe(error))
+        logger.info(
+            "MCP OAuth callback received vendor error: %s (%s)",
+            log_safe(error),
+            log_safe(error_description or ""),
+        )
         return _popup_response(
             success=False,
             connection_id="",
-            error=f"{error}: {error_description}" if error_description else error,
+            error="OAuth provider rejected the connection request.",
         )
 
     # 1. Decode + verify state

@@ -49,8 +49,19 @@ class TestPopupResponse:
             success=False, connection_id="x", error="user's denied"
         )
         body = response.body.decode()
-        # JS-escaped single quote
-        assert "\\'" in body
+        assert '"error": "user\'s denied"' in body
+
+    def test_error_html_escapes_markup_and_script_breakout(self):
+        response = _popup_response(
+            success=False,
+            connection_id="conn-1",
+            error="</script><img src=x onerror=alert(1)>",
+        )
+        body = response.body.decode()
+
+        assert "<p>Connection failed: &lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;</p>" in body
+        assert '"error": "</script><img src=x onerror=alert(1)>"' not in body
+        assert '"error": "\\u003c/script\\u003e\\u003cimg src=x onerror=alert(1)\\u003e"' in body
 
 
 class TestExchangeCodeForToken:
@@ -240,12 +251,13 @@ class TestCallbackHandler:
             code="",
             state="ignored",
             error="access_denied",
-            error_description="user clicked cancel",
+            error_description="</script><img src=x onerror=alert(1)>",
         )
         assert response.status_code == 400
         body = response.body.decode()
-        assert "access_denied" in body
-        assert "user clicked cancel" in body
+        assert "OAuth provider rejected the connection request." in body
+        assert "access_denied" not in body
+        assert "onerror=alert" not in body
 
     @pytest.mark.asyncio
     async def test_invalid_state_returns_error_without_db_io(self):
