@@ -176,7 +176,7 @@ class BundlerService:
             #    arbitrary-value utilities (bg-[color:var(--x)],
             #    lg:grid-cols-[1fr_360px]) the host preload doesn't know
             #    about, AND processes user .css files so @apply / @layer /
-            #    @theme directives + per-app tailwind.config.* work.
+            #    @theme directives work.
             #    User CSS files that were consumed get filtered out of
             #    `sources` because they're now inlined into the unified
             #    __bifrost_tailwind.css; re-importing them through esbuild
@@ -312,9 +312,9 @@ class BundlerService:
 
         Scans .tsx/.ts/.jsx/.js for class candidates, concatenates user
         .css files into the Tailwind input so @apply / @layer / @theme
-        directives are processed, optionally honors a per-app
-        tailwind.config.{js,ts,mjs,cjs} via @config. Writes the unified
-        result to src_dir/__bifrost_tailwind.css.
+        directives are processed. App-authored tailwind.config.* files are not
+        loaded because Tailwind config files execute server-side JavaScript.
+        Writes the unified result to src_dir/__bifrost_tailwind.css.
 
         Returns:
             (wrote_css, consumed_css_files). When wrote_css is True, the
@@ -354,20 +354,10 @@ class BundlerService:
                     f"Bundler: skipping {log_safe(rel)} for tailwind input: {e}"
                 )
 
-        # Per-app tailwind.config.* — first match wins. Tailwind v4 honors
-        # @config from the input CSS regardless of extension; we just need
-        # to find the file.
-        config_path: str | None = None
-        for ext in ("ts", "js", "mjs", "cjs"):
-            candidate = src_dir / f"tailwind.config.{ext}"
-            if candidate.exists():
-                config_path = str(candidate.resolve())
-                break
-
         css = await AppTailwindService.generate_css_pipeline(
             code_sources=code_contents,
             user_css=user_css,
-            config_path=config_path,
+            config_path=None,
         )
         if not css:
             return (False, set())

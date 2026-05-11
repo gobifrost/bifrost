@@ -150,7 +150,7 @@ class AppTailwindService:
         Candidates-only mode: produces utility CSS for the class names
         found in `sources`. Does NOT process user CSS files — see
         `generate_css_pipeline` for the pipeline mode that supports
-        @apply / @layer / per-app tailwind.config.
+        @apply / @layer / @theme.
         """
         candidates = AppTailwindService.extract_candidates(sources)
         if not candidates:
@@ -173,8 +173,8 @@ class AppTailwindService:
                 .css files. Concatenated into the Tailwind input so
                 @apply / @layer / @theme directives in user CSS are
                 processed against the utility layer.
-            config_path: optional absolute path to a per-app
-                tailwind.config.js. Threaded through as @config.
+            config_path: ignored for compatibility. Per-app Tailwind config
+                files are not loaded because they execute server-side JavaScript.
 
         Returns the generated CSS string (utilities + processed user CSS),
         or None on failure.
@@ -186,9 +186,6 @@ class AppTailwindService:
                 {"path": p, "content": c} for p, c in user_css
             ],
         }
-        if config_path:
-            payload["config_path"] = config_path
-
         # Skip the subprocess only when there's literally nothing to do —
         # no candidates AND no user CSS. (User CSS alone with no candidates
         # is still a real input; e.g. a stylesheet declaring CSS variables.)

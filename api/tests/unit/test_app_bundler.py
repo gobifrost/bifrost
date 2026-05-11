@@ -388,11 +388,14 @@ async def test_generate_app_tailwind_consumes_user_css_files(
 
 
 @pytest.mark.asyncio
-async def test_generate_app_tailwind_threads_per_app_config(
+async def test_generate_app_tailwind_ignores_per_app_config(
     bundler: BundlerService, tmp_path: pathlib.Path
 ) -> None:
-    """When the app source includes a tailwind.config.{ts,js,mjs,cjs},
-    its absolute path must be forwarded to the compiler as @config."""
+    """App-authored tailwind.config.* must not be forwarded to Tailwind.
+
+    Tailwind config loading executes server-side JavaScript, so app themes
+    should use CSS-native @theme directives instead.
+    """
     src_dir = tmp_path / "src"
     src_dir.mkdir()
     (src_dir / "_layout.tsx").write_text(
@@ -416,7 +419,7 @@ async def test_generate_app_tailwind_threads_per_app_config(
         added, _ = await bundler._generate_app_tailwind(src_dir, sources)
 
     assert added is True
-    assert captured["config_path"] == str(config_file.resolve())
+    assert captured["config_path"] is None
 
 
 @pytest.mark.asyncio

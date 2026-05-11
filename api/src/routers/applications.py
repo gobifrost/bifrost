@@ -306,8 +306,8 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         """Repoint an application's source directory.
 
         Validates uniqueness, nesting, and that the new prefix has source files
-        in file_index. Any of those checks may be bypassed with ``force=True``.
-        No file moves — updates DB only.
+        in file_index. ``force=True`` may bypass only the source-exists check;
+        app boundary checks are always enforced. No file moves — updates DB only.
 
         Returns the updated Application, or None if the app was not found.
         Raises ValueError on validation failure.
@@ -327,42 +327,41 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         if normalized == app.repo_path:
             return app
 
-        if not force:
-            # Uniqueness check (excluding the app itself).
-            existing_stmt = select(Application).where(
-                Application.repo_path == normalized,
-                Application.id != app_id,
+        # Uniqueness check (excluding the app itself).
+        existing_stmt = select(Application).where(
+            Application.repo_path == normalized,
+            Application.id != app_id,
+        )
+        conflict = (await self.session.execute(existing_stmt)).scalar_one_or_none()
+        if conflict is not None:
+            raise ValueError(
+                f"repo_path '{normalized}' already claimed by app "
+                f"{conflict.slug} ({conflict.id})."
             )
-            conflict = (await self.session.execute(existing_stmt)).scalar_one_or_none()
-            if conflict is not None:
+
+        # Nesting check: no other app's repo_path is a prefix of new (with /),
+        # and new (with /) is not a prefix of any other app's repo_path.
+        # Simple Python-side approach: fetch all other apps' repo_paths and check.
+        # This is fine because app count is small (tens, not millions).
+        new_prefix = f"{normalized}/"
+        others_stmt = select(Application).where(Application.id != app_id)
+        others = (await self.session.execute(others_stmt)).scalars().all()
+        for other in others:
+            other_prefix = f"{other.repo_path}/"
+            # new is nested inside other: new_prefix starts with other_prefix
+            if new_prefix.startswith(other_prefix):
                 raise ValueError(
-                    f"repo_path '{normalized}' already claimed by app "
-                    f"{conflict.slug} ({conflict.id}). Pass force=True to override."
+                    f"repo_path '{normalized}' is nested under app "
+                    f"{other.slug} ({other.repo_path})."
+                )
+            # other is nested inside new: other_prefix starts with new_prefix
+            if other_prefix.startswith(new_prefix):
+                raise ValueError(
+                    f"repo_path '{normalized}' would contain app "
+                    f"{other.slug} ({other.repo_path}) nested inside it."
                 )
 
-            # Nesting check: no other app's repo_path is a prefix of new (with /),
-            # and new (with /) is not a prefix of any other app's repo_path.
-            # Simple Python-side approach: fetch all other apps' repo_paths and check.
-            # This is fine because app count is small (tens, not millions).
-            new_prefix = f"{normalized}/"
-            others_stmt = select(Application).where(Application.id != app_id)
-            others = (await self.session.execute(others_stmt)).scalars().all()
-            for other in others:
-                other_prefix = f"{other.repo_path}/"
-                # new is nested inside other: new_prefix starts with other_prefix
-                if new_prefix.startswith(other_prefix):
-                    raise ValueError(
-                        f"repo_path '{normalized}' is nested under app "
-                        f"{other.slug} ({other.repo_path}). Pass force=True to override."
-                    )
-                # other is nested inside new: other_prefix starts with new_prefix
-                if other_prefix.startswith(new_prefix):
-                    raise ValueError(
-                        f"repo_path '{normalized}' would contain app "
-                        f"{other.slug} ({other.repo_path}) nested inside it. "
-                        "Pass force=True to override."
-                    )
-
+        if not force:
             # Source-exists check: at least one file_index row starts with new_prefix.
             file_stmt = select(FileIndex).where(
                 FileIndex.path.like(f"{new_prefix}%")
@@ -1041,7 +1040,7 @@ async def replace_application_endpoint(
     """Update ``repo_path`` after source files have been moved/renamed.
 
     Validates that the new path is unique, non-nested with other apps, and has
-    source files under it. ``force: true`` bypasses all three checks.
+    source files under it. ``force: true`` bypasses only the source-file check.
     """
     repo = ApplicationRepository(
         ctx.db,

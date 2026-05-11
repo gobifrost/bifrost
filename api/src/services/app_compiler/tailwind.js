@@ -14,12 +14,13 @@
  *       Input  (stdin): {
  *         "candidates": ["flex", ...],
  *         "user_css": [{"path": "styles.css", "content": "..."}, ...],
- *         "config_path": "/abs/path/to/tailwind.config.js" | null
+ *         "config_path": null
  *       }
  *       Output (stdout): {"css": "...", "error": null}
  *     Concatenates user CSS into the input, threads it through Tailwind so
- *     @apply / @layer / @theme directives are processed, optionally honors
- *     a per-app tailwind.config.js via @config.
+ *     @apply / @layer / @theme directives are processed. Per-app
+ *     tailwind.config.* files are intentionally not loaded because Tailwind
+ *     config evaluation executes server-side JavaScript.
  *
  * The mode is determined by presence of "user_css" in the input.
  */
@@ -37,17 +38,8 @@ process.stdin.on("end", async () => {
     const cfg = JSON.parse(input);
     const candidates = cfg.candidates || [];
     const userCss = cfg.user_css;
-    const configPath = cfg.config_path || null;
-
     // Build the entry CSS — what we hand to compile() as the input string.
-    // @config must come before user CSS so per-app theme tokens are
-    // available when user @apply pulls them in.
     let entryCss = BASELINE_IMPORTS;
-    if (configPath) {
-      // @tailwindcss/node accepts absolute paths in @config but expects
-      // them quoted. Forward-slash even on Linux for portability.
-      entryCss += `@config '${configPath.replace(/\\/g, "/")}';\n`;
-    }
     if (userCss && Array.isArray(userCss)) {
       for (const f of userCss) {
         // Inline user CSS rather than @import it, so @apply rules in user

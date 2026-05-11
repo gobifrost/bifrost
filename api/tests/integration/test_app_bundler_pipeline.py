@@ -1,9 +1,8 @@
 """Phase 2 integration tests — full Tailwind v4 pipeline against the real
-@tailwindcss/node compiler. Covers @apply / @layer in user CSS and per-app
-tailwind.config.{ts,js,mjs,cjs}.
+@tailwindcss/node compiler. Covers @apply / @layer / @theme in user CSS.
 
-If these pass, every reasonable Tailwind feature a developer expects from
-"a normal React app with Tailwind" works inside the v2 Bifrost bundler.
+If these pass, the CSS-native Tailwind features Bifrost supports work inside
+the v2 bundler without loading app-authored JavaScript config.
 """
 from __future__ import annotations
 
@@ -91,32 +90,21 @@ async def test_layer_components_with_apply_chain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_per_app_tailwind_config_extends_theme() -> None:
-    """Per-app tailwind.config.ts can add custom theme tokens — those
-    tokens must be available to the app's class names."""
+async def test_per_app_tailwind_config_is_not_executed() -> None:
+    """Per-app tailwind.config.* must not execute server-side JavaScript."""
     bundler = BundlerService()
 
     with tempfile.TemporaryDirectory() as tmp:
         src_dir = pathlib.Path(tmp)
         (src_dir / "_layout.tsx").write_text(
-            'export default () => <div className="bg-brand-500" />;\n',
+            'export default () => <div className="flex" />;\n',
             encoding="utf-8",
         )
-        # Tailwind v4 config files use CommonJS or ESM. Use .js/CJS for the
-        # broadest compatibility in the test (no Node ESM loader hassle).
+        marker = src_dir / "tailwind-config-executed"
         (src_dir / "tailwind.config.js").write_text(
-            """
-            module.exports = {
-              theme: {
-                extend: {
-                  colors: {
-                    brand: {
-                      500: '#facc15',
-                    },
-                  },
-                },
-              },
-            };
+            f"""
+            require('node:fs').writeFileSync({str(marker)!r}, 'executed');
+            module.exports = {{}};
             """,
             encoding="utf-8",
         )
@@ -126,11 +114,9 @@ async def test_per_app_tailwind_config_extends_theme() -> None:
         )
         assert added is True
         css = (src_dir / TAILWIND_OUTPUT_CSS).read_text(encoding="utf-8")
+        assert not marker.exists()
 
-    assert "#facc15" in css.lower() or "facc15" in css.lower(), (
-        "custom brand-500 color from per-app config must compile to a rule"
-    )
-    assert ".bg-brand-500" in css
+    assert ".flex" in css
 
 
 @pytest.mark.asyncio
