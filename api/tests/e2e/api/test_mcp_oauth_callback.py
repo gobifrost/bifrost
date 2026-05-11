@@ -30,12 +30,13 @@ class TestMCPOAuthCallbackErrors:
                 "code": "",
                 "state": "ignored",
                 "error": "access_denied",
-                "error_description": "user clicked cancel",
+                "error_description": "</script><img src=x onerror=alert(1)>",
             },
         )
         assert resp.status_code == 400
-        assert "access_denied" in resp.text
-        assert "user clicked cancel" in resp.text
+        assert "OAuth provider rejected the connection request." in resp.text
+        assert "access_denied" not in resp.text
+        assert "onerror=alert" not in resp.text
 
     def test_callback_renders_popup_html(self, e2e_client):
         """The callback always renders an HTML page (window.opener
