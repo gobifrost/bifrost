@@ -324,6 +324,13 @@ async def create_agent(
     )
     if privilege_error is not None:
         return privilege_error
+    if (
+        scope == "organization"
+        and not context.is_platform_admin
+        and organization_id is not None
+        and (context.org_id is None or str(organization_id) != str(context.org_id))
+    ):
+        return error_result("You don't have permission to create agents in another organization.")
 
     # Validate channels if provided
     valid_channels = {"chat", "voice", "teams", "slack"}
@@ -519,6 +526,8 @@ async def update_agent(
     )
     if privilege_error is not None:
         return privilege_error
+    if not context.is_platform_admin and context.org_id is None:
+        return error_result("Organization context is required to update agents.")
 
     try:
         async with get_tool_db(context) as db:

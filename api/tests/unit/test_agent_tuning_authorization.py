@@ -18,6 +18,7 @@ def _principal(
     org_id: UUID | None,
     *,
     is_superuser: bool = False,
+    roles: list[str] | None = None,
 ) -> UserPrincipal:
     return UserPrincipal(
         user_id=user_id,
@@ -26,6 +27,7 @@ def _principal(
         is_active=True,
         is_superuser=is_superuser,
         is_verified=True,
+        roles=roles or [],
     )
 
 
@@ -146,3 +148,35 @@ async def test_platform_admin_can_tune_shared_agent():
     )
 
     assert loaded.id == agent.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["Platform Admin", "Platform Owner"])
+async def test_role_based_admin_can_tune_shared_agent(role: str):
+    org_id = uuid4()
+    admin_id = uuid4()
+    agent = _agent(
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        owner_user_id=None,
+        organization_id=org_id,
+    )
+
+    loaded = await _load_agent_with_access(
+        agent.id,
+        _db_returning(agent),
+        _principal(admin_id, org_id, roles=[role]),
+    )
+
+    assert loaded.id == agent.id
+
+
+@pytest.mark.asyncio
+async def test_missing_agent_returns_404():
+    with pytest.raises(HTTPException) as exc_info:
+        await _load_agent_with_access(
+            uuid4(),
+            _db_returning(None),
+            _principal(uuid4(), uuid4()),
+        )
+
+    assert exc_info.value.status_code == 404
