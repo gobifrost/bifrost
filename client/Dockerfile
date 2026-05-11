@@ -6,7 +6,7 @@
 # Uses BUILDPLATFORM to run on native architecture (no QEMU emulation)
 # =============================================================================
 # node:20-slim
-FROM --platform=$BUILDPLATFORM node@sha256:d15867b60cf18766c9671e9e15bfdbde8639d1741193242aac88734937c50751 AS base
+FROM --platform=$BUILDPLATFORM node@sha256:f6f9fae352b319e817eec5efc7721b3f06bc53104f2f800d0f778f3915835804 AS base
 
 WORKDIR /app
 
