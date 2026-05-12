@@ -9,6 +9,9 @@ dist/
 output/
 client/output
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Logs (root level only, not src/components/logs)
 /logs/
 npm-debug.log
