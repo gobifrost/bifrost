@@ -387,7 +387,7 @@ class LLMConfigService:
 
             await client.chat.completions.create(
                 model=model,
-                max_tokens=1,
+                max_completion_tokens=1,
                 messages=[{"role": "user", "content": "ping"}],
             )
             return LLMTestResult(
