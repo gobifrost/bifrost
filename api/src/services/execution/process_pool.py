@@ -33,7 +33,7 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from queue import Empty
 from typing import Any, Awaitable, Callable
@@ -47,6 +47,8 @@ from src.services.execution.simple_worker import install_requirements
 from src.services.execution.template_process import TemplateProcess
 
 logger = logging.getLogger(__name__)
+
+_CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
 
 
 def _get_installed_packages() -> list[dict[str, str]]:
@@ -147,6 +149,9 @@ class ProcessHandle:
     # Used by the orphan sweep to wait out the grace-sleep window before treating
     # a KILLED handle as truly stuck.
     killed_at: datetime | None = None
+    # Timestamp set when health checks first observe a cleanly exited process
+    # whose result has not reached the result queue yet.
+    clean_exit_observed_at: datetime | None = None
 
     @property
     def is_alive(self) -> bool:
@@ -724,6 +729,7 @@ class ProcessPoolManager:
             timeout_seconds=timeout,
         )
         idle.result_reported = False
+        idle.clean_exit_observed_at = None
 
         # Send to process
         idle.work_queue.put_nowait(execution_id)
@@ -1157,8 +1163,17 @@ class ProcessPoolManager:
                         await self._handle_result(handle, result)
                         continue
                 except Empty:
-                    # No queued result: handle this dead process as a crash below.
-                    pass
+                    if (
+                        handle.process.exitcode == 0
+                        and handle.current_execution
+                        and not handle.result_reported
+                    ):
+                        now = datetime.now(timezone.utc)
+                        if handle.clean_exit_observed_at is None:
+                            handle.clean_exit_observed_at = now
+
+                        if now - handle.clean_exit_observed_at < _CLEAN_EXIT_RESULT_GRACE:
+                            continue
 
                 # Case A: unexpected crash
                 logger.warning(

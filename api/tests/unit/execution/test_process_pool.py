@@ -16,6 +16,7 @@ NOTE: These tests use mocks to avoid spawning real processes.
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from queue import Empty
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1368,5 +1369,77 @@ class TestCrashedProcessReport:
         await pool._check_process_health()
 
         callback.assert_awaited_once_with(result)
+        mock_process.join.assert_called_once_with(1.0)
+        assert handle.id not in pool.processes
+
+    @pytest.mark.asyncio
+    async def test_clean_exit_waits_for_result_queue_delivery(self):
+        """A cleanly exited worker gets a short grace period for result delivery."""
+        pool = ProcessPoolManager(min_workers=0, max_workers=2)
+        pool.on_result = AsyncMock()
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = 0
+
+        result_queue = MagicMock()
+        result_queue.get_nowait.side_effect = Empty
+
+        handle = ProcessHandle(
+            id="process-clean-exit",
+            process=mock_process,
+            pid=99996,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-clean-exit",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+            ),
+        )
+        pool.processes[handle.id] = handle
+
+        await pool._check_process_health()
+
+        pool.on_result.assert_not_awaited()
+        assert handle.id in pool.processes
+        assert handle.clean_exit_observed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_clean_exit_without_result_after_grace_is_reported(self):
+        """A clean exit without a delivered result eventually reports failure."""
+        pool = ProcessPoolManager(min_workers=0, max_workers=2)
+        pool.on_result = AsyncMock()
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = 0
+        mock_process.join = MagicMock()
+
+        result_queue = MagicMock()
+        result_queue.get_nowait.side_effect = Empty
+
+        handle = ProcessHandle(
+            id="process-stale-clean-exit",
+            process=mock_process,
+            pid=99995,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-stale-clean-exit",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+            ),
+            clean_exit_observed_at=datetime.now(timezone.utc) - timedelta(seconds=3),
+        )
+        pool.processes[handle.id] = handle
+
+        await pool._check_process_health()
+
+        pool.on_result.assert_awaited_once()
         mock_process.join.assert_called_once_with(1.0)
         assert handle.id not in pool.processes
