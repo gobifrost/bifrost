@@ -25,6 +25,7 @@ from src.services.execution.process_pool import (
     ProcessHandle,
     ProcessPoolManager,
     ProcessState,
+    _PidWrapper,
 )
 
 
@@ -992,6 +993,65 @@ class TestMinWorkersZero:
                     assert len(pool_zero.processes) == 0
                     mock_spawn.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_handle_result_reaps_completed_child(self):
+        """On-demand children should be joined after returning a result."""
+        callback = AsyncMock()
+        pool = ProcessPoolManager(min_workers=0, max_workers=5, on_result=callback)
+
+        mock_process = MagicMock()
+        handle = ProcessHandle(
+            id="process-1",
+            process=mock_process,
+            pid=12345,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-123",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+            ),
+        )
+        pool.processes[handle.id] = handle
+
+        result = {
+            "type": "result",
+            "execution_id": "exec-123",
+            "success": True,
+            "result": {},
+        }
+
+        await pool._handle_result(handle, result)
+
+        mock_process.join.assert_called_once_with(1.0)
+        assert handle.id not in pool.processes
+        callback.assert_awaited_once_with(result)
+
+
+class TestPidWrapper:
+    """Tests for raw PID lifecycle handling."""
+
+    def test_is_alive_reaps_exited_child(self):
+        """A zombie child should be reaped and reported not alive."""
+        wrapper = _PidWrapper(12345)
+
+        with patch("src.services.execution.process_pool.os.waitpid", return_value=(12345, 0)):
+            assert wrapper.is_alive() is False
+
+        assert wrapper.exitcode == 0
+
+    def test_is_alive_keeps_running_child_alive(self):
+        """A running child should still be reported alive."""
+        wrapper = _PidWrapper(12345)
+
+        with patch("src.services.execution.process_pool.os.waitpid", return_value=(0, 0)):
+            with patch("src.services.execution.process_pool.os.kill") as mock_kill:
+                assert wrapper.is_alive() is True
+
+        mock_kill.assert_called_once_with(12345, 0)
+
 
 class TestAdmissionControl:
     """Tests for cgroup-based admission control."""
@@ -1269,3 +1329,44 @@ class TestCrashedProcessReport:
 
         # Handle still removed from pool (cleanup still happens)
         assert "process-sigkill-2" not in pool.processes
+
+    @pytest.mark.asyncio
+    async def test_exited_worker_with_queued_result_is_not_reported_as_crash(self):
+        """A completed child can exit before the result loop reads its pipe."""
+        callback = AsyncMock()
+        pool = ProcessPoolManager(min_workers=0, max_workers=5, on_result=callback)
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = 0
+
+        result = {
+            "type": "result",
+            "execution_id": "exec-finished",
+            "success": True,
+            "result": {},
+        }
+        result_queue = MagicMock()
+        result_queue.get_nowait.return_value = result
+
+        handle = ProcessHandle(
+            id="process-finished",
+            process=mock_process,
+            pid=99997,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-finished",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+            ),
+        )
+        pool.processes[handle.id] = handle
+
+        await pool._check_process_health()
+
+        callback.assert_awaited_once_with(result)
+        mock_process.join.assert_called_once_with(1.0)
+        assert handle.id not in pool.processes
