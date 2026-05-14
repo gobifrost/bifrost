@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from src.core.security import decrypt_secret
 from src.services.webhooks.protocol import (
     Deliver,
     HandleResult,
@@ -26,6 +27,31 @@ from src.services.webhooks.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_access_token(integration: Any | None) -> str:
+    """Read a Graph access token from SDK-style or ORM-style integration data."""
+    if not integration:
+        raise ValueError("Microsoft integration with OAuth is required")
+
+    oauth = getattr(integration, "oauth", None)
+    access_token = getattr(oauth, "access_token", None)
+    if access_token:
+        return access_token
+
+    provider = getattr(integration, "oauth_provider", None)
+    tokens = getattr(provider, "tokens", None) if provider else None
+    token = next(iter(tokens or []), None)
+    encrypted_access_token = getattr(token, "encrypted_access_token", None)
+    if encrypted_access_token:
+        raw_token = (
+            encrypted_access_token.decode()
+            if isinstance(encrypted_access_token, bytes)
+            else encrypted_access_token
+        )
+        return decrypt_secret(raw_token)
+
+    raise ValueError("OAuth access token is required")
 
 
 class MicrosoftGraphAdapter(WebhookAdapter):
@@ -120,12 +146,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
 
     async def _list_users(self, integration: Any | None) -> list[dict[str, Any]]:
         """Fetch users from Microsoft Graph API."""
-        if not integration or not integration.oauth:
-            raise ValueError("Microsoft integration with OAuth is required")
-
-        access_token = integration.oauth.access_token
-        if not access_token:
-            raise ValueError("OAuth access token is required")
+        access_token = _get_access_token(integration)
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -209,12 +230,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
 
         Calls POST /subscriptions to register the webhook with Graph API.
         """
-        if not integration or not integration.oauth:
-            raise ValueError("Microsoft integration with OAuth is required")
-
-        access_token = integration.oauth.access_token
-        if not access_token:
-            raise ValueError("OAuth access token is required")
+        access_token = _get_access_token(integration)
 
         # Generate client state for validation
         client_state = self.generate_secret(32)
@@ -279,11 +295,9 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         if not external_id:
             return
 
-        if not integration or not integration.oauth:
-            return
-
-        access_token = integration.oauth.access_token
-        if not access_token:
+        try:
+            access_token = _get_access_token(integration)
+        except ValueError:
             return
 
         try:
@@ -311,11 +325,9 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         if not external_id:
             return None
 
-        if not integration or not integration.oauth:
-            return None
-
-        access_token = integration.oauth.access_token
-        if not access_token:
+        try:
+            access_token = _get_access_token(integration)
+        except ValueError:
             return None
 
         # Extend for another 3 days

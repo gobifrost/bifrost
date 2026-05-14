@@ -7,11 +7,13 @@ request handling logic.
 
 import hashlib
 import hmac
+from types import SimpleNamespace
 
 import pytest
 
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
-from src.services.webhooks.protocol import Deliver, Rejected, WebhookAdapter, WebhookRequest
+from src.services.webhooks.adapters.microsoft_graph import MicrosoftGraphAdapter
+from src.services.webhooks.protocol import Deliver, Rejected, ValidationResponse, WebhookAdapter, WebhookRequest
 
 
 def _sign(body: bytes, secret: str, prefix: str = "sha256=") -> str:
@@ -263,3 +265,93 @@ class TestGenericWebhookAdapterSubscribe:
         )
 
         assert result.state == {}
+
+
+# =============================================================================
+# TestMicrosoftGraphAdapter
+# =============================================================================
+
+
+class TestMicrosoftGraphAdapter:
+    """Tests for MicrosoftGraphAdapter Graph-specific behavior."""
+
+    @pytest.fixture
+    def adapter(self):
+        return MicrosoftGraphAdapter()
+
+    @pytest.mark.asyncio
+    async def test_validation_token_returns_plain_text_response(self, adapter):
+        request = WebhookRequest(
+            method="GET",
+            path="/api/hooks/source-id",
+            headers={},
+            query_params={"validationToken": "probe-token"},
+            body=b"",
+        )
+
+        result = await adapter.handle_request(request, config={}, state={})
+
+        assert isinstance(result, ValidationResponse)
+        assert result.status_code == 200
+        assert result.body == "probe-token"
+        assert result.content_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_reads_orm_oauth_token(self, adapter, monkeypatch):
+        calls = []
+
+        class FakeResponse:
+            status_code = 201
+
+            def json(self):
+                return {
+                    "id": "graph-subscription-id",
+                    "expirationDateTime": "2026-05-16T12:00:00Z",
+                }
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, headers, json, timeout):
+                calls.append({
+                    "url": url,
+                    "headers": headers,
+                    "json": json,
+                    "timeout": timeout,
+                })
+                return FakeResponse()
+
+        monkeypatch.setattr(
+            "src.services.webhooks.adapters.microsoft_graph.decrypt_secret",
+            lambda encrypted: "decrypted-access-token",
+        )
+        monkeypatch.setattr(
+            "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
+            FakeClient,
+        )
+
+        integration = SimpleNamespace(
+            oauth_provider=SimpleNamespace(
+                tokens=[
+                    SimpleNamespace(encrypted_access_token=b"encrypted-token"),
+                ]
+            )
+        )
+
+        result = await adapter.subscribe(
+            callback_url="https://bifrost.example.com/api/hooks/source-id",
+            config={
+                "resource": "/users/midbot@midtowntg.com/messages",
+                "change_types": ["created"],
+            },
+            integration=integration,
+        )
+
+        assert result.external_id == "graph-subscription-id"
+        assert result.state["client_state"]
+        assert calls[0]["headers"]["Authorization"] == "Bearer decrypted-access-token"
+        assert calls[0]["json"]["notificationUrl"] == "https://bifrost.example.com/api/hooks/source-id"

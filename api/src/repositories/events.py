@@ -23,6 +23,8 @@ from src.models.orm.events import (
     EventSubscription,
     WebhookSource,
 )
+from src.models.orm.integrations import Integration
+from src.models.orm.oauth import OAuthProvider
 from src.repositories.base import BaseRepository
 
 
@@ -186,7 +188,9 @@ class WebhookSourceRepository(BaseRepository[WebhookSource]):
                     ),
                     joinedload(EventSource.organization),
                 ),
-                joinedload(WebhookSource.integration),
+                joinedload(WebhookSource.integration)
+                .joinedload(Integration.oauth_provider)
+                .joinedload(OAuthProvider.tokens),
             )
             .where(WebhookSource.event_source_id == event_source_id)
         )
@@ -203,7 +207,9 @@ class WebhookSourceRepository(BaseRepository[WebhookSource]):
             select(WebhookSource)
             .options(
                 joinedload(WebhookSource.event_source),
-                joinedload(WebhookSource.integration),
+                joinedload(WebhookSource.integration)
+                .joinedload(Integration.oauth_provider)
+                .joinedload(OAuthProvider.tokens),
             )
             .where(WebhookSource.expires_at.isnot(None))
             .where(WebhookSource.expires_at <= expiry_threshold)

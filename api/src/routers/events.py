@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload
 from src.core.auth import Context, CurrentSuperuser
 from src.core.database import DbSession
 from src.core.log_safety import log_safe
+from src.config import get_settings
 from src.models.contracts.events import (
     CreateDeliveryRequest,
     DynamicValuesRequest,
@@ -48,6 +49,8 @@ from src.models.orm.events import (
     ScheduleSource,
     WebhookSource,
 )
+from src.models.orm.integrations import Integration
+from src.models.orm.oauth import OAuthProvider
 from src.repositories.events import (
     EventDeliveryRepository,
     EventRepository,
@@ -63,8 +66,8 @@ router = APIRouter(prefix="/api/events", tags=["Events"])
 
 
 def _build_callback_url(source_id: UUID) -> str:
-    """Build callback URL path from event source ID."""
-    return f"/api/hooks/{source_id}"
+    """Build public callback URL from event source ID."""
+    return f"{get_settings().public_url.rstrip('/')}/api/hooks/{source_id}"
 
 
 async def _get_rate_limited_count(source_id: str) -> int:
@@ -413,8 +416,17 @@ async def create_source(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Adapter '{adapter_name}' requires integration",
                 )
-            # TODO: Load integration from database
-            # integration = await get_integration(request.webhook.integration_id)
+            integration_result = await db.execute(
+                select(Integration)
+                .options(joinedload(Integration.oauth_provider).joinedload(OAuthProvider.tokens))
+                .where(Integration.id == request.webhook.integration_id)
+            )
+            integration = integration_result.unique().scalar_one_or_none()
+            if not integration:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Integration not found",
+                )
 
         # Create webhook source record
         webhook_source = WebhookSource(
@@ -430,7 +442,6 @@ async def create_source(
         )
 
         # Call adapter subscribe (for external subscriptions)
-        # Note: callback_url is a path - client will combine with origin
         callback_url = _build_callback_url(source.id)
         try:
             result = await adapter.subscribe(

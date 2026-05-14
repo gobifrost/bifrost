@@ -65,7 +65,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                     "external_id": webhook.external_id,
                     "state": webhook.state or {},
                     "integration": webhook.integration if webhook.integration_id else None,
-                    "callback_path": webhook.callback_path,
+                    "event_source_id": webhook.event_source_id,
                     "has_event_source": webhook.event_source is not None,
                 })
 
@@ -95,9 +95,10 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                     })
                     results["renewed_successfully"] += 1
                     logger.info(
-                        f"Renewed webhook subscription: {wh['callback_path']}",
+                        f"Renewed webhook subscription for event source {wh['event_source_id']}",
                         extra={
                             "webhook_id": str(wh["id"]),
+                            "event_source_id": str(wh["event_source_id"]),
                             "adapter": wh["adapter_name"],
                             "new_expires_at": renewal_result.expires_at.isoformat() if renewal_result.expires_at else None,
                         },
