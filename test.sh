@@ -10,6 +10,7 @@
 # Backend tests (stack must be up):
 #   ./test.sh                           Unit tests only (fast default).
 #   ./test.sh unit                      Same as above.
+#   ./test.sh e2e-smoke                 PR-gating backend e2e smoke tests.
 #   ./test.sh e2e                       Backend e2e tests.
 #   ./test.sh all                       Unit + e2e (mirrors CI).
 #   ./test.sh tests/path/... [args]     Pass through to pytest.
@@ -232,11 +233,20 @@ run_pytest() {
     require_stack_up
     reset_state
     docker compose -f "$COMPOSE_FILE" --profile test run --rm test-runner \
-        pytest "$@" --junitxml="/tmp/bifrost/test-results.xml" 2>&1 | tee "$LOG_DIR/test-runner.log"
+        pytest "$@" --durations=25 --junitxml="$LOG_DIR/test-results.xml" 2>&1 | tee "$LOG_DIR/test-runner.log"
     return "${PIPESTATUS[0]}"
 }
 
 cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -v "$@"; }
+cmd_e2e_smoke() {
+    run_pytest \
+        tests/e2e/api/test_auth.py::TestHealthCheck \
+        tests/e2e/api/test_auth.py::TestRegistrationFlow::test_platform_admin_can_access_protected_endpoints \
+        tests/e2e/api/test_workflows.py::TestWorkflowListing \
+        tests/e2e/api/test_workflows.py::TestWorkflowValidation::test_validate_valid_workflow \
+        tests/e2e/platform/test_cli_ephemeral_login.py::test_ephemeral_env_vars_authenticate_bifrost_api_subprocess \
+        -v "$@"
+}
 cmd_e2e()  { run_pytest tests/e2e/ -v "$@"; }
 cmd_all()  { run_pytest tests/ -v "$@"; }
 
@@ -342,6 +352,7 @@ fi
 case "$1" in
     stack) shift; cmd_stack "$@" ;;
     unit) shift; cmd_unit "$@" ;;
+    e2e-smoke) shift; cmd_e2e_smoke "$@" ;;
     e2e) shift; cmd_e2e "$@" ;;
     all) shift; cmd_all "$@" ;;
     client) shift; cmd_client "$@" ;;
