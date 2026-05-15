@@ -69,10 +69,29 @@ interface GraphStatusFixture {
 	edges: GraphEdge[];
 }
 
+const generatedAt = "2026-05-14T00:00:00Z";
+const freshEvidence = (source: string): GraphNode["evidence"] => ({
+	source,
+	sampled_at: generatedAt,
+	freshness: "fresh",
+});
+const causalEdge = (
+	from: string,
+	to: string,
+	status: GraphStatus,
+	summary: string,
+): GraphEdge => ({
+	from,
+	to,
+	kind: "causal",
+	status,
+	summary,
+});
+
 const graphStatus: GraphStatusFixture = {
 	environment: "poc",
 	instance: "dev.bifrost.midtowntg.com",
-	generated_at: "2026-05-14T00:00:00Z",
+	generated_at: generatedAt,
 	status: "Degraded",
 	impact: "Limited",
 	nodes: [
@@ -85,11 +104,7 @@ const graphStatus: GraphStatusFixture = {
 			summary: "Live image refs match the infra lock.",
 			explainer:
 				"Deployment state proves what platform image should be running and whether the live API, client, worker, and scheduler images match infra-pinned refs.",
-			evidence: {
-				source: "images.lock.yml + deploy guard image refs",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("images.lock.yml + deploy guard image refs"),
 			links: [],
 		},
 		{
@@ -101,11 +116,7 @@ const graphStatus: GraphStatusFixture = {
 			summary: "The Azure VM and Compose observation completed.",
 			explainer:
 				"The host runtime is the Azure VM, systemd service, Docker engine, and Compose stack that run this Bifrost instance.",
-			evidence: {
-				source: "Azure Run Command + bifrost-compose-deploy-guard",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("Azure Run Command + bifrost-compose-deploy-guard"),
 			links: [],
 		},
 		{
@@ -117,11 +128,7 @@ const graphStatus: GraphStatusFixture = {
 			summary: "Postgres, Redis, RabbitMQ, and S3 are reachable.",
 			explainer:
 				"API readiness proves the API can reach its hard dependencies. It does not prove that workers can execute workflow code.",
-			evidence: {
-				source: "/health/ready",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("/health/ready"),
 			links: [],
 		},
 		{
@@ -133,11 +140,7 @@ const graphStatus: GraphStatusFixture = {
 			summary: "Recent infrastructure-shaped execution failures were observed.",
 			explainer:
 				"The execution plane is the queue, worker, and runtime path that turns workflow requests into completed work.",
-			evidence: {
-				source: "deploy guard + executions table + RabbitMQ queues",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("deploy guard + executions table + RabbitMQ queues"),
 			links: [{ label: "Open History", target: "/history" }],
 		},
 		{
@@ -149,11 +152,7 @@ const graphStatus: GraphStatusFixture = {
 			summary: "1 worker pool heartbeat records observed.",
 			explainer:
 				"Worker pools pick up queued work and execute workflow code. A heartbeat proves a worker process is alive, but execution outcomes still need aggregate execution health.",
-			evidence: {
-				source: "worker pool heartbeat table",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("worker pool heartbeat table"),
 			links: [{ label: "Open History", target: "/history" }],
 		},
 		{
@@ -166,11 +165,7 @@ const graphStatus: GraphStatusFixture = {
 				"Adjacent service smoke checks passed; optional services disabled: google_ops_worker",
 			explainer:
 				"Adjacent services are MTG-operated workloads that support Bifrost without being part of the core Compose runtime.",
-			evidence: {
-				source: "verify-poc-adjacent-services.py",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("verify-poc-adjacent-services.py"),
 			links: [],
 		},
 		{
@@ -183,61 +178,47 @@ const graphStatus: GraphStatusFixture = {
 				"AutoTask, HaloPSA, NinjaOne, IT Glue, ConnectSecure, Microsoft Graph, Keeper, Cove, and Meraki are advisory unless tied to active work.",
 			explainer:
 				"External integrations are third-party systems Bifrost talks to frequently. They should inform operator triage without making the core instance look broken unless active workflows are affected.",
-			evidence: {
-				source: "configured integration probes",
-				sampled_at: "2026-05-14T00:00:00Z",
-				freshness: "fresh",
-			},
+			evidence: freshEvidence("configured integration probes"),
 			links: [],
 		},
 	],
 	edges: [
-		{
-			from: "deployment-state",
-			to: "host-runtime",
-			kind: "causal",
-			status: "Healthy",
-			summary: "Infra image pins define what the host runtime should run.",
-		},
-		{
-			from: "host-runtime",
-			to: "api-readiness",
-			kind: "causal",
-			status: "Healthy",
-			summary:
-				"The host and Compose runtime must be alive before API readiness is meaningful.",
-		},
-		{
-			from: "api-readiness",
-			to: "execution-plane",
-			kind: "causal",
-			status: "Degraded",
-			summary:
-				"API dependencies support the execution plane, but do not prove it is healthy.",
-		},
-		{
-			from: "execution-plane",
-			to: "worker-pools",
-			kind: "causal",
-			status: "Degraded",
-			summary: "Queued work needs healthy workers to complete.",
-		},
-		{
-			from: "host-runtime",
-			to: "adjacent-services",
-			kind: "causal",
-			status: "Healthy",
-			summary:
-				"Adjacent services support Bifrost without being core Compose runtime.",
-		},
-		{
-			from: "execution-plane",
-			to: "external-integrations",
-			kind: "causal",
-			status: "Advisory",
-			summary:
-				"External integrations are advisory until tied to active workflow impact.",
-		},
+		causalEdge(
+			"deployment-state",
+			"host-runtime",
+			"Healthy",
+			"Infra image pins define what the host runtime should run.",
+		),
+		causalEdge(
+			"host-runtime",
+			"api-readiness",
+			"Healthy",
+			"The host and Compose runtime must be alive before API readiness is meaningful.",
+		),
+		causalEdge(
+			"api-readiness",
+			"execution-plane",
+			"Degraded",
+			"API dependencies support the execution plane, but do not prove it is healthy.",
+		),
+		causalEdge(
+			"execution-plane",
+			"worker-pools",
+			"Degraded",
+			"Queued work needs healthy workers to complete.",
+		),
+		causalEdge(
+			"host-runtime",
+			"adjacent-services",
+			"Healthy",
+			"Adjacent services support Bifrost without being core Compose runtime.",
+		),
+		causalEdge(
+			"execution-plane",
+			"external-integrations",
+			"Advisory",
+			"External integrations are advisory until tied to active workflow impact.",
+		),
 	],
 };
 
