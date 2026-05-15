@@ -56,7 +56,10 @@ async def read_cmd(
     client: BifrostClient,  # noqa: ARG001
     resolver,  # noqa: ARG001
 ) -> None:
-    """Read a workspace file and write its contents to stdout."""
+    """Read a workspace file and write its contents to stdout.
+
+    Text files only. The SDK has `read_bytes` for binary; this CLI verb does not.
+    """
     content = await files_sdk.read(path, location=location)
     # Avoid output_result()'s key:value dict formatting; raw stdout is what
     # shell pipelines and agents expect from a `read` verb.
@@ -89,7 +92,10 @@ async def write_cmd(
     client: BifrostClient,  # noqa: ARG001
     resolver,  # noqa: ARG001
 ) -> None:
-    """Write to a workspace file. Source: --content, --from-file, or `-` for stdin."""
+    """Write to a workspace file. Source: --content, --from-file, or `-` for stdin.
+
+    Text files only. Pass --content "" to truncate an existing file.
+    """
     sources = [s for s in (content_flag, from_file, source) if s is not None]
     if len(sources) != 1:
         raise click.UsageError(
@@ -183,7 +189,7 @@ async def exists_cmd(
 @click.option(
     "--max-results",
     "max_results",
-    type=int,
+    type=click.IntRange(1, 10000),
     default=1000,
     help="Maximum results to return (default: 1000, max: 10000).",
 )

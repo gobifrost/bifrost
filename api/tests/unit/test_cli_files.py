@@ -115,7 +115,7 @@ class TestWrite:
             {"/api/files/write": {}},
         )
         assert result.exit_code != 0
-        assert "exactly one" in result.output.lower() or "mutually exclusive" in result.output.lower()
+        assert "exactly one" in result.output.lower()
 
 
 class TestList:
