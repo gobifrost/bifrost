@@ -31,7 +31,7 @@ User says any of:
 2. **Reuse the shared Bifrost OAuth registration if available.** All Bifrost agents share the same host, so ONE Teams Dev Portal OAuth client registration named "Bifrost" covers every agent. If you have a saved referenceId from a previous run, pass it to `pack.py --ref-id <id>` automatically. Otherwise walk the user through the one-time registration (see "Auth picker" below).
 3. **Run the packager** (path is relative to this skill directory):
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/.claude/skills/copilot-cowork-package/pack.py" "<agent name or id>" --out ./out
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/copilot-cowork-package/pack.py" "<agent name or id>" --out ./out
    ```
    If `CLAUDE_PLUGIN_ROOT` isn't set, fall back to the absolute path of the skill's `pack.py` (the file sitting next to this `SKILL.md`).
 
@@ -108,7 +108,7 @@ For Bifrost agents specifically, recommend in this order:
 ## Real-world example
 
 ```
-$ python3 "${CLAUDE_PLUGIN_ROOT}/.claude/skills/copilot-cowork-package/pack.py" "Cyber Questionnaire Assistant" --out /tmp
+$ python3 "${CLAUDE_PLUGIN_ROOT}/skills/copilot-cowork-package/pack.py" "Cyber Questionnaire Assistant" --out /tmp
 {
   "zip": "/tmp/cyber-questionnaire-assistant-cowork.zip",
   "app_id": "...",
