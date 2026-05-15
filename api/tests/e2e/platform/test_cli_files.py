@@ -47,7 +47,7 @@ def engine_creds() -> None:
     authenticate_engine()
 
 
-def _run_bifrost(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+def _run_bifrost(args: list[str]) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped ``bifrost`` binary via :mod:`subprocess`.
 
     Sets ``BIFROST_API_URL`` so the CLI's credential resolver points at
@@ -55,14 +55,20 @@ def _run_bifrost(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     into the credentials file, so the SDK matches the right record.
     """
     env = {**os.environ, "BIFROST_API_URL": "http://api:8000"}
-    return subprocess.run(
-        ["bifrost", *args],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        **kwargs,
-    )
+    try:
+        return subprocess.run(
+            ["bifrost", *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except FileNotFoundError as e:
+        raise AssertionError(
+            "bifrost shim not found on PATH — is /usr/local/bin/bifrost "
+            "installed in this image?"
+        ) from e
 
 
 @pytest.mark.e2e
@@ -74,7 +80,11 @@ def test_bifrost_on_path(engine_creds) -> None:
     ``python -m bifrost``.
     """
     which = subprocess.run(
-        ["which", "bifrost"], capture_output=True, text=True, check=False
+        ["which", "bifrost"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
     assert which.returncode == 0, which.stderr
     assert "/bifrost" in which.stdout
@@ -90,16 +100,15 @@ def test_files_write_then_read_roundtrip(engine_creds) -> None:
     path = f"e2e/{uuid.uuid4().hex}.txt"
     payload = "hello-from-cli"
 
-    write = _run_bifrost(["files", "write", path, "--content", payload])
-    assert write.returncode == 0, f"write failed: {write.stderr}"
+    try:
+        write = _run_bifrost(["files", "write", path, "--content", payload])
+        assert write.returncode == 0, f"write failed: {write.stderr}"
 
-    read = _run_bifrost(["files", "read", path])
-    assert read.returncode == 0, f"read failed: {read.stderr}"
-    assert read.stdout == payload
-
-    # Cleanup
-    delete = _run_bifrost(["files", "delete", path])
-    assert delete.returncode == 0, delete.stderr
+        read = _run_bifrost(["files", "read", path])
+        assert read.returncode == 0, f"read failed: {read.stderr}"
+        assert read.stdout.rstrip("\n") == payload
+    finally:
+        _run_bifrost(["files", "delete", path])
 
 
 @pytest.mark.e2e
@@ -113,7 +122,9 @@ def test_files_exists_exit_codes(engine_creds) -> None:
 
     _run_bifrost(["files", "delete", path])
     absent = _run_bifrost(["files", "exists", path])
-    assert absent.returncode == 1
+    assert absent.returncode == 1, (
+        f"exists on deleted file should exit 1, got {absent.returncode}: {absent.stdout}"
+    )
 
 
 @pytest.mark.e2e
@@ -126,20 +137,22 @@ def test_files_search_finds_written_content(engine_creds) -> None:
     """
     marker = f"BUILDFROST_E2E_MARKER_{uuid.uuid4().hex}"
     path = f"e2e/{uuid.uuid4().hex}.txt"
-    write = _run_bifrost(
-        ["files", "write", path, "--content", f"line1\n{marker}\nline3\n"]
-    )
-    assert write.returncode == 0, write.stderr
 
-    result = _run_bifrost(["files", "--json", "search", marker])
-    assert result.returncode == 0, result.stderr
-    body = json.loads(result.stdout)
+    try:
+        write = _run_bifrost(
+            ["files", "write", path, "--content", f"line1\n{marker}\nline3\n"]
+        )
+        assert write.returncode == 0, write.stderr
 
-    assert body["total_matches"] >= 1, (
-        "search did not find content written via CLI; "
-        "FileIndex may be updated asynchronously"
-    )
-    leaf = path.split("/")[-1]
-    assert any(r["file_path"].endswith(leaf) for r in body["results"])
+        result = _run_bifrost(["files", "--json", "search", marker])
+        assert result.returncode == 0, result.stderr
+        body = json.loads(result.stdout)
 
-    _run_bifrost(["files", "delete", path])
+        assert body["total_matches"] >= 1, (
+            "search did not find content written via CLI; "
+            "FileIndex may be updated asynchronously"
+        )
+        leaf = path.split("/")[-1]
+        assert any(r["file_path"].endswith(leaf) for r in body["results"])
+    finally:
+        _run_bifrost(["files", "delete", path])
