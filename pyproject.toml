@@ -105,6 +105,7 @@ dependencies = [
     # =========================================================================
     "python-json-logger",
     "structlog",
+    "sentry-sdk[fastapi]",
     "psutil",  # Process monitoring for worker heartbeats
 
     # =========================================================================

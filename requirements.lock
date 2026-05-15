@@ -421,6 +421,7 @@ certifi==2026.4.22 \
     #   httpcore
     #   httpx
     #   requests
+    #   sentry-sdk
 cffi==2.0.0 \
     --hash=sha256:00bdf7acc5f795150faa6957054fbbca2439db2f775ce831222b66f192f03beb \
     --hash=sha256:07b271772c100085dd28b74fa0cd81c8fb1a3ba18b21e03d7c27f3436a10606b \
@@ -927,7 +928,9 @@ exceptiongroup==1.3.1 \
 fastapi==0.136.1 \
     --hash=sha256:7af665ad7acfa0a3baf8983d393b6b471b9da10ede59c60045f49fbc89a0fa7f \
     --hash=sha256:a6e9d7eeada96c93a4d69cb03836b44fa34e2854accb7244a1ece36cd4781c3f
-    # via bifrost-api (pyproject.toml)
+    # via
+    #   bifrost-api (pyproject.toml)
+    #   sentry-sdk
 fastmcp==3.2.4 \
     --hash=sha256:083ecb75b44a4169e7fc0f632f94b781bdb0ff877c6b35b9877cbb566fd4d4d1 \
     --hash=sha256:e6c9c429171041455e47ab94bb3f83c4657622a0ec28922f6940053959bd58a9
@@ -2595,6 +2598,10 @@ secretstorage==3.5.0 \
     --hash=sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137 \
     --hash=sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be
     # via keyring
+sentry-sdk[fastapi]==2.60.0 \
+    --hash=sha256:0bd25e54e78ca02d0be512529fa644bbbf9e8470d7b26371294012d4ca93c978 \
+    --hash=sha256:28a536c03291c8bcb363cf35c611b32738ec118ff64d8d6383b096448ac4c803
+    # via bifrost-api (pyproject.toml)
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
@@ -2758,6 +2765,7 @@ urllib3==2.6.3 \
     #   dulwich
     #   pygithub
     #   requests
+    #   sentry-sdk
 uvicorn[standard]==0.46.0 \
     --hash=sha256:bbebbcbed972d162afca128605223022bedd345b7bc7855ce66deb31487a9048 \
     --hash=sha256:fb9da0926999cc6cb22dc7cd71a94a632f078e6ae47ff683c5c420750fb7413d

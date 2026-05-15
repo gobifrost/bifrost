@@ -120,6 +120,33 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Error Monitoring (Sentry)
+    # ==========================================================================
+    sentry_dsn: str | None = Field(
+        default=None,
+        description="Sentry DSN. When unset, Sentry is disabled."
+    )
+
+    sentry_traces_sample_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Sentry performance trace sample rate. Defaults to errors only."
+    )
+
+    sentry_profiles_sample_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Sentry profiling sample rate. Defaults to disabled."
+    )
+
+    sentry_send_default_pii: bool = Field(
+        default=False,
+        description="Allow Sentry to send default PII such as headers and user IPs."
+    )
+
+    # ==========================================================================
     # Redis
     # ==========================================================================
     redis_url: str = Field(

@@ -267,7 +267,10 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI application instance
     """
+    from src.core.sentry import configure_sentry
     from shared.version import get_version
+
+    configure_sentry(get_settings())
 
     app = FastAPI(
         title="Bifrost API",
