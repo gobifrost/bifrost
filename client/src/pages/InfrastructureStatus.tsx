@@ -75,6 +75,27 @@ const freshEvidence = (source: string): GraphNode["evidence"] => ({
 	sampled_at: generatedAt,
 	freshness: "fresh",
 });
+const graphNode = (
+	id: string,
+	label: string,
+	domain: string,
+	status: GraphStatus,
+	impact: GraphImpact,
+	summary: string,
+	explainer: string,
+	evidenceSource: string,
+	links: GraphNode["links"] = [],
+): GraphNode => ({
+	id,
+	label,
+	domain,
+	status,
+	impact,
+	summary,
+	explainer,
+	evidence: freshEvidence(evidenceSource),
+	links,
+});
 const causalEdge = (
 	from: string,
 	to: string,
@@ -95,92 +116,78 @@ const graphStatus: GraphStatusFixture = {
 	status: "Degraded",
 	impact: "Limited",
 	nodes: [
-		{
-			id: "deployment-state",
-			label: "Deployment state",
-			domain: "Deployment State",
-			status: "Healthy",
-			impact: "None",
-			summary: "Live image refs match the infra lock.",
-			explainer:
-				"Deployment state proves what platform image should be running and whether the live API, client, worker, and scheduler images match infra-pinned refs.",
-			evidence: freshEvidence("images.lock.yml + deploy guard image refs"),
-			links: [],
-		},
-		{
-			id: "host-runtime",
-			label: "Host runtime",
-			domain: "Host Runtime",
-			status: "Healthy",
-			impact: "None",
-			summary: "The Azure VM and Compose observation completed.",
-			explainer:
-				"The host runtime is the Azure VM, systemd service, Docker engine, and Compose stack that run this Bifrost instance.",
-			evidence: freshEvidence("Azure Run Command + bifrost-compose-deploy-guard"),
-			links: [],
-		},
-		{
-			id: "api-readiness",
-			label: "API readiness",
-			domain: "API Readiness",
-			status: "Healthy",
-			impact: "None",
-			summary: "Postgres, Redis, RabbitMQ, and S3 are reachable.",
-			explainer:
-				"API readiness proves the API can reach its hard dependencies. It does not prove that workers can execute workflow code.",
-			evidence: freshEvidence("/health/ready"),
-			links: [],
-		},
-		{
-			id: "execution-plane",
-			label: "Execution plane",
-			domain: "Execution Plane",
-			status: "Degraded",
-			impact: "Limited",
-			summary: "Recent infrastructure-shaped execution failures were observed.",
-			explainer:
-				"The execution plane is the queue, worker, and runtime path that turns workflow requests into completed work.",
-			evidence: freshEvidence("deploy guard + executions table + RabbitMQ queues"),
-			links: [{ label: "Open History", target: "/history" }],
-		},
-		{
-			id: "worker-pools",
-			label: "Worker pools",
-			domain: "Execution Plane",
-			status: "Healthy",
-			impact: "None",
-			summary: "1 worker pool heartbeat records observed.",
-			explainer:
-				"Worker pools pick up queued work and execute workflow code. A heartbeat proves a worker process is alive, but execution outcomes still need aggregate execution health.",
-			evidence: freshEvidence("worker pool heartbeat table"),
-			links: [{ label: "Open History", target: "/history" }],
-		},
-		{
-			id: "adjacent-services",
-			label: "Adjacent services",
-			domain: "Adjacent Services",
-			status: "Healthy",
-			impact: "None",
-			summary:
-				"Adjacent service smoke checks passed; optional services disabled: google_ops_worker",
-			explainer:
-				"Adjacent services are MTG-operated workloads that support Bifrost without being part of the core Compose runtime.",
-			evidence: freshEvidence("verify-poc-adjacent-services.py"),
-			links: [],
-		},
-		{
-			id: "external-integrations",
-			label: "External integrations",
-			domain: "External Integrations",
-			status: "Advisory",
-			impact: "None",
-			summary:
-				"AutoTask, HaloPSA, NinjaOne, IT Glue, ConnectSecure, Microsoft Graph, Keeper, Cove, and Meraki are advisory unless tied to active work.",
-			explainer:
-				"External integrations are third-party systems Bifrost talks to frequently. They should inform operator triage without making the core instance look broken unless active workflows are affected.",
-			evidence: freshEvidence("configured integration probes"),
-			links: [],
-		},
+		graphNode(
+			"deployment-state",
+			"Deployment state",
+			"Deployment State",
+			"Healthy",
+			"None",
+			"Live image refs match the infra lock.",
+			"Deployment state proves what platform image should be running and whether the live API, client, worker, and scheduler images match infra-pinned refs.",
+			"images.lock.yml + deploy guard image refs",
+		),
+		graphNode(
+			"host-runtime",
+			"Host runtime",
+			"Host Runtime",
+			"Healthy",
+			"None",
+			"The Azure VM and Compose observation completed.",
+			"The host runtime is the Azure VM, systemd service, Docker engine, and Compose stack that run this Bifrost instance.",
+			"Azure Run Command + bifrost-compose-deploy-guard",
+		),
+		graphNode(
+			"api-readiness",
+			"API readiness",
+			"API Readiness",
+			"Healthy",
+			"None",
+			"Postgres, Redis, RabbitMQ, and S3 are reachable.",
+			"API readiness proves the API can reach its hard dependencies. It does not prove that workers can execute workflow code.",
+			"/health/ready",
+		),
+		graphNode(
+			"execution-plane",
+			"Execution plane",
+			"Execution Plane",
+			"Degraded",
+			"Limited",
+			"Recent infrastructure-shaped execution failures were observed.",
+			"The execution plane is the queue, worker, and runtime path that turns workflow requests into completed work.",
+			"deploy guard + executions table + RabbitMQ queues",
+			[{ label: "Open History", target: "/history" }],
+		),
+		graphNode(
+			"worker-pools",
+			"Worker pools",
+			"Execution Plane",
+			"Healthy",
+			"None",
+			"1 worker pool heartbeat records observed.",
+			"Worker pools pick up queued work and execute workflow code. A heartbeat proves a worker process is alive, but execution outcomes still need aggregate execution health.",
+			"worker pool heartbeat table",
+			[{ label: "Open History", target: "/history" }],
+		),
+		graphNode(
+			"adjacent-services",
+			"Adjacent services",
+			"Adjacent Services",
+			"Healthy",
+			"None",
+			"Adjacent service smoke checks passed; optional services disabled: google_ops_worker",
+			"Adjacent services are MTG-operated workloads that support Bifrost without being part of the core Compose runtime.",
+			"verify-poc-adjacent-services.py",
+		),
+		graphNode(
+			"external-integrations",
+			"External integrations",
+			"External Integrations",
+			"Advisory",
+			"None",
+			"AutoTask, HaloPSA, NinjaOne, IT Glue, ConnectSecure, Microsoft Graph, Keeper, Cove, and Meraki are advisory unless tied to active work.",
+			"External integrations are third-party systems Bifrost talks to frequently. They should inform operator triage without making the core instance look broken unless active workflows are affected.",
+			"configured integration probes",
+		),
 	],
 	edges: [
 		causalEdge(
@@ -250,7 +257,7 @@ function formatTimestamp(value: string): string {
 	}).format(new Date(value));
 }
 
-function StatusBadge({ status }: { status: GraphStatus }) {
+function StatusBadge({ status }: Readonly<{ status: GraphStatus }>) {
 	return (
 		<Badge variant="outline" className={cn("shrink-0", statusStyles[status])}>
 			{status}
@@ -258,7 +265,7 @@ function StatusBadge({ status }: { status: GraphStatus }) {
 	);
 }
 
-function InfrastructureNode({ node }: { node: GraphNode }) {
+function InfrastructureNode({ node }: Readonly<{ node: GraphNode }>) {
 	const Icon = nodeIcons[node.domain] ?? Info;
 
 	return (
@@ -307,7 +314,7 @@ function InfrastructureNode({ node }: { node: GraphNode }) {
 	);
 }
 
-function EdgeList({ edges }: { edges: GraphEdge[] }) {
+function EdgeList({ edges }: Readonly<{ edges: GraphEdge[] }>) {
 	return (
 		<div className="grid gap-3 lg:grid-cols-2">
 			{edges.map((edge) => (
@@ -340,10 +347,16 @@ export function InfrastructureStatus() {
 	const degradedCount = degradedNodes.filter(
 		(node) => node.status === "Degraded",
 	).length;
+	const blockedSummary = `${blockedCount} ${
+		blockedCount === 1 ? "domain is" : "domains are"
+	} blocked`;
+	const degradedSummary = `${degradedCount} ${
+		degradedCount === 1 ? "domain is" : "domains are"
+	} degraded`;
 	const attentionDescription =
 		blockedCount > 0
-			? `${blockedCount} ${blockedCount === 1 ? "domain is" : "domains are"} blocked and ${degradedCount} ${degradedCount === 1 ? "domain is" : "domains are"} degraded.`
-			: `The instance is not blocked, but ${degradedCount} ${degradedCount === 1 ? "domain is" : "domains are"} degraded.`;
+			? `${blockedSummary} and ${degradedSummary}.`
+			: `The instance is not blocked, but ${degradedSummary}.`;
 
 	return (
 		<div className="space-y-6">
