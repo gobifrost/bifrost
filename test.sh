@@ -233,7 +233,7 @@ run_pytest() {
     require_stack_up
     reset_state
     docker compose -f "$COMPOSE_FILE" --profile test run --rm test-runner \
-        pytest "$@" --durations=25 --junitxml="/tmp/bifrost/test-results.xml" 2>&1 | tee "$LOG_DIR/test-runner.log"
+        pytest "$@" --durations=25 --junitxml="$LOG_DIR/test-results.xml" 2>&1 | tee "$LOG_DIR/test-runner.log"
     return "${PIPESTATUS[0]}"
 }
 
