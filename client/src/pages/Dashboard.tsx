@@ -10,6 +10,7 @@ import {
 	Clock,
 	DollarSign,
 	RefreshCw,
+	ServerCog,
 } from "lucide-react";
 import {
 	Card,
@@ -397,6 +398,31 @@ export function Dashboard() {
 					<h2 className="text-xl font-semibold">
 						Platform Analytics
 					</h2>
+
+					<Link to="/infrastructure" className="block">
+						<Card className="hover:border-primary/50 transition-colors cursor-pointer">
+							<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+								<div>
+									<CardTitle className="text-base">
+										Infrastructure Status
+									</CardTitle>
+									<CardDescription className="text-xs">
+										Read-only instance map
+									</CardDescription>
+								</div>
+								<ServerCog className="h-4 w-4 text-muted-foreground" />
+							</CardHeader>
+							<CardContent>
+								<div className="flex flex-wrap items-center gap-2">
+									<Badge variant="outline">View live status</Badge>
+								</div>
+								<p className="mt-2 text-xs text-muted-foreground">
+									Deployment, host, API, execution, adjacent
+									services, and external integrations
+								</p>
+							</CardContent>
+						</Card>
+					</Link>
 
 					{/* Resource Trend Chart - Full Width */}
 					<ResourceTrendChart

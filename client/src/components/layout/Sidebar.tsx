@@ -180,6 +180,12 @@ const navSections: NavSection[] = [
 				requiresPlatformAdmin: true,
 			},
 			{
+				title: "Infrastructure",
+				href: "/infrastructure",
+				icon: ServerCog,
+				requiresPlatformAdmin: true,
+			},
+			{
 				title: "Audit Log",
 				href: "/audit",
 				icon: ShieldCheck,

@@ -191,7 +191,7 @@ class TestEventSourceCRUD:
         )
 
     def test_create_webhook_source_returns_callback_url(self, e2e_client, platform_admin):
-        """Verify callback URL is /api/hooks/{uuid}."""
+        """Verify callback URL uses the configured public URL."""
         source_name = f"E2E Callback URL Test {uuid.uuid4().hex[:8]}"
 
         response = e2e_client.post(
@@ -211,8 +211,7 @@ class TestEventSourceCRUD:
         source = response.json()
         callback_url = source["webhook"]["callback_url"]
 
-        # Should be /api/hooks/{source_id}
-        assert callback_url == f"/api/hooks/{source['id']}"
+        assert callback_url == f"http://localhost:8000/api/hooks/{source['id']}"
 
         # Cleanup
         e2e_client.delete(
