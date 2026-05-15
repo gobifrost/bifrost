@@ -25,6 +25,7 @@ import shutil
 import sys
 import tarfile
 from pathlib import Path
+from pathlib import PurePosixPath
 
 import httpx
 
@@ -225,6 +226,8 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
         members = tar.getmembers()
 
         # First pass: read top-level skills/ symlinks to build the allowlist.
+        # The public alias and the real skill folder name can differ, e.g.
+        # ``skills/build -> ../.claude/skills/bifrost-build``.
         for member in members:
             parts = member.name.split("/", 1)
             if len(parts) != 2:
@@ -236,7 +239,8 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
             if not name or "/" in name:
                 continue
             if member.issym() or member.islnk():
-                public_skills.add(name)
+                target_name = PurePosixPath(member.linkname).name
+                public_skills.add(target_name or name)
 
         if not public_skills:
             raise ValueError(
