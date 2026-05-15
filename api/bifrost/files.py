@@ -307,12 +307,18 @@ class files:
         """
         Search workspace file contents.
 
+        Note:
+            Unlike the other ``files`` methods, ``search`` has no ``scope`` parameter.
+            The server scopes results by the caller's identity; a provider-org cannot
+            cross-search another org's workspace through this endpoint.
+
         Args:
             query: Text or regex pattern to search for.
             case_sensitive: Case-sensitive matching (default: False).
             is_regex: Treat query as a regex (default: False; literal substring).
-            include_pattern: Glob restricting which files to search
-                (default: ``**/*``).
+            include_pattern: Glob restricting which files to search (default: ``**/*``).
+                The SDK does not expose the server's nullable form; callers always send
+                a pattern, defaulting to "match all files".
             max_results: Maximum results returned (default: 1000, max: 10000).
 
         Returns:
