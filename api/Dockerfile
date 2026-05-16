@@ -50,6 +50,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
+# Install `bifrost` CLI shim. The bifrost Python package is mounted at
+# /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim
+# below exposes that as the `bifrost` console script on PATH, matching the
+# console-script entry declared in api/pyproject.toml. Workflows shell out
+# to `bifrost <verb>` from worker subprocesses (see Buildfrost spec at
+# Sync/Projects/buildfrost/backend-ask.md).
+RUN printf '#!/bin/sh\nexec python -m bifrost "$@"\n' > /usr/local/bin/bifrost \
+    && chmod +x /usr/local/bin/bifrost
+
 # Copy application code (paths relative to root context)
 COPY api/src/ /app/src/
 COPY api/shared/ /app/shared/

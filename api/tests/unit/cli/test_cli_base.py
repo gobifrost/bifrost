@@ -192,6 +192,7 @@ class TestSubgroupRegistration:
             "configs",
             "tables",
             "events",
+            "files",
             "requirements",
         }
 
