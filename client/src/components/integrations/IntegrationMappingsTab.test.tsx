@@ -24,7 +24,6 @@ function renderTab(
 		onUpdateOrgMapping: vi.fn(),
 		onOpenConfigDialog: vi.fn(),
 		onDeleteMapping: vi.fn(),
-		onEditIntegration: vi.fn(),
 		onConnectMapping: vi.fn(),
 		onDisconnectMapping: vi.fn(),
 	};

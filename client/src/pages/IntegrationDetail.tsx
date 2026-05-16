@@ -724,7 +724,6 @@ export function IntegrationDetail() {
 						onUpdateOrgMapping={handleEntitySelect}
 						onOpenConfigDialog={handleOpenConfigDialog}
 						onDeleteMapping={handleDeleteMappingClick}
-						onEditIntegration={() => setEditDialogOpen(true)}
 						onConnectMapping={handleConnectMapping}
 						onDisconnectMapping={handleDisconnectMapping}
 					/>

@@ -77,7 +77,6 @@ export interface IntegrationMappingsTabProps {
 	onUpdateOrgMapping: (orgId: string, entityId: string, entityName?: string) => void;
 	onOpenConfigDialog: (orgId: string) => void;
 	onDeleteMapping: (org: OrgWithMapping) => void;
-	onEditIntegration: () => void;
 	onConnectMapping: (mappingId: string) => void;
 	onDisconnectMapping: (mappingId: string) => void;
 }
@@ -103,7 +102,6 @@ export function IntegrationMappingsTab({
 	onUpdateOrgMapping,
 	onOpenConfigDialog,
 	onDeleteMapping,
-	onEditIntegration: _onEditIntegration,
 	onConnectMapping,
 	onDisconnectMapping,
 }: IntegrationMappingsTabProps) {
