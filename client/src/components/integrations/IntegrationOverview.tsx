@@ -358,9 +358,9 @@ export function IntegrationOverview({
 												Connecting...
 											</>
 										) : isOAuthConnected ? (
-											"Reconnect"
+											"Reconnect default"
 										) : (
-											"Connect"
+											"Connect default"
 										)}
 									</Button>
 								)}
@@ -404,12 +404,15 @@ export function IntegrationOverview({
 											) : (
 												<>
 													<RotateCw className="mr-2 h-3 w-3" />
-													Refresh Token
+													Refresh default token
 												</>
 											)}
 										</Button>
 									)}
 							</div>
+							<p className="text-xs text-muted-foreground mt-1">
+								Used when an organization isn't individually connected via its mapping.
+							</p>
 						</div>
 					) : (
 						<div className="text-center py-4">
