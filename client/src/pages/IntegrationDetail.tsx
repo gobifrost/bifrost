@@ -36,6 +36,8 @@ import {
 	useUpdateIntegrationConfig,
 	useTestIntegration,
 	useBatchUpsertMappings,
+	useAuthorizeMapping,
+	useDisconnectMapping,
 	type IntegrationTestResponse,
 } from "@/services/integrations";
 import { $api } from "@/lib/api-client";
@@ -111,6 +113,8 @@ export function IntegrationDetail() {
 	const deleteOAuthMutation = useDeleteOAuthConnection();
 	const testMutation = useTestIntegration();
 	const batchMutation = useBatchUpsertMappings();
+	const authorizeMappingMutation = useAuthorizeMapping();
+	const disconnectMappingMutation = useDisconnectMapping();
 
 	// Memoize to stabilize references for the useEffect that combines them
 	const organizations = useMemo(
@@ -261,6 +265,52 @@ export function IntegrationDetail() {
 
 	const handleDeleteMappingClick = (org: OrgWithMapping) => {
 		setDeleteMappingConfirm(org);
+	};
+
+	const handleConnectMapping = (mappingId: string) => {
+		if (!integrationId) return;
+		const redirectUri = `${window.location.origin}/oauth/callback`;
+		authorizeMappingMutation.mutate(
+			{
+				params: {
+					path: {
+						integration_id: integrationId,
+						mapping_id: mappingId,
+					},
+				},
+				body: { redirect_uri: redirectUri },
+			},
+			{
+				onSuccess: (data) => {
+					window.location.href = data.authorization_url;
+				},
+				onError: () => {
+					toast.error("Failed to start OAuth connection");
+				},
+			},
+		);
+	};
+
+	const handleDisconnectMapping = (mappingId: string) => {
+		if (!integrationId) return;
+		disconnectMappingMutation.mutate(
+			{
+				params: {
+					path: {
+						integration_id: integrationId,
+						mapping_id: mappingId,
+					},
+				},
+			},
+			{
+				onSuccess: () => {
+					toast.success("OAuth connection disconnected");
+				},
+				onError: () => {
+					toast.error("Failed to disconnect OAuth connection");
+				},
+			},
+		);
 	};
 
 	const handleDeleteMappingConfirm = async () => {
@@ -659,6 +709,7 @@ export function IntegrationDetail() {
 						isLoadingEntities={isLoadingEntities}
 						isEntitiesError={isEntitiesError}
 						hasDataProvider={!!integration.list_entities_data_provider_id}
+						hasOAuth={!!integration.has_oauth_config}
 						configSchema={integration?.config_schema || []}
 						configDefaults={integration?.config_defaults}
 						autoMatchSuggestions={autoMatchSuggestions}
@@ -674,6 +725,8 @@ export function IntegrationDetail() {
 						onOpenConfigDialog={handleOpenConfigDialog}
 						onDeleteMapping={handleDeleteMappingClick}
 						onEditIntegration={() => setEditDialogOpen(true)}
+						onConnectMapping={handleConnectMapping}
+						onDisconnectMapping={handleDisconnectMapping}
 					/>
 				</TabsContent>
 
