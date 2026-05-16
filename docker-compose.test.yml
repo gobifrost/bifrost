@@ -166,6 +166,7 @@ services:
       BIFROST_S3_REGION: us-east-1
       # Enable registration for E2E tests
       BIFROST_ALLOW_REGISTRATION: "true"
+      OAUTH_STATE_SECRET: test-oauth-state-secret-do-not-use-in-prod
     # No ports exposed - all access via Docker network (test-runner connects to api:8000)
     volumes:
       - ./api/src:/app/src
@@ -311,6 +312,7 @@ services:
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
+      OAUTH_STATE_SECRET: test-oauth-state-secret-do-not-use-in-prod
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
       PYTHONPATH: /app

@@ -82,6 +82,7 @@ services:
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
       BIFROST_S3_PUBLIC_ENDPOINT_URL: ${BIFROST_S3_PUBLIC_ENDPOINT_URL:-}
+      OAUTH_STATE_SECRET: dev-oauth-state-secret-do-not-use-in-prod
       # Debugging (optional - enables debugpy)
       ENABLE_DEBUG: ${ENABLE_DEBUG:-false}
     ports:
