@@ -346,7 +346,7 @@ class MCPToolAccessService:
             agent_role_names = {role.name for role in agent.roles}
             if not agent_role_names:
                 return is_superuser
-            return bool(set(user_roles) & agent_role_names)
+            return is_superuser or bool(set(user_roles) & agent_role_names)
 
         return False
 
@@ -360,9 +360,10 @@ class MCPToolAccessService:
 
         Rules:
         - AUTHENTICATED: Any authenticated user can access
-        - ROLE_BASED with roles: User must share at least one role with the agent
+        - ROLE_BASED with roles: User must share at least one role with the agent,
+          OR be a platform admin (superuser)
         - ROLE_BASED with no roles: Only superusers can access
-        - Platform admins (superusers) are ALSO filtered by agent access (no bypass)
+        - Platform admins (superusers) bypass ROLE_BASED role checks (issue #244)
         """
         # Query all active agents with their tools and roles eagerly loaded
         query = (
@@ -394,8 +395,9 @@ class MCPToolAccessService:
                     # ROLE_BASED with no roles = only superusers can access
                     if is_superuser:
                         accessible_agents.append(agent)
-                elif user_role_set & agent_role_names:
-                    # User has at least one matching role
+                elif is_superuser or (user_role_set & agent_role_names):
+                    # User has at least one matching role, or is a platform
+                    # admin (superuser bypass — issue #244)
                     accessible_agents.append(agent)
 
             # Note: PUBLIC agents are not included for MCP access

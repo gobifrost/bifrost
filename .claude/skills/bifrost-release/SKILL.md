@@ -224,6 +224,25 @@ grep -vE $'\t(jackmusick|app/dependabot|app/renovate|github-actions\\[bot\\])\t'
 - ❌ Crediting only in the Contributors section without per-bullet `(#NN by @user)` markers. Readers scanning the feature list shouldn't have to scroll to find out who shipped it.
 - ❌ Putting external contributors as a footnote. They led the work — lead with their name on the bullet that describes it.
 
+### 2c. Bump the Claude plugin manifest (REQUIRED)
+
+Claude Code's plugin marketplace only fetches plugin updates when `.claude-plugin/plugin.json`'s `version` field changes on the default branch. Without this step, users installed via the bifrost plugin will keep getting the old skill content.
+
+Run the helper, commit the bump to `main` via a normal PR, and merge it **before** tagging:
+
+```bash
+# <tag> is the version you're about to cut, e.g. v0.8.1 — strip the leading v.
+VERSION="${TAG#v}"
+./scripts/update-plugin-version.sh "$VERSION"
+git add .claude-plugin/plugin.json
+git commit -m "chore(release): bump plugin manifest to $VERSION"
+# PR + merge via the normal flow, then continue.
+```
+
+The tag-build CI job (`build-api`) has a hard guard that fails the release if the manifest version doesn't match the tag — so forgetting this step blocks the build, it doesn't silently ship stale skills.
+
+**Trade-off:** between releases the manifest reflects the last tagged version, not the current dev commit. Per-push commit-back was considered and rejected — main has branch protection with required PR review and no ruleset bypass, so CI cannot push directly, and an auto-PR loop would churn the merge queue on every commit. See issue #245 and PR #246 for the full rationale.
+
 ### 3. Run pre-tag checks
 
 ```bash

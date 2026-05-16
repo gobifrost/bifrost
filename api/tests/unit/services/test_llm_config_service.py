@@ -452,6 +452,32 @@ class TestLLMConfigServiceTestConnection:
         assert "rejected a test completion" in result.message
         assert "insufficient_quota" in result.message
 
+    @pytest.mark.asyncio
+    async def test_complete_openai_uses_max_completion_tokens(self, mock_session):
+        """OpenAI test completion must send max_completion_tokens, not max_tokens.
+
+        Regression for #239: modern reasoning models (o1, o3, gpt-5.x) reject
+        the legacy `max_tokens` param with a 400. The newer
+        `max_completion_tokens` is accepted by all current OpenAI models.
+        """
+        with patch("openai.AsyncOpenAI") as mock_openai:
+            mock_client = AsyncMock()
+            mock_client.chat.completions.create = AsyncMock()
+            mock_openai.return_value = mock_client
+
+            service = LLMConfigService(mock_session)
+            result = await service._complete_openai(
+                api_key="sk-test-key", model="gpt-5.4"
+            )
+
+        assert result.success is True
+        mock_client.chat.completions.create.assert_awaited_once()
+        await_args = mock_client.chat.completions.create.await_args
+        assert await_args is not None
+        assert "max_completion_tokens" in await_args.kwargs
+        assert "max_tokens" not in await_args.kwargs
+        assert await_args.kwargs["max_completion_tokens"] == 1
+
 
 class TestLLMConfigServiceListModels:
     """Test LLMConfigService list_models method."""
