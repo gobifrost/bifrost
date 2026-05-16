@@ -317,6 +317,18 @@ class IntegrationMappingResponse(BaseModel):
         default=None,
         description="Per-organization integration configuration",
     )
+    connection_status: str | None = Field(
+        default=None,
+        description="Per-mapping OAuth token status (mirrors OAuthToken.status); None if no per-row token",
+    )
+    connection_message: str | None = Field(
+        default=None,
+        description="Last status message from the per-mapping token (e.g., refresh error)",
+    )
+    last_refresh_at: datetime | None = Field(
+        default=None,
+        description="When the per-mapping token was last refreshed",
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 

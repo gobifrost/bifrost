@@ -318,3 +318,70 @@ class TestPerMappingDisconnect:
                 f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
                 headers=platform_admin.headers,
             )
+
+    @pytest.mark.asyncio
+    async def test_mapping_list_includes_connection_status(
+        self, e2e_client, platform_admin, db_session, org1, integration_with_oauth
+    ):
+        """Mapping list response includes connection_status from the per-mapping OAuth token."""
+        integration = integration_with_oauth["integration"]
+
+        # Create a mapping
+        mapping_resp = e2e_client.post(
+            f"/api/integrations/{integration['id']}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "status-entity-456",
+                "entity_name": "Status Test Entity",
+            },
+        )
+        assert mapping_resp.status_code == 201, f"Create mapping failed: {mapping_resp.text}"
+        mapping = mapping_resp.json()
+        mapping_id = mapping["id"]
+
+        try:
+            # Create an OAuthToken with status="completed" and link it to the mapping
+            oauth_provider = integration_with_oauth["oauth_provider"]
+            token = OAuthToken(
+                provider_id=oauth_provider.id,
+                encrypted_access_token=b"encrypted_access_token",
+                scopes=["read", "write"],
+                status="completed",
+                status_message="Connected successfully",
+            )
+            db_session.add(token)
+            await db_session.commit()
+            await db_session.refresh(token)
+            token_id = token.id
+
+            # Link the token to the mapping via direct DB update
+            from sqlalchemy import update
+            from src.models.orm import IntegrationMapping
+
+            await db_session.execute(
+                update(IntegrationMapping)
+                .where(IntegrationMapping.id == UUID(mapping_id))
+                .values(oauth_token_id=token_id)
+            )
+            await db_session.commit()
+
+            # GET /api/integrations/{integration_id}/mappings
+            list_resp = e2e_client.get(
+                f"/api/integrations/{integration['id']}/mappings",
+                headers=platform_admin.headers,
+            )
+            assert list_resp.status_code == 200, f"List mappings failed: {list_resp.text}"
+            items = list_resp.json()["items"]
+
+            # Find our mapping in the list
+            our_mapping = next((m for m in items if m["id"] == mapping_id), None)
+            assert our_mapping is not None, f"Mapping {mapping_id} not found in list"
+            assert our_mapping["connection_status"] == "completed"
+            assert our_mapping["connection_message"] == "Connected successfully"
+
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
+                headers=platform_admin.headers,
+            )

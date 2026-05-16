@@ -751,17 +751,7 @@ async def get_integration(
     for m in integration.mappings:
         org_config = all_org_configs.get(m.organization_id, {}) if m.organization_id else {}
         mapping_responses.append(
-            IntegrationMappingResponse(
-                id=m.id,
-                integration_id=m.integration_id,
-                organization_id=m.organization_id,
-                entity_id=m.entity_id,
-                entity_name=m.entity_name,
-                oauth_token_id=m.oauth_token_id,
-                config=org_config if org_config else None,
-                created_at=m.created_at,
-                updated_at=m.updated_at,
-            )
+            await _mapping_to_response(ctx.db, m, config=org_config if org_config else None)
         )
 
     # Convert ORM config_schema items to Pydantic models
@@ -966,6 +956,37 @@ async def get_integration_config(
 # =============================================================================
 
 
+async def _mapping_to_response(
+    db,
+    m,  # IntegrationMapping ORM instance
+    config: dict | None = None,
+) -> IntegrationMappingResponse:
+    """Build IntegrationMappingResponse, hydrating per-token status."""
+    status_val = None
+    message = None
+    last_refresh = None
+    if m.oauth_token_id:
+        token = await db.get(OAuthToken, m.oauth_token_id)
+        if token:
+            status_val = token.status
+            message = token.status_message
+            last_refresh = token.last_refresh_at
+    return IntegrationMappingResponse(
+        id=m.id,
+        integration_id=m.integration_id,
+        organization_id=m.organization_id,
+        entity_id=m.entity_id,
+        entity_name=m.entity_name,
+        oauth_token_id=m.oauth_token_id,
+        config=config,
+        connection_status=status_val,
+        connection_message=message,
+        last_refresh_at=last_refresh,
+        created_at=m.created_at,
+        updated_at=m.updated_at,
+    )
+
+
 @router.post(
     "/{integration_id}/mappings",
     response_model=IntegrationMappingResponse,
@@ -1006,17 +1027,7 @@ async def create_mapping(
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, request.organization_id)
 
-    return IntegrationMappingResponse(
-        id=mapping.id,
-        integration_id=mapping.integration_id,
-        organization_id=mapping.organization_id,
-        entity_id=mapping.entity_id,
-        entity_name=mapping.entity_name,
-        oauth_token_id=mapping.oauth_token_id,
-        config=org_config if org_config else None,
-        created_at=mapping.created_at,
-        updated_at=mapping.updated_at,
-    )
+    return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
 
 @router.get(
@@ -1043,20 +1054,7 @@ async def list_mappings(
 
     mappings = await repo.list_mappings_for_integration(integration_id)
 
-    items = [
-        IntegrationMappingResponse(
-            id=m.id,
-            integration_id=m.integration_id,
-            organization_id=m.organization_id,
-            entity_id=m.entity_id,
-            entity_name=m.entity_name,
-            oauth_token_id=m.oauth_token_id,
-            config=None,  # Not included in list response
-            created_at=m.created_at,
-            updated_at=m.updated_at,
-        )
-        for m in mappings
-    ]
+    items = [await _mapping_to_response(ctx.db, m) for m in mappings]
     return IntegrationMappingListResponse(items=items, total=len(items))
 
 
@@ -1085,17 +1083,7 @@ async def get_mapping(
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, mapping.organization_id)
 
-    return IntegrationMappingResponse(
-        id=mapping.id,
-        integration_id=mapping.integration_id,
-        organization_id=mapping.organization_id,
-        entity_id=mapping.entity_id,
-        entity_name=mapping.entity_name,
-        oauth_token_id=mapping.oauth_token_id,
-        config=org_config if org_config else None,
-        created_at=mapping.created_at,
-        updated_at=mapping.updated_at,
-    )
+    return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
 
 @router.get(
@@ -1123,17 +1111,7 @@ async def get_mapping_by_org(
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, org_id)
 
-    return IntegrationMappingResponse(
-        id=mapping.id,
-        integration_id=mapping.integration_id,
-        organization_id=mapping.organization_id,
-        entity_id=mapping.entity_id,
-        entity_name=mapping.entity_name,
-        oauth_token_id=mapping.oauth_token_id,
-        config=org_config if org_config else None,
-        created_at=mapping.created_at,
-        updated_at=mapping.updated_at,
-    )
+    return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
 
 @router.put(
@@ -1166,17 +1144,7 @@ async def update_mapping(
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, mapping.organization_id)
 
-    return IntegrationMappingResponse(
-        id=mapping.id,
-        integration_id=mapping.integration_id,
-        organization_id=mapping.organization_id,
-        entity_id=mapping.entity_id,
-        entity_name=mapping.entity_name,
-        oauth_token_id=mapping.oauth_token_id,
-        config=org_config if org_config else None,
-        created_at=mapping.created_at,
-        updated_at=mapping.updated_at,
-    )
+    return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
 
 @router.post(
