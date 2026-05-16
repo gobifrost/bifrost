@@ -45,6 +45,8 @@ from src.models import (
 )
 from src.models.orm import Config as ConfigModel
 from src.models.orm import IntegrationConfigSchema
+from src.services.oauth_provider import get_url_resolution_defaults, resolve_url_template
+from src.services.oauth_state import encode_state
 
 logger = logging.getLogger(__name__)
 
@@ -1284,9 +1286,6 @@ async def authorize_mapping(
     Returns an authorization URL containing a signed state token that carries
     the mapping_id so the callback can attribute the resulting token to this mapping.
     """
-    from src.services.oauth_state import encode_state
-    from src.services.oauth_provider import get_url_resolution_defaults, resolve_url_template
-
     repo = IntegrationsRepository(ctx.db)
     integration = await repo.get_integration_by_id(integration_id)
     if not integration or not integration.oauth_provider:
