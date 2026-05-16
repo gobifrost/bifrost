@@ -45,6 +45,7 @@ from src.models import (
 )
 from src.models.orm import Config as ConfigModel
 from src.models.orm import IntegrationConfigSchema
+from src.models.orm import OAuthToken
 from src.services.oauth_provider import get_url_resolution_defaults, resolve_url_template
 from src.services.oauth_state import encode_state
 
@@ -1329,6 +1330,34 @@ async def authorize_mapping(
     return MappingAuthorizeResponse(
         authorization_url=f"{resolved_url}?{urlencode(params)}",
     )
+
+
+@router.post(
+    "/{integration_id}/mappings/{mapping_id}/oauth/disconnect",
+    status_code=204,
+    summary="Disconnect a mapping's per-row OAuth connection",
+    description="Deletes the mapping's OAuth token and clears oauth_token_id. Fallback to integration-level token resumes (Platform admin only).",
+)
+async def disconnect_mapping(
+    integration_id: UUID,
+    mapping_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> None:
+    repo = IntegrationsRepository(ctx.db)
+    mapping = await repo.get_mapping_by_id(integration_id, mapping_id)
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+
+    token_id = mapping.oauth_token_id
+    mapping.oauth_token_id = None
+    await ctx.db.flush()
+
+    if token_id is not None:
+        token = await ctx.db.get(OAuthToken, token_id)
+        if token:
+            await ctx.db.delete(token)
+            await ctx.db.flush()
 
 
 # =============================================================================

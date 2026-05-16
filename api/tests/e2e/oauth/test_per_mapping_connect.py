@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 
-from src.models.orm import OAuthProvider
+from src.models.orm import OAuthProvider, OAuthToken
 
 
 @pytest.mark.e2e
@@ -192,5 +192,132 @@ class TestPerMappingAuthorize:
             )
             e2e_client.delete(
                 f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
+
+@pytest.mark.e2e
+class TestPerMappingDisconnect:
+    """Test per-mapping OAuth disconnect endpoint."""
+
+    @pytest_asyncio.fixture
+    async def integration_with_oauth(self, e2e_client, platform_admin, db_session):
+        """Create an integration with an authorization_code OAuth provider."""
+        from uuid import uuid4
+
+        integration_name = f"e2e_disconnect_oauth_{uuid4().hex[:8]}"
+
+        response = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        assert response.status_code == 201, f"Create integration failed: {response.text}"
+        integration = response.json()
+
+        integration_id = UUID(integration["id"])
+        oauth_provider = OAuthProvider(
+            provider_name=f"test_provider_{uuid4().hex[:6]}",
+            display_name="Test OAuth Provider",
+            oauth_flow_type="authorization_code",
+            client_id="test-client-id",
+            encrypted_client_secret=b"encrypted_secret",
+            authorization_url="https://login.example.com/authorize",
+            token_url="https://login.example.com/token",
+            scopes=["read", "write"],
+            redirect_uri="/api/oauth/callback/test_provider",
+            integration_id=integration_id,
+        )
+        db_session.add(oauth_provider)
+        await db_session.commit()
+        await db_session.refresh(oauth_provider)
+
+        yield {"integration": integration, "oauth_provider": oauth_provider}
+
+        e2e_client.delete(
+            f"/api/integrations/{integration['id']}",
+            headers=platform_admin.headers,
+        )
+
+    @pytest.mark.asyncio
+    async def test_disconnect_mapping_clears_token_link_and_deletes_token(
+        self, e2e_client, platform_admin, db_session, org1, integration_with_oauth
+    ):
+        """Disconnect clears oauth_token_id and deletes the OAuthToken row."""
+        from uuid import uuid4
+
+        integration = integration_with_oauth["integration"]
+        integration_id = UUID(integration["id"])
+
+        # Create a mapping
+        mapping_resp = e2e_client.post(
+            f"/api/integrations/{integration['id']}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "disconnect-entity-123",
+                "entity_name": "Disconnect Test Entity",
+            },
+        )
+        assert mapping_resp.status_code == 201, f"Create mapping failed: {mapping_resp.text}"
+        mapping = mapping_resp.json()
+        mapping_id = mapping["id"]
+
+        try:
+            # Create an OAuthToken and link it to the mapping directly via db_session
+            oauth_provider = integration_with_oauth["oauth_provider"]
+            token = OAuthToken(
+                provider_id=oauth_provider.id,
+                encrypted_access_token=b"encrypted_access_token",
+                scopes=["read", "write"],
+            )
+            db_session.add(token)
+            await db_session.commit()
+            await db_session.refresh(token)
+            token_id = token.id
+
+            # Link the token to the mapping via direct DB update
+            from sqlalchemy import update
+            from src.models.orm import IntegrationMapping
+
+            await db_session.execute(
+                update(IntegrationMapping)
+                .where(IntegrationMapping.id == UUID(mapping_id))
+                .values(oauth_token_id=token_id)
+            )
+            await db_session.commit()
+
+            # Verify link is in place via GET
+            get_resp = e2e_client.get(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
+                headers=platform_admin.headers,
+            )
+            assert get_resp.status_code == 200, f"GET mapping failed: {get_resp.text}"
+            assert get_resp.json()["oauth_token_id"] == str(token_id)
+
+            # POST disconnect
+            disconnect_resp = e2e_client.post(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}/oauth/disconnect",
+                headers=platform_admin.headers,
+            )
+            assert disconnect_resp.status_code == 204, f"Disconnect failed: {disconnect_resp.text}"
+            assert disconnect_resp.content == b""
+
+            # GET mapping — oauth_token_id must be None
+            get_after = e2e_client.get(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
+                headers=platform_admin.headers,
+            )
+            assert get_after.status_code == 200, f"GET after disconnect failed: {get_after.text}"
+            assert get_after.json()["oauth_token_id"] is None
+
+            # Verify the OAuthToken row is deleted
+            db_session.expire_all()
+            deleted_token = await db_session.get(OAuthToken, token_id)
+            assert deleted_token is None, "OAuthToken row should have been deleted"
+
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
                 headers=platform_admin.headers,
             )
