@@ -642,3 +642,55 @@ async def refresh_oauth_token_http(td: dict[str, Any]) -> dict[str, Any]:
         logger.error(f"Error refreshing OAuth token: {e}", exc_info=True)
         outcome["error"] = f"Token refresh failed: {str(e)[:200]}"
         return outcome
+
+
+async def get_token_for_org(
+    db: "AsyncSession",
+    integration_id: UUID,
+    org_id: UUID,
+) -> "OAuthToken | None":
+    """Resolve the OAuth token to use for (integration, org) at workflow runtime.
+
+    Priority:
+    1. The integration mapping's ``oauth_token_id`` (per-row connect)
+    2. The integration-level token (provider's most-recent token with
+       organization_id IS NULL)
+    3. None — caller must surface a clear error
+    """
+    # Function-local imports to match the existing pattern in this module
+    # and avoid circular import risk (same pattern as build_token_refresh_context).
+    from src.models.orm import OAuthToken
+    from src.models.orm.integrations import IntegrationMapping
+    from src.models.orm.oauth import OAuthProvider
+
+    # 1. Mapping-scoped token
+    mapping_result = await db.execute(
+        select(IntegrationMapping).where(
+            IntegrationMapping.integration_id == integration_id,
+            IntegrationMapping.organization_id == org_id,
+        )
+    )
+    mapping = mapping_result.scalar_one_or_none()
+    if mapping and mapping.oauth_token_id:
+        token = await db.get(OAuthToken, mapping.oauth_token_id)
+        if token:
+            return token
+
+    # 2. Integration-level fallback — most-recent token with organization_id IS NULL
+    #    for the provider linked to this integration.
+    provider_result = await db.execute(
+        select(OAuthProvider).where(OAuthProvider.integration_id == integration_id)
+    )
+    provider = provider_result.scalar_one_or_none()
+    if not provider:
+        return None
+
+    fallback_result = await db.execute(
+        select(OAuthToken)
+        .where(
+            OAuthToken.provider_id == provider.id,
+            OAuthToken.organization_id.is_(None),
+        )
+        .order_by(OAuthToken.created_at.desc())
+    )
+    return fallback_result.scalar_one_or_none()
