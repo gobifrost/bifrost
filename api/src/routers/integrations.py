@@ -39,6 +39,8 @@ from src.models import (
     IntegrationTestRequest,
     IntegrationTestResponse,
     IntegrationUpdate,
+    MappingAuthorizeRequest,
+    MappingAuthorizeResponse,
     OAuthConfigSummary,
 )
 from src.models.orm import Config as ConfigModel
@@ -1262,6 +1264,72 @@ async def delete_mapping(
         )
 
     logger.info(f"Deleted mapping {log_safe(mapping_id)} for integration {log_safe(integration_id)}")
+
+
+@router.post(
+    "/{integration_id}/mappings/{mapping_id}/oauth/authorize",
+    response_model=MappingAuthorizeResponse,
+    summary="Begin OAuth authorize flow for a mapping",
+    description="Returns the authorization URL with a signed state token carrying mapping_id (Platform admin only)",
+)
+async def authorize_mapping(
+    integration_id: UUID,
+    mapping_id: UUID,
+    request: MappingAuthorizeRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> MappingAuthorizeResponse:
+    """Begin the OAuth authorization flow for a specific integration mapping.
+
+    Returns an authorization URL containing a signed state token that carries
+    the mapping_id so the callback can attribute the resulting token to this mapping.
+    """
+    from src.services.oauth_state import encode_state
+    from src.services.oauth_provider import get_url_resolution_defaults, resolve_url_template
+
+    repo = IntegrationsRepository(ctx.db)
+    integration = await repo.get_integration_by_id(integration_id)
+    if not integration or not integration.oauth_provider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Integration or its OAuth provider not found",
+        )
+    provider = integration.oauth_provider
+    if not provider.authorization_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This integration uses client_credentials flow and does not require user authorization",
+        )
+
+    mapping = await repo.get_mapping_by_id(integration_id, mapping_id)
+    if not mapping:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mapping not found",
+        )
+
+    defaults = await get_url_resolution_defaults(ctx.db, provider)
+    resolved_url = resolve_url_template(url=provider.authorization_url, defaults=defaults)
+    state = encode_state({
+        "provider_id": str(provider.id),
+        "mapping_id": str(mapping_id),
+    })
+    params = {
+        "client_id": provider.client_id,
+        "response_type": "code",
+        "state": state,
+        "scope": " ".join(provider.scopes) if provider.scopes else "",
+        "redirect_uri": request.redirect_uri,
+    }
+
+    logger.info(
+        f"Generated per-mapping OAuth authorization URL for mapping {log_safe(mapping_id)}, "
+        f"integration {log_safe(integration_id)}"
+    )
+
+    return MappingAuthorizeResponse(
+        authorization_url=f"{resolved_url}?{urlencode(params)}",
+    )
 
 
 # =============================================================================

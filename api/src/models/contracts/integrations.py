@@ -233,6 +233,18 @@ class IntegrationMappingBatchResponse(BaseModel):
     errors: list[str] = Field(default_factory=list, description="Error messages for failed items")
 
 
+class MappingAuthorizeRequest(BaseModel):
+    """Request to begin OAuth authorize flow for a specific mapping."""
+
+    redirect_uri: str = Field(..., description="Frontend callback URL")
+
+
+class MappingAuthorizeResponse(BaseModel):
+    """Response with the authorization URL to redirect the user to."""
+
+    authorization_url: str = Field(..., description="URL to redirect user for authorization")
+
+
 # ==================== INTEGRATION RESPONSE MODELS ====================
 
 
