@@ -164,7 +164,11 @@ def _check_cli_version() -> None:
         if not api_url:
             return
 
-        with urllib.request.urlopen(f"{api_url}/api/version", timeout=3) as resp:
+        req = urllib.request.Request(
+            f"{api_url}/api/version",
+            headers={"User-Agent": f"bifrost-cli/{installed}"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
             data = _json.loads(resp.read())
 
         server_version = (data.get("version") or "").lstrip("v")

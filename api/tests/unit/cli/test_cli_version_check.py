@@ -298,8 +298,8 @@ class TestUrlResolution:
             cli._check_cli_version()
             resolve.assert_called_once()
             # The /api/version GET should target the URL credentials returned.
-            url = urlopen.call_args[0][0]
-            assert url == "http://from-credentials.example/api/version"
+            req = urlopen.call_args[0][0]
+            assert req.full_url == "http://from-credentials.example/api/version"
 
     def test_loads_dotenv_before_resolving(self, monkeypatch, tmp_path):
         """A project ``.env`` containing BIFROST_API_URL is honored.
@@ -335,5 +335,39 @@ class TestUrlResolution:
 
         # urlopen should have been called against the URL from .env.
         assert urlopen.called, "urlopen never called — dotenv URL not resolved"
-        url = urlopen.call_args[0][0]
-        assert url == "http://from-dotenv.example/api/version"
+        req = urlopen.call_args[0][0]
+        assert req.full_url == "http://from-dotenv.example/api/version"
+
+
+class TestRequestHeaders:
+    def test_sets_non_default_user_agent(self, monkeypatch):
+        """The request must override the default Python-urllib User-Agent.
+
+        WAFs in front of production deployments (e.g. Cloudflare on
+        gocovi.com) block the default ``Python-urllib/X.Y`` UA with HTTP
+        403. The exception is swallowed by the best-effort except clause,
+        so the entire version check silently no-ops in prod. Pin a
+        ``bifrost-cli/<version>`` UA so the request actually reaches the
+        server.
+        """
+        _patch_version(monkeypatch, "1.2.3")
+        from bifrost import cli
+
+        with patch(
+            "bifrost.credentials._resolve_url",
+            return_value="http://example.com",
+        ), patch(
+            "urllib.request.urlopen",
+            return_value=_make_url_response({"version": "1.2.3"}),
+        ) as urlopen:
+            cli._check_cli_version()
+
+        req = urlopen.call_args[0][0]
+        ua = req.get_header("User-agent")  # urllib normalizes header names
+        assert ua is not None, "request was sent with no User-Agent override"
+        assert not ua.lower().startswith("python-urllib"), (
+            f"User-Agent must not be the urllib default; got {ua!r}"
+        )
+        assert "bifrost-cli" in ua and "1.2.3" in ua, (
+            f"expected bifrost-cli/<version> UA, got {ua!r}"
+        )
