@@ -87,6 +87,7 @@ export interface IntegrationMappingsTabProps {
 	onConnectMapping: (org: OrgWithMapping) => void;
 	onDisconnectMapping: (mappingId: string) => void;
 	onRefreshMapping: (mappingId: string) => void;
+	refreshingMappingId?: string | null;
 }
 
 export function IntegrationMappingsTab({
@@ -113,6 +114,7 @@ export function IntegrationMappingsTab({
 	onConnectMapping,
 	onDisconnectMapping,
 	onRefreshMapping,
+	refreshingMappingId = null,
 }: IntegrationMappingsTabProps) {
 	const hasNonDefaultConfig = (org: OrgWithMapping): boolean => {
 		if (!org.mapping?.config || !configSchema) return false;
@@ -307,6 +309,9 @@ export function IntegrationMappingsTab({
 													) : org.mapping?.connection_status === "completed" ? (
 														<ConnectedBadge
 															expiresAt={org.mapping?.connection_expires_at ?? null}
+															isRefreshing={
+																refreshingMappingId === org.mapping?.id
+															}
 															onRefresh={() =>
 																onRefreshMapping(org.mapping!.id)
 															}
@@ -413,9 +418,11 @@ function formatTimeUntil(expiresAt: string | null): string {
 
 function ConnectedBadge({
 	expiresAt,
+	isRefreshing,
 	onRefresh,
 }: {
 	expiresAt: string | null;
+	isRefreshing: boolean;
 	onRefresh: () => void;
 }) {
 	return (
@@ -427,17 +434,22 @@ function ConnectedBadge({
 						type="button"
 						onClick={(e) => {
 							e.stopPropagation();
-							onRefresh();
+							if (!isRefreshing) onRefresh();
 						}}
-						className="rounded p-0.5 hover:bg-green-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-white"
-						title="Refresh token"
+						disabled={isRefreshing}
+						className="rounded p-0.5 hover:bg-green-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-white disabled:cursor-default"
+						title={isRefreshing ? "Refreshing…" : "Refresh token"}
 						aria-label="Refresh token"
 					>
-						<RefreshCw className="h-3 w-3" />
+						<RefreshCw
+							className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`}
+						/>
 					</button>
 				</Badge>
 			</TooltipTrigger>
-			<TooltipContent>{formatTimeUntil(expiresAt)}</TooltipContent>
+			<TooltipContent>
+				{isRefreshing ? "Refreshing…" : formatTimeUntil(expiresAt)}
+			</TooltipContent>
 		</Tooltip>
 	);
 }

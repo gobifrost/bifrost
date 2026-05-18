@@ -119,6 +119,9 @@ export function IntegrationDetail() {
 	const authorizeMappingMutation = useAuthorizeMapping();
 	const disconnectMappingMutation = useDisconnectMapping();
 	const refreshMappingMutation = useRefreshMapping();
+	const [refreshingMappingId, setRefreshingMappingId] = useState<
+		string | null
+	>(null);
 
 	// Memoize to stabilize references for the useEffect that combines them
 	const organizations = useMemo(
@@ -357,6 +360,7 @@ export function IntegrationDetail() {
 
 	const handleRefreshMapping = (mappingId: string) => {
 		if (!integrationId) return;
+		setRefreshingMappingId(mappingId);
 		refreshMappingMutation.mutate(
 			{
 				params: {
@@ -375,6 +379,9 @@ export function IntegrationDetail() {
 						(err as { detail?: string } | undefined)?.detail ??
 						"Failed to refresh token";
 					toast.error(msg);
+				},
+				onSettled: () => {
+					setRefreshingMappingId(null);
 				},
 			},
 		);
@@ -794,6 +801,7 @@ export function IntegrationDetail() {
 						onConnectMapping={handleConnectMapping}
 						onDisconnectMapping={handleDisconnectMapping}
 						onRefreshMapping={handleRefreshMapping}
+						refreshingMappingId={refreshingMappingId}
 					/>
 				</TabsContent>
 
