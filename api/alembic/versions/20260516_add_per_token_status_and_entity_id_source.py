@@ -1,7 +1,7 @@
 """add per-token status and entity_id_source
 
 Revision ID: 20260516_per_token_status
-Revises: 20260506_knowledge_dim
+Revises: 20260518_documents_composite_pk
 Create Date: 2026-05-16
 
 """
@@ -14,7 +14,10 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "20260516_per_token_status"
-down_revision: Union[str, None] = "20260506_knowledge_dim"
+# Chained after 20260518_documents_composite_pk (PR #257) to keep a
+# single alembic head after the merge from main; this migration was
+# originally authored against 20260506_knowledge_dim.
+down_revision: Union[str, None] = "20260518_documents_composite_pk"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
