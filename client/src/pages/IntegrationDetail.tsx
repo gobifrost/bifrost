@@ -270,7 +270,10 @@ export function IntegrationDetail() {
 
 	const handleConnectMapping = async (org: OrgWithMapping) => {
 		if (!integrationId) return;
-		const redirectUri = `${window.location.origin}/oauth/callback`;
+		// Use the same redirect_uri shape as the integration-level Connect so the
+		// shared OAuthCallback page (route /oauth/callback/:integrationId) handles
+		// both flows. The state token carries mapping_id for the per-mapping path.
+		const redirectUri = `${window.location.origin}/oauth/callback/${integrationId}`;
 
 		// If there's no mapping row yet, create an empty one so the OAuth
 		// callback has something to link the token to. entity_id will be
@@ -305,8 +308,21 @@ export function IntegrationDetail() {
 				body: { redirect_uri: redirectUri },
 			},
 			{
-				onSuccess: (data) => {
-					window.location.href = data.authorization_url;
+				onSuccess: (response) => {
+					// Match the integration-level Connect: open in a centered popup
+					// so the user stays on the integration page and the existing
+					// postMessage(oauth_success) listener refreshes state on close.
+					const width = 600;
+					const height = 700;
+					const left =
+						window.screenX + (window.outerWidth - width) / 2;
+					const top =
+						window.screenY + (window.outerHeight - height) / 2;
+					window.open(
+						response.authorization_url,
+						"oauth_popup",
+						`width=${width},height=${height},left=${left},top=${top},scrollbars=yes`,
+					);
 				},
 				onError: () => {
 					toast.error("Failed to start OAuth connection");
