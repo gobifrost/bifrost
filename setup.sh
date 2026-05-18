@@ -57,13 +57,13 @@ echo ""
 # Generate secure random values (alphanumeric only for compatibility)
 POSTGRES_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
 RABBITMQ_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
-MINIO_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
+SEAWEEDFS_SECRET=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
 SECRET_KEY=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 48)
 
 # Replace in .env (sed -i.bak works on both Linux and macOS)
 sed -i.bak "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASS/" "$ENV_FILE"
 sed -i.bak "s/RABBITMQ_PASSWORD=.*/RABBITMQ_PASSWORD=$RABBITMQ_PASS/" "$ENV_FILE"
-sed -i.bak "s/MINIO_ROOT_PASSWORD=.*/MINIO_ROOT_PASSWORD=$MINIO_PASS/" "$ENV_FILE"
+sed -i.bak "s/SEAWEEDFS_SECRET_KEY=.*/SEAWEEDFS_SECRET_KEY=$SEAWEEDFS_SECRET/" "$ENV_FILE"
 sed -i.bak "s/BIFROST_SECRET_KEY=.*/BIFROST_SECRET_KEY=$SECRET_KEY/" "$ENV_FILE"
 
 # Configure WebAuthn/Passkeys
@@ -86,7 +86,7 @@ echo ""
 echo "Generated:"
 echo "  - POSTGRES_PASSWORD (24 chars)"
 echo "  - RABBITMQ_PASSWORD (24 chars)"
-echo "  - MINIO_ROOT_PASSWORD (24 chars)"
+echo "  - SEAWEEDFS_SECRET_KEY (24 chars)"
 echo "  - BIFROST_SECRET_KEY (48 chars)"
 echo ""
 echo "Configured:"

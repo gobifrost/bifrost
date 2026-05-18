@@ -7,7 +7,7 @@ This directory contains Kubernetes manifests for deploying Bifrost to a Kubernet
 Before deploying Bifrost, you need:
 
 1. **PostgreSQL Database** - Use a managed service (RDS, Cloud SQL, Azure Database)
-2. **S3-Compatible Storage** - AWS S3, GCS, Azure Blob, or MinIO
+2. **S3-Compatible Storage** - AWS S3, GCS, Azure Blob, or self-hosted S3-compatible storage such as SeaweedFS
 
 ## Directory Structure
 
@@ -221,7 +221,7 @@ The scheduler must run as a singleton to prevent duplicate job executions.
 | `BIFROST_RABBITMQ_URL` | RabbitMQ AMQP connection string |
 | `BIFROST_RABBITMQ_PASSWORD` | RabbitMQ password (for in-cluster deployment) |
 | `BIFROST_REDIS_URL` | Redis connection string (for caching) |
-| `BIFROST_S3_ENDPOINT_URL` | S3 endpoint (or MinIO URL) |
+| `BIFROST_S3_ENDPOINT_URL` | S3 endpoint URL |
 | `BIFROST_S3_ACCESS_KEY` | S3 access key |
 | `BIFROST_S3_SECRET_KEY` | S3 secret key |
 

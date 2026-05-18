@@ -19,7 +19,7 @@ def _settings(s3_configured: bool = True):
         rabbitmq_url="amqp://rabbit-secret@example:5672/",
         s3_configured=s3_configured,
         s3_bucket="bucket-secret" if s3_configured else None,
-        s3_endpoint_url="http://minio-secret:9000" if s3_configured else None,
+        s3_endpoint_url="http://object-store-secret:8333" if s3_configured else None,
         s3_access_key="access-secret" if s3_configured else None,
         s3_secret_key="secret-secret" if s3_configured else None,
         s3_region="us-east-1",
@@ -134,7 +134,7 @@ async def test_error_output_does_not_include_secret_values(monkeypatch):
         "redis-secret",
         "rabbit-secret",
         "bucket-secret",
-        "minio-secret",
+        "object-store-secret",
         "access-secret",
         "secret-secret",
     ]

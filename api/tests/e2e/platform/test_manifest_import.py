@@ -51,7 +51,7 @@ def manifest_import_test_wf(message: str):
 
 @pytest_asyncio.fixture
 async def repo_storage() -> RepoStorage:
-    """Real RepoStorage backed by test MinIO."""
+    """Real RepoStorage backed by test S3-compatible storage."""
     settings = get_settings()
     return RepoStorage(settings)
 

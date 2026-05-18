@@ -179,7 +179,7 @@ class TestS3ClientCaching:
         mod._s3_available = True
 
         env_vars = {
-            "BIFROST_S3_ENDPOINT_URL": "http://localhost:9000",
+            "BIFROST_S3_ENDPOINT_URL": "http://localhost:8333",
             "BIFROST_S3_ACCESS_KEY": "test",
             "BIFROST_S3_SECRET_KEY": "test",
             "BIFROST_S3_BUCKET": "test-bucket",

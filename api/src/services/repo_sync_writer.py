@@ -5,7 +5,7 @@ When platform entities are created/updated/deleted, this writer
 regenerates the split-file manifest under ``.bifrost/`` so the S3
 working tree stays in sync with the DB.
 
-Skips silently when S3 is not configured (local dev without MinIO).
+Skips silently when S3-compatible storage is not configured.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class RepoSyncWriter:
     """Writes the regenerated manifest to S3 _repo/.bifrost/.
 
-    Skips writes silently when S3 is not configured (e.g., dev without MinIO).
+    Skips writes silently when S3-compatible storage is not configured.
     """
 
     def __init__(self, db: AsyncSession):

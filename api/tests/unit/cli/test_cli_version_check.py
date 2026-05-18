@@ -21,6 +21,7 @@ import io
 import json
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 
@@ -56,20 +57,18 @@ def _patch_version(monkeypatch, value: str) -> None:
     monkeypatch.setattr("bifrost.__version__", value, raising=False)
 
 
-def _make_url_response(payload: dict) -> object:
-    """Return a context-manager-shaped fake for ``urllib.request.urlopen``."""
+def _make_url_response(payload: dict, status_code: int = 200) -> httpx.Response:
+    """Return an httpx.Response matching what ``httpx.get`` would yield.
 
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_a):
-            return False
-
-        def read(self):
-            return json.dumps(payload).encode()
-
-    return _Resp()
+    ``request=`` must be set or ``raise_for_status()`` raises a
+    ``RuntimeError`` instead of evaluating the status code.
+    """
+    return httpx.Response(
+        status_code=status_code,
+        content=json.dumps(payload).encode(),
+        headers={"content-type": "application/json"},
+        request=httpx.Request("GET", "http://test.example/api/version"),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -83,7 +82,7 @@ class TestSkipCases:
         _patch_version(monkeypatch, "unknown")
         from bifrost import cli
 
-        with patch("urllib.request.urlopen") as urlopen:
+        with patch("httpx.get") as urlopen:
             cli._check_cli_version()
             urlopen.assert_not_called()
 
@@ -92,7 +91,7 @@ class TestSkipCases:
         _patch_version(monkeypatch, "0.0.0+source")
         from bifrost import cli
 
-        with patch("urllib.request.urlopen") as urlopen:
+        with patch("httpx.get") as urlopen:
             cli._check_cli_version()
             urlopen.assert_not_called()
 
@@ -102,7 +101,7 @@ class TestSkipCases:
         from bifrost import cli
 
         with patch("bifrost.credentials._resolve_url", return_value=None), \
-             patch("urllib.request.urlopen") as urlopen:
+             patch("httpx.get") as urlopen:
             cli._check_cli_version()
             urlopen.assert_not_called()
 
@@ -114,7 +113,7 @@ class TestSkipCases:
         with patch(
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
-        ), patch("urllib.request.urlopen", side_effect=OSError("network down")):
+        ), patch("httpx.get", side_effect=OSError("network down")):
             cli._check_cli_version()  # must not raise SystemExit
 
     def test_skips_on_malformed_response(self, monkeypatch):
@@ -122,20 +121,16 @@ class TestSkipCases:
         _patch_version(monkeypatch, "1.2.3")
         from bifrost import cli
 
-        class _BadResp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_a):
-                return False
-
-            def read(self):
-                return b"<html>not json</html>"
-
+        bad = httpx.Response(
+            status_code=200,
+            content=b"<html>not json</html>",
+            headers={"content-type": "text/html"},
+            request=httpx.Request("GET", "http://server.example/api/version"),
+        )
         with patch(
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
-        ), patch("urllib.request.urlopen", return_value=_BadResp()):
+        ), patch("httpx.get", return_value=bad):
             cli._check_cli_version()  # must not raise SystemExit
 
     def test_skips_when_server_version_missing(self, monkeypatch):
@@ -147,7 +142,7 @@ class TestSkipCases:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({}),
         ):
             cli._check_cli_version()  # must not raise SystemExit
@@ -169,7 +164,7 @@ class TestVersionComparison:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "1.2.3"}),
         ), patch("sys.stderr", stderr):
             cli._check_cli_version()
@@ -185,7 +180,7 @@ class TestVersionComparison:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "v1.2.3"}),
         ):
             cli._check_cli_version()  # no SystemExit
@@ -199,7 +194,7 @@ class TestVersionComparison:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "1.3.0"}),
         ):
             with pytest.raises(SystemExit) as excinfo:
@@ -226,7 +221,7 @@ class TestVersionComparison:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "1.9.9"}),
         ):
             with pytest.raises(SystemExit) as excinfo:
@@ -246,7 +241,7 @@ class TestVersionComparison:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "0.8.1-dev.47"}),
         ):
             cli._check_cli_version()  # no SystemExit
@@ -261,7 +256,7 @@ class TestVersionComparison:
             "bifrost.credentials._resolve_url",
             return_value="http://server.example",
         ), patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "0.8.1-dev.48"}),
         ):
             with pytest.raises(SystemExit) as excinfo:
@@ -292,7 +287,7 @@ class TestUrlResolution:
             "bifrost.credentials._resolve_url",
             return_value="http://from-credentials.example",
         ) as resolve, patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "1.2.3"}),
         ) as urlopen:
             cli._check_cli_version()
@@ -325,7 +320,7 @@ class TestUrlResolution:
         with patch(
             "bifrost.credentials.get_persistent_backend"
         ) as get_backend, patch(
-            "urllib.request.urlopen",
+            "httpx.get",
             return_value=_make_url_response({"version": "1.2.3"}),
         ) as urlopen:
             backend = get_backend.return_value
@@ -333,7 +328,36 @@ class TestUrlResolution:
             backend.get.return_value = None
             cli._check_cli_version()
 
-        # urlopen should have been called against the URL from .env.
-        assert urlopen.called, "urlopen never called — dotenv URL not resolved"
+        # httpx.get should have been called against the URL from .env.
+        assert urlopen.called, "httpx.get never called — dotenv URL not resolved"
         url = urlopen.call_args[0][0]
         assert url == "http://from-dotenv.example/api/version"
+
+
+class TestTransport:
+    def test_uses_httpx_not_urllib(self, monkeypatch):
+        """Regression: the request must go through httpx, not urllib.
+
+        urllib's default ``Python-urllib/X.Y`` User-Agent is blocked with
+        HTTP 403 by CDNs/WAFs in front of production Bifrost instances
+        (Cloudflare on bifrost.gocovi.com is the live case). The 403 was
+        swallowed by the best-effort except clause, so the entire version
+        check silently no-op'd in prod. httpx's UA gets through and matches
+        what every other SDK request already sends.
+
+        Patch both transports — only the httpx mock should be hit.
+        """
+        _patch_version(monkeypatch, "1.2.3")
+        from bifrost import cli
+
+        with patch(
+            "bifrost.credentials._resolve_url",
+            return_value="http://example.com",
+        ), patch(
+            "httpx.get",
+            return_value=_make_url_response({"version": "1.2.3"}),
+        ) as httpx_get, patch("urllib.request.urlopen") as urlopen:
+            cli._check_cli_version()
+
+        assert httpx_get.called, "version check did not route through httpx"
+        urlopen.assert_not_called()

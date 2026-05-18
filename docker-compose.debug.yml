@@ -74,31 +74,14 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
     environment:
-      MINIO_ROOT_USER: bifrost
-      MINIO_ROOT_PASSWORD: bifrost_debug_key
+      AWS_ACCESS_KEY_ID: bifrost
+      AWS_SECRET_ACCESS_KEY: bifrost_debug_key
+      S3_BUCKET: bifrost-local
     volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set myminio http://minio:9000 bifrost bifrost_debug_key;
-      mc mb myminio/bifrost-local --ignore-existing;
-      echo 'Bucket created successfully';
-      "
+      - seaweedfs_data:/data
 
   init:
     build:
@@ -142,7 +125,7 @@ services:
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_S3_BUCKET: bifrost-local
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
@@ -169,8 +152,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 10s
@@ -196,7 +179,7 @@ services:
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_S3_BUCKET: bifrost-local
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
@@ -234,7 +217,7 @@ services:
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_S3_BUCKET: bifrost-local
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
@@ -325,5 +308,5 @@ volumes:
   postgres_data:
   rabbitmq_data:
   redis_data:
-  minio_data:
+  seaweedfs_data:
   netbird_data:

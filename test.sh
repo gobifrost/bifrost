@@ -4,7 +4,7 @@
 # Stack lifecycle (long-lived, per worktree):
 #   ./test.sh stack up                  Boot the stack.
 #   ./test.sh stack down                Tear it down + remove volumes.
-#   ./test.sh stack reset               Fast state reset (DB clone, redis flush, minio wipe).
+#   ./test.sh stack reset               Fast state reset (DB clone, redis flush, object storage wipe).
 #   ./test.sh stack status              Print project name and running services.
 #
 # Backend tests (stack must be up):
@@ -92,7 +92,8 @@ reset_state() {
         "CREATE DATABASE bifrost_test TEMPLATE bifrost_test_template;" > /dev/null
 
     docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli FLUSHDB > /dev/null
-    docker compose -f "$COMPOSE_FILE" run --rm --no-deps minio-init > /dev/null
+    docker compose -f "$COMPOSE_FILE" rm -sf seaweedfs > /dev/null
+    docker compose -f "$COMPOSE_FILE" up -d seaweedfs > /dev/null
 
     rm -f client/e2e/.auth/credentials.json \
           client/e2e/.auth/platform_admin.json \
@@ -144,13 +145,13 @@ stack_up() {
     fi
 
     echo "Booting infrastructure..."
-    docker compose -f "$COMPOSE_FILE" up -d postgres rabbitmq redis minio
+    docker compose -f "$COMPOSE_FILE" up -d postgres rabbitmq redis seaweedfs
 
     wait_for_service "$COMPOSE_FILE" postgres pg_isready -U bifrost -d postgres
     wait_for_service "$COMPOSE_FILE" rabbitmq rabbitmq-diagnostics check_running
     wait_for_service "$COMPOSE_FILE" redis redis-cli ping
 
-    docker compose -f "$COMPOSE_FILE" up -d pgbouncer minio-init
+    docker compose -f "$COMPOSE_FILE" up -d pgbouncer
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
 
     echo "Building template database..."

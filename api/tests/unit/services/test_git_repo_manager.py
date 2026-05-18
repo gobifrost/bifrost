@@ -13,7 +13,7 @@ def mock_settings():
     """Create mock settings for S3 configuration."""
     settings = MagicMock()
     settings.s3_bucket = "bifrost-local"
-    settings.s3_endpoint_url = "http://minio:9000"
+    settings.s3_endpoint_url = "http://seaweedfs:8333"
     settings.s3_access_key = "bifrost"
     settings.s3_secret_key = "bifrost123"
     settings.s3_region = "us-east-1"
@@ -39,7 +39,7 @@ class TestBuildSyncCmd:
             "aws", "s3", "sync",
             "s3://bifrost-local/_repo/",
             "/tmp/work",
-            "--endpoint-url", "http://minio:9000",
+            "--endpoint-url", "http://seaweedfs:8333",
             "--only-show-errors",
         ]
 
@@ -54,7 +54,7 @@ class TestBuildSyncCmd:
             "/tmp/work",
             "s3://bifrost-local/_repo/",
             "--delete",
-            "--endpoint-url", "http://minio:9000",
+            "--endpoint-url", "http://seaweedfs:8333",
             "--only-show-errors",
         ]
 

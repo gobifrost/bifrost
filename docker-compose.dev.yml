@@ -9,7 +9,7 @@ name: bifrost-dev
 # - Hot reload with volume mounts for live code changes
 # - Development-specific Dockerfiles (dependencies only)
 # - Debug port for VS Code attachment
-# - Management UI ports for RabbitMQ and MinIO
+# - Management UI ports for RabbitMQ and SeaweedFS
 # - Development environment defaults
 
 services:
@@ -26,18 +26,13 @@ services:
       - "5672:5672"
       - "15672:15672"  # Management UI for debugging
 
-  # MinIO - development password + console port
-  minio:
+  # SeaweedFS - development password + S3 port
+  seaweedfs:
     environment:
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-bifrost123}
+      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY:-bifrost}
+      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_KEY:-bifrost123}
     ports:
-      - "9000:9000"
-      - "9001:9001"  # Web Console for debugging
-
-  # MinIO Init - development password default
-  minio-init:
-    environment:
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-bifrost123}
+      - "8333:8333"
 
   # PgBouncer - development password default
   pgbouncer:
@@ -79,7 +74,7 @@ services:
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD:-bifrost_dev}@rabbitmq:5672/
-      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-bifrost123}}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
       BIFROST_S3_PUBLIC_ENDPOINT_URL: ${BIFROST_S3_PUBLIC_ENDPOINT_URL:-}
       # Debugging (optional - enables debugpy)
@@ -115,7 +110,7 @@ services:
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD:-bifrost_dev}@rabbitmq:5672/
-      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-bifrost123}}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
     volumes:
       - ./api/src:/app/src:ro
@@ -139,7 +134,7 @@ services:
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD:-bifrost_dev}@rabbitmq:5672/
-      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-bifrost123}}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
       # Thread-based worker model (new execution architecture)
       BIFROST_USE_THREAD_WORKERS: "true"
@@ -173,4 +168,4 @@ services:
       - ./client/tailwind.config.js:/app/tailwind.config.js
       - ./client/postcss.config.js:/app/postcss.config.js
     environment:
-      BIFROST_S3_ENDPOINT_URL: ${BIFROST_S3_ENDPOINT_URL:-http://minio:9000}
+      BIFROST_S3_ENDPOINT_URL: ${BIFROST_S3_ENDPOINT_URL:-http://seaweedfs:8333}
