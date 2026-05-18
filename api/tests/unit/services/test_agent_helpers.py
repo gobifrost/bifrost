@@ -67,6 +67,50 @@ class TestResolveAgentTools:
         assert "search_knowledge" in tool_names
 
     @pytest.mark.asyncio
+    @patch("src.services.mcp_server.server.get_system_tools")
+    async def test_filters_privileged_agent_management_system_tools(self, mock_get_system_tools):
+        """Privileged agent-management tools are not exposed to agent planners."""
+        mock_get_system_tools.return_value = [
+            {
+                "id": "create_agent",
+                "description": "Create an agent",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "id": "update_agent",
+                "description": "Update an agent",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "id": "delete_agent",
+                "description": "Delete an agent",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "id": "list_workflows",
+                "description": "List workflows",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+        mock_session = MagicMock()
+        mock_agent = MagicMock()
+        mock_agent.id = uuid4()
+        mock_agent.organization_id = None
+        mock_agent.tools = []
+        mock_agent.system_tools = [
+            "create_agent",
+            "list_workflows",
+            "update_agent",
+            "delete_agent",
+        ]
+        mock_agent.knowledge_sources = []
+        mock_agent.delegated_agents = []
+
+        tools, _ = await resolve_agent_tools(mock_agent, mock_session)
+
+        assert [t.name for t in tools] == ["list_workflows"]
+
+    @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools", return_value=[])
     async def test_no_tools_returns_empty(self, _mock_get_system_tools):
         """Agent with no tools returns empty lists."""

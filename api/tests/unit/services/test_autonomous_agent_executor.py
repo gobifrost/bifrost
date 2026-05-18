@@ -9,6 +9,7 @@ from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
     MAX_DELEGATION_DEPTH,
+    ToolError,
 )
 from src.services.llm.base import LLMResponse, ToolCallRequest
 
@@ -728,6 +729,20 @@ class TestAutonomousAgentExecutor:
         # Verify a tool_error step was buffered (Redis-first pattern)
         error_steps = [s for s in executor._pending_steps if s["type"] == "tool_error"]
         assert len(error_steps) >= 1
+
+    @pytest.mark.asyncio
+    async def test_privileged_agent_management_tool_is_blocked(self, mock_session, mock_agent):
+        """Autonomous agents cannot execute privileged agent-management system tools."""
+        mock_agent.system_tools = ["create_agent"]
+
+        executor = AutonomousAgentExecutor(mock_session)
+        tool_call = ToolCallRequest(id="tc1", name="create_agent", arguments={})
+
+        with patch.object(executor, "_execute_system_tool", new_callable=AsyncMock) as mock_system_tool:
+            with pytest.raises(ToolError, match="cannot be executed from autonomous agents"):
+                await executor._execute_tool(tool_call, mock_agent)
+
+        mock_system_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.get_llm_client")

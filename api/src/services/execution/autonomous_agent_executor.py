@@ -27,6 +27,7 @@ from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
+from src.core.system_agents import is_privileged_agent_management_tool
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
@@ -427,6 +428,10 @@ class AutonomousAgentExecutor:
 
         # System tools
         if tool_call.name in (agent.system_tools or []):
+            if is_privileged_agent_management_tool(tool_call.name):
+                raise ToolError(
+                    f"System tool '{tool_call.name}' cannot be executed from autonomous agents"
+                )
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.

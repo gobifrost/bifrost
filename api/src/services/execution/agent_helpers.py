@@ -13,6 +13,7 @@ from src.models.orm.external_mcp import (
     MCPConnection,
     MCPServer,
 )
+from src.core.system_agents import is_privileged_agent_management_tool
 from src.services.llm import ToolDefinition
 from src.services.tool_registry import ToolRegistry
 
@@ -134,7 +135,12 @@ async def resolve_agent_tools(
     seen_names: dict[str, str] = {}
 
     # 1. System tools first (they always win conflicts)
-    system_tool_ids = list(agent.system_tools or [])
+    configured_system_tool_ids = list(agent.system_tools or [])
+    system_tool_ids = [
+        tool_id
+        for tool_id in configured_system_tool_ids
+        if not is_privileged_agent_management_tool(tool_id)
+    ]
 
     # Auto-add search_knowledge when agent has knowledge sources
     if agent.knowledge_sources and "search_knowledge" not in system_tool_ids:
