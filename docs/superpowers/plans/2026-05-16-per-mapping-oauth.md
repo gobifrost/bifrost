@@ -1880,6 +1880,916 @@ git commit -m "chore: final cleanups from verification pass" || echo "Nothing to
 
 ---
 
+## Phase 6: Entity ID Source Picker (in-callback discovery UX)
+
+**Why:** `entity_id_source` is currently a JSON column on `OAuthProvider` that has no UI. Today an admin has to set it via SQL or MCP — hostile to the people who actually configure integrations. This phase folds the configuration into the natural OAuth connect moment so admins set it by clicking the right field in a picker, never leaving the popup.
+
+**Behavior recap (from the design doc):**
+
+- After every Connect (integration-level OR per-mapping), the callback inspects the captured artifacts.
+- If `entity_id_source` is already set on the provider → skip picker, close popup as normal.
+- If the OAuth response contains ONLY OAuth-protocol fields (no useful identity to extract) → skip picker, close as normal.
+- Otherwise → render the picker in the popup before closing. Admin sees `(source_type, key, value)` rows with secrets scrubbed.
+- Admin picks one → saves `entity_id_source` on the provider AND populates the triggering mapping's `entity_id`.
+- Admin closes without picking → `entity_id_source` stays null; picker appears again on next connect. No "dismissed" state.
+
+### Task 15: Backend — surface picker candidates in callback response
+
+**Files:**
+- Modify: `api/src/services/oauth_entity_id.py` — add `enumerate_candidate_fields()`
+- Modify: `api/src/models/contracts/oauth.py` — extend `OAuthCallbackResponse` with `entity_id_picker: list[PickerCandidate] | None`
+- Modify: `api/src/routers/oauth_connections.py` — populate the new field in the callback when conditions match
+- Create: `api/tests/unit/test_entity_id_picker_candidates.py` — unit coverage for enumeration + scrubbing
+
+- [ ] **Step 1: Write the failing unit tests**
+
+Create `api/tests/unit/test_entity_id_picker_candidates.py`:
+
+```python
+"""Unit tests for entity_id picker candidate enumeration + secret scrubbing."""
+
+import base64
+import json
+import pytest
+
+from src.services.oauth_entity_id import enumerate_candidate_fields
+
+
+def _id_token(claims: dict) -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    return f"{header}.{payload}."
+
+
+def test_returns_empty_when_only_protocol_fields():
+    """Pure OAuth response (access_token, refresh_token, expires_in, etc.) yields no candidates."""
+    out = enumerate_candidate_fields(
+        callback_url_params={},
+        token_response={
+            "access_token": "atk",
+            "refresh_token": "rtk",
+            "expires_in": 3600,
+            "scope": "read write",
+            "token_type": "Bearer",
+        },
+    )
+    assert out == []
+
+
+def test_returns_url_param_candidates():
+    out = enumerate_candidate_fields(
+        callback_url_params={"realmId": "12345", "code": "abc", "state": "xyz"},
+        token_response={},
+    )
+    # code and state are protocol — must be hidden
+    paths = {(c["type"], c["key"]) for c in out}
+    assert ("url_param", "realmId") in paths
+    assert ("url_param", "code") not in paths
+    assert ("url_param", "state") not in paths
+
+
+def test_returns_token_response_candidates_with_dotted_paths():
+    out = enumerate_candidate_fields(
+        callback_url_params={},
+        token_response={
+            "access_token": "atk",
+            "team": {"id": "T123", "name": "Acme"},
+            "stripe_user_id": "acct_1",
+        },
+    )
+    paths = {(c["type"], c["key"]): c["value"] for c in out}
+    assert paths.get(("token_response_field", "team.id")) == "T123"
+    assert paths.get(("token_response_field", "team.name")) == "Acme"
+    assert paths.get(("token_response_field", "stripe_user_id")) == "acct_1"
+    # access_token must be scrubbed
+    assert ("token_response_field", "access_token") not in paths
+
+
+def test_returns_id_token_claim_candidates():
+    out = enumerate_candidate_fields(
+        callback_url_params={},
+        token_response={
+            "access_token": "atk",
+            "id_token": _id_token({"tid": "tenant-uuid", "sub": "user-id", "iss": "https://example.com"}),
+        },
+    )
+    paths = {(c["type"], c["key"]): c["value"] for c in out}
+    assert paths.get(("id_token_claim", "tid")) == "tenant-uuid"
+    assert paths.get(("id_token_claim", "sub")) == "user-id"
+    assert paths.get(("id_token_claim", "iss")) == "https://example.com"
+
+
+def test_scrubs_token_suffix_patterns():
+    out = enumerate_candidate_fields(
+        callback_url_params={},
+        token_response={
+            "id": "abc",
+            "session_token": "should-hide",
+            "api_key": "should-hide",
+            "client_secret": "should-hide",
+            "hmac_signature": "should-hide",
+        },
+    )
+    keys = {(c["type"], c["key"]) for c in out}
+    assert ("token_response_field", "id") in keys
+    assert ("token_response_field", "session_token") not in keys
+    assert ("token_response_field", "api_key") not in keys
+    assert ("token_response_field", "client_secret") not in keys
+    assert ("token_response_field", "hmac_signature") not in keys
+
+
+def test_scrubs_case_insensitively():
+    out = enumerate_candidate_fields(
+        callback_url_params={"AccessToken": "x", "RealmID": "y"},
+        token_response={},
+    )
+    keys = {(c["type"], c["key"]) for c in out}
+    assert ("url_param", "AccessToken") not in keys
+    assert ("url_param", "RealmID") in keys
+
+
+def test_coerces_non_string_values_to_strings():
+    out = enumerate_candidate_fields(
+        callback_url_params={},
+        token_response={"count": 42, "active": True, "id": None},
+    )
+    paths = {(c["type"], c["key"]): c["value"] for c in out}
+    # None values are skipped (no useful entity_id)
+    assert ("token_response_field", "id") not in paths
+    assert paths.get(("token_response_field", "count")) == "42"
+    assert paths.get(("token_response_field", "active")) == "True"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `./test.sh tests/unit/test_entity_id_picker_candidates.py -v`
+
+Expected: ImportError — `enumerate_candidate_fields` doesn't exist.
+
+- [ ] **Step 3: Implement enumerate_candidate_fields + scrubber**
+
+In `api/src/services/oauth_entity_id.py`, add to the bottom:
+
+```python
+# Deny-list for secret-bearing field names. Case-insensitive.
+# Exact matches:
+_PROTOCOL_FIELDS_EXACT = frozenset({
+    "access_token", "refresh_token", "id_token", "code", "client_secret",
+    "code_verifier", "assertion", "password", "state", "nonce",
+    # OAuth protocol fields (not secret but not useful for entity_id either —
+    # excluding them prevents noise and lets the caller decide "skip picker"
+    # when only protocol fields remain)
+    "expires_in", "scope", "token_type", "expires_at",
+})
+
+# Suffix matches (lowercased key endswith one of these):
+_SCRUB_SUFFIXES = ("_token", "_secret", "_key", "_password", "_signature", "_hmac")
+
+
+def _is_scrubbed(key: str) -> bool:
+    lower = key.lower()
+    if lower in _PROTOCOL_FIELDS_EXACT:
+        return True
+    return any(lower.endswith(s) for s in _SCRUB_SUFFIXES)
+
+
+def _walk_leaves(obj: Any, prefix: str = "") -> list[tuple[str, str]]:
+    """Walk a dict, emitting (dotted_path, str_value) pairs for non-None leaves.
+    Lists are not walked (entity_id is never inside a list in practice)."""
+    out: list[tuple[str, str]] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            path = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict):
+                out.extend(_walk_leaves(v, path))
+            elif v is not None and not isinstance(v, (list, bytes)):
+                out.append((path, str(v)))
+    return out
+
+
+def enumerate_candidate_fields(
+    callback_url_params: dict[str, str],
+    token_response: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Enumerate possible entity_id sources from OAuth callback artifacts.
+
+    Returns a list of {"type", "key", "value"} dicts the picker UI can render.
+    Secret-bearing fields are scrubbed via _is_scrubbed. id_token is decoded
+    and its claims are walked separately.
+    """
+    candidates: list[dict[str, str]] = []
+
+    # 1. URL params (flat)
+    for key, value in callback_url_params.items():
+        if _is_scrubbed(key) or value is None:
+            continue
+        candidates.append({"type": "url_param", "key": key, "value": str(value)})
+
+    # 2. Token response (walk leaves; skip id_token itself — its claims are handled in step 3)
+    for key, value in _walk_leaves(
+        {k: v for k, v in token_response.items() if k != "id_token"}
+    ):
+        # Check every segment of the path against scrub rules
+        if any(_is_scrubbed(seg) for seg in key.split(".")):
+            continue
+        candidates.append({"type": "token_response_field", "key": key, "value": value})
+
+    # 3. id_token claims (decode if present)
+    id_token = token_response.get("id_token")
+    if id_token:
+        claims = _decode_id_token_claims(id_token)
+        if claims:
+            for key, value in _walk_leaves(claims):
+                if any(_is_scrubbed(seg) for seg in key.split(".")):
+                    continue
+                candidates.append({"type": "id_token_claim", "key": key, "value": value})
+
+    return candidates
+```
+
+- [ ] **Step 4: Run unit tests to verify they pass**
+
+Run: `./test.sh tests/unit/test_entity_id_picker_candidates.py -v`
+
+Expected: 7 passed.
+
+- [ ] **Step 5: Add `entity_id_picker` field to OAuthCallbackResponse**
+
+In `api/src/models/contracts/oauth.py`, find `OAuthCallbackResponse` (grep for `class OAuthCallbackResponse`). Add a sibling Pydantic model and a field:
+
+```python
+class EntityIdPickerCandidate(BaseModel):
+    """A candidate entity_id field surfaced from an OAuth callback."""
+    type: str = Field(..., description="One of: url_param, token_response_field, id_token_claim")
+    key: str = Field(..., description="Dotted path (e.g. 'team.id' or 'tid')")
+    value: str = Field(..., description="Stringified value found at that path")
+
+
+# Inside OAuthCallbackResponse, add:
+entity_id_picker: list[EntityIdPickerCandidate] | None = Field(
+    default=None,
+    description=(
+        "Candidate entity_id sources for the admin to pick from. Populated "
+        "only when entity_id_source is unset on the provider AND the callback "
+        "response contains non-protocol fields. Null means 'don't show the picker'."
+    ),
+)
+```
+
+- [ ] **Step 6: Wire callback to populate the picker field**
+
+In `api/src/routers/oauth_connections.py` `oauth_callback`, after `repo.store_token(...)` and AFTER the existing `_apply_callback_to_mapping` block, before the response is constructed:
+
+```python
+    # If the provider has no entity_id_source set, offer the admin a picker
+    # of candidate fields discovered in the callback artifacts. The UI renders
+    # the picker in the popup before closing; selecting a candidate hits
+    # PATCH /api/integrations/{id}/oauth/entity_id_source and (if the connect
+    # was per-mapping) populates the triggering mapping's entity_id.
+    picker: list[dict[str, str]] | None = None
+    if provider.entity_id_source is None:
+        from src.services.oauth_entity_id import enumerate_candidate_fields
+        candidates = enumerate_candidate_fields(
+            callback_url_params=request.callback_url_params or {},
+            token_response=result,
+        )
+        if candidates:
+            picker = candidates
+```
+
+Then in the success response construction further down, include:
+
+```python
+        entity_id_picker=picker,
+```
+
+Make sure both the warning-path response and the success-path response include the field (`None` is fine; the field is optional).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add api/src/services/oauth_entity_id.py api/src/models/contracts/oauth.py api/src/routers/oauth_connections.py api/tests/unit/test_entity_id_picker_candidates.py
+git commit -m "feat(oauth): surface entity_id picker candidates in callback response"
+```
+
+---
+
+### Task 16: Backend — endpoint to save picker selection
+
+**Files:**
+- Modify: `api/src/routers/integrations.py` — add `PATCH /{integration_id}/oauth/entity_id_source`
+- Modify: `api/src/models/contracts/integrations.py` — add request model
+- Modify: `api/tests/e2e/oauth/test_per_mapping_connect.py` — new test class
+
+- [ ] **Step 1: Add the request contract**
+
+In `api/src/models/contracts/integrations.py`:
+
+```python
+class EntityIdSourceUpdateRequest(BaseModel):
+    """Set the entity_id_source on an integration's OAuth provider, optionally
+    populating a triggering mapping's entity_id at the same time."""
+
+    type: str = Field(..., description="url_param | token_response_field | id_token_claim")
+    key: str = Field(..., description="Dotted path (e.g. 'team.id')")
+    # Optional: when set, also write the captured value to this mapping's entity_id.
+    # Used to backfill the connect that triggered the picker.
+    apply_to_mapping_id: UUID | None = Field(default=None)
+    apply_value: str | None = Field(
+        default=None,
+        description="Captured value from the picker for the triggering mapping",
+    )
+```
+
+- [ ] **Step 2: Write the failing e2e test**
+
+Append to `api/tests/e2e/oauth/test_per_mapping_connect.py`:
+
+```python
+@pytest.mark.e2e
+class TestEntityIdSourceConfig:
+    """PATCH /oauth/entity_id_source persists the picker selection."""
+
+    @pytest.mark.asyncio
+    async def test_patch_sets_entity_id_source(
+        self, e2e_client, platform_admin, db_session
+    ):
+        from uuid import uuid4
+        from src.models.orm import OAuthProvider as _OP
+
+        integration_name = f"e2e_eid_source_{uuid4().hex[:8]}"
+        integ_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        assert integ_resp.status_code == 201
+        integration = integ_resp.json()
+        integration_id = UUID(integration["id"])
+
+        provider = _OP(
+            provider_name=f"prov_{uuid4().hex[:6]}",
+            oauth_flow_type="authorization_code",
+            client_id="x",
+            encrypted_client_secret=b"x",
+            token_url="https://example.com/token",
+            integration_id=integration_id,
+        )
+        db_session.add(provider)
+        await db_session.commit()
+        await db_session.refresh(provider)
+        provider_id = provider.id
+
+        try:
+            resp = e2e_client.patch(
+                f"/api/integrations/{integration['id']}/oauth/entity_id_source",
+                headers=platform_admin.headers,
+                json={"type": "id_token_claim", "key": "tid"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            db_session.expire_all()
+            refetched = await db_session.get(_OP, provider_id)
+            assert refetched.entity_id_source == {"type": "id_token_claim", "key": "tid"}
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
+    @pytest.mark.asyncio
+    async def test_patch_with_apply_to_mapping_backfills_entity_id(
+        self, e2e_client, platform_admin, db_session, org1
+    ):
+        from uuid import uuid4
+        from src.models.orm import OAuthProvider as _OP
+
+        integration_name = f"e2e_eid_apply_{uuid4().hex[:8]}"
+        integ_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        integration = integ_resp.json()
+        integration_id = UUID(integration["id"])
+
+        provider = _OP(
+            provider_name=f"prov_{uuid4().hex[:6]}",
+            oauth_flow_type="authorization_code",
+            client_id="x",
+            encrypted_client_secret=b"x",
+            token_url="https://example.com/token",
+            integration_id=integration_id,
+        )
+        db_session.add(provider)
+        await db_session.commit()
+
+        # Create a mapping with empty entity_id
+        mapping_resp = e2e_client.post(
+            f"/api/integrations/{integration['id']}/mappings",
+            headers=platform_admin.headers,
+            json={"organization_id": str(org1["id"]), "entity_id": ""},
+        )
+        assert mapping_resp.status_code == 201
+        mapping_id = mapping_resp.json()["id"]
+
+        try:
+            resp = e2e_client.patch(
+                f"/api/integrations/{integration['id']}/oauth/entity_id_source",
+                headers=platform_admin.headers,
+                json={
+                    "type": "id_token_claim",
+                    "key": "tid",
+                    "apply_to_mapping_id": mapping_id,
+                    "apply_value": "tenant-uuid-from-picker",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+            get_resp = e2e_client.get(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
+                headers=platform_admin.headers,
+            )
+            assert get_resp.json()["entity_id"] == "tenant-uuid-from-picker"
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `./test.sh tests/e2e/oauth/test_per_mapping_connect.py::TestEntityIdSourceConfig -v`
+
+Expected: 405 / 404 — endpoint doesn't exist.
+
+- [ ] **Step 4: Implement the endpoint**
+
+In `api/src/routers/integrations.py`, near the other OAuth-config endpoints (search for `/{integration_id}/oauth` to find the section), add:
+
+```python
+@router.patch(
+    "/{integration_id}/oauth/entity_id_source",
+    summary="Set entity_id_source on the integration's OAuth provider",
+    description=(
+        "Persists the admin's picker selection. Optionally backfills a "
+        "specific mapping's entity_id (used when the picker fires inside "
+        "the OAuth popup of a per-mapping connect). Platform admin only."
+    ),
+)
+async def set_entity_id_source(
+    integration_id: UUID,
+    request: EntityIdSourceUpdateRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> dict:
+    from src.models.orm import IntegrationMapping, OAuthProvider as _OP
+    from sqlalchemy import select as _select
+
+    if request.type not in {"url_param", "token_response_field", "id_token_claim"}:
+        raise HTTPException(status_code=400, detail=f"Invalid type: {request.type}")
+    if not request.key:
+        raise HTTPException(status_code=400, detail="key is required")
+
+    # Find the integration's provider
+    result = await ctx.db.execute(
+        _select(_OP).where(_OP.integration_id == integration_id)
+    )
+    provider = result.scalar_one_or_none()
+    if not provider:
+        raise HTTPException(status_code=404, detail="Integration has no OAuth provider")
+
+    provider.entity_id_source = {"type": request.type, "key": request.key}
+
+    # Optionally backfill the triggering mapping
+    if request.apply_to_mapping_id and request.apply_value:
+        mapping = await ctx.db.get(IntegrationMapping, request.apply_to_mapping_id)
+        if mapping and mapping.integration_id == integration_id and not mapping.entity_id:
+            mapping.entity_id = request.apply_value
+
+    await ctx.db.flush()
+    return {"entity_id_source": provider.entity_id_source}
+```
+
+Add to imports at the top of the file:
+
+```python
+from src.models.contracts.integrations import (
+    # ... existing imports ...
+    EntityIdSourceUpdateRequest,
+)
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `./test.sh tests/e2e/oauth/test_per_mapping_connect.py::TestEntityIdSourceConfig -v`
+
+Expected: 2 passed.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add api/src/routers/integrations.py api/src/models/contracts/integrations.py api/tests/e2e/oauth/test_per_mapping_connect.py
+git commit -m "feat(oauth): PATCH endpoint to save entity_id_source picker selection"
+```
+
+---
+
+### Task 17: Frontend — render the picker in OAuthCallback popup
+
+**Files:**
+- Modify: `client/src/pages/OAuthCallback.tsx` — render picker when `entity_id_picker` is in the response
+- Modify: `client/src/services/integrations.ts` — add hook for the PATCH endpoint
+- Create: `client/src/components/integrations/EntityIdSourcePicker.tsx` — the picker UI
+- Create: `client/src/components/integrations/EntityIdSourcePicker.test.tsx`
+- Run: `cd client && npm run generate:types` to pick up the new response field and request model
+
+- [ ] **Step 1: Regenerate API types**
+
+Make sure the API container has the changes from Task 15-16 hot-reloaded, then:
+
+```bash
+cd client && npm run generate:types
+grep -c "entity_id_picker\|EntityIdSourceUpdateRequest\|EntityIdPickerCandidate" src/lib/v1.d.ts
+```
+
+Expected: > 0 hits for each.
+
+If `npm run generate:types` doesn't see them (dev stack mounts main repo by default), pull from the worktree's test-stack API instead:
+
+```bash
+docker exec bifrost-test-<project-suffix>-api-1 curl -s http://localhost:8000/openapi.json > /tmp/openapi.json
+cd client && npx openapi-typescript /tmp/openapi.json -o src/lib/v1.d.ts
+```
+
+- [ ] **Step 2: Add the service hook**
+
+In `client/src/services/integrations.ts`:
+
+```typescript
+/**
+ * Hook to set the entity_id_source on an integration's OAuth provider.
+ * Optionally backfills a triggering mapping's entity_id.
+ */
+export function useSetEntityIdSource() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"patch",
+		"/api/integrations/{integration_id}/oauth/entity_id_source",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
+}
+```
+
+- [ ] **Step 3: Build the EntityIdSourcePicker component**
+
+Create `client/src/components/integrations/EntityIdSourcePicker.tsx`:
+
+```tsx
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import type { components } from "@/lib/v1";
+
+export type Candidate = components["schemas"]["EntityIdPickerCandidate"];
+
+interface EntityIdSourcePickerProps {
+	candidates: Candidate[];
+	onSelect: (candidate: Candidate) => void;
+	onSkip: () => void;
+	isPending: boolean;
+}
+
+export function EntityIdSourcePicker({
+	candidates,
+	onSelect,
+	onSkip,
+	isPending,
+}: EntityIdSourcePickerProps) {
+	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+	const keyId = (c: Candidate) => `${c.type}:${c.key}`;
+	const selected = candidates.find((c) => keyId(c) === selectedKey) ?? null;
+
+	return (
+		<div className="space-y-4">
+			<div>
+				<h3 className="text-lg font-semibold">Set up entity ID auto-capture</h3>
+				<p className="text-sm text-muted-foreground mt-1">
+					Pick the field that uniquely identifies the tenant or account
+					you just authorized. Future connections will auto-fill this
+					mapping's entity ID from the same field.
+				</p>
+			</div>
+
+			<div className="max-h-80 overflow-y-auto rounded-md border">
+				<table className="w-full text-sm">
+					<thead className="border-b bg-muted/50 text-left">
+						<tr>
+							<th className="p-2 w-8"></th>
+							<th className="p-2">Source</th>
+							<th className="p-2">Field</th>
+							<th className="p-2">Value</th>
+						</tr>
+					</thead>
+					<tbody>
+						{candidates.map((c) => (
+							<tr
+								key={keyId(c)}
+								className={`border-b cursor-pointer hover:bg-muted/30 ${
+									selectedKey === keyId(c) ? "bg-blue-50" : ""
+								}`}
+								onClick={() => setSelectedKey(keyId(c))}
+							>
+								<td className="p-2">
+									<input
+										type="radio"
+										name="entity_id_source"
+										checked={selectedKey === keyId(c)}
+										onChange={() => setSelectedKey(keyId(c))}
+									/>
+								</td>
+								<td className="p-2">
+									<Badge variant="outline" className="text-xs">
+										{c.type}
+									</Badge>
+								</td>
+								<td className="p-2 font-mono text-xs">{c.key}</td>
+								<td className="p-2 font-mono text-xs truncate max-w-[200px]" title={c.value}>
+									{c.value}
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+
+			<div className="flex justify-end gap-2">
+				<Button variant="ghost" onClick={onSkip} disabled={isPending}>
+					Skip
+				</Button>
+				<Button
+					onClick={() => selected && onSelect(selected)}
+					disabled={!selected || isPending}
+				>
+					{isPending ? "Saving…" : "Use this field"}
+				</Button>
+			</div>
+		</div>
+	);
+}
+```
+
+- [ ] **Step 4: Add component tests**
+
+Create `client/src/components/integrations/EntityIdSourcePicker.test.tsx`:
+
+```typescript
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { EntityIdSourcePicker, type Candidate } from "./EntityIdSourcePicker";
+
+const candidates: Candidate[] = [
+	{ type: "id_token_claim", key: "tid", value: "tenant-abc" },
+	{ type: "token_response_field", key: "team.id", value: "T123" },
+];
+
+describe("EntityIdSourcePicker", () => {
+	it("renders all candidates with source / key / value", () => {
+		render(
+			<EntityIdSourcePicker
+				candidates={candidates}
+				onSelect={vi.fn()}
+				onSkip={vi.fn()}
+				isPending={false}
+			/>,
+		);
+		expect(screen.getByText("id_token_claim")).toBeInTheDocument();
+		expect(screen.getByText("tid")).toBeInTheDocument();
+		expect(screen.getByText("tenant-abc")).toBeInTheDocument();
+		expect(screen.getByText("token_response_field")).toBeInTheDocument();
+		expect(screen.getByText("team.id")).toBeInTheDocument();
+	});
+
+	it("disables 'Use this field' until a row is selected", async () => {
+		const user = userEvent.setup();
+		render(
+			<EntityIdSourcePicker
+				candidates={candidates}
+				onSelect={vi.fn()}
+				onSkip={vi.fn()}
+				isPending={false}
+			/>,
+		);
+		const useBtn = screen.getByRole("button", { name: /use this field/i });
+		expect(useBtn).toBeDisabled();
+
+		await user.click(screen.getByText("tid"));
+		expect(useBtn).toBeEnabled();
+	});
+
+	it("calls onSelect with the chosen candidate", async () => {
+		const onSelect = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<EntityIdSourcePicker
+				candidates={candidates}
+				onSelect={onSelect}
+				onSkip={vi.fn()}
+				isPending={false}
+			/>,
+		);
+		await user.click(screen.getByText("tid"));
+		await user.click(screen.getByRole("button", { name: /use this field/i }));
+		expect(onSelect).toHaveBeenCalledWith(candidates[0]);
+	});
+
+	it("calls onSkip when Skip is clicked", async () => {
+		const onSkip = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<EntityIdSourcePicker
+				candidates={candidates}
+				onSelect={vi.fn()}
+				onSkip={onSkip}
+				isPending={false}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /skip/i }));
+		expect(onSkip).toHaveBeenCalled();
+	});
+
+	it("shows 'Saving…' on the Use button when isPending", () => {
+		render(
+			<EntityIdSourcePicker
+				candidates={candidates}
+				onSelect={vi.fn()}
+				onSkip={vi.fn()}
+				isPending={true}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: /saving/i })).toBeInTheDocument();
+	});
+});
+```
+
+- [ ] **Step 5: Wire the picker into OAuthCallback**
+
+Modify `client/src/pages/OAuthCallback.tsx` — after the success response is parsed and before the popup auto-closes, check `response.entity_id_picker`:
+
+```typescript
+// After: const response = await handleOAuthCallback(...)
+// Before: setStatus("success") / setTimeout(window.close, 1500)
+
+const picker = (responseData?.entity_id_picker ?? null) as Candidate[] | null;
+if (picker && picker.length > 0) {
+	// Show the picker INSTEAD of auto-closing. Admin clicks "Use this field"
+	// (which calls the PATCH endpoint then closes) or "Skip" (closes without
+	// saving — picker will reappear on the next connect).
+	setPickerCandidates(picker);
+	setStatus("picker");  // new state value
+	return;
+}
+```
+
+State + render additions:
+
+```tsx
+import { EntityIdSourcePicker, type Candidate } from "@/components/integrations/EntityIdSourcePicker";
+import { useSetEntityIdSource } from "@/services/integrations";
+
+// In the component:
+const [pickerCandidates, setPickerCandidates] = useState<Candidate[]>([]);
+// extend the status union: "processing" | "success" | "error" | "warning" | "picker"
+const setEntityIdSource = useSetEntityIdSource();
+
+// In the JSX, when status === "picker":
+{status === "picker" && (
+	<EntityIdSourcePicker
+		candidates={pickerCandidates}
+		isPending={setEntityIdSource.isPending}
+		onSkip={() => {
+			// Just close — picker will reappear on next connect.
+			if (window.opener) {
+				window.opener.postMessage(
+					{ type: "oauth_success", integrationId },
+					window.location.origin,
+				);
+			}
+			window.close();
+		}}
+		onSelect={(candidate) => {
+			setEntityIdSource.mutate(
+				{
+					params: { path: { integration_id: integrationId! } },
+					body: {
+						type: candidate.type,
+						key: candidate.key,
+						// Backfill the mapping that triggered THIS connect.
+						// The state token has mapping_id — decode it on the
+						// callback page OR pass it through from the callback
+						// response (preferred — backend can populate
+						// triggering_mapping_id alongside entity_id_picker).
+						apply_to_mapping_id: triggeringMappingId,
+						apply_value: candidate.value,
+					},
+				},
+				{
+					onSuccess: () => {
+						if (window.opener) {
+							window.opener.postMessage(
+								{ type: "oauth_success", integrationId },
+								window.location.origin,
+							);
+						}
+						window.close();
+					},
+				},
+			);
+		}}
+	/>
+)}
+```
+
+**Implementation note:** the `triggeringMappingId` needs to reach the callback page. Easiest: add a `triggering_mapping_id: UUID | None` field to `OAuthCallbackResponse` (Task 15), populated from `mapping_id_from_state` in the callback handler. Then `responseData.triggering_mapping_id` is available here.
+
+- [ ] **Step 6: Run tests + tsc**
+
+```bash
+./test.sh client unit src/components/integrations/EntityIdSourcePicker.test.tsx
+cd client && npm run tsc
+```
+
+Expected: all pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add client/src/components/integrations/EntityIdSourcePicker.tsx client/src/components/integrations/EntityIdSourcePicker.test.tsx client/src/pages/OAuthCallback.tsx client/src/services/integrations.ts client/src/lib/v1.d.ts
+git commit -m "feat(client): in-popup entity_id picker after first OAuth connect"
+```
+
+---
+
+### Task 18: Verification
+
+- [ ] **Step 1: Backend type + lint**
+
+```bash
+cd api && pyright
+cd api && ruff check .
+```
+
+Expected: 0 new errors.
+
+- [ ] **Step 2: Frontend type + lint**
+
+```bash
+cd client && npm run tsc
+cd client && npm run lint
+```
+
+Expected: 0 new errors.
+
+- [ ] **Step 3: Full test suite**
+
+```bash
+./test.sh stack up
+./test.sh all
+./test.sh client unit
+./test.sh client e2e
+```
+
+Expected: all pass.
+
+- [ ] **Step 4: Manual smoke**
+
+Bring up `./debug.sh`, navigate to a freshly-created OAuth integration with `entity_id_source = NULL`, click Connect on a mapping. Confirm:
+
+- Picker appears in the popup with candidate fields visible
+- Each candidate shows `(source_type, key, value)`
+- Secret-bearing fields (e.g., `access_token`) are NOT in the list
+- Picking a candidate persists `entity_id_source` on the provider AND fills the triggering mapping's `entity_id`
+- A second mapping's Connect on the same provider skips the picker and auto-fills `entity_id` using the saved source
+
+If you don't have a provider that returns non-protocol fields handy, set `entity_id_source = NULL` on an existing one and reconnect.
+
+---
+
 ## Notes for the Implementing Engineer
 
 - **Hot reload caveat for migrations:** the migration in Task 1 needs `docker compose restart bifrost-init && docker compose restart api` — code hot-reload alone doesn't run alembic. See `CLAUDE.md` "Database Migrations" section.
