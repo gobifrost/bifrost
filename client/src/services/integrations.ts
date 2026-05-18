@@ -342,3 +342,28 @@ export function useRefreshMapping() {
 		},
 	);
 }
+
+/**
+ * Hook to set the entity_id_source on an integration's OAuth provider.
+ * Optionally backfills a triggering mapping's entity_id.
+ */
+export function useSetEntityIdSource() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"patch",
+		"/api/integrations/{integration_id}/oauth/entity_id_source",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
+}

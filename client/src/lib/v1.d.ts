@@ -3472,22 +3472,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5568,6 +5568,26 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{integration_id}/oauth/entity_id_source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set entity_id_source on the integration's OAuth provider
+         * @description Persists the admin's picker selection. Optionally backfills a specific mapping's entity_id (used when the picker fires inside the OAuth popup of a per-mapping connect). Platform admin only.
+         */
+        patch: operations["set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch"];
         trace?: never;
     };
     "/api/integrations/sdk/{name}": {
@@ -12132,6 +12152,54 @@ export interface components {
             duration_ms?: number | null;
         };
         /**
+         * EntityIdPickerCandidate
+         * @description A candidate entity_id field surfaced from an OAuth callback.
+         */
+        EntityIdPickerCandidate: {
+            /**
+             * Type
+             * @description One of: url_param, token_response_field, id_token_claim
+             */
+            type: string;
+            /**
+             * Key
+             * @description Dotted path (e.g. 'team.id' or 'tid')
+             */
+            key: string;
+            /**
+             * Value
+             * @description Stringified value found at that path
+             */
+            value: string;
+        };
+        /**
+         * EntityIdSourceUpdateRequest
+         * @description Set the entity_id_source on an integration's OAuth provider, optionally
+         *     populating a triggering mapping's entity_id at the same time.
+         */
+        EntityIdSourceUpdateRequest: {
+            /**
+             * Type
+             * @description url_param | token_response_field | id_token_claim
+             */
+            type: string;
+            /**
+             * Key
+             * @description Dotted path (e.g. 'team.id')
+             */
+            key: string;
+            /**
+             * Apply To Mapping Id
+             * @description When set, also write apply_value to this mapping's entity_id
+             */
+            apply_to_mapping_id?: string | null;
+            /**
+             * Apply Value
+             * @description Captured value from the picker for the triggering mapping
+             */
+            apply_value?: string | null;
+        };
+        /**
          * EntityUsage
          * @description Usage count for a single entity (form, app, agent).
          */
@@ -16209,6 +16277,16 @@ export interface components {
              * @description Error message displayed to user
              */
             error_message?: string | null;
+            /**
+             * Entity Id Picker
+             * @description Candidate entity_id sources for the admin to pick from. Populated only when entity_id_source is unset on the provider AND the callback response contains non-protocol fields. Null means 'don't show the picker'.
+             */
+            entity_id_picker?: components["schemas"]["EntityIdPickerCandidate"][] | null;
+            /**
+             * Triggering Mapping Id
+             * @description When the callback was triggered by a per-mapping connect, the ID of that mapping. Used by the picker UI to backfill the mapping's entity_id with the chosen value.
+             */
+            triggering_mapping_id?: string | null;
         };
         /**
          * OAuthConfigListResponse
@@ -26451,7 +26529,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -26484,7 +26562,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -26517,7 +26595,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -26550,7 +26628,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30117,6 +30195,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OAuthAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                integration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntityIdSourceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
