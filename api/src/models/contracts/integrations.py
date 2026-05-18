@@ -246,6 +246,22 @@ class MappingAuthorizeResponse(BaseModel):
     authorization_url: str = Field(..., description="URL to redirect user for authorization")
 
 
+class EntityIdSourceUpdateRequest(BaseModel):
+    """Set the entity_id_source on an integration's OAuth provider, optionally
+    populating a triggering mapping's entity_id at the same time."""
+
+    type: str = Field(..., description="url_param | token_response_field | id_token_claim")
+    key: str = Field(..., description="Dotted path (e.g. 'team.id')")
+    apply_to_mapping_id: UUID | None = Field(
+        default=None,
+        description="When set, also write apply_value to this mapping's entity_id",
+    )
+    apply_value: str | None = Field(
+        default=None,
+        description="Captured value from the picker for the triggering mapping",
+    )
+
+
 # ==================== INTEGRATION RESPONSE MODELS ====================
 
 

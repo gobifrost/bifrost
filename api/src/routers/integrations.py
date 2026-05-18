@@ -23,6 +23,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from src.models import (
     ConfigSchemaItem,
+    EntityIdSourceUpdateRequest,
     Integration,
     IntegrationCreate,
     IntegrationDetailResponse,
@@ -1521,6 +1522,50 @@ async def get_oauth_authorization_url(
         state=state,
         message="Redirect user to authorization_url to complete OAuth flow",
     )
+
+
+@router.patch(
+    "/{integration_id}/oauth/entity_id_source",
+    summary="Set entity_id_source on the integration's OAuth provider",
+    description=(
+        "Persists the admin's picker selection. Optionally backfills a "
+        "specific mapping's entity_id (used when the picker fires inside "
+        "the OAuth popup of a per-mapping connect). Platform admin only."
+    ),
+)
+async def set_entity_id_source(
+    integration_id: UUID,
+    request: EntityIdSourceUpdateRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> dict:
+    from src.models.orm import IntegrationMapping as _IM
+    from src.models.orm import OAuthProvider as _OP
+
+    if request.type not in {"url_param", "token_response_field", "id_token_claim"}:
+        raise HTTPException(status_code=400, detail=f"Invalid type: {request.type}")
+    if not request.key:
+        raise HTTPException(status_code=400, detail="key is required")
+
+    result = await ctx.db.execute(
+        select(_OP).where(_OP.integration_id == integration_id)
+    )
+    provider = result.scalar_one_or_none()
+    if not provider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Integration has no OAuth provider",
+        )
+
+    provider.entity_id_source = {"type": request.type, "key": request.key}
+
+    if request.apply_to_mapping_id and request.apply_value:
+        mapping = await ctx.db.get(_IM, request.apply_to_mapping_id)
+        if mapping and mapping.integration_id == integration_id and not mapping.entity_id:
+            mapping.entity_id = request.apply_value
+
+    await ctx.db.flush()
+    return {"entity_id_source": provider.entity_id_source}
 
 
 # =============================================================================

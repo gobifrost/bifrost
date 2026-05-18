@@ -706,3 +706,114 @@ class TestPerMappingCallbackTokenScope:
                 f"/api/integrations/{integration['id']}",
                 headers=platform_admin.headers,
             )
+
+
+@pytest.mark.e2e
+class TestEntityIdSourceConfig:
+    """PATCH /oauth/entity_id_source persists the picker selection."""
+
+    @pytest.mark.asyncio
+    async def test_patch_sets_entity_id_source(
+        self, e2e_client, platform_admin, db_session
+    ):
+        from uuid import uuid4
+        from src.models.orm import OAuthProvider as _OP
+
+        integration_name = f"e2e_eid_source_{uuid4().hex[:8]}"
+        integ_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        assert integ_resp.status_code == 201
+        integration = integ_resp.json()
+        integration_id = UUID(integration["id"])
+
+        provider = _OP(
+            provider_name=f"prov_{uuid4().hex[:6]}",
+            oauth_flow_type="authorization_code",
+            client_id="x",
+            encrypted_client_secret=b"x",
+            token_url="https://example.com/token",
+            integration_id=integration_id,
+        )
+        db_session.add(provider)
+        await db_session.commit()
+        await db_session.refresh(provider)
+        provider_id = provider.id
+
+        try:
+            resp = e2e_client.patch(
+                f"/api/integrations/{integration['id']}/oauth/entity_id_source",
+                headers=platform_admin.headers,
+                json={"type": "id_token_claim", "key": "tid"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            db_session.expire_all()
+            refetched = await db_session.get(_OP, provider_id)
+            assert refetched.entity_id_source == {"type": "id_token_claim", "key": "tid"}
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
+    @pytest.mark.asyncio
+    async def test_patch_with_apply_to_mapping_backfills_entity_id(
+        self, e2e_client, platform_admin, db_session, org1
+    ):
+        from uuid import uuid4
+        from src.models.orm import OAuthProvider as _OP
+
+        integration_name = f"e2e_eid_apply_{uuid4().hex[:8]}"
+        integ_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        integration = integ_resp.json()
+        integration_id = UUID(integration["id"])
+
+        provider = _OP(
+            provider_name=f"prov_{uuid4().hex[:6]}",
+            oauth_flow_type="authorization_code",
+            client_id="x",
+            encrypted_client_secret=b"x",
+            token_url="https://example.com/token",
+            integration_id=integration_id,
+        )
+        db_session.add(provider)
+        await db_session.commit()
+
+        mapping_resp = e2e_client.post(
+            f"/api/integrations/{integration['id']}/mappings",
+            headers=platform_admin.headers,
+            json={"organization_id": str(org1["id"]), "entity_id": ""},
+        )
+        assert mapping_resp.status_code == 201
+        mapping_id = mapping_resp.json()["id"]
+
+        try:
+            resp = e2e_client.patch(
+                f"/api/integrations/{integration['id']}/oauth/entity_id_source",
+                headers=platform_admin.headers,
+                json={
+                    "type": "id_token_claim",
+                    "key": "tid",
+                    "apply_to_mapping_id": mapping_id,
+                    "apply_value": "tenant-uuid-from-picker",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+            get_resp = e2e_client.get(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
+                headers=platform_admin.headers,
+            )
+            assert get_resp.json()["entity_id"] == "tenant-uuid-from-picker"
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
