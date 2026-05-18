@@ -40,22 +40,17 @@ export function EntityIdSourcePicker({
 				{candidates.map((c) => {
 					const isSelected = selectedKey === keyId(c);
 					return (
-						<label
+						<button
+							type="button"
 							key={keyId(c)}
-							className={`flex gap-2 rounded-md border p-2 cursor-pointer transition-colors ${
+							onClick={() => setSelectedKey(keyId(c))}
+							className={`w-full text-left rounded-md border p-2 cursor-pointer transition-colors ${
 								isSelected
 									? "border-primary bg-primary/5"
 									: "hover:bg-muted/30"
 							}`}
 						>
-							<input
-								type="radio"
-								name="entity_id_source"
-								checked={isSelected}
-								onChange={() => setSelectedKey(keyId(c))}
-								className="mt-1 shrink-0"
-							/>
-							<div className="min-w-0 flex-1 space-y-1">
+							<div className="min-w-0 space-y-1">
 								<div className="flex items-center gap-2 min-w-0">
 									<span className="font-mono text-xs truncate">
 										{c.key}
@@ -74,7 +69,7 @@ export function EntityIdSourcePicker({
 									{c.value}
 								</div>
 							</div>
-						</label>
+						</button>
 					);
 				})}
 			</div>
