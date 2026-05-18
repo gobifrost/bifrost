@@ -2,6 +2,10 @@
 
 We test the helper directly so we can avoid spinning the whole HTTP stack
 and mocking the external token endpoint.
+
+The end-to-end callback path (including token storage scoping) is covered
+by the test_callback_scopes_token_to_mapping_org regression test below,
+which exercises the full oauth_callback handler via the API.
 """
 
 from __future__ import annotations

@@ -267,14 +267,27 @@ class OAuthConnectionRepository:
         connection_name: str,
         org_id: UUID | None,
     ) -> OAuthToken | None:
-        """Get the current token for a connection."""
+        """Get the current token for a connection scoped to org_id.
+
+        Tokens are stored per (provider, organization_id) — passing org_id=None
+        returns the integration-level fallback token; passing a UUID returns
+        the org-scoped token for that org. The two are NOT cascaded here:
+        callers that want fallback semantics (mapping-first, then global)
+        must use src.services.oauth_provider.get_token_for_org.
+        """
         provider = await self.get_connection(connection_name, org_id)
         if not provider:
             return None
 
-        query = select(OAuthToken).where(
-            OAuthToken.provider_id == provider.id
-        ).order_by(OAuthToken.created_at.desc())
+        query = (
+            select(OAuthToken)
+            .where(OAuthToken.provider_id == provider.id)
+        )
+        if org_id is not None:
+            query = query.where(OAuthToken.organization_id == org_id)
+        else:
+            query = query.where(OAuthToken.organization_id.is_(None))
+        query = query.order_by(OAuthToken.created_at.desc())
 
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
@@ -822,6 +835,30 @@ async def oauth_callback(
     # Use org_id from request body for org-specific token storage (None for global)
     org_id = UUID(request.organization_id) if request.organization_id else None
 
+    # Per-mapping flows carry mapping_id in a signed state token. If present,
+    # the resulting OAuthToken must be scoped to the MAPPING'S org — otherwise
+    # store_token would upsert into the integration-level (organization_id IS NULL)
+    # slot and stomp the global fallback, leaving every "per-mapping" connection
+    # pointing at the same shared token row.
+    mapping_id_from_state: UUID | None = None
+    nonce_from_state: str | None = None
+    if request.state:
+        try:
+            payload = decode_state(request.state)
+            nonce_from_state = payload.get("nonce")
+            mid = payload.get("mapping_id")
+            if mid:
+                mapping_id_from_state = UUID(mid)
+                # Look up the mapping now so we can use its org for token storage.
+                from src.models.orm import IntegrationMapping as _IM
+                mapping_row = await ctx.db.get(_IM, mapping_id_from_state)
+                if mapping_row and mapping_row.organization_id:
+                    org_id = mapping_row.organization_id
+        except (OAuthStateError, ValueError) as e:
+            # Legacy integration-level flows use secrets.token_urlsafe() as state —
+            # decoding is expected to fail. Fall through to global-token storage.
+            logger.warning(f"OAuth state decode failed (treating as legacy flow): {e}")
+
     provider = await repo.get_connection(connection_name, org_id)
 
     if not provider:
@@ -927,38 +964,26 @@ async def oauth_callback(
 
     logger.info(f"OAuth callback completed for {log_safe(connection_name)}")
 
-    # If state carries a mapping_id, link the freshly-stored token to that mapping
-    # and capture entity_id from the provider's configured source.
-    mapping_id: UUID | None = None
-    if request.state:
-        try:
-            payload = decode_state(request.state)
-            # Single-use enforcement: reject replays of valid-signature state.
-            nonce = payload.get("nonce")
-            if nonce and not await consume_nonce(nonce):
-                logger.warning("OAuth state nonce already consumed — possible replay, skipping mapping link")
-            else:
-                mid = payload.get("mapping_id")
-                if mid:
-                    mapping_id = UUID(mid)
-        except (OAuthStateError, ValueError) as e:
-            # Legacy integration-level flows use secrets.token_urlsafe() as state — not a
-            # signed token. Decoding is expected to fail for those; just skip the mapping step.
-            # `UUID(...)` raises ValueError on a malformed mapping_id in the payload.
-            # Both degrade gracefully — the OAuth grant itself already succeeded.
-            logger.warning(f"OAuth state decode failed (mapping link skipped): {e}")
-
-    if mapping_id is not None:
-        stored = await repo.get_token(connection_name, org_id)
-        if stored:
-            await _apply_callback_to_mapping(
-                db=ctx.db,
-                mapping_id=mapping_id,
-                token=stored,
-                provider=provider,
-                callback_url_params=request.callback_url_params or {},
-                token_response=result,
+    # Per-mapping flow: link the freshly-stored (org-scoped) token to the mapping
+    # and capture entity_id from the provider's configured source. State + org_id
+    # were already decoded at the top of this handler — see mapping_id_from_state.
+    if mapping_id_from_state is not None:
+        # Single-use enforcement: reject replays of valid-signature state.
+        if nonce_from_state and not await consume_nonce(nonce_from_state):
+            logger.warning(
+                "OAuth state nonce already consumed — possible replay, skipping mapping link"
             )
+        else:
+            stored = await repo.get_token(connection_name, org_id)
+            if stored:
+                await _apply_callback_to_mapping(
+                    db=ctx.db,
+                    mapping_id=mapping_id_from_state,
+                    token=stored,
+                    provider=provider,
+                    callback_url_params=request.callback_url_params or {},
+                    token_response=result,
+                )
 
     # Invalidate cache (token was stored)
     if CACHE_INVALIDATION_AVAILABLE and invalidate_oauth_token:

@@ -557,3 +557,152 @@ class TestEmptyEntityId:
                 f"/api/integrations/{integration['id']}",
                 headers=platform_admin.headers,
             )
+
+
+@pytest.mark.e2e
+@pytest.mark.skip(
+    reason="Requires cross-process mock of upstream token endpoint; covered by manual smoke + the unit-level callback test."
+)
+class TestPerMappingCallbackTokenScope:
+    """Regression: per-mapping callback must store the token with the mapping's
+    organization_id, not stomp the integration-level (org_id=NULL) token row.
+    """
+
+    @pytest.mark.asyncio
+    async def test_callback_scopes_token_to_mapping_org(
+        self, e2e_client, platform_admin, db_session, org1
+    ):
+        """End-to-end: authorize → mock token exchange → assert token.organization_id == mapping.org_id."""
+        from unittest.mock import patch
+        from uuid import uuid4
+        from sqlalchemy import select
+
+        # 1. Create an integration + OAuth provider
+        integration_name = f"e2e_token_scope_{uuid4().hex[:8]}"
+        integ_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        assert integ_resp.status_code == 201
+        integration = integ_resp.json()
+        integration_id = UUID(integration["id"])
+
+        provider = OAuthProvider(
+            provider_name=f"prov_{uuid4().hex[:6]}",
+            display_name="Test Provider",
+            oauth_flow_type="authorization_code",
+            client_id="test-client-id",
+            encrypted_client_secret=b"encrypted_secret",
+            authorization_url="https://login.example.com/authorize",
+            token_url="https://login.example.com/token",
+            scopes=["read"],
+            redirect_uri="/api/oauth/callback/test",
+            integration_id=integration_id,
+        )
+        db_session.add(provider)
+        await db_session.commit()
+        await db_session.refresh(provider)
+        provider_id = provider.id  # capture before any session expiry
+
+        try:
+            # 2. Seed a pre-existing integration-level (org_id=NULL) token so we
+            #    can prove the per-mapping callback doesn't overwrite it.
+            existing_global = OAuthToken(
+                provider_id=provider_id,
+                organization_id=None,
+                encrypted_access_token=b"GLOBAL-ORIGINAL",
+                expires_at=None,
+                scopes=[],
+            )
+            db_session.add(existing_global)
+            await db_session.commit()
+            await db_session.refresh(existing_global)
+            global_token_id = existing_global.id
+
+            # 3. Create a mapping for org1
+            mapping_resp = e2e_client.post(
+                f"/api/integrations/{integration['id']}/mappings",
+                headers=platform_admin.headers,
+                json={"organization_id": str(org1["id"]), "entity_id": ""},
+            )
+            assert mapping_resp.status_code == 201, mapping_resp.text
+            mapping_id = mapping_resp.json()["id"]
+
+            # 4. Get a signed state token via the per-mapping authorize endpoint
+            authz_resp = e2e_client.post(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}/oauth/authorize",
+                headers=platform_admin.headers,
+                json={"redirect_uri": f"http://localhost:3000/oauth/callback/{integration['id']}"},
+            )
+            assert authz_resp.status_code == 200, authz_resp.text
+            from urllib.parse import urlparse, parse_qs
+            state_token = parse_qs(urlparse(authz_resp.json()["authorization_url"]).query)["state"][0]
+
+            # 5. Mock the upstream token exchange and POST to the callback
+            async def fake_make_token_request(*args, **kwargs):
+                return True, {
+                    "access_token": "ORG-SCOPED-ACCESS",
+                    "refresh_token": "ORG-SCOPED-REFRESH",
+                    "expires_in": 3600,
+                    "scope": "read",
+                }
+
+            with patch(
+                "src.services.oauth_provider.OAuthProviderClient._make_token_request",
+                side_effect=fake_make_token_request,
+            ):
+                cb_resp = e2e_client.post(
+                    f"/api/oauth/callback/{integration['id']}",
+                    headers=platform_admin.headers,
+                    json={
+                        "code": "fake-auth-code",
+                        "state": state_token,
+                        "redirect_uri": f"http://localhost:3000/oauth/callback/{integration['id']}",
+                    },
+                )
+            assert cb_resp.status_code == 200, cb_resp.text
+
+            # 6. Assert the global token is UNCHANGED
+            db_session.expire_all()
+            still_global = await db_session.get(OAuthToken, global_token_id)
+            assert still_global is not None, "Existing global token was deleted!"
+            assert still_global.organization_id is None
+            assert still_global.encrypted_access_token == b"GLOBAL-ORIGINAL", (
+                "Per-mapping callback overwrote the integration-level token "
+                "(the original bug — every per-mapping connect stomped the global one)"
+            )
+
+            # Diagnostic — list every token for this provider
+            all_tokens = await db_session.execute(
+                select(OAuthToken).where(OAuthToken.provider_id == provider_id)
+            )
+            all_list = list(all_tokens.scalars().all())
+            diagnostic = [
+                (str(t.id), str(t.organization_id), t.encrypted_access_token[:20])
+                for t in all_list
+            ]
+
+            # 7. Assert a NEW token exists scoped to org1
+            org_tokens = await db_session.execute(
+                select(OAuthToken).where(
+                    OAuthToken.provider_id == provider_id,
+                    OAuthToken.organization_id == org1["id"],
+                )
+            )
+            org_token = org_tokens.scalar_one_or_none()
+            assert org_token is not None, f"No org-scoped token was created. All tokens for provider: {diagnostic}"
+            assert org_token.id != global_token_id
+
+            # 8. Assert the mapping is linked to the NEW org-scoped token
+            mapping_get = e2e_client.get(
+                f"/api/integrations/{integration['id']}/mappings/{mapping_id}",
+                headers=platform_admin.headers,
+            )
+            assert mapping_get.status_code == 200
+            assert mapping_get.json()["oauth_token_id"] == str(org_token.id)
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
