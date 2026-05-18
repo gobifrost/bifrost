@@ -338,20 +338,21 @@ class OAuthProviderClient:
 
     def _parse_token_response(self, response_data: dict) -> dict:
         """
-        Parse OAuth token response and calculate expiration
+        Parse OAuth token response and calculate expiration.
 
-        Args:
-            response_data: Response JSON from OAuth provider
-
-        Returns:
-            Parsed token data with expires_at datetime
+        Pass-through by default: every field the provider returned is preserved
+        on the result dict so downstream code (entity_id capture, picker
+        enumeration) can see id_token, realmId, team.*, and anything else
+        provider-specific. Only ``expires_at`` is derived (from ``expires_in``)
+        and the standard fields are surfaced as explicit keys with their
+        documented defaults. The picker/extractor apply their own deny-list
+        scrubbing — we don't drop fields here.
         """
-        result = {
-            "access_token": response_data.get("access_token"),
-            "token_type": response_data.get("token_type", "Bearer"),
-            "refresh_token": response_data.get("refresh_token"),
-            "scope": response_data.get("scope", "")
-        }
+        result: dict = dict(response_data)
+        result["access_token"] = response_data.get("access_token")
+        result["token_type"] = response_data.get("token_type", "Bearer")
+        result["refresh_token"] = response_data.get("refresh_token")
+        result["scope"] = response_data.get("scope", "")
 
         # Calculate expires_at from expires_in (seconds)
         expires_in = response_data.get("expires_in")
