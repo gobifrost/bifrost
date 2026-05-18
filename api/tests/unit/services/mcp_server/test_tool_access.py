@@ -225,8 +225,13 @@ class TestGetAccessibleAgents:
         assert len(result) == 1
 
     @pytest.mark.asyncio
-    async def test_platform_admin_still_filtered_by_agent_access(self, service, mock_session, mock_agent):
-        """Platform admins should NOT bypass agent role requirements."""
+    async def test_platform_admin_bypasses_role_based_agent(self, service, mock_session, mock_agent):
+        """Platform admins (superusers) bypass ROLE_BASED agent role requirements (issue #244).
+
+        Previously, platform admins listing tools via /mcp/{agent_id} for a ROLE_BASED agent
+        whose roles they did not share would receive an empty tools list. Superusers must
+        be able to see tools for any agent, matching their behavior elsewhere in the platform.
+        """
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
             system_tools=["search_knowledge"],
@@ -235,13 +240,37 @@ class TestGetAccessibleAgents:
 
         mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
 
-        # Platform admin without the role should NOT see the agent
+        # Platform admin without the role SHOULD now see the agent
         result = await service._get_accessible_agents(
             user_roles=["Platform Admin"],  # Not "Secret Team"
             is_superuser=True,
         )
 
-        assert len(result) == 0
+        assert len(result) == 1
+        assert result[0].id == agent.id
+
+    def test_check_agent_access_superuser_bypass_role_based(self, service, mock_agent):
+        """_check_agent_access: superuser without matching roles still gets access (issue #244)."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.ROLE_BASED,
+            roles=["Secret Team"],
+        )
+
+        # Superuser without matching role -> True (the fix)
+        assert service._check_agent_access(
+            agent, user_roles=["Other"], is_superuser=True
+        ) is True
+
+    def test_check_agent_access_non_superuser_without_matching_role(self, service, mock_agent):
+        """_check_agent_access: non-superuser without matching roles is denied."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.ROLE_BASED,
+            roles=["Secret Team"],
+        )
+
+        assert service._check_agent_access(
+            agent, user_roles=["Other"], is_superuser=False
+        ) is False
 
     @pytest.mark.asyncio
     async def test_multiple_roles_matching(self, service, mock_session, mock_agent):

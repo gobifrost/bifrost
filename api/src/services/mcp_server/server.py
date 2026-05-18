@@ -453,7 +453,18 @@ def get_system_tools() -> list[dict[str, Any]]:
                 schema["additionalProperties"] = True
             return schema
         elif annotation is list or origin is list:
-            return {"type": "array"}
+            # Gemini rejects array schemas without `items`; OpenAI/Anthropic
+            # accept the field, so emit it unconditionally.
+            array_schema: dict[str, Any] = {"type": "array"}
+            if origin is list:
+                args = get_args(annotation)
+                if args:
+                    array_schema["items"] = python_type_to_json_schema(args[0])
+                else:
+                    array_schema["items"] = {"type": "string"}
+            else:
+                array_schema["items"] = {"type": "string"}
+            return array_schema
 
         return {"type": "string"}
 

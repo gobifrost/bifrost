@@ -85,7 +85,7 @@
 		"openapi-typescript-helpers": "^0.1.0",
 		"qrcode": "^1.5.4",
 		"react": "^19.2.1",
-		"react-day-picker": "^9.11.1",
+		"react-day-picker": "^10.0.0",
 		"react-diff-viewer-continued": "^4.2.2",
 		"react-dom": "^19.2.1",
 		"react-hook-form": "^7.75.0",

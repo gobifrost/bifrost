@@ -141,8 +141,8 @@ def _check_cli_version() -> None:
     command runs.
     """
     try:
-        import urllib.request
-        import json as _json
+        import httpx
+
         from bifrost import __version__
 
         installed = __version__.lstrip("v")
@@ -164,8 +164,14 @@ def _check_cli_version() -> None:
         if not api_url:
             return
 
-        with urllib.request.urlopen(f"{api_url}/api/version", timeout=3) as resp:
-            data = _json.loads(resp.read())
+        # Use httpx (already a hard dep via BifrostClient), not urllib.
+        # CDNs/WAFs in front of prod Bifrost instances (Cloudflare on
+        # bifrost.gocovi.com being the live case) 403 the default
+        # `Python-urllib/X.Y` User-Agent. httpx's default UA gets through
+        # and matches what every other SDK request already sends.
+        resp = httpx.get(f"{api_url}/api/version", timeout=3)
+        resp.raise_for_status()
+        data = resp.json()
 
         server_version = (data.get("version") or "").lstrip("v")
         if not server_version:

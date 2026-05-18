@@ -22,14 +22,17 @@ def _make_tarball(
     ref: str,
     files: dict[str, bytes],
     public_skills: list[str] | None = None,
+    public_skill_targets: dict[str, str] | None = None,
 ) -> bytes:
     """Build a tarball mimicking what GitHub's codeload returns.
 
     GitHub wraps everything in a ``<repo-name>-<sha>/`` prefix, so we
     simulate that. ``public_skills`` lists the names that should appear as
     symlinks under the top-level ``skills/`` directory (the plugin allowlist).
-    Defaults to every skill seen under ``.claude/skills/`` so existing tests
-    that don't care about filtering keep their current shape.
+    ``public_skill_targets`` optionally lets those aliases point at a different
+    real skill folder under ``.claude/skills/``. Defaults to every skill seen
+    under ``.claude/skills/`` so existing tests that don't care about filtering
+    keep their current shape.
     """
     repo_name = repo.split("/")[-1]
     prefix = f"{repo_name}-{ref}"
@@ -43,6 +46,8 @@ def _make_tarball(
             if name:
                 derived.add(name)
         public_skills = sorted(derived)
+    if public_skill_targets is None:
+        public_skill_targets = {name: name for name in public_skills}
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for relpath, contents in files.items():
@@ -53,7 +58,8 @@ def _make_tarball(
         for name in public_skills:
             info = tarfile.TarInfo(name=f"{prefix}/skills/{name}")
             info.type = tarfile.SYMTYPE
-            info.linkname = f"../.claude/skills/{name}"
+            target = public_skill_targets.get(name, name)
+            info.linkname = f"../.claude/skills/{target}"
             tar.addfile(info)
     return buf.getvalue()
 
@@ -66,7 +72,11 @@ def stub_github(monkeypatch: pytest.MonkeyPatch):
     wants the "repo" to ship.
     """
 
-    state: dict[str, object] = {"calls": [], "public_skills": None}
+    state: dict[str, object] = {
+        "calls": [],
+        "public_skills": None,
+        "public_skill_targets": None,
+    }
 
     def install(files: dict[str, bytes], repo: str = "jackmusick/bifrost") -> None:
         def _get(url: str, **_kwargs):
@@ -82,6 +92,7 @@ def stub_github(monkeypatch: pytest.MonkeyPatch):
                 ref,
                 files,
                 public_skills=public,  # type: ignore[arg-type]
+                public_skill_targets=state["public_skill_targets"],  # type: ignore[arg-type]
             )
             request = httpx.Request("GET", url)
             return httpx.Response(200, content=tarball, request=request)
@@ -215,6 +226,31 @@ class TestSkillUpdate:
         assert "Installed bifrost-build" in out
         assert "bifrost-debug" not in out
         assert "bifrost-secaudit" not in out
+
+    def test_public_skill_alias_installs_real_skill_folder(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        stub_github["install"](
+            {
+                ".claude/skills/bifrost-build/SKILL.md": b"public\n",
+                ".claude/skills/bifrost-build/notes.md": b"notes\n",
+            },
+        )
+        stub_github["public_skills"] = ["build"]  # type: ignore[index]
+        stub_github["public_skill_targets"] = {"build": "bifrost-build"}  # type: ignore[index]
+
+        rc = skill_module.handle_skill(["update"])
+        assert rc == 0
+
+        for root in (".claude/skills", ".agents/skills"):
+            assert (workspace / root / "bifrost-build/SKILL.md").is_file()
+            assert (workspace / root / "bifrost-build/notes.md").is_file()
+            assert not (workspace / root / "build").exists()
+        out = capsys.readouterr().out
+        assert "Installed bifrost-build" in out
 
     def test_repo_with_no_public_skills_errors(
         self,

@@ -1144,3 +1144,133 @@ class TestDocumentQueryPaginationStable:
         )
         assert sorted(walked) == sorted(full_ids)
         assert len(set(walked)) == n
+
+
+@pytest.mark.e2e
+class TestDocumentIdUniquePerTable:
+    """Document `id` must be unique *per table*, not platform-wide.
+
+    Regression for #256: the original schema put the primary key on `id`
+    alone, which made document ids globally unique across tables. Workflows
+    using a shared doc-id convention (e.g. ``cache-<org_id>`` across multiple
+    cache tables) would hit a 409 on the second write — because the PK on
+    `id` alone collided with the row from the first table, even though the
+    `(table_id, id)` composite was unique. The fix moves the PK to
+    ``(table_id, id)``.
+
+    The repro path is the SDK-style cache pattern Covi tripped over: same
+    doc id, two different tables, both global scope.
+    """
+
+    def test_same_doc_id_in_two_tables_via_upsert(
+        self, e2e_client, platform_admin
+    ):
+        """Two tables, one doc id — both upserts must succeed and stay independent."""
+        suffix = uuid4().hex[:8]
+        table_a = _create_table(
+            e2e_client, platform_admin.headers, f"pk_a_{suffix}"
+        )
+        table_b = _create_table(
+            e2e_client, platform_admin.headers, f"pk_b_{suffix}"
+        )
+        # The cache-<org_id> shape that Covi hit in prod.
+        doc_id = f"cache-{uuid4()}"
+
+        a = e2e_client.post(
+            f"/api/tables/{table_a}/documents/upsert",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"table": "a"}},
+        )
+        assert a.status_code == 200, a.text
+
+        b = e2e_client.post(
+            f"/api/tables/{table_b}/documents/upsert",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"table": "b"}},
+        )
+        assert b.status_code == 200, b.text
+
+        # Each row reads back independently from its own table.
+        get_a = e2e_client.get(
+            f"/api/tables/{table_a}/documents/{doc_id}",
+            headers=platform_admin.headers,
+        )
+        assert get_a.status_code == 200, get_a.text
+        assert get_a.json()["data"] == {"table": "a"}
+
+        get_b = e2e_client.get(
+            f"/api/tables/{table_b}/documents/{doc_id}",
+            headers=platform_admin.headers,
+        )
+        assert get_b.status_code == 200, get_b.text
+        assert get_b.json()["data"] == {"table": "b"}
+
+    def test_same_doc_id_in_two_tables_via_insert(
+        self, e2e_client, platform_admin
+    ):
+        """Same regression via the plain INSERT verb (no upsert flag)."""
+        suffix = uuid4().hex[:8]
+        table_a = _create_table(
+            e2e_client, platform_admin.headers, f"pk_ins_a_{suffix}"
+        )
+        table_b = _create_table(
+            e2e_client, platform_admin.headers, f"pk_ins_b_{suffix}"
+        )
+        doc_id = f"cache-{uuid4()}"
+
+        a = e2e_client.post(
+            f"/api/tables/{table_a}/documents",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"table": "a"}},
+        )
+        assert a.status_code == 201, a.text
+
+        b = e2e_client.post(
+            f"/api/tables/{table_b}/documents",
+            headers=platform_admin.headers,
+            json={"id": doc_id, "data": {"table": "b"}},
+        )
+        assert b.status_code == 201, b.text
+
+    def test_delete_doc_in_one_table_leaves_other_intact(
+        self, e2e_client, platform_admin
+    ):
+        """Deleting `(table_a, doc_id)` must NOT delete `(table_b, doc_id)`."""
+        suffix = uuid4().hex[:8]
+        table_a = _create_table(
+            e2e_client, platform_admin.headers, f"pk_del_a_{suffix}"
+        )
+        table_b = _create_table(
+            e2e_client, platform_admin.headers, f"pk_del_b_{suffix}"
+        )
+        doc_id = f"cache-{uuid4()}"
+
+        for table_id, payload in ((table_a, "a"), (table_b, "b")):
+            resp = e2e_client.post(
+                f"/api/tables/{table_id}/documents/upsert",
+                headers=platform_admin.headers,
+                json={"id": doc_id, "data": {"table": payload}},
+            )
+            assert resp.status_code == 200, resp.text
+
+        # Delete from table_a only.
+        del_resp = e2e_client.delete(
+            f"/api/tables/{table_a}/documents/{doc_id}",
+            headers=platform_admin.headers,
+        )
+        assert del_resp.status_code == 204, del_resp.text
+
+        # table_a is now empty for this id.
+        get_a = e2e_client.get(
+            f"/api/tables/{table_a}/documents/{doc_id}",
+            headers=platform_admin.headers,
+        )
+        assert get_a.status_code == 404
+
+        # table_b still has its row.
+        get_b = e2e_client.get(
+            f"/api/tables/{table_b}/documents/{doc_id}",
+            headers=platform_admin.headers,
+        )
+        assert get_b.status_code == 200, get_b.text
+        assert get_b.json()["data"] == {"table": "b"}

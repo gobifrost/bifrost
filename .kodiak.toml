@@ -1,0 +1,17 @@
+version = 1
+
+[merge]
+automerge_label = "automerge"
+method = "squash"
+update_branch_immediately = true
+optimistic_updates = false
+
+[merge.message]
+title = "pull_request_title"
+body = "pull_request_body"
+include_pr_number = true
+strip_html_comments = true
+
+[update]
+always = false
+require_automerge_label = true
