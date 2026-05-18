@@ -4,6 +4,7 @@ OAuth connection contract models for Bifrost.
 
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -439,6 +440,17 @@ class OAuthCallbackRequest(BaseModel):
         default=None,
         description="Organization ID for org-specific token storage (optional, for org overrides)"
     )
+    callback_url_params: dict[str, str] | None = Field(
+        default=None,
+        description="Raw query params from the OAuth callback URL (used to capture entity_id)",
+    )
+
+
+class EntityIdPickerCandidate(BaseModel):
+    """A candidate entity_id field surfaced from an OAuth callback."""
+    type: str = Field(..., description="One of: url_param, token_response_field, id_token_claim")
+    key: str = Field(..., description="Dotted path (e.g. 'team.id' or 'tid')")
+    value: str = Field(..., description="Stringified value found at that path")
 
 
 class OAuthCallbackResponse(BaseModel):
@@ -449,6 +461,38 @@ class OAuthCallbackResponse(BaseModel):
     connection_name: str = Field(..., description="Name of the OAuth connection")
     warning_message: str | None = Field(default=None, description="Warning message displayed to user (e.g., missing refresh token)")
     error_message: str | None = Field(default=None, description="Error message displayed to user")
+    entity_id_picker: list[EntityIdPickerCandidate] | None = Field(
+        default=None,
+        description=(
+            "Candidate entity_id sources for the admin to pick from. Populated "
+            "when entity_id_source is unset on the provider, OR when it is set "
+            "but extraction returned no value (the configured field wasn't in "
+            "this response). Null means 'don't show the picker'."
+        ),
+    )
+    triggering_mapping_id: UUID | None = Field(
+        default=None,
+        description=(
+            "When the callback was triggered by a per-mapping connect, the ID of "
+            "that mapping. Used by the picker UI to backfill the mapping's "
+            "entity_id with the chosen value."
+        ),
+    )
+    captured_entity_id: str | None = Field(
+        default=None,
+        description=(
+            "Value captured into the mapping's entity_id via the provider's "
+            "entity_id_source. Null when nothing was captured (no source, "
+            "extraction missed, or no triggering mapping)."
+        ),
+    )
+    captured_entity_id_from: str | None = Field(
+        default=None,
+        description=(
+            "Display string identifying where captured_entity_id came from, "
+            "e.g. 'id_token_claim:tid'. Null when captured_entity_id is null."
+        ),
+    )
 
 
 class OAuthProviderBase(BaseModel):

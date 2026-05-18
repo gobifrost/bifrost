@@ -77,7 +77,7 @@ describe("IntegrationOverview — no OAuth configured", () => {
 });
 
 describe("IntegrationOverview — connected", () => {
-	it("renders Connected status, Reconnect button, and Refresh Token", async () => {
+	it("renders Connected status, Reconnect default button, and Refresh default token", async () => {
 		const { user, onOAuthConnect, onOAuthRefresh } = renderOverview({
 			integration: {
 				name: "Test",
@@ -98,10 +98,10 @@ describe("IntegrationOverview — connected", () => {
 
 		expect(screen.getByText("Connected")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: /reconnect/i }));
+		await user.click(screen.getByRole("button", { name: /reconnect default/i }));
 		expect(onOAuthConnect).toHaveBeenCalledTimes(1);
 
-		await user.click(screen.getByRole("button", { name: /refresh token/i }));
+		await user.click(screen.getByRole("button", { name: /refresh default token/i }));
 		expect(onOAuthRefresh).toHaveBeenCalledTimes(1);
 	});
 
@@ -149,5 +149,29 @@ describe("IntegrationOverview — client_credentials flow", () => {
 
 		await user.click(screen.getByRole("button", { name: /get token/i }));
 		expect(onOAuthRefresh).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("IntegrationOverview — default fallback helper text", () => {
+	it("shows helper text under the connection button explaining it's the default fallback", () => {
+		renderOverview({
+			integration: {
+				name: "Test",
+				has_oauth_config: true,
+				config_schema: [],
+				config_defaults: {},
+				default_entity_id: null,
+				entity_id_name: null,
+			},
+			oauthConfig: {
+				status: "connected",
+				oauth_flow_type: "authorization_code",
+				has_refresh_token: true,
+			},
+			isOAuthConnected: true,
+		});
+		expect(
+			screen.getByText(/used when an organization isn't individually connected/i),
+		).toBeInTheDocument();
 	});
 });

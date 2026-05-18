@@ -40,6 +40,11 @@ class OAuthProvider(Base):
         default={},
         comment="Default values for URL template placeholders (e.g., {'entity_id': 'common'})"
     )
+    entity_id_source: Mapped[dict | None] = mapped_column(
+        JSONB,
+        default=None,
+        comment="Where to extract entity_id from OAuth callback artifacts; shape: {type: 'url_param'|'id_token_claim'|'token_response_field', key: '...'}",
+    )
     scopes: Mapped[list] = mapped_column(JSONB, default=[])
     redirect_uri: Mapped[str | None] = mapped_column(String(500), default=None)
     status: Mapped[str] = mapped_column(String(50), default="not_connected")
@@ -96,6 +101,9 @@ class OAuthToken(Base):
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     scopes: Mapped[list] = mapped_column(JSONB, default=[])
+    status: Mapped[str] = mapped_column(String(50), default="not_connected", server_default=text("'not_connected'"))
+    status_message: Mapped[str | None] = mapped_column(Text, default=None)
+    last_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )

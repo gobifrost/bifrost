@@ -189,6 +189,7 @@ async def run_refresh_job(
                     if not token or not provider:
                         continue
 
+                    # Per-token status always gets written
                     if outcome["success"]:
                         token.encrypted_access_token = outcome["encrypted_access_token"]
                         token.expires_at = outcome["expires_at"]
@@ -196,12 +197,24 @@ async def run_refresh_job(
                             token.encrypted_refresh_token = outcome["encrypted_refresh_token"]
                         if outcome.get("scopes"):
                             token.scopes = outcome["scopes"]
-                        provider.status = "completed"
-                        provider.last_token_refresh = datetime.now(timezone.utc)
-                        provider.status_message = None
+                        token.status = "completed"
+                        token.status_message = None
+                        token.last_refresh_at = datetime.now(timezone.utc)
                     else:
-                        provider.status = "failed"
-                        provider.status_message = outcome.get("error", "Refresh failed")[:200]
+                        token.status = "failed"
+                        token.status_message = (outcome.get("error", "Refresh failed"))[:200]
+                        token.last_refresh_at = datetime.now(timezone.utc)
+
+                    # Provider status mirrors the integration-level (fallback) token only.
+                    # Per-org tokens (organization_id IS NOT NULL) don't poison provider status.
+                    if token.organization_id is None:
+                        if outcome["success"]:
+                            provider.status = "completed"
+                            provider.status_message = None
+                            provider.last_token_refresh = datetime.now(timezone.utc)
+                        else:
+                            provider.status = "failed"
+                            provider.status_message = (outcome.get("error", "Refresh failed"))[:200]
 
                 await db.commit()
 

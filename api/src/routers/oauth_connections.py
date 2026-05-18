@@ -8,6 +8,7 @@ This is separate from oauth_sso.py which handles user authentication.
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import (
     CreateOAuthConnectionRequest,
+    EntityIdPickerCandidate,
     UpdateOAuthConnectionRequest,
     OAuthConnectionDetail,
     OAuthCredentialsResponse,
@@ -29,12 +31,15 @@ from src.models import (
 from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.models import OAuthProvider, OAuthToken
+from src.models.orm.integrations import IntegrationMapping
+from src.services.oauth_entity_id import extract_entity_id
 from src.services.oauth_provider import (
     build_token_refresh_context,
     get_url_resolution_defaults,
     refresh_oauth_token_http,
     resolve_url_template,
 )
+from src.services.oauth_state import consume_nonce, decode_state, OAuthStateError
 
 # Import cache invalidation
 try:
@@ -263,14 +268,27 @@ class OAuthConnectionRepository:
         connection_name: str,
         org_id: UUID | None,
     ) -> OAuthToken | None:
-        """Get the current token for a connection."""
+        """Get the current token for a connection scoped to org_id.
+
+        Tokens are stored per (provider, organization_id) — passing org_id=None
+        returns the integration-level fallback token; passing a UUID returns
+        the org-scoped token for that org. The two are NOT cascaded here:
+        callers that want fallback semantics (mapping-first, then global)
+        must use src.services.oauth_provider.get_token_for_org.
+        """
         provider = await self.get_connection(connection_name, org_id)
         if not provider:
             return None
 
-        query = select(OAuthToken).where(
-            OAuthToken.provider_id == provider.id
-        ).order_by(OAuthToken.created_at.desc())
+        query = (
+            select(OAuthToken)
+            .where(OAuthToken.provider_id == provider.id)
+        )
+        if org_id is not None:
+            query = query.where(OAuthToken.organization_id == org_id)
+        else:
+            query = query.where(OAuthToken.organization_id.is_(None))
+        query = query.order_by(OAuthToken.created_at.desc())
 
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
@@ -298,11 +316,15 @@ class OAuthConnectionRepository:
         # Check for existing token and update, or create new
         existing_token = await self.get_token(connection_name, org_id)
 
+        now = datetime.now(timezone.utc)
         if existing_token:
             existing_token.encrypted_access_token = encrypted_access
             existing_token.encrypted_refresh_token = encrypted_refresh
             existing_token.expires_at = expires_at
             existing_token.scopes = scopes or []
+            existing_token.status = "completed"
+            existing_token.status_message = None
+            existing_token.last_refresh_at = now
             token = existing_token
         else:
             token = OAuthToken(
@@ -312,14 +334,17 @@ class OAuthConnectionRepository:
                 encrypted_refresh_token=encrypted_refresh,
                 expires_at=expires_at,
                 scopes=scopes or [],
+                status="completed",
+                status_message=None,
+                last_refresh_at=now,
             )
             self.db.add(token)
 
-        # Update provider status
+        # Update provider status (integration-level fallback health view)
         provider.status = "completed"
         provider.status_message = "Token acquired successfully"
-        provider.last_token_refresh = datetime.now(timezone.utc)
-        provider.updated_at = datetime.now(timezone.utc)
+        provider.last_token_refresh = now
+        provider.updated_at = now
 
         await self.db.flush()
         await self.db.refresh(token)
@@ -767,6 +792,44 @@ async def refresh_token(
     )
 
 
+async def _apply_callback_to_mapping(
+    db: AsyncSession,
+    mapping_id: UUID,
+    token: OAuthToken,
+    provider: OAuthProvider,
+    callback_url_params: dict[str, str],
+    token_response: dict[str, Any],
+) -> str | None:
+    """Link the freshly-stored token to the mapping and capture entity_id.
+
+    Idempotent for the ``oauth_token_id`` link. Does NOT overwrite a non-empty
+    ``mapping.entity_id`` — manual overrides win over auto-capture.
+
+    Returns the captured entity_id value when extraction succeeded AND was
+    actually written to the mapping. Returns None otherwise (no source set,
+    extraction missed, mapping already had a value, or mapping not found).
+    """
+    mapping = await db.get(IntegrationMapping, mapping_id)
+    if not mapping:
+        return None  # silently skip — the connection still happened at the provider level
+
+    mapping.oauth_token_id = token.id
+
+    captured: str | None = None
+    if not mapping.entity_id:
+        extracted = extract_entity_id(
+            provider.entity_id_source,
+            callback_url_params=callback_url_params,
+            token_response=token_response,
+        )
+        if extracted:
+            mapping.entity_id = extracted
+            captured = extracted
+
+    await db.flush()
+    return captured
+
+
 @router.post(
     "/callback/{connection_name}",
     response_model=OAuthCallbackResponse,
@@ -786,6 +849,30 @@ async def oauth_callback(
     repo = OAuthConnectionRepository(ctx.db)
     # Use org_id from request body for org-specific token storage (None for global)
     org_id = UUID(request.organization_id) if request.organization_id else None
+
+    # Per-mapping flows carry mapping_id in a signed state token. If present,
+    # the resulting OAuthToken must be scoped to the MAPPING'S org — otherwise
+    # store_token would upsert into the integration-level (organization_id IS NULL)
+    # slot and stomp the global fallback, leaving every "per-mapping" connection
+    # pointing at the same shared token row.
+    mapping_id_from_state: UUID | None = None
+    nonce_from_state: str | None = None
+    if request.state:
+        try:
+            payload = decode_state(request.state)
+            nonce_from_state = payload.get("nonce")
+            mid = payload.get("mapping_id")
+            if mid:
+                mapping_id_from_state = UUID(mid)
+                # Look up the mapping now so we can use its org for token storage.
+                from src.models.orm import IntegrationMapping as _IM
+                mapping_row = await ctx.db.get(_IM, mapping_id_from_state)
+                if mapping_row and mapping_row.organization_id:
+                    org_id = mapping_row.organization_id
+        except (OAuthStateError, ValueError) as e:
+            # Legacy integration-level flows use secrets.token_urlsafe() as state —
+            # decoding is expected to fail. Fall through to global-token storage.
+            logger.warning(f"OAuth state decode failed (treating as legacy flow): {e}")
 
     provider = await repo.get_connection(connection_name, org_id)
 
@@ -892,9 +979,59 @@ async def oauth_callback(
 
     logger.info(f"OAuth callback completed for {log_safe(connection_name)}")
 
+    # Per-mapping flow: link the freshly-stored (org-scoped) token to the mapping
+    # and capture entity_id from the provider's configured source. State + org_id
+    # were already decoded at the top of this handler — see mapping_id_from_state.
+    captured_value: str | None = None
+    if mapping_id_from_state is not None:
+        # Single-use enforcement: reject replays of valid-signature state.
+        if nonce_from_state and not await consume_nonce(nonce_from_state):
+            logger.warning(
+                "OAuth state nonce already consumed — possible replay, skipping mapping link"
+            )
+        else:
+            stored = await repo.get_token(connection_name, org_id)
+            if stored:
+                captured_value = await _apply_callback_to_mapping(
+                    db=ctx.db,
+                    mapping_id=mapping_id_from_state,
+                    token=stored,
+                    provider=provider,
+                    callback_url_params=request.callback_url_params or {},
+                    token_response=result,
+                )
+
     # Invalidate cache (token was stored)
     if CACHE_INVALIDATION_AVAILABLE and invalidate_oauth_token:
         await invalidate_oauth_token(None, connection_name)  # org_id is None in callback
+
+    # Surface the picker when the admin needs to make (or correct) a choice:
+    #   (a) entity_id_source is unset — first-time setup, any connect path
+    #   (b) entity_id_source IS set, this was a per-mapping connect, but
+    #       extraction returned nothing (the configured field wasn't in this
+    #       response). Re-show candidates so admin can pick a different source.
+    # When source is set AND extraction succeeded, we skip the picker.
+    picker: list[EntityIdPickerCandidate] | None = None
+    extraction_missed = (
+        provider.entity_id_source is not None
+        and mapping_id_from_state is not None
+        and captured_value is None
+    )
+    if provider.entity_id_source is None or extraction_missed:
+        from src.services.oauth_entity_id import enumerate_candidate_fields
+        candidates = enumerate_candidate_fields(
+            callback_url_params=request.callback_url_params or {},
+            token_response=result,
+        )
+        if candidates:
+            picker = [EntityIdPickerCandidate(**c) for c in candidates]
+        if extraction_missed:
+            src = provider.entity_id_source or {}
+            logger.warning(
+                f"entity_id auto-capture missed: source={src.get('type')}:{src.get('key')} "
+                f"not found in callback artifacts for {log_safe(connection_name)}; "
+                f"re-showing picker"
+            )
 
     # Build response with optional warning
     warning_msg = None
@@ -904,6 +1041,11 @@ async def oauth_callback(
             "when the access token expires."
         )
 
+    captured_from: str | None = None
+    if captured_value and provider.entity_id_source:
+        src = provider.entity_id_source
+        captured_from = f"{src.get('type')}:{src.get('key')}"
+
     return OAuthCallbackResponse(
         success=True,
         message="OAuth connection completed successfully",
@@ -911,6 +1053,10 @@ async def oauth_callback(
         connection_name=connection_name,
         warning_message=warning_msg,
         error_message=None,
+        entity_id_picker=picker,
+        triggering_mapping_id=mapping_id_from_state,
+        captured_entity_id=captured_value,
+        captured_entity_id_from=captured_from,
     )
 
 
