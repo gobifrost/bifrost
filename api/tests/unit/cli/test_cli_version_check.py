@@ -67,7 +67,7 @@ def _make_url_response(payload: dict, status_code: int = 200) -> httpx.Response:
         status_code=status_code,
         content=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
-        request=httpx.Request("GET", "http://test.example/api/version"),
+        request=httpx.Request("GET", "https://test.example/api/version"),
     )
 
 
@@ -125,7 +125,7 @@ class TestSkipCases:
             status_code=200,
             content=b"<html>not json</html>",
             headers={"content-type": "text/html"},
-            request=httpx.Request("GET", "http://server.example/api/version"),
+            request=httpx.Request("GET", "https://server.example/api/version"),
         )
         with patch(
             "bifrost.credentials._resolve_url",

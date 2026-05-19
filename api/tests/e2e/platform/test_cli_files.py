@@ -65,7 +65,7 @@ def _run_bifrost(args: list[str]) -> subprocess.CompletedProcess[str]:
     the in-network test API. ``authenticate_engine`` writes the same URL
     into the credentials file, so the SDK matches the right record.
     """
-    env = {**os.environ, "BIFROST_API_URL": "http://api:8000"}
+    env = {**os.environ, "BIFROST_API_URL": "http://api:8000"}  # NOSONAR - in-network Docker test API
     try:
         return subprocess.run(
             ["bifrost", *args],
