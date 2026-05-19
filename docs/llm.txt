@@ -190,6 +190,16 @@ Non-obvious semantics:
 
 Run `bifrost events <verb> --help` for the complete flag list.
 
+### Internal events (platform-emitted)
+
+Internal events have `source_type=internal` and `event_source_id=NULL`. Subscriptions match on `event_type` only. Subscribe with `bifrost events subscribe --event-type <type> --workflow <ref>`.
+
+| Event type | When emitted | Key payload fields |
+|---|---|---|
+| `user.invited` | `POST /api/users` with `invite=true` (and `trigger_automation≠false`), or `POST /api/users/{id}/invite/resend` | `user_id`, `email`, `name`, `registration_url`, `expires_at`, `invited_by`, `reason` |
+
+Full payload schema: `docs/events/internal.md`.
+
 ## Requirements (Python workflow deps)
 
 Workspace-wide `requirements.txt` for Python packages workers install at process spawn. Wraps `/api/packages/*`.
