@@ -77,9 +77,61 @@ Start with this policy:
 - License findings warn during rollout and should not block merges until the
   policy is explicitly tuned.
 
+## Debian Container Findings
+
+Debian stable packages often keep an older upstream version and backport
+security fixes into the Debian package revision. Do not treat an upstream
+version comparison as sufficient evidence that a Debian package is exploitable.
+
+For Debian container findings:
+
+1. Record the Snyk ID, CVE, package, installed version, introducing package,
+   and runtime path.
+2. Check the installed version and candidate version in the built image:
+
+   ```sh
+   apt-get update
+   apt-cache policy <package>
+   ```
+
+3. Check Debian Security Tracker for the CVE and source package:
+   - https://security-tracker.debian.org/tracker/<CVE>
+   - https://security-tracker.debian.org/tracker/source-package/<source-package>
+4. Classify the finding:
+   - **Fix now** when Debian has a fixed candidate available in stable or
+     stable-security.
+   - **Track upstream/distro** when Debian still marks the stable package
+     vulnerable and no fixed stable candidate exists.
+   - **Accept with evidence** when Debian marks the issue ignored, postponed,
+     no-DSA, or not applicable to our runtime path.
+   - **Refactor later** when the finding only disappears by removing a runtime
+     tool such as `awscli`, `git`, or `curl`.
+5. Add Snyk ignores only for reviewed findings with a dated comment that names
+   the Debian tracker status and the Bifrost follow-up decision. Do not add
+   broad package-level ignores.
+
+### Current API Image Snapshot
+
+As of 2026-05-19, the API image is based on
+`python:3.14-slim@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856`.
+The container scan reports 8 high/critical Debian findings after the initial
+base-image cleanup. The image already has the current Debian candidate versions:
+
+| Source package | Installed version | Snyk CVEs | Debian status | Bifrost disposition |
+| --- | --- | --- | --- | --- |
+| `gnutls28` | `3.8.9-3+deb13u3` | `CVE-2026-33845`, `CVE-2026-33846`, `CVE-2026-3833`, `CVE-2026-42009`, `CVE-2026-42010`, `CVE-2026-42011` | Debian Security Tracker marks trixie vulnerable; fixed in sid/forky at `3.8.13-1`. | Track until Debian ships a trixie security fix or we can remove the `git`/`curl` runtime dependency chain. |
+| `expat` | `2.7.1-2` | `CVE-2026-45186` | Debian Security Tracker marks trixie vulnerable; fixed in sid at `2.8.0-2`. | Track until Debian ships a trixie security fix or we can remove the `git`/`awscli` runtime dependency chain. |
+| `python-urllib3` | `2.3.0-3+deb13u1` | `CVE-2025-66471` | Debian marks trixie vulnerable but ignored because the effective fix is intrusive and requires a newer `brotli`. | Accept as distro-reviewed residual for now; revisit if Debian publishes a stable fix or if `awscli` is removed. |
+
+The remaining findings are not a reason to vendor newer Debian packages from
+testing/unstable into the production image. Prefer either the supported Debian
+stable security update, or a separate runtime-slimming change that removes the
+introducing tool.
+
 ## Promotion Criteria
 
 Make Snyk blocking only after at least one scheduled run and one representative
 pull-request run have completed with acceptable noise. A reasonable first
 blocking gate is high and critical open-source findings on production
-dependencies only.
+dependencies only. Do not make Debian container findings blocking until the
+triage process above has a low-noise suppress/track workflow.
