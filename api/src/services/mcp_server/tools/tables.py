@@ -219,7 +219,7 @@ async def create_table(
     """Create a new table with explicit scope."""
     from sqlalchemy import select
 
-    from shared.policies.probe import make_seed_admin_bypass
+    from shared.table_policies import make_seed_admin_bypass
     from src.models.orm.tables import Table
 
     logger.info(f"MCP create_table called with name={name}, scope={scope}")

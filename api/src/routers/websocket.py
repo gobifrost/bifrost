@@ -19,12 +19,13 @@ from sqlalchemy.orm import selectinload
 from shared.policies.probe import is_subscribe_authorized
 from shared.policies.subscription import decide_visibility_change
 from shared.role_cache import get_user_roles
+from shared.table_policies import RowResolver, TablePolicies
 from src.core.auth import UserPrincipal, get_current_user_ws
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
-from src.models.contracts.policies import Expr, TablePolicies
+from src.models.contracts.policies import Expr
 from src.models.orm import Agent
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
@@ -253,10 +254,11 @@ async def _handle_table_message(
         return
 
     decision = decide_visibility_change(
-        old_row=payload.get("old_row"),
-        new_row=payload.get("new_row"),
+        old_ctx=payload.get("old_row"),
+        new_ctx=payload.get("new_row"),
         policies=policies,
         user=user,
+        resolver=RowResolver(),
         user_filter=sub.get("filter"),
     )
     if decision is None:
@@ -286,7 +288,7 @@ async def _re_evaluate_subscription(
 ) -> None:
     """Re-run subscribe-time authorization after a policy edit; revoke if no."""
     policies = await _load_policies_for_table(table_id)
-    if policies is None or not is_subscribe_authorized(policies, user):
+    if policies is None or not is_subscribe_authorized(policies, user, resolver=RowResolver()):
         await websocket.send_json({
             "type": "subscription_revoked",
             "channel": f"table:{table_id}",
@@ -338,7 +340,7 @@ async def _authorize_table_subscribe(
         return None
 
     await _populate_user_roles(user)
-    if not is_subscribe_authorized(policies, user):
+    if not is_subscribe_authorized(policies, user, resolver=RowResolver()):
         await websocket.send_json({
             "type": "error",
             "channel": spec.name,

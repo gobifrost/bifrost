@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentSuperuser
 from src.core.database import DbSession
-from shared.policies.probe import make_seed_admin_bypass
+from shared.table_policies import make_seed_admin_bypass
 from src.core.security import decrypt_with_key, encrypt_secret
 from src.models.enums import ConfigType
 from src.models.orm.config import Config

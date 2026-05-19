@@ -2254,8 +2254,7 @@ class ManifestResolver:
         from sqlalchemy import update
         from sqlalchemy.dialects.postgresql import insert
 
-        from shared.policies.probe import make_seed_admin_bypass
-        from src.models.contracts.policies import TablePolicies
+        from shared.table_policies import make_seed_admin_bypass, TablePolicies
         from src.models.orm.tables import Table
         from src.services.sync_ops import SyncOp  # noqa: F401
 
