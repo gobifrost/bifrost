@@ -3,13 +3,12 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkflowKeys } from "@/pages/settings/WorkflowKeys";
 import { Branding } from "@/pages/settings/Branding";
-import { Email } from "@/pages/settings/Email";
 import { OAuth } from "@/pages/settings/OAuth";
 import { GitHub } from "@/pages/settings/GitHub";
 import { LLMConfig } from "@/pages/settings/LLMConfig";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
-import { Bot, Key, Mail, Palette, Plug, Shield, Wrench } from "lucide-react";
+import { Bot, Key, Palette, Plug, Shield, Wrench } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
 
 export function Settings() {
@@ -56,10 +55,6 @@ export function Settings() {
 						<Palette className="h-4 w-4 mr-1" />
 						Branding
 					</TabsTrigger>
-					<TabsTrigger value="email">
-						<Mail className="h-4 w-4 mr-1" />
-						Email
-					</TabsTrigger>
 					<TabsTrigger value="sso">
 						<Shield className="h-4 w-4 mr-1" />
 						SSO
@@ -89,10 +84,6 @@ export function Settings() {
 
 				<TabsContent value="branding" className="mt-6">
 					<Branding />
-				</TabsContent>
-
-				<TabsContent value="email" className="mt-6">
-					<Email />
 				</TabsContent>
 
 				<TabsContent value="sso" className="mt-6">

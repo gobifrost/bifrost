@@ -535,9 +535,9 @@ export function Users() {
 													resendMutation.mutate(user.id, {
 														onSuccess: (res) => {
 															toast.success(
-																res.email_sent
-																	? `Invite resent to ${user.email}`
-																	: "Invite generated (email failed — copy link from regenerate)",
+																res.event_emitted
+																	? `Invite automation triggered for ${user.email}`
+																	: "Invite regenerated (no automations — copy link from regenerate)",
 															);
 														},
 														onError: (e: unknown) =>

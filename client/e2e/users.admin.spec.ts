@@ -138,7 +138,7 @@ test.describe("User Invitation", () => {
 		const orgs = await orgsResp.json();
 		const organizationId = orgs[0]?.id as string | undefined;
 
-		// Create user without sending invite email (avoid email dependency)
+		// Create user without invite flag (avoid triggering automations)
 		const createResp = await api.post("/api/users", {
 			data: { email, name: "Playwright Invitee", invite: false, organization_id: organizationId },
 		});

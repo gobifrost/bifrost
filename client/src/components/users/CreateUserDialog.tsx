@@ -26,7 +26,12 @@ import {
 	CommandItem,
 	CommandList,
 } from "@/components/ui/command";
-import { Shield, AlertCircle, Loader2, Check, ChevronsUpDown, X } from "lucide-react";
+import { Shield, AlertCircle, Loader2, Check, ChevronsUpDown, X, Info } from "lucide-react";
+import {
+	HoverCard,
+	HoverCardContent,
+	HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCreateUser } from "@/hooks/useUsers";
@@ -54,6 +59,7 @@ function CreateUserDialogContent({
 	const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
 	const [orgId, setOrgId] = useState<string>("");
 	const [sendInvite, setSendInvite] = useState(true);
+	const [triggerAutomation, setTriggerAutomation] = useState(true);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(new Set());
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
@@ -140,6 +146,7 @@ function CreateUserDialogContent({
 					is_superuser: isPlatformAdmin,
 					organization_id: orgId || null,
 					invite: sendInvite,
+					trigger_automation: triggerAutomation,
 				},
 			});
 
@@ -158,7 +165,9 @@ function CreateUserDialogContent({
 
 			toast.success("User created successfully", {
 				description: sendInvite
-					? `Invite email sent to ${email}`
+					? triggerAutomation
+						? `Invite automation triggered for ${email}`
+						: `Invite link created for ${email} (automations skipped)`
 					: `${displayName} (${email}) has been added to the platform`,
 			});
 
@@ -375,9 +384,17 @@ function CreateUserDialogContent({
 						onChange={(e) => setSendInvite(e.target.checked)}
 					/>
 					<Label htmlFor="sendInvite" className="cursor-pointer text-sm font-normal">
-						Send invite email
+						Create invite link
 					</Label>
 				</div>
+
+				{sendInvite && (
+					<TriggerAutomationToggle
+						checked={triggerAutomation}
+						onCheckedChange={setTriggerAutomation}
+						events={["user.invited"]}
+					/>
+				)}
 
 				{isPlatformAdmin && (
 					<Alert>
@@ -419,5 +436,59 @@ export function CreateUserDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			{open && <CreateUserDialogContent onOpenChange={onOpenChange} />}
 		</Dialog>
+	);
+}
+
+interface TriggerAutomationToggleProps {
+	checked: boolean;
+	onCheckedChange: (v: boolean) => void;
+	events: string[];
+}
+
+export function TriggerAutomationToggle({
+	checked,
+	onCheckedChange,
+	events,
+}: TriggerAutomationToggleProps) {
+	return (
+		<div className="flex items-center gap-2 pl-6">
+			<input
+				id="triggerAutomation"
+				type="checkbox"
+				className="h-4 w-4 rounded border-input"
+				checked={checked}
+				onChange={(e) => onCheckedChange(e.target.checked)}
+			/>
+			<Label htmlFor="triggerAutomation" className="cursor-pointer text-sm font-normal">
+				Trigger invite automation
+			</Label>
+			<HoverCard>
+				<HoverCardTrigger asChild>
+					<button
+						type="button"
+						aria-label="Learn about invite automation"
+						className="text-muted-foreground hover:text-foreground"
+					>
+						<Info className="h-4 w-4" />
+					</button>
+				</HoverCardTrigger>
+				<HoverCardContent className="w-72 text-sm">
+					<p className="mb-2">
+						Workflows subscribed to these events will run when you create this user.
+						If unchecked, the registration link is generated but no automations run.
+					</p>
+					<div className="flex flex-wrap gap-1">
+						{events.map((event) => (
+							<span
+								key={event}
+								className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+							>
+								{event}
+							</span>
+						))}
+					</div>
+				</HoverCardContent>
+			</HoverCard>
+		</div>
 	);
 }

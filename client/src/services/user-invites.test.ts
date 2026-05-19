@@ -14,7 +14,7 @@ describe("user-invites service", () => {
 
 	it("resendInvite POSTs to /resend with user_id path param", async () => {
 		(apiClient.POST as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-			data: { user_id: "u1", registration_url: "x", email_sent: true, expires_at: "" },
+			data: { user_id: "u1", registration_url: "x", event_emitted: true, expires_at: "" },
 			error: null,
 		});
 		const r = await resendInvite("u1");
@@ -27,7 +27,7 @@ describe("user-invites service", () => {
 
 	it("regenerateInvite POSTs to /regenerate", async () => {
 		(apiClient.POST as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-			data: { user_id: "u2", registration_url: "y", email_sent: false, expires_at: "" },
+			data: { user_id: "u2", registration_url: "y", event_emitted: false, expires_at: "" },
 			error: null,
 		});
 		const r = await regenerateInvite("u2");
