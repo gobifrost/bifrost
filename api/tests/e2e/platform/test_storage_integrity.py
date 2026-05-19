@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @pytest_asyncio.fixture
 async def repo_storage():
-    """Real RepoStorage against test MinIO."""
+    """Real RepoStorage against test S3-compatible storage."""
     settings = get_settings()
     return RepoStorage(settings)
 
@@ -66,7 +66,7 @@ async def cleanup_repo(db_session: AsyncSession, repo_storage: RepoStorage):
         for path in paths:
             await repo_storage.delete(path)
     except Exception as e:
-        # Best-effort fixture cleanup — MinIO may be unreachable / list may fail
+        # Best-effort fixture cleanup - object storage may be unreachable / list may fail
         logger.debug(f"cleanup_repo S3 sweep skipped: {e}")
 
 

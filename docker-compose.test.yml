@@ -7,7 +7,7 @@
 # - NO exposed ports (all communication via Docker network)
 # - Fresh database for each test run
 # - PgBouncer for connection pooling (matches production)
-# - MinIO for S3-compatible storage (workspace and files)
+# - SeaweedFS for S3-compatible storage (workspace and files)
 #
 # NOTE: Ports are NOT exposed to the host, allowing tests to run while
 # the development stack is running on the default ports.
@@ -91,35 +91,17 @@ services:
       timeout: 5s
       retries: 10
 
-  # MinIO - S3-compatible object storage (Test)
+  # SeaweedFS - S3-compatible object storage (Test)
   # Stores workspace files and runtime outputs
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
     environment:
-      MINIO_ROOT_USER: bifrost
-      MINIO_ROOT_PASSWORD: bifrost_test_key
+      AWS_ACCESS_KEY_ID: bifrost
+      AWS_SECRET_ACCESS_KEY: bifrost_test_key
+      S3_BUCKET: bifrost-test
     # No ports exposed - all access via Docker network
     tmpfs:
       - /data  # Ephemeral storage - fresh each run
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # MinIO bucket initialization (Test)
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: |
-      /bin/sh -c "
-      mc alias set myminio http://minio:9000 bifrost bifrost_test_key
-      mc mb myminio/bifrost-test --ignore-existing
-      echo 'MinIO bucket created successfully'
-      "
 
   # Init Container (Test) - Runs migrations and warms module cache before API/workers start
   init:
@@ -158,9 +140,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # S3 configuration for MinIO
+      # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
@@ -183,8 +165,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_started
       init:
         condition: service_completed_successfully
     healthcheck:
@@ -212,9 +194,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # S3 configuration for MinIO
+      # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
@@ -234,8 +216,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_started
       api:
         condition: service_healthy
     # Entrypoint handles permissions; run as root so it can fix volume ownership
@@ -258,9 +240,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # S3 configuration for MinIO
+      # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
@@ -281,8 +263,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_started
       api:
         condition: service_healthy
     # Entrypoint handles permissions; run as root so it can fix volume ownership
@@ -305,9 +287,9 @@ services:
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       BIFROST_ALLOW_REGISTRATION: "true"
-      # S3 configuration for MinIO
+      # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://minio:9000
+      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
@@ -361,8 +343,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      seaweedfs:
+        condition: service_started
       init:
         condition: service_completed_successfully
     # Entrypoint fixes mounted result/coverage directory ownership, then drops to bifrost.

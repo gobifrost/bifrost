@@ -9,7 +9,15 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    PrimaryKeyConstraint,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -81,9 +89,11 @@ class Document(Base):
 
     __tablename__ = "documents"
 
-    id: Mapped[str] = mapped_column(
-        String(255), primary_key=True, default=lambda: str(uuid4())
-    )
+    # Composite PK ``(table_id, id)`` — declared in ``__table_args__`` below.
+    # Document ids are unique *per table*, not globally; the narrower PK on
+    # ``id`` alone (pre-#256) broke any workflow using a shared doc-id
+    # convention across multiple tables (e.g. ``cache-<org_id>``).
+    id: Mapped[str] = mapped_column(String(255), default=lambda: str(uuid4()))
     table_id: Mapped[UUID] = mapped_column(
         ForeignKey("tables.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
     )
@@ -104,7 +114,7 @@ class Document(Base):
     table: Mapped["Table"] = relationship("Table", back_populates="documents")
 
     __table_args__ = (
+        PrimaryKeyConstraint("table_id", "id", name="documents_pkey"),
         Index("ix_documents_table_id", "table_id"),
-        # Unique constraint on (table_id, id) handled in migration
         # GIN index on data handled in migration
     )

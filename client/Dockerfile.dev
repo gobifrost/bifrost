@@ -2,8 +2,8 @@
 # Installs dependencies only - all code comes from volume mounts
 # Prevents stale code and build cache issues
 
-# node:20-slim
-FROM node@sha256:f6f9fae352b319e817eec5efc7721b3f06bc53104f2f800d0f778f3915835804
+# node:26-slim
+FROM node:26-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30
 
 WORKDIR /app
 

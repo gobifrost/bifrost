@@ -119,7 +119,7 @@ dependencies = [
     "websockets",  # For E2E WebSocket tests
 
     # =========================================================================
-    # Object Storage (S3/MinIO)
+    # Object Storage (S3-compatible)
     # =========================================================================
     "aiobotocore",  # Async S3 client
     "types-aiobotocore[s3]",  # Type stubs for S3

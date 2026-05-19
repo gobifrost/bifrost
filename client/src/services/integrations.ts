@@ -23,6 +23,8 @@ export type IntegrationMappingCreate =
 	components["schemas"]["IntegrationMappingCreate"];
 export type IntegrationMappingUpdate =
 	components["schemas"]["IntegrationMappingUpdate"];
+export type MappingAuthorizeResponse =
+	components["schemas"]["MappingAuthorizeResponse"];
 
 /**
  * Hook to fetch all integrations
@@ -266,4 +268,135 @@ export type IntegrationTestResponse =
  */
 export function useTestIntegration() {
 	return $api.useMutation("post", "/api/integrations/{integration_id}/test");
+}
+
+/**
+ * Hook to begin OAuth authorize flow for a specific mapping.
+ * Returns an authorization URL the caller should redirect the user to.
+ */
+export function useAuthorizeMapping() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"post",
+		"/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/authorize",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
+}
+
+/**
+ * Hook to disconnect (revoke) the OAuth token for a specific mapping.
+ */
+export function useDisconnectMapping() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"post",
+		"/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/disconnect",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
+}
+
+/**
+ * Hook to proactively refresh a specific mapping's OAuth token.
+ */
+export function useRefreshMapping() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"post",
+		"/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/refresh",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
+}
+
+/**
+ * Hook to set the entity_id_source on an integration's OAuth provider.
+ * Optionally backfills a triggering mapping's entity_id.
+ */
+export function useSetEntityIdSource() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"patch",
+		"/api/integrations/{integration_id}/oauth/entity_id_source",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
+}
+
+/**
+ * Hook to clear the entity_id_source on an integration's OAuth provider.
+ * When clearMappings=true, also clears entity_id on every mapping under
+ * this integration so they re-capture on reconnect.
+ */
+export function useResetEntityIdSource() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"delete",
+		"/api/integrations/{integration_id}/oauth/entity_id_source",
+		{
+			onSuccess: (_, variables) => {
+				const integrationId = variables.params.path.integration_id;
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/integrations/{integration_id}/mappings",
+						{ params: { path: { integration_id: integrationId } } },
+					],
+				});
+			},
+		},
+	);
 }

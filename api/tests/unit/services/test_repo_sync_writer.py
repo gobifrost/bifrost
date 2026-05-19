@@ -12,7 +12,7 @@ def mock_settings():
     settings = MagicMock()
     settings.s3_configured = True
     settings.s3_bucket = "test-bucket"
-    settings.s3_endpoint_url = "http://minio:9000"
+    settings.s3_endpoint_url = "http://seaweedfs:8333"
     settings.s3_access_key = "test"
     settings.s3_secret_key = "test"
     settings.s3_region = "us-east-1"

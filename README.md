@@ -146,7 +146,7 @@ The full stack runs in Docker with hot reload enabled for both API and client:
 ./debug.sh              # Start all services with hot reload
 ```
 
-This launches PostgreSQL, Redis, RabbitMQ, MinIO, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
+This launches PostgreSQL, Redis, RabbitMQ, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
 
 Changes to files in `api/src/`, `api/shared/`, and `client/src/` automatically reload — **do not restart containers for code changes.**
 

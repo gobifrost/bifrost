@@ -116,15 +116,14 @@ class TestIntegrationMappingCreate:
             for e in errors
         )
 
-    def test_mapping_create_invalid_entity_id_empty(self):
-        """Test creating mapping with empty entity_id."""
-        with pytest.raises(ValidationError) as exc_info:
-            IntegrationMappingCreate(
-                organization_id=uuid4(),
-                entity_id="",
-            )
-        errors = exc_info.value.errors()
-        assert any(e["loc"] == ("entity_id",) for e in errors)
+    def test_mapping_create_allows_empty_entity_id(self):
+        """Empty entity_id is allowed — mapping can be created before OAuth
+        captures the tenant identifier. See commit 030b4c9f."""
+        mapping = IntegrationMappingCreate(
+            organization_id=uuid4(),
+            entity_id="",
+        )
+        assert mapping.entity_id == ""
 
     def test_mapping_create_invalid_entity_id_too_long(self):
         """Test creating mapping with entity_id exceeding max length."""
@@ -151,12 +150,10 @@ class TestIntegrationMappingCreate:
 class TestIntegrationMappingUpdate:
     """Tests for IntegrationMappingUpdate model."""
 
-    def test_mapping_update_invalid_entity_id_empty(self):
-        """Test update with empty entity_id fails validation."""
-        with pytest.raises(ValidationError) as exc_info:
-            IntegrationMappingUpdate(entity_id="")
-        errors = exc_info.value.errors()
-        assert any(e["loc"] == ("entity_id",) for e in errors)
+    def test_mapping_update_allows_empty_entity_id(self):
+        """Empty entity_id clears the field — see commit 030b4c9f."""
+        update = IntegrationMappingUpdate(entity_id="")
+        assert update.entity_id == ""
 
 
 class TestIntegrationSDKResponse:

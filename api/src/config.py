@@ -217,7 +217,7 @@ class Settings(BaseSettings):
 
     s3_endpoint_url: str | None = Field(
         default=None,
-        description="S3 endpoint URL (None for AWS, 'http://minio:9000' for local MinIO)"
+        description="S3 endpoint URL (None for AWS, local S3-compatible endpoint for self-hosted storage)"
     )
 
     s3_access_key: str | None = Field(

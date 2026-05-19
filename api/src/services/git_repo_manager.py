@@ -161,7 +161,7 @@ class GitRepoManager:
         cmd = ["aws", "s3", "sync", source, dest]
         if delete:
             cmd.append("--delete")
-        # For MinIO or custom S3 endpoints
+        # For self-hosted or custom S3 endpoints
         endpoint_url = self._settings.s3_endpoint_url
         if endpoint_url:
             cmd.extend(["--endpoint-url", endpoint_url])

@@ -186,9 +186,9 @@ export default defineConfig({
 			interval: 1000,
 		},
 		proxy: {
-			// Proxy S3 presigned URLs through Vite so the browser can reach MinIO
+			// Proxy S3 presigned URLs through Vite so the browser can reach local object storage
 			"/s3": {
-				target: process.env.BIFROST_S3_ENDPOINT_URL || "http://minio:9000",
+				target: process.env.BIFROST_S3_ENDPOINT_URL || "http://seaweedfs:8333",
 				changeOrigin: true,
 				rewrite: (path) => path.replace(/^\/s3/, ""),
 			},

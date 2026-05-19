@@ -6,7 +6,7 @@
 # Stage 1: Builder
 # =============================================================================
 # python:3.14-slim
-FROM python@sha256:511f025a0718f01b977d5ad572bc431745b31887ceccc538c85b87e82ad2956f AS builder
+FROM python:3.14-slim@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856 AS builder
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 # Stage 2: Runtime
 # =============================================================================
 # python:3.14-slim
-FROM python@sha256:511f025a0718f01b977d5ad572bc431745b31887ceccc538c85b87e82ad2956f
+FROM python:3.14-slim@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856
 
 WORKDIR /app
 
@@ -49,6 +49,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Install `bifrost` CLI shim. The bifrost Python package is mounted at
+# /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim
+# below exposes that as the `bifrost` console script on PATH, matching the
+# console-script entry declared in api/pyproject.toml. Workflows shell out
+# to `bifrost <verb>` from worker subprocesses (see Buildfrost spec at
+# Sync/Projects/buildfrost/backend-ask.md).
+RUN printf '#!/bin/sh\nexec python -m bifrost "$@"\n' > /usr/local/bin/bifrost \
+    && chmod +x /usr/local/bin/bifrost
 
 # Create non-root user
 RUN useradd -m -u 1000 bifrost && \

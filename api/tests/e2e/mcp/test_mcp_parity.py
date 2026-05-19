@@ -75,7 +75,7 @@ async def mcp_bridge_env(e2e_api_url) -> AsyncIterator[str]:
     """Point the parity tools' HTTP bridge at the running API container.
 
     The bridge falls back to in-process ASGITransport without this — but
-    that won't share the real API's DB/Redis/MinIO state we need for
+    that won't share the real API's DB/Redis/object-storage state we need for
     end-to-end behaviour.
     """
     prev = os.environ.get("BIFROST_MCP_HTTP_BRIDGE_URL")

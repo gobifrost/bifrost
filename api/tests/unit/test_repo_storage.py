@@ -86,7 +86,7 @@ def test_compute_hash():
 def _mock_settings():
     s = MagicMock()
     s.s3_bucket = "test-bucket"
-    s.s3_endpoint_url = "http://localhost:9000"
+    s.s3_endpoint_url = "http://localhost:8333"
     s.s3_access_key = "test"
     s.s3_secret_key = "test"
     s.s3_region = "us-east-1"

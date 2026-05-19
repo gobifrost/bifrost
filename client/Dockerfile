@@ -5,8 +5,8 @@
 # Stage 1: Base with dependencies
 # Uses BUILDPLATFORM to run on native architecture (no QEMU emulation)
 # =============================================================================
-# node:20-slim
-FROM --platform=$BUILDPLATFORM node@sha256:f6f9fae352b319e817eec5efc7721b3f06bc53104f2f800d0f778f3915835804 AS base
+# node:26-slim
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS base
 
 WORKDIR /app
 
