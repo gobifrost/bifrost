@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -96,6 +96,7 @@ class MCPToolAccessService:
         accessible_agents = await self._get_accessible_agents(
             user_roles=user_roles,
             is_superuser=is_superuser,
+            org_id=org_id,
         )
 
         # Step 2: Collect tools from accessible agents, enforcing per-workflow
@@ -189,6 +190,7 @@ class MCPToolAccessService:
             .where(Agent.id == str(agent_id))
             .where(Agent.is_active.is_(True))
         )
+        query = self._apply_agent_org_scope(query, org_id=org_id, is_superuser=is_superuser)
 
         result = await self.session.execute(query)
         agent = result.scalars().unique().first()
@@ -198,6 +200,10 @@ class MCPToolAccessService:
             return None
 
         # Check access using same rules as _get_accessible_agents
+        if not self._agent_in_org_scope(agent, org_id=org_id, is_superuser=is_superuser):
+            logger.warning(f"User denied org-scoped access to agent {agent_id}")
+            return None
+
         if not self._check_agent_access(agent, user_roles, is_superuser):
             logger.warning(f"User denied access to agent {agent_id}")
             return None
@@ -354,6 +360,7 @@ class MCPToolAccessService:
         self,
         user_roles: list[str],
         is_superuser: bool,
+        org_id: UUID | str | None = None,
     ) -> list[Agent]:
         """
         Get agents accessible to the user based on access_level and roles.
@@ -374,9 +381,15 @@ class MCPToolAccessService:
             )
             .where(Agent.is_active.is_(True))
         )
+        query = self._apply_agent_org_scope(query, org_id=org_id, is_superuser=is_superuser)
 
         result = await self.session.execute(query)
         all_agents = result.scalars().unique().all()
+        all_agents = [
+            agent
+            for agent in all_agents
+            if self._agent_in_org_scope(agent, org_id=org_id, is_superuser=is_superuser)
+        ]
 
         # Filter by access level
         accessible_agents: list[Agent] = []
@@ -404,6 +417,39 @@ class MCPToolAccessService:
             # as MCP requires authentication
 
         return accessible_agents
+
+    @staticmethod
+    def _apply_agent_org_scope(query, org_id: UUID | str | None, is_superuser: bool):
+        """Apply AgentRepository-style cascade scoping to MCP-visible agents."""
+        if org_id is None:
+            if is_superuser:
+                return query
+            return query.where(Agent.organization_id.is_(None))
+
+        return query.where(
+            or_(
+                Agent.organization_id == org_id,
+                Agent.organization_id.is_(None),
+            )
+        )
+
+    @staticmethod
+    def _agent_in_org_scope(
+        agent: Agent,
+        org_id: UUID | str | None,
+        is_superuser: bool,
+    ) -> bool:
+        """Return whether an already-loaded agent is in the caller's org scope."""
+        agent_org_id = (
+            getattr(agent, "organization_id", None)
+            if "organization_id" in getattr(agent, "__dict__", {})
+            else None
+        )
+
+        if org_id is None:
+            return is_superuser or agent_org_id is None
+
+        return agent_org_id is None or str(agent_org_id) == str(org_id)
 
     def _apply_config_filters(
         self,

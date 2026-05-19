@@ -59,6 +59,7 @@ def mock_agent(mock_role, mock_workflow):
     def _create_agent(
         name: str = "Test Agent",
         access_level: AgentAccessLevel = AgentAccessLevel.AUTHENTICATED,
+        organization_id=None,
         system_tools: list[str] | None = None,
         knowledge_sources: list[str] | None = None,
         roles: list[str] | None = None,
@@ -68,6 +69,7 @@ def mock_agent(mock_role, mock_workflow):
         agent.id = uuid4()
         agent.name = name
         agent.access_level = access_level
+        agent.organization_id = organization_id
         agent.is_active = True
         agent.system_tools = system_tools or []
         agent.knowledge_sources = knowledge_sources or []
@@ -161,6 +163,41 @@ class TestGetAccessibleAgents:
 
         assert len(result) == 1
         assert result[0].id == agent.id
+
+    @pytest.mark.asyncio
+    async def test_org_user_only_sees_global_and_own_org_agents(
+        self, service, mock_session, mock_agent
+    ):
+        """Org-scoped MCP callers cannot collect tools from another org's agents."""
+        caller_org_id = uuid4()
+        other_org_id = uuid4()
+        global_agent = mock_agent(
+            name="Global Agent",
+            organization_id=None,
+            knowledge_sources=["global-docs"],
+        )
+        own_org_agent = mock_agent(
+            name="Own Org Agent",
+            organization_id=caller_org_id,
+            knowledge_sources=["own-docs"],
+        )
+        other_org_agent = mock_agent(
+            name="Other Org Agent",
+            organization_id=other_org_id,
+            knowledge_sources=["other-docs"],
+        )
+
+        mock_session.execute = AsyncMock(
+            return_value=mock_query_result([global_agent, own_org_agent, other_org_agent])
+        )
+
+        result = await service._get_accessible_agents(
+            user_roles=[],
+            is_superuser=False,
+            org_id=caller_org_id,
+        )
+
+        assert {agent.id for agent in result} == {global_agent.id, own_org_agent.id}
 
     @pytest.mark.asyncio
     async def test_role_based_agent_with_matching_role(self, service, mock_session, mock_agent):
@@ -820,6 +857,46 @@ class TestSearchKnowledgeAutoInjection:
         assert "search_knowledge" in tool_ids
 
     @pytest.mark.asyncio
+    async def test_get_accessible_tools_excludes_cross_org_knowledge_namespaces(
+        self, service, mock_session, mock_agent
+    ):
+        """Namespace grants come only from agents in the caller's org cascade."""
+        caller_org_id = uuid4()
+        other_org_id = uuid4()
+        own_org_agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            organization_id=caller_org_id,
+            system_tools=[],
+            knowledge_sources=["own-docs"],
+        )
+        other_org_agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            organization_id=other_org_id,
+            system_tools=[],
+            knowledge_sources=["other-docs"],
+        )
+
+        mock_session.execute = AsyncMock(
+            return_value=mock_query_result([own_org_agent, other_org_agent])
+        )
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
+            mock_config = MagicMock()
+            mock_config.allowed_tool_ids = None
+            mock_config.blocked_tool_ids = None
+            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
+
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=False,
+                org_id=caller_org_id,
+            )
+
+        assert result.accessible_agent_ids == [own_org_agent.id]
+        assert result.accessible_namespaces == ["own-docs"]
+        assert "other-docs" not in result.accessible_namespaces
+
+    @pytest.mark.asyncio
     async def test_get_accessible_tools_does_not_inject_without_namespaces(
         self, service, mock_session, mock_agent
     ):
@@ -907,6 +984,34 @@ class TestSearchKnowledgeAutoInjection:
         assert result is not None
         tool_ids = {t.id for t in result.tools}
         assert "search_knowledge" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_get_tools_for_agent_denies_cross_org_agent(
+        self, service, mock_session, mock_agent
+    ):
+        """Agent-scoped MCP path cannot bind to another org's authenticated agent."""
+        caller_org_id = uuid4()
+        other_org_id = uuid4()
+        agent = mock_agent(
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            organization_id=other_org_id,
+            system_tools=[],
+            knowledge_sources=["other-docs"],
+        )
+        agent.system_prompt = "Other org docs"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await service.get_tools_for_agent(
+            agent_id=agent.id,
+            user_roles=[],
+            is_superuser=False,
+            org_id=caller_org_id,
+        )
+
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_tools_for_agent_no_inject_without_namespaces(
