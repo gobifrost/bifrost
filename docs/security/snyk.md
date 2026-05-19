@@ -52,8 +52,14 @@ and an isolated virtual environment:
 ```powershell
 $tmpReq = Join-Path $env:TEMP 'bifrost-snyk-requirements.txt'
 Get-Content requirements.lock |
-  Where-Object { $_ -match '^[A-Za-z0-9_.-]+==' } |
-  ForEach-Object { ($_ -split '\s+\\')[0] } |
+  ForEach-Object { $_.Trim() } |
+  Where-Object {
+    $_ -and
+    $_ -notmatch '^#' -and
+    $_ -notmatch '^--hash=' -and
+    $_ -match '=='
+  } |
+  ForEach-Object { ($_ -replace '\s+\\$','') } |
   Set-Content -Encoding ascii $tmpReq
 
 python -m venv .venv

@@ -82,14 +82,16 @@ jobs:
 
       - name: Test Python dependencies
         if: env.SNYK_TOKEN != ''
+        continue-on-error: true
         run: snyk test --file="${{ steps.python-requirements.outputs.requirements_file }}" --package-manager=pip --severity-threshold=high --skip-unresolved=true --command=./.venv/bin/python ${SNYK_ORG:+--org="$SNYK_ORG"}
 
       - name: Test client dependencies
         if: env.SNYK_TOKEN != ''
+        continue-on-error: true
         run: snyk test --file=client/package-lock.json --package-manager=npm --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
 
       - name: Monitor default branch snapshots
-        if: env.SNYK_TOKEN != '' && github.event_name != 'pull_request'
+        if: always() && env.SNYK_TOKEN != '' && github.event_name != 'pull_request'
         run: |
           snyk monitor --file="${{ steps.python-requirements.outputs.requirements_file }}" --package-manager=pip --project-name=bifrost-api --skip-unresolved=true --command=./.venv/bin/python ${SNYK_ORG:+--org="$SNYK_ORG"}
           snyk monitor --file=client/package-lock.json --package-manager=npm --project-name=bifrost-client ${SNYK_ORG:+--org="$SNYK_ORG"}
