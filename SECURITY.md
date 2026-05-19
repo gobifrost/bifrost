@@ -54,6 +54,8 @@ The repo runs:
 - **Secret scanning + push protection** at the repo level
 - **OpenSSF Scorecard** weekly, results published to
   https://api.securityscorecards.dev/projects/github.com/jackmusick/bifrost
+- **Snyk** dependency, IaC, and container scanning as a non-blocking rollout
+  lane (see `.github/workflows/snyk.yml` and `docs/security/snyk.md`)
 
 ### Auto-Merge Policy for Dependency Updates
 

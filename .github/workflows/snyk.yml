@@ -1,0 +1,158 @@
+# Snyk dependency, IaC, and container scans.
+#
+# This is intentionally non-blocking at first. Snyk is a second signal next to
+# Dependabot, CodeQL, and Scorecard; once the finding volume is tuned, selected
+# jobs can become required checks.
+
+name: Snyk
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SNYK_ORG: ${{ vars.SNYK_ORG }}
+  SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+jobs:
+  open-source:
+    name: Open Source
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Skip when Snyk token is not configured
+        if: env.SNYK_TOKEN == ''
+        run: echo "SNYK_TOKEN is not configured; skipping Snyk open-source scans."
+
+      - name: Checkout
+        if: env.SNYK_TOKEN != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        if: env.SNYK_TOKEN != ''
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        if: env.SNYK_TOKEN != ''
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Snyk CLI
+        if: env.SNYK_TOKEN != ''
+        run: npm install --global snyk@1.1304.3
+
+      - name: Prepare Python dependency manifest for Snyk
+        id: python-requirements
+        if: env.SNYK_TOKEN != ''
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          source = Path("requirements.lock")
+          target = Path(os.environ["RUNNER_TEMP"]) / "bifrost-snyk-requirements.txt"
+          lines = []
+          for line in source.read_text(encoding="utf-8").splitlines():
+              stripped = line.strip()
+              if not stripped or stripped.startswith("#") or stripped.startswith("--hash="):
+                  continue
+              if "==" in stripped:
+                  lines.append(stripped.split(" \\")[0])
+          target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"requirements_file={target}", file=output)
+          PY
+
+      - name: Install Python dependencies
+        if: env.SNYK_TOKEN != ''
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install --require-hashes -r requirements.lock
+
+      - name: Test Python dependencies
+        if: env.SNYK_TOKEN != ''
+        run: snyk test --file="${{ steps.python-requirements.outputs.requirements_file }}" --package-manager=pip --severity-threshold=high --skip-unresolved=true --command=./.venv/bin/python ${SNYK_ORG:+--org="$SNYK_ORG"}
+
+      - name: Test client dependencies
+        if: env.SNYK_TOKEN != ''
+        run: snyk test --file=client/package-lock.json --package-manager=npm --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
+
+      - name: Monitor default branch snapshots
+        if: env.SNYK_TOKEN != '' && github.event_name != 'pull_request'
+        run: |
+          snyk monitor --file="${{ steps.python-requirements.outputs.requirements_file }}" --package-manager=pip --project-name=bifrost-api --skip-unresolved=true --command=./.venv/bin/python ${SNYK_ORG:+--org="$SNYK_ORG"}
+          snyk monitor --file=client/package-lock.json --package-manager=npm --project-name=bifrost-client ${SNYK_ORG:+--org="$SNYK_ORG"}
+
+  iac:
+    name: IaC
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Skip when Snyk token is not configured
+        if: env.SNYK_TOKEN == ''
+        run: echo "SNYK_TOKEN is not configured; skipping Snyk IaC scans."
+
+      - name: Checkout
+        if: env.SNYK_TOKEN != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        if: env.SNYK_TOKEN != ''
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install Snyk CLI
+        if: env.SNYK_TOKEN != ''
+        run: npm install --global snyk@1.1304.3
+
+      - name: Test Kubernetes manifests
+        if: env.SNYK_TOKEN != ''
+        run: snyk iac test k8s --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
+
+  containers:
+    name: Containers
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    steps:
+      - name: Skip when Snyk token is not configured
+        if: env.SNYK_TOKEN == ''
+        run: echo "SNYK_TOKEN is not configured; skipping Snyk container scans."
+
+      - name: Checkout
+        if: env.SNYK_TOKEN != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        if: env.SNYK_TOKEN != ''
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install Snyk CLI
+        if: env.SNYK_TOKEN != ''
+        run: npm install --global snyk@1.1304.3
+
+      - name: Test published API image
+        if: env.SNYK_TOKEN != ''
+        run: snyk container test ghcr.io/mtg-thomas/bifrost-api:dev --file=api/Dockerfile --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
+
+      - name: Test published client image
+        if: env.SNYK_TOKEN != ''
+        run: snyk container test ghcr.io/mtg-thomas/bifrost-client:dev --file=client/Dockerfile --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}

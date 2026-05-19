@@ -29,7 +29,31 @@ COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # =============================================================================
-# Stage 2: Runtime
+# Stage 2: Node dependencies
+# =============================================================================
+# Keep npm and its Debian node-* dependency tree out of the runtime image.
+# The runtime services execute Node scripts directly with `node`.
+FROM python@sha256:511f025a0718f01b977d5ad572bc431745b31887ceccc538c85b87e82ad2956f AS node-deps
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install app compiler Node.js dependencies
+COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
+RUN cd /app/src/services/app_compiler && \
+    if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+
+# Install app bundler Node.js dependencies (esbuild)
+COPY api/src/services/app_bundler/package.json api/src/services/app_bundler/package-lock.json* /app/src/services/app_bundler/
+RUN cd /app/src/services/app_bundler && \
+    if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+
+# =============================================================================
+# Stage 3: Runtime
 # =============================================================================
 # python:3.14-slim
 FROM python@sha256:511f025a0718f01b977d5ad572bc431745b31887ceccc538c85b87e82ad2956f
@@ -43,7 +67,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     git \
     awscli \
-    nodejs npm \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -59,15 +83,13 @@ COPY api/bifrost.py /app/
 COPY api/scripts/ /app/scripts/
 COPY api/shared/ /app/shared/
 
-# Install app compiler Node.js dependencies
-COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
+# Copy app compiler Node.js runtime
 COPY api/src/services/app_compiler/compile.js /app/src/services/app_compiler/
 COPY api/src/services/app_compiler/tailwind.js /app/src/services/app_compiler/
-RUN cd /app/src/services/app_compiler && npm install --production
+COPY --from=node-deps /app/src/services/app_compiler/node_modules /app/src/services/app_compiler/node_modules
 
-# Install app bundler Node.js dependencies (esbuild)
-COPY api/src/services/app_bundler/package.json api/src/services/app_bundler/package-lock.json* /app/src/services/app_bundler/
-RUN cd /app/src/services/app_bundler && npm install --production
+# Copy app bundler Node.js runtime (esbuild)
+COPY --from=node-deps /app/src/services/app_bundler/node_modules /app/src/services/app_bundler/node_modules
 
 # Create non-root user
 RUN useradd -m -u 1000 bifrost && \
