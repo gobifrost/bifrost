@@ -268,7 +268,11 @@ class TestBackendSelection:
         assert isinstance(backend, KeyringBackend)
 
     def test_no_keyring_falls_back_to_json(self, monkeypatch, capsys):
-        from bifrost.credentials import JsonBackend, _select_persistent_backend
+        from bifrost.credentials import (
+            JsonBackend,
+            _select_persistent_backend,
+            warn_if_keyring_fallback,
+        )
         creds_mod._reset_persistent_backend_for_tests()
         import keyring
         import keyring.errors
@@ -281,7 +285,11 @@ class TestBackendSelection:
         monkeypatch.setattr(keyring, "get_password", fake_get_password)
         backend = _select_persistent_backend()
         assert isinstance(backend, JsonBackend)
-        # Stderr warning so users know.
+        # Selection itself is silent — every `bifrost files` call would
+        # otherwise pollute stderr / MCP tool_result text.
+        assert capsys.readouterr().err == ""
+        # Warning surfaces only when explicitly requested (e.g. from login).
+        warn_if_keyring_fallback()
         captured = capsys.readouterr()
         assert "keyring" in captured.err.lower()
         assert "fallback" in captured.err.lower() or "falling back" in captured.err.lower()
