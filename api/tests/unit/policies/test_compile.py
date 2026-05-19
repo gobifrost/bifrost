@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 
 from shared.policies.compile import compile_to_sql
+from shared.table_policies import TableBinding
 from src.models.contracts.policies import Expr
 from src.models.orm.tables import Document
 
@@ -20,37 +21,10 @@ class FakeUser:
     role_names: list[str] = field(default_factory=list)
 
 
-class _TableBindingForTest:
-    """Local stub mirroring the pre-Task-5 hardcoded {row: ...} → Document
-    column logic. Replaced by the real TableBinding from
-    shared.table_policies in Task 6."""
-    namespace = "row"
-
-    _COLUMN_MAPPED_ROW_FIELDS = {
-        "id": Document.id,
-        "organization_id": None,
-        "created_by": Document.created_by,
-        "updated_by": Document.updated_by,
-        "created_at": Document.created_at,
-        "updated_at": Document.updated_at,
-        "table_id": Document.table_id,
-    }
-
-    def resolve_reference(self, path):
-        parts = path.split(".")
-        if len(parts) == 1 and parts[0] in self._COLUMN_MAPPED_ROW_FIELDS:
-            col = self._COLUMN_MAPPED_ROW_FIELDS[parts[0]]
-            if col is not None:
-                return col
-        if len(parts) == 1:
-            return Document.data[parts[0]].astext
-        return Document.data[parts].astext
-
-
 def _compile(d: dict, user=None) -> str:
     """Compile to SQL, return the rendered string."""
     expr = Expr.model_validate(d)
-    sql_expr = compile_to_sql(expr, user or FakeUser(), _TableBindingForTest())
+    sql_expr = compile_to_sql(expr, user or FakeUser(), TableBinding())
     # Use a SELECT to render WHERE clause for inspection
     stmt = select(Document.id).where(sql_expr)
     return str(stmt.compile(compile_kwargs={"literal_binds": True}))
@@ -69,16 +43,22 @@ def test_eq_row_user_reference():
     assert str(uid) in sql
 
 
-def test_eq_row_organization_id_uses_column():
-    """organization_id is a column on documents.tables, not in JSONB."""
+def test_eq_row_organization_id_falls_through_to_jsonb():
+    """`{row: organization_id}` has no column mapping — falls through to JSONB lookup.
+
+    documents has no `organization_id` column; org scoping is applied via the
+    parent table at the join. Apps that need `{row: organization_id}` in policies
+    should denormalize it into the row's `data` JSONB at insert time.
+    """
     org_id = uuid4()
     user = FakeUser(organization_id=org_id)
     sql = _compile(
         {"eq": [{"row": "organization_id"}, {"user": "organization_id"}]},
         user=user,
     )
-    # Implementation detail: should reference the column, not data->>
-    # Looser check: the org_id literal appears
+    # The user-side literal lands in the rendered SQL regardless of binding
+    # path. The actual column-vs-JSONB choice is verified by the table-binding
+    # tests in test_table_policies_binding.py.
     assert str(org_id) in sql
 
 
@@ -169,4 +149,4 @@ def test_call_with_row_reference_arg_raises():
     user = FakeUser()
     expr = Expr.model_validate({"call": "has_role", "args": [{"row": "x"}]})
     with pytest.raises(ValueError, match="cannot resolve"):
-        compile_to_sql(expr, user, _TableBindingForTest())
+        compile_to_sql(expr, user, TableBinding())

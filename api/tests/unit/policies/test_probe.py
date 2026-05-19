@@ -3,9 +3,12 @@
 from uuid import uuid4
 
 from shared.policies.probe import (
-    compile_read_filter,
     evaluate_action,
     is_subscribe_authorized,
+)
+from shared.table_policies import (
+    RowResolver,
+    compile_read_filter,
     make_seed_admin_bypass,
 )
 from src.models.contracts.policies import Policy, TablePolicies
@@ -34,16 +37,16 @@ def _own_row_policy() -> Policy:
 def test_evaluate_action_default_deny():
     """Empty policies → deny."""
     tp = TablePolicies(policies=[])
-    assert evaluate_action("read", tp, row={}, user=FakeUser()) is False
+    assert evaluate_action("read", tp, {}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 def test_evaluate_action_admin_bypass():
     tp = TablePolicies(policies=[_admin_bypass_policy()])
     admin = FakeUser(is_platform_admin=True)
     other = FakeUser(is_platform_admin=False)
-    assert evaluate_action("read", tp, row={}, user=admin) is True
-    assert evaluate_action("update", tp, row={}, user=admin) is True
-    assert evaluate_action("read", tp, row={}, user=other) is False
+    assert evaluate_action("read", tp, {}, user=admin, resolver=RowResolver()) is True
+    assert evaluate_action("update", tp, {}, user=admin, resolver=RowResolver()) is True
+    assert evaluate_action("read", tp, {}, user=other, resolver=RowResolver()) is False
 
 
 def test_evaluate_action_OR_across_rules():
@@ -52,11 +55,11 @@ def test_evaluate_action_OR_across_rules():
     user = FakeUser(user_id=uuid4(), is_platform_admin=False)
     # Not admin, not the creator → deny
     assert evaluate_action(
-        "read", tp, row={"created_by": str(uuid4())}, user=user
+        "read", tp, {"created_by": str(uuid4())}, user=user, resolver=RowResolver()
     ) is False
     # Not admin, is creator → allow via own_row
     assert evaluate_action(
-        "read", tp, row={"created_by": str(user.user_id)}, user=user
+        "read", tp, {"created_by": str(user.user_id)}, user=user, resolver=RowResolver()
     ) is True
 
 
@@ -69,8 +72,8 @@ def test_evaluate_action_skips_rules_for_other_actions():
             "when": None,
         })
     ])
-    assert evaluate_action("read", tp, row={}, user=FakeUser()) is False
-    assert evaluate_action("update", tp, row={}, user=FakeUser()) is True
+    assert evaluate_action("read", tp, {}, user=FakeUser(), resolver=RowResolver()) is False
+    assert evaluate_action("update", tp, {}, user=FakeUser(), resolver=RowResolver()) is True
 
 
 def test_evaluate_action_when_none_means_always():
@@ -78,7 +81,7 @@ def test_evaluate_action_when_none_means_always():
     tp = TablePolicies(policies=[
         Policy.model_validate({"name": "open_read", "actions": ["read"], "when": None})
     ])
-    assert evaluate_action("read", tp, row={}, user=FakeUser()) is True
+    assert evaluate_action("read", tp, {}, user=FakeUser(), resolver=RowResolver()) is True
 
 
 # --- compile_read_filter ---
@@ -128,21 +131,21 @@ def test_subscribe_authorized_when_at_least_one_read_rule_could_match():
     tp = TablePolicies(policies=[_own_row_policy()])
     # Even with empty row, the rule is row-data-dependent; subscribe stays open
     # and the per-message filter gates individual messages.
-    assert is_subscribe_authorized(tp, user=FakeUser()) is True
+    assert is_subscribe_authorized(tp, user=FakeUser(), resolver=RowResolver()) is True
 
 
 def test_subscribe_unauthorized_when_no_read_rules():
     tp = TablePolicies(policies=[
         Policy.model_validate({"name": "create_only", "actions": ["create"], "when": None})
     ])
-    assert is_subscribe_authorized(tp, user=FakeUser()) is False
+    assert is_subscribe_authorized(tp, user=FakeUser(), resolver=RowResolver()) is False
 
 
 def test_subscribe_authorized_for_admin_bypass():
     tp = TablePolicies(policies=[_admin_bypass_policy()])
-    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=True)) is True
+    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=True), resolver=RowResolver()) is True
     # Non-admin, no other read rule → user-level fact resolves to False at probe time
-    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=False)) is False
+    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=False), resolver=RowResolver()) is False
 
 
 # --- seed ---
@@ -160,7 +163,7 @@ def test_subscribe_user_dep_false_followed_by_row_dep_allows():
     tp = TablePolicies(policies=[_admin_bypass_policy(), _own_row_policy()])
     # Non-admin → admin_bypass resolves False at probe time
     # own_row is row-dep → conservatively allow
-    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=False)) is True
+    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=False), resolver=RowResolver()) is True
 
 
 def test_subscribe_all_user_dep_resolving_false_denies():
@@ -174,7 +177,7 @@ def test_subscribe_all_user_dep_resolving_false_denies():
         }),
     ])
     assert is_subscribe_authorized(
-        tp, user=FakeUser(is_platform_admin=False, role_names=["customer"])
+        tp, user=FakeUser(is_platform_admin=False, role_names=["customer"]), resolver=RowResolver()
     ) is False
 
 
@@ -183,7 +186,8 @@ def test_make_seed_admin_bypass_validates():
 
     Catches schema drift at module-test time rather than at first table-create.
     """
-    TablePolicies.model_validate(make_seed_admin_bypass())  # must not raise
+    from shared.table_policies import TablePolicies as TP
+    TP.model_validate(make_seed_admin_bypass())  # must not raise
 
 
 def test_compile_read_filter_single_rule_no_or_wrap():

@@ -5,56 +5,11 @@ from pydantic import ValidationError
 
 from shared.policies.compile import compile_to_sql
 from shared.policies.evaluate import evaluate
+from shared.table_policies import RowResolver, TableBinding
 from src.models.contracts.policies import Expr
-from src.models.orm.tables import Document
-
 
 # Reuse the FakeUser shape from test_evaluate
 from tests.unit.policies.test_evaluate import FakeUser
-
-
-class _TableBindingForTest:
-    """Local stub mirroring the pre-Task-5 hardcoded {row: ...} → Document
-    column logic. Replaced by the real TableBinding from
-    shared.table_policies in Task 6."""
-    namespace = "row"
-
-    _COLUMN_MAPPED_ROW_FIELDS = {
-        "id": Document.id,
-        "organization_id": None,
-        "created_by": Document.created_by,
-        "updated_by": Document.updated_by,
-        "created_at": Document.created_at,
-        "updated_at": Document.updated_at,
-        "table_id": Document.table_id,
-    }
-
-    def resolve_reference(self, path):
-        parts = path.split(".")
-        if len(parts) == 1 and parts[0] in self._COLUMN_MAPPED_ROW_FIELDS:
-            col = self._COLUMN_MAPPED_ROW_FIELDS[parts[0]]
-            if col is not None:
-                return col
-        if len(parts) == 1:
-            return Document.data[parts[0]].astext
-        return Document.data[parts].astext
-
-
-class _RowResolverForTest:
-    """Local stub for the {row: ...} resolver semantics. Replaced by the
-    real RowResolver from shared.table_policies in Task 6."""
-    namespace = "row"
-
-    def resolve(self, path, ctx):
-        parts = path.split(".")
-        cur = ctx
-        for p in parts:
-            if not isinstance(cur, dict):
-                return None
-            cur = cur.get(p)
-            if cur is None:
-                return None
-        return cur
 
 
 # Each case is (expr_dict, row_dict, user_kwargs, expected_bool)
@@ -107,13 +62,13 @@ def test_round_trip(expr_dict, row, user_kwargs, expected):
     expr = Expr.model_validate(expr_dict)
     user = FakeUser(**user_kwargs)
 
-    eval_result = evaluate(expr, ctx=row, user=user, resolver=_RowResolverForTest())
+    eval_result = evaluate(expr, ctx=row, user=user, resolver=RowResolver())
     assert eval_result is expected, (
         f"evaluator: {eval_result}, expected {expected}, expr={expr_dict}"
     )
 
     # Compile the expression to a literal value via a SELECT 1 WHERE <expr>
-    sql_expr = compile_to_sql(expr, user, _TableBindingForTest())
+    sql_expr = compile_to_sql(expr, user, TableBinding())
     # We can't run SQL without the DB; instead, verify the rendered SQL
     # contains expected literals/columns. The actual SQL execution is
     # tested in the e2e test_policies.py via real document rows.
