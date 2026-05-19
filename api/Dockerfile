@@ -45,12 +45,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install app compiler Node.js dependencies
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
 RUN cd /app/src/services/app_compiler && \
-    if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+    test -f package-lock.json || { echo "package-lock.json is required for app_compiler"; exit 1; } && \
+    npm ci --omit=dev
 
 # Install app bundler Node.js dependencies (esbuild)
 COPY api/src/services/app_bundler/package.json api/src/services/app_bundler/package-lock.json* /app/src/services/app_bundler/
 RUN cd /app/src/services/app_bundler && \
-    if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+    test -f package-lock.json || { echo "package-lock.json is required for app_bundler"; exit 1; } && \
+    npm ci --omit=dev
 
 # =============================================================================
 # Stage 3: Runtime

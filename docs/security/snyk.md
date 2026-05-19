@@ -121,13 +121,15 @@ For Debian container findings:
 As of 2026-05-19, the API image is based on
 `python:3.14-slim@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856`.
 The container scan reports 8 high/critical Debian findings after the initial
-base-image cleanup. The image already has the current Debian candidate versions:
+base-image cleanup. The image already has the current Debian candidate versions.
+Track the Snyk finding IDs in our backlog; use Debian Security Tracker for the
+public CVE/source-package status during each review.
 
-| Source package | Installed version | Snyk CVEs | Debian status | Bifrost disposition |
+| Source package | Installed version | Snyk finding IDs | Debian status | Bifrost disposition |
 | --- | --- | --- | --- | --- |
-| `gnutls28` | `3.8.9-3+deb13u3` | `CVE-2026-33845`, `CVE-2026-33846`, `CVE-2026-3833`, `CVE-2026-42009`, `CVE-2026-42010`, `CVE-2026-42011` | Debian Security Tracker marks trixie vulnerable; fixed in sid/forky at `3.8.13-1`. | Track until Debian ships a trixie security fix or we can remove the `git`/`curl` runtime dependency chain. |
-| `expat` | `2.7.1-2` | `CVE-2026-45186` | Debian Security Tracker marks trixie vulnerable; fixed in sid at `2.8.0-2`. | Track until Debian ships a trixie security fix or we can remove the `git`/`awscli` runtime dependency chain. |
-| `python-urllib3` | `2.3.0-3+deb13u1` | `CVE-2025-66471` | Debian marks trixie vulnerable but ignored because the effective fix is intrusive and requires a newer `brotli`. | Accept as distro-reviewed residual for now; revisit if Debian publishes a stable fix or if `awscli` is removed. |
+| `gnutls28` | `3.8.9-3+deb13u3` | `SNYK-DEBIAN13-GNUTLS28-16344302`, `SNYK-DEBIAN13-GNUTLS28-16344305`, `SNYK-DEBIAN13-GNUTLS28-16344314`, `SNYK-DEBIAN13-GNUTLS28-16344321`, `SNYK-DEBIAN13-GNUTLS28-16344352`, `SNYK-DEBIAN13-GNUTLS28-16344357` | Debian Security Tracker marks trixie vulnerable; fixed in sid/forky at `3.8.13-1`. | Track until Debian ships a trixie security fix or we can remove the `git`/`curl` runtime dependency chain. |
+| `expat` | `2.7.1-2` | `SNYK-DEBIAN13-EXPAT-16650098` | Debian Security Tracker marks trixie vulnerable; fixed in sid at `2.8.0-2`. | Track until Debian ships a trixie security fix or we can remove the `git`/`awscli` runtime dependency chain. |
+| `python-urllib3` | `2.3.0-3+deb13u1` | `SNYK-DEBIAN13-PYTHONURLLIB3-14193375` | Debian marks trixie vulnerable but ignored because the effective fix is intrusive and requires a newer `brotli`. | Accept as distro-reviewed residual for now; revisit if Debian publishes a stable fix or if `awscli` is removed. |
 
 The remaining findings are not a reason to vendor newer Debian packages from
 testing/unstable into the production image. Prefer either the supported Debian

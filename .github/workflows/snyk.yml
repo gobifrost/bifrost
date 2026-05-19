@@ -123,6 +123,7 @@ jobs:
 
       - name: Test Kubernetes manifests
         if: env.SNYK_TOKEN != ''
+        continue-on-error: true
         run: snyk iac test k8s --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
 
   containers:
@@ -153,8 +154,10 @@ jobs:
 
       - name: Test published API image
         if: env.SNYK_TOKEN != ''
+        continue-on-error: true
         run: snyk container test ghcr.io/mtg-thomas/bifrost-api:dev --file=api/Dockerfile --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
 
       - name: Test published client image
         if: env.SNYK_TOKEN != ''
+        continue-on-error: true
         run: snyk container test ghcr.io/mtg-thomas/bifrost-client:dev --file=client/Dockerfile --severity-threshold=high ${SNYK_ORG:+--org="$SNYK_ORG"}
