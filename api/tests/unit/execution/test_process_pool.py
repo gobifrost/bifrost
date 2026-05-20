@@ -15,12 +15,14 @@ NOTE: These tests use mocks to avoid spawning real processes.
 """
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from queue import Empty
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import src.services.execution.process_pool as process_pool_module
 from src.services.execution.process_pool import (
     ExecutionInfo,
     ProcessHandle,
@@ -212,6 +214,35 @@ class TestProcessPoolManagerStart:
     """Tests for pool startup."""
 
     @pytest.mark.asyncio
+    async def test_start_delegates_requirements_install_to_template_process(self):
+        """Pool startup should not install requirements before template startup."""
+        pool = ProcessPoolManager(min_workers=0, max_workers=5)
+
+        with patch("src.services.execution.process_pool.install_requirements") as install:
+            with patch.object(pool, "_start_template", new_callable=AsyncMock):
+                with patch.object(pool, "_update_requirements_status"):
+                    with patch.object(pool, "_register_worker", new_callable=AsyncMock):
+                        with patch.object(pool, "_monitor_loop", new_callable=AsyncMock):
+                            with patch.object(pool, "_result_loop", new_callable=AsyncMock):
+                                with patch.object(pool, "_heartbeat_loop", new_callable=AsyncMock):
+                                    await pool.start()
+
+        install.assert_not_called()
+
+        pool._shutdown = True
+        for task in [
+            pool._monitor_task,
+            pool._result_task,
+            pool._heartbeat_task,
+            pool._cancel_task,
+            pool._command_task,
+        ]:
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    @pytest.mark.asyncio
     async def test_pool_starts_with_min_workers(self):
         """Should spawn min_workers processes on start."""
         pool = ProcessPoolManager(min_workers=3, max_workers=10)
@@ -261,11 +292,8 @@ class TestProcessPoolManagerStart:
         for task in [pool._monitor_task, pool._result_task, pool._heartbeat_task]:
             if task:
                 task.cancel()
-                try:
+                with suppress(asyncio.CancelledError):
                     await task
-                except asyncio.CancelledError:
-                    # Expected — we just cancelled the task during cleanup
-                    pass
 
 
 class TestProcessPoolManagerRouting:
@@ -640,6 +668,34 @@ class TestProcessPoolManagerRecycle:
 
 class TestProcessPoolManagerHeartbeat:
     """Tests for heartbeat functionality."""
+
+    def test_update_requirements_status_ignores_comments_and_inline_comments(self):
+        """Requirements status should count real package names, not comments."""
+        pool = ProcessPoolManager()
+        content = """
+# Bifrost API requirements
+aio-pika  # async rabbitmq client
+sqlalchemy[asyncio]>=2.0
+
+# Developer tools
+pytest-timeout==2.3.1
+"""
+
+        with patch(
+            "src.core.requirements_cache.get_requirements_sync",
+            return_value=content,
+        ):
+            with patch(
+                "src.services.execution.process_pool._get_installed_packages",
+                return_value=[
+                    {"name": "aio-pika", "version": "1.0"},
+                    {"name": "SQLAlchemy", "version": "2.0"},
+                ],
+            ):
+                pool._update_requirements_status()
+
+        assert pool._requirements_total == 3
+        assert pool._requirements_installed == 2
 
     def test_build_heartbeat(self):
         """Should build heartbeat with process state."""
@@ -1238,10 +1294,33 @@ class TestOrphanedKilledHandleSweep:
 
 
 class TestOnDemandMode:
-    """Tests for on-demand mode (min_workers is always 0 now)."""
+    """Tests for on-demand mode and configured warm pools."""
+
+    def test_get_process_pool_uses_settings_min_workers(self):
+        """Global pool construction should honor configured warm pool size."""
+        previous_pool = process_pool_module._pool
+        process_pool_module._pool = None
+        settings = MagicMock()
+        settings.min_workers = 3
+        settings.max_workers = 8
+        settings.execution_timeout_seconds = 300
+        settings.graceful_shutdown_seconds = 5
+        settings.recycle_after_executions = 100
+        settings.recycle_memory_mb = 768
+        settings.worker_heartbeat_interval_seconds = 10
+        settings.worker_registration_ttl_seconds = 30
+
+        try:
+            with patch("src.services.execution.process_pool.get_settings", return_value=settings):
+                pool = process_pool_module.get_process_pool()
+
+            assert pool.min_workers == 3
+            assert pool.max_workers == 8
+        finally:
+            process_pool_module._pool = previous_pool
 
     def test_pool_starts_with_zero_min_workers(self):
-        """Pool should always have min_workers=0 for on-demand mode."""
+        """Pool should still allow min_workers=0 for on-demand mode."""
         pool = ProcessPoolManager(min_workers=0, max_workers=5)
         assert pool.min_workers == 0
 

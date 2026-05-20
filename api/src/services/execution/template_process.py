@@ -90,9 +90,30 @@ CMD_FORK = "fork"
 CMD_SHUTDOWN = "shutdown"
 
 
+def _load_execution_infrastructure(install_requirements_on_startup: bool) -> None:
+    """Load execution helpers and optionally install workspace requirements."""
+    from src.services.execution.virtual_import import install_virtual_import_hook
+    from src.services.execution.simple_worker import install_requirements
+
+    if install_requirements_on_startup:
+        install_requirements()
+    else:
+        logger.info("Skipping requirements install in template process")
+
+    # Ensure user site-packages is in sys.path
+    import site
+    user_site = site.getusersitepackages()
+    if site.ENABLE_USER_SITE and os.path.exists(user_site) and user_site not in sys.path:
+        sys.path.insert(0, user_site)
+        logger.info(f"Added user site-packages to sys.path: {user_site}")
+
+    install_virtual_import_hook()
+
+
 def _template_main(
     pipe: Connection,
     preload_modules: list[str] | None = None,
+    install_requirements_on_startup: bool = True,
 ) -> None:
     """
     Entry point for the template process.
@@ -145,21 +166,7 @@ def _template_main(
 
         # Execution infrastructure
         try:
-            from src.services.execution.virtual_import import install_virtual_import_hook
-            from src.services.execution.simple_worker import install_requirements
-
-            # Install user packages (pip install from requirements.txt)
-            install_requirements()
-
-            # Ensure user site-packages is in sys.path
-            import site
-            user_site = site.getusersitepackages()
-            if site.ENABLE_USER_SITE and os.path.exists(user_site) and user_site not in sys.path:
-                sys.path.insert(0, user_site)
-                logger.info(f"Added user site-packages to sys.path: {user_site}")
-
-            # Install virtual import hook for workspace modules
-            install_virtual_import_hook()
+            _load_execution_infrastructure(install_requirements_on_startup)
         except ImportError as e:
             logger.warning(f"Execution infrastructure not available: {e} — continuing without it")
 
@@ -425,10 +432,11 @@ class TemplateProcess:
     holds all heavy dependencies in memory and forks children on request.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, install_requirements_on_startup: bool = True) -> None:
         self._process: Any = None  # multiprocessing.Process or SpawnProcess
         self._pipe: Connection | None = None
         self.pid: int | None = None
+        self.install_requirements_on_startup = install_requirements_on_startup
 
     def start(self) -> None:
         """
@@ -445,7 +453,7 @@ class TemplateProcess:
 
         self._process = ctx.Process(
             target=_template_main,
-            args=(child_conn,),
+            args=(child_conn, None, self.install_requirements_on_startup),
             name="template-process",
         )
         self._process.start()

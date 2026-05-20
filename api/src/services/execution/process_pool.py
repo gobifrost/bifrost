@@ -72,6 +72,17 @@ def _get_installed_packages() -> list[dict[str, str]]:
     return []
 
 
+def _requirement_name(line: str) -> str:
+    """Return the normalized package name from one requirements.txt line."""
+    stripped = line.split("#", 1)[0].strip()
+    if not stripped or stripped.startswith(("-", "git+")) or "://" in stripped:
+        return ""
+    name = stripped
+    for marker in ("===", "==", ">=", "<=", "~=", "!=", ">", "<", "["):
+        name = name.split(marker, 1)[0]
+    return name.strip().lower().replace("_", "-")
+
+
 class ProcessState(Enum):
     """
     State of a worker process in the pool.
@@ -364,7 +375,10 @@ class ProcessPoolManager:
         catch this — the worker process should crash-loop so Kubernetes
         restarts it and the failure is visible.
         """
-        new_template = TemplateProcess()
+        settings = get_settings()
+        new_template = TemplateProcess(
+            install_requirements_on_startup=settings.worker_install_requirements_on_startup
+        )
         await asyncio.to_thread(new_template.start)
         self._template = new_template
         logger.info(f"Template process started (PID={new_template.pid})")
@@ -493,14 +507,13 @@ class ProcessPoolManager:
         self._shutdown = False
         self._started_at = datetime.now(timezone.utc)
 
-        # Install requirements once (shared filesystem — all child processes inherit)
-        await asyncio.to_thread(install_requirements)
-
-        # Compute requirements status for heartbeat reporting
-        self._update_requirements_status()
-
         # Start template process (loads deps, ready to fork)
         await self._start_template()
+
+        # Compute requirements status for heartbeat reporting after the template
+        # has optionally installed workspace requirements into the shared image
+        # filesystem.
+        self._update_requirements_status()
 
         # Spawn initial pool
         for _ in range(self.min_workers):
@@ -1683,11 +1696,8 @@ class ProcessPoolManager:
                 self._requirements_installed = 0
                 return
 
-            required = {
-                line.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].strip().lower()
-                for line in content.strip().split("\n")
-                if line.strip()
-            }
+            required = {_requirement_name(line) for line in content.strip().split("\n")}
+            required.discard("")
             self._requirements_total = len(required)
 
             installed = {p["name"].lower() for p in _get_installed_packages()}
@@ -1834,7 +1844,7 @@ def get_process_pool() -> ProcessPoolManager:
     if _pool is None:
         settings = get_settings()
         _pool = ProcessPoolManager(
-            min_workers=0,  # On-demand (JIT) mode — no warm pool
+            min_workers=settings.min_workers,
             max_workers=settings.max_workers,
             execution_timeout_seconds=settings.execution_timeout_seconds,
             graceful_shutdown_seconds=settings.graceful_shutdown_seconds,
