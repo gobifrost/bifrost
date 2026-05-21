@@ -304,8 +304,8 @@ class EventProcessor:
         source = await self._source_repo.get_by_topic(topic)
         if source is None:
             logger.info(
-                f"No active topic source for '{topic}'; emit is a no-op",
-                extra={"topic": topic, "triggered_by": triggered_by},
+                f"No active topic source for '{log_safe(topic)}'; emit is a no-op",
+                extra={"topic": log_safe(topic), "triggered_by": triggered_by},
             )
             return uuid.uuid4(), 0
 
@@ -326,10 +326,10 @@ class EventProcessor:
         await self.session.flush()
 
         logger.info(
-            f"Topic event emitted: {event.id}",
+            f"Topic event emitted: {event.id} (topic={log_safe(topic)})",
             extra={
                 "event_id": str(event.id),
-                "topic": topic,
+                "topic": log_safe(topic),
                 "triggered_by": triggered_by,
             },
         )
@@ -342,7 +342,7 @@ class EventProcessor:
         if not subscriptions:
             event.status = EventStatus.COMPLETED
             await self.session.flush()
-            logger.info(f"No subscriptions for topic '{topic}': {event.id}")
+            logger.info(f"No subscriptions for topic '{log_safe(topic)}': {event.id}")
             return event.id, 0
 
         event.status = EventStatus.PROCESSING
@@ -374,7 +374,7 @@ class EventProcessor:
 
         await self.session.flush()
         logger.info(
-            f"Created deliveries for topic '{topic}': {event.id}",
+            f"Created deliveries for topic '{log_safe(topic)}': {event.id}",
             extra={
                 "event_id": str(event.id),
                 "subscription_count": len(subscriptions),
