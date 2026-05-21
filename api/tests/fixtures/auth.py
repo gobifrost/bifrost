@@ -124,26 +124,3 @@ def auth_headers(token: str) -> dict[str, str]:
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-
-
-def org_headers(org_id: str, token: str) -> dict[str, str]:
-    """
-    Create headers with organization context and authentication.
-
-    Args:
-        org_id: Organization ID
-        token: JWT token from create_test_jwt()
-
-    Returns:
-        dict: Headers with auth + organization context
-
-    Example:
-        >>> token = create_test_jwt(email="user@acme.com")
-        >>> headers = org_headers("org-123", token)
-        >>> response = requests.post(url, json={...}, headers=headers)
-    """
-    return {
-        "Authorization": f"Bearer {token}",
-        "X-Organization-Id": org_id,
-        "Content-Type": "application/json",
-    }

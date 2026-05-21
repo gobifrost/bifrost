@@ -1,6 +1,5 @@
 /**
  * React Query hooks for forms management using openapi-react-query pattern
- * All hooks use the centralized api client which handles X-Organization-Id automatically
  */
 
 import { useQueryClient } from "@tanstack/react-query";
