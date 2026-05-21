@@ -11,6 +11,10 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 
 
+def _compiled_sql(statement) -> str:
+    return str(statement.compile(compile_kwargs={"literal_binds": False})).lower()
+
+
 class TestRefreshTokenClientCredentials:
     """Test refresh_token endpoint for client_credentials flows."""
 
@@ -161,6 +165,109 @@ class TestRefreshTokenClientCredentials:
         # Existing token should be updated, not a new one added
         mock_db.add.assert_not_called()
         assert mock_existing_token.expires_at == expires_at
+
+    @pytest.mark.asyncio
+    async def test_provider_and_token_lookup_are_org_scoped(self):
+        """Refresh must not select another org's provider with the same name."""
+        from src.routers.cli import sdk_integrations_refresh_token
+        from src.models.contracts.cli import SDKIntegrationsRefreshTokenRequest
+
+        org_id = uuid4()
+        provider_id = uuid4()
+        request = SDKIntegrationsRefreshTokenRequest(
+            connection_name="Pax8",
+            scope=str(org_id),
+        )
+
+        mock_user = MagicMock()
+        mock_user.user_id = uuid4()
+        mock_user.email = "test@example.com"
+        mock_db = AsyncMock()
+
+        mock_provider = MagicMock()
+        mock_provider.id = provider_id
+        mock_provider.provider_name = "Pax8"
+        mock_provider.client_id = "pax8-client-id"
+        mock_provider.encrypted_client_secret = b"encrypted-secret"
+        mock_provider.token_url = "https://login.pax8.com/oauth/token"
+        mock_provider.token_url_defaults = {}
+        mock_provider.oauth_flow_type = "client_credentials"
+        mock_provider.scopes = []
+        mock_provider.integration_id = None
+        mock_provider.organization_id = org_id
+        mock_provider.audience = None
+
+        provider_result = MagicMock()
+        provider_result.scalars.return_value.first.return_value = mock_provider
+        token_result = MagicMock()
+        token_result.scalars.return_value.first.return_value = None
+        mock_db.execute = AsyncMock(side_effect=[provider_result, token_result])
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        mock_token_response = {
+            "access_token": "fresh-pax8-token",
+            "expires_at": expires_at,
+        }
+
+        with (
+            patch(
+                "src.routers.cli._get_cli_org_id",
+                new_callable=AsyncMock,
+                return_value=str(org_id),
+            ),
+            patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
+            patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
+            patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-token"),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get_client_credentials_token = AsyncMock(
+                return_value=(True, mock_token_response)
+            )
+            mock_client_class.return_value = mock_instance
+
+            await sdk_integrations_refresh_token(request, mock_user, mock_db)
+
+        provider_stmt = mock_db.execute.await_args_list[0].args[0]
+        token_stmt = mock_db.execute.await_args_list[1].args[0]
+        provider_sql = _compiled_sql(provider_stmt)
+        token_sql = _compiled_sql(token_stmt)
+        assert "oauth_providers.provider_name" in provider_sql
+        assert "oauth_providers.organization_id" in provider_sql
+        assert "oauth_tokens.provider_id" in token_sql
+        assert "oauth_tokens.organization_id" in token_sql
+        created_token = mock_db.add.call_args.args[0]
+        assert created_token.organization_id == org_id
+
+    @pytest.mark.asyncio
+    async def test_global_refresh_only_selects_global_provider(self):
+        """Default/global refresh must not fall through to tenant providers."""
+        from fastapi import HTTPException
+        from src.routers.cli import sdk_integrations_refresh_token
+        from src.models.contracts.cli import SDKIntegrationsRefreshTokenRequest
+
+        request = SDKIntegrationsRefreshTokenRequest(connection_name="Pax8")
+        mock_user = MagicMock()
+        mock_user.user_id = uuid4()
+        mock_user.email = "test@example.com"
+        mock_db = AsyncMock()
+
+        provider_result = MagicMock()
+        provider_result.scalars.return_value.first.return_value = None
+        mock_db.execute = AsyncMock(return_value=provider_result)
+
+        with (
+            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await sdk_integrations_refresh_token(request, mock_user, mock_db)
+
+        provider_stmt = mock_db.execute.await_args.args[0]
+        provider_sql = _compiled_sql(provider_stmt)
+        assert "oauth_providers.provider_name" in provider_sql
+        assert "oauth_providers.organization_id is null" in provider_sql
+        assert exc_info.value.status_code == 404
 
 
 class TestRefreshTokenAuthorizationCode:

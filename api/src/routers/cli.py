@@ -1093,12 +1093,17 @@ async def sdk_integrations_refresh_token(
     org_uuid = UUID(org_id) if org_id else None
 
     try:
-        # Look up provider by connection_name (== provider_name)
-        result = await db.execute(
-            select(OAuthProvider).where(
-                OAuthProvider.provider_name == request.connection_name
-            )
+        # Look up provider by connection_name (== provider_name), scoped to the
+        # caller's resolved CLI org/global context. Provider names are not
+        # globally unique.
+        provider_stmt = select(OAuthProvider).where(
+            OAuthProvider.provider_name == request.connection_name
         )
+        if org_uuid is None:
+            provider_stmt = provider_stmt.where(OAuthProvider.organization_id.is_(None))
+        else:
+            provider_stmt = provider_stmt.where(OAuthProvider.organization_id == org_uuid)
+        result = await db.execute(provider_stmt)
         provider = result.scalars().first()
 
         if not provider:
@@ -1111,12 +1116,18 @@ async def sdk_integrations_refresh_token(
         # build_token_refresh_context can carry the encrypted refresh token.
         stored_token = None
         if provider.oauth_flow_type == "authorization_code":
-            token_result = await db.execute(
-                select(OAuthToken).where(
+            token_stmt = (
+                select(OAuthToken)
+                .where(
                     OAuthToken.provider_id == provider.id,
                     OAuthToken.user_id.is_(None),
                 )
             )
+            if org_uuid is None:
+                token_stmt = token_stmt.where(OAuthToken.organization_id.is_(None))
+            else:
+                token_stmt = token_stmt.where(OAuthToken.organization_id == org_uuid)
+            token_result = await db.execute(token_stmt)
             stored_token = token_result.scalars().first()
             if not stored_token or not stored_token.encrypted_refresh_token:
                 raise HTTPException(
@@ -1166,12 +1177,18 @@ async def sdk_integrations_refresh_token(
         token_obj = stored_token
         if token_obj is None:
             # client_credentials path — fetch (or later create) the user_id=NULL row
-            token_result = await db.execute(
-                select(OAuthToken).where(
+            token_stmt = (
+                select(OAuthToken)
+                .where(
                     OAuthToken.provider_id == provider.id,
                     OAuthToken.user_id.is_(None),
                 )
             )
+            if org_uuid is None:
+                token_stmt = token_stmt.where(OAuthToken.organization_id.is_(None))
+            else:
+                token_stmt = token_stmt.where(OAuthToken.organization_id == org_uuid)
+            token_result = await db.execute(token_stmt)
             token_obj = token_result.scalars().first()
 
         if token_obj:
@@ -1182,7 +1199,7 @@ async def sdk_integrations_refresh_token(
                 token_obj.expires_at = expires_at_dt
         else:
             new_token = OAuthToken(
-                organization_id=provider.organization_id,
+                organization_id=org_uuid,
                 provider_id=provider.id,
                 encrypted_access_token=outcome["encrypted_access_token"],
                 encrypted_refresh_token=outcome.get("encrypted_refresh_token"),
