@@ -59,6 +59,22 @@ def test_malformed_xml_rejected():
         sanitize_svg(b"<svg><not-closed>")
 
 
+def test_inkscape_style_doctype_accepted():
+    """SVG editors (Inkscape, Illustrator) emit a benign DOCTYPE referencing the
+    SVG 1.1 DTD; we must accept it because real-world logo files commonly include
+    it. The XXE / billion-laughs vectors are entity declarations and external
+    resolution, both of which remain blocked."""
+    payload = (
+        b'<?xml version="1.0" standalone="no"?>'
+        b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+        b'"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">'
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+        b'<circle cx="5" cy="5" r="4"/></svg>'
+    )
+    out = sanitize_svg(payload)
+    assert b"<circle" in out
+
+
 def test_billion_laughs_blocked():
     payload = (
         b'<?xml version="1.0"?>'

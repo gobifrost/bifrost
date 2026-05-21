@@ -52,8 +52,16 @@ def sanitize_svg(data: bytes) -> bytes:
     Raises SvgSanitizationError if the input can't be safely parsed.
     """
     try:
-        # forbid_dtd blocks XXE and billion-laughs entity expansion
-        root = DefusedET.fromstring(data, forbid_dtd=True)
+        # Allow a benign top-level DOCTYPE (Inkscape/Illustrator emit one
+        # referencing the SVG 1.1 DTD), but reject entity declarations and
+        # external resolution — those are the actual XXE / billion-laughs
+        # attack vectors.
+        root = DefusedET.fromstring(
+            data,
+            forbid_dtd=False,
+            forbid_entities=True,
+            forbid_external=True,
+        )
     except Exception as exc:
         raise SvgSanitizationError(f"unparseable svg: {exc}") from exc
 
