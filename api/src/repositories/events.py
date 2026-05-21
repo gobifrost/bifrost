@@ -2,7 +2,7 @@
 Event Repository
 
 Database operations for the event system:
-- Event sources (webhook, schedule, internal)
+- Event sources (webhook, schedule, topic)
 - Event subscriptions (link sources to workflows)
 - Events (immutable log of received events)
 - Event deliveries (tracking delivery to each workflow)
@@ -169,6 +169,27 @@ class EventSourceRepository(BaseRepository[EventSource]):
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 
+    async def get_by_topic(self, topic: str) -> EventSource | None:
+        """Get an active topic EventSource by its event_type string."""
+        result = await self.session.execute(
+            select(EventSource)
+            .where(EventSource.source_type == EventSourceType.TOPIC)
+            .where(EventSource.event_type == topic)
+            .where(EventSource.is_active.is_(True))
+        )
+        return result.unique().scalar_one_or_none()
+
+    async def get_distinct_topic_types(self) -> list[str]:
+        """Return distinct event_type values for all active topic sources."""
+        result = await self.session.execute(
+            select(EventSource.event_type)
+            .where(EventSource.source_type == EventSourceType.TOPIC)
+            .where(EventSource.event_type.isnot(None))
+            .distinct()
+            .order_by(EventSource.event_type)
+        )
+        return [row[0] for row in result.all()]
+
 
 class WebhookSourceRepository(BaseRepository[WebhookSource]):
     """Repository for webhook source operations."""
@@ -268,37 +289,6 @@ class EventSubscriptionRepository(BaseRepository[EventSubscription]):
         else:
             # Event has no type: only match subscriptions with no filter
             stmt = stmt.where(EventSubscription.event_type.is_(None))
-
-        result = await self.session.execute(stmt)
-        return result.unique().scalars().all()
-
-    async def get_active_for_internal_event(
-        self,
-        event_type: str,
-        organization_id: UUID | None = None,
-    ) -> Sequence[EventSubscription]:
-        """
-        Get active subscriptions for an internal event (no event_source_id).
-
-        Matches subscriptions with NULL event_source_id and either no event_type
-        filter or an event_type filter matching the given event_type.
-
-        Args:
-            event_type: The internal event type (e.g. "user.invited")
-            organization_id: Scope; NULL subscriptions match all orgs
-        """
-        stmt = (
-            select(EventSubscription)
-            .options(
-                joinedload(EventSubscription.workflow),
-            )
-            .where(EventSubscription.event_source_id.is_(None))
-            .where(EventSubscription.is_active.is_(True))
-            .where(
-                (EventSubscription.event_type.is_(None))
-                | (EventSubscription.event_type == event_type)
-            )
-        )
 
         result = await self.session.execute(stmt)
         return result.unique().scalars().all()

@@ -17,7 +17,7 @@ from src.core.database import DbSession
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter, OrgFilterType
 from src.services.audit import emit_audit
-from src.services.events import emit_internal_event
+from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
 from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
 from src.models import (
@@ -165,7 +165,7 @@ async def create_user(
             registration_url = (
                 f"{get_settings().public_url.rstrip('/')}/accept-invite?token={raw_token}"
             )
-            await emit_internal_event(
+            await emit_event(
                 "user.invited",
                 {
                     "user_id": str(new_user.id),
@@ -253,7 +253,7 @@ async def _generate_invite(
 
     event_id = None
     if send:
-        event_id = await emit_internal_event(
+        event_id, _ = await emit_event(
             "user.invited",
             {
                 "user_id": str(user_id),

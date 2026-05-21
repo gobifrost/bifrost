@@ -11,14 +11,14 @@ from src.services.events.processor import (
 )
 
 
-async def emit_internal_event(
-    event_type: str,
+async def emit_event(
+    topic: str,
     data: dict,
     *,
     organization_id: UUID | None = None,
     triggered_by: str | None = None,
-) -> UUID:
-    """Emit an internal platform event and return its event_id.
+) -> tuple[UUID, int]:
+    """Emit a topic event and return (event_id, subscribers_notified).
 
     Opens its own DB session and commits, so callers don't need to manage
     transactions. Safe to call from within a request handler that has its
@@ -29,20 +29,21 @@ async def emit_internal_event(
     session_factory = get_session_factory()
     async with session_factory() as db:
         processor = EventProcessor(db)
-        event_id = await processor.emit_internal(
-            event_type=event_type,
+        event_id, count = await processor.emit_topic(
+            topic=topic,
             data=data,
             organization_id=organization_id,
             triggered_by=triggered_by,
         )
         await db.commit()
-        await processor.queue_event_deliveries(event_id)
-        return event_id
+        if count > 0:
+            await processor.queue_event_deliveries(event_id)
+        return event_id, count
 
 
 __all__ = [
     "EventProcessor",
-    "emit_internal_event",
+    "emit_event",
     "resolve_webhook_source",
     "update_delivery_from_execution",
 ]

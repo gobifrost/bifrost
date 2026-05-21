@@ -35,9 +35,11 @@ from src.models.orm.events import (
 from src.repositories.events import (
     EventDeliveryRepository,
     EventRepository,
+    EventSourceRepository,
     EventSubscriptionRepository,
     WebhookSourceRepository,
 )
+from src.services.events.validation import validate_topic
 from src.services.webhooks.protocol import (
     Deliver,
     HandleResult,
@@ -207,6 +209,7 @@ class EventProcessor:
     def __init__(self, session: AsyncSession):
         self.session = session
         self._webhook_repo = WebhookSourceRepository(session)
+        self._source_repo = EventSourceRepository(session)
         self._subscription_repo = EventSubscriptionRepository(session)
         self._event_repo = EventRepository(session)
         self._delivery_repo = EventDeliveryRepository(session)
@@ -282,25 +285,37 @@ class EventProcessor:
             status_code=500,
         )
 
-    async def emit_internal(
+    async def emit_topic(
         self,
         *,
-        event_type: str,
+        topic: str,
         data: dict,
         organization_id: UUID | None = None,
         triggered_by: str | None = None,
-    ) -> UUID:
-        """Emit an internal platform event. Returns the event_id.
+    ) -> tuple[UUID, int]:
+        """Emit a topic event. Returns (event_id, subscribers_notified).
 
-        Creates an Event row with event_source_id=NULL (INTERNAL source),
-        finds matching subscriptions (those with NULL event_source_id and
-        matching event_type), creates deliveries, and marks them PENDING for
-        queue_event_deliveries to pick up after commit.
+        Looks up the topic EventSource by event_type, stamps Event.organization_id
+        from the source row (or the explicit override), creates deliveries for all
+        active subscriptions, and marks them PENDING for queue_event_deliveries.
         """
+        validate_topic(topic)
+
+        source = await self._source_repo.get_by_topic(topic)
+        if source is None:
+            logger.info(
+                f"No active topic source for '{topic}'; emit is a no-op",
+                extra={"topic": topic, "triggered_by": triggered_by},
+            )
+            return uuid.uuid4(), 0
+
+        stamped_org = organization_id if organization_id is not None else source.organization_id
+
         event = Event(
             id=uuid.uuid4(),
-            event_source_id=None,
-            event_type=event_type,
+            event_source_id=source.id,
+            event_type=topic,
+            organization_id=stamped_org,
             received_at=datetime.now(timezone.utc),
             headers=None,
             data=data,
@@ -311,24 +326,24 @@ class EventProcessor:
         await self.session.flush()
 
         logger.info(
-            f"Internal event emitted: {event.id}",
+            f"Topic event emitted: {event.id}",
             extra={
                 "event_id": str(event.id),
-                "event_type": event_type,
+                "topic": topic,
                 "triggered_by": triggered_by,
             },
         )
 
-        subscriptions = await self._subscription_repo.get_active_for_internal_event(
-            event_type=event_type,
-            organization_id=organization_id,
+        subscriptions = await self._subscription_repo.get_active_for_event(
+            source_id=source.id,
+            event_type=topic,
         )
 
         if not subscriptions:
             event.status = EventStatus.COMPLETED
             await self.session.flush()
-            logger.info(f"No subscriptions for internal event {event_type}: {event.id}")
-            return event.id
+            logger.info(f"No subscriptions for topic '{topic}': {event.id}")
+            return event.id, 0
 
         event.status = EventStatus.PROCESSING
         await self.session.flush()
@@ -359,13 +374,13 @@ class EventProcessor:
 
         await self.session.flush()
         logger.info(
-            f"Created deliveries for internal event {event_type}: {event.id}",
+            f"Created deliveries for topic '{topic}': {event.id}",
             extra={
                 "event_id": str(event.id),
                 "subscription_count": len(subscriptions),
             },
         )
-        return event.id
+        return event.id, len(subscriptions)
 
     async def _process_delivery(
         self,
