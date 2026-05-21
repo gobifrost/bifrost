@@ -93,7 +93,10 @@ class OAuthConfigService:
             try:
                 return decrypt_secret(encrypted)
             except Exception as e:
-                logger.error(f"Failed to decrypt secret {key}: {e}")
+                logger.error(
+                    "Failed to decrypt OAuth config secret: %s",
+                    e.__class__.__name__,
+                )
                 return None
         return None
 
@@ -308,8 +311,12 @@ class OAuthConfigService:
                         client_id=config.client_id,
                         client_secret_set=bool(config.client_secret),
                         tenant_id=config.tenant_id if provider == "microsoft" else None,
-                        discovery_url=config.discovery_url if provider == "oidc" else None,
-                        display_name=config.display_name if provider == "oidc" else None,
+                        discovery_url=config.discovery_url
+                        if provider == "oidc"
+                        else None,
+                        display_name=config.display_name
+                        if provider == "oidc"
+                        else None,
                     )
                 )
             else:
@@ -369,7 +376,9 @@ class OAuthConfigService:
                         message=f"Successfully connected to Microsoft Entra ID (tenant: {tenant})",
                         details={
                             "issuer": data.get("issuer"),
-                            "authorization_endpoint": data.get("authorization_endpoint"),
+                            "authorization_endpoint": data.get(
+                                "authorization_endpoint"
+                            ),
                             "token_endpoint": data.get("token_endpoint"),
                         },
                     )
@@ -414,7 +423,9 @@ class OAuthConfigService:
                         message="Successfully connected to Google OAuth",
                         details={
                             "issuer": data.get("issuer"),
-                            "authorization_endpoint": data.get("authorization_endpoint"),
+                            "authorization_endpoint": data.get(
+                                "authorization_endpoint"
+                            ),
                             "token_endpoint": data.get("token_endpoint"),
                         },
                     )
@@ -478,7 +489,9 @@ class OAuthConfigService:
                         message=f"Successfully connected to OIDC provider: {data.get('issuer')}",
                         details={
                             "issuer": data.get("issuer"),
-                            "authorization_endpoint": data.get("authorization_endpoint"),
+                            "authorization_endpoint": data.get(
+                                "authorization_endpoint"
+                            ),
                             "token_endpoint": data.get("token_endpoint"),
                             "userinfo_endpoint": data.get("userinfo_endpoint"),
                             "scopes_supported": data.get("scopes_supported", [])[:10],
