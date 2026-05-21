@@ -100,7 +100,7 @@ class TestExecutionContextIsolation:
     def test_workspace_receives_org_context(self):
         """Integration: Workspace code receives organization context"""
         # When execute_workflow is called, it should:
-        # 1. Load organization from X-Organization-Id header
+        # 1. Resolve organization from the authenticated principal / scope query param
         # 2. Create ExecutionContext
         # 3. Pass to workspace workflow function
 
@@ -116,7 +116,7 @@ class TestExecutionContextIsolation:
     def test_function_key_auth_enforces_org_validation(self):
         """Integration: Function key auth still validates org exists"""
         # Even with function key bypass, the system must:
-        # 1. Extract X-Organization-Id from headers
+        # 1. Resolve organization from principal / scope query param
         # 2. Validate organization exists and is active
         # 3. Create ExecutionContext with that org
 
