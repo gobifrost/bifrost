@@ -143,3 +143,79 @@ def test_call_with_row_reference_arg_raises():
     expr = Expr.model_validate({"call": "has_role", "args": [{"row": "x"}]})
     with pytest.raises(ValueError, match="cannot resolve"):
         compile_to_sql(expr, user)
+
+
+# --- JSONB type coercion for non-string literals ---------------------------
+#
+# Spec (docs/superpowers/specs/2026-04-30-table-policies-design.md, line 117):
+#   "Boolean fields stored in JSON come out as true/false.
+#    {eq: [{row: finalized}, true]} works."
+#
+# The naive compile (data->>'field' = TRUE) is invalid Postgres SQL
+# (text = boolean). Use the JSONB-compare form (data->'field' = 'true'::jsonb)
+# so type mismatches in row data return false instead of raising.
+
+
+def _is_jsonb_extract(sql: str, field: str) -> bool:
+    """SQLAlchemy's `Document.data[field]` renders as either `data['field']`
+    (subscript) or `data -> 'field'` (explicit operator) depending on dialect
+    settings. Both compile to the same Postgres `->` operator. Accept either.
+    """
+    normalized = sql.replace(" ", "").lower()
+    return f"data['{field}']" in normalized or f"data->'{field}'" in normalized
+
+
+def _is_jsonb_text_extract(sql: str, field: str) -> bool:
+    """The broken text-extract form: `data->>'field'`."""
+    normalized = sql.replace(" ", "").lower()
+    return f"data->>'{field}'" in normalized
+
+
+def test_eq_row_jsonb_bool_true():
+    """{eq:[{row:finalized}, true]} — must not produce `data->>'x' = TRUE`."""
+    sql = _compile({"eq": [{"row": "finalized"}, True]})
+    assert not _is_jsonb_text_extract(sql, "finalized")
+    assert _is_jsonb_extract(sql, "finalized")
+    assert "jsonb" in sql.lower()
+    assert "'true'" in sql.lower()
+
+
+def test_eq_row_jsonb_bool_false():
+    sql = _compile({"eq": [{"row": "finalized"}, False]})
+    assert not _is_jsonb_text_extract(sql, "finalized")
+    assert _is_jsonb_extract(sql, "finalized")
+    assert "jsonb" in sql.lower()
+    assert "'false'" in sql.lower()
+
+
+def test_eq_row_jsonb_int():
+    """Numeric literals against JSONB fields need the same treatment."""
+    sql = _compile({"eq": [{"row": "count"}, 5]})
+    assert not _is_jsonb_text_extract(sql, "count")
+    assert _is_jsonb_extract(sql, "count")
+    assert "jsonb" in sql.lower()
+
+
+def test_lt_row_jsonb_int():
+    sql = _compile({"lt": [{"row": "count"}, 10]})
+    assert not _is_jsonb_text_extract(sql, "count")
+    assert _is_jsonb_extract(sql, "count")
+    assert "jsonb" in sql.lower()
+
+
+def test_eq_row_column_mapped_field_unchanged():
+    """Column-mapped fields (created_by) still use the column directly."""
+    uid = uuid4()
+    user = FakeUser(user_id=uid)
+    sql = _compile({"eq": [{"row": "created_by"}, {"user": "user_id"}]}, user=user)
+    assert "data ->> 'created_by'" not in sql
+    assert "data -> 'created_by'" not in sql
+    assert "created_by" in sql
+    assert str(uid) in sql
+
+
+def test_eq_row_jsonb_string_literal_unchanged():
+    """String literal path is unchanged — uses ->> (text) comparison."""
+    sql = _compile({"eq": [{"row": "status"}, "open"]})
+    assert "data ->> 'status'" in sql or "data->>'status'" in sql.replace(" ", "")
+    assert "'open'" in sql
