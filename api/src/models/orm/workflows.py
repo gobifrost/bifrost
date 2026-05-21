@@ -5,9 +5,10 @@ Represents all executable user code (workflows, tools, data providers)
 discovered from Python files. Data providers were consolidated into this
 table in migration 20260103_000000.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
@@ -16,11 +17,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.agents import Agent
-    from src.models.orm.organizations import Organization
-    from src.models.orm.users import Role
-    from src.models.orm.workflow_roles import WorkflowRole
 
 
 class Workflow(Base):

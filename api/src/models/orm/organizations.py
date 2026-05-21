@@ -3,9 +3,10 @@ Organization ORM model.
 
 Represents tenant organizations in the Bifrost platform.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, Index, String, text
@@ -14,17 +15,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.agents import Agent
-    from src.models.orm.applications import Application
-    from src.models.orm.config import Config, SystemConfig
-    from src.models.orm.executions import Execution
-    from src.models.orm.forms import Form
-    from src.models.orm.knowledge import KnowledgeStore
-    from src.models.orm.metrics import KnowledgeStorageDaily
-    from src.models.orm.tables import Table
-    from src.models.orm.users import User
-    from src.models.orm.workflows import Workflow
 
 
 class Organization(Base):

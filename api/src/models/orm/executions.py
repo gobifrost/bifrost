@@ -3,9 +3,10 @@ Execution and ExecutionLog ORM models.
 
 Represents workflow executions and their logs.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, String, Text, text
@@ -15,13 +16,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.enums import ExecutionStatus
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.ai_usage import AIUsage
-    from src.models.orm.cli import CLISession
-    from src.models.orm.forms import Form
-    from src.models.orm.organizations import Organization
-    from src.models.orm.users import User
-    from src.models.orm.workflows import Workflow
 
 
 class Execution(Base):

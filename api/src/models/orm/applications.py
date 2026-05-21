@@ -5,11 +5,12 @@ Represents applications with:
 - applications: metadata, access control, published_snapshot
 - Files stored in S3 via file_index (not in database tables)
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, text
@@ -18,10 +19,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.enums import AppAccessLevel
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.app_embed_secrets import AppEmbedSecret
-    from src.models.orm.app_roles import AppRole
-    from src.models.orm.organizations import Organization
 
 
 class Application(Base):

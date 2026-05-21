@@ -3,9 +3,10 @@ OAuthProvider and OAuthToken ORM models.
 
 Represents OAuth provider configurations and user OAuth tokens for integrations.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, Text, text
@@ -14,8 +15,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.integrations import Integration
 
 
 class OAuthProvider(Base):

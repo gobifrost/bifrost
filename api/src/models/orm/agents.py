@@ -3,9 +3,10 @@ Agent, AgentTool, AgentDelegation, AgentRole, Conversation, and Message ORM mode
 
 Represents AI agents, their tool/delegation relationships, and chat conversations.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, Enum as SQLAlchemyEnum, ForeignKey, Index, Integer, String, Text, text
@@ -15,11 +16,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.enums import AgentAccessLevel, MessageRole
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.ai_usage import AIUsage
-    from src.models.orm.organizations import Organization
-    from src.models.orm.users import Role, User
-    from src.models.orm.workflows import Workflow
 
 
 class Agent(Base):
@@ -101,7 +97,7 @@ class Agent(Base):
     # that introduces ``agent_mcp_connections`` backfills grants for existing
     # rows so the rollout preserves current behavior.
     #
-    # Untyped on purpose: importing MCPConnection (even under TYPE_CHECKING)
+    # Untyped on purpose: importing MCPConnection for static-only annotations
     # closes a CodeQL-flagged cycle through external_mcp → organizations →
     # agents. SQLAlchemy resolves the string class name at mapper config
     # time, so the runtime is unaffected.

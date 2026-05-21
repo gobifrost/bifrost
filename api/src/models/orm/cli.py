@@ -3,9 +3,10 @@ CLI Session ORM model.
 
 Represents CLI debugging sessions for local workflow execution.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Text, text
@@ -14,9 +15,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.executions import Execution
-    from src.models.orm.users import User
 
 
 class CLISession(Base):

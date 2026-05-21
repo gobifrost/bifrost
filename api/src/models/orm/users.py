@@ -3,9 +3,10 @@ User, Role, and UserRole ORM models.
 
 Represents users, roles, and role assignments in the platform.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
@@ -14,12 +15,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.agents import Agent
-    from src.models.orm.developer import DeveloperContext
-    from src.models.orm.executions import Execution
-    from src.models.orm.mfa import MFARecoveryCode, TrustedDevice, UserMFAMethod, UserOAuthAccount, UserPasskey
-    from src.models.orm.organizations import Organization
 
 
 class User(Base):

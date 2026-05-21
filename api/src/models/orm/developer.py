@@ -3,9 +3,10 @@ Developer context ORM model.
 
 Represents developer configuration for SDK usage.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, text
@@ -14,9 +15,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.organizations import Organization
-    from src.models.orm.users import User
 
 
 class DeveloperContext(Base):

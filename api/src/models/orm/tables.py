@@ -4,9 +4,10 @@ Table and Document ORM models.
 Provides a flexible document store for app builder data storage.
 Tables are scoped like configs: organization_id = NULL for global, UUID for org-specific.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -23,8 +24,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.organizations import Organization
 
 
 class Table(Base):

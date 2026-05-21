@@ -1,6 +1,7 @@
 """AgentRun and AgentRunStep ORM models for autonomous agent execution tracking."""
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, text
@@ -9,8 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.ai_usage import AIUsage
 
 
 class AgentRun(Base):

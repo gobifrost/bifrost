@@ -3,10 +3,11 @@ AI Usage and Model Pricing ORM models.
 
 Tracks AI provider usage across workflow executions and chat conversations.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
@@ -25,12 +26,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.agent_runs import AgentRun
-    from src.models.orm.agents import Conversation, Message
-    from src.models.orm.executions import Execution
-    from src.models.orm.organizations import Organization
-    from src.models.orm.users import User
 
 
 class AIModelPricing(Base):

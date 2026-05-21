@@ -4,9 +4,10 @@ WorkflowRole ORM model.
 Junction table for workflow role-based access control,
 following the same pattern as FormRole, AppRole, AgentRole.
 """
+# ruff: noqa: F821
+# pyright: reportUndefinedVariable=false
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, text
@@ -14,9 +15,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
 
-if TYPE_CHECKING:
-    from src.models.orm.users import Role
-    from src.models.orm.workflows import Workflow
 
 
 class WorkflowRole(Base):
