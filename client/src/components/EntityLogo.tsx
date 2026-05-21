@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useEntityLogoVersion } from "./entityLogoVersions";
 
 export type EntityLogoProps = {
 	entityType: "app" | "agent";
@@ -22,14 +23,23 @@ export function EntityLogo({
 	cacheKey,
 	className,
 }: EntityLogoProps) {
-	const [errored, setErrored] = useState(false);
+	// Track which "version" of the URL we last failed to load. When a new
+	// version is bumped (after upload/delete), this stale marker no longer
+	// matches and we retry — no setState-in-useEffect dance needed.
+	const [erroredVersion, setErroredVersion] = useState<string | null>(null);
 
-	if (errored) {
-		return <>{fallback}</>;
-	}
+	// Global per-entity version bumped by LogoDropZone after upload/delete.
+	const globalVersion = useEntityLogoVersion(entityType, entityId);
 
 	const base = `${PATHS[entityType]}/${entityId}/logo`;
-	const src = cacheKey ? `${base}?v=${encodeURIComponent(cacheKey)}` : base;
+	const effectiveKey = cacheKey ?? globalVersion?.toString() ?? null;
+	const src = effectiveKey
+		? `${base}?v=${encodeURIComponent(effectiveKey)}`
+		: base;
+
+	if (erroredVersion !== null && erroredVersion === (effectiveKey ?? "")) {
+		return <>{fallback}</>;
+	}
 
 	return (
 		<img
@@ -39,7 +49,7 @@ export function EntityLogo({
 			width={size}
 			height={size}
 			className={className}
-			onError={() => setErrored(true)}
+			onError={() => setErroredVersion(effectiveKey ?? "")}
 		/>
 	);
 }

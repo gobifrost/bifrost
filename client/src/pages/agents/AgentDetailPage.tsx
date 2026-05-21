@@ -43,6 +43,7 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { LogoDropZone } from "@/components/LogoDropZone";
+import { bumpEntityLogo } from "@/components/entityLogoVersions";
 import { AgentOverviewTab } from "@/components/agents/AgentOverviewTab";
 import { AgentRunsTab } from "@/components/agents/AgentRunsTab";
 import { AgentSettingsTab } from "@/components/agents/AgentSettingsTab";
@@ -160,6 +161,9 @@ export function AgentDetailPage() {
 							previewUrl={`/api/agents/${agent.id}/logo`}
 							fallback={<Bot className="h-5 w-5" />}
 							size={48}
+							onChange={() =>
+								bumpEntityLogo("agent", agent.id ?? "")
+							}
 						/>
 					) : null}
 					<div className="min-w-0 flex-1">

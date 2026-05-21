@@ -55,6 +55,7 @@ import {
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { LogoDropZone } from "@/components/LogoDropZone";
+import { bumpEntityLogo } from "@/components/entityLogoVersions";
 import { AppReplacePathDialog } from "@/components/applications/AppReplacePathDialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -303,6 +304,9 @@ export function AppInfoDialog({
 								previewUrl={`/api/applications/${existingApp.id}/logo`}
 								fallback={<AppWindow className="h-6 w-6" />}
 								size={64}
+								onChange={() =>
+									bumpEntityLogo("app", existingApp.id)
+								}
 							/>
 						) : null}
 						<div className="min-w-0 flex-1">
