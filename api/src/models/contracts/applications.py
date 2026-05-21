@@ -386,7 +386,7 @@ class ApplicationReplaceRequest(BaseModel):
     force: bool = Field(
         default=False,
         description=(
-            "Bypass the uniqueness, nesting, and source-exists checks. "
+            "Bypass the source-exists check only. "
             "Use when repointing before files are pushed."
         ),
     )

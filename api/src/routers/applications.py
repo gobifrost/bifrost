@@ -1042,6 +1042,12 @@ async def replace_application_endpoint(
     Validates that the new path is unique, non-nested with other apps, and has
     source files under it. ``force: true`` bypasses only the source-file check.
     """
+    if not user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin privileges required",
+        )
+
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,

@@ -549,6 +549,48 @@ class TestApplicationCrossOrgAdmin:
 
 
 @pytest.mark.e2e
+class TestApplicationReplaceAuthorization:
+    """Authorization coverage for the source-root repoint endpoint."""
+
+    def test_org_user_cannot_replace_accessible_app_repo_path(
+        self, e2e_client, platform_admin, org1_user, org1
+    ):
+        """Readable authenticated apps cannot be repointed by non-admin users."""
+        suffix = uuid.uuid4().hex[:8]
+        app = _create_app(
+            e2e_client,
+            platform_admin.headers,
+            f"replace-deny-{suffix}",
+            name="Replace Deny",
+            organization_id=org1["id"],
+        )
+
+        try:
+            get_response = e2e_client.get(
+                f"/api/applications/{app['slug']}",
+                headers=org1_user.headers,
+            )
+            assert get_response.status_code == 200, (
+                f"Fixture app should be readable by org user: {get_response.text}"
+            )
+
+            response = e2e_client.post(
+                f"/api/applications/{app['id']}/replace",
+                headers=org1_user.headers,
+                json={
+                    "repo_path": f"apps/replaced-by-user-{suffix}",
+                    "force": True,
+                },
+            )
+
+            assert response.status_code == 403, (
+                f"Non-admin should not repoint app source roots: {response.text}"
+            )
+        finally:
+            _delete_app(e2e_client, platform_admin.headers, app["id"])
+
+
+@pytest.mark.e2e
 class TestApplicationDBStorage:
     """Test that applications are stored in database, not S3."""
 
