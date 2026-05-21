@@ -120,7 +120,7 @@ export function FleetPage() {
 	);
 
 	return (
-		<div className="mx-auto flex max-w-[1400px] flex-col gap-5 p-7">
+		<div className="mx-auto flex h-full max-w-[1400px] flex-col gap-5">
 			{/* Header */}
 			<div className="flex items-start justify-between gap-4">
 				<div>
@@ -279,40 +279,42 @@ export function FleetPage() {
 			</div>
 
 			{/* Content */}
-			{agentsLoading ? (
-				view === "grid" ? (
+			<div className="flex-1 min-h-0 overflow-auto">
+				{agentsLoading ? (
+					view === "grid" ? (
+						<div className={cn("grid md:grid-cols-2 xl:grid-cols-3", GAP_CARD)}>
+							{[...Array(6)].map((_, i) => (
+								<Skeleton key={i} className="h-52 w-full" />
+							))}
+						</div>
+					) : (
+						<div className="space-y-2">
+							{[...Array(3)].map((_, i) => (
+								<Skeleton key={i} className="h-12 w-full" />
+							))}
+						</div>
+					)
+				) : filtered.length === 0 ? (
+					<EmptyState hasQuery={query.trim().length > 0} />
+				) : view === "grid" ? (
 					<div className={cn("grid md:grid-cols-2 xl:grid-cols-3", GAP_CARD)}>
-						{[...Array(6)].map((_, i) => (
-							<Skeleton key={i} className="h-52 w-full" />
+						{filtered.map((agent) => (
+							<AgentGridCard
+								key={agent.id}
+								agent={agent}
+								showOrg={isPlatformAdmin}
+								orgName={getOrgName(agent.organization_id)}
+							/>
 						))}
 					</div>
 				) : (
-					<div className="space-y-2">
-						{[...Array(3)].map((_, i) => (
-							<Skeleton key={i} className="h-12 w-full" />
-						))}
-					</div>
-				)
-			) : filtered.length === 0 ? (
-				<EmptyState hasQuery={query.trim().length > 0} />
-			) : view === "grid" ? (
-				<div className={cn("grid md:grid-cols-2 xl:grid-cols-3", GAP_CARD)}>
-					{filtered.map((agent) => (
-						<AgentGridCard
-							key={agent.id}
-							agent={agent}
-							showOrg={isPlatformAdmin}
-							orgName={getOrgName(agent.organization_id)}
-						/>
-					))}
-				</div>
-			) : (
-				<AgentTable
-					agents={filtered}
-					showOrg={isPlatformAdmin}
-					getOrgName={getOrgName}
-				/>
-			)}
+					<AgentTable
+						agents={filtered}
+						showOrg={isPlatformAdmin}
+						getOrgName={getOrgName}
+					/>
+				)}
+			</div>
 		</div>
 	);
 }
