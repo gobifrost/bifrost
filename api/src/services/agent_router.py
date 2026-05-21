@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from src.core.log_safety import log_safe
+from src.core.org_filter import OrgFilterType
 from src.models.orm import Agent
+from src.models.orm.users import User
+from src.repositories.agents import AgentRepository
 from src.services.llm import get_llm_client, LLMMessage
 
 logger = logging.getLogger(__name__)
@@ -46,7 +49,35 @@ class AgentRouter:
             yield session
             await session.commit()
 
-    async def parse_mention(self, message: str) -> Agent | None:
+    async def _load_accessible_agents(self, user: User) -> list[Agent]:
+        """Load active agents visible to ``user`` using the normal access model."""
+        async with self._db() as session:
+            repo = AgentRepository(
+                session=session,
+                org_id=user.organization_id,
+                user_id=user.id,
+                is_superuser=user.is_superuser,
+            )
+            if user.is_superuser:
+                return await repo.list_all_in_scope(
+                    OrgFilterType.ALL,
+                    active_only=True,
+                )
+            return await repo.list_agents(active_only=True)
+
+    async def _find_accessible_agent_by_name(
+        self,
+        agent_name: str,
+        user: User,
+    ) -> Agent | None:
+        """Resolve an agent mention by name after applying caller access checks."""
+        normalized_name = agent_name.lower()
+        for agent in await self._load_accessible_agents(user):
+            if agent.name.lower() == normalized_name:
+                return agent
+        return None
+
+    async def parse_mention(self, message: str, user: User | None = None) -> Agent | None:
         """
         Parse @mention from user message and find matching agent.
 
@@ -62,7 +93,15 @@ class AgentRouter:
 
         agent_name = match.group(1).strip()
 
-        # Find agent by name (case-insensitive), with tools and delegations loaded
+        if user is not None:
+            agent = await self._find_accessible_agent_by_name(agent_name, user)
+            if agent:
+                logger.info(f"@mention routing to agent: {agent.name}")
+            return agent
+
+        # Compatibility fallback for internal callers that predate user-scoped
+        # routing. Chat execution passes a user and gets access-controlled
+        # resolution.
         async with self._db() as session:
             result = await session.execute(
                 select(Agent)
@@ -105,6 +144,7 @@ class AgentRouter:
         self,
         message: str,
         available_agents: list[Agent] | None = None,
+        user: User | None = None,
     ) -> Agent | None:
         """
         Use AI to route a message to the most appropriate agent.
@@ -116,18 +156,23 @@ class AgentRouter:
         Returns:
             Agent if a good match was found, None to handle directly
         """
-        # Get available agents if not provided (with tools and delegations eager-loaded)
+        # Get available agents if not provided.
         if available_agents is None:
-            async with self._db() as session:
-                result = await session.execute(
-                    select(Agent)
-                    .options(
-                        selectinload(Agent.tools),
-                        selectinload(Agent.delegated_agents),
+            if user is not None:
+                available_agents = await self._load_accessible_agents(user)
+            else:
+                # Compatibility fallback for internal callers. Chat execution
+                # passes a user and gets access-controlled routing candidates.
+                async with self._db() as session:
+                    result = await session.execute(
+                        select(Agent)
+                        .options(
+                            selectinload(Agent.tools),
+                            selectinload(Agent.delegated_agents),
+                        )
+                        .where(Agent.is_active.is_(True))
                     )
-                    .where(Agent.is_active.is_(True))
-                )
-                available_agents = list(result.scalars().all())
+                    available_agents = list(result.scalars().all())
 
         # If no agents available, return None
         if not available_agents:

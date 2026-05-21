@@ -184,7 +184,10 @@ class AgentExecutor:
         try:
             # 1. Check for @mention agent switching
             if enable_routing:
-                mentioned_agent = await router.parse_mention(user_message)
+                mentioned_agent = await router.parse_mention(
+                    user_message,
+                    conversation.user,
+                )
                 if mentioned_agent:
                     # Strip @mention from message for cleaner processing
                     user_message = router.strip_mention(user_message)
@@ -199,7 +202,8 @@ class AgentExecutor:
                 is_first_message = await self._is_first_user_message(conversation.id)
                 if is_first_message:
                     routed_agent = await router.route_message(
-                        user_message
+                        user_message,
+                        user=conversation.user,
                     )
                     if routed_agent:
                         # Switch to routed agent (handles events and persistence)
