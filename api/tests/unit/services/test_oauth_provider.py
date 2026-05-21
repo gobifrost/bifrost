@@ -6,6 +6,7 @@ Mocks HTTP requests to OAuth providers.
 
 import pytest
 import asyncio
+import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
 
@@ -16,6 +17,60 @@ from src.services.oauth_provider import OAuthProviderClient
 def oauth_client():
     """Create OAuth provider client with test defaults"""
     return OAuthProviderClient(timeout=10, max_retries=3)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "secrets", "expected"),
+    [
+        (
+            "exchange_code_for_token",
+            {
+                "token_url": "https://oauth.example.com/token?tenant=secret-tenant",
+                "code": "authorization-code",
+                "client_id": "client-id",
+                "client_secret": "super-secret-client-value",
+                "redirect_uri": "https://app.example.com/callback",
+            },
+            ("super-secret-client-value", "secret-tenant", "client_secret"),
+            "confidential client",
+        ),
+        (
+            "refresh_access_token",
+            {
+                "token_url": "https://oauth.example.com/token?tenant=secret-tenant",
+                "refresh_token": "refresh-token-secret",
+                "client_id": "client-id",
+                "client_secret": "client-secret-value",
+            },
+            (
+                "refresh-token-secret",
+                "client-secret-value",
+                "secret-tenant",
+                "client_secret",
+            ),
+            "confidential client",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_oauth_request_logs_do_not_include_secret_material(
+    oauth_client, caplog, method_name, kwargs, secrets, expected
+):
+    """OAuth request logs should describe flow shape without logging secrets."""
+    with (
+        caplog.at_level(logging.INFO, logger="src.services.oauth_provider"),
+        patch.object(
+            oauth_client,
+            "_make_token_request",
+            new=AsyncMock(return_value=(True, {"access_token": "ok"})),
+        ),
+    ):
+        await getattr(oauth_client, method_name)(**kwargs)
+
+    log_text = caplog.text
+    for secret in secrets:
+        assert secret not in log_text
+    assert expected in log_text
 
 
 class TestOAuthProviderTokenExchange:
