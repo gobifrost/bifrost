@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, LargeBinary, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.enums import AppAccessLevel
@@ -62,6 +62,8 @@ class Application(Base):
     description: Mapped[str | None] = mapped_column(Text, default=None)
     dependencies: Mapped[dict | None] = mapped_column(JSON, default=None, nullable=True)
     icon: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    logo_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )

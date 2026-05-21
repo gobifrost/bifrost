@@ -10,17 +10,33 @@ import {
 import { Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { handleOAuthCallback } from "@/hooks/useOAuth";
+import {
+	EntityIdSourcePicker,
+	type Candidate,
+} from "@/components/integrations/EntityIdSourcePicker";
+import { useSetEntityIdSource } from "@/services/integrations";
 
 export function OAuthCallback() {
 	const navigate = useNavigate();
 	const { integrationId } = useParams<{ integrationId: string }>();
 	const [searchParams] = useSearchParams();
 	const [status, setStatus] = useState<
-		"processing" | "success" | "error" | "warning"
+		"processing" | "success" | "error" | "warning" | "picker"
 	>("processing");
 	const [message, setMessage] = useState("Processing OAuth callback...");
 	const [warning, setWarning] = useState<string | null>(null);
+	const [pickerCandidates, setPickerCandidates] = useState<Candidate[]>([]);
+	const [triggeringMappingId, setTriggeringMappingId] = useState<
+		string | null
+	>(null);
+	const [capturedEntityId, setCapturedEntityId] = useState<string | null>(
+		null,
+	);
+	const [capturedEntityIdFrom, setCapturedEntityIdFrom] = useState<
+		string | null
+	>(null);
 	const hasProcessed = useRef(false);
+	const setEntityIdSource = useSetEntityIdSource();
 
 	useEffect(() => {
 		const handleCallback = async () => {
@@ -109,9 +125,43 @@ export function OAuthCallback() {
 					return;
 				}
 
+				// If the backend surfaced picker candidates, show them BEFORE
+				// closing — the admin picks the entity_id field, we PATCH it,
+				// then close. Skipping just closes (picker reappears next connect).
+				const picker = (responseData?.entity_id_picker ?? null) as
+					| Candidate[]
+					| null;
+				if (picker && picker.length > 0) {
+					setPickerCandidates(picker);
+					setTriggeringMappingId(
+						(responseData?.triggering_mapping_id as
+							| string
+							| null
+							| undefined) ?? null,
+					);
+					setStatus("picker");
+					return;
+				}
+
 				// No warning or error - proceed with normal success flow
 				setStatus("success");
 				setMessage("OAuth connection completed successfully!");
+
+				// Capture confirmation: when the backend filled an Entity ID
+				// via the provider's configured source, show it and require
+				// manual close so the admin sees what landed in the mapping.
+				const captured =
+					(responseData?.captured_entity_id as string | null | undefined) ??
+					null;
+				const capturedFrom =
+					(responseData?.captured_entity_id_from as
+						| string
+						| null
+						| undefined) ?? null;
+				if (captured) {
+					setCapturedEntityId(captured);
+					setCapturedEntityIdFrom(capturedFrom);
+				}
 
 				// Notify parent window to refresh connections
 				if (window.opener) {
@@ -124,13 +174,17 @@ export function OAuthCallback() {
 					);
 				}
 
-				// Auto-close on success (no warning)
-				setTimeout(() => {
-					window.close();
+				// Auto-close only when there's nothing for the admin to see.
+				// When we captured an Entity ID, leave the popup open so the
+				// admin can confirm the value before closing.
+				if (!captured) {
 					setTimeout(() => {
-						navigate("/integrations");
-					}, 100);
-				}, 1500);
+						window.close();
+						setTimeout(() => {
+							navigate("/integrations");
+						}, 100);
+					}, 1500);
+				}
 			} catch (err: unknown) {
 				setStatus("error");
 				const errorMsg =
@@ -181,6 +235,7 @@ export function OAuthCallback() {
 							{status === "success" && "Authorization Successful"}
 							{status === "warning" && "Warning"}
 							{status === "error" && "Authorization Failed"}
+							{status === "picker" && "Authorization Successful"}
 						</CardTitle>
 					</div>
 					<CardDescription>
@@ -209,8 +264,37 @@ export function OAuthCallback() {
 						</>
 					)}
 
-					{/* Success state - auto-closes */}
-					{status === "success" && (
+					{/* Success state */}
+					{status === "success" && capturedEntityId && (
+						<>
+							<div className="rounded-md border bg-muted/30 p-3 mb-4">
+								<p className="text-xs text-muted-foreground mb-1">
+									Captured Entity ID
+								</p>
+								<p className="font-mono text-sm break-all">
+									{capturedEntityId}
+								</p>
+								{capturedEntityIdFrom && (
+									<p className="text-xs text-muted-foreground mt-2">
+										from{" "}
+										<code className="font-mono">
+											{capturedEntityIdFrom}
+										</code>
+									</p>
+								)}
+							</div>
+							<div className="flex justify-center">
+								<Button
+									onClick={() => window.close()}
+									variant="default"
+									className="w-48"
+								>
+									Close
+								</Button>
+							</div>
+						</>
+					)}
+					{status === "success" && !capturedEntityId && (
 						<p className="text-xs text-muted-foreground">
 							This window will close automatically...
 						</p>
@@ -227,6 +311,56 @@ export function OAuthCallback() {
 								Close
 							</Button>
 						</div>
+					)}
+
+					{/* Picker state - admin picks entity_id source */}
+					{status === "picker" && (
+						<EntityIdSourcePicker
+							candidates={pickerCandidates}
+							isPending={setEntityIdSource.isPending}
+							onSkip={() => {
+								if (window.opener) {
+									window.opener.postMessage(
+										{
+											type: "oauth_success",
+											integrationId,
+										},
+										window.location.origin,
+									);
+								}
+								window.close();
+							}}
+							onSelect={(candidate) => {
+								if (!integrationId) return;
+								setEntityIdSource.mutate(
+									{
+										params: {
+											path: { integration_id: integrationId },
+										},
+										body: {
+											type: candidate.type,
+											key: candidate.key,
+											apply_to_mapping_id: triggeringMappingId,
+											apply_value: candidate.value,
+										},
+									},
+									{
+										onSuccess: () => {
+											if (window.opener) {
+												window.opener.postMessage(
+													{
+														type: "oauth_success",
+														integrationId,
+													},
+													window.location.origin,
+												);
+											}
+											window.close();
+										},
+									},
+								);
+							}}
+						/>
 					)}
 				</CardContent>
 			</Card>

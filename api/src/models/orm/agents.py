@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum as SQLAlchemyEnum, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum as SQLAlchemyEnum, ForeignKey, Index, Integer, LargeBinary, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,6 +30,8 @@ class Agent(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, default=None)
+    logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    logo_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     channels: Mapped[list] = mapped_column(JSONB, default=["chat"])
     access_level: Mapped[AgentAccessLevel] = mapped_column(

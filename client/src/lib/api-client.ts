@@ -260,7 +260,7 @@ async function ensureValidToken(): Promise<boolean> {
  * Get CSRF token from cookie (set by backend on login/OAuth)
  * The csrf_token cookie is non-HttpOnly so JavaScript can read it
  */
-function getCsrfToken(): string | null {
+export function getCsrfToken(): string | null {
 	const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
 	return match ? decodeURIComponent(match[1]) : null;
 }

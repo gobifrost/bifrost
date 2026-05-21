@@ -37,6 +37,7 @@ import {
 	useCreateIntegration,
 	useUpdateIntegration,
 	useIntegration,
+	useResetEntityIdSource,
 	type ConfigSchemaItem,
 	type IntegrationDetail,
 } from "@/services/integrations";
@@ -115,6 +116,18 @@ function CreateIntegrationForm({
 	const [showConfigFieldRemovalConfirm, setShowConfigFieldRemovalConfirm] =
 		useState(false);
 	const [removedFieldNames, setRemovedFieldNames] = useState<string[]>([]);
+
+	// Entity ID source reset state
+	const [showResetEntityIdSource, setShowResetEntityIdSource] =
+		useState(false);
+	const [resetClearMappings, setResetClearMappings] = useState(false);
+	const resetEntityIdSource = useResetEntityIdSource();
+
+	const existingEntityIdSource =
+		existingIntegration?.oauth_config?.entity_id_source ?? null;
+	const entityIdSourceDisplay = existingEntityIdSource
+		? `${String(existingEntityIdSource.type ?? "")}:${String(existingEntityIdSource.key ?? "")}`
+		: "";
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -305,6 +318,42 @@ function CreateIntegrationForm({
 							for organization mappings
 						</p>
 					</div>
+
+					{/* Entity ID source (read-only; reset via trash icon) */}
+					{isEditing && existingIntegration?.oauth_config && (
+						<div className="space-y-2">
+							<Label htmlFor="entityIdSource">
+								Entity ID source
+							</Label>
+							<div className="flex gap-2">
+								<Input
+									id="entityIdSource"
+									readOnly
+									value={entityIdSourceDisplay}
+									placeholder="Not set — picker will appear on next OAuth connect"
+									className="font-mono text-xs"
+								/>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									disabled={!existingEntityIdSource}
+									onClick={() => {
+										setResetClearMappings(false);
+										setShowResetEntityIdSource(true);
+									}}
+									title="Reset Entity ID source"
+								>
+									<Trash2 className="h-4 w-4" />
+								</Button>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								Where new connections auto-capture the entity
+								ID from. Set by picking a field in the OAuth
+								callback popup.
+							</p>
+						</div>
+					)}
 
 					{/* Default Entity ID */}
 					<div className="space-y-2">
@@ -532,6 +581,86 @@ function CreateIntegrationForm({
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
 							Delete Fields
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			<AlertDialog
+				open={showResetEntityIdSource}
+				onOpenChange={setShowResetEntityIdSource}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							Reset Entity ID source?
+						</AlertDialogTitle>
+						<AlertDialogDescription asChild>
+							<div className="space-y-3">
+								<p>
+									Clears the configured source on this
+									integration's OAuth provider. The picker
+									will reappear on the next connect.
+								</p>
+								<label className="flex items-start gap-2 text-sm">
+									<Checkbox
+										checked={resetClearMappings}
+										onCheckedChange={(c) =>
+											setResetClearMappings(c === true)
+										}
+									/>
+									<span>
+										Also clear captured Entity IDs on
+										existing mappings for this integration.
+									</span>
+								</label>
+							</div>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel
+							disabled={resetEntityIdSource.isPending}
+						>
+							Cancel
+						</AlertDialogCancel>
+						<AlertDialogAction
+							disabled={resetEntityIdSource.isPending}
+							onClick={(e) => {
+								e.preventDefault();
+								if (!editIntegrationId) return;
+								resetEntityIdSource.mutate(
+									{
+										params: {
+											path: {
+												integration_id:
+													editIntegrationId,
+											},
+											query: {
+												clear_mappings:
+													resetClearMappings,
+											},
+										},
+									},
+									{
+										onSuccess: () => {
+											toast.success(
+												"Entity ID source cleared",
+											);
+											setShowResetEntityIdSource(false);
+										},
+										onError: () => {
+											toast.error(
+												"Failed to clear Entity ID source",
+											);
+										},
+									},
+								);
+							}}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							{resetEntityIdSource.isPending
+								? "Clearing…"
+								: "Reset"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

@@ -3556,22 +3556,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4626,6 +4626,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agents/{agent_id}/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Logo */
+        get: operations["get_agent_logo_api_agents__agent_id__logo_get"];
+        put?: never;
+        /**
+         * Upload Agent Logo
+         * @description Upload a square logo for an agent.
+         */
+        post: operations["upload_agent_logo_api_agents__agent_id__logo_post"];
+        /** Delete Agent Logo */
+        delete: operations["delete_agent_logo_api_agents__agent_id__logo_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs": {
         parameters: {
             query?: never;
@@ -5554,6 +5576,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Begin OAuth authorize flow for a mapping
+         * @description Returns the authorization URL with a signed state token carrying mapping_id (Platform admin only)
+         */
+        post: operations["authorize_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disconnect a mapping's per-row OAuth connection
+         * @description Deletes the mapping's OAuth token and clears oauth_token_id. Fallback to integration-level token resumes (Platform admin only).
+         */
+        post: operations["disconnect_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_disconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh a mapping's per-row OAuth token
+         * @description Proactively refresh the OAuth access token linked to this mapping. Uses the stored refresh token (authorization_code) or re-mints with client credentials (client_credentials). Updates token.status and token.last_refresh_at; provider.status is NOT touched (per-mapping tokens don't poison the integration-level fallback's health). Platform admin only.
+         */
+        post: operations["refresh_mapping_oauth_api_integrations__integration_id__mappings__mapping_id__oauth_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations/{integration_id}/oauth": {
         parameters: {
             query?: never;
@@ -5592,6 +5674,30 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{integration_id}/oauth/entity_id_source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear entity_id_source on the integration's OAuth provider
+         * @description Resets the provider's entity_id_source to NULL. Picker will reappear on next OAuth connect so the admin can pick a different source. When clear_mappings=true, also clears entity_id on every mapping under this integration so they re-capture on reconnect. Platform admin only.
+         */
+        delete: operations["clear_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Set entity_id_source on the integration's OAuth provider
+         * @description Persists the admin's picker selection. Optionally backfills a specific mapping's entity_id (used when the picker fires inside the OAuth popup of a per-mapping connect). Platform admin only.
+         */
+        patch: operations["set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch"];
         trace?: never;
     };
     "/api/integrations/sdk/{name}": {
@@ -7192,6 +7298,30 @@ export interface paths {
          */
         post: operations["rollback_application_api_applications__app_id__rollback_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{app_id}/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get application logo */
+        get: operations["get_application_logo_api_applications__app_id__logo_get"];
+        put?: never;
+        /**
+         * Upload application logo
+         * @description Upload a square logo for an application.
+         *
+         *     Requires the same permissions as updating the application.
+         */
+        post: operations["upload_application_logo_api_applications__app_id__logo_post"];
+        /** Delete application logo */
+        delete: operations["delete_application_logo_api_applications__app_id__logo_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9733,6 +9863,22 @@ export interface components {
              */
             client_secret?: string | null;
         };
+        /** Body_upload_agent_logo_api_agents__agent_id__logo_post */
+        Body_upload_agent_logo_api_agents__agent_id__logo_post: {
+            /**
+             * File
+             * @description Logo image (PNG/JPEG/SVG, ≤5MB)
+             */
+            file: string;
+        };
+        /** Body_upload_application_logo_api_applications__app_id__logo_post */
+        Body_upload_application_logo_api_applications__app_id__logo_post: {
+            /**
+             * File
+             * @description Logo image (PNG/JPEG/SVG, ≤5MB)
+             */
+            file: string;
+        };
         /** Body_upload_avatar_api_profile_avatar_post */
         Body_upload_avatar_api_profile_avatar_post: {
             /** File */
@@ -12085,6 +12231,54 @@ export interface components {
             duration_ms?: number | null;
         };
         /**
+         * EntityIdPickerCandidate
+         * @description A candidate entity_id field surfaced from an OAuth callback.
+         */
+        EntityIdPickerCandidate: {
+            /**
+             * Type
+             * @description One of: url_param, token_response_field, id_token_claim
+             */
+            type: string;
+            /**
+             * Key
+             * @description Dotted path (e.g. 'team.id' or 'tid')
+             */
+            key: string;
+            /**
+             * Value
+             * @description Stringified value found at that path
+             */
+            value: string;
+        };
+        /**
+         * EntityIdSourceUpdateRequest
+         * @description Set the entity_id_source on an integration's OAuth provider, optionally
+         *     populating a triggering mapping's entity_id at the same time.
+         */
+        EntityIdSourceUpdateRequest: {
+            /**
+             * Type
+             * @description url_param | token_response_field | id_token_claim
+             */
+            type: string;
+            /**
+             * Key
+             * @description Dotted path (e.g. 'team.id')
+             */
+            key: string;
+            /**
+             * Apply To Mapping Id
+             * @description When set, also write apply_value to this mapping's entity_id
+             */
+            apply_to_mapping_id?: string | null;
+            /**
+             * Apply Value
+             * @description Captured value from the picker for the triggering mapping
+             */
+            apply_value?: string | null;
+        };
+        /**
          * EntityUsage
          * @description Usage count for a single entity (form, app, agent).
          */
@@ -14277,7 +14471,7 @@ export interface components {
             organization_id: string;
             /**
              * Entity Id
-             * @description External entity ID
+             * @description External entity ID (empty string allowed; see IntegrationMappingCreate)
              */
             entity_id: string;
             /**
@@ -14336,7 +14530,7 @@ export interface components {
             organization_id: string;
             /**
              * Entity Id
-             * @description External entity ID (e.g., tenant ID, company ID)
+             * @description External entity ID (e.g., tenant ID, company ID). May be empty when creating a mapping ahead of an OAuth Connect flow that will fill it from the callback via OAuthProvider.entity_id_source.
              */
             entity_id: string;
             /**
@@ -14420,6 +14614,26 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /**
+             * Connection Status
+             * @description Per-mapping OAuth token status (mirrors OAuthToken.status); None if no per-row token
+             */
+            connection_status?: string | null;
+            /**
+             * Connection Message
+             * @description Last status message from the per-mapping token (e.g., refresh error)
+             */
+            connection_message?: string | null;
+            /**
+             * Last Refresh At
+             * @description When the per-mapping token was last refreshed
+             */
+            last_refresh_at?: string | null;
+            /**
+             * Connection Expires At
+             * @description When the per-mapping OAuth token expires; None if no per-row token
+             */
+            connection_expires_at?: string | null;
+            /**
              * Created At
              * Format: date-time
              * @description Creation timestamp
@@ -14440,7 +14654,7 @@ export interface components {
         IntegrationMappingUpdate: {
             /**
              * Entity Id
-             * @description External entity ID
+             * @description External entity ID (empty string allowed; see IntegrationMappingCreate)
              */
             entity_id?: string | null;
             /**
@@ -15885,6 +16099,28 @@ export interface components {
             }[];
         };
         /**
+         * MappingAuthorizeRequest
+         * @description Request to begin OAuth authorize flow for a specific mapping.
+         */
+        MappingAuthorizeRequest: {
+            /**
+             * Redirect Uri
+             * @description Frontend callback URL
+             */
+            redirect_uri: string;
+        };
+        /**
+         * MappingAuthorizeResponse
+         * @description Response with the authorization URL to redirect the user to.
+         */
+        MappingAuthorizeResponse: {
+            /**
+             * Authorization Url
+             * @description URL to redirect user for authorization
+             */
+            authorization_url: string;
+        };
+        /**
          * MessagePublic
          * @description Message output for API responses.
          */
@@ -16130,6 +16366,26 @@ export interface components {
              * @description Error message displayed to user
              */
             error_message?: string | null;
+            /**
+             * Entity Id Picker
+             * @description Candidate entity_id sources for the admin to pick from. Populated when entity_id_source is unset on the provider, OR when it is set but extraction returned no value (the configured field wasn't in this response). Null means 'don't show the picker'.
+             */
+            entity_id_picker?: components["schemas"]["EntityIdPickerCandidate"][] | null;
+            /**
+             * Triggering Mapping Id
+             * @description When the callback was triggered by a per-mapping connect, the ID of that mapping. Used by the picker UI to backfill the mapping's entity_id with the chosen value.
+             */
+            triggering_mapping_id?: string | null;
+            /**
+             * Captured Entity Id
+             * @description Value captured into the mapping's entity_id via the provider's entity_id_source. Null when nothing was captured (no source, extraction missed, or no triggering mapping).
+             */
+            captured_entity_id?: string | null;
+            /**
+             * Captured Entity Id From
+             * @description Display string identifying where captured_entity_id came from, e.g. 'id_token_claim:tid'. Null when captured_entity_id is null.
+             */
+            captured_entity_id_from?: string | null;
         };
         /**
          * OAuthConfigListResponse
@@ -16269,6 +16525,13 @@ export interface components {
              * @default false
              */
             has_refresh_token: boolean;
+            /**
+             * Entity Id Source
+             * @description Configured entity_id source ({'type': ..., 'key': ...}) or null
+             */
+            entity_id_source?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * OAuthConfigTestRequest
@@ -20941,6 +21204,13 @@ export interface components {
              * @description Organization ID for org-specific token storage (optional, for org overrides)
              */
             organization_id?: string | null;
+            /**
+             * Callback Url Params
+             * @description Raw query params from the OAuth callback URL (used to capture entity_id)
+             */
+            callback_url_params?: {
+                [key: string]: string;
+            } | null;
         };
         /**
          * UserCreate
@@ -26539,7 +26809,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -26572,7 +26842,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -26605,7 +26875,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -26638,7 +26908,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28413,6 +28683,113 @@ export interface operations {
             };
         };
     };
+    get_agent_logo_api_agents__agent_id__logo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/svg+xml": unknown;
+                };
+            };
+            /** @description No logo set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_agent_logo_api_agents__agent_id__logo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_agent_logo_api_agents__agent_id__logo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_logo_api_agents__agent_id__logo_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_agent_runs_api_agent_runs_get: {
         parameters: {
             query?: {
@@ -30055,6 +30432,104 @@ export interface operations {
             };
         };
     };
+    authorize_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                integration_id: string;
+                mapping_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MappingAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_disconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                integration_id: string;
+                mapping_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_mapping_oauth_api_integrations__integration_id__mappings__mapping_id__oauth_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                integration_id: string;
+                mapping_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationMappingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_oauth_config_api_integrations__integration_id__oauth_get: {
         parameters: {
             query?: never;
@@ -30107,6 +30582,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OAuthAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_delete: {
+        parameters: {
+            query?: {
+                /** @description When true, also clear entity_id on every mapping for this integration */
+                clear_mappings?: boolean;
+            };
+            header?: never;
+            path: {
+                integration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                integration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntityIdSourceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -33192,6 +33740,113 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ApplicationPublic"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_application_logo_api_applications__app_id__logo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/svg+xml": unknown;
+                };
+            };
+            /** @description No logo set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_application_logo_api_applications__app_id__logo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_application_logo_api_applications__app_id__logo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_application_logo_api_applications__app_id__logo_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

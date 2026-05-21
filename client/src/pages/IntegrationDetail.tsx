@@ -36,9 +36,14 @@ import {
 	useUpdateIntegrationConfig,
 	useTestIntegration,
 	useBatchUpsertMappings,
+	useCreateMapping,
+	useAuthorizeMapping,
+	useDisconnectMapping,
+	useRefreshMapping,
 	type IntegrationTestResponse,
 } from "@/services/integrations";
 import { $api } from "@/lib/api-client";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	useAuthorizeOAuthConnection,
 	useRefreshOAuthToken,
@@ -89,6 +94,8 @@ export function IntegrationDetail() {
 	const [testResult, setTestResult] =
 		useState<IntegrationTestResponse | null>(null);
 
+	const queryClient = useQueryClient();
+
 	// Fetch integration details (includes mappings and OAuth config)
 	const {
 		data: integration,
@@ -111,6 +118,13 @@ export function IntegrationDetail() {
 	const deleteOAuthMutation = useDeleteOAuthConnection();
 	const testMutation = useTestIntegration();
 	const batchMutation = useBatchUpsertMappings();
+	const createMappingMutation = useCreateMapping();
+	const authorizeMappingMutation = useAuthorizeMapping();
+	const disconnectMappingMutation = useDisconnectMapping();
+	const refreshMappingMutation = useRefreshMapping();
+	const [refreshingMappingId, setRefreshingMappingId] = useState<
+		string | null
+	>(null);
 
 	// Memoize to stabilize references for the useEffect that combines them
 	const organizations = useMemo(
@@ -218,6 +232,21 @@ export function IntegrationDetail() {
 			if (event.data?.type === "oauth_success") {
 				// Refresh integration (includes OAuth config)
 				refetchIntegration();
+				// Also refresh per-mapping data (entity_id, oauth_token_id) so
+				// the table row updates without a manual page refresh.
+				if (integrationId) {
+					queryClient.invalidateQueries({
+						queryKey: [
+							"get",
+							"/api/integrations/{integration_id}/mappings",
+							{
+								params: {
+									path: { integration_id: integrationId },
+								},
+							},
+						],
+					});
+				}
 				toast.success("OAuth connection established successfully");
 			}
 		};
@@ -228,7 +257,7 @@ export function IntegrationDetail() {
 		return () => {
 			window.removeEventListener("message", handleMessage);
 		};
-	}, [refetchIntegration]);
+	}, [refetchIntegration, queryClient, integrationId]);
 
 	const saveMappings = async (
 		mappingsToSave: Array<{ organization_id: string; entity_id: string; entity_name?: string }>,
@@ -251,7 +280,6 @@ export function IntegrationDetail() {
 		entityId: string,
 		entityName?: string,
 	) => {
-		if (!entityId) return;
 		try {
 			await saveMappings([{ organization_id: orgId, entity_id: entityId, entity_name: entityName }]);
 		} catch {
@@ -261,6 +289,120 @@ export function IntegrationDetail() {
 
 	const handleDeleteMappingClick = (org: OrgWithMapping) => {
 		setDeleteMappingConfirm(org);
+	};
+
+	const handleConnectMapping = async (org: OrgWithMapping) => {
+		if (!integrationId) return;
+		// Use the same redirect_uri shape as the integration-level Connect so the
+		// shared OAuthCallback page (route /oauth/callback/:integrationId) handles
+		// both flows. The state token carries mapping_id for the per-mapping path.
+		const redirectUri = `${window.location.origin}/oauth/callback/${integrationId}`;
+
+		// If there's no mapping row yet, create an empty one so the OAuth
+		// callback has something to link the token to. entity_id will be
+		// auto-populated from the callback when the provider has entity_id_source
+		// configured.
+		let mappingId = org.mapping?.id;
+		if (!mappingId) {
+			try {
+				const created = await createMappingMutation.mutateAsync({
+					params: { path: { integration_id: integrationId } },
+					body: {
+						organization_id: org.id,
+						entity_id: org.formData.entity_id ?? "",
+						entity_name: org.formData.entity_name ?? "",
+					},
+				});
+				mappingId = created.id;
+			} catch {
+				toast.error("Failed to create mapping for OAuth connection");
+				return;
+			}
+		}
+
+		authorizeMappingMutation.mutate(
+			{
+				params: {
+					path: {
+						integration_id: integrationId,
+						mapping_id: mappingId,
+					},
+				},
+				body: { redirect_uri: redirectUri },
+			},
+			{
+				onSuccess: (response) => {
+					// Match the integration-level Connect: open in a centered popup
+					// so the user stays on the integration page and the existing
+					// postMessage(oauth_success) listener refreshes state on close.
+					const width = 600;
+					const height = 700;
+					const left =
+						window.screenX + (window.outerWidth - width) / 2;
+					const top =
+						window.screenY + (window.outerHeight - height) / 2;
+					window.open(
+						response.authorization_url,
+						"oauth_popup",
+						`width=${width},height=${height},left=${left},top=${top},scrollbars=yes`,
+					);
+				},
+				onError: () => {
+					toast.error("Failed to start OAuth connection");
+				},
+			},
+		);
+	};
+
+	const handleDisconnectMapping = (mappingId: string) => {
+		if (!integrationId) return;
+		disconnectMappingMutation.mutate(
+			{
+				params: {
+					path: {
+						integration_id: integrationId,
+						mapping_id: mappingId,
+					},
+				},
+			},
+			{
+				onSuccess: () => {
+					toast.success("OAuth connection disconnected");
+				},
+				onError: () => {
+					toast.error("Failed to disconnect OAuth connection");
+				},
+			},
+		);
+	};
+
+	const handleRefreshMapping = (mappingId: string) => {
+		if (!integrationId) return;
+		setRefreshingMappingId(mappingId);
+		refreshMappingMutation.mutate(
+			{
+				params: {
+					path: {
+						integration_id: integrationId,
+						mapping_id: mappingId,
+					},
+				},
+			},
+			{
+				onSuccess: () => {
+					toast.success("Token refreshed");
+				},
+				onError: (err: unknown) => {
+					const msg =
+						(err as { detail?: string } | undefined)?.detail ??
+						"Failed to refresh token";
+					toast.error(msg);
+				},
+				onSettled: () => {
+					setRefreshingMappingId(null);
+				},
+			},
+		);
 	};
 
 	const handleDeleteMappingConfirm = async () => {
@@ -659,6 +801,7 @@ export function IntegrationDetail() {
 						isLoadingEntities={isLoadingEntities}
 						isEntitiesError={isEntitiesError}
 						hasDataProvider={!!integration.list_entities_data_provider_id}
+						hasOAuth={!!integration.has_oauth_config}
 						configSchema={integration?.config_schema || []}
 						configDefaults={integration?.config_defaults}
 						autoMatchSuggestions={autoMatchSuggestions}
@@ -673,7 +816,10 @@ export function IntegrationDetail() {
 						onUpdateOrgMapping={handleEntitySelect}
 						onOpenConfigDialog={handleOpenConfigDialog}
 						onDeleteMapping={handleDeleteMappingClick}
-						onEditIntegration={() => setEditDialogOpen(true)}
+						onConnectMapping={handleConnectMapping}
+						onDisconnectMapping={handleDisconnectMapping}
+						onRefreshMapping={handleRefreshMapping}
+						refreshingMappingId={refreshingMappingId}
 					/>
 				</TabsContent>
 

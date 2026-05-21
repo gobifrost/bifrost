@@ -147,6 +147,50 @@ class TestBranding:
             f"Upload rectangle logo failed: {response.text}"
         )
 
+    def test_upload_svg_logo_strips_script(self, e2e_client, platform_admin):
+        """SVG with <script> is sanitized on upload — script removed when fetched back."""
+        payload = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><circle r="1"/></svg>'
+
+        upload_headers = {
+            k: v
+            for k, v in platform_admin.headers.items()
+            if k.lower() != "content-type"
+        }
+
+        upload = e2e_client.post(
+            "/api/branding/logo/square",
+            headers=upload_headers,
+            files={"file": ("logo.svg", payload, "image/svg+xml")},
+        )
+        assert upload.status_code in (200, 201), f"upload failed: {upload.text}"
+
+        fetched = e2e_client.get("/api/branding/logo/square")
+        assert fetched.status_code == 200
+        assert b"script" not in fetched.content.lower(), (
+            f"script tag was not stripped: {fetched.content!r}"
+        )
+
+    def test_upload_svg_logo_rejects_xxe(self, e2e_client, platform_admin):
+        """SVG with XXE entity declaration is rejected (HTTP 400)."""
+        payload = (
+            b'<?xml version="1.0"?>'
+            b'<!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+            b'<svg xmlns="http://www.w3.org/2000/svg"><text>&xxe;</text></svg>'
+        )
+
+        upload_headers = {
+            k: v
+            for k, v in platform_admin.headers.items()
+            if k.lower() != "content-type"
+        }
+
+        resp = e2e_client.post(
+            "/api/branding/logo/square",
+            headers=upload_headers,
+            files={"file": ("xxe.svg", payload, "image/svg+xml")},
+        )
+        assert resp.status_code == 400, f"expected 400, got {resp.status_code}: {resp.text}"
+
     def test_get_square_logo_public(self, e2e_client):
         """Get square logo without authentication after upload."""
         response = e2e_client.get("/api/branding/logo/square")

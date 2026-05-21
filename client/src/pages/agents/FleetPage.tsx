@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { EntityLogo } from "@/components/EntityLogo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -382,7 +383,13 @@ function AgentGridCard({
 			<div className="border-b px-4 pb-3 pt-3.5">
 				<div className="flex items-start justify-between gap-3">
 					<div className="flex min-w-0 items-center gap-2">
-						<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+						<EntityLogo
+							entityType="agent"
+							entityId={agent.id}
+							fallback={<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+							size={20}
+							className="h-5 w-5 rounded shrink-0 object-cover"
+						/>
 						<span className={cn("truncate", TYPE_CARD_TITLE)}>
 							{agent.name}
 						</span>

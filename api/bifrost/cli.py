@@ -217,6 +217,10 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
     api_url = api_url.rstrip("/")
 
+    # Surface keyring fallback here — login is the user's chance to fix it.
+    from bifrost.credentials import warn_if_keyring_fallback
+    warn_if_keyring_fallback()
+
     try:
         async with httpx.AsyncClient(base_url=api_url, timeout=30.0) as client:
             # Step 1: Request device code

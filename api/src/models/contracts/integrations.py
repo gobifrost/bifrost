@@ -148,9 +148,12 @@ class IntegrationMappingCreate(BaseModel):
     )
     entity_id: str = Field(
         ...,
-        min_length=1,
         max_length=255,
-        description="External entity ID (e.g., tenant ID, company ID)",
+        description=(
+            "External entity ID (e.g., tenant ID, company ID). May be empty when "
+            "creating a mapping ahead of an OAuth Connect flow that will fill it "
+            "from the callback via OAuthProvider.entity_id_source."
+        ),
     )
     entity_name: str | None = Field(
         default=None,
@@ -175,9 +178,8 @@ class IntegrationMappingUpdate(BaseModel):
 
     entity_id: str | None = Field(
         default=None,
-        min_length=1,
         max_length=255,
-        description="External entity ID",
+        description="External entity ID (empty string allowed; see IntegrationMappingCreate)",
     )
     entity_name: str | None = Field(
         default=None,
@@ -203,9 +205,8 @@ class IntegrationMappingBatchItem(BaseModel):
     )
     entity_id: str = Field(
         ...,
-        min_length=1,
         max_length=255,
-        description="External entity ID",
+        description="External entity ID (empty string allowed; see IntegrationMappingCreate)",
     )
     entity_name: str | None = Field(
         default=None,
@@ -231,6 +232,34 @@ class IntegrationMappingBatchResponse(BaseModel):
     created: int = Field(..., description="Number of new mappings created")
     updated: int = Field(..., description="Number of existing mappings updated")
     errors: list[str] = Field(default_factory=list, description="Error messages for failed items")
+
+
+class MappingAuthorizeRequest(BaseModel):
+    """Request to begin OAuth authorize flow for a specific mapping."""
+
+    redirect_uri: str = Field(..., description="Frontend callback URL")
+
+
+class MappingAuthorizeResponse(BaseModel):
+    """Response with the authorization URL to redirect the user to."""
+
+    authorization_url: str = Field(..., description="URL to redirect user for authorization")
+
+
+class EntityIdSourceUpdateRequest(BaseModel):
+    """Set the entity_id_source on an integration's OAuth provider, optionally
+    populating a triggering mapping's entity_id at the same time."""
+
+    type: str = Field(..., description="url_param | token_response_field | id_token_claim")
+    key: str = Field(..., description="Dotted path (e.g. 'team.id')")
+    apply_to_mapping_id: UUID | None = Field(
+        default=None,
+        description="When set, also write apply_value to this mapping's entity_id",
+    )
+    apply_value: str | None = Field(
+        default=None,
+        description="Captured value from the picker for the triggering mapping",
+    )
 
 
 # ==================== INTEGRATION RESPONSE MODELS ====================
@@ -305,6 +334,22 @@ class IntegrationMappingResponse(BaseModel):
         default=None,
         description="Per-organization integration configuration",
     )
+    connection_status: str | None = Field(
+        default=None,
+        description="Per-mapping OAuth token status (mirrors OAuthToken.status); None if no per-row token",
+    )
+    connection_message: str | None = Field(
+        default=None,
+        description="Last status message from the per-mapping token (e.g., refresh error)",
+    )
+    last_refresh_at: datetime | None = Field(
+        default=None,
+        description="When the per-mapping token was last refreshed",
+    )
+    connection_expires_at: datetime | None = Field(
+        default=None,
+        description="When the per-mapping OAuth token expires; None if no per-row token",
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
@@ -358,6 +403,10 @@ class OAuthConfigSummary(BaseModel):
     expires_at: datetime | None = Field(default=None, description="Token expiration time")
     last_refresh_at: datetime | None = Field(default=None, description="Last token refresh time")
     has_refresh_token: bool = Field(default=False, description="Whether a refresh token is available")
+    entity_id_source: dict | None = Field(
+        default=None,
+        description="Configured entity_id source ({'type': ..., 'key': ...}) or null",
+    )
 
 
 class IntegrationDetailResponse(BaseModel):

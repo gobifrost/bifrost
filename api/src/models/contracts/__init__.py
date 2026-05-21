@@ -180,6 +180,7 @@ from src.models.contracts.config import (
 # OAuth Connections
 from src.models.contracts.oauth import (
     CreateOAuthConnectionRequest,
+    EntityIdPickerCandidate,
     OAuthCallbackRequest,
     OAuthCallbackResponse,
     OAuthConnection,
@@ -455,6 +456,9 @@ from src.models.contracts.integrations import (
     IntegrationMappingBatchResponse,
     IntegrationMappingResponse,
     IntegrationMappingListResponse,
+    EntityIdSourceUpdateRequest,
+    MappingAuthorizeRequest,
+    MappingAuthorizeResponse,
     OAuthConfigSummary,
     IntegrationSDKResponse,  # For API SDK endpoint responses (no decrypted tokens)
     IntegrationTestRequest,
@@ -703,6 +707,7 @@ __all__ = [
     "OAuthCredentials",
     "OAuthCredentialsModel",
     "OAuthCredentialsResponse",
+    "EntityIdPickerCandidate",
     "OAuthCallbackRequest",
     "OAuthCallbackResponse",
     "OAuthProviderBase",
@@ -892,6 +897,9 @@ __all__ = [
     "IntegrationMappingBatchResponse",
     "IntegrationMappingResponse",
     "IntegrationMappingListResponse",
+    "EntityIdSourceUpdateRequest",
+    "MappingAuthorizeRequest",
+    "MappingAuthorizeResponse",
     "IntegrationData",
     "IntegrationSDKResponse",
     "IntegrationTestRequest",
