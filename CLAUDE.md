@@ -275,6 +275,24 @@ cd client && npm run lint                 # Lint TypeScript
 2. Regenerate the lock: `docker run --rm -v "$PWD":/repo -w /repo python:3.14-slim sh -c "pip install --quiet --require-hashes -r requirements-piptools.lock && pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml"`
 3. Rebuild and restart: `docker compose -f docker-compose.dev.yml up --build api`
 
+**Merging main into a long-lived branch:** Two specific gotchas:
+
+1. **`client/src/lib/v1.d.ts` always conflicts.** It's a generated file. Resolve by taking main's version, then regenerating against your running API:
+   ```bash
+   git checkout --theirs client/src/lib/v1.d.ts
+   cd client && OPENAPI_URL=<your-dev-url>/openapi.json npm run generate:types
+   cd .. && git add client/src/lib/v1.d.ts && git commit --no-edit
+   ```
+   Get the URL from `./debug.sh status`. The regen must happen *after* the merge is in place, because it reflects the merged code's schema.
+
+2. **Newly-added Python deps on main break the dev container silently.** If main introduced a new `import` (e.g. `defusedxml`) and your container was built before that dep landed in `requirements.lock`, the API will start failing with `ModuleNotFoundError` after the next restart, and `/openapi.json` will 502. Symptom: regen suddenly can't fetch the schema. Fix:
+   ```bash
+   docker logs bifrost-debug-<project>-api-1 --tail 20   # confirm ModuleNotFoundError
+   docker exec bifrost-debug-<project>-api-1 pip install <missing-pkg>
+   docker restart bifrost-debug-<project>-api-1
+   ```
+   This is a per-container quick fix. The lasting fix is `./debug.sh down` and a fresh `./debug.sh` (which rebuilds against the new lock), but the in-container `pip install` unblocks you in 10 seconds.
+
 ## Pre-Completion Verification (REQUIRED)
 
 Before marking any significant work complete, run this verification sequence:
