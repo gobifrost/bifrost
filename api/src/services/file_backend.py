@@ -21,6 +21,13 @@ from src.services.file_storage import FileStorageService
 # Location is now a free string validated by `shared.file_paths`. Keep the type
 # alias for callers that want documentation, but allow any string at runtime.
 Location = str
+_REPO_PREFIX = "_repo/"
+
+
+def _validate_workspace_path(path: str) -> str:
+    """Validate a workspace-relative path and return its normalized form."""
+    s3_key = resolve_s3_key("workspace", None, path)
+    return s3_key.removeprefix(_REPO_PREFIX)
 
 
 class FileBackend(ABC):
@@ -158,7 +165,7 @@ class S3Backend(FileBackend):
         try:
             if location == "workspace":
                 # Workspace goes through the indexed read path so file_index stays in sync.
-                content, _ = await self.storage.read_file(path)
+                content, _ = await self.storage.read_file(_validate_workspace_path(path))
                 return content
             s3_path = resolve_s3_key(location, scope, path)
             return await self.storage.read_uploaded_file(s3_path)
@@ -175,7 +182,7 @@ class S3Backend(FileBackend):
     async def write(self, path: str, content: bytes, location: Location, updated_by: str = "system", scope: str | None = None) -> None:
         """Write file to S3."""
         if location == "workspace":
-            await self.storage.write_file(path, content, updated_by)
+            await self.storage.write_file(_validate_workspace_path(path), content, updated_by)
             return
         s3_path = resolve_s3_key(location, scope, path)
         await self.storage.write_raw_to_s3(s3_path, content)
@@ -183,7 +190,7 @@ class S3Backend(FileBackend):
     async def delete(self, path: str, location: Location, scope: str | None = None) -> None:
         """Delete file from S3."""
         if location == "workspace":
-            await self.storage.delete_file(path)
+            await self.storage.delete_file(_validate_workspace_path(path))
             return
         s3_path = resolve_s3_key(location, scope, path)
         await self.storage.delete_raw_from_s3(s3_path)
@@ -191,7 +198,7 @@ class S3Backend(FileBackend):
     async def list(self, directory: str, location: Location, scope: str | None = None) -> list[str]:
         """List files in S3 directory."""
         if location == "workspace":
-            files = await self.storage.list_files(directory)
+            files = await self.storage.list_files(_validate_workspace_path(directory))
             return [f.path for f in files]
         s3_dir = resolve_s3_key(location, scope, directory)
         return await self.storage.list_raw_s3(s3_dir)
@@ -199,8 +206,7 @@ class S3Backend(FileBackend):
     async def exists(self, path: str, location: Location, scope: str | None = None) -> bool:
         """Check if file exists in S3."""
         if location == "workspace":
-            from src.services.repo_storage import REPO_PREFIX
-            s3_path = f"{REPO_PREFIX}{path.lstrip('/')}"
+            s3_path = resolve_s3_key("workspace", None, path)
         else:
             s3_path = resolve_s3_key(location, scope, path)
         return await self.storage.file_exists(s3_path)

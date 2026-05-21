@@ -1,6 +1,8 @@
 """Tests for the _search_content pure function in src.services.editor.search."""
 
-from src.services.editor.search import _search_content
+import pytest
+
+from src.services.editor.search import _search_content, _validate_regex_pattern
 
 
 class TestSimpleSearch:
@@ -63,6 +65,36 @@ class TestRegexSearch:
         content = "hello world"
         results = _search_content(content, "test.py", "[invalid", case_sensitive=False, is_regex=True)
         assert results == []
+
+    def test_nested_quantifier_regex_rejected_before_search(self):
+        content = "a" * 1000
+        risky_pattern = "".join(["(", "a", "+", ")", "+", "$"])
+        with pytest.raises(ValueError, match="nested quantifiers"):
+            _validate_regex_pattern(risky_pattern)
+        with pytest.raises(ValueError, match="nested quantifiers"):
+            _search_content(content, "test.py", risky_pattern, case_sensitive=False, is_regex=True)
+
+    def test_ambiguous_quantified_alternation_rejected_before_search(self):
+        risky_pattern = "".join(["(", "a", "|", "a", ")", "+"])
+        with pytest.raises(ValueError, match="nested quantifiers"):
+            _validate_regex_pattern(risky_pattern)
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            r"(?:async\s+)?def",
+            r"(\d+)?",
+            r"(http|https)?",
+            r"(?:foo|bar)+",
+            r"(?:[a-z]+\d+)?",
+        ],
+    )
+    def test_benign_grouped_regex_patterns_are_accepted(self, pattern):
+        _validate_regex_pattern(pattern)
+
+    def test_regex_pattern_length_limit(self):
+        with pytest.raises(ValueError, match="exceeds"):
+            _validate_regex_pattern("a" * 513)
 
     def test_special_regex_chars_escaped_in_literal_search(self):
         """When is_regex=False, special characters like . and + should be escaped."""

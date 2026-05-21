@@ -25,7 +25,8 @@ from urllib.parse import urlparse
 
 import requests
 import yaml
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import FileSystemLoader
+from jinja2.sandbox import SandboxedEnvironment
 
 from src.core.log_safety import log_safe
 
@@ -634,12 +635,10 @@ def generate_sdk(
     # Extract models and methods from spec
     models, methods = extract_models_and_methods(spec, class_name)
 
-    # Load and render Jinja template.
-    # autoescape=False is intentional: we are generating Python SDK source code,
-    # not HTML — autoescape would mangle quotes/brackets and break the output.
-    env = Environment(
+    # Load and render a Python source template. The sandbox keeps template
+    # execution constrained while preserving source-code rendering semantics.
+    env = SandboxedEnvironment(
         loader=FileSystemLoader(TEMPLATE_DIR),
-        autoescape=False,
         trim_blocks=True,
         lstrip_blocks=True,
     )
