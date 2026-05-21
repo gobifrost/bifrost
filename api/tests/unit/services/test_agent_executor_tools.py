@@ -395,6 +395,51 @@ class TestPrivilegedAgentManagementTools:
         mock_execute_system_tool.assert_awaited_once()
         assert result is expected
 
+    @pytest.mark.asyncio
+    async def test_system_tool_context_uses_caller_org_not_agent_org(self, executor):
+        """System tools inherit caller tenant scope even when the agent is global/foreign."""
+        from src.services.llm.base import ToolCallRequest
+        from src.services.mcp_server.tool_result import success_result
+
+        caller_org_id = uuid4()
+        agent_org_id = uuid4()
+        seen_context = None
+
+        async def fake_tool(context, **_kwargs):
+            nonlocal seen_context
+            seen_context = context
+            return success_result("ok", {"ok": True})
+
+        conversation = MagicMock()
+        conversation.user = MagicMock()
+        conversation.user.id = uuid4()
+        conversation.user.organization_id = caller_org_id
+        conversation.user.is_superuser = False
+        conversation.user.email = "user@example.com"
+        conversation.user.name = "User"
+
+        agent = MagicMock()
+        agent.organization_id = agent_org_id
+
+        with patch(
+            "src.services.mcp_server.server.get_system_tool_function",
+            return_value=fake_tool,
+        ):
+            result = await executor._execute_system_tool(
+                ToolCallRequest(
+                    id="call_allowed",
+                    name="list_workflows",
+                    arguments={},
+                ),
+                agent=agent,
+                conversation=conversation,
+            )
+
+        assert result.error is None
+        assert seen_context is not None
+        assert seen_context.org_id == caller_org_id
+        assert seen_context.org_id != agent_org_id
+
 
 class TestSerializeForJson:
     """Test the _serialize_for_json helper function."""

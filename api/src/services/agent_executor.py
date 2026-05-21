@@ -1663,12 +1663,17 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             # Get user from conversation (same pattern as workflow tool execution)
             user = conversation.user if conversation else None
 
+            # Create context from the caller first. Agent organization controls
+            # visibility of the agent, not the tenant scope for tool effects.
+            user_org_id = getattr(user, "organization_id", None) if user else None
+            context_org_id = user_org_id or agent.organization_id
+
             # Create context from agent/conversation/user
             # session=None: system tools create their own short-lived sessions
             # via get_tool_db() fallback, avoiding long-lived connection holds
             context = MCPContext(
                 user_id=str(user.id) if user else "",
-                org_id=str(agent.organization_id) if agent.organization_id else None,
+                org_id=str(context_org_id) if context_org_id else None,
                 is_platform_admin=user.is_superuser if user else False,
                 user_email=user.email if user else "",
                 user_name=user.name if user else "",
