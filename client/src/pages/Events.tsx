@@ -381,7 +381,14 @@ export function Events() {
 											{getSourceTypeIcon(
 												source.source_type,
 											)}
-											{source.name}
+											<div className="flex flex-col">
+												<span>{source.name}</span>
+												{source.source_type === "topic" && source.event_type && (
+													<span className="text-xs text-muted-foreground font-mono">
+														{source.event_type}
+													</span>
+												)}
+											</div>
 										</div>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">

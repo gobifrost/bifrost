@@ -271,6 +271,11 @@ export function EventSourceDetail({
 
 			{/* Metadata badges row */}
 			<div className="flex items-center gap-2 flex-wrap">
+				{source.source_type === "topic" && source.event_type && (
+					<Badge variant="outline" className="font-mono">
+						{source.event_type}
+					</Badge>
+				)}
 				{source.webhook?.adapter_name && (
 					<Badge variant="outline">
 						{source.webhook.adapter_name}

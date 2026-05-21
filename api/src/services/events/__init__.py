@@ -35,9 +35,13 @@ async def emit_event(
             organization_id=organization_id,
             triggered_by=triggered_by,
         )
-        await db.commit()
         if count > 0:
+            # Queue deliveries in the same transaction as emit so that
+            # delivery.execution_id is persisted; otherwise the subsequent
+            # update_delivery_from_execution lookup fails and a sweeper
+            # eventually marks the delivery FAILED with a phantom timeout.
             await processor.queue_event_deliveries(event_id)
+        await db.commit()
         return event_id, count
 
 

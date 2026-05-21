@@ -291,6 +291,22 @@ function EditEventSourceDialogContent({
 					/>
 				</div>
 
+				{/* Topic (read-only) */}
+				{source.source_type === "topic" && source.event_type && (
+					<div className="space-y-2">
+						<Label htmlFor="topic">Topic</Label>
+						<Input
+							id="topic"
+							value={source.event_type}
+							disabled
+							className="font-mono"
+						/>
+						<p className="text-xs text-muted-foreground">
+							The topic this source publishes to. Cannot be changed after creation.
+						</p>
+					</div>
+				)}
+
 				{/* Webhook Config (Dynamic from adapter schema) */}
 				{isWebhook && hasDynamicConfig && selectedAdapter && (
 					<>
