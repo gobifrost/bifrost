@@ -69,8 +69,21 @@ import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import {
 	useApplication,
 	useCreateApplication,
+	useDeleteApplication,
 	useUpdateApplication,
 } from "@/hooks/useApplications";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import type { components } from "@/lib/v1";
 
 type RolePublic = components["schemas"]["RolePublic"];
@@ -133,10 +146,13 @@ export function AppInfoDialog({
 	const { data: roles, isLoading: rolesLoading } = useRoles();
 	const createApplication = useCreateApplication();
 	const updateApplication = useUpdateApplication();
+	const deleteApplication = useDeleteApplication();
+	const navigate = useNavigate();
 
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
 	const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
+	const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 	const [replacePathOpen, setReplacePathOpen] = useState(false);
 
 	// Default organization_id for org users is their org, for platform admins it's null (global)
@@ -595,24 +611,40 @@ export function AppInfoDialog({
 								</Collapsible>
 							)}
 
-							<DialogFooter className="pt-4">
-								<Button
-									type="button"
-									variant="outline"
-									onClick={handleClose}
-								>
-									Cancel
-								</Button>
-								<Button type="submit" disabled={isPending}>
-									{isPending && (
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									)}
-									{isPending
-										? "Saving..."
-										: isEditing
-											? "Save Changes"
-											: "Create Application"}
-								</Button>
+							<DialogFooter className="pt-4 sm:justify-between">
+								{isEditing && existingApp ? (
+									<Button
+										type="button"
+										variant="ghost"
+										className="text-destructive hover:text-destructive hover:bg-destructive/10"
+										onClick={() => setConfirmDeleteOpen(true)}
+										disabled={deleteApplication.isPending}
+									>
+										<Trash2 className="mr-2 h-4 w-4" />
+										Delete
+									</Button>
+								) : (
+									<span />
+								)}
+								<div className="flex gap-2">
+									<Button
+										type="button"
+										variant="outline"
+										onClick={handleClose}
+									>
+										Cancel
+									</Button>
+									<Button type="submit" disabled={isPending}>
+										{isPending && (
+											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+										)}
+										{isPending
+											? "Saving..."
+											: isEditing
+												? "Save Changes"
+												: "Create Application"}
+									</Button>
+								</div>
 							</DialogFooter>
 						</form>
 					</Form>
@@ -624,6 +656,49 @@ export function AppInfoDialog({
 					open={replacePathOpen}
 					onClose={() => setReplacePathOpen(false)}
 				/>
+			)}
+			{isEditing && existingApp && (
+				<AlertDialog
+					open={confirmDeleteOpen}
+					onOpenChange={setConfirmDeleteOpen}
+				>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>Delete Application?</AlertDialogTitle>
+							<AlertDialogDescription>
+								This will permanently delete{" "}
+								<strong>{existingApp.name}</strong> and all of
+								its files. This action cannot be undone.
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<AlertDialogFooter>
+							<AlertDialogCancel>Cancel</AlertDialogCancel>
+							<AlertDialogAction
+								className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+								onClick={async () => {
+									await deleteApplication.mutateAsync({
+										params: {
+											path: { app_id: existingApp.id },
+										},
+									});
+									setConfirmDeleteOpen(false);
+									onOpenChange(false);
+									// If the user was on the code editor for this
+									// app, drop them back to the apps list.
+									if (
+										window.location.pathname.startsWith(
+											`/apps/${existingApp.slug}`,
+										)
+									) {
+										navigate("/apps");
+									}
+								}}
+							>
+								Delete
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
 			)}
 		</Dialog>
 	);

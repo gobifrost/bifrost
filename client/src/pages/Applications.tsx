@@ -18,17 +18,13 @@ import {
 	LayoutGrid,
 	Table as TableIcon,
 	Eye,
+	Code2,
 } from "lucide-react";
 import { EntityLogo } from "@/components/EntityLogo";
+import { AppInfoDialog } from "@/components/app-builder/AppInfoDialog";
 import { CreateAppModal } from "@/components/app-builder/CreateAppModal";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -72,6 +68,7 @@ export function Applications() {
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [isEngineSelectOpen, setIsEngineSelectOpen] = useState(false);
+	const [infoDialogSlug, setInfoDialogSlug] = useState<string | null>(null);
 	const [selectedApp, setSelectedApp] = useState<{
 		id: string;
 		name: string;
@@ -111,8 +108,12 @@ export function Applications() {
 		setIsEngineSelectOpen(true);
 	};
 
-	const handleEdit = (appSlug: string) => {
+	const handleOpenCode = (appSlug: string) => {
 		navigate(`/apps/${appSlug}/edit`);
+	};
+
+	const handleOpenSettings = (appSlug: string) => {
+		setInfoDialogSlug(appSlug);
 	};
 
 	const handlePreview = (appSlug: string) => {
@@ -261,34 +262,47 @@ export function Applications() {
 				)
 			) : filteredApps && filteredApps.length > 0 ? (
 				viewMode === "grid" || !canManageApps ? (
-					<div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
-						{filteredApps.map((app) => (
-							<Card
-								key={app.id}
-								className="hover:border-primary transition-colors flex flex-col"
-							>
-								<CardHeader className="pb-3">
-									<div className="flex items-start justify-between gap-3">
+					<div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+						{filteredApps.map((app) => {
+							const defaultTarget = app.is_published
+								? () => handleLaunch(app.slug)
+								: () => handlePreview(app.slug);
+							return (
+								<Card
+									key={app.id}
+									role="button"
+									tabIndex={0}
+									onClick={defaultTarget}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ") {
+											e.preventDefault();
+											defaultTarget();
+										}
+									}}
+									className="group relative cursor-pointer hover:border-primary transition-colors flex flex-col overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								>
+									{/* Body: logo + name + status badges */}
+									<div className="flex items-center gap-3 p-4">
 										<EntityLogo
 											entityType="app"
 											entityId={app.id}
 											fallback={
-												<div className="h-8 w-8 rounded bg-muted flex items-center justify-center shrink-0">
-													<AppWindow className="h-4 w-4 text-muted-foreground" />
+												<div className="h-10 w-10 rounded bg-muted flex items-center justify-center shrink-0">
+													<AppWindow className="h-5 w-5 text-muted-foreground" />
 												</div>
 											}
-											size={32}
-											className="h-8 w-8 rounded object-cover shrink-0"
+											size={40}
+											className="h-10 w-10 rounded object-cover shrink-0 transition-[filter] group-hover:blur-sm"
 										/>
-										<div className="flex-1 min-w-0">
-											<div className="flex items-center gap-2 flex-wrap">
-												<CardTitle className="text-base break-all">
-													{app.name}
-												</CardTitle>
+										<div className="min-w-0 flex-1">
+											<div className="font-medium truncate">
+												{app.name}
+											</div>
+											<div className="mt-1 flex items-center gap-1.5 flex-wrap">
 												{app.is_published && (
 													<Badge
 														variant="default"
-														className="text-xs"
+														className="text-[10px] px-1.5 py-0"
 													>
 														Published
 													</Badge>
@@ -296,114 +310,84 @@ export function Applications() {
 												{app.has_unpublished_changes && (
 													<Badge
 														variant="outline"
-														className="text-xs"
+														className="text-[10px] px-1.5 py-0"
 													>
 														Draft
 													</Badge>
 												)}
 											</div>
-											<CardDescription className="mt-1.5 text-sm break-words">
-												{app.description || (
-													<span className="italic text-muted-foreground/60">
-														No description
-													</span>
-												)}
-											</CardDescription>
 										</div>
 									</div>
-								</CardHeader>
-								<CardContent className="flex-1 flex flex-col pt-0">
-									{/* Organization badge (platform admins only) */}
-									{isPlatformAdmin && (
-										<div className="mb-2">
-											{app.organization_id ? (
-												<Badge
-													variant="outline"
-													className="text-xs"
-												>
-													<Building2 className="mr-1 h-3 w-3" />
-													{getOrgName(
-														app.organization_id,
-													)}
-												</Badge>
-											) : (
-												<Badge
-													variant="default"
-													className="text-xs"
-												>
-													<Globe className="mr-1 h-3 w-3" />
-													Global
-												</Badge>
-											)}
-										</div>
-									)}
 
-									{/* Published status */}
-									{app.is_published && (
-										<div className="text-xs text-muted-foreground mb-3">
-											Published
-										</div>
-									)}
-
-									<div className="flex gap-2 mt-auto">
-										<Button
-											className="flex-1"
-											onClick={() =>
-												handleLaunch(app.slug)
-											}
-											disabled={!app.is_published}
-											title={
-												!app.is_published
-													? "No published version available"
-													: "Open application"
-											}
-										>
-											<PlayCircle className="mr-2 h-4 w-4" />
-											Open
-										</Button>
-										{canManageApps && (
-											<>
-												{app.has_unpublished_changes && (
-													<Button
-														variant="outline"
-														size="icon"
-														onClick={() =>
-															handlePreview(
-																app.slug,
-															)
-														}
-														title="Preview draft"
+									{/* Hover overlay: admin-only quick actions */}
+									{canManageApps && (
+										<>
+											{/* Vertical "Open" menu, centered over the blurred logo area */}
+											<div className="absolute inset-x-0 top-0 bottom-12 flex flex-col items-start justify-center gap-1 pl-5 bg-background/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+												{app.is_published && (
+													<button
+														type="button"
+														className="pointer-events-auto text-sm font-medium text-foreground hover:text-primary text-left"
+														onClick={(e) => {
+															e.stopPropagation();
+															handleLaunch(app.slug);
+														}}
 													>
-														<Eye className="h-4 w-4" />
-													</Button>
+														<PlayCircle className="inline mr-1.5 h-3.5 w-3.5 -mt-0.5" />
+														Open Published
+													</button>
 												)}
-												<Button
-													variant="outline"
-													size="icon"
-													onClick={() => handleEdit(app.slug)}
-													title="Edit application"
+												<button
+													type="button"
+													className="pointer-events-auto text-sm font-medium text-foreground hover:text-primary text-left"
+													onClick={(e) => {
+														e.stopPropagation();
+														handlePreview(app.slug);
+													}}
 												>
-													<Pencil className="h-4 w-4" />
+													<Eye className="inline mr-1.5 h-3.5 w-3.5 -mt-0.5" />
+													Open Preview
+												</button>
+											</div>
+
+											{/* Top-right toolbar: Edit (settings dialog) + Code editor */}
+											<div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+												<Button
+													type="button"
+													variant="secondary"
+													size="icon"
+													className="h-7 w-7"
+													onClick={(e) => {
+														e.stopPropagation();
+														handleOpenSettings(
+															app.slug,
+														);
+													}}
+													title="Settings"
+												>
+													<Pencil className="h-3.5 w-3.5" />
 												</Button>
 												<Button
-													variant="outline"
+													type="button"
+													variant="secondary"
 													size="icon"
-													onClick={() =>
-														handleDelete(
-															app.id,
-															app.name,
-														)
-													}
-													title="Delete application"
+													className="h-7 w-7"
+													onClick={(e) => {
+														e.stopPropagation();
+														handleOpenCode(
+															app.slug,
+														);
+													}}
+													title="Code editor"
 												>
-													<Trash2 className="h-4 w-4" />
+													<Code2 className="h-3.5 w-3.5" />
 												</Button>
-											</>
-										)}
-									</div>
-								</CardContent>
-							</Card>
-						))}
+											</div>
+										</>
+									)}
+								</Card>
+							);
+						})}
 					</div>
 				) : (
 					<div className="flex-1 min-h-0">
@@ -525,10 +509,26 @@ export function Applications() {
 														<Button
 															variant="ghost"
 															size="sm"
-															onClick={() => handleEdit(app.slug)}
-															title="Edit application"
+															onClick={() =>
+																handleOpenSettings(
+																	app.slug,
+																)
+															}
+															title="Settings"
 														>
 															<Pencil className="h-4 w-4" />
+														</Button>
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() =>
+																handleOpenCode(
+																	app.slug,
+																)
+															}
+															title="Code editor"
+														>
+															<Code2 className="h-4 w-4" />
 														</Button>
 														<Button
 															variant="ghost"
@@ -616,6 +616,15 @@ export function Applications() {
 			<CreateAppModal
 				open={isEngineSelectOpen}
 				onOpenChange={setIsEngineSelectOpen}
+			/>
+
+			{/* Application Settings Dialog (opened from card pencil button) */}
+			<AppInfoDialog
+				appSlug={infoDialogSlug}
+				open={infoDialogSlug !== null}
+				onOpenChange={(o) => {
+					if (!o) setInfoDialogSlug(null);
+				}}
 			/>
 		</div>
 	);
