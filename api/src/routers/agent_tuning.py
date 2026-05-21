@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["Agent Tuning"])
 
 
+def _is_tuning_admin(user: CurrentActiveUser) -> bool:
+    return user.is_superuser or any(
+        role in ["Platform Admin", "Platform Owner"] for role in user.roles
+    )
+
+
 async def _load_agent_with_access(
     agent_id: UUID, db: DbSession, user: CurrentActiveUser
 ) -> Agent:
@@ -54,9 +60,7 @@ async def _load_agent_with_access(
     org/global agents may be visible to regular users, but they are not
     user-owned mutable resources.
     """
-    is_admin = user.is_superuser or any(
-        role in ["Platform Admin", "Platform Owner"] for role in user.roles
-    )
+    is_admin = _is_tuning_admin(user)
 
     agent = (
         await db.execute(select(Agent).where(Agent.id == agent_id))
@@ -90,9 +94,15 @@ async def create_tuning_session(
 ) -> ConsolidatedProposalResponse:
     """Generate a consolidated prompt proposal from this agent's flagged runs."""
     await _load_agent_with_access(agent_id, db, user)
+    is_admin = _is_tuning_admin(user)
 
     try:
-        proposal = await propose_consolidated_tuning(agent_id, db)
+        proposal = await propose_consolidated_tuning(
+            agent_id,
+            db,
+            org_id=user.organization_id,
+            restrict_to_org=not is_admin,
+        )
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -120,6 +130,7 @@ async def dry_run_tuning_session(
     Capped at 10 runs by the service layer to bound cost.
     """
     await _load_agent_with_access(agent_id, db, user)
+    is_admin = _is_tuning_admin(user)
 
     session_factory = get_session_factory()
     raw = await dry_run_consolidated(
@@ -127,6 +138,8 @@ async def dry_run_tuning_session(
         proposed_prompt=request.proposed_prompt,
         db=db,
         session_factory=session_factory,
+        org_id=user.organization_id,
+        restrict_to_org=not is_admin,
     )
     return ConsolidatedDryRunResponse(
         results=[
@@ -153,6 +166,7 @@ async def apply_tuning_session(
 ) -> ApplyTuningResponse:
     """Apply a consolidated tuning proposal: update prompt, write history, clear verdicts."""
     await _load_agent_with_access(agent_id, db, user)
+    is_admin = _is_tuning_admin(user)
 
     try:
         applied = await apply_consolidated_tuning(
@@ -161,6 +175,8 @@ async def apply_tuning_session(
             reason=request.reason,
             user_id=user.user_id,
             db=db,
+            org_id=user.organization_id,
+            restrict_to_org=not is_admin,
         )
     except LookupError as exc:
         raise HTTPException(

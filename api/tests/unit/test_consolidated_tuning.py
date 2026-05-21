@@ -10,6 +10,7 @@ Validates the Task 17 implementation:
 - ``dry_run_consolidated`` calls the per-run dry-run for at most
   ``CONSOLIDATED_DRY_RUN_LIMIT`` runs even when more are flagged.
 """
+import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -22,6 +23,7 @@ from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
+from src.models.orm.organizations import Organization
 from src.services.execution.tuning_service import (
     CONSOLIDATED_DRY_RUN_LIMIT,
     apply_consolidated_tuning,
@@ -46,6 +48,10 @@ def _build_mock_client(response):
     client.complete = AsyncMock(return_value=response)
     client.provider_name = "anthropic"
     return client
+
+
+def _build_org(name: str) -> Organization:
+    return Organization(id=uuid4(), name=name, created_by="test")
 
 
 @pytest_asyncio.fixture
@@ -119,6 +125,85 @@ async def test_propose_returns_proposal_with_flagged_runs(
 
 
 @pytest.mark.asyncio
+async def test_propose_can_scope_global_agent_runs_to_caller_org(
+    db_session, seed_agent
+):
+    """Tenant-scoped tuning excludes other orgs' runs for global agents."""
+    from src.services.execution import tuning_service as mod
+
+    caller_org = _build_org("Caller Org")
+    other_org = _build_org("Other Org")
+    caller_org_id = caller_org.id
+    other_org_id = other_org.id
+    caller_run = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="test",
+        status="completed",
+        iterations_used=1,
+        tokens_used=100,
+        input={"message": "caller org question"},
+        output={"text": "caller org answer"},
+        verdict="down",
+        org_id=caller_org_id,
+    )
+    other_run = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="test",
+        status="completed",
+        iterations_used=1,
+        tokens_used=100,
+        input={"message": "other org secret question"},
+        output={"text": "other org secret answer"},
+        verdict="down",
+        org_id=other_org_id,
+    )
+    db_session.add_all([caller_org, other_org])
+    await db_session.flush()
+    db_session.add_all([caller_run, other_run])
+    await db_session.commit()
+
+    mock_client = _build_mock_client(
+        _build_mock_llm_response(
+            '{"summary": "Caller org only.", '
+            '"proposed_prompt": "Stay tenant scoped."}'
+        )
+    )
+
+    try:
+        with patch.object(
+            mod,
+            "get_tuning_client",
+            new=AsyncMock(return_value=(mock_client, "claude-sonnet-4-6")),
+        ):
+            proposal = await propose_consolidated_tuning(
+                seed_agent.id,
+                db_session,
+                org_id=caller_org_id,
+                restrict_to_org=True,
+            )
+
+        assert proposal.affected_run_ids == [caller_run.id]
+        payload = json.loads(
+            mock_client.complete.await_args.kwargs["messages"][1].content
+        )
+        serialized = json.dumps(payload)
+        assert "caller org question" in serialized
+        assert "other org secret question" not in serialized
+    finally:
+        await db_session.execute(
+            delete(AgentRun).where(AgentRun.id.in_([caller_run.id, other_run.id]))
+        )
+        await db_session.execute(
+            delete(Organization).where(
+                Organization.id.in_([caller_org_id, other_org_id])
+            )
+        )
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_propose_no_flagged_runs_raises(db_session, seed_agent):
     """No flagged runs -> LookupError (router maps to 404)."""
     with pytest.raises(LookupError):
@@ -182,6 +267,91 @@ async def test_apply_updates_prompt_creates_history_resets_verdicts(
         ).scalar_one()
         assert refreshed_run.verdict is None
         assert refreshed_run.verdict_note is None
+
+
+@pytest.mark.asyncio
+async def test_apply_only_clears_caller_org_flagged_runs_for_global_agent(
+    db_session, seed_agent, seed_user
+):
+    """Tenant-scoped apply must not clear verdicts from other orgs."""
+    caller_org = _build_org("Apply Caller Org")
+    other_org = _build_org("Apply Other Org")
+    caller_org_id = caller_org.id
+    other_org_id = other_org.id
+    caller_run = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="test",
+        status="completed",
+        iterations_used=1,
+        tokens_used=100,
+        input={"message": "caller"},
+        output={"text": "caller"},
+        verdict="down",
+        verdict_note="caller wrong",
+        org_id=caller_org_id,
+    )
+    other_run = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="test",
+        status="completed",
+        iterations_used=1,
+        tokens_used=100,
+        input={"message": "other"},
+        output={"text": "other"},
+        verdict="down",
+        verdict_note="other wrong",
+        org_id=other_org_id,
+    )
+    db_session.add_all([caller_org, other_org])
+    await db_session.flush()
+    db_session.add_all([caller_run, other_run])
+    await db_session.commit()
+
+    try:
+        applied = await apply_consolidated_tuning(
+            agent_id=seed_agent.id,
+            new_prompt="Tenant-scoped prompt.",
+            reason="Only caller org.",
+            user_id=seed_user.id,
+            db=db_session,
+            org_id=caller_org_id,
+            restrict_to_org=True,
+        )
+        await db_session.commit()
+
+        assert applied.affected_run_ids == [caller_run.id]
+
+        refreshed_caller = (
+            await db_session.execute(
+                select(AgentRun).where(AgentRun.id == caller_run.id)
+            )
+        ).scalar_one()
+        refreshed_other = (
+            await db_session.execute(
+                select(AgentRun).where(AgentRun.id == other_run.id)
+            )
+        ).scalar_one()
+        assert refreshed_caller.verdict is None
+        assert refreshed_caller.verdict_note is None
+        assert refreshed_other.verdict == "down"
+        assert refreshed_other.verdict_note == "other wrong"
+    finally:
+        await db_session.execute(
+            delete(AgentRun).where(AgentRun.id.in_([caller_run.id, other_run.id]))
+        )
+        await db_session.execute(
+            delete(AgentPromptHistory).where(
+                AgentPromptHistory.agent_id == seed_agent.id
+            )
+        )
+        await db_session.execute(
+            delete(Organization).where(
+                Organization.id.in_([caller_org_id, other_org_id])
+            )
+        )
+        await db_session.commit()
 
 
 @pytest.mark.asyncio
