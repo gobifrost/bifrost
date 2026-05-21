@@ -54,6 +54,7 @@ class WorkspaceImportRestrictor(MetaPathFinder):
         'bifrost.workflows',
         'bifrost.files',
         'bifrost.forms',
+        'bifrost.events',
         'bifrost.executions',
         'bifrost.roles',
         'bifrost.config',
