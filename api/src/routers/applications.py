@@ -12,6 +12,7 @@ Applications use code-based files (TSX/TypeScript) stored in app_files table.
 File operations are handled through the app_files router.
 """
 
+import base64
 import logging
 import re
 from datetime import datetime, timezone
@@ -616,6 +617,14 @@ export default function RootLayout() {
 # =============================================================================
 
 
+def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
+    """Encode a binary logo as a data URL, or None if no logo is set."""
+    if not data:
+        return None
+    mime = content_type or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
 async def application_to_public(
     application: Application,
     repo: "ApplicationRepository",
@@ -638,6 +647,7 @@ async def application_to_public(
         access_level=application.access_level,
         role_ids=role_ids,
         repo_path=application.repo_path,
+        logo=_logo_data_url(application.logo_data, application.logo_content_type),
     )
 
 

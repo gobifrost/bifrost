@@ -48,6 +48,35 @@ describe("EntityLogo", () => {
 		expect(screen.queryByTestId("entity-logo")).toBeNull();
 	});
 
+	it("renders inline logo (data URL) directly without hitting the per-entity endpoint", () => {
+		const dataUrl = "data:image/svg+xml;base64,PHN2Zy8+";
+		render(
+			<EntityLogo
+				entityType="app"
+				entityId="11111111-1111-1111-1111-111111111111"
+				logo={dataUrl}
+				fallback={<span data-testid="fallback">F</span>}
+				size={32}
+			/>,
+		);
+		const img = screen.getByTestId("entity-logo");
+		expect(img.getAttribute("src")).toBe(dataUrl);
+	});
+
+	it("renders fallback without making any request when logo is explicitly null", () => {
+		render(
+			<EntityLogo
+				entityType="agent"
+				entityId="22222222-2222-2222-2222-222222222222"
+				logo={null}
+				fallback={<span data-testid="fallback">F</span>}
+				size={32}
+			/>,
+		);
+		expect(screen.getByTestId("fallback")).toBeInTheDocument();
+		expect(screen.queryByTestId("entity-logo")).toBeNull();
+	});
+
 	it("appends cacheKey to bust browser cache", () => {
 		render(
 			<EntityLogo

@@ -8,6 +8,7 @@ Agents are virtual entities stored only in the database.
 Git sync serializes agents on-the-fly from the database.
 """
 
+import base64
 import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -189,6 +190,14 @@ async def _user_has_permission(
     return False
 
 
+def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
+    """Encode a binary logo as a data URL, or None if no logo is set."""
+    if not data:
+        return None
+    mime = content_type or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
 def _agent_to_public(agent: Agent) -> AgentPublic:
     """Convert Agent ORM to AgentPublic with relationships."""
     valid_system_tool_ids = set(get_system_tool_ids())
@@ -221,6 +230,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
         max_token_budget=agent.max_token_budget,
+        logo=_logo_data_url(agent.logo_data, agent.logo_content_type),
     )
 
 
@@ -306,6 +316,7 @@ async def list_agents(
         summary = AgentSummary.model_validate(a)
         summary.dependency_count = dep_counts.get(a.id, 0)
         summary.mcp_connection_count = mcp_counts.get(a.id, 0)
+        summary.logo = _logo_data_url(a.logo_data, a.logo_content_type)
         result.append(summary)
 
     return result
@@ -1006,7 +1017,12 @@ async def get_agent_delegations(
             detail=f"Agent {agent_id} not found",
         )
 
-    return [AgentSummary.model_validate(a) for a in agent.delegated_agents]
+    summaries = []
+    for a in agent.delegated_agents:
+        s = AgentSummary.model_validate(a)
+        s.logo = _logo_data_url(a.logo_data, a.logo_content_type)
+        summaries.append(s)
+    return summaries
 
 
 @router.post("/{agent_id}/logo")

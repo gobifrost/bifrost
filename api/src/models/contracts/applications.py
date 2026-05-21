@@ -147,6 +147,10 @@ class ApplicationPublic(ApplicationBase):
     repo_path: str = Field(
         description="Workspace-relative path to the app's source directory. Mutated via POST /api/applications/{id}/replace."
     )
+    logo: str | None = Field(
+        default=None,
+        description="Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.",
+    )
 
     @field_serializer("created_at", "updated_at", "published_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:
