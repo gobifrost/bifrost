@@ -3556,22 +3556,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6386,6 +6386,46 @@ export interface paths {
          * @description List events for an event source with optional filters (Platform admin only).
          */
         get: operations["list_events_api_events_sources__source_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/emit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Emit a topic event
+         * @description Publish an event to a topic. All subscriptions on the matching topic source will be triggered.
+         */
+        post: operations["emit_topic_event_api_events_emit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List available topics
+         * @description Returns curated topic suggestions and topics currently in use.
+         */
+        get: operations["list_topics_api_events_topics_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11988,6 +12028,45 @@ export interface components {
             models?: string[] | null;
         };
         /**
+         * EmitEventRequest
+         * @description Request body for POST /api/events/emit.
+         */
+        EmitEventRequest: {
+            /**
+             * Topic
+             * @description Topic string, e.g. 'user.invited'. Validated: ^[a-z0-9_.]+$, must contain a dot.
+             */
+            topic: string;
+            /**
+             * Data
+             * @description JSON-serializable event payload.
+             */
+            data?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Scope
+             * @description Organization scope: org UUID string or None for GLOBAL.
+             */
+            scope?: string | null;
+        };
+        /**
+         * EmitEventResponse
+         * @description Response from POST /api/events/emit.
+         */
+        EmitEventResponse: {
+            /**
+             * Event Id
+             * @description UUID of the created Event row.
+             */
+            event_id: string;
+            /**
+             * Subscribers Notified
+             * @description Number of subscriptions that will receive this event.
+             */
+            subscribers_notified: number;
+        };
+        /**
          * EndpointExecuteResponse
          * @description Response for endpoint execution.
          */
@@ -12245,13 +12324,18 @@ export interface components {
              * @description Event source name
              */
             name: string;
-            /** @description Event source type (webhook, schedule, internal) */
+            /** @description Event source type (webhook, schedule, topic) */
             source_type: components["schemas"]["EventSourceType"];
             /**
              * Organization Id
              * @description Organization ID (null for global sources)
              */
             organization_id?: string | null;
+            /**
+             * Event Type
+             * @description Topic string for topic sources (e.g. 'user.invited'). Required when source_type='topic'.
+             */
+            event_type?: string | null;
             /** @description Webhook configuration (required if source_type is webhook) */
             webhook?: components["schemas"]["WebhookSourceConfig"] | null;
             /** @description Schedule configuration (required if source_type is schedule) */
@@ -12293,6 +12377,11 @@ export interface components {
             name: string;
             /** @description Source type */
             source_type: components["schemas"]["EventSourceType"];
+            /**
+             * Event Type
+             * @description Topic string for topic sources (e.g. 'user.invited')
+             */
+            event_type?: string | null;
             /**
              * Organization Id
              * @description Organization ID (null for global)
@@ -12352,7 +12441,7 @@ export interface components {
          * @description Event source types
          * @enum {string}
          */
-        EventSourceType: "webhook" | "schedule" | "internal";
+        EventSourceType: "webhook" | "schedule" | "topic";
         /**
          * EventSourceUpdate
          * @description Request model for updating an event source.
@@ -19184,6 +19273,32 @@ export interface components {
         ToolsResponse: {
             /** Tools */
             tools?: components["schemas"]["ToolInfo"][];
+        };
+        /**
+         * TopicRegistryEntry
+         * @description A curated topic with a human-readable description.
+         */
+        TopicRegistryEntry: {
+            /** Topic */
+            topic: string;
+            /** Description */
+            description: string;
+        };
+        /**
+         * TopicsRegistryResponse
+         * @description Response from GET /api/events/topics.
+         */
+        TopicsRegistryResponse: {
+            /**
+             * Curated
+             * @description Hand-curated topics with descriptions.
+             */
+            curated: components["schemas"]["TopicRegistryEntry"][];
+            /**
+             * In Use
+             * @description Distinct topic strings currently in use as EventSources.
+             */
+            in_use: string[];
         };
         /**
          * TrustedDeviceResponse
@@ -26424,7 +26539,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26457,7 +26572,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26490,7 +26605,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26523,7 +26638,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -31437,6 +31552,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    emit_topic_event_api_events_emit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmitEventRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmitEventResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_topics_api_events_topics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicsRegistryResponse"];
                 };
             };
         };

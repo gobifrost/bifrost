@@ -13,7 +13,10 @@ import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
+	SelectSeparator,
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
@@ -27,6 +30,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
 	useCreateEventSource,
 	useWebhookAdapters,
+	useTopics,
 	type EventSourceType,
 } from "@/services/events";
 import { useIntegrations } from "@/services/integrations";
@@ -41,6 +45,26 @@ interface CronValidationResult {
 	warning?: string;
 	error?: string;
 }
+
+const TOPIC_REGEX = /^[a-z0-9_.]+$/;
+const TOPIC_MAX_LEN = 100;
+
+function validateTopicClient(topic: string): string | null {
+	if (!topic) return "Topic is required";
+	if (topic.length > TOPIC_MAX_LEN) return `Topic must be at most ${TOPIC_MAX_LEN} characters`;
+	if (!TOPIC_REGEX.test(topic)) return "Topic must match ^[a-z0-9_.]+$ (lowercase, digits, dots, underscores)";
+	if (!topic.includes(".")) return "Topic must contain at least one dot (e.g. 'user.invited')";
+	return null;
+}
+
+function topicToName(topic: string): string {
+	return topic
+		.split(".")
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+const CUSTOM_TOPIC_VALUE = "__custom__";
 
 const CRON_PRESETS = [
 	{ label: "Every 5 min", expression: "*/5 * * * *" },
@@ -85,6 +109,23 @@ function CreateEventSourceDialogContent({
 	const [adapterName, setAdapterName] = useState<string>("");
 	const [integrationId, setIntegrationId] = useState<string>("");
 	const [errors, setErrors] = useState<string[]>([]);
+
+	// Topic state
+	const [topicPickerValue, setTopicPickerValue] = useState<string>("");
+	const [customTopic, setCustomTopic] = useState<string>("");
+	const [topicError, setTopicError] = useState<string | null>(null);
+
+	// Topic registry
+	const { data: topicsData } = useTopics();
+	const curatedTopics = topicsData?.curated ?? [];
+	const inUseTopics = topicsData?.in_use ?? [];
+	const allKnownTopics = [
+		...curatedTopics.map((t) => t.topic),
+		...inUseTopics.filter((t) => !curatedTopics.some((c) => c.topic === t)),
+	];
+
+	const effectiveTopic =
+		topicPickerValue === CUSTOM_TOPIC_VALUE ? customTopic : topicPickerValue;
 
 	// Dynamic config for adapters with config_schema
 	const [webhookConfig, setWebhookConfig] = useState<Record<string, unknown>>(
@@ -180,8 +221,17 @@ function CreateEventSourceDialogContent({
 	const validateForm = (): boolean => {
 		const newErrors: string[] = [];
 
-		if (!name.trim()) {
-			newErrors.push("Name is required");
+		if (sourceType === "topic") {
+			const err = validateTopicClient(effectiveTopic);
+			if (err) {
+				newErrors.push(err);
+				setTopicError(err);
+			}
+			// Name defaults from topic if blank — no error needed
+		} else {
+			if (!name.trim()) {
+				newErrors.push("Name is required");
+			}
 		}
 
 		if (sourceType === "webhook" && !adapterName) {
@@ -214,11 +264,17 @@ function CreateEventSourceDialogContent({
 		if (!validateForm()) return;
 
 		try {
+			const resolvedName =
+				sourceType === "topic" && !name.trim()
+					? topicToName(effectiveTopic)
+					: name.trim();
+
 			await createMutation.mutateAsync({
 				body: {
-					name: name.trim(),
+					name: resolvedName,
 					source_type: sourceType,
 					organization_id: organizationId || undefined,
+					event_type: sourceType === "topic" ? effectiveTopic : undefined,
 					webhook:
 						sourceType === "webhook"
 							? {
@@ -313,9 +369,12 @@ function CreateEventSourceDialogContent({
 					<Label htmlFor="source-type">Source Type</Label>
 					<Select
 						value={sourceType}
-						onValueChange={(value) =>
-							setSourceType(value as EventSourceType)
-						}
+						onValueChange={(value) => {
+							setSourceType(value as EventSourceType);
+							setTopicPickerValue("");
+							setCustomTopic("");
+							setTopicError(null);
+						}}
 					>
 						<SelectTrigger id="source-type">
 							<SelectValue />
@@ -323,12 +382,76 @@ function CreateEventSourceDialogContent({
 						<SelectContent>
 							<SelectItem value="webhook">Webhook</SelectItem>
 							<SelectItem value="schedule">Schedule</SelectItem>
-							<SelectItem value="internal" disabled>
-								Internal (Coming Soon)
-							</SelectItem>
+							<SelectItem value="topic">Topic</SelectItem>
 						</SelectContent>
 					</Select>
 				</div>
+
+				{/* Topic Configuration */}
+				{sourceType === "topic" && (
+					<>
+						<div className="border-t pt-4">
+							<h4 className="text-sm font-medium mb-3">
+								Topic Configuration
+							</h4>
+						</div>
+
+						<div className="space-y-2">
+							<Label htmlFor="topic-picker">Topic</Label>
+							<Select
+								value={topicPickerValue}
+								onValueChange={(value) => {
+									setTopicPickerValue(value);
+									setTopicError(null);
+									if (value !== CUSTOM_TOPIC_VALUE && !name.trim()) {
+										setName(topicToName(value));
+									}
+								}}
+							>
+								<SelectTrigger id="topic-picker">
+									<SelectValue placeholder="Select or enter a topic..." />
+								</SelectTrigger>
+								<SelectContent>
+									{allKnownTopics.length > 0 && (
+										<>
+											<SelectGroup>
+												<SelectLabel>Known Topics</SelectLabel>
+												{allKnownTopics.map((topic) => (
+													<SelectItem key={topic} value={topic}>
+														{topic}
+													</SelectItem>
+												))}
+											</SelectGroup>
+											<SelectSeparator />
+										</>
+									)}
+									<SelectItem value={CUSTOM_TOPIC_VALUE}>
+										Custom topic...
+									</SelectItem>
+								</SelectContent>
+							</Select>
+							{topicPickerValue === CUSTOM_TOPIC_VALUE && (
+								<Input
+									id="custom-topic"
+									value={customTopic}
+									onChange={(e) => {
+										setCustomTopic(e.target.value);
+										setTopicError(validateTopicClient(e.target.value));
+									}}
+									placeholder="e.g. acme.deal_won"
+									className="font-mono"
+									aria-label="Custom topic"
+								/>
+							)}
+							{topicError && (
+								<p className="text-xs text-destructive">{topicError}</p>
+							)}
+							<p className="text-xs text-muted-foreground">
+								Lowercase, dot-separated (e.g. <code>user.invited</code>). Must contain at least one dot.
+							</p>
+						</div>
+					</>
+				)}
 
 				{/* Webhook Adapter */}
 				{sourceType === "webhook" && (

@@ -58,7 +58,7 @@ function getSourceTypeIcon(type: EventSourceType) {
 			return <Webhook className="h-4 w-4" />;
 		case "schedule":
 			return <Calendar className="h-4 w-4" />;
-		case "internal":
+		case "topic":
 			return <Zap className="h-4 w-4" />;
 	}
 }
@@ -69,8 +69,8 @@ function getSourceTypeLabel(type: EventSourceType) {
 			return "Webhook";
 		case "schedule":
 			return "Schedule";
-		case "internal":
-			return "Internal";
+		case "topic":
+			return "Topic";
 	}
 }
 
