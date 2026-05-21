@@ -48,12 +48,15 @@ class EventSource(Base):
         PgEnum(
             "webhook",
             "schedule",
-            "internal",
+            "topic",
             name="event_source_type",
             create_type=False,
         ),
         nullable=False,
     )
+
+    # For topic sources: the validated topic string (e.g. "user.invited")
+    event_type: Mapped[str | None] = mapped_column(String(100), default=None)
 
     # Scope: NULL = global, otherwise org-specific
     organization_id: Mapped[UUID | None] = mapped_column(
@@ -229,9 +232,8 @@ class EventSubscription(Base):
     __tablename__ = "event_subscriptions"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    # NULL for internal-event subscriptions (matched by event_type only); set for webhook/schedule
-    event_source_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("event_sources.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=True
+    event_source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("event_sources.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
     )
     workflow_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=True
@@ -295,9 +297,13 @@ class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    # NULL for internal events; set for webhook/schedule events
-    event_source_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("event_sources.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=True
+    event_source_id: Mapped[UUID] = mapped_column(
+        ForeignKey("event_sources.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+
+    # Organization that owns this event (stamped at emit time)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), default=None
     )
 
     # Event metadata
