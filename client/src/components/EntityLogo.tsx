@@ -8,6 +8,14 @@ export type EntityLogoProps = {
 	size: number;
 	cacheKey?: string;
 	className?: string;
+	/**
+	 * Inline logo (data URL) from the list/detail response. When provided as a
+	 * string, renders directly — no extra GET. When explicitly `null`, renders
+	 * the fallback without hitting the per-entity endpoint. When `undefined`,
+	 * falls back to fetching /api/{type}/{id}/logo (preserves the upload
+	 * dialog's live-preview behavior).
+	 */
+	logo?: string | null;
 };
 
 const PATHS: Record<EntityLogoProps["entityType"], string> = {
@@ -22,14 +30,27 @@ export function EntityLogo({
 	size,
 	cacheKey,
 	className,
+	logo,
 }: EntityLogoProps) {
-	// Track which "version" of the URL we last failed to load. When a new
-	// version is bumped (after upload/delete), this stale marker no longer
-	// matches and we retry — no setState-in-useEffect dance needed.
 	const [erroredVersion, setErroredVersion] = useState<string | null>(null);
-
-	// Global per-entity version bumped by LogoDropZone after upload/delete.
 	const globalVersion = useEntityLogoVersion(entityType, entityId);
+
+	if (logo === null) {
+		return <>{fallback}</>;
+	}
+
+	if (typeof logo === "string") {
+		return (
+			<img
+				data-testid="entity-logo"
+				src={logo}
+				alt=""
+				width={size}
+				height={size}
+				className={className}
+			/>
+		);
+	}
 
 	const base = `${PATHS[entityType]}/${entityId}/logo`;
 	const effectiveKey = cacheKey ?? globalVersion?.toString() ?? null;

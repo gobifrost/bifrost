@@ -3472,22 +3472,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8638,6 +8638,11 @@ export interface components {
             max_iterations?: number | null;
             /** Max Token Budget */
             max_token_budget?: number | null;
+            /**
+             * Logo
+             * @description Inline logo as a data URL, or null when no logo is set.
+             */
+            logo?: string | null;
         };
         /** AgentRunCreateRequest */
         AgentRunCreateRequest: {
@@ -8965,6 +8970,11 @@ export interface components {
              * @default 0
              */
             mcp_connection_count: number;
+            /**
+             * Logo
+             * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
+             */
+            logo?: string | null;
         };
         /**
          * AgentUpdate
@@ -9314,6 +9324,11 @@ export interface components {
              * @description Workspace-relative path to the app's source directory. Mutated via POST /api/applications/{id}/replace.
              */
             repo_path: string;
+            /**
+             * Logo
+             * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
+             */
+            logo?: string | null;
         };
         /**
          * ApplicationPublishRequest
@@ -26612,7 +26627,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26645,7 +26660,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26678,7 +26693,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26711,7 +26726,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
