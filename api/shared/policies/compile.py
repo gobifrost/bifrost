@@ -11,12 +11,16 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+import json
+
 from sqlalchemy import and_ as sa_and
+from sqlalchemy import cast as sa_cast
 from sqlalchemy import false as sa_false
 from sqlalchemy import literal
 from sqlalchemy import not_ as sa_not
 from sqlalchemy import or_ as sa_or
 from sqlalchemy import true as sa_true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import ColumnElement
 
 from shared.policies.functions import FUNCTIONS
@@ -84,6 +88,30 @@ def _resolve_row_to_column(path: str) -> ColumnElement:
     return Document.data[parts].astext  # SQLAlchemy supports list keys
 
 
+def _resolve_row_to_jsonb(path: str) -> ColumnElement | None:
+    """Return the JSONB-form extract (data->'field') for a row path, or None
+    if the path resolves to a column-mapped field (which is not JSONB).
+
+    Used for comparisons against non-string Python literals (bool, int, float),
+    where the text-form `data->>'field' = TRUE` produces invalid Postgres SQL.
+    The JSONB compare form `data->'field' = 'true'::jsonb` is type-aware and
+    silently returns false on type mismatch instead of raising.
+    """
+    parts = path.split(".")
+    if len(parts) == 1 and parts[0] in _COLUMN_MAPPED_ROW_FIELDS:
+        col = _COLUMN_MAPPED_ROW_FIELDS[parts[0]]
+        if col is not None:
+            return None  # column-mapped — caller falls back to text path
+    if len(parts) == 1:
+        return Document.data[parts[0]]
+    return Document.data[parts]
+
+
+def _jsonb_literal(value: Any) -> ColumnElement:
+    """Wrap a Python value as a JSONB literal: `'{json}'::jsonb`."""
+    return sa_cast(literal(json.dumps(value)), JSONB)
+
+
 def _compile_call(node: dict, user: Any) -> ColumnElement:
     target = node["call"]
     args = [_resolve_arg_for_call(a, user) for a in node.get("args", [])]
@@ -111,6 +139,70 @@ def _resolve_arg_for_call(arg: Any, user: Any) -> Any:
     return arg  # literal
 
 
+def _resolve_to_scalar(node: Any, user: Any) -> Any:
+    """If `node` resolves to a concrete Python scalar at compile time, return it.
+
+    Returns the scalar for: bare literals, `{user: field}` references whose
+    resolved value is a non-UUID scalar, and `{call: ...}` results (already
+    a Python bool from `has_role`). Returns a sentinel `_NOT_SCALAR` otherwise
+    (notably for `{row: ...}` references, which only resolve at SQL execution).
+    """
+    if isinstance(node, (str, int, float, bool)) or node is None:
+        return node
+    if isinstance(node, dict):
+        keys = set(node.keys())
+        if keys == {"user"}:
+            val = getattr(user, node["user"], None)
+            if isinstance(val, UUID):
+                return str(val)
+            return val
+    return _NOT_SCALAR
+
+
+_NOT_SCALAR = object()
+
+
+def _compile_comparison_operands(
+    left_node: Any, right_node: Any, user: Any
+) -> tuple[ColumnElement, ColumnElement]:
+    """Compile both sides of a comparison, switching to JSONB-compare form
+    when one side is a JSONB-backed row reference and the other resolves to
+    a non-string Python scalar (bool / int / float).
+
+    The default text-form (`data->>'field' = '<value>'`) only works when the
+    right side is a string. For bool/int/float, `data->>'field' = TRUE` is
+    invalid Postgres SQL. JSONB-compare (`data->'field' = '<json>'::jsonb`)
+    is type-aware: type mismatches in row data return false instead of
+    raising. Spec: docs/superpowers/specs/2026-04-30-table-policies-design.md
+    """
+    left_row = (
+        left_node["row"]
+        if isinstance(left_node, dict) and set(left_node.keys()) == {"row"}
+        else None
+    )
+    right_row = (
+        right_node["row"]
+        if isinstance(right_node, dict) and set(right_node.keys()) == {"row"}
+        else None
+    )
+
+    # Detect the "JSONB row vs non-string scalar literal" shape on either side.
+    if left_row is not None and right_row is None:
+        scalar = _resolve_to_scalar(right_node, user)
+        if scalar is not _NOT_SCALAR and isinstance(scalar, (bool, int, float)) and not isinstance(scalar, str):
+            jsonb_col = _resolve_row_to_jsonb(left_row)
+            if jsonb_col is not None:
+                return jsonb_col, _jsonb_literal(scalar)
+    if right_row is not None and left_row is None:
+        scalar = _resolve_to_scalar(left_node, user)
+        if scalar is not _NOT_SCALAR and isinstance(scalar, (bool, int, float)) and not isinstance(scalar, str):
+            jsonb_col = _resolve_row_to_jsonb(right_row)
+            if jsonb_col is not None:
+                return _jsonb_literal(scalar), jsonb_col
+
+    return _compile_node(left_node, user), _compile_node(right_node, user)
+
+
 def _compile_op(op: str, value: Any, user: Any) -> ColumnElement:
     if op == "and":
         return sa_and(*(_compile_node(item, user) for item in value))
@@ -121,18 +213,20 @@ def _compile_op(op: str, value: Any, user: Any) -> ColumnElement:
         # `not_(x == y)` into `x != y`; we want a literal NOT(...) so
         # NULL-as-false semantics survive the negation.
         return sa_not(_compile_node(value, user).self_group())
-    if op == "eq":
-        return _compile_node(value[0], user) == _compile_node(value[1], user)
-    if op == "neq":
-        return _compile_node(value[0], user) != _compile_node(value[1], user)
-    if op == "lt":
-        return _compile_node(value[0], user) < _compile_node(value[1], user)
-    if op == "lte":
-        return _compile_node(value[0], user) <= _compile_node(value[1], user)
-    if op == "gt":
-        return _compile_node(value[0], user) > _compile_node(value[1], user)
-    if op == "gte":
-        return _compile_node(value[0], user) >= _compile_node(value[1], user)
+    if op in ("eq", "neq", "lt", "lte", "gt", "gte"):
+        left, right = _compile_comparison_operands(value[0], value[1], user)
+        if op == "eq":
+            return left == right
+        if op == "neq":
+            return left != right
+        if op == "lt":
+            return left < right
+        if op == "lte":
+            return left <= right
+        if op == "gt":
+            return left > right
+        if op == "gte":
+            return left >= right
     if op == "in":
         left = _compile_node(value[0], user)
         return left.in_(value[1])
