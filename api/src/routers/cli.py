@@ -2522,7 +2522,7 @@ async def cli_create_table(
     # Seed admin_bypass so platform admins can still operate on tables
     # created via the SDK. SDK callers can override this later by setting
     # explicit policies through the REST `PATCH /api/tables/{id}` endpoint.
-    from shared.policies.probe import make_seed_admin_bypass
+    from shared.table_policies import make_seed_admin_bypass
 
     table = Table(
         name=request.name,

@@ -10,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.policies.probe import make_seed_admin_bypass
-from src.models.contracts.policies import TablePolicies
+from shared.table_policies import TablePolicies, make_seed_admin_bypass
 
 
 MIGRATION_PATH = (
@@ -61,6 +60,7 @@ def test_migration_seed_validates_as_table_policies():
 def test_migration_seed_admin_only_evaluation(user_attrs, expected):
     """Behaviorally: the seed grants every action to admins, denies all others."""
     from shared.policies.probe import evaluate_action
+    from shared.table_policies import RowResolver
 
     class StubUser:
         def __init__(self, **kw):
@@ -76,6 +76,6 @@ def test_migration_seed_admin_only_evaluation(user_attrs, expected):
     policies = TablePolicies.model_validate(_extract_seed_from_migration())
     user = StubUser(**user_attrs)
     for action in ("read", "create", "update", "delete"):
-        assert evaluate_action(action, policies, row={}, user=user) is expected, (
+        assert evaluate_action(action, policies, ctx={}, user=user, resolver=RowResolver()) is expected, (
             f"action={action!r} user={user_attrs} expected={expected}"
         )

@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from shared.policies.compile import compile_to_sql
 from shared.policies.evaluate import evaluate
+from shared.table_policies import RowResolver, TableBinding
 from src.models.contracts.policies import Expr
-
 
 # Reuse the FakeUser shape from test_evaluate
 from tests.unit.policies.test_evaluate import FakeUser
@@ -62,13 +62,13 @@ def test_round_trip(expr_dict, row, user_kwargs, expected):
     expr = Expr.model_validate(expr_dict)
     user = FakeUser(**user_kwargs)
 
-    eval_result = evaluate(expr, row=row, user=user)
+    eval_result = evaluate(expr, ctx=row, user=user, resolver=RowResolver())
     assert eval_result is expected, (
         f"evaluator: {eval_result}, expected {expected}, expr={expr_dict}"
     )
 
     # Compile the expression to a literal value via a SELECT 1 WHERE <expr>
-    sql_expr = compile_to_sql(expr, user)
+    sql_expr = compile_to_sql(expr, user, TableBinding())
     # We can't run SQL without the DB; instead, verify the rendered SQL
     # contains expected literals/columns. The actual SQL execution is
     # tested in the e2e test_policies.py via real document rows.

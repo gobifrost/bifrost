@@ -6,6 +6,7 @@ would be emitted to the subscriber.
 """
 
 from shared.policies.subscription import decide_visibility_change
+from shared.table_policies import RowResolver
 from src.models.contracts.policies import Expr, TablePolicies
 from tests.unit.policies.test_evaluate import FakeUser
 
@@ -25,7 +26,7 @@ def test_visibility_stays_in():
     pol = _own_row_policies()
     row_old = {"id": "r1", "created_by": str(user.user_id), "v": 1}
     row_new = {"id": "r1", "created_by": str(user.user_id), "v": 2}
-    decision = decide_visibility_change(row_old, row_new, pol, user)
+    decision = decide_visibility_change(row_old, row_new, pol, user, resolver=RowResolver())
     assert decision is not None
     assert decision[0] == "update"
     assert decision[1] == row_new
@@ -37,7 +38,7 @@ def test_visibility_stays_out():
     other = "00000000-0000-0000-0000-000000000999"
     row_old = {"id": "r1", "created_by": other, "v": 1}
     row_new = {"id": "r1", "created_by": other, "v": 2}
-    assert decide_visibility_change(row_old, row_new, pol, user) is None
+    assert decide_visibility_change(row_old, row_new, pol, user, resolver=RowResolver()) is None
 
 
 def test_visibility_gain():
@@ -47,7 +48,7 @@ def test_visibility_gain():
     other = "00000000-0000-0000-0000-000000000999"
     row_old = {"id": "r1", "created_by": other}
     row_new = {"id": "r1", "created_by": str(user.user_id)}
-    decision = decide_visibility_change(row_old, row_new, pol, user)
+    decision = decide_visibility_change(row_old, row_new, pol, user, resolver=RowResolver())
     assert decision is not None
     assert decision[0] == "insert"
     assert decision[1] == row_new
@@ -59,7 +60,7 @@ def test_visibility_loss():
     other = "00000000-0000-0000-0000-000000000999"
     row_old = {"id": "r1", "created_by": str(user.user_id)}
     row_new = {"id": "r1", "created_by": other}
-    decision = decide_visibility_change(row_old, row_new, pol, user)
+    decision = decide_visibility_change(row_old, row_new, pol, user, resolver=RowResolver())
     assert decision == ("delete", "r1")
 
 
@@ -71,5 +72,5 @@ def test_user_filter_narrows_visibility():
     row_old = {"id": "r1", "created_by": str(user.user_id), "status": "open"}
     row_new = {"id": "r1", "created_by": str(user.user_id), "status": "done"}
     # Status flipped from open to done → user filter says no longer visible
-    decision = decide_visibility_change(row_old, row_new, pol, user, user_filter=user_filter)
+    decision = decide_visibility_change(row_old, row_new, pol, user, resolver=RowResolver(), user_filter=user_filter)
     assert decision == ("delete", "r1")

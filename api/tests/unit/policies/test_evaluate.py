@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from shared.policies.evaluate import evaluate
+from shared.table_policies import RowResolver
 from src.models.contracts.policies import Expr
 
 
@@ -28,29 +29,29 @@ def _e(d: dict) -> Expr:
 
 
 def test_eq_literal_literal():
-    assert evaluate(_e({"eq": [1, 1]}), row={}, user=FakeUser()) is True
-    assert evaluate(_e({"eq": [1, 2]}), row={}, user=FakeUser()) is False
+    assert evaluate(_e({"eq": [1, 1]}), ctx={}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(_e({"eq": [1, 2]}), ctx={}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 def test_eq_row_reference():
     expr = _e({"eq": [{"row": "x"}, 5]})
-    assert evaluate(expr, row={"x": 5}, user=FakeUser()) is True
-    assert evaluate(expr, row={"x": 6}, user=FakeUser()) is False
-    assert evaluate(expr, row={}, user=FakeUser()) is False  # missing → null → ne
+    assert evaluate(expr, ctx={"x": 5}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"x": 6}, user=FakeUser(), resolver=RowResolver()) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is False  # missing → null → ne
 
 
 def test_eq_user_reference():
     uid = uuid4()
     user = FakeUser(user_id=uid)
     expr = _e({"eq": [{"row": "owner"}, {"user": "user_id"}]})
-    assert evaluate(expr, row={"owner": str(uid)}, user=user) is True
-    assert evaluate(expr, row={"owner": str(uuid4())}, user=user) is False
+    assert evaluate(expr, ctx={"owner": str(uid)}, user=user, resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"owner": str(uuid4())}, user=user, resolver=RowResolver()) is False
 
 
 def test_user_is_platform_admin():
     expr = _e({"user": "is_platform_admin"})
-    assert evaluate(expr, row={}, user=FakeUser(is_platform_admin=True)) is True
-    assert evaluate(expr, row={}, user=FakeUser(is_platform_admin=False)) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(is_platform_admin=True), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={}, user=FakeUser(is_platform_admin=False), resolver=RowResolver()) is False
 
 
 # --- Logic ---
@@ -63,22 +64,22 @@ def test_and_short_circuits_on_false():
             {"eq": [{"row": "missing"}, 1]},  # would be false too
         ]
     })
-    assert evaluate(expr, row={}, user=FakeUser()) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 def test_and_all_true():
     expr = _e({"and": [{"eq": [1, 1]}, {"eq": [2, 2]}]})
-    assert evaluate(expr, row={}, user=FakeUser()) is True
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is True
 
 
 def test_or_short_circuits_on_true():
     expr = _e({"or": [{"eq": [1, 1]}, {"eq": [{"row": "x"}, 99]}]})
-    assert evaluate(expr, row={}, user=FakeUser()) is True
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is True
 
 
 def test_not():
-    assert evaluate(_e({"not": {"eq": [1, 1]}}), row={}, user=FakeUser()) is False
-    assert evaluate(_e({"not": {"eq": [1, 2]}}), row={}, user=FakeUser()) is True
+    assert evaluate(_e({"not": {"eq": [1, 1]}}), ctx={}, user=FakeUser(), resolver=RowResolver()) is False
+    assert evaluate(_e({"not": {"eq": [1, 2]}}), ctx={}, user=FakeUser(), resolver=RowResolver()) is True
 
 
 # --- Comparisons ---
@@ -86,16 +87,16 @@ def test_not():
 
 def test_lt_lte_gt_gte_numbers():
     user = FakeUser()
-    assert evaluate(_e({"lt": [1, 2]}), row={}, user=user) is True
-    assert evaluate(_e({"lt": [2, 2]}), row={}, user=user) is False
-    assert evaluate(_e({"lte": [2, 2]}), row={}, user=user) is True
-    assert evaluate(_e({"gt": [3, 2]}), row={}, user=user) is True
-    assert evaluate(_e({"gte": [2, 2]}), row={}, user=user) is True
+    assert evaluate(_e({"lt": [1, 2]}), ctx={}, user=user, resolver=RowResolver()) is True
+    assert evaluate(_e({"lt": [2, 2]}), ctx={}, user=user, resolver=RowResolver()) is False
+    assert evaluate(_e({"lte": [2, 2]}), ctx={}, user=user, resolver=RowResolver()) is True
+    assert evaluate(_e({"gt": [3, 2]}), ctx={}, user=user, resolver=RowResolver()) is True
+    assert evaluate(_e({"gte": [2, 2]}), ctx={}, user=user, resolver=RowResolver()) is True
 
 
 def test_neq():
-    assert evaluate(_e({"neq": [1, 2]}), row={}, user=FakeUser()) is True
-    assert evaluate(_e({"neq": [1, 1]}), row={}, user=FakeUser()) is False
+    assert evaluate(_e({"neq": [1, 2]}), ctx={}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(_e({"neq": [1, 1]}), ctx={}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 # --- Membership ---
@@ -104,9 +105,9 @@ def test_neq():
 def test_in_membership():
     user = FakeUser()
     expr = _e({"in": [{"row": "status"}, ["draft", "review"]]})
-    assert evaluate(expr, row={"status": "draft"}, user=user) is True
-    assert evaluate(expr, row={"status": "done"}, user=user) is False
-    assert evaluate(expr, row={}, user=user) is False  # missing
+    assert evaluate(expr, ctx={"status": "draft"}, user=user, resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"status": "done"}, user=user, resolver=RowResolver()) is False
+    assert evaluate(expr, ctx={}, user=user, resolver=RowResolver()) is False  # missing
 
 
 # --- is_null ---
@@ -114,21 +115,21 @@ def test_in_membership():
 
 def test_is_null_missing_field():
     expr = _e({"is_null": {"row": "absent"}})
-    assert evaluate(expr, row={}, user=FakeUser()) is True
-    assert evaluate(expr, row={"absent": "x"}, user=FakeUser()) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"absent": "x"}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 def test_is_null_explicit_null():
     expr = _e({"is_null": {"row": "x"}})
-    assert evaluate(expr, row={"x": None}, user=FakeUser()) is True
+    assert evaluate(expr, ctx={"x": None}, user=FakeUser(), resolver=RowResolver()) is True
 
 
 def test_not_is_null_pattern():
     """Common idiom: 'is set' check."""
     expr = _e({"not": {"is_null": {"row": "manager_user_id"}}})
     user = FakeUser()
-    assert evaluate(expr, row={"manager_user_id": "abc"}, user=user) is True
-    assert evaluate(expr, row={}, user=user) is False
+    assert evaluate(expr, ctx={"manager_user_id": "abc"}, user=user, resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={}, user=user, resolver=RowResolver()) is False
 
 
 # --- Calls ---
@@ -136,14 +137,14 @@ def test_not_is_null_pattern():
 
 def test_has_role_match_by_name():
     expr = _e({"call": "has_role", "args": ["admin"]})
-    assert evaluate(expr, row={}, user=FakeUser(role_names=["admin"])) is True
-    assert evaluate(expr, row={}, user=FakeUser(role_names=["viewer"])) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(role_names=["admin"]), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={}, user=FakeUser(role_names=["viewer"]), resolver=RowResolver()) is False
 
 
 def test_has_role_match_by_uuid_string():
     role_id = uuid4()
     expr = _e({"call": "has_role", "args": [str(role_id)]})
-    assert evaluate(expr, row={}, user=FakeUser(role_ids=[role_id])) is True
+    assert evaluate(expr, ctx={}, user=FakeUser(role_ids=[role_id]), resolver=RowResolver()) is True
 
 
 # --- Realistic policy scenarios ---
@@ -160,11 +161,11 @@ def test_owner_can_edit_open_policy():
         ]
     })
     # Owner, open: allow
-    assert evaluate(policy, row={"created_by": str(uid), "status": "open"}, user=user) is True
+    assert evaluate(policy, ctx={"created_by": str(uid), "status": "open"}, user=user, resolver=RowResolver()) is True
     # Owner, done: deny
-    assert evaluate(policy, row={"created_by": str(uid), "status": "done"}, user=user) is False
+    assert evaluate(policy, ctx={"created_by": str(uid), "status": "done"}, user=user, resolver=RowResolver()) is False
     # Other, open: deny
-    assert evaluate(policy, row={"created_by": str(uuid4()), "status": "open"}, user=user) is False
+    assert evaluate(policy, ctx={"created_by": str(uuid4()), "status": "open"}, user=user, resolver=RowResolver()) is False
 
 
 def test_manager_reads_reports_policy():
@@ -172,15 +173,15 @@ def test_manager_reads_reports_policy():
     mgr_id = uuid4()
     mgr = FakeUser(user_id=mgr_id)
     policy = _e({"eq": [{"row": "manager_user_id"}, {"user": "user_id"}]})
-    assert evaluate(policy, row={"manager_user_id": str(mgr_id)}, user=mgr) is True
-    assert evaluate(policy, row={"manager_user_id": str(uuid4())}, user=mgr) is False
+    assert evaluate(policy, ctx={"manager_user_id": str(mgr_id)}, user=mgr, resolver=RowResolver()) is True
+    assert evaluate(policy, ctx={"manager_user_id": str(uuid4())}, user=mgr, resolver=RowResolver()) is False
 
 
 def test_admin_bypass_policy():
     """Platform admin shortcut."""
     policy = _e({"user": "is_platform_admin"})
-    assert evaluate(policy, row={"any": "row"}, user=FakeUser(is_platform_admin=True)) is True
-    assert evaluate(policy, row={"any": "row"}, user=FakeUser(is_platform_admin=False)) is False
+    assert evaluate(policy, ctx={"any": "row"}, user=FakeUser(is_platform_admin=True), resolver=RowResolver()) is True
+    assert evaluate(policy, ctx={"any": "row"}, user=FakeUser(is_platform_admin=False), resolver=RowResolver()) is False
 
 
 def test_own_org_policy():
@@ -188,8 +189,8 @@ def test_own_org_policy():
     org_id = uuid4()
     user = FakeUser(organization_id=org_id)
     policy = _e({"eq": [{"row": "organization_id"}, {"user": "organization_id"}]})
-    assert evaluate(policy, row={"organization_id": str(org_id)}, user=user) is True
-    assert evaluate(policy, row={"organization_id": str(uuid4())}, user=user) is False
+    assert evaluate(policy, ctx={"organization_id": str(org_id)}, user=user, resolver=RowResolver()) is True
+    assert evaluate(policy, ctx={"organization_id": str(uuid4())}, user=user, resolver=RowResolver()) is False
 
 
 # --- Type semantics ---
@@ -201,21 +202,21 @@ def test_string_eq_with_uuid_value_from_user():
     user = FakeUser(user_id=uid)
     expr = _e({"eq": [{"row": "user_id"}, {"user": "user_id"}]})
     # Row has the UUID as a string (JSONB extraction yields string)
-    assert evaluate(expr, row={"user_id": str(uid)}, user=user) is True
+    assert evaluate(expr, ctx={"user_id": str(uid)}, user=user, resolver=RowResolver()) is True
 
 
 def test_null_propagates_in_eq():
     """eq([missing, anything]) is false (does not error)."""
     expr = _e({"eq": [{"row": "x"}, "value"]})
-    assert evaluate(expr, row={}, user=FakeUser()) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 def test_boolean_field_eq():
     """Boolean fields compare correctly."""
     expr = _e({"eq": [{"row": "enabled"}, True]})
     user = FakeUser()
-    assert evaluate(expr, row={"enabled": True}, user=user) is True
-    assert evaluate(expr, row={"enabled": False}, user=user) is False
+    assert evaluate(expr, ctx={"enabled": True}, user=user, resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"enabled": False}, user=user, resolver=RowResolver()) is False
 
 
 # --- Top-level boolean coercion ---
@@ -224,24 +225,24 @@ def test_boolean_field_eq():
 def test_bare_literal_top_level_coerces_to_bool():
     """A top-level bare literal coerces to bool (truthy → True)."""
     user = FakeUser()
-    assert evaluate(_e({"eq": ["yes", "yes"]}), row={}, user=user) is True
+    assert evaluate(_e({"eq": ["yes", "yes"]}), ctx={}, user=user, resolver=RowResolver()) is True
     # A reference resolving to a non-empty string is truthy
     expr = _e({"eq": [{"row": "x"}, "v"]})
-    assert evaluate(expr, row={"x": "v"}, user=user) is True
+    assert evaluate(expr, ctx={"x": "v"}, user=user, resolver=RowResolver()) is True
 
 
 # --- row=None contract (DELETE events) ---
 
 
 def test_row_none_resolves_refs_to_none():
-    """row=None makes every {"row": ...} reference resolve to None."""
+    """ctx=None makes every {"row": ...} reference resolve to None."""
     user = FakeUser()
     expr = _e({"eq": [{"row": "x"}, "v"]})
     # Null left side -> NULL-as-false
-    assert evaluate(expr, row=None, user=user) is False
+    assert evaluate(expr, ctx=None, user=user, resolver=RowResolver()) is False
     # User-only refs still work
     expr_user = _e({"user": "is_platform_admin"})
-    assert evaluate(expr_user, row=None, user=FakeUser(is_platform_admin=True)) is True
+    assert evaluate(expr_user, ctx=None, user=FakeUser(is_platform_admin=True), resolver=RowResolver()) is True
 
 
 # --- is_null on nested paths ---
@@ -250,10 +251,10 @@ def test_row_none_resolves_refs_to_none():
 def test_is_null_nested_missing_path():
     """is_null on a nested path where an intermediate is missing."""
     expr = _e({"is_null": {"row": "a.b.c"}})
-    assert evaluate(expr, row={}, user=FakeUser()) is True
-    assert evaluate(expr, row={"a": None}, user=FakeUser()) is True
-    assert evaluate(expr, row={"a": "scalar"}, user=FakeUser()) is True
-    assert evaluate(expr, row={"a": {"b": {"c": "v"}}}, user=FakeUser()) is False
+    assert evaluate(expr, ctx={}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"a": None}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"a": "scalar"}, user=FakeUser(), resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"a": {"b": {"c": "v"}}}, user=FakeUser(), resolver=RowResolver()) is False
 
 
 # --- in-membership with mixed types ---
@@ -264,10 +265,10 @@ def test_in_membership_mixed_types():
     expr = _e({"in": [{"row": "x"}, [1, "1"]]})
     user = FakeUser()
     # String "1" matches the literal "1" in the list
-    assert evaluate(expr, row={"x": "1"}, user=user) is True
+    assert evaluate(expr, ctx={"x": "1"}, user=user, resolver=RowResolver()) is True
     # Int 1 matches the literal 1 in the list
-    assert evaluate(expr, row={"x": 1}, user=user) is True
-    assert evaluate(expr, row={"x": 2}, user=user) is False
+    assert evaluate(expr, ctx={"x": 1}, user=user, resolver=RowResolver()) is True
+    assert evaluate(expr, ctx={"x": 2}, user=user, resolver=RowResolver()) is False
 
 
 # --- eq against literal None is rejected at validate time ---
@@ -280,4 +281,4 @@ def test_eq_against_literal_none_rejected():
     with pytest.raises(ValidationError, match="use is_null"):
         _e({"eq": [{"row": "x"}, None]})
     # The correct shape:
-    assert evaluate(_e({"is_null": {"row": "x"}}), row={"x": None}, user=user) is True
+    assert evaluate(_e({"is_null": {"row": "x"}}), ctx={"x": None}, user=user, resolver=RowResolver()) is True

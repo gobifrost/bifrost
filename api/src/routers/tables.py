@@ -20,9 +20,11 @@ from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
-from shared.policies.probe import (
+from shared.policies.probe import evaluate_action
+from shared.table_policies import (
+    RowResolver,
+    TablePolicies,
     compile_read_filter,
-    evaluate_action,
     make_seed_admin_bypass,
 )
 from src.core.auth import Context, CurrentSuperuser, UserPrincipal
@@ -32,7 +34,6 @@ from src.core.org_filter import OrgFilterType, resolve_org_filter, resolve_targe
 from src.models.contracts.policies import (
     PolicyValidationError,
     PolicyValidationResponse,
-    TablePolicies,
 )
 from src.models.contracts.tables import (
     DocumentBatchCreate,
@@ -156,7 +157,7 @@ async def _check_action_or_403(
     mutation or only after read-only operations.
     """
     policies = _load_policies(table)
-    if evaluate_action(action, policies, row, user):
+    if evaluate_action(action, policies, row, user, resolver=RowResolver()):
         return
 
     # Resolve the row id only when it's actually a UUID.
@@ -1321,7 +1322,7 @@ async def batch_documents(
             if existing is not None:
                 pre_existing[i] = existing
                 if not evaluate_action(
-                    "update", policies, _row_from_doc(existing), ctx.user
+                    "update", policies, _row_from_doc(existing), ctx.user, resolver=RowResolver()
                 ):
                     denied.append(i)
                 continue
@@ -1331,7 +1332,7 @@ async def batch_documents(
             "created_by": item_created_by,
             "updated_by": item_updated_by,
         }
-        if not evaluate_action("create", policies, candidate_row, ctx.user):
+        if not evaluate_action("create", policies, candidate_row, ctx.user, resolver=RowResolver()):
             denied.append(i)
 
     if denied:
@@ -1419,7 +1420,7 @@ async def batch_delete_documents(
             continue
         existing_by_index[i] = existing
         if not evaluate_action(
-            "delete", policies, _row_from_doc(existing), ctx.user
+            "delete", policies, _row_from_doc(existing), ctx.user, resolver=RowResolver()
         ):
             denied.append(i)
 
