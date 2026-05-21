@@ -17,6 +17,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	ArrowRightLeft,
+	AppWindow,
 } from "lucide-react";
 import {
 	Dialog,
@@ -53,7 +54,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { AppLogoPicker } from "@/components/applications/AppLogoPicker";
+import { LogoDropZone } from "@/components/LogoDropZone";
 import { AppReplacePathDialog } from "@/components/applications/AppReplacePathDialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -278,14 +279,29 @@ export function AppInfoDialog({
 		<Dialog open={open} onOpenChange={handleClose}>
 			<DialogContent className="sm:max-w-[500px]">
 				<DialogHeader>
-					<DialogTitle>
-						{isEditing ? "Edit Application" : "Create Application"}
-					</DialogTitle>
-					<DialogDescription>
-						{isEditing
-							? "Update the application settings"
-							: "Configure your new application"}
-					</DialogDescription>
+					<div className="flex items-start gap-4">
+						{isEditing && existingApp ? (
+							<LogoDropZone
+								uploadUrl={`/api/applications/${existingApp.id}/logo`}
+								deleteUrl={`/api/applications/${existingApp.id}/logo`}
+								previewUrl={`/api/applications/${existingApp.id}/logo`}
+								fallback={<AppWindow className="h-6 w-6" />}
+								size={64}
+							/>
+						) : null}
+						<div className="min-w-0 flex-1">
+							<DialogTitle>
+								{isEditing
+									? "Edit Application"
+									: "Create Application"}
+							</DialogTitle>
+							<DialogDescription>
+								{isEditing
+									? "Update the application settings"
+									: "Configure your new application"}
+							</DialogDescription>
+						</div>
+					</div>
 				</DialogHeader>
 
 				{isEditing && isLoadingApp ? (
@@ -370,20 +386,6 @@ export function AppInfoDialog({
 									</FormItem>
 								)}
 							/>
-
-							{/* Logo — only available when editing an existing app */}
-							{isEditing && existingApp && (
-								<FormItem>
-									<FormLabel>Logo</FormLabel>
-									<FormControl>
-										<AppLogoPicker
-											applicationId={existingApp.id}
-											onUploaded={() => {}}
-											onRemoved={() => {}}
-										/>
-									</FormControl>
-								</FormItem>
-							)}
 
 							{/* Description */}
 							<FormField

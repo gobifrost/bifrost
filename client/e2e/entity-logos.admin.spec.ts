@@ -5,9 +5,9 @@
  * and for an agent via the detail-page drop zone. Verifies the rendered
  * <img> on each card after upload.
  *
- * Component-level logic is covered by EntityLogo/AppLogoPicker/
- * AgentLogoDropZone vitest. API round-trip is covered by
- * api/tests/e2e/api/test_entity_logos.py. This spec is the wire-up test.
+ * Component-level logic is covered by EntityLogo/LogoDropZone vitest.
+ * API round-trip is covered by api/tests/e2e/api/test_entity_logos.py.
+ * This spec is the wire-up test.
  */
 
 import { test, expect } from "./fixtures/api-fixture";
@@ -51,13 +51,13 @@ test.describe("Entity logos", () => {
 				page.getByRole("heading", { name: /edit application/i }),
 			).toBeVisible();
 
-			// The file input has aria-label="Upload logo" but is visually hidden.
-			// Playwright's setInputFiles works on hidden inputs.
-			const fileInput = page.locator('input[aria-label="Upload logo"]');
+			// The hidden file input lives inside the logo drop zone.
+			const fileInput = page
+				.locator('[data-testid="logo-drop-zone"] input[type="file"]');
 			await fileInput.setInputFiles(FIXTURE_PNG);
 
 			// Confirmation toast appears
-			await expect(page.getByText("Logo updated")).toBeVisible();
+			await expect(page.getByText("Image updated")).toBeVisible();
 
 			// Close the dialog and navigate to the apps list
 			await page.keyboard.press("Escape");
@@ -98,14 +98,14 @@ test.describe("Entity logos", () => {
 			await page.goto(`/agents/${agentId}`);
 
 			// Wait for the drop zone to be present (it only renders once agent data loads).
-			await page.waitForSelector('[data-testid="agent-logo-zone"]');
+			await page.waitForSelector('[data-testid="logo-drop-zone"]');
 
 			// The hidden file input lives inside the drop zone.
 			const fileInput = page
-				.locator('[data-testid="agent-logo-zone"] input[type="file"]');
+				.locator('[data-testid="logo-drop-zone"] input[type="file"]');
 			await fileInput.setInputFiles(FIXTURE_PNG);
 
-			await expect(page.getByText("Logo updated")).toBeVisible();
+			await expect(page.getByText("Image updated")).toBeVisible();
 
 			await page.goto("/agents");
 

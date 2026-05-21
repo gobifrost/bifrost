@@ -14,6 +14,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { toast } from "sonner";
 import {
 	ArrowLeft,
+	Bot,
 	Loader2,
 	MessageSquare,
 	Pause,
@@ -29,7 +30,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { AgentLogoDropZone } from "@/components/agents/AgentLogoDropZone";
+import { LogoDropZone } from "@/components/LogoDropZone";
 import { AgentOverviewTab } from "@/components/agents/AgentOverviewTab";
 import { AgentRunsTab } from "@/components/agents/AgentRunsTab";
 import { AgentSettingsTab } from "@/components/agents/AgentSettingsTab";
@@ -139,13 +140,12 @@ export function AgentDetailPage() {
 			<div className="flex flex-wrap items-start justify-between gap-4">
 				<div className="flex items-start gap-3 min-w-0 flex-1">
 					{!isCreate && agent ? (
-						<AgentLogoDropZone
-							agentId={agent.id ?? ""}
-							agentName={agent.name ?? ""}
-							onUploaded={() => {
-								/* EntityLogo internally cache-busts via cacheKey; no refetch needed */
-							}}
-							size={40}
+						<LogoDropZone
+							uploadUrl={`/api/agents/${agent.id}/logo`}
+							deleteUrl={`/api/agents/${agent.id}/logo`}
+							previewUrl={`/api/agents/${agent.id}/logo`}
+							fallback={<Bot className="h-5 w-5" />}
+							size={48}
 						/>
 					) : null}
 					<div className="min-w-0 flex-1">

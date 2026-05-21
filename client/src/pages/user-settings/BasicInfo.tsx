@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
 	Card,
 	CardContent,
@@ -9,13 +9,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import {
 	Loader2,
-	Camera,
-	Trash2,
 	AlertCircle,
 	Check,
 	Eye,
@@ -23,6 +20,7 @@ import {
 } from "lucide-react";
 import { profileService, type ProfileResponse } from "@/services/profile";
 import { useAuth } from "@/contexts/AuthContext";
+import { LogoDropZone } from "@/components/LogoDropZone";
 
 export function BasicInfo() {
 	const { user } = useAuth();
@@ -33,13 +31,6 @@ export function BasicInfo() {
 	// Profile form state
 	const [name, setName] = useState("");
 	const [savingName, setSavingName] = useState(false);
-
-	// Avatar state
-	const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-	const [uploadingAvatar, setUploadingAvatar] = useState(false);
-	const [deletingAvatar, setDeletingAvatar] = useState(false);
-	const [isDragging, setIsDragging] = useState(false);
-	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	// Password form state
 	const [currentPassword, setCurrentPassword] = useState("");
@@ -58,12 +49,6 @@ export function BasicInfo() {
 				const data = await profileService.getProfile();
 				setProfile(data);
 				setName(data.name || "");
-				if (data.has_avatar) {
-					// Add cache-busting timestamp
-					setAvatarUrl(
-						`${profileService.getAvatarUrl()}?t=${Date.now()}`,
-					);
-				}
 			} catch (err) {
 				console.error("Failed to load profile:", err);
 				setError("Failed to load profile. Please try again.");
@@ -94,78 +79,6 @@ export function BasicInfo() {
 			setSavingName(false);
 		}
 	};
-
-	// Handle avatar upload
-	const handleAvatarUpload = async (file: File) => {
-		// Validate file type
-		if (!["image/png", "image/jpeg", "image/jpg"].includes(file.type)) {
-			toast.error("Please upload a PNG or JPEG image");
-			return;
-		}
-
-		// Validate file size (2MB max)
-		if (file.size > 2 * 1024 * 1024) {
-			toast.error("Image must be less than 2MB");
-			return;
-		}
-
-		setUploadingAvatar(true);
-		try {
-			const updated = await profileService.uploadAvatar(file);
-			setProfile(updated);
-			setAvatarUrl(`${profileService.getAvatarUrl()}?t=${Date.now()}`);
-			toast.success("Avatar uploaded");
-		} catch (err) {
-			console.error("Failed to upload avatar:", err);
-			toast.error("Failed to upload avatar");
-		} finally {
-			setUploadingAvatar(false);
-		}
-	};
-
-	// Handle avatar delete
-	const handleDeleteAvatar = async () => {
-		setDeletingAvatar(true);
-		try {
-			const updated = await profileService.deleteAvatar();
-			setProfile(updated);
-			setAvatarUrl(null);
-			toast.success("Avatar removed");
-		} catch (err) {
-			console.error("Failed to delete avatar:", err);
-			toast.error("Failed to delete avatar");
-		} finally {
-			setDeletingAvatar(false);
-		}
-	};
-
-	// Handle file input change
-	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		const file = e.target.files?.[0];
-		if (file) {
-			handleAvatarUpload(file);
-		}
-	};
-
-	// Handle drag and drop
-	const handleDragOver = useCallback((e: React.DragEvent) => {
-		e.preventDefault();
-		setIsDragging(true);
-	}, []);
-
-	const handleDragLeave = useCallback((e: React.DragEvent) => {
-		e.preventDefault();
-		setIsDragging(false);
-	}, []);
-
-	const handleDrop = useCallback((e: React.DragEvent) => {
-		e.preventDefault();
-		setIsDragging(false);
-		const file = e.dataTransfer.files[0];
-		if (file) {
-			handleAvatarUpload(file);
-		}
-	}, []);
 
 	// Handle password change/set
 	const handleChangePassword = async () => {
@@ -275,83 +188,29 @@ export function BasicInfo() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
-					<div className="flex items-start gap-6">
-						{/* Avatar Preview */}
-						<div
-							className={`relative group cursor-pointer ${isDragging ? "ring-2 ring-primary ring-offset-2" : ""}`}
-							onDragOver={handleDragOver}
-							onDragLeave={handleDragLeave}
-							onDrop={handleDrop}
-							onClick={() => fileInputRef.current?.click()}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" || e.key === " ") {
-									e.preventDefault();
-									fileInputRef.current?.click();
-								}
-							}}
-							tabIndex={0}
-							role="button"
-							aria-label="Upload profile picture"
-						>
-							<Avatar className="h-24 w-24">
-								<AvatarImage src={avatarUrl || undefined} />
-								<AvatarFallback className="text-2xl">
-									{getInitials()}
-								</AvatarFallback>
-							</Avatar>
-							<div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-								{uploadingAvatar ? (
-									<Loader2 className="h-6 w-6 text-white animate-spin" />
-								) : (
-									<Camera className="h-6 w-6 text-white" />
-								)}
-							</div>
-							<input
-								ref={fileInputRef}
-								type="file"
-								accept="image/png,image/jpeg,image/jpg"
-								onChange={handleFileChange}
-								className="hidden"
-							/>
-						</div>
-
-						{/* Upload Instructions & Actions */}
-						<div className="flex-1 space-y-3">
-							<div className="text-sm text-muted-foreground">
-								<p>
-									Click on the avatar or drag and drop an
-									image.
-								</p>
-								<p className="mt-1">
-									Recommended: Square image, at least
-									128x128px.
-								</p>
-							</div>
-							{profile?.has_avatar && (
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={(e) => {
-										e.stopPropagation();
-										handleDeleteAvatar();
-									}}
-									disabled={deletingAvatar}
-								>
-									{deletingAvatar ? (
-										<>
-											<Loader2 className="h-4 w-4 mr-2 animate-spin" />
-											Removing...
-										</>
-									) : (
-										<>
-											<Trash2 className="h-4 w-4 mr-2" />
-											Remove picture
-										</>
-									)}
-								</Button>
-							)}
-						</div>
-					</div>
+					<LogoDropZone
+						uploadUrl="/api/profile/avatar"
+						deleteUrl="/api/profile/avatar"
+						previewUrl="/api/profile/avatar"
+						fallback={
+							<span className="text-2xl font-medium">
+								{getInitials()}
+							</span>
+						}
+						shape="circle"
+						size={96}
+						accept="image/png,image/jpeg,image/jpg"
+						maxBytes={2 * 1024 * 1024}
+						ariaLabel="Upload profile picture"
+						onChange={async () => {
+							try {
+								const fresh = await profileService.getProfile();
+								setProfile(fresh);
+							} catch {
+								/* preview cache-busts itself */
+							}
+						}}
+					/>
 				</CardContent>
 			</Card>
 
