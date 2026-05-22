@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -32,6 +32,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCreateUser } from "@/hooks/useUsers";
 import { useRoles, useAssignUsersToRole } from "@/hooks/useRoles";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePlatformAdminOrgSelection } from "./platformAdminOrg";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
 
@@ -62,29 +64,19 @@ function CreateUserDialogContent({
 	const assignUsersToRole = useAssignUsersToRole();
 	const { data: organizations, isLoading: orgsLoading } = useOrganizations();
 	const { data: allRoles } = useRoles();
+	const { user: currentUser } = useAuth();
 
 	const roles = useMemo(() => (allRoles ?? []) as Role[], [allRoles]);
 
-	// Find the provider org (for auto-selecting when platform admin is chosen)
-	const providerOrg = organizations?.find((org: Organization) => org.is_provider);
-
-	useEffect(() => {
-		if (isPlatformAdmin && providerOrg && orgId !== providerOrg.id) {
-			setOrgId(providerOrg.id);
-		}
-	}, [isPlatformAdmin, orgId, providerOrg]);
-
-	// Auto-select provider org when switching to platform admin
-	const handleUserTypeChange = (value: string) => {
-		const isAdmin = value === "platform";
-		setIsPlatformAdmin(isAdmin);
-		if (isAdmin && providerOrg) {
-			setOrgId(providerOrg.id);
-		} else if (!isAdmin && orgId === providerOrg?.id) {
-			// Clear provider org if switching to org user
-			setOrgId("");
-		}
-	};
+	const { effectiveOrgId, handleUserTypeChange } =
+		usePlatformAdminOrgSelection({
+			organizations,
+			currentUser,
+			isPlatformAdmin,
+			setIsPlatformAdmin,
+			orgId,
+			setOrgId,
+		});
 
 	const toggleRole = (roleId: string) => {
 		setSelectedRoleIds((prev) => {
@@ -121,7 +113,7 @@ function CreateUserDialogContent({
 			setValidationError("Please enter a display name");
 			return false;
 		}
-		if (!orgId) {
+		if (!effectiveOrgId) {
 			setValidationError("Please select an organization");
 			return false;
 		}
@@ -143,7 +135,7 @@ function CreateUserDialogContent({
 					name: displayName.trim(),
 					is_active: true,
 					is_superuser: isPlatformAdmin,
-					organization_id: orgId || null,
+					organization_id: effectiveOrgId || null,
 				},
 			});
 
