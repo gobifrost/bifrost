@@ -61,14 +61,13 @@ import {
 	BulkResultDialog,
 	BulkSetActiveDialog,
 } from "@/components/users/BulkUserDialogs";
-import type { components as v1 } from "@/lib/v1";
 import {
 	useRegenerateInvite,
 	useResendInvite,
 	useRevokeInvite,
 } from "@/hooks/useUserInvites";
 import { toast } from "sonner";
-import type { components } from "@/lib/v1";
+import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
 
