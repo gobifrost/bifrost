@@ -70,7 +70,7 @@ class TestIndexPlatformDocs:
     def mock_embedding_client(self):
         """Mock embedding client that returns fake embeddings."""
         client = AsyncMock()
-        client.embed_single = AsyncMock(return_value=[0.1] * 1536)
+        client.embed = AsyncMock(return_value=[[0.1] * 1536])
         return client
 
     @pytest.fixture
@@ -78,7 +78,7 @@ class TestIndexPlatformDocs:
         """Mock knowledge repository."""
         repo = AsyncMock()
         repo.get_all_by_namespace = AsyncMock(return_value={})
-        repo.store = AsyncMock(return_value="doc-id-123")
+        repo.store_chunked = AsyncMock(return_value=["doc-id-123"])
         repo.delete_orphaned_docs = AsyncMock(return_value=0)
         return repo
 
@@ -137,7 +137,7 @@ class TestIndexPlatformDocs:
         assert result["indexed"] == 2  # Two test files
         assert result["skipped"] == 0
         assert result["deleted"] == 0
-        assert mock_embedding_client.embed_single.call_count == 2
+        assert mock_knowledge_repo.store_chunked.call_count == 2
 
     @pytest.mark.asyncio
     async def test_skips_unchanged_docs(
@@ -197,7 +197,7 @@ class TestIndexPlatformDocs:
         assert result["status"] == "complete"
         assert result["indexed"] == 0  # Nothing new
         assert result["skipped"] == 2  # Both skipped
-        assert mock_embedding_client.embed_single.call_count == 0  # No API calls!
+        assert mock_knowledge_repo.store_chunked.call_count == 0
 
     @pytest.mark.asyncio
     async def test_reindexes_changed_docs(
@@ -254,7 +254,7 @@ class TestIndexPlatformDocs:
         assert result["status"] == "complete"
         assert result["indexed"] == 1  # Only changed doc
         assert result["skipped"] == 1  # Unchanged doc
-        assert mock_embedding_client.embed_single.call_count == 1
+        assert mock_knowledge_repo.store_chunked.call_count == 1
 
     @pytest.mark.asyncio
     async def test_deletes_orphaned_docs(
@@ -327,14 +327,15 @@ class TestIndexPlatformDocs:
         ):
             await index_platform_docs()
 
-        # Check that store was called with content_hash in metadata
-        store_calls = mock_knowledge_repo.store.call_args_list
+        # Check that store_chunked was called with content_hash in metadata
+        store_calls = mock_knowledge_repo.store_chunked.call_args_list
         assert len(store_calls) == 2
 
         for call in store_calls:
             metadata = call.kwargs["metadata"]
             assert "content_hash" in metadata
             assert len(metadata["content_hash"]) == 64  # SHA-256
+            assert call.kwargs["embedder"] is mock_embedding_client
 
     @pytest.mark.asyncio
     async def test_skips_when_no_embedding_config(self, mock_docs_path: Path):

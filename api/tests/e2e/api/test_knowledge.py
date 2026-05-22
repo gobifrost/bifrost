@@ -125,6 +125,106 @@ class TestKnowledgeStoreBasicOperations:
         top_keys = [r["key"] for r in results[:2]]
         assert "ml-intro" in top_keys or "nn-intro" in top_keys
 
+    def test_long_document_search_returns_chunked_content(
+        self,
+        e2e_client,
+        platform_admin,
+        embedding_config_setup,
+        knowledge_cleanup,
+    ):
+        """Long documents are chunked transparently and keep metadata filters."""
+        long_content = (
+            "# Resetting MFA\n\n"
+            + ("Detailed MFA reset instructions step by step. " * 80)
+            + "\n\n# Resetting Password\n\n"
+            + ("Detailed password reset instructions. " * 80)
+            + "\n\n# Unlocking AD Account\n\n"
+            + ("Detailed AD unlock instructions. " * 80)
+        )
+
+        store_response = e2e_client.post(
+            "/api/cli/knowledge/store",
+            headers=platform_admin.headers,
+            json={
+                "content": long_content,
+                "namespace": "e2e-chunking",
+                "key": "article-1",
+                "metadata": {"client_id": "acme", "doc_type": "runbook"},
+            },
+        )
+        assert store_response.status_code == 200, f"Store failed: {store_response.text}"
+
+        search_response = e2e_client.post(
+            "/api/cli/knowledge/search",
+            headers=platform_admin.headers,
+            json={
+                "query": "how do I unlock an AD account",
+                "namespace": ["e2e-chunking"],
+                "limit": 5,
+            },
+        )
+        assert search_response.status_code == 200, f"Search failed: {search_response.text}"
+        results = search_response.json()
+        assert len(results) >= 1
+        assert all(len(result["content"]) < 4000 for result in results)
+
+        top_content = results[0]["content"].lower()
+        assert "unlock" in top_content or "ad" in top_content
+
+        filtered_response = e2e_client.post(
+            "/api/cli/knowledge/search",
+            headers=platform_admin.headers,
+            json={
+                "query": "anything",
+                "namespace": ["e2e-chunking"],
+                "limit": 5,
+                "metadata_filter": {"client_id": "acme"},
+            },
+        )
+        assert filtered_response.status_code == 200, (
+            f"Filtered search failed: {filtered_response.text}"
+        )
+        filtered_results = filtered_response.json()
+        assert len(filtered_results) >= 1
+        assert all(
+            result["metadata"]["client_id"] == "acme"
+            for result in filtered_results
+        )
+
+    def test_search_dedupes_chunked_document_by_key(
+        self,
+        e2e_client,
+        platform_admin,
+        embedding_config_setup,
+        knowledge_cleanup,
+    ):
+        """A multi-chunk document appears at most once in default search."""
+        long_content = ("Body content sentence. " * 500).strip()
+        store_response = e2e_client.post(
+            "/api/cli/knowledge/store",
+            headers=platform_admin.headers,
+            json={
+                "content": long_content,
+                "namespace": "e2e-dedup",
+                "key": "single-doc",
+                "metadata": {},
+            },
+        )
+        assert store_response.status_code == 200, f"Store failed: {store_response.text}"
+
+        search_response = e2e_client.post(
+            "/api/cli/knowledge/search",
+            headers=platform_admin.headers,
+            json={
+                "query": "body",
+                "namespace": ["e2e-dedup"],
+                "limit": 5,
+            },
+        )
+        assert search_response.status_code == 200, f"Search failed: {search_response.text}"
+        results = search_response.json()
+        assert len([result for result in results if result.get("key") == "single-doc"]) <= 1
+
     def test_delete_document(
         self,
         e2e_client,

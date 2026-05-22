@@ -29,6 +29,7 @@ from src.models.contracts.notifications import (
     NotificationUpdate,
 )
 from src.models.orm.knowledge import KnowledgeStore
+from src.repositories.knowledge import KnowledgeRepository
 from src.services.embeddings.factory import get_embedding_client
 from src.services.notification_service import get_notification_service
 
@@ -77,6 +78,54 @@ async def clear_cancel_flag(notification_id: str) -> None:
         logger.warning(f"Failed to clear cancel flag for {notification_id}: {e}")
 
 
+async def run_reindex_for_group(
+    db,
+    embedder,
+    *,
+    namespace: str,
+    organization_id,
+    key: str,
+) -> int:
+    """
+    Re-chunk and re-embed rows under (namespace, organization_id, key).
+
+    Returns the number of chunks written. Cancellation and progress reporting
+    are handled by the caller.
+    """
+    stmt = (
+        select(KnowledgeStore)
+        .where(
+            KnowledgeStore.namespace == namespace,
+            KnowledgeStore.key == key,
+        )
+        .order_by(KnowledgeStore.chunk_index)
+    )
+    if organization_id is not None:
+        stmt = stmt.where(KnowledgeStore.organization_id == organization_id)
+    else:
+        stmt = stmt.where(KnowledgeStore.organization_id.is_(None))
+
+    rows = (await db.execute(stmt)).scalars().all()
+    if not rows:
+        return 0
+
+    full_content = "".join(row.content for row in rows)
+    metadata = rows[0].doc_metadata
+    created_by = rows[0].created_by
+
+    repo = KnowledgeRepository(db, org_id=organization_id, is_superuser=True)
+    new_ids = await repo.store_chunked(
+        content=full_content,
+        namespace=namespace,
+        key=key,
+        metadata=metadata,
+        organization_id=organization_id,
+        created_by=created_by,
+        embedder=embedder,
+    )
+    return len(new_ids)
+
+
 async def run_reindex(notification_id: str) -> None:
     """
     Re-embed every row in knowledge_store against the saved embedding config.
@@ -98,19 +147,31 @@ async def run_reindex(notification_id: str) -> None:
 
     try:
         async with get_db_context() as db:
-            # Count first so we can compute progress percent and surface
-            # "no rows" as an immediate completed-with-zero state.
-            total_result = await db.execute(
-                select(KnowledgeStore.id).execution_options(yield_per=None)
+            groups_result = await db.execute(
+                select(
+                    KnowledgeStore.namespace,
+                    KnowledgeStore.organization_id,
+                    KnowledgeStore.key,
+                )
+                .where(KnowledgeStore.key.is_not(None))
+                .distinct()
             )
-            row_ids = [row[0] for row in total_result.all()]
-            total = len(row_ids)
+            groups = groups_result.all()
+
+            keyless_result = await db.execute(
+                select(KnowledgeStore.id, KnowledgeStore.content).where(
+                    KnowledgeStore.key.is_(None)
+                )
+            )
+            keyless_rows = keyless_result.all()
+
+            total = len(groups) + len(keyless_rows)
 
             await notif_service.update_notification(
                 notification_id,
                 NotificationUpdate(
                     status=NotificationStatus.RUNNING,
-                    description=f"Re-embedding {total} rows...",
+                    description=f"Re-embedding {total} knowledge document(s)...",
                     percent=0.0 if total > 0 else 100.0,
                 ),
             )
@@ -129,12 +190,9 @@ async def run_reindex(notification_id: str) -> None:
 
             client = await get_embedding_client(db)
 
-            total_batches = (total + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE
+            total_batches = total
 
-            # Embedding API calls happen in batches (round-trip efficiency).
-            # Progress notifications fire per-row so the UI sees real-time motion.
-            # Cancellation is checked between embed-batches.
-            for batch_start in range(0, total, EMBED_BATCH_SIZE):
+            for namespace, org_id, key in groups:
                 if await is_cancelled(notification_id):
                     await notif_service.update_notification(
                         notification_id,
@@ -155,52 +213,71 @@ async def run_reindex(notification_id: str) -> None:
                     )
                     return
 
-                batch_ids = row_ids[batch_start : batch_start + EMBED_BATCH_SIZE]
-
-                # Pull the content for this batch.
-                rows_result = await db.execute(
-                    select(KnowledgeStore.id, KnowledgeStore.content).where(
-                        KnowledgeStore.id.in_(batch_ids)
-                    )
-                )
-                batch_rows = rows_result.all()
-                if not batch_rows:
-                    continue
-
-                texts = [row.content for row in batch_rows]
-
                 try:
-                    embeddings = await client.embed(texts)
+                    await run_reindex_for_group(
+                        db,
+                        client,
+                        namespace=namespace,
+                        organization_id=org_id,
+                        key=key,
+                    )
+                    await db.commit()
                 except Exception as e:
                     failed_batches += 1
-                    logger.error(
-                        f"Reindex batch {batch_start}-{batch_start + len(batch_rows)} "
-                        f"failed: {e}"
-                    )
-                    # Skip the batch; the rows keep their old embeddings.
-                    # Do NOT bump `processed` — that counter reflects rows
-                    # whose embedding was actually rewritten. Bumping it on
-                    # failure produced the "Reindexed N/N" lie that hid the
-                    # original incident (issue #198).
+                    logger.error(f"Reindex group {namespace}/{org_id}/{key} failed: {e}")
+                    await db.rollback()
                     await _push_progress(
                         notif_service, notification_id, processed, total
                     )
                     continue
 
-                # Update each row, push progress after each. pgvector +
-                # SQLAlchemy doesn't have a nice executemany for vector params
-                # but round-trips are bounded to a single connection.
-                for row, vector in zip(batch_rows, embeddings):
+                processed += 1
+                await _push_progress(
+                    notif_service, notification_id, processed, total
+                )
+
+            for row in keyless_rows:
+                if await is_cancelled(notification_id):
+                    await notif_service.update_notification(
+                        notification_id,
+                        NotificationUpdate(
+                            status=NotificationStatus.CANCELLED,
+                            description=(
+                                f"Cancelled after {processed}/{total} rows. "
+                                "Partial state retained."
+                            ),
+                            result={
+                                "processed": processed,
+                                "total": total,
+                                "failed_batches": failed_batches,
+                                "total_batches": total_batches,
+                                "cancelled": True,
+                            },
+                        ),
+                    )
+                    return
+
+                try:
+                    vector = await client.embed_single(row.content)
                     await db.execute(
                         update(KnowledgeStore)
                         .where(KnowledgeStore.id == row.id)
                         .values(embedding=vector)
                     )
                     await db.commit()
-                    processed += 1
+                except Exception as e:
+                    failed_batches += 1
+                    logger.error(f"Reindex keyless row {row.id} failed: {e}")
+                    await db.rollback()
                     await _push_progress(
                         notif_service, notification_id, processed, total
                     )
+                    continue
+
+                processed += 1
+                await _push_progress(
+                    notif_service, notification_id, processed, total
+                )
 
             # Terminal status reflects the real outcome:
             #   all batches failed   → FAILED (no rows rewritten)
@@ -226,11 +303,11 @@ async def run_reindex(notification_id: str) -> None:
                     ),
                 )
             else:
-                description = f"Reindexed {processed}/{total} rows."
+                description = f"Reindexed {processed}/{total} knowledge document(s)."
                 if failed_batches:
                     description += (
-                        f" ({failed_batches}/{total_batches} batches failed; "
-                        f"{total - processed} row(s) kept their old embedding.)"
+                        f" ({failed_batches}/{total_batches} document(s) failed; "
+                        f"{total - processed} kept their old embedding.)"
                     )
                 await notif_service.update_notification(
                     notification_id,
@@ -274,7 +351,7 @@ async def _push_progress(
         notification_id,
         NotificationUpdate(
             status=NotificationStatus.RUNNING,
-            description=f"Re-embedded {processed}/{total} rows...",
+            description=f"Re-embedded {processed}/{total} knowledge document(s)...",
             percent=percent,
         ),
     )
@@ -321,6 +398,7 @@ async def count_knowledge_rows_at_other_dims(target_dim: int) -> int:
 __all__ = [
     "EMBED_BATCH_SIZE",
     "run_reindex",
+    "run_reindex_for_group",
     "is_cancelled",
     "mark_cancelled",
     "clear_cancel_flag",

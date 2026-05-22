@@ -9,7 +9,9 @@ is exercised via an e2e test against real DB + redis.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
+from src.models.orm.knowledge import KnowledgeStore
 from src.services.embeddings import reindex
 
 
@@ -70,6 +72,48 @@ async def test_clear_cancel_flag(mock_redis):
 
 
 @pytest.mark.asyncio
+async def test_run_reindex_for_group_rechunks_legacy_giant_row(db_session):
+    legacy = KnowledgeStore(
+        namespace="halo_kb",
+        organization_id=None,
+        key="legacy-1",
+        content=("Long article content. " * 500).strip(),
+        doc_metadata={"client_id": "acme"},
+        embedding=[0.1] * 8,
+        chunk_index=0,
+        chunk_count=1,
+    )
+    db_session.add(legacy)
+    await db_session.flush()
+
+    class _Embedder:
+        async def embed(self, texts):
+            return [[0.2] * 8 for _ in texts]
+
+        async def embed_single(self, text):
+            return [0.2] * 8
+
+    await reindex.run_reindex_for_group(
+        db_session,
+        _Embedder(),
+        namespace="halo_kb",
+        organization_id=None,
+        key="legacy-1",
+    )
+
+    rows = (
+        await db_session.execute(
+            select(KnowledgeStore)
+            .where(KnowledgeStore.key == "legacy-1")
+            .order_by(KnowledgeStore.chunk_index)
+        )
+    ).scalars().all()
+    assert len(rows) >= 4
+    assert all(row.chunk_count == len(rows) for row in rows)
+    assert all(row.doc_metadata == {"client_id": "acme"} for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_run_reindex_completes_immediately_when_no_rows():
     """An empty knowledge store should flip the notification to COMPLETED with
     processed=0, not blow up trying to embed nothing."""
@@ -110,10 +154,13 @@ async def test_run_reindex_bails_on_cancellation_before_first_batch():
     notif_service.update_notification = AsyncMock()
 
     db = AsyncMock()
-    # Pretend there are 5 rows.
-    rows_result = MagicMock()
-    rows_result.all = MagicMock(return_value=[(f"id-{i}",) for i in range(5)])
-    db.execute = AsyncMock(return_value=rows_result)
+    groups_result = MagicMock()
+    groups_result.all = MagicMock(
+        return_value=[("ns", None, f"key-{i}") for i in range(5)]
+    )
+    keyless_result = MagicMock()
+    keyless_result.all = MagicMock(return_value=[])
+    db.execute = AsyncMock(side_effect=[groups_result, keyless_result])
 
     db_ctx = AsyncMock()
     db_ctx.__aenter__ = AsyncMock(return_value=db)
@@ -160,34 +207,13 @@ async def test_run_reindex_marks_failed_when_every_batch_fails():
     notif_service.update_notification = AsyncMock()
 
     db = AsyncMock()
-    # 600 rows → 3 batches of 256 (256 + 256 + 88).
-    row_count = 600
-    rows_result = MagicMock()
-    rows_result.all = MagicMock(return_value=[(f"id-{i}",) for i in range(row_count)])
-
-    # Per-batch content lookup: returns (id, content) tuples.
-    def make_content_result(start, end):
-        r = MagicMock()
-        # The reindex code uses `row.content`, so produce row-shaped objects
-        # rather than plain tuples.
-        rows = []
-        for i in range(start, end):
-            row = MagicMock()
-            row.id = f"id-{i}"
-            row.content = f"text-{i}"
-            rows.append(row)
-        r.all = MagicMock(return_value=rows)
-        return r
-
-    # First execute() returns ids; subsequent ones return per-batch content.
-    db.execute = AsyncMock(
-        side_effect=[
-            rows_result,
-            make_content_result(0, 256),
-            make_content_result(256, 512),
-            make_content_result(512, 600),
-        ]
+    groups_result = MagicMock()
+    groups_result.all = MagicMock(
+        return_value=[("ns", None, f"key-{i}") for i in range(3)]
     )
+    keyless_result = MagicMock()
+    keyless_result.all = MagicMock(return_value=[])
+    db.execute = AsyncMock(side_effect=[groups_result, keyless_result])
 
     db_ctx = AsyncMock()
     db_ctx.__aenter__ = AsyncMock(return_value=db)
@@ -203,6 +229,11 @@ async def test_run_reindex_marks_failed_when_every_batch_fails():
         patch.object(reindex, "is_cancelled", AsyncMock(return_value=False)),
         patch.object(
             reindex, "get_embedding_client", AsyncMock(return_value=embedding_client)
+        ),
+        patch.object(
+            reindex,
+            "run_reindex_for_group",
+            AsyncMock(side_effect=RuntimeError("provider broken")),
         ),
     ):
         await reindex.run_reindex("nid")
@@ -226,39 +257,13 @@ async def test_run_reindex_partial_failure_completes_with_failed_batch_count():
     notif_service.update_notification = AsyncMock()
 
     db = AsyncMock()
-    row_count = 600
-    rows_result = MagicMock()
-    rows_result.all = MagicMock(
-        return_value=[(f"id-{i}",) for i in range(row_count)]
+    groups_result = MagicMock()
+    groups_result.all = MagicMock(
+        return_value=[("ns", None, f"key-{i}") for i in range(3)]
     )
-
-    def make_content_result(start, end):
-        r = MagicMock()
-        # The reindex code uses `row.content`, so produce row-shaped objects
-        # rather than plain tuples.
-        rows = []
-        for i in range(start, end):
-            row = MagicMock()
-            row.id = f"id-{i}"
-            row.content = f"text-{i}"
-            rows.append(row)
-        r.all = MagicMock(return_value=rows)
-        return r
-
-    # Many execute() calls — the per-row UPDATE issues one each. We only
-    # care that the IDs and per-batch content are correct in order; the
-    # UPDATE results are unused.
-    db.execute = AsyncMock(
-        side_effect=[
-            rows_result,
-            make_content_result(0, 256),
-            *[MagicMock() for _ in range(256)],  # UPDATEs for batch 0
-            make_content_result(256, 512),
-            # Batch 1 fails, no UPDATEs.
-            make_content_result(512, 600),
-            *[MagicMock() for _ in range(88)],  # UPDATEs for batch 2
-        ]
-    )
+    keyless_result = MagicMock()
+    keyless_result.all = MagicMock(return_value=[])
+    db.execute = AsyncMock(side_effect=[groups_result, keyless_result])
 
     db_ctx = AsyncMock()
     db_ctx.__aenter__ = AsyncMock(return_value=db)
@@ -283,18 +288,22 @@ async def test_run_reindex_partial_failure_completes_with_failed_batch_count():
         patch.object(
             reindex, "get_embedding_client", AsyncMock(return_value=embedding_client)
         ),
+        patch.object(
+            reindex,
+            "run_reindex_for_group",
+            AsyncMock(side_effect=[2, RuntimeError("provider blip"), 2]),
+        ),
     ):
         await reindex.run_reindex("nid")
 
     final_call = notif_service.update_notification.await_args_list[-1]
     final_update = final_call.args[1]
     assert final_update.status.value == "completed"
-    # 256 + 88 rows actually rewritten; batch 1's 256 rows skipped.
-    assert final_update.result["processed"] == 344
+    assert final_update.result["processed"] == 2
     assert final_update.result["failed_batches"] == 1
     assert final_update.result["total_batches"] == 3
-    assert final_update.result["total"] == 600
-    assert "1/3 batches failed" in final_update.description
+    assert final_update.result["total"] == 3
+    assert "1/3 document(s) failed" in final_update.description
 
 
 @pytest.mark.asyncio

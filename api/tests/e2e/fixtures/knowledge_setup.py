@@ -43,7 +43,15 @@ def knowledge_cleanup(
     cleans up any documents created during the test.
     """
     # Clean up any existing knowledge for org1 before test
-    namespaces_to_clean = ["e2e-test", "e2e-isolation", "e2e-org1", "e2e-org2", "e2e-global"]
+    namespaces_to_clean = [
+        "e2e-test",
+        "e2e-isolation",
+        "e2e-org1",
+        "e2e-org2",
+        "e2e-global",
+        "e2e-chunking",
+        "e2e-dedup",
+    ]
 
     for ns in namespaces_to_clean:
         try:

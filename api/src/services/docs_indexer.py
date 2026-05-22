@@ -118,12 +118,8 @@ async def index_platform_docs() -> dict[str, Any]:
                     skipped_count += 1
                     continue
 
-            # Generate embedding via LLM API (no DB connection held)
-            embedding = await embedding_client.embed_single(content)
-
             docs_to_upsert.append({
                 "content": content,
-                "embedding": embedding,
                 "key": key,
                 "content_hash": content_hash,
             })
@@ -140,9 +136,8 @@ async def index_platform_docs() -> dict[str, Any]:
         repo = KnowledgeRepository(db, org_id=None, is_superuser=True)
 
         for doc in docs_to_upsert:
-            await repo.store(
+            await repo.store_chunked(
                 content=doc["content"],
-                embedding=doc["embedding"],
                 namespace=NAMESPACE,
                 key=doc["key"],
                 metadata={
@@ -151,6 +146,7 @@ async def index_platform_docs() -> dict[str, Any]:
                     "indexed_at": indexed_at,
                     "content_hash": doc["content_hash"],
                 },
+                embedder=embedding_client,
             )
 
         if current_keys:

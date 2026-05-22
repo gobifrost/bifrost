@@ -2032,20 +2032,19 @@ async def cli_knowledge_store(
         org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Generate embedding
         embedding_client = await get_embedding_client(db)
-        embedding = await embedding_client.embed_single(request.content)
 
         # Store document
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
-        doc_id = await repo.store(
+        doc_ids = await repo.store_chunked(
             content=request.content,
-            embedding=embedding,
             namespace=request.namespace,
             key=request.key,
             metadata=request.metadata,
             created_by=current_user.user_id,
+            embedder=embedding_client,
         )
+        doc_id = doc_ids[0]
 
         await db.commit()
 
@@ -2082,25 +2081,21 @@ async def cli_knowledge_store_many(
         org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Extract contents for batch embedding
-        contents = [doc["content"] for doc in request.documents]
-
-        # Batch generate embeddings
         embedding_client = await get_embedding_client(db)
-        embeddings = await embedding_client.embed(contents)
 
         # Store each document
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
         doc_ids = []
-        for doc, embedding in zip(request.documents, embeddings):
-            doc_id = await repo.store(
+        for doc in request.documents:
+            inserted_ids = await repo.store_chunked(
                 content=doc["content"],
-                embedding=embedding,
                 namespace=request.namespace,
                 key=doc.get("key"),
                 metadata=doc.get("metadata"),
                 created_by=current_user.user_id,
+                embedder=embedding_client,
             )
+            doc_id = inserted_ids[0]
             doc_ids.append(doc_id)
 
         await db.commit()
@@ -2593,5 +2588,4 @@ async def cli_list_tables(
         )
         for t in tables
     ]
-
 

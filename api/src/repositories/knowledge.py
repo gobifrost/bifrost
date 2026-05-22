@@ -11,10 +11,11 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.dialects.postgresql import insert
 
 from src.models.orm import KnowledgeStore
 from src.repositories.org_scoped import OrgScopedRepository
+from src.services.embeddings import BaseEmbeddingClient
+from src.services.knowledge.chunking import split_into_chunks
 
 
 @dataclass
@@ -58,76 +59,75 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
     model = KnowledgeStore
     role_table = None  # No RBAC - SDK-only access
 
-    async def store(
+    async def store_chunked(
         self,
         content: str,
-        embedding: list[float],
         namespace: str = "default",
         key: str | None = None,
         metadata: dict[str, Any] | None = None,
         organization_id: UUID | None = None,
         created_by: UUID | None = None,
-    ) -> str:
+        embedder: BaseEmbeddingClient | None = None,
+    ) -> list[str]:
         """
-        Store a document with its embedding.
+        Store a document as one or more embedded chunks.
 
-        If key is provided and exists, updates the existing document (upsert).
+        If key is provided, existing rows for that key are atomically replaced
+        so upsert semantics are preserved across any number of chunks.
 
         Args:
             content: Text content
-            embedding: Vector embedding
             namespace: Namespace for organization
             key: Optional user-provided key for upserts
             metadata: Optional metadata dict
             organization_id: Organization scope (None for global). Defaults to self.org_id.
             created_by: User who created the document
+            embedder: Embedding client used to embed every chunk
 
         Returns:
-            Document ID (UUID as string)
+            Inserted document IDs (UUID strings), in chunk_index order.
         """
-        # Use self.org_id as default if not explicitly provided
+        if embedder is None:
+            raise ValueError("store_chunked requires an embedder")
+
         target_org_id = organization_id if organization_id is not None else self.org_id
-        if key:
-            # Use upsert for key-based storage
-            # Build values dict using column objects to avoid SQLAlchemy MetaData conflict
-            # (the column is named 'metadata' which conflicts with SQLAlchemy's MetaData class)
-            metadata_col = KnowledgeStore.__table__.c.metadata
-            values = {
-                KnowledgeStore.namespace: namespace,
-                KnowledgeStore.organization_id: target_org_id,
-                KnowledgeStore.key: key,
-                KnowledgeStore.content: content,
-                metadata_col: metadata or {},
-                KnowledgeStore.embedding: embedding,
-                KnowledgeStore.created_by: created_by,
-            }
-            stmt = insert(KnowledgeStore).values(values)
-            stmt = stmt.on_conflict_do_update(
-                constraint="uq_knowledge_ns_org_key",
-                set_={
-                    "content": stmt.excluded.content,
-                    "metadata": stmt.excluded.metadata,
-                    "embedding": stmt.excluded.embedding,
-                    "updated_at": func.now(),
-                },
+        chunks = split_into_chunks(content)
+        embeddings = await embedder.embed(chunks)
+
+        if len(embeddings) != len(chunks):
+            raise ValueError(
+                f"Embedder returned {len(embeddings)} embeddings for {len(chunks)} chunks"
             )
-            stmt = stmt.returning(KnowledgeStore.id)
-            result = await self.session.execute(stmt)
-            doc_id = result.scalar_one()
-            return str(doc_id)
-        else:
-            # No key - just insert
-            doc = KnowledgeStore(
+
+        if key is not None:
+            stmt = delete(KnowledgeStore).where(
+                KnowledgeStore.key == key,
+                KnowledgeStore.namespace == namespace,
+            )
+            if target_org_id is not None:
+                stmt = stmt.where(KnowledgeStore.organization_id == target_org_id)
+            else:
+                stmt = stmt.where(KnowledgeStore.organization_id.is_(None))
+            await self.session.execute(stmt)
+
+        chunk_count = len(chunks)
+        rows = [
+            KnowledgeStore(
                 namespace=namespace,
                 organization_id=target_org_id,
-                content=content,
+                key=key,
+                content=chunk,
                 doc_metadata=metadata or {},
                 embedding=embedding,
                 created_by=created_by,
+                chunk_index=index,
+                chunk_count=chunk_count,
             )
-            self.session.add(doc)
-            await self.session.flush()
-            return str(doc.id)
+            for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        ]
+        self.session.add_all(rows)
+        await self.session.flush()
+        return [str(row.id) for row in rows]
 
     async def search(
         self,
@@ -138,6 +138,7 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         min_score: float | None = None,
         metadata_filter: dict[str, Any] | None = None,
         fallback: bool = True,
+        group_by_key: bool = True,
     ) -> list[KnowledgeDocument]:
         """
         Search for similar documents using vector similarity.
@@ -150,6 +151,7 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             min_score: Minimum similarity score (0-1)
             metadata_filter: Filter by metadata fields
             fallback: If True, also search global scope
+            group_by_key: If True, return at most one chunk per keyed document
 
         Returns:
             List of KnowledgeDocument sorted by similarity
@@ -193,14 +195,15 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
                     KnowledgeStore.doc_metadata.contains({key: value})
                 )
 
-        # Order by similarity (higher score = more similar)
         stmt = stmt.order_by(score_expr.desc())
-        stmt = stmt.limit(limit)
+        raw_limit = limit * 4 if group_by_key else limit
+        stmt = stmt.limit(raw_limit)
 
         result = await self.session.execute(stmt)
         rows = result.all()
 
-        documents = []
+        documents: list[KnowledgeDocument] = []
+        seen_keys: set[tuple[str, str | None, str]] = set()
         for row in rows:
             doc = row[0]
             score = row[1]
@@ -208,6 +211,16 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             # Filter by min_score if specified
             if min_score is not None and score < min_score:
                 continue
+
+            if group_by_key and doc.key is not None:
+                dedup_key = (
+                    doc.namespace,
+                    str(doc.organization_id) if doc.organization_id else None,
+                    doc.key,
+                )
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
 
             documents.append(
                 KnowledgeDocument(
@@ -221,6 +234,8 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
                     created_at=doc.created_at,
                 )
             )
+            if len(documents) >= limit:
+                break
 
         return documents
 
