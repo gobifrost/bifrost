@@ -8,6 +8,7 @@ import {
 	ExternalLink,
 	GitBranch,
 	Info,
+	Boxes,
 	Network,
 	ServerCog,
 	ShieldAlert,
@@ -60,6 +61,22 @@ interface GraphEdge {
 	summary: string;
 }
 
+interface OrchestratorTarget {
+	id: string;
+	label: string;
+	runtime: "VM" | "AKS" | "ACA" | "Other";
+	status: GraphStatus;
+	summary: string;
+	details: Array<{
+		label: string;
+		value: string;
+	}>;
+	links: Array<{
+		label: string;
+		target: string;
+	}>;
+}
+
 interface GraphStatusFixture {
 	environment: string;
 	instance: string;
@@ -68,6 +85,7 @@ interface GraphStatusFixture {
 	impact: GraphImpact;
 	nodes: GraphNode[];
 	edges: GraphEdge[];
+	orchestrators?: OrchestratorTarget[];
 }
 
 const generatedAt = "2026-05-14T00:00:00Z";
@@ -108,6 +126,24 @@ const causalEdge = (
 	kind: "causal",
 	status,
 	summary,
+});
+
+const orchestratorTarget = (
+	id: string,
+	label: string,
+	runtime: OrchestratorTarget["runtime"],
+	status: GraphStatus,
+	summary: string,
+	details: OrchestratorTarget["details"],
+	links: OrchestratorTarget["links"] = [],
+): OrchestratorTarget => ({
+	id,
+	label,
+	runtime,
+	status,
+	summary,
+	details,
+	links,
 });
 
 const graphStatus: GraphStatusFixture = {
@@ -228,6 +264,45 @@ const graphStatus: GraphStatusFixture = {
 			"External integrations are advisory until tied to active workflow impact.",
 		),
 	],
+	orchestrators: [
+		orchestratorTarget(
+			"vm-compose-workers",
+			"VM Compose workers",
+			"VM",
+			"Healthy",
+			"Steady worker fallback remains on the Azure VM.",
+			[
+				{ label: "Runtime", value: "Docker Compose" },
+				{ label: "Placement", value: "Azure VM" },
+				{ label: "Role", value: "Fallback execution capacity" },
+			],
+			[{ label: "Open Diagnostics", target: "/diagnostics" }],
+		),
+		orchestratorTarget(
+			"aks-worker-lane",
+			"AKS worker lane",
+			"AKS",
+			"Unknown",
+			"AKS scaling facts are reported when the live infrastructure feed includes them.",
+			[
+				{ label: "Worker pods", value: "reported by live feed" },
+				{ label: "KEDA", value: "reported by live feed" },
+				{ label: "Nodepool", value: "reported by live feed" },
+			],
+			[{ label: "Open Diagnostics", target: "/diagnostics" }],
+		),
+		orchestratorTarget(
+			"aca-worker-lane",
+			"ACA worker lane",
+			"ACA",
+			"Disabled",
+			"ACA worker apps are expected to stay drained during the AKS transition.",
+			[
+				{ label: "Desired state", value: "0 active worker revisions" },
+				{ label: "Rollback", value: "container app definitions retained" },
+			],
+		),
+	],
 };
 
 const INFRASTRUCTURE_STATUS_URL = "/infrastructure/status.json";
@@ -245,7 +320,9 @@ function isGraphStatusFixture(value: unknown): value is GraphStatusFixture {
 		typeof candidate.status === "string" &&
 		typeof candidate.impact === "string" &&
 		Array.isArray(candidate.nodes) &&
-		Array.isArray(candidate.edges)
+		Array.isArray(candidate.edges) &&
+		(candidate.orchestrators === undefined ||
+			Array.isArray(candidate.orchestrators))
 	);
 }
 
@@ -409,6 +486,70 @@ function EdgeList({ edges }: Readonly<{ edges: GraphEdge[] }>) {
 	);
 }
 
+const runtimeIcons: Record<OrchestratorTarget["runtime"], React.ElementType> = {
+	VM: ServerCog,
+	AKS: Boxes,
+	ACA: Network,
+	Other: Info,
+};
+
+function OrchestratorList({
+	orchestrators,
+}: Readonly<{ orchestrators: OrchestratorTarget[] }>) {
+	return (
+		<div className="grid gap-4 lg:grid-cols-3">
+			{orchestrators.map((target) => {
+				const Icon = runtimeIcons[target.runtime] ?? Info;
+				return (
+					<Card key={target.id}>
+						<CardHeader className="pb-3">
+							<CardTitle className="flex items-start justify-between gap-3 text-base">
+								<span className="flex min-w-0 items-center gap-2">
+									<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+									<span>{target.label}</span>
+								</span>
+								<StatusBadge status={target.status} />
+							</CardTitle>
+							<CardDescription>{target.summary}</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-3">
+							<div className="grid gap-2 text-sm">
+								{target.details.map((detail) => (
+									<div
+										key={`${target.id}-${detail.label}`}
+										className="flex items-start justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2"
+									>
+										<span className="text-muted-foreground">
+											{detail.label}
+										</span>
+										<span className="text-right font-medium">
+											{detail.value}
+										</span>
+									</div>
+								))}
+							</div>
+							{target.links.length > 0 ? (
+								<div className="flex flex-wrap gap-2">
+									{target.links.map((link) => (
+										<Button
+											key={`${target.id}-${link.label}`}
+											asChild
+											size="sm"
+											variant="outline"
+										>
+											<Link to={link.target}>{link.label}</Link>
+										</Button>
+									))}
+								</div>
+							) : null}
+						</CardContent>
+					</Card>
+				);
+			})}
+		</div>
+	);
+}
+
 export function InfrastructureStatus() {
 	const { status: infrastructureStatus, source, loadError } =
 		useInfrastructureStatus();
@@ -427,6 +568,8 @@ export function InfrastructureStatus() {
 	const degradedSummary = `${degradedCount} ${
 		degradedCount === 1 ? "domain is" : "domains are"
 	} degraded`;
+	const orchestrators =
+		infrastructureStatus.orchestrators ?? graphStatus.orchestrators ?? [];
 	const attentionDescription =
 		blockedCount > 0
 			? `${blockedSummary} and ${degradedSummary}.`
@@ -517,6 +660,16 @@ export function InfrastructureStatus() {
 			<section className="space-y-3" aria-label="Causal dependencies">
 				<h2 className="text-xl font-semibold">Causal Edges</h2>
 				<EdgeList edges={infrastructureStatus.edges} />
+			</section>
+
+			<section className="space-y-3" aria-label="Orchestrator details">
+				<div className="flex items-center justify-between">
+					<h2 className="text-xl font-semibold">Orchestrator Detail</h2>
+					<Badge variant="secondary">Operator view</Badge>
+				</div>
+				<OrchestratorList
+					orchestrators={orchestrators}
+				/>
 			</section>
 
 			<section className="space-y-3" aria-label="Operator notes">

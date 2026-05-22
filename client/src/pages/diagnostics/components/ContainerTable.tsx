@@ -1,6 +1,6 @@
 // client/src/pages/diagnostics/components/ContainerTable.tsx
 import { Fragment, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Cloud, Server, Boxes } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/tooltip";
 
 type PoolData = PoolSummary | PoolDetail;
+type RuntimeKind = "AKS" | "VM" | "ACA" | "Unknown";
 
 function formatUptime(seconds: number): string {
     if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -71,6 +72,43 @@ function getUptimeSeconds(pool: PoolData): number {
     return (Date.now() - new Date(startedAt).getTime()) / 1000;
 }
 
+function getRuntimeKind(pool: PoolData): RuntimeKind {
+    const workerId = pool.worker_id.toLowerCase();
+    const hostname = (pool.hostname ?? "").toLowerCase();
+    const source = `${workerId} ${hostname}`;
+
+    if (source.includes("aks") || source.includes("k8s")) {
+        return "AKS";
+    }
+    if (source.includes("aca") || source.includes("containerapp")) {
+        return "ACA";
+    }
+    if (/^[a-f0-9]{12}$/.test(workerId) || source.includes("compose") || source.includes("docker")) {
+        return "VM";
+    }
+    return "Unknown";
+}
+
+function RuntimeBadge({ pool }: Readonly<{ pool: PoolData }>) {
+    const runtime = getRuntimeKind(pool);
+    const Icon = runtime === "AKS" ? Boxes : runtime === "ACA" ? Cloud : Server;
+    const label =
+        runtime === "AKS"
+            ? "AKS pod"
+            : runtime === "ACA"
+                ? "ACA app"
+                : runtime === "VM"
+                    ? "VM"
+                    : "Unknown";
+
+    return (
+        <Badge variant="outline" className="gap-1 text-[10px]">
+            <Icon className="h-3 w-3" />
+            {label}
+        </Badge>
+    );
+}
+
 interface ContainerTableProps {
     pools: PoolData[];
     /** Sorted worker IDs for consistent color assignment (same as chart) */
@@ -104,6 +142,7 @@ export function ContainerTable({ pools, workerIds }: ContainerTableProps) {
                     <TableRow className="text-xs">
                         <TableHead className="w-8" />
                         <TableHead>Container</TableHead>
+                        <TableHead className="w-[100px]">Runtime</TableHead>
                         <TableHead className="w-[80px]">Status</TableHead>
                         <TableHead className="w-[100px]">Forks</TableHead>
                         <TableHead className="w-[200px]">Memory</TableHead>
@@ -179,6 +218,9 @@ export function ContainerTable({ pools, workerIds }: ContainerTableProps) {
                                         </div>
                                     </TableCell>
                                     <TableCell>
+                                        <RuntimeBadge pool={pool} />
+                                    </TableCell>
+                                    <TableCell>
                                         <Badge
                                             variant={
                                                 pool.status === "online"
@@ -234,7 +276,7 @@ export function ContainerTable({ pools, workerIds }: ContainerTableProps) {
                                         counts.processes.length > 0 && (
                                             <TableRow>
                                                 <TableCell
-                                                    colSpan={6}
+                                                    colSpan={7}
                                                     className="p-0 bg-muted/30"
                                                 >
                                                     <motion.div

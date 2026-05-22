@@ -38,6 +38,9 @@ describe("InfrastructureStatus", () => {
 		expect(
 			screen.getByText(/External integrations are third-party systems/i),
 		).toBeInTheDocument();
+		expect(screen.getByText("Orchestrator Detail")).toBeInTheDocument();
+		expect(screen.getByText("AKS worker lane")).toBeInTheDocument();
+		expect(screen.getByText("ACA worker lane")).toBeInTheDocument();
 	});
 
 	it("keeps external integrations advisory in the instance rollup", () => {
@@ -83,6 +86,20 @@ describe("InfrastructureStatus", () => {
 						},
 					],
 					edges: [],
+					orchestrators: [
+						{
+							id: "aks-worker-lane",
+							label: "AKS worker lane",
+							runtime: "AKS",
+							status: "Healthy",
+							summary: "3 pods running with KEDA max 6.",
+							details: [
+								{ label: "Pods", value: "3 / 6" },
+								{ label: "Nodepool", value: "1 / 3 nodes" },
+							],
+							links: [{ label: "Open Diagnostics", target: "/diagnostics" }],
+						},
+					],
 				}),
 				{ headers: { "Content-Type": "application/json" }, status: 200 },
 			),
@@ -92,6 +109,8 @@ describe("InfrastructureStatus", () => {
 
 		expect(await screen.findByText("Live feed")).toBeInTheDocument();
 		expect(screen.getByText("Live API status loaded.")).toBeInTheDocument();
+		expect(screen.getByText("3 pods running with KEDA max 6.")).toBeInTheDocument();
+		expect(screen.getByText("1 / 3 nodes")).toBeInTheDocument();
 		expect(screen.queryByText("Fallback snapshot")).not.toBeInTheDocument();
 		expect(globalThis.fetch).toHaveBeenCalledWith(
 			"/infrastructure/status.json",
