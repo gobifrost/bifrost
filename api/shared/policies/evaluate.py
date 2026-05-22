@@ -92,7 +92,7 @@ def _eval_call(node: dict, row: dict | None, user: Any) -> bool:
     target = node["call"]
     args = [_eval_node(a, row, user) for a in node.get("args", [])]
     fn = FUNCTIONS[target]
-    return fn.evaluate(args, user, row)
+    return fn.evaluate(args, user, row or {})
 
 
 def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
