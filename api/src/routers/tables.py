@@ -25,6 +25,7 @@ from shared.policies.probe import (
     evaluate_action,
     make_seed_admin_bypass,
 )
+from shared.claims.registry import referenced_claim_names
 from src.core.auth import Context, CurrentSuperuser, UserPrincipal
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
@@ -52,6 +53,7 @@ from src.models.contracts.tables import (
     TableUpdate,
 )
 from src.models.orm.tables import Document, Table
+from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.repositories.org_scoped import OrgScopedRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
 from src.services.audit import emit_audit
@@ -659,6 +661,48 @@ def _resolve_target_org_safe(ctx: Context, scope: str | None) -> UUID | None:
         )
 
 
+def _validate_policy_claim_refs(
+    expr: object,
+    known_claim_names: set[str],
+) -> None:
+    """Reject policy claim references not defined in the table's org."""
+    refs = referenced_claim_names(expr)
+    missing = refs - known_claim_names
+    if missing:
+        raise ValueError(
+            f"policy references unknown claims: {sorted(missing)}; "
+            f"defined in this org: {sorted(known_claim_names)}"
+        )
+
+
+async def _known_claim_names_for_org(
+    db: AsyncSession,
+    organization_id: UUID | None,
+) -> set[str]:
+    if organization_id is None:
+        return set()
+    rows = (
+        await db.execute(
+            select(CustomClaimORM.name).where(
+                CustomClaimORM.organization_id == organization_id
+            )
+        )
+    ).scalars().all()
+    return set(rows)
+
+
+async def _validate_table_policy_claim_refs(
+    db: AsyncSession,
+    organization_id: UUID | None,
+    policies: TablePolicies | None,
+) -> None:
+    if policies is None:
+        return
+    known = await _known_claim_names_for_org(db, organization_id)
+    for policy in policies.policies:
+        _validate_policy_claim_refs(policy.when, known)
+
+
 async def get_table_or_404(
     ctx: Context,
     name_or_id: str,
@@ -730,8 +774,15 @@ async def create_table(
         target_org_id = _resolve_target_org_safe(ctx, scope)
     else:
         target_org_id = ctx.org_id
-    repo = TableRepository(ctx.db, target_org_id, is_superuser=True)
+    try:
+        await _validate_table_policy_claim_refs(ctx.db, target_org_id, data.policies)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
 
+    repo = TableRepository(ctx.db, target_org_id, is_superuser=True)
     try:
         table = await repo.create_table(data, created_by=user.email)
         return TablePublic.model_validate(table)
@@ -935,6 +986,27 @@ async def update_table(
     user: CurrentSuperuser,
 ) -> TablePublic:
     """Update table metadata by ID (platform admin only)."""
+    if "policies" in data.model_fields_set:
+        existing_table = (
+            await ctx.db.execute(select(Table).where(Table.id == table_id))
+        ).scalar_one_or_none()
+        if existing_table is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table '{table_id}' not found",
+            )
+        try:
+            await _validate_table_policy_claim_refs(
+                ctx.db,
+                existing_table.organization_id,
+                data.policies,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(e),
+            )
+
     repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
     try:
         table = await repo.update_table(table_id, data)
