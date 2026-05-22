@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
 	Activity,
@@ -229,6 +230,77 @@ const graphStatus: GraphStatusFixture = {
 	],
 };
 
+const INFRASTRUCTURE_STATUS_URL = "/infrastructure/status.json";
+
+function isGraphStatusFixture(value: unknown): value is GraphStatusFixture {
+	if (!value || typeof value !== "object") {
+		return false;
+	}
+
+	const candidate = value as Partial<GraphStatusFixture>;
+	return (
+		typeof candidate.environment === "string" &&
+		typeof candidate.instance === "string" &&
+		typeof candidate.generated_at === "string" &&
+		typeof candidate.status === "string" &&
+		typeof candidate.impact === "string" &&
+		Array.isArray(candidate.nodes) &&
+		Array.isArray(candidate.edges)
+	);
+}
+
+function useInfrastructureStatus() {
+	const [status, setStatus] = useState(graphStatus);
+	const [source, setSource] = useState<"live" | "fallback">("fallback");
+	const [loadError, setLoadError] = useState<string | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		async function loadStatus() {
+			try {
+				const response = await fetch(INFRASTRUCTURE_STATUS_URL, {
+					cache: "no-store",
+					headers: { Accept: "application/json" },
+				});
+
+				if (!response.ok) {
+					throw new Error(`status endpoint returned ${response.status}`);
+				}
+
+				const payload: unknown = await response.json();
+				if (!isGraphStatusFixture(payload)) {
+					throw new Error("status endpoint returned an unexpected payload");
+				}
+
+				if (!cancelled) {
+					setStatus(payload);
+					setSource("live");
+					setLoadError(null);
+				}
+			} catch (error) {
+				if (!cancelled) {
+					setStatus(graphStatus);
+					setSource("fallback");
+					setLoadError(
+						error instanceof Error
+							? error.message
+							: "status endpoint could not be loaded",
+					);
+				}
+			}
+		}
+
+		void loadStatus();
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	return { status, source, loadError };
+}
+
 const statusStyles: Record<GraphStatus, string> = {
 	Healthy: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
 	Advisory: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
@@ -338,7 +410,9 @@ function EdgeList({ edges }: Readonly<{ edges: GraphEdge[] }>) {
 }
 
 export function InfrastructureStatus() {
-	const degradedNodes = graphStatus.nodes.filter(
+	const { status: infrastructureStatus, source, loadError } =
+		useInfrastructureStatus();
+	const degradedNodes = infrastructureStatus.nodes.filter(
 		(node) => node.status === "Degraded" || node.status === "Blocked",
 	);
 	const blockedCount = degradedNodes.filter(
@@ -366,7 +440,7 @@ export function InfrastructureStatus() {
 						<h1 className="scroll-m-20 text-4xl font-extrabold tracking-tight lg:text-5xl">
 							Infrastructure Status
 						</h1>
-						<StatusBadge status={graphStatus.status} />
+						<StatusBadge status={infrastructureStatus.status} />
 					</div>
 					<p className="max-w-3xl leading-7 text-muted-foreground">
 						Read-only instance map for runtime health, pressure,
@@ -374,18 +448,37 @@ export function InfrastructureStatus() {
 					</p>
 				</div>
 				<div className="rounded-lg border bg-muted/30 p-4 text-sm">
-					<div className="font-medium">{graphStatus.instance}</div>
+					<div className="font-medium">{infrastructureStatus.instance}</div>
 					<div className="mt-1 text-muted-foreground">
-						{graphStatus.environment} environment
+						{infrastructureStatus.environment} environment
 					</div>
 					<div className="mt-3 flex flex-wrap gap-2">
-						<Badge variant="outline">{graphStatus.impact} impact</Badge>
 						<Badge variant="outline">
-							Sampled {formatTimestamp(graphStatus.generated_at)}
+							{infrastructureStatus.impact} impact
+						</Badge>
+						<Badge variant="outline">
+							Sampled {formatTimestamp(infrastructureStatus.generated_at)}
+						</Badge>
+						<Badge variant={source === "live" ? "secondary" : "outline"}>
+							{source === "live" ? "Live feed" : "Fallback snapshot"}
 						</Badge>
 					</div>
 				</div>
 			</div>
+
+			{loadError ? (
+				<Card className="border-sky-500/40 bg-sky-500/5">
+					<CardHeader className="pb-3">
+						<CardTitle className="flex items-center gap-2 text-base">
+							<Info className="h-4 w-4 text-sky-600" />
+							Using fallback snapshot
+						</CardTitle>
+						<CardDescription>
+							Live infrastructure status could not be loaded: {loadError}.
+						</CardDescription>
+					</CardHeader>
+				</Card>
+			) : null}
 
 			{degradedNodes.length > 0 ? (
 				<Card className="border-amber-500/40 bg-amber-500/5">
@@ -415,7 +508,7 @@ export function InfrastructureStatus() {
 					<Badge variant="secondary">Read-only</Badge>
 				</div>
 				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-					{graphStatus.nodes.map((node) => (
+					{infrastructureStatus.nodes.map((node) => (
 						<InfrastructureNode key={node.id} node={node} />
 					))}
 				</div>
@@ -423,13 +516,13 @@ export function InfrastructureStatus() {
 
 			<section className="space-y-3" aria-label="Causal dependencies">
 				<h2 className="text-xl font-semibold">Causal Edges</h2>
-				<EdgeList edges={graphStatus.edges} />
+				<EdgeList edges={infrastructureStatus.edges} />
 			</section>
 
 			<section className="space-y-3" aria-label="Operator notes">
 				<h2 className="text-xl font-semibold">What Each Layer Proves</h2>
 				<div className="grid gap-4 lg:grid-cols-2">
-					{graphStatus.nodes.map((node) => (
+					{infrastructureStatus.nodes.map((node) => (
 						<Card key={`${node.id}-details`}>
 							<CardHeader className="pb-3">
 								<CardTitle className="flex items-center justify-between gap-3 text-base">
