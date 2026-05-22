@@ -1,0 +1,33 @@
+{
+  "name": "bifrost",
+  "version": "0.9.2-dev.5",
+  "description": "Bifrost — MSP automation platform. Skills for building workflows, forms, agents, and apps with the Bifrost SDK + CLI, setting up local Bifrost development, and packaging Bifrost agents as Microsoft 365 Copilot Cowork plugins.",
+  "author": {
+    "name": "Jack Musick",
+    "url": "https://github.com/jackmusick/bifrost"
+  },
+  "homepage": "https://github.com/jackmusick/bifrost",
+  "repository": "https://github.com/jackmusick/bifrost",
+  "license": "AGPL-3.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bifrost",
+    "shortDescription": "Build, set up, and package Bifrost automation artifacts",
+    "longDescription": "Use Bifrost skills to build workflows, forms, agents, and apps with the Bifrost SDK and CLI; set up local Bifrost development; and package Bifrost agents as Microsoft 365 Copilot Cowork plugins.",
+    "developerName": "Jack Musick",
+    "category": "Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Help me build a Bifrost workflow, form, agent, or app.",
+      "Set up this project for local Bifrost development.",
+      "Package a Bifrost agent as a Microsoft 365 Copilot Cowork plugin."
+    ],
+    "websiteURL": "https://github.com/jackmusick/bifrost",
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

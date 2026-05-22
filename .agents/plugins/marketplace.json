@@ -8,7 +8,7 @@
       "name": "bifrost",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./plugins/bifrost"
       },
       "policy": {
         "installation": "AVAILABLE",
