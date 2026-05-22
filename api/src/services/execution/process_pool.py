@@ -33,7 +33,7 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from queue import Empty
 from typing import Any, Awaitable, Callable
@@ -47,6 +47,8 @@ from src.services.execution.simple_worker import install_requirements
 from src.services.execution.template_process import TemplateProcess
 
 logger = logging.getLogger(__name__)
+
+_CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
 
 
 def _get_installed_packages() -> list[dict[str, str]]:
@@ -147,6 +149,9 @@ class ProcessHandle:
     # Used by the orphan sweep to wait out the grace-sleep window before treating
     # a KILLED handle as truly stuck.
     killed_at: datetime | None = None
+    # Timestamp set when health checks first observe a cleanly exited process
+    # whose result has not reached the result queue yet.
+    clean_exit_observed_at: datetime | None = None
 
     @property
     def is_alive(self) -> bool:
@@ -171,7 +176,24 @@ class _PidWrapper:
         self.pid = pid
         self.exitcode: int | None = None
 
+    def _reap_if_exited(self) -> bool:
+        """Reap the child if it has exited, returning True when no child remains."""
+        if self.exitcode is not None:
+            return True
+        try:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid == 0:
+                return False
+            self.exitcode = os.waitstatus_to_exitcode(status)
+            return True
+        except ChildProcessError:
+            # Already reaped elsewhere.
+            self.exitcode = 0 if self.exitcode is None else self.exitcode
+            return True
+
     def is_alive(self) -> bool:
+        if self._reap_if_exited():
+            return False
         try:
             os.kill(self.pid, 0)
             return True
@@ -185,11 +207,10 @@ class _PidWrapper:
                 # Non-blocking waitpid with polling
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
-                    pid, status = os.waitpid(self.pid, os.WNOHANG)
-                    if pid != 0:
-                        self.exitcode = os.waitstatus_to_exitcode(status)
+                    if self._reap_if_exited():
                         return
                     time.sleep(0.1)
+                self._reap_if_exited()
             else:
                 _, status = os.waitpid(self.pid, 0)
                 self.exitcode = os.waitstatus_to_exitcode(status)
@@ -608,6 +629,13 @@ class ProcessPoolManager:
                 pass
             handle.process.join(timeout=1)
 
+    async def _reap_process(self, handle: ProcessHandle, timeout: float = 1.0) -> None:
+        """Reap a raw forked child so completed on-demand work does not become a zombie."""
+        try:
+            await asyncio.to_thread(handle.process.join, timeout)
+        except Exception as e:
+            logger.debug(f"Failed to reap process {handle.id}: {e}")
+
     def _get_idle_process(self) -> ProcessHandle | None:
         """
         Get an IDLE process from the pool.
@@ -701,6 +729,7 @@ class ProcessPoolManager:
             timeout_seconds=timeout,
         )
         idle.result_reported = False
+        idle.clean_exit_observed_at = None
 
         # Send to process
         idle.work_queue.put_nowait(execution_id)
@@ -1126,8 +1155,26 @@ class ProcessPoolManager:
         """
         to_remove: list[str] = []
 
-        for process_id, handle in self.processes.items():
+        for process_id, handle in list(self.processes.items()):
             if not handle.is_alive and handle.state != ProcessState.KILLED:
+                try:
+                    result = handle.result_queue.get_nowait()
+                    if isinstance(result, dict):
+                        await self._handle_result(handle, result)
+                        continue
+                except Empty:
+                    if (
+                        handle.process.exitcode == 0
+                        and handle.current_execution
+                        and not handle.result_reported
+                    ):
+                        now = datetime.now(timezone.utc)
+                        if handle.clean_exit_observed_at is None:
+                            handle.clean_exit_observed_at = now
+
+                        if now - handle.clean_exit_observed_at < _CLEAN_EXIT_RESULT_GRACE:
+                            continue
+
                 # Case A: unexpected crash
                 logger.warning(
                     f"Process {process_id} crashed "
@@ -1160,6 +1207,8 @@ class ProcessPoolManager:
 
         # Remove crashed/orphaned processes
         for process_id in to_remove:
+            handle = self.processes[process_id]
+            await self._reap_process(handle)
             del self.processes[process_id]
 
         # Spawn replacements to maintain min_workers
@@ -1323,6 +1372,7 @@ class ProcessPoolManager:
 
         # On-demand mode: child exits after one execution, just clean up
         if self.min_workers == 0:
+            await self._reap_process(handle)
             if handle.id in self.processes:
                 del self.processes[handle.id]
             # Forward result to callback

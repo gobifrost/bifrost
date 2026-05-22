@@ -2,7 +2,7 @@
 Organization Filter Helper
 
 Provides consistent organization filtering logic across endpoints.
-Replaces the deprecated X-Organization-Id header approach with query parameters.
+Org scoping is selected via the `scope` query parameter.
 
 Scope Parameter Values:
 - Not sent / omitted → show all (no filter) - superusers only

@@ -30,7 +30,7 @@ export function AssignUsersDialog({
 }: AssignUsersDialogProps) {
 	const { selectedIds, toggle, clear, isSelected, count } = useMultiSelect();
 
-	// Fetch users (filtered by scope via X-Organization-Id header)
+	// Fetch users (filtered by scope server-side).
 	const { data: users, isLoading } = useUsers();
 	const assignUsers = useAssignUsersToRole();
 
