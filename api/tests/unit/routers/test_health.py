@@ -39,6 +39,33 @@ async def _build_components(db, settings):
     }
 
 
+class FakeRabbitMQChannel:
+    def __init__(self):
+        self.close_count = 0
+
+    async def close(self):
+        self.close_count += 1
+
+
+class FakeRabbitMQConnection:
+    def __init__(self, channel_error: Exception | None = None):
+        self.channel_error = channel_error
+        self.channels: list[FakeRabbitMQChannel] = []
+        self.close_count = 0
+        self.is_closed = False
+
+    async def channel(self):
+        if self.channel_error:
+            raise self.channel_error
+        channel = FakeRabbitMQChannel()
+        self.channels.append(channel)
+        return channel
+
+    async def close(self):
+        self.close_count += 1
+        self.is_closed = True
+
+
 @pytest.mark.asyncio
 async def test_health_is_liveness_and_does_not_check_dependencies(monkeypatch):
     async def fail_if_called(*args, **kwargs):
@@ -125,6 +152,76 @@ async def test_s3_not_configured_does_not_fail_readiness(monkeypatch):
     assert response.status_code == 200
     assert result.status == "healthy"
     assert result.components["s3"] == {"status": "not_configured", "type": "s3"}
+
+
+@pytest.mark.asyncio
+async def test_rabbitmq_check_reuses_cached_connection(monkeypatch):
+    await health.close_rabbitmq_health_connection()
+    connections: list[FakeRabbitMQConnection] = []
+
+    async def connect_robust(url):
+        connection = FakeRabbitMQConnection()
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(health.aio_pika, "connect_robust", connect_robust)
+
+    try:
+        first_name, first_component = await health.check_rabbitmq(_settings())
+        second_name, second_component = await health.check_rabbitmq(_settings())
+    finally:
+        await health.close_rabbitmq_health_connection()
+
+    assert first_name == "rabbitmq"
+    assert second_name == "rabbitmq"
+    assert first_component == {"status": "healthy", "type": "rabbitmq"}
+    assert second_component == {"status": "healthy", "type": "rabbitmq"}
+    assert len(connections) == 1
+    assert len(connections[0].channels) == 2
+    assert [channel.close_count for channel in connections[0].channels] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_rabbitmq_check_reports_unhealthy_when_channel_fails(monkeypatch):
+    await health.close_rabbitmq_health_connection()
+    failed_connection = FakeRabbitMQConnection(channel_error=RuntimeError("channel failed"))
+
+    async def connect_robust(url):
+        return failed_connection
+
+    monkeypatch.setattr(health.aio_pika, "connect_robust", connect_robust)
+
+    try:
+        component_name, component = await health.check_rabbitmq(_settings())
+    finally:
+        await health.close_rabbitmq_health_connection()
+
+    assert component_name == "rabbitmq"
+    assert component == {
+        "status": "unhealthy",
+        "type": "rabbitmq",
+        "error": "RuntimeError",
+    }
+    assert failed_connection.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_rabbitmq_check_reports_unhealthy_when_connect_fails(monkeypatch):
+    await health.close_rabbitmq_health_connection()
+
+    async def connect_robust(url):
+        raise ConnectionError("cannot connect")
+
+    monkeypatch.setattr(health.aio_pika, "connect_robust", connect_robust)
+
+    component_name, component = await health.check_rabbitmq(_settings())
+
+    assert component_name == "rabbitmq"
+    assert component == {
+        "status": "unhealthy",
+        "type": "rabbitmq",
+        "error": "ConnectionError",
+    }
 
 
 @pytest.mark.asyncio
