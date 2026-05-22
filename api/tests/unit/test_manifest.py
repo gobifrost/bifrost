@@ -2440,3 +2440,30 @@ class TestMCPServerManifest:
         assert mcp_manifest_data["platform_conn_id"] in ids
         assert mcp_manifest_data["org_server_id"] in ids
         assert mcp_manifest_data["org_conn_id"] in ids
+
+
+def test_custom_claim_manifest_round_trip():
+    from bifrost.manifest import (
+        Manifest,
+        ManifestCustomClaim,
+        parse_manifest,
+        serialize_manifest,
+    )
+    from src.models.contracts.claims import ClaimQuery
+
+    entry = ManifestCustomClaim(
+        id="11111111-1111-1111-1111-111111111111",
+        name="allowed_campus_ids",
+        organization_id="22222222-2222-2222-2222-222222222222",
+        type="list",
+        query=ClaimQuery(
+            table="user_campus_access",
+            where={"eq": [{"row": "user_id"}, {"user": "user_id"}]},
+            select="campus_id",
+        ),
+    )
+
+    manifest = Manifest(claims={entry.id: entry})
+    restored = parse_manifest(serialize_manifest(manifest))
+
+    assert restored.claims[entry.id] == entry

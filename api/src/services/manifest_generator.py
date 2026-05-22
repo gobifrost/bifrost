@@ -18,6 +18,7 @@ from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.config import Config
+from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
 from src.models.orm.external_mcp import (
     AgentMCPConnection,
@@ -38,6 +39,7 @@ from bifrost.manifest import (
     ManifestAgent,
     ManifestApp,
     ManifestConfig,
+    ManifestCustomClaim,
     ManifestEventSource,
     ManifestEventSubscription,
     ManifestForm,
@@ -54,6 +56,7 @@ from bifrost.manifest import (
     ManifestTable,
     ManifestWorkflow,
 )
+from src.models.contracts.claims import ClaimQuery
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +274,18 @@ def serialize_config(cfg: Config) -> ManifestConfig:
         description=cfg.description,
         organization_id=str(cfg.organization_id) if cfg.organization_id else None,
         value=None if (cfg.config_type == ConfigType.SECRET or str(cfg.config_type) == "secret") else cfg.value,
+    )
+
+
+def serialize_custom_claim(claim: CustomClaim) -> ManifestCustomClaim:
+    """Serialize a CustomClaim ORM object to ManifestCustomClaim."""
+    return ManifestCustomClaim(
+        id=str(claim.id),
+        name=claim.name,
+        description=claim.description,
+        organization_id=str(claim.organization_id),
+        type=claim.type,  # type: ignore[arg-type]
+        query=ClaimQuery.model_validate(claim.query),
     )
 
 
@@ -577,6 +592,14 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
     configs_list = config_result.scalars().all()
 
     # ------------------------------------------------------------------
+    # Custom Claims
+    # ------------------------------------------------------------------
+    claim_result = await db.execute(
+        select(CustomClaim).order_by(CustomClaim.organization_id, CustomClaim.name)
+    )
+    claims_list = claim_result.scalars().all()
+
+    # ------------------------------------------------------------------
     # Tables
     # ------------------------------------------------------------------
     table_result = await db.execute(select(Table).order_by(Table.name))
@@ -665,6 +688,10 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
             str(cfg.id): serialize_config(cfg)
             for cfg in configs_list
         },
+        claims={
+            str(claim.id): serialize_custom_claim(claim)
+            for claim in claims_list
+        },
         tables={
             str(table.id): serialize_table(table)
             for table in tables_list
@@ -714,7 +741,8 @@ async def generate_manifest(db: AsyncSession) -> Manifest:
         f"Generated manifest: {len(manifest.workflows)} workflows, "
         f"{len(manifest.forms)} forms, {len(manifest.agents)} agents, "
         f"{len(manifest.apps)} apps, {len(manifest.integrations)} integrations, "
-        f"{len(manifest.configs)} configs, {len(manifest.tables)} tables, "
+        f"{len(manifest.configs)} configs, {len(manifest.claims)} claims, "
+        f"{len(manifest.tables)} tables, "
         f"{len(manifest.events)} events, "
         f"{len(manifest.mcp_servers)} mcp_servers"
     )
