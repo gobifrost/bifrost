@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -34,6 +34,7 @@ import { useUpdateUser, useUserRoles } from "@/hooks/useUsers";
 import { useRoles, useAssignUsersToRole, useRemoveUserFromRole } from "@/hooks/useRoles";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePlatformAdminOrgSelection } from "./platformAdminOrg";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
 
@@ -91,17 +92,15 @@ function EditUserDialogContent({
 
 	const roles = useMemo(() => (allRoles ?? []) as Role[], [allRoles]);
 
-	// Find the provider org (for auto-selecting when promoting to platform admin)
-	const providerOrg = organizations?.find((org: Organization) => org.is_provider);
-	const providerOrgId =
-		providerOrg?.id ??
-		(currentUser?.isSuperuser ? currentUser.organizationId : null);
-
-	useEffect(() => {
-		if (isPlatformAdmin && providerOrgId && orgId !== providerOrgId) {
-			setOrgId(providerOrgId);
-		}
-	}, [isPlatformAdmin, orgId, providerOrgId]);
+	const { effectiveOrgId, handleUserTypeChange } =
+		usePlatformAdminOrgSelection({
+			organizations,
+			currentUser,
+			isPlatformAdmin,
+			setIsPlatformAdmin,
+			orgId,
+			setOrgId,
+		});
 
 	// Check if editing own account
 	const isEditingSelf = !!(currentUser && user.id === currentUser.id);
@@ -109,18 +108,6 @@ function EditUserDialogContent({
 	const isRoleChanging = user.is_superuser !== isPlatformAdmin;
 	const isDemoting = user.is_superuser && !isPlatformAdmin;
 	const isPromoting = !user.is_superuser && isPlatformAdmin;
-
-	// Auto-select provider org when promoting to platform admin
-	const handleUserTypeChange = (value: string) => {
-		const isAdmin = value === "platform";
-		setIsPlatformAdmin(isAdmin);
-		if (isAdmin && providerOrgId) {
-			setOrgId(providerOrgId);
-		} else if (!isAdmin && orgId === providerOrgId) {
-			// Clear provider org if switching to org user
-			setOrgId("");
-		}
-	};
 
 	const toggleRole = (roleId: string) => {
 		setSelectedRoleIds((prev) => {
@@ -153,7 +140,7 @@ function EditUserDialogContent({
 			setValidationError("Please enter a display name");
 			return false;
 		}
-		if (!(isPlatformAdmin ? providerOrgId || orgId : orgId)) {
+		if (!effectiveOrgId) {
 			setValidationError("Please select an organization");
 			return false;
 		}
@@ -167,8 +154,6 @@ function EditUserDialogContent({
 		if (!validateForm()) {
 			return;
 		}
-
-		const effectiveOrgId = isPlatformAdmin ? providerOrgId || orgId : orgId;
 
 		// Build request body - only send changed fields
 		const body = {
