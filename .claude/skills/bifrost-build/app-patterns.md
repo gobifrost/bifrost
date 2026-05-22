@@ -454,3 +454,124 @@ export default function MyTasks() {
 ```
 
 The `created_by` is auto-stamped by the API. The `own_row` policy ensures each user only sees and mutates their own rows. The `useTable` hook keeps the rendered list in sync via websocket — when the user inserts via `tables.insert`, the local state updates from the server's `insert` event (no manual refresh).
+
+## 12. Drag-and-drop — use native HTML5, not `@dnd-kit` / `react-beautiful-dnd`
+
+**TL;DR:** Don't pull in `@dnd-kit/*` or `react-beautiful-dnd`. Use the browser's native HTML5 drag-and-drop API (`draggable` attribute + `onDragStart`/`onDragOver`/`onDrop` handlers). Anything that relies on a React Context shared between multiple packages will silently fail because of how esm.sh keys its cache.
+
+### Why context-based DnD libraries fail
+
+App dependencies resolve at runtime via esm.sh. esm.sh caches each module by `(package, version, externalization-signature)` — the externalization signature is the set of deps the requester wants to treat as external (passed through the `?external=` query). Two import sites that ask for the same package with different externals get two distinct, cached copies.
+
+For `@dnd-kit`:
+1. The page imports `@dnd-kit/core` directly — esm.sh fetches it with the full app externals (`react,react-dom,react-dom/client,react/jsx-runtime,react-router-dom`).
+2. The page also imports `@dnd-kit/sortable`, which has an internal `import "@dnd-kit/core"`. That internal request is resolved by esm.sh with a *different* externals signature (`react,react-dom` only).
+3. **Two copies of `@dnd-kit/core@x.y.z` load**, each with its own `React.createContext()` for `DndContext`.
+4. The page's `<DndContext>` provider uses copy A. `useSortable` (inside `@dnd-kit/sortable`) reads context from copy B — which is empty.
+5. `useSortable` returns `{ attributes, listeners: {}, setNodeRef, ... }`. `{...attributes}` spreads aria props onto the handle but `{...listeners}` is a no-op. **The drag handle never gets an `onPointerDown` — holding it does nothing.**
+
+You can confirm the duplication in DevTools:
+
+```js
+performance.getEntriesByType('resource')
+  .filter(e => e.name.includes('@dnd-kit/core'))
+```
+
+Two entries for the same version with different `X-...` segments = two physically separate modules. Pinning the version in `bifrost apps set-deps` does **not** dedupe — the cache key includes the externals signature, not just the version.
+
+`react-beautiful-dnd` has the same class of failure (different `react-redux`/`react-dom` resolution under esm.sh).
+
+### Pattern: native HTML5 drag-and-drop with handle-armed dragging
+
+By default, HTML5 `draggable="true"` makes the entire element draggable. To restrict dragging to a specific handle (like the grip icon), keep a local `dragArmed` state, set it on `onMouseDown` of the handle, and clear it on `onDragEnd` and the handle's `onMouseUp`. The row is only `draggable={dragArmed}`.
+
+```tsx
+function Row({ id, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, isDragging, isDropTarget }) {
+  const [dragArmed, setDragArmed] = useState(false);
+
+  return (
+    <div
+      draggable={dragArmed}
+      onDragStart={(e) => onDragStart(id, e)}
+      onDragEnd={() => { setDragArmed(false); onDragEnd(); }}
+      onDragOver={(e) => onDragOver(id, e)}
+      onDragLeave={() => onDragLeave(id)}
+      onDrop={(e) => onDrop(id, e)}
+      style={{
+        opacity: isDragging ? 0.4 : 1,
+        outline: isDropTarget ? "2px solid var(--cv-cb)" : undefined,
+      }}
+    >
+      <span
+        role="button"
+        aria-label="Drag row"
+        onMouseDown={() => setDragArmed(true)}
+        onMouseUp={() => setDragArmed(false)}
+        style={{ cursor: "grab", userSelect: "none" }}
+      >
+        <GripVertical size={14} />
+      </span>
+      {/* …row content… */}
+    </div>
+  );
+}
+```
+
+Parent component owns the drag state:
+
+```tsx
+const [draggedId, setDraggedId] = useState<string | null>(null);
+const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+function onDragStart(id, e) {
+  setDraggedId(id);
+  try {
+    e.dataTransfer.setData("text/plain", id);
+    e.dataTransfer.effectAllowed = "move";
+  } catch {}
+}
+
+function onDragOver(id, e) {
+  if (!draggedId || draggedId === id) return;
+  e.preventDefault();       // REQUIRED — without preventDefault, drop never fires
+  e.stopPropagation();
+  try { e.dataTransfer.dropEffect = "move"; } catch {}
+  if (dropTargetId !== id) setDropTargetId(id);
+}
+
+function onDragLeave(id) {
+  if (dropTargetId === id) setDropTargetId(null);
+}
+
+function onDragEnd() {
+  setDraggedId(null);
+  setDropTargetId(null);
+}
+
+async function onDrop(id, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const src = draggedId;
+  setDraggedId(null);
+  setDropTargetId(null);
+  if (!src || src === id) return;
+  // reorder logic → tables.update(...) with new sort_order, etc.
+}
+```
+
+### Trade-offs vs `@dnd-kit`
+
+| | `@dnd-kit` (broken on Bifrost) | Native HTML5 (works) |
+|---|---|---|
+| Items slide aside as you drag over | ✅ when working | ❌ — drop target gets an outline, items stay put until drop |
+| Touch support | ✅ via PointerSensor | ⚠️ inconsistent across mobile browsers |
+| Keyboard a11y | ✅ via KeyboardSensor | ❌ — add explicit Up/Down buttons if you need keyboard reorder |
+| Setup complexity | Sensors, contexts, strategies, collision detection | A few handlers |
+| Works in a Bifrost app | ❌ | ✅ |
+
+For most app reorder UIs (kanban-lite, tree drag, sortable lists) the native pattern is sufficient. If you need full touch/keyboard parity, expose explicit Up/Down buttons alongside the handle.
+
+### Reference implementations
+
+- `apps/notes/_layout.tsx` — reparent notes via drag-into-row (tree drag).
+- `apps/bifrost-grc/pages/frameworks/[id].tsx` + `components/framework-builder/` — sortable list with within-container reorder and cross-container move (domains + controls).
