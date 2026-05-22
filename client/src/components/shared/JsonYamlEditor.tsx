@@ -88,7 +88,14 @@ export function JsonYamlEditor<T>({
 	// linters don't flag the unused prop while preserving the API contract.
 	void _schema;
 
-	const seedValue: T | object = useMemo(() => seed ?? {}, [seed]);
+	// Stringify-as-memo-key: callers commonly pass `seed={{...}}` inline
+	// without memoizing, so reference identity churns every render. We key
+	// off the structural hash so `seedValue` only recomputes on actual
+	// content change — otherwise the render-phase reset below would clobber
+	// in-progress buffers every parent render.
+	const seedKey = useMemo(() => JSON.stringify(seed ?? {}), [seed]);
+	// eslint-disable-next-line react-hooks/exhaustive-deps -- seedKey is the structural-identity proxy for `seed`; reference is intentionally ignored
+	const seedValue: T | object = useMemo(() => seed ?? {}, [seedKey]);
 	const jsonPath = paths?.json ?? "document.json";
 	const yamlPath = paths?.yaml ?? "document.yaml";
 
@@ -270,7 +277,11 @@ export function JsonYamlEditor<T>({
 			lastNotifiedError.current = activeParseError;
 			onParseErrorChange(activeParseError);
 		}
-	}, [activeParseError, onParseErrorChange]);
+		// `onParseErrorChange` intentionally omitted: callers (e.g. PolicyEditor)
+		// recreate the callback every render, which would re-run this effect on
+		// every render. The `lastNotifiedError` ref guard enforces correctness.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [activeParseError]);
 
 	return (
 		<div className={className}>

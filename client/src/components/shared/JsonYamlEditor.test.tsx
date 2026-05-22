@@ -155,6 +155,56 @@ describe("JsonYamlEditor", () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
+	it("blocks tab switch while a parse error is unresolved", async () => {
+		const { user } = renderWithProviders(
+			<JsonYamlEditor<Doc>
+				value={null}
+				onChange={onChange}
+				schema={schema}
+			/>,
+		);
+		const editor = screen.getByLabelText(
+			"document.json",
+		) as HTMLTextAreaElement;
+		fireEvent.change(editor, { target: { value: "{not json" } });
+		// Try to switch to YAML. The parse-error row stays, and the JSON
+		// editor remains visible (i.e. activeTab did not change).
+		await user.click(screen.getByRole("tab", { name: /yaml/i }));
+		expect(
+			screen.getByTestId("json-yaml-editor-parse-error"),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText("document.json")).toBeVisible();
+		const jsonTab = screen.getByRole("tab", { name: /json/i });
+		expect(jsonTab).toHaveAttribute("data-state", "active");
+	});
+
+	it("fires onParseErrorChange with the error and then null as the buffer recovers", () => {
+		const onParseErrorChange = vi.fn<(error: string | null) => void>();
+		renderWithProviders(
+			<JsonYamlEditor<Doc>
+				value={null}
+				onChange={onChange}
+				schema={schema}
+				onParseErrorChange={onParseErrorChange}
+			/>,
+		);
+		const editor = screen.getByLabelText(
+			"document.json",
+		) as HTMLTextAreaElement;
+		// Type invalid JSON — spy should be called with a non-null error.
+		fireEvent.change(editor, { target: { value: "{not json" } });
+		const errorCalls = onParseErrorChange.mock.calls.filter(
+			(call) => call[0] !== null,
+		);
+		expect(errorCalls.length).toBeGreaterThan(0);
+		expect(errorCalls.at(-1)![0]).toBeTruthy();
+
+		// Type valid JSON — spy should be called with null.
+		const next = JSON.stringify({ policies: [{ name: "p1" }] }, null, 2);
+		fireEvent.change(editor, { target: { value: next } });
+		expect(onParseErrorChange).toHaveBeenLastCalledWith(null);
+	});
+
 	it("seeds the JSON buffer from the `seed` prop when value is null", () => {
 		const seed: Doc = { policies: [] };
 		renderWithProviders(
