@@ -11,18 +11,15 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { RolesMultiSelect } from "@/components/forms/RolesMultiSelect";
 import { useBulkUserOperation } from "@/hooks/useUsers";
-import { useRoles } from "@/hooks/useRoles";
 
 import type { components } from "@/lib/v1";
 
 type User = components["schemas"]["UserPublic"];
 type BulkUserResponse = components["schemas"]["BulkUserResponse"];
-type RolePublic = components["schemas"]["RolePublic"];
 
 export interface BulkDialogSharedProps {
 	open: boolean;
@@ -139,18 +136,8 @@ function BulkReplaceRolesDialogInner({
 	users,
 	onPartialFailure,
 }: BulkDialogSharedProps) {
-	const { data: roles, isLoading: rolesLoading } = useRoles();
-	const [selected, setSelected] = useState<Set<string>>(new Set());
+	const [selected, setSelected] = useState<string[]>([]);
 	const bulkOp = useBulkUserOperation();
-
-	const toggle = (roleId: string) => {
-		setSelected((prev) => {
-			const next = new Set(prev);
-			if (next.has(roleId)) next.delete(roleId);
-			else next.add(roleId);
-			return next;
-		});
-	};
 
 	const handleSubmit = async () => {
 		try {
@@ -158,7 +145,7 @@ function BulkReplaceRolesDialogInner({
 				body: {
 					user_ids: users.map((u) => u.id),
 					operation: "replace_roles",
-					role_ids: Array.from(selected),
+					role_ids: selected,
 				},
 			})) as BulkUserResponse;
 			summarize(result, "Replace roles");
@@ -182,40 +169,12 @@ function BulkReplaceRolesDialogInner({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="max-h-80 overflow-y-auto space-y-2 border rounded p-3">
-					{rolesLoading ? (
-						<>
-							<Skeleton className="h-6 w-full" />
-							<Skeleton className="h-6 w-full" />
-							<Skeleton className="h-6 w-full" />
-						</>
-					) : !roles || roles.length === 0 ? (
-						<p className="text-sm text-muted-foreground">No roles defined.</p>
-					) : (
-						roles.map((role: RolePublic) => (
-							<label
-								key={role.id}
-								className="flex items-start gap-2 cursor-pointer hover:bg-accent/30 rounded px-2 py-1.5"
-							>
-								<Checkbox
-									checked={selected.has(role.id)}
-									onCheckedChange={() => toggle(role.id)}
-									aria-label={`Select role ${role.name}`}
-								/>
-								<div className="flex-1 min-w-0">
-									<div className="text-sm font-medium">{role.name}</div>
-									{role.description && (
-										<div className="text-xs text-muted-foreground truncate">
-											{role.description}
-										</div>
-									)}
-								</div>
-							</label>
-						))
-					)}
+				<div className="space-y-2">
+					<Label htmlFor="bulk-roles">Roles</Label>
+					<RolesMultiSelect value={selected} onChange={setSelected} />
 				</div>
 
-				{selected.size === 0 && (
+				{selected.length === 0 && (
 					<div className="flex items-start gap-2 text-xs text-muted-foreground">
 						<AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
 						<span>

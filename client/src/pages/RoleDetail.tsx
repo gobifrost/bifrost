@@ -17,6 +17,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
 	AlertDialog,
@@ -274,11 +282,34 @@ export function RoleDetail() {
 // Tab implementations
 // =============================================================================
 
+/**
+ * Look up an organization by id and return the {id, name, isProvider} triple
+ * the ConsumerTab OrgBadge expects. Shared by every tab so the lookup
+ * happens once per role-detail render.
+ */
+function useOrgLookup() {
+	const { data: orgs } = useOrganizations();
+	return useMemo(() => {
+		const byId = new Map<string, components["schemas"]["OrganizationPublic"]>();
+		for (const o of orgs ?? []) byId.set(o.id, o);
+		return (orgId: string | null | undefined) => {
+			if (!orgId) return { id: null, name: "Platform", isProvider: false };
+			const o = byId.get(orgId);
+			return {
+				id: orgId,
+				name: o?.name ?? orgId,
+				isProvider: o?.is_provider ?? false,
+			};
+		};
+	}, [orgs]);
+}
+
 function UsersTab({ roleId }: { roleId: string }) {
 	const { data: assigned, isLoading } = useRoleUsers(roleId);
 	const { data: allUsers, isLoading: loadingAll } = useUsersFiltered();
 	const assignMut = useAssignUsersToRole();
 	const unassignMut = useBulkUnassignUsers();
+	const orgFor = useOrgLookup();
 
 	const assignedIds = useMemo(
 		() => new Set(assigned?.user_ids ?? []),
@@ -298,9 +329,10 @@ function UsersTab({ roleId }: { roleId: string }) {
 					id,
 					primary: u?.name || u?.email || id,
 					secondary: u?.email && u?.name !== u?.email ? u.email : null,
+					org: orgFor(u?.organization_id),
 				};
 			}),
-		[assignedIds, userById],
+		[assignedIds, userById, orgFor],
 	);
 
 	const candidates: ConsumerTabItem[] = useMemo(
@@ -309,8 +341,9 @@ function UsersTab({ roleId }: { roleId: string }) {
 				id: u.id,
 				primary: u.name || u.email,
 				secondary: u.email && u.name !== u.email ? u.email : null,
+				org: orgFor(u.organization_id),
 			})),
-		[allUsers],
+		[allUsers, orgFor],
 	);
 
 	return (
@@ -321,6 +354,9 @@ function UsersTab({ roleId }: { roleId: string }) {
 			candidatesLoading={loadingAll}
 			consumerLabel="users"
 			emptyHint="No users assigned to this role yet."
+			primaryColumnLabel="Name"
+			secondaryColumnLabel="Email"
+			showOrgColumn
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
@@ -342,6 +378,7 @@ function FormsTab({ roleId }: { roleId: string }) {
 	const { data: allForms, isLoading: loadingAll } = useForms();
 	const assignMut = useAssignFormsToRole();
 	const unassignMut = useBulkUnassignForms();
+	const orgFor = useOrgLookup();
 
 	const formById = useMemo(() => {
 		const m = new Map<string, components["schemas"]["FormPublic"]>();
@@ -357,9 +394,10 @@ function FormsTab({ roleId }: { roleId: string }) {
 					id,
 					primary: f?.name || id,
 					secondary: f?.description || null,
+					org: orgFor(f?.organization_id),
 				};
 			}),
-		[assigned, formById],
+		[assigned, formById, orgFor],
 	);
 
 	const candidates: ConsumerTabItem[] = useMemo(
@@ -368,8 +406,9 @@ function FormsTab({ roleId }: { roleId: string }) {
 				id: f.id,
 				primary: f.name,
 				secondary: f.description || null,
+				org: orgFor(f.organization_id),
 			})),
-		[allForms],
+		[allForms, orgFor],
 	);
 
 	return (
@@ -380,6 +419,7 @@ function FormsTab({ roleId }: { roleId: string }) {
 			candidatesLoading={loadingAll}
 			consumerLabel="forms"
 			emptyHint="No forms assigned to this role yet."
+			showOrgColumn
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
@@ -401,19 +441,18 @@ function AgentsTab({ roleId }: { roleId: string }) {
 	const { data: allAgents, isLoading: loadingAll } = useAgents();
 	const assignMut = useAssignAgentsToRole();
 	const unassignMut = useBulkUnassignAgents();
+	const orgFor = useOrgLookup();
+
+	type AgentLite = {
+		id: string;
+		name: string;
+		description?: string | null;
+		organization_id?: string | null;
+	};
 
 	const agentById = useMemo(() => {
-		const m = new Map<
-			string,
-			{ id: string; name: string; description?: string | null }
-		>();
-		for (const a of (allAgents ?? []) as Array<{
-			id: string;
-			name: string;
-			description?: string | null;
-		}>) {
-			m.set(a.id, a);
-		}
+		const m = new Map<string, AgentLite>();
+		for (const a of (allAgents ?? []) as AgentLite[]) m.set(a.id, a);
 		return m;
 	}, [allAgents]);
 
@@ -425,23 +464,21 @@ function AgentsTab({ roleId }: { roleId: string }) {
 					id,
 					primary: a?.name || id,
 					secondary: a?.description || null,
+					org: orgFor(a?.organization_id),
 				};
 			}),
-		[assigned, agentById],
+		[assigned, agentById, orgFor],
 	);
 
 	const candidates: ConsumerTabItem[] = useMemo(
 		() =>
-			((allAgents ?? []) as Array<{
-				id: string;
-				name: string;
-				description?: string | null;
-			}>).map((a) => ({
+			((allAgents ?? []) as AgentLite[]).map((a) => ({
 				id: a.id,
 				primary: a.name,
 				secondary: a.description || null,
+				org: orgFor(a.organization_id),
 			})),
-		[allAgents],
+		[allAgents, orgFor],
 	);
 
 	return (
@@ -452,6 +489,7 @@ function AgentsTab({ roleId }: { roleId: string }) {
 			candidatesLoading={loadingAll}
 			consumerLabel="agents"
 			emptyHint="No agents assigned to this role yet."
+			showOrgColumn
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
@@ -473,10 +511,9 @@ function AppsTab({ roleId }: { roleId: string }) {
 	const { data: allAppsResp, isLoading: loadingAll } = useApplications();
 	const assignMut = useAssignAppsToRole();
 	const unassignMut = useBulkUnassignApps();
+	const orgFor = useOrgLookup();
 
 	const allApps = useMemo(() => {
-		// Endpoint returns {applications, total} on platform admins; older callers
-		// expected a list. Normalize to a list.
 		if (Array.isArray(allAppsResp)) return allAppsResp;
 		return (allAppsResp as { applications?: components["schemas"]["ApplicationPublic"][] } | undefined)?.applications ?? [];
 	}, [allAppsResp]);
@@ -495,9 +532,10 @@ function AppsTab({ roleId }: { roleId: string }) {
 					id,
 					primary: a?.name || id,
 					secondary: a?.description || null,
+					org: orgFor(a?.organization_id),
 				};
 			}),
-		[assigned, appById],
+		[assigned, appById, orgFor],
 	);
 
 	const candidates: ConsumerTabItem[] = useMemo(
@@ -506,8 +544,9 @@ function AppsTab({ roleId }: { roleId: string }) {
 				id: a.id,
 				primary: a.name,
 				secondary: a.description || null,
+				org: orgFor(a.organization_id),
 			})),
-		[allApps],
+		[allApps, orgFor],
 	);
 
 	return (
@@ -518,6 +557,7 @@ function AppsTab({ roleId }: { roleId: string }) {
 			candidatesLoading={loadingAll}
 			consumerLabel="apps"
 			emptyHint="No apps assigned to this role yet."
+			showOrgColumn
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
@@ -539,16 +579,18 @@ function WorkflowsTab({ roleId }: { roleId: string }) {
 	const { data: allWorkflows, isLoading: loadingAll } = useWorkflows();
 	const assignMut = useAssignWorkflowsToRole();
 	const unassignMut = useBulkUnassignWorkflows();
+	const orgFor = useOrgLookup();
+
+	type WorkflowLite = {
+		id: string;
+		name?: string;
+		description?: string | null;
+		organization_id?: string | null;
+	};
 
 	const workflowById = useMemo(() => {
-		const m = new Map<string, { id: string; name?: string; description?: string | null }>();
-		for (const w of (allWorkflows ?? []) as Array<{
-			id: string;
-			name?: string;
-			description?: string | null;
-		}>) {
-			m.set(w.id, w);
-		}
+		const m = new Map<string, WorkflowLite>();
+		for (const w of (allWorkflows ?? []) as WorkflowLite[]) m.set(w.id, w);
 		return m;
 	}, [allWorkflows]);
 
@@ -560,23 +602,21 @@ function WorkflowsTab({ roleId }: { roleId: string }) {
 					id,
 					primary: w?.name || id,
 					secondary: w?.description || null,
+					org: orgFor(w?.organization_id),
 				};
 			}),
-		[assigned, workflowById],
+		[assigned, workflowById, orgFor],
 	);
 
 	const candidates: ConsumerTabItem[] = useMemo(
 		() =>
-			((allWorkflows ?? []) as Array<{
-				id: string;
-				name?: string;
-				description?: string | null;
-			}>).map((w) => ({
+			((allWorkflows ?? []) as WorkflowLite[]).map((w) => ({
 				id: w.id,
 				primary: w.name || w.id,
 				secondary: w.description || null,
+				org: orgFor(w.organization_id),
 			})),
-		[allWorkflows],
+		[allWorkflows, orgFor],
 	);
 
 	return (
@@ -587,6 +627,7 @@ function WorkflowsTab({ roleId }: { roleId: string }) {
 			candidatesLoading={loadingAll}
 			consumerLabel="workflows"
 			emptyHint="No workflows assigned to this role yet."
+			showOrgColumn
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
@@ -716,46 +757,48 @@ function KnowledgeTab({ roleId }: { roleId: string }) {
 					No knowledge namespaces assigned to this role yet.
 				</div>
 			) : (
-				<div className="border rounded divide-y">
-					<div className="flex items-center gap-3 px-3 py-2 bg-muted/30">
-						<Checkbox
-							checked={
-								allSelected
-									? true
-									: effective.size > 0
-										? "indeterminate"
-										: false
-							}
-							onCheckedChange={toggleAll}
-							aria-label="Select all visible namespaces"
-						/>
-						<span className="text-xs text-muted-foreground">
-							{effective.size > 0
-								? `${effective.size} selected`
-								: `${visible.length} namespace(s)`}
-						</span>
-					</div>
-					{visible.map((e) => (
-						<label
-							key={e.id}
-							className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-accent/30"
-						>
-							<Checkbox
-								checked={effective.has(e.id)}
-								onCheckedChange={() => toggle(e.id)}
-								aria-label={`Select ${e.namespace}`}
-							/>
-							<div className="flex-1 min-w-0">
-								<div className="text-sm font-medium truncate">
+				<DataTable>
+					<DataTableHeader>
+						<DataTableRow>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								<Checkbox
+									checked={
+										allSelected
+											? true
+											: effective.size > 0
+												? "indeterminate"
+												: false
+									}
+									onCheckedChange={toggleAll}
+									aria-label="Select all visible namespaces"
+								/>
+							</DataTableHead>
+							<DataTableHead>Namespace</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								Scope
+							</DataTableHead>
+						</DataTableRow>
+					</DataTableHeader>
+					<DataTableBody>
+						{visible.map((e) => (
+							<DataTableRow key={e.id}>
+								<DataTableCell className="w-0 whitespace-nowrap">
+									<Checkbox
+										checked={effective.has(e.id)}
+										onCheckedChange={() => toggle(e.id)}
+										aria-label={`Select ${e.namespace}`}
+									/>
+								</DataTableCell>
+								<DataTableCell className="font-medium">
 									{e.namespace}
-								</div>
-								<div className="text-xs text-muted-foreground truncate">
+								</DataTableCell>
+								<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
 									{orgName(e.organization_id)}
-								</div>
-							</div>
-						</label>
-					))}
-				</div>
+								</DataTableCell>
+							</DataTableRow>
+						))}
+					</DataTableBody>
+				</DataTable>
 			)}
 
 			{effective.size > 0 && (

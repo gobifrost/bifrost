@@ -1,40 +1,73 @@
 import { useMemo, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { Building2, Plus, Star, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetFooter,
+	SheetHeader,
+	SheetTitle,
+} from "@/components/ui/sheet";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SearchBox } from "@/components/search/SearchBox";
+
+export interface OrgInfo {
+	id: string | null;
+	name: string;
+	isProvider?: boolean;
+}
 
 export interface ConsumerTabItem {
 	id: string;
 	primary: string;
 	secondary?: string | null;
+	/** Org info for the Organization column. Null = platform/global. */
+	org?: OrgInfo | null;
 }
 
 export interface ConsumerTabProps {
-	/** Items currently assigned to the role (left side, with checkboxes). */
 	items: ConsumerTabItem[];
 	isLoading: boolean;
-	/** All items that COULD be assigned (drives the drawer). */
 	candidates: ConsumerTabItem[];
-	/** True when candidates are loading — used by drawer. */
 	candidatesLoading: boolean;
 	consumerLabel: string;
 	emptyHint: string;
+	/** Header label for the primary column (defaults to "Name"). */
+	primaryColumnLabel?: string;
+	/** Header label for the secondary column (defaults to "Description"). */
+	secondaryColumnLabel?: string;
+	/** Hide the secondary column entirely (e.g. when item.secondary is always null). */
+	hideSecondary?: boolean;
+	/** Show an Organization column. Items must populate `org`. */
+	showOrgColumn?: boolean;
 	onAssign: (ids: string[]) => Promise<void>;
 	onUnassign: (ids: string[]) => Promise<void>;
 }
 
 /**
- * Generic role-consumer tab. Lists assigned items with a checkbox + search,
- * sticky "Unassign N" footer when rows are selected, and an "Add" button
- * that opens an AssignDrawer for picking unassigned candidates.
+ * Generic role-consumer tab. Renders the assigned items as a standard
+ * DataTable (matching /users + /history conventions), with an optional
+ * Organization column for entity types that carry an org_id.
  *
- * Knowledge is the special case — see KnowledgeTab.tsx for the per-row
- * namespace+org shape; the rest of the consumer types (users/forms/agents/
- * apps/workflows) all fit this generic surface.
+ * Knowledge is a special case — see KnowledgeTab in RoleDetail.tsx for the
+ * namespace+org shape.
  */
 export function ConsumerTab({
 	items,
@@ -43,6 +76,10 @@ export function ConsumerTab({
 	candidatesLoading,
 	consumerLabel,
 	emptyHint,
+	primaryColumnLabel = "Name",
+	secondaryColumnLabel = "Description",
+	hideSecondary = false,
+	showOrgColumn = false,
 	onAssign,
 	onUnassign,
 }: ConsumerTabProps) {
@@ -57,7 +94,8 @@ export function ConsumerTab({
 		return items.filter(
 			(it) =>
 				it.primary.toLowerCase().includes(q) ||
-				(it.secondary ?? "").toLowerCase().includes(q),
+				(it.secondary ?? "").toLowerCase().includes(q) ||
+				(it.org?.name ?? "").toLowerCase().includes(q),
 		);
 	}, [items, search]);
 
@@ -75,6 +113,8 @@ export function ConsumerTab({
 	const allVisibleSelected =
 		visibleItems.length > 0 &&
 		visibleItems.every((i) => effectiveSelected.has(i.id));
+	const someVisibleSelected =
+		!allVisibleSelected && effectiveSelected.size > 0;
 
 	const toggleOne = (id: string) =>
 		setSelected((prev) => {
@@ -140,48 +180,73 @@ export function ConsumerTab({
 					{emptyHint}
 				</div>
 			) : (
-				<div className="border rounded divide-y">
-					<div className="flex items-center gap-3 px-3 py-2 bg-muted/30">
-						<Checkbox
-							checked={
-								allVisibleSelected
-									? true
-									: effectiveSelected.size > 0
-										? "indeterminate"
-										: false
-							}
-							onCheckedChange={toggleAll}
-							aria-label={`Select all visible ${consumerLabel}`}
-						/>
-						<span className="text-xs text-muted-foreground">
-							{effectiveSelected.size > 0
-								? `${effectiveSelected.size} selected`
-								: `${visibleItems.length} ${consumerLabel}`}
-						</span>
-					</div>
-					{visibleItems.map((item) => (
-						<label
-							key={item.id}
-							className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-accent/30"
-						>
-							<Checkbox
-								checked={effectiveSelected.has(item.id)}
-								onCheckedChange={() => toggleOne(item.id)}
-								aria-label={`Select ${item.primary}`}
-							/>
-							<div className="flex-1 min-w-0">
-								<div className="text-sm font-medium truncate">
+				<DataTable>
+					<DataTableHeader>
+						<DataTableRow>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								<Checkbox
+									checked={
+										allVisibleSelected
+											? true
+											: someVisibleSelected
+												? "indeterminate"
+												: false
+									}
+									onCheckedChange={toggleAll}
+									aria-label={`Select all visible ${consumerLabel}`}
+								/>
+							</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								{primaryColumnLabel}
+							</DataTableHead>
+							{!hideSecondary && (
+								<DataTableHead>{secondaryColumnLabel}</DataTableHead>
+							)}
+							{showOrgColumn && (
+								<DataTableHead className="w-0 whitespace-nowrap">
+									Organization
+								</DataTableHead>
+							)}
+						</DataTableRow>
+					</DataTableHeader>
+					<DataTableBody>
+						{visibleItems.map((item) => (
+							<DataTableRow key={item.id} className="group/row">
+								<DataTableCell className="w-0 whitespace-nowrap">
+									<Checkbox
+										checked={effectiveSelected.has(item.id)}
+										onCheckedChange={() => toggleOne(item.id)}
+										aria-label={`Select ${item.primary}`}
+									/>
+								</DataTableCell>
+								<DataTableCell className="w-0 whitespace-nowrap font-medium">
 									{item.primary}
-								</div>
-								{item.secondary && (
-									<div className="text-xs text-muted-foreground truncate">
-										{item.secondary}
-									</div>
+								</DataTableCell>
+								{!hideSecondary && (
+									<DataTableCell className="max-w-xs truncate text-muted-foreground">
+										{item.secondary ? (
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<span className="block truncate">
+														{item.secondary}
+													</span>
+												</TooltipTrigger>
+												<TooltipContent>{item.secondary}</TooltipContent>
+											</Tooltip>
+										) : (
+											<span className="text-muted-foreground/60">-</span>
+										)}
+									</DataTableCell>
 								)}
-							</div>
-						</label>
-					))}
-				</div>
+								{showOrgColumn && (
+									<DataTableCell className="w-0 whitespace-nowrap text-sm">
+										<OrgBadge org={item.org ?? null} />
+									</DataTableCell>
+								)}
+							</DataTableRow>
+						))}
+					</DataTableBody>
+				</DataTable>
 			)}
 
 			{effectiveSelected.size > 0 && (
@@ -199,7 +264,7 @@ export function ConsumerTab({
 						disabled={submitting}
 						onClick={handleUnassign}
 					>
-						{submitting ? "Unassigning..." : `Unassign from role`}
+						{submitting ? "Unassigning..." : "Unassign from role"}
 					</Button>
 					<Button
 						variant="ghost"
@@ -219,6 +284,7 @@ export function ConsumerTab({
 					candidates={candidates}
 					candidatesLoading={candidatesLoading}
 					consumerLabel={consumerLabel}
+					showOrgColumn={showOrgColumn}
 					onClose={() => setDrawerOpen(false)}
 					onAssign={onAssign}
 				/>
@@ -227,24 +293,37 @@ export function ConsumerTab({
 	);
 }
 
-// =============================================================================
-// AssignDrawer — picks unassigned candidates and posts them in one batch.
-// =============================================================================
+export function OrgBadge({ org }: { org: OrgInfo | null }) {
+	if (!org || !org.id) {
+		return (
+			<span className="inline-flex items-center gap-1 text-muted-foreground">
+				<Building2 className="h-3.5 w-3.5" />
+				Platform
+			</span>
+		);
+	}
+	return (
+		<span className="inline-flex items-center gap-1">
+			{org.isProvider ? (
+				<Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+			) : (
+				<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+			)}
+			<span className="truncate">{org.name}</span>
+		</span>
+	);
+}
 
-import {
-	Sheet,
-	SheetContent,
-	SheetDescription,
-	SheetFooter,
-	SheetHeader,
-	SheetTitle,
-} from "@/components/ui/sheet";
+// =============================================================================
+// AssignDrawer
+// =============================================================================
 
 interface AssignDrawerProps {
 	assignedIds: Set<string>;
 	candidates: ConsumerTabItem[];
 	candidatesLoading: boolean;
 	consumerLabel: string;
+	showOrgColumn?: boolean;
 	onClose: () => void;
 	onAssign: (ids: string[]) => Promise<void>;
 }
@@ -254,6 +333,7 @@ function AssignDrawer({
 	candidates,
 	candidatesLoading,
 	consumerLabel,
+	showOrgColumn,
 	onClose,
 	onAssign,
 }: AssignDrawerProps) {
@@ -270,7 +350,8 @@ function AssignDrawer({
 			if (!q) return true;
 			return (
 				c.primary.toLowerCase().includes(q) ||
-				(c.secondary ?? "").toLowerCase().includes(q)
+				(c.secondary ?? "").toLowerCase().includes(q) ||
+				(c.org?.name ?? "").toLowerCase().includes(q)
 			);
 		});
 	}, [candidates, assignedIds, search, showAssigned]);
@@ -305,12 +386,16 @@ function AssignDrawer({
 
 	return (
 		<Sheet open onOpenChange={(o) => !o && onClose()}>
-			<SheetContent side="right" className="w-[480px] sm:max-w-[480px] flex flex-col">
+			<SheetContent
+				side="right"
+				className="w-[480px] sm:max-w-[480px] flex flex-col"
+			>
 				<SheetHeader>
 					<SheetTitle>Assign {consumerLabel}</SheetTitle>
 					<SheetDescription>
-						Pick the {consumerLabel} you want to add to this role. Already-assigned
-						entries are hidden by default — toggle the switch below to see them.
+						Pick the {consumerLabel} you want to add to this role.
+						Already-assigned entries are hidden by default — toggle the switch
+						below to see them.
 					</SheetDescription>
 				</SheetHeader>
 
@@ -370,6 +455,11 @@ function AssignDrawer({
 											{c.secondary && (
 												<div className="text-xs text-muted-foreground truncate">
 													{c.secondary}
+												</div>
+											)}
+											{showOrgColumn && c.org && (
+												<div className="text-xs text-muted-foreground truncate">
+													<OrgBadge org={c.org} />
 												</div>
 											)}
 										</div>

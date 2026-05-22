@@ -54,6 +54,7 @@ import { EditUserDialog } from "@/components/users/EditUserDialog";
 import { UserActionsMenu } from "@/components/users/UserActionsMenu";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import { BulkActionBar } from "@/components/users/BulkActionBar";
+import { UserEmailCell } from "@/components/users/UserEmailCell";
 import {
 	BulkMoveOrgDialog,
 	BulkReplaceRolesDialog,
@@ -499,13 +500,11 @@ export function Users() {
 												)}
 											</div>
 										</DataTableCell>
-										<DataTableCell className="text-muted-foreground">
-											<Tooltip>
-												<TooltipTrigger asChild>
-													<span className="block truncate">{user.email}</span>
-												</TooltipTrigger>
-												<TooltipContent>{user.email}</TooltipContent>
-											</Tooltip>
+										<DataTableCell
+											className="text-muted-foreground max-w-0"
+											onClick={(e) => e.stopPropagation()}
+										>
+											<UserEmailCell email={user.email} />
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap">
 											<UserStatusBadge
