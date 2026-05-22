@@ -142,6 +142,18 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {},
     },
     {
+        "model_path": "src.models.contracts.claims:CustomClaimCreate",
+        "tool_path": "src.services.mcp_server.tools.claims:create_claim",
+        "extra_args": set(),
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.claims:CustomClaimUpdate",
+        "tool_path": "src.services.mcp_server.tools.claims:update_claim",
+        "extra_args": {"name"},
+        "field_renames": {},
+    },
+    {
         "model_path": "src.models.contracts.organizations:OrganizationUpdate",
         "tool_path": (
             "src.services.mcp_server.tools.organizations:update_organization"

@@ -7,6 +7,7 @@ Each module provides a register_tools(mcp, get_context_fn) function.
 from src.services.mcp_server.tools import (
     agents,
     apps,
+    claims,
     code_editor,
     configs,
     docs,
@@ -25,6 +26,7 @@ from src.services.mcp_server.tools import (
 TOOL_MODULES = [
     agents,
     apps,
+    claims,
     code_editor,
     configs,
     docs,
