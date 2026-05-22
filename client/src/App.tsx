@@ -29,6 +29,9 @@ const Config = lazyWithReload(() =>
 const Roles = lazyWithReload(() =>
 	import("@/pages/Roles").then((m) => ({ default: m.Roles })),
 );
+const RoleDetail = lazyWithReload(() =>
+	import("@/pages/RoleDetail").then((m) => ({ default: m.RoleDetail })),
+);
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
@@ -383,6 +386,22 @@ function AppRoutes() {
 							element={
 								<ProtectedRoute requirePlatformAdmin>
 									<Roles />
+								</ProtectedRoute>
+							}
+						/>
+						<Route
+							path="roles/:roleId"
+							element={
+								<ProtectedRoute requirePlatformAdmin>
+									<RoleDetail />
+								</ProtectedRoute>
+							}
+						/>
+						<Route
+							path="roles/:roleId/:tab"
+							element={
+								<ProtectedRoute requirePlatformAdmin>
+									<RoleDetail />
 								</ProtectedRoute>
 							}
 						/>

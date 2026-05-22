@@ -210,28 +210,146 @@ export async function assignRolesToForm(
 	}
 }
 
-/**
- * Remove a form from a role
- * NOTE: Not implemented - the endpoint is not available in the API
- */
-// export function useRemoveFormFromRole() {
-// 	const queryClient = useQueryClient();
+// =============================================================================
+// Agents / Apps / Workflows / Knowledge — consumer-tab hooks (Block 5)
+// =============================================================================
 
-// 	return useMutation({
-// 		mutationFn: ({ roleId, formId }: { roleId: string; formId: string }) =>
-// 			rolesService.removeFormFromRole(roleId, formId),
-// 		onSuccess: (_, variables) => {
-// 			queryClient.invalidateQueries({
-// 				queryKey: ["roles", variables.roleId, "forms"],
-// 			});
-// 			toast.success("Form removed", {
-// 				description: "Form has been removed from the role",
-// 			});
-// 		},
-// 		onError: (error: Error) => {
-// 			toast.error("Failed to remove form", {
-// 				description: error.message,
-// 			});
-// 		},
-// 	});
-// }
+function invalidateRoleList(qc: ReturnType<typeof useQueryClient>) {
+	qc.invalidateQueries({ queryKey: ["get", "/api/roles"] });
+}
+
+export function useRoleAgents(roleId: string | undefined) {
+	return $api.useQuery(
+		"get",
+		"/api/roles/{role_id}/agents",
+		{ params: { path: { role_id: roleId ?? "" } } },
+		{ enabled: !!roleId },
+	);
+}
+
+export function useAssignAgentsToRole() {
+	const qc = useQueryClient();
+	return $api.useMutation("post", "/api/roles/{role_id}/agents", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/agents"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useBulkUnassignAgents() {
+	const qc = useQueryClient();
+	return $api.useMutation("delete", "/api/roles/{role_id}/agents", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/agents"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useBulkUnassignUsers() {
+	const qc = useQueryClient();
+	return $api.useMutation("delete", "/api/roles/{role_id}/users", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/users"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useBulkUnassignForms() {
+	const qc = useQueryClient();
+	return $api.useMutation("delete", "/api/roles/{role_id}/forms", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/forms"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useRoleApps(roleId: string | undefined) {
+	return $api.useQuery(
+		"get",
+		"/api/roles/{role_id}/apps",
+		{ params: { path: { role_id: roleId ?? "" } } },
+		{ enabled: !!roleId },
+	);
+}
+
+export function useAssignAppsToRole() {
+	const qc = useQueryClient();
+	return $api.useMutation("post", "/api/roles/{role_id}/apps", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/apps"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useBulkUnassignApps() {
+	const qc = useQueryClient();
+	return $api.useMutation("delete", "/api/roles/{role_id}/apps", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/apps"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useRoleWorkflows(roleId: string | undefined) {
+	return $api.useQuery(
+		"get",
+		"/api/roles/{role_id}/workflows",
+		{ params: { path: { role_id: roleId ?? "" } } },
+		{ enabled: !!roleId },
+	);
+}
+
+export function useAssignWorkflowsToRole() {
+	const qc = useQueryClient();
+	return $api.useMutation("post", "/api/roles/{role_id}/workflows", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/workflows"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useBulkUnassignWorkflows() {
+	const qc = useQueryClient();
+	return $api.useMutation("delete", "/api/roles/{role_id}/workflows", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/workflows"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useRoleKnowledge(roleId: string | undefined) {
+	return $api.useQuery(
+		"get",
+		"/api/roles/{role_id}/knowledge",
+		{ params: { path: { role_id: roleId ?? "" } } },
+		{ enabled: !!roleId },
+	);
+}
+
+export function useAssignKnowledgeToRole() {
+	const qc = useQueryClient();
+	return $api.useMutation("post", "/api/roles/{role_id}/knowledge", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/knowledge"] });
+			invalidateRoleList(qc);
+		},
+	});
+}
+
+export function useBulkUnassignKnowledge() {
+	const qc = useQueryClient();
+	return $api.useMutation("delete", "/api/roles/{role_id}/knowledge", {
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/knowledge"] });
+			invalidateRoleList(qc);
+		},
+	});
+}

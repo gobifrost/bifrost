@@ -1,15 +1,22 @@
-import { useState, useMemo } from "react";
-import { Pencil, Plus, Trash2, UserCog, RefreshCw, ArrowUp, ArrowDown } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+	Plus,
+	RefreshCw,
+	UserCog,
+	Users,
+	FileText,
+	Bot,
+	LayoutGrid,
+	Workflow,
+	BookOpen,
+	Pencil,
+	Trash2,
+} from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-	DataTable,
-	DataTableBody,
-	DataTableCell,
-	DataTableHead,
-	DataTableHeader,
-	DataTableRow,
-} from "@/components/ui/data-table";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -20,73 +27,53 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { useRoles, useDeleteRole } from "@/hooks/useRoles";
 import { RoleDialog } from "@/components/roles/RoleDialog";
-import { RoleDetailsDialog } from "@/components/roles/RoleDetailsDialog";
+
 import type { components } from "@/lib/v1";
 type Role = components["schemas"]["RolePublic"];
 
-type SortColumn = "name" | "created";
-type SortDirection = "asc" | "desc";
-
-function SortIcon({ column, sortColumn, sortDirection }: { column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }) {
-	if (sortColumn !== column) return null;
-	return sortDirection === "asc" ? (
-		<ArrowUp className="inline ml-1 h-3 w-3" />
-	) : (
-		<ArrowDown className="inline ml-1 h-3 w-3" />
-	);
-}
+const CHIP_DEFS: {
+	key: "users" | "forms" | "agents" | "apps" | "workflows" | "knowledge";
+	label: string;
+	icon: React.ComponentType<{ className?: string }>;
+}[] = [
+	{ key: "users", label: "Users", icon: Users },
+	{ key: "forms", label: "Forms", icon: FileText },
+	{ key: "agents", label: "Agents", icon: Bot },
+	{ key: "apps", label: "Apps", icon: LayoutGrid },
+	{ key: "workflows", label: "Workflows", icon: Workflow },
+	{ key: "knowledge", label: "Knowledge", icon: BookOpen },
+];
 
 export function Roles() {
 	const [selectedRole, setSelectedRole] = useState<Role | undefined>();
 	const [isDialogOpen, setIsDialogOpen] = useState(false);
-	const [detailsRole, setDetailsRole] = useState<Role | undefined>();
-	const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 	const [roleToDelete, setRoleToDelete] = useState<Role | undefined>();
 	const [searchTerm, setSearchTerm] = useState("");
-	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
-	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
 	const { data: roles, isLoading, refetch } = useRoles();
 	const deleteRole = useDeleteRole();
 
-	// Apply search filter
 	const filteredRoles = useSearch(roles || [], searchTerm, [
 		"name",
 		"description",
 	]);
 
-	// Apply sorting
-	const sortedRoles = useMemo(() => {
-		if (!filteredRoles) return [];
-		return [...filteredRoles].sort((a, b) => {
-			const dir = sortDirection === "asc" ? 1 : -1;
-			switch (sortColumn) {
-				case "name":
-					return dir * (a.name || "").localeCompare(b.name || "");
-				case "created": {
-					const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
-					const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
-					return dir * (aDate - bDate);
-				}
-				default:
-					return 0;
-			}
-		});
-	}, [filteredRoles, sortColumn, sortDirection]);
+	const sortedRoles = useMemo(
+		() =>
+			[...(filteredRoles || [])].sort((a, b) =>
+				(a.name || "").localeCompare(b.name || ""),
+			),
+		[filteredRoles],
+	);
 
-	const handleSort = (column: SortColumn) => {
-		if (sortColumn === column) {
-			setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
-		} else {
-			setSortColumn(column);
-			setSortDirection("asc");
-		}
+	const handleAdd = () => {
+		setSelectedRole(undefined);
+		setIsDialogOpen(true);
 	};
 
 	const handleEdit = (role: Role) => {
@@ -94,51 +81,26 @@ export function Roles() {
 		setIsDialogOpen(true);
 	};
 
-	const handleAdd = () => {
-		setSelectedRole(undefined);
-		setIsDialogOpen(true);
-	};
-
 	const handleDelete = (role: Role) => {
 		setRoleToDelete(role);
-		setIsDeleteDialogOpen(true);
+		setIsDeleteOpen(true);
 	};
 
-	const handleConfirmDelete = async () => {
+	const handleConfirmDelete = () => {
 		if (!roleToDelete) return;
-		deleteRole.mutate({
-			params: { path: { role_id: roleToDelete.id } },
-		});
-		setIsDeleteDialogOpen(false);
+		deleteRole.mutate({ params: { path: { role_id: roleToDelete.id } } });
+		setIsDeleteOpen(false);
 		setRoleToDelete(undefined);
-	};
-
-	const handleViewDetails = (role: Role) => {
-		setDetailsRole(role);
-		setIsDetailsOpen(true);
-	};
-
-	const handleDialogClose = () => {
-		setIsDialogOpen(false);
-		setSelectedRole(undefined);
-	};
-
-	const handleDetailsClose = () => {
-		setIsDetailsOpen(false);
-		setDetailsRole(undefined);
 	};
 
 	return (
 		<div className="h-full flex flex-col space-y-6 max-w-7xl mx-auto">
-			{/* Header */}
 			<div className="flex items-center justify-between">
 				<div>
-					<h1 className="text-4xl font-extrabold tracking-tight">
-						Roles
-					</h1>
+					<h1 className="text-4xl font-extrabold tracking-tight">Roles</h1>
 					<p className="mt-2 text-muted-foreground">
-						Manage roles for organization users and control form
-						access
+						Roles grant access to users, forms, agents, apps, workflows, and
+						knowledge namespaces. Click a chip to manage a role's consumers.
 					</p>
 				</div>
 				<div className="flex gap-2">
@@ -161,7 +123,6 @@ export function Roles() {
 				</div>
 			</div>
 
-			{/* Search and Filters */}
 			<div className="flex items-center gap-4">
 				<SearchBox
 					value={searchTerm}
@@ -171,140 +132,68 @@ export function Roles() {
 				/>
 			</div>
 
-			{/* Content */}
-			{isLoading ? (
-				<div className="space-y-2">
-					{[...Array(5)].map((_, i) => (
-						<Skeleton key={i} className="h-12 w-full" />
-					))}
-				</div>
-			) : sortedRoles && sortedRoles.length > 0 ? (
-				<div className="flex-1 min-h-0">
-					<DataTable className="max-h-full">
-						<DataTableHeader>
-							<DataTableRow>
-								<DataTableHead
-									className="cursor-pointer select-none"
-									onClick={() => handleSort("name")}
-								>
-									Name
-									<SortIcon column="name" sortColumn={sortColumn} sortDirection={sortDirection} />
-								</DataTableHead>
-								<DataTableHead>Description</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("created")}
-								>
-									Created
-									<SortIcon column="created" sortColumn={sortColumn} sortDirection={sortDirection} />
-								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap text-right">
-									Actions
-								</DataTableHead>
-							</DataTableRow>
-						</DataTableHeader>
-						<DataTableBody>
-							{sortedRoles.map((role) => (
-								<DataTableRow
-									key={role.id}
-									clickable
-									onClick={() => handleViewDetails(role)}
-								>
-									<DataTableCell className="font-medium">
-										{role.name}
-									</DataTableCell>
-									<DataTableCell className="max-w-xs truncate text-muted-foreground">
-										{role.description || "-"}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-										{role.created_at
-											? new Date(
-													role.created_at,
-												).toLocaleDateString()
-											: "N/A"}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-right">
-										<div className="flex justify-end gap-2">
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={(e) => {
-													e.stopPropagation();
-													handleEdit(role);
-												}}
-												title="Edit role"
-											>
-												<Pencil className="h-4 w-4" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={(e) => {
-													e.stopPropagation();
-													handleDelete(role);
-												}}
-												title="Delete role"
-											>
-												<Trash2 className="h-4 w-4" />
-											</Button>
-										</div>
-									</DataTableCell>
-								</DataTableRow>
-							))}
-						</DataTableBody>
-					</DataTable>
-				</div>
-			) : (
-				// Empty State
-				<Card>
-					<CardContent className="flex flex-col items-center justify-center py-12 text-center">
-						<UserCog className="h-12 w-12 text-muted-foreground" />
-						<h3 className="mt-4 text-lg font-semibold">
-							{searchTerm
-								? "No roles match your search"
-								: "No roles found"}
-						</h3>
-						<p className="mt-2 text-sm text-muted-foreground">
-							{searchTerm
-								? "Try adjusting your search term or clear the filter"
-								: "Get started by creating your first role"}
-						</p>
-						<Button
-							variant="outline"
-							size="icon"
-							onClick={handleAdd}
-							title="Create Role"
-							className="mt-4"
-						>
-							<Plus className="h-4 w-4" />
-						</Button>
-					</CardContent>
-				</Card>
-			)}
+			<div className="flex-1 min-h-0 overflow-y-auto">
+				{isLoading ? (
+					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						{[...Array(6)].map((_, i) => (
+							<Skeleton key={i} className="h-48 w-full" />
+						))}
+					</div>
+				) : sortedRoles.length === 0 ? (
+					<Card>
+						<CardContent className="flex flex-col items-center justify-center py-12 text-center">
+							<UserCog className="h-12 w-12 text-muted-foreground" />
+							<h3 className="mt-4 text-lg font-semibold">
+								{searchTerm
+									? "No roles match your search"
+									: "No roles found"}
+							</h3>
+							<p className="mt-2 text-sm text-muted-foreground">
+								{searchTerm
+									? "Try adjusting your search term or clear the filter"
+									: "Get started by creating your first role"}
+							</p>
+							<Button
+								variant="outline"
+								size="icon"
+								onClick={handleAdd}
+								title="Create Role"
+								className="mt-4"
+							>
+								<Plus className="h-4 w-4" />
+							</Button>
+						</CardContent>
+					</Card>
+				) : (
+					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						{sortedRoles.map((role) => (
+							<RoleCard
+								key={role.id}
+								role={role}
+								onEdit={() => handleEdit(role)}
+								onDelete={() => handleDelete(role)}
+							/>
+						))}
+					</div>
+				)}
+			</div>
 
 			<RoleDialog
 				role={selectedRole}
 				open={isDialogOpen}
-				onClose={handleDialogClose}
+				onClose={() => {
+					setIsDialogOpen(false);
+					setSelectedRole(undefined);
+				}}
 			/>
 
-			<RoleDetailsDialog
-				role={detailsRole}
-				open={isDetailsOpen}
-				onClose={handleDetailsClose}
-			/>
-
-			{/* Delete Confirmation Dialog */}
-			<AlertDialog
-				open={isDeleteDialogOpen}
-				onOpenChange={setIsDeleteDialogOpen}
-			>
+			<AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>Delete Role</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to delete the role "
-							{roleToDelete?.name}"? This action cannot be undone.
+							Are you sure you want to delete the role "{roleToDelete?.name}"?
+							This action cannot be undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -313,13 +202,84 @@ export function Roles() {
 							onClick={handleConfirmDelete}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{deleteRole.isPending
-								? "Deleting..."
-								: "Delete Role"}
+							{deleteRole.isPending ? "Deleting..." : "Delete Role"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
 		</div>
+	);
+}
+
+function RoleCard({
+	role,
+	onEdit,
+	onDelete,
+}: {
+	role: Role;
+	onEdit: () => void;
+	onDelete: () => void;
+}) {
+	const counts = role.consumer_counts;
+
+	return (
+		<Card className="group transition-colors hover:border-primary/40">
+			<CardContent className="p-5 flex flex-col gap-4">
+				<div className="flex items-start justify-between gap-2">
+					<Link
+						to={`/roles/${role.id}`}
+						className="flex-1 min-w-0 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+					>
+						<div className="text-lg font-semibold truncate">{role.name}</div>
+						{role.description && (
+							<div className="text-sm text-muted-foreground line-clamp-2">
+								{role.description}
+							</div>
+						)}
+					</Link>
+					<div className="flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-8 w-8"
+							onClick={onEdit}
+							aria-label={`Edit ${role.name}`}
+							title="Edit role"
+						>
+							<Pencil className="h-4 w-4" />
+						</Button>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-8 w-8"
+							onClick={onDelete}
+							aria-label={`Delete ${role.name}`}
+							title="Delete role"
+						>
+							<Trash2 className="h-4 w-4" />
+						</Button>
+					</div>
+				</div>
+
+				<div className="flex flex-wrap gap-1.5">
+					{CHIP_DEFS.map(({ key, label, icon: Icon }) => {
+						const count = counts ? counts[key] : 0;
+						return (
+							<Link
+								key={key}
+								to={`/roles/${role.id}/${key}`}
+								className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-muted hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								title={`${count} ${label.toLowerCase()}`}
+								aria-label={`${count} ${label.toLowerCase()} — open ${label.toLowerCase()} tab`}
+							>
+								<Icon className="h-3 w-3" />
+								<span className="font-medium">{count}</span>
+								<span className="text-muted-foreground">{label}</span>
+							</Link>
+						);
+					})}
+				</div>
+			</CardContent>
+		</Card>
 	);
 }
