@@ -99,6 +99,23 @@ def test_empty_scalar_result_resolves_to_none(monkeypatch):
     assert resolver.resolve_claim(claim, user, db=None) is None
 
 
+def test_resolver_dispatches_to_runner(monkeypatch):
+    """resolver._run_claim_query must dispatch through runner.run."""
+    from shared.claims import resolver, runner
+
+    captured = {}
+
+    def fake_run(claim, user, db):
+        captured["claim"] = claim.name
+        return []
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    user = make_user(org_id=uuid4())
+    claim = make_claim("allowed_campus_ids")
+    resolver.resolve_claim(claim, user, db=None)
+    assert captured["claim"] == "allowed_campus_ids"
+
+
 def test_missing_user_claims_attribute_is_initialized(monkeypatch):
     from shared.claims import resolver
 

@@ -32,10 +32,7 @@ def _get_or_init_cache(user: Any) -> dict:
 
 
 def _run_claim_query(claim: CustomClaim, user: Any, db: Any) -> list[dict]:
-    """Run the claim's query against the source table as the calling user.
+    """Dispatch to ``shared.claims.runner.run`` (kept as a seam for tests)."""
+    from shared.claims import runner  # local import to avoid circular at module load
 
-    Wired in Task 8 — for now this is the seam the tests monkeypatch.
-    """
-    raise NotImplementedError(
-        "_run_claim_query is wired in shared/claims/runner.py — see Task 8"
-    )
+    return runner.run(claim, user, db)
