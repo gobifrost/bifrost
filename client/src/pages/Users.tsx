@@ -1,15 +1,11 @@
 import { useState, useMemo } from "react";
 import {
-	Shield,
-	Users as UsersIcon,
+	Crown,
 	RefreshCw,
 	UserCog,
-	Edit,
 	Plus,
-	Trash2,
-	Globe,
-	Building2,
 	Star,
+	Building2,
 	ArrowUp,
 	ArrowDown,
 } from "lucide-react";
@@ -22,7 +18,6 @@ import {
 	DataTableHeader,
 	DataTableRow,
 } from "@/components/ui/data-table";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -54,7 +49,7 @@ import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { CreateUserDialog } from "@/components/users/CreateUserDialog";
 import { EditUserDialog } from "@/components/users/EditUserDialog";
-import { InviteActionsMenu } from "@/components/users/InviteActionsMenu";
+import { UserActionsMenu } from "@/components/users/UserActionsMenu";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import {
 	useRegenerateInvite,
@@ -66,7 +61,7 @@ import type { components } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
 
-type SortColumn = "organization" | "name" | "email" | "type" | "status" | "created" | "last_login";
+type SortColumn = "name" | "email" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
 
 function SortIcon({ column, sortColumn, sortDirection }: { column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }) {
@@ -95,7 +90,6 @@ export function Users() {
 	const { scope } = useOrgScope();
 	const { user: currentUser, isPlatformAdmin } = useAuth();
 
-	// Fetch users with scope filter (undefined = all, null = global only, UUID = specific org)
 	const {
 		data: users,
 		isLoading,
@@ -110,12 +104,10 @@ export function Users() {
 	const regenerateMutation = useRegenerateInvite();
 	const revokeMutation = useRevokeInvite();
 
-	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
 		enabled: isPlatformAdmin,
 	});
 
-	// Helper to get organization info from ID
 	const getOrgInfo = (
 		orgId: string | null | undefined,
 	): { name: string; isProvider: boolean } => {
@@ -124,33 +116,17 @@ export function Users() {
 		return { name: org?.name || orgId, isProvider: org?.is_provider ?? false };
 	};
 
-	// Apply search filter
 	const filteredUsers = useSearch(users || [], searchTerm, ["email", "name"]);
 
-	// Apply sorting
 	const sortedUsers = useMemo(() => {
 		if (!filteredUsers) return [];
 		return [...filteredUsers].sort((a, b) => {
 			const dir = sortDirection === "asc" ? 1 : -1;
 			switch (sortColumn) {
-				case "organization": {
-					const aOrg = a.organization_id
-						? (organizations?.find((o: Organization) => o.id === a.organization_id)?.name || a.organization_id)
-						: "Platform";
-					const bOrg = b.organization_id
-						? (organizations?.find((o: Organization) => o.id === b.organization_id)?.name || b.organization_id)
-						: "Platform";
-					return dir * aOrg.localeCompare(bOrg);
-				}
 				case "name":
 					return dir * (a.name || a.email || "").localeCompare(b.name || b.email || "");
 				case "email":
 					return dir * (a.email || "").localeCompare(b.email || "");
-				case "type": {
-					const aVal = a.is_superuser ? 1 : 0;
-					const bVal = b.is_superuser ? 1 : 0;
-					return dir * (aVal - bVal);
-				}
 				case "status": {
 					const aVal = a.invite_status ?? "active";
 					const bVal = b.invite_status ?? "active";
@@ -170,7 +146,7 @@ export function Users() {
 					return 0;
 			}
 		});
-	}, [filteredUsers, sortColumn, sortDirection, organizations]);
+	}, [filteredUsers, sortColumn, sortDirection]);
 
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
@@ -188,11 +164,9 @@ export function Users() {
 
 	const handleToggleActive = (user: User) => {
 		if (user.is_active) {
-			// Disabling requires confirmation
 			setSelectedUser(user);
 			setIsDisableOpen(true);
 		} else {
-			// Enabling is instant
 			handleEnableUser(user);
 		}
 	};
@@ -272,20 +246,6 @@ export function Users() {
 	const handleEditClose = () => {
 		setIsEditOpen(false);
 		setSelectedUser(undefined);
-	};
-
-	const getUserTypeBadge = (isSuperuser: boolean) => {
-		return isSuperuser ? (
-			<Badge variant="default">
-				<Shield className="mr-1 h-3 w-3" />
-				Platform Admin
-			</Badge>
-		) : (
-			<Badge variant="secondary">
-				<UsersIcon className="mr-1 h-3 w-3" />
-				Organization User
-			</Badge>
-		);
 	};
 
 	const isSelf = (user: User) =>
@@ -370,42 +330,19 @@ export function Users() {
 					<DataTable>
 						<DataTableHeader>
 							<DataTableRow>
-								{isPlatformAdmin && (
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("organization")}
-									>
-										Organization
-										<SortIcon column="organization" sortColumn={sortColumn} sortDirection={sortDirection} />
-									</DataTableHead>
-								)}
 								<DataTableHead
-									className="cursor-pointer select-none"
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
 									onClick={() => handleSort("name")}
 								>
 									Name
 									<SortIcon column="name" sortColumn={sortColumn} sortDirection={sortDirection} />
 								</DataTableHead>
 								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									className="cursor-pointer select-none"
 									onClick={() => handleSort("email")}
 								>
 									Email
 									<SortIcon column="email" sortColumn={sortColumn} sortDirection={sortDirection} />
-								</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("type")}
-								>
-									Type
-									<SortIcon column="type" sortColumn={sortColumn} sortDirection={sortDirection} />
-								</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("created")}
-								>
-									Created
-									<SortIcon column="created" sortColumn={sortColumn} sortDirection={sortDirection} />
 								</DataTableHead>
 								<DataTableHead
 									className="w-0 whitespace-nowrap cursor-pointer select-none"
@@ -416,121 +353,96 @@ export function Users() {
 								</DataTableHead>
 								<DataTableHead
 									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("created")}
+								>
+									Created
+									<SortIcon column="created" sortColumn={sortColumn} sortDirection={sortDirection} />
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
 									onClick={() => handleSort("last_login")}
 								>
 									Last Login
 									<SortIcon column="last_login" sortColumn={sortColumn} sortDirection={sortDirection} />
 								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap text-right"></DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>
-							{sortedUsers.map((user) => (
-								<DataTableRow
-									key={user.id}
-									clickable
-									onClick={() => handleEditUser(user)}
-									className={
-										!user.is_active
-											? "opacity-60"
-											: undefined
-									}
-								>
-									{isPlatformAdmin && (
+							{sortedUsers.map((user) => {
+								const orgInfo = getOrgInfo(user.organization_id);
+								return (
+									<DataTableRow
+										key={user.id}
+										clickable
+										onClick={() => handleEditUser(user)}
+										className={
+											"group/row" +
+											(!user.is_active ? " opacity-60" : "")
+										}
+									>
 										<DataTableCell className="w-0 whitespace-nowrap">
-											{(() => {
-												const orgInfo = getOrgInfo(
-													user.organization_id,
-												);
-												return user.organization_id ? (
-													<Badge
-														variant="outline"
-														className="text-xs"
-													>
+											<div className="flex flex-col">
+												<div className="flex items-center gap-1.5">
+													<span className="font-medium">
+														{user.name || user.email}
+													</span>
+													{user.is_superuser && (
+														<Tooltip>
+															<TooltipTrigger asChild>
+																<Crown className="h-4 w-4 shrink-0 text-amber-500 fill-amber-500" />
+															</TooltipTrigger>
+															<TooltipContent>Platform Admin</TooltipContent>
+														</Tooltip>
+													)}
+												</div>
+												{!user.is_superuser && (
+													<div className="flex items-center gap-1 text-xs text-muted-foreground">
 														{orgInfo.isProvider ? (
-															<Star className="mr-1 h-3 w-3 text-amber-500 fill-amber-500" />
+															<Star className="h-3 w-3 shrink-0 text-amber-500 fill-amber-500" />
 														) : (
-															<Building2 className="mr-1 h-3 w-3" />
+															<Building2 className="h-3 w-3 shrink-0" />
 														)}
-														{orgInfo.name}
-													</Badge>
-												) : (
-													<Badge
-														variant="default"
-														className="text-xs"
-													>
-														<Globe className="mr-1 h-3 w-3" />
-														Platform
-													</Badge>
-												);
-											})()}
+														<span>{orgInfo.name}</span>
+													</div>
+												)}
+											</div>
 										</DataTableCell>
-									)}
-									<DataTableCell className="font-medium">
-										{user.name || user.email}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-muted-foreground">
-										{user.email}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap">
-										{getUserTypeBadge(user.is_superuser)}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-										{user.created_at
-											? new Date(
-													user.created_at,
-												).toLocaleDateString()
-											: "N/A"}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap">
-										<UserStatusBadge
-											status={user.invite_status ?? "active"}
-										/>
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-										{user.last_login
-											? new Date(
-													user.last_login,
-												).toLocaleDateString()
-											: "Never"}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-right">
-										<div
-											className="flex items-center justify-end gap-2"
-											onClick={(e) => e.stopPropagation()}
-										>
+										<DataTableCell className="text-muted-foreground">
 											<Tooltip>
 												<TooltipTrigger asChild>
-													<div className="w-fit">
-														<Switch
-															checked={
-																user.is_active
-															}
-															onCheckedChange={() =>
-																handleToggleActive(
-																	user,
-																)
-															}
-															disabled={
-																isSelf(
-																	user,
-																) ||
-																updateMutation.isPending
-															}
-														/>
-													</div>
+													<span className="block truncate">{user.email}</span>
 												</TooltipTrigger>
-												<TooltipContent>
-													{isSelf(user)
-														? "You cannot disable your own account"
-														: user.is_active
-															? "Enabled — click to disable"
-															: "Disabled — click to enable"}
-												</TooltipContent>
+												<TooltipContent>{user.email}</TooltipContent>
 											</Tooltip>
-											<InviteActionsMenu
-												userId={user.id}
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap">
+											<UserStatusBadge
 												status={user.invite_status ?? "active"}
+											/>
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+											{user.created_at
+												? new Date(
+														user.created_at,
+													).toLocaleDateString()
+												: "N/A"}
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+											{user.last_login
+												? new Date(
+														user.last_login,
+													).toLocaleDateString()
+												: "Never"}
+										</DataTableCell>
+										<DataTableCell
+											className="w-0 whitespace-nowrap text-right sticky right-0 bg-card group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
+											onClick={(e) => e.stopPropagation()}
+										>
+											<UserActionsMenu
+												status={user.invite_status ?? "active"}
+												isActive={user.is_active}
+												isSelf={isSelf(user)}
 												onResend={() =>
 													resendMutation.mutate(user.id, {
 														onSuccess: (res) => {
@@ -579,32 +491,13 @@ export function Users() {
 															),
 													})
 												}
+												onToggleActive={() => handleToggleActive(user)}
+												onDelete={() => handleDeleteUser(user)}
 											/>
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={() =>
-													handleEditUser(user)
-												}
-												title="Edit user"
-											>
-												<Edit className="h-4 w-4" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={() =>
-													handleDeleteUser(user)
-												}
-												title="Permanently delete"
-												disabled={isSelf(user)}
-											>
-												<Trash2 className="h-4 w-4 text-destructive" />
-											</Button>
-										</div>
-									</DataTableCell>
-								</DataTableRow>
-							))}
+										</DataTableCell>
+									</DataTableRow>
+								);
+							})}
 						</DataTableBody>
 					</DataTable>
 				) : (
