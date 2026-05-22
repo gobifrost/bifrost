@@ -3472,22 +3472,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6839,7 +6839,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List custom claims for caller's org */
+        /**
+         * List custom claims
+         * @description List custom claims.
+         *
+         *     Platform admins see claims across every org by default — the
+         *     organization column lets them filter in the UI. Non-superusers don't
+         *     reach this endpoint (gated by ``CurrentSuperuser``).
+         */
         get: operations["list_claims_api_claims_get"];
         put?: never;
         /** Create a custom claim (admin only) */
@@ -26748,7 +26755,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26781,7 +26788,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26814,7 +26821,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -26847,7 +26854,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -32859,7 +32866,10 @@ export interface operations {
     };
     list_claims_api_claims_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Filter scope: omit to list across all orgs (superuser default), or pass an org UUID. */
+                scope?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -32875,11 +32885,23 @@ export interface operations {
                     "application/json": components["schemas"]["ClaimsList"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_claim_api_claims_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -32912,7 +32934,10 @@ export interface operations {
     };
     get_claim_api_claims__name__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 name: string;
@@ -32943,7 +32968,10 @@ export interface operations {
     };
     delete_claim_api_claims__name__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 name: string;
@@ -32972,7 +33000,10 @@ export interface operations {
     };
     update_claim_api_claims__name__patch: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
             header?: never;
             path: {
                 name: string;

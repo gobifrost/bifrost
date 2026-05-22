@@ -13,6 +13,22 @@ vi.mock("@/services/claims", () => ({
 	deleteClaim: (...args: unknown[]) => mockDeleteClaim(...args),
 }));
 
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({
+		isPlatformAdmin: true,
+		user: {
+			id: "dev-user",
+			email: "dev@gobifrost.com",
+			organizationId: "22222222-2222-4222-8222-222222222222",
+			isSuperuser: true,
+		},
+	}),
+}));
+
+vi.mock("@/hooks/useOrganizations", () => ({
+	useOrganizations: () => ({ data: [] }),
+}));
+
 import { TablesClaimsTab } from "./TablesClaimsTab";
 
 beforeEach(() => {
@@ -45,7 +61,7 @@ describe("TablesClaimsTab", () => {
 		expect(mockListClaims).toHaveBeenCalledTimes(1);
 	});
 
-	it("deletes a claim and refreshes the list", async () => {
+	it("deletes a claim through the confirmation dialog with scope", async () => {
 		mockListClaims
 			.mockResolvedValueOnce({
 				claims: [
@@ -69,11 +85,14 @@ describe("TablesClaimsTab", () => {
 		const { user } = renderWithProviders(<TablesClaimsTab />);
 		await screen.findByText("allowed_campus_ids");
 
-		await user.click(screen.getByRole("button", { name: /delete/i }));
+		await user.click(screen.getByRole("button", { name: /delete claim/i }));
+		// Confirmation dialog appears — accept it.
+		await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
 		await waitFor(() =>
 			expect(mockDeleteClaim).toHaveBeenCalledWith(
 				"allowed_campus_ids",
+				{ scope: "22222222-2222-4222-8222-222222222222" },
 			),
 		);
 		expect(mockListClaims).toHaveBeenCalledTimes(2);

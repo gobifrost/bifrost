@@ -46,10 +46,16 @@ async def _assemble_claim_body(
         )
 
 
-async def list_claims(context: Any) -> ToolResult:
+def _scope_params(scope: str | None) -> dict[str, Any] | None:
+    return {"scope": scope} if scope else None
+
+
+async def list_claims(context: Any, scope: str | None = None) -> ToolResult:
     """List custom claims — thin wrapper over ``GET /api/claims``."""
     logger.info("MCP list_claims (HTTP bridge)")
-    status_code, body = await call_rest(context, "GET", "/api/claims")
+    status_code, body = await call_rest(
+        context, "GET", "/api/claims", params=_scope_params(scope)
+    )
     if status_code != 200:
         return error_result(f"list_claims failed: HTTP {status_code}", {"body": body})
     items = body.get("claims", []) if isinstance(body, dict) else []
@@ -59,12 +65,14 @@ async def list_claims(context: Any) -> ToolResult:
     )
 
 
-async def get_claim(context: Any, name: str) -> ToolResult:
+async def get_claim(context: Any, name: str, scope: str | None = None) -> ToolResult:
     """Get a custom claim by name — thin wrapper over ``GET /api/claims/{name}``."""
     if not name:
         return error_result("name is required")
 
-    status_code, body = await call_rest(context, "GET", f"/api/claims/{name}")
+    status_code, body = await call_rest(
+        context, "GET", f"/api/claims/{name}", params=_scope_params(scope)
+    )
     if status_code != 200:
         return error_result(f"get_claim failed: HTTP {status_code}", {"body": body})
     return success_result(
@@ -79,6 +87,7 @@ async def create_claim(
     query: dict[str, Any],
     description: str | None = None,
     type: str = "list",
+    scope: str | None = None,
 ) -> ToolResult:
     """Create a custom claim — thin wrapper over ``POST /api/claims``."""
     if not name:
@@ -97,7 +106,9 @@ async def create_claim(
     except Exception as exc:
         return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
 
-    status_code, resp = await call_rest(context, "POST", "/api/claims", json_body=body)
+    status_code, resp = await call_rest(
+        context, "POST", "/api/claims", json_body=body, params=_scope_params(scope)
+    )
     if status_code not in (200, 201):
         return error_result(f"create_claim failed: HTTP {status_code}", {"body": resp})
     return success_result(
@@ -112,6 +123,7 @@ async def update_claim(
     description: str | None = None,
     type: str | None = None,
     query: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
     """Update a custom claim by name — thin wrapper over ``PATCH /api/claims/{name}``."""
     if not name:
@@ -124,7 +136,11 @@ async def update_claim(
         return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
 
     status_code, resp = await call_rest(
-        context, "PATCH", f"/api/claims/{name}", json_body=body
+        context,
+        "PATCH",
+        f"/api/claims/{name}",
+        json_body=body,
+        params=_scope_params(scope),
     )
     if status_code != 200:
         return error_result(f"update_claim failed: HTTP {status_code}", {"body": resp})
@@ -134,12 +150,16 @@ async def update_claim(
     )
 
 
-async def delete_claim(context: Any, name: str) -> ToolResult:
+async def delete_claim(
+    context: Any, name: str, scope: str | None = None
+) -> ToolResult:
     """Delete a custom claim by name — thin wrapper over ``DELETE /api/claims/{name}``."""
     if not name:
         return error_result("name is required")
 
-    status_code, resp = await call_rest(context, "DELETE", f"/api/claims/{name}")
+    status_code, resp = await call_rest(
+        context, "DELETE", f"/api/claims/{name}", params=_scope_params(scope)
+    )
     if status_code not in (200, 204):
         return error_result(f"delete_claim failed: HTTP {status_code}", {"body": resp})
     return success_result(f"Deleted custom claim {name}", {"deleted": name})
