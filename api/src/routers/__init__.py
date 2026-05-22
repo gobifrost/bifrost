@@ -117,6 +117,7 @@ __all__ = [
     "events_router",
     "hooks_router",
     "tables_router",
+    "claims_router",
     "knowledge_sources_router",
     "app_embed_secrets_router",
     "applications_router",
