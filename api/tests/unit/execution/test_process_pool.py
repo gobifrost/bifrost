@@ -1348,7 +1348,7 @@ class TestCrashedProcessReport:
             "result": {},
         }
         result_queue = MagicMock()
-        result_queue.get_nowait.return_value = result
+        result_queue.get.return_value = result
 
         handle = ProcessHandle(
             id="process-finished",
@@ -1383,7 +1383,7 @@ class TestCrashedProcessReport:
         mock_process.exitcode = 0
 
         result_queue = MagicMock()
-        result_queue.get_nowait.side_effect = Empty
+        result_queue.get.side_effect = Empty
 
         handle = ProcessHandle(
             id="process-clean-exit",
@@ -1419,7 +1419,7 @@ class TestCrashedProcessReport:
         mock_process.join = MagicMock()
 
         result_queue = MagicMock()
-        result_queue.get_nowait.side_effect = Empty
+        result_queue.get.side_effect = Empty
 
         handle = ProcessHandle(
             id="process-stale-clean-exit",
@@ -1434,7 +1434,7 @@ class TestCrashedProcessReport:
                 started_at=datetime.now(timezone.utc),
                 timeout_seconds=300,
             ),
-            clean_exit_observed_at=datetime.now(timezone.utc) - timedelta(seconds=3),
+            clean_exit_observed_at=datetime.now(timezone.utc) - timedelta(seconds=11),
         )
         pool.processes[handle.id] = handle
 

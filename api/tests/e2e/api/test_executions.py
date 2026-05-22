@@ -683,7 +683,7 @@ class TestExecutionConcurrency:
             assert response.status_code == 200
             data = response.json()
             assert data.get("status") == "Success", (
-                f"Execution {eid} did not complete successfully: {data.get('status')}"
+                f"Execution {eid} did not complete successfully: {data}"
             )
             executions_data.append(data)
 

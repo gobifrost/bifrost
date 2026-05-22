@@ -48,7 +48,8 @@ from src.services.execution.template_process import TemplateProcess
 
 logger = logging.getLogger(__name__)
 
-_CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
+_CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=10)
+_EXITED_PROCESS_RESULT_READ_TIMEOUT = 0.25
 
 
 def _get_installed_packages() -> list[dict[str, str]]:
@@ -1158,7 +1159,14 @@ class ProcessPoolManager:
         for process_id, handle in list(self.processes.items()):
             if not handle.is_alive and handle.state != ProcessState.KILLED:
                 try:
-                    result = handle.result_queue.get_nowait()
+                    # A forked child can be reaped before the pipe payload is
+                    # visible to poll(0), especially on loaded CI runners.
+                    # Give completed children a short blocking read before
+                    # deciding the execution crashed.
+                    result = handle.result_queue.get(
+                        block=True,
+                        timeout=_EXITED_PROCESS_RESULT_READ_TIMEOUT,
+                    )
                     if isinstance(result, dict):
                         await self._handle_result(handle, result)
                         continue
