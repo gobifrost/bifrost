@@ -148,30 +148,41 @@ class TestRoleWorkflows:
         wf_name = f"role_wf_{uuid.uuid4().hex[:8]}"
         wf_id = _make_workflow(e2e_client, platform_admin.headers, wf_name)
 
-        post = e2e_client.post(
-            f"/api/roles/{role}/workflows",
-            headers=platform_admin.headers,
-            json={"workflow_ids": [wf_id]},
-        )
-        assert post.status_code == 204, post.text
+        try:
+            post = e2e_client.post(
+                f"/api/roles/{role}/workflows",
+                headers=platform_admin.headers,
+                json={"workflow_ids": [wf_id]},
+            )
+            assert post.status_code == 204, post.text
 
-        after = e2e_client.get(
-            f"/api/roles/{role}/workflows", headers=platform_admin.headers
-        ).json()["workflow_ids"]
-        assert wf_id in after
+            after = e2e_client.get(
+                f"/api/roles/{role}/workflows", headers=platform_admin.headers
+            ).json()["workflow_ids"]
+            assert wf_id in after
 
-        dele = e2e_client.request(
-            "DELETE",
-            f"/api/roles/{role}/workflows",
-            headers=platform_admin.headers,
-            json={"workflow_ids": [wf_id]},
-        )
-        assert dele.status_code == 204, dele.text
+            dele = e2e_client.request(
+                "DELETE",
+                f"/api/roles/{role}/workflows",
+                headers=platform_admin.headers,
+                json={"workflow_ids": [wf_id]},
+            )
+            assert dele.status_code == 204, dele.text
 
-        final = e2e_client.get(
-            f"/api/roles/{role}/workflows", headers=platform_admin.headers
-        ).json()["workflow_ids"]
-        assert wf_id not in final
+            final = e2e_client.get(
+                f"/api/roles/{role}/workflows", headers=platform_admin.headers
+            ).json()["workflow_ids"]
+            assert wf_id not in final
+        finally:
+            # Stale workflow→role links survive across the whole session
+            # otherwise — `test_cli_import` exports every workflow with its
+            # role membership and rejects dangling refs.
+            e2e_client.delete(
+                f"/api/roles/{role}", headers=platform_admin.headers
+            )
+            e2e_client.delete(
+                f"/api/workflows/{wf_id}", headers=platform_admin.headers
+            )
 
     def test_assign_unknown_workflow_404(self, e2e_client, platform_admin):
         role = _create_role(e2e_client, platform_admin.headers, "WFMiss")
@@ -248,121 +259,132 @@ class TestRoleConsumerCounts:
         self, e2e_client, platform_admin, org1
     ):
         role = _create_role(e2e_client, platform_admin.headers, "Counts")
+        wf_id: str | None = None
+        try:
+            # Baseline — every count zero.
+            roles_resp = e2e_client.get(
+                "/api/roles", headers=platform_admin.headers
+            ).json()
+            match = next(r for r in roles_resp if r["id"] == role)
+            assert match["consumer_counts"] == {
+                "users": 0,
+                "forms": 0,
+                "agents": 0,
+                "apps": 0,
+                "workflows": 0,
+                "knowledge": 0,
+            }
 
-        # Baseline — every count zero.
-        roles_resp = e2e_client.get(
-            "/api/roles", headers=platform_admin.headers
-        ).json()
-        match = next(r for r in roles_resp if r["id"] == role)
-        assert match["consumer_counts"] == {
-            "users": 0,
-            "forms": 0,
-            "agents": 0,
-            "apps": 0,
-            "workflows": 0,
-            "knowledge": 0,
-        }
+            # Add one of each type.
+            user_id = e2e_client.post(
+                "/api/users",
+                headers=platform_admin.headers,
+                json={
+                    "email": f"counts-{uuid.uuid4().hex[:6]}@cnt.gobifrost.dev",
+                    "name": "Counts user",
+                    "organization_id": org1["id"],
+                    "is_superuser": False,
+                    "invite": False,
+                },
+            ).json()["id"]
+            e2e_client.post(
+                f"/api/roles/{role}/users",
+                headers=platform_admin.headers,
+                json={"user_ids": [user_id]},
+            )
 
-        # Add one of each type.
-        user_id = e2e_client.post(
-            "/api/users",
-            headers=platform_admin.headers,
-            json={
-                "email": f"counts-{uuid.uuid4().hex[:6]}@cnt.gobifrost.dev",
-                "name": "Counts user",
-                "organization_id": org1["id"],
-                "is_superuser": False,
-                "invite": False,
-            },
-        ).json()["id"]
-        e2e_client.post(
-            f"/api/roles/{role}/users",
-            headers=platform_admin.headers,
-            json={"user_ids": [user_id]},
-        )
+            form_id = e2e_client.post(
+                "/api/forms",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"CntForm {uuid.uuid4().hex[:6]}",
+                    "description": "",
+                    "workflow_id": None,
+                    "form_schema": {"fields": []},
+                    "access_level": "role_based",
+                },
+            ).json()["id"]
+            e2e_client.post(
+                f"/api/roles/{role}/forms",
+                headers=platform_admin.headers,
+                json={"form_ids": [form_id]},
+            )
 
-        form_id = e2e_client.post(
-            "/api/forms",
-            headers=platform_admin.headers,
-            json={
-                "name": f"CntForm {uuid.uuid4().hex[:6]}",
-                "description": "",
-                "workflow_id": None,
-                "form_schema": {"fields": []},
-                "access_level": "role_based",
-            },
-        ).json()["id"]
-        e2e_client.post(
-            f"/api/roles/{role}/forms",
-            headers=platform_admin.headers,
-            json={"form_ids": [form_id]},
-        )
+            agent_id = e2e_client.post(
+                "/api/agents",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"CntAgent {uuid.uuid4().hex[:6]}",
+                    "description": "",
+                    "system_prompt": "Test",
+                    "channels": ["chat"],
+                    "access_level": "authenticated",
+                },
+            ).json()["id"]
+            e2e_client.post(
+                f"/api/roles/{role}/agents",
+                headers=platform_admin.headers,
+                json={"agent_ids": [agent_id]},
+            )
 
-        agent_id = e2e_client.post(
-            "/api/agents",
-            headers=platform_admin.headers,
-            json={
-                "name": f"CntAgent {uuid.uuid4().hex[:6]}",
-                "description": "",
-                "system_prompt": "Test",
-                "channels": ["chat"],
-                "access_level": "authenticated",
-            },
-        ).json()["id"]
-        e2e_client.post(
-            f"/api/roles/{role}/agents",
-            headers=platform_admin.headers,
-            json={"agent_ids": [agent_id]},
-        )
+            app_id = _create_app(e2e_client, platform_admin.headers, "CntApp")
+            e2e_client.post(
+                f"/api/roles/{role}/apps",
+                headers=platform_admin.headers,
+                json={"app_ids": [app_id]},
+            )
 
-        app_id = _create_app(e2e_client, platform_admin.headers, "CntApp")
-        e2e_client.post(
-            f"/api/roles/{role}/apps",
-            headers=platform_admin.headers,
-            json={"app_ids": [app_id]},
-        )
+            wf_id = _make_workflow(
+                e2e_client, platform_admin.headers, f"cnt_wf_{uuid.uuid4().hex[:6]}"
+            )
+            e2e_client.post(
+                f"/api/roles/{role}/workflows",
+                headers=platform_admin.headers,
+                json={"workflow_ids": [wf_id]},
+            )
 
-        wf_id = _make_workflow(
-            e2e_client, platform_admin.headers, f"cnt_wf_{uuid.uuid4().hex[:6]}"
-        )
-        e2e_client.post(
-            f"/api/roles/{role}/workflows",
-            headers=platform_admin.headers,
-            json={"workflow_ids": [wf_id]},
-        )
+            ns = f"cnt-ns-{uuid.uuid4().hex[:6]}"
+            e2e_client.post(
+                f"/api/roles/{role}/knowledge",
+                headers=platform_admin.headers,
+                json={"entries": [{"namespace": ns, "organization_id": None}]},
+            )
 
-        ns = f"cnt-ns-{uuid.uuid4().hex[:6]}"
-        e2e_client.post(
-            f"/api/roles/{role}/knowledge",
-            headers=platform_admin.headers,
-            json={"entries": [{"namespace": ns, "organization_id": None}]},
-        )
+            # Now every count should be 1.
+            roles_after = e2e_client.get(
+                "/api/roles", headers=platform_admin.headers
+            ).json()
+            match2 = next(r for r in roles_after if r["id"] == role)
+            assert match2["consumer_counts"] == {
+                "users": 1,
+                "forms": 1,
+                "agents": 1,
+                "apps": 1,
+                "workflows": 1,
+                "knowledge": 1,
+            }
 
-        # Now every count should be 1.
-        roles_after = e2e_client.get(
-            "/api/roles", headers=platform_admin.headers
-        ).json()
-        match2 = next(r for r in roles_after if r["id"] == role)
-        assert match2["consumer_counts"] == {
-            "users": 1,
-            "forms": 1,
-            "agents": 1,
-            "apps": 1,
-            "workflows": 1,
-            "knowledge": 1,
-        }
+            # Unassign the user — counts.users drops back to 0.
+            e2e_client.request(
+                "DELETE",
+                f"/api/roles/{role}/users",
+                headers=platform_admin.headers,
+                json={"user_ids": [user_id]},
+            )
 
-        # Unassign the user — counts.users drops back to 0.
-        e2e_client.request(
-            "DELETE",
-            f"/api/roles/{role}/users",
-            headers=platform_admin.headers,
-            json={"user_ids": [user_id]},
-        )
-
-        roles_final = e2e_client.get(
-            "/api/roles", headers=platform_admin.headers
-        ).json()
-        match3 = next(r for r in roles_final if r["id"] == role)
-        assert match3["consumer_counts"]["users"] == 0
-        assert match3["consumer_counts"]["forms"] == 1
+            roles_final = e2e_client.get(
+                "/api/roles", headers=platform_admin.headers
+            ).json()
+            match3 = next(r for r in roles_final if r["id"] == role)
+            assert match3["consumer_counts"]["users"] == 0
+            assert match3["consumer_counts"]["forms"] == 1
+        finally:
+            # Sweep state pollution before `test_cli_import` runs and trips on
+            # a workflow→role link pointing at a non-existent role.
+            e2e_client.delete(
+                f"/api/roles/{role}", headers=platform_admin.headers
+            )
+            if wf_id:
+                e2e_client.delete(
+                    f"/api/workflows/{wf_id}", headers=platform_admin.headers
+                )
