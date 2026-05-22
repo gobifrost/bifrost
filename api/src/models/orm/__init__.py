@@ -43,6 +43,7 @@ from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
 from src.models.orm.tables import Document, Table
 from src.models.orm.users import Role, User, UserRole
+from src.models.orm.user_invites import UserInvite
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.models.orm.file_index import FileIndex
@@ -61,6 +62,7 @@ __all__ = [
     "User",
     "Role",
     "UserRole",
+    "UserInvite",
     # Agent Runs
     "AgentRun",
     "AgentRunFlagConversation",

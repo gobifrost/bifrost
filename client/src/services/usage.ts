@@ -2,8 +2,6 @@
  * Usage Reports API service using openapi-react-query pattern
  *
  * Provides hooks for fetching AI usage and resource consumption data.
- * Organization filtering is handled via the X-Organization-Id header, which is
- * automatically injected by the API client based on the org switcher selection.
  */
 
 import { $api } from "@/lib/api-client";

@@ -169,6 +169,10 @@ class AgentPublic(BaseModel):
     llm_max_tokens: int | None = None
     max_iterations: int | None = None
     max_token_budget: int | None = None
+    logo: str | None = Field(
+        default=None,
+        description="Inline logo as a data URL, or null when no logo is set.",
+    )
 
     @field_serializer("id")
     def serialize_id(self, v: UUID) -> str:
@@ -201,6 +205,10 @@ class AgentSummary(BaseModel):
     mcp_connection_count: int = Field(
         default=0,
         description="Number of MCP connections explicitly granted to this agent.",
+    )
+    logo: str | None = Field(
+        default=None,
+        description="Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.",
     )
 
     @field_serializer("id")

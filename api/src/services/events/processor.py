@@ -35,9 +35,11 @@ from src.models.orm.events import (
 from src.repositories.events import (
     EventDeliveryRepository,
     EventRepository,
+    EventSourceRepository,
     EventSubscriptionRepository,
     WebhookSourceRepository,
 )
+from src.services.events.validation import validate_topic
 from src.services.webhooks.protocol import (
     Deliver,
     HandleResult,
@@ -207,6 +209,7 @@ class EventProcessor:
     def __init__(self, session: AsyncSession):
         self.session = session
         self._webhook_repo = WebhookSourceRepository(session)
+        self._source_repo = EventSourceRepository(session)
         self._subscription_repo = EventSubscriptionRepository(session)
         self._event_repo = EventRepository(session)
         self._delivery_repo = EventDeliveryRepository(session)
@@ -281,6 +284,103 @@ class EventProcessor:
             message="Internal error",
             status_code=500,
         )
+
+    async def emit_topic(
+        self,
+        *,
+        topic: str,
+        data: dict,
+        organization_id: UUID | None = None,
+        triggered_by: str | None = None,
+    ) -> tuple[UUID, int]:
+        """Emit a topic event. Returns (event_id, subscribers_notified).
+
+        Looks up the topic EventSource by event_type, stamps Event.organization_id
+        from the source row (or the explicit override), creates deliveries for all
+        active subscriptions, and marks them PENDING for queue_event_deliveries.
+        """
+        validate_topic(topic)
+
+        source = await self._source_repo.get_by_topic(topic)
+        if source is None:
+            logger.info(
+                f"No active topic source for '{log_safe(topic)}'; emit is a no-op",
+                extra={"topic": log_safe(topic), "triggered_by": triggered_by},
+            )
+            return uuid.uuid4(), 0
+
+        stamped_org = organization_id if organization_id is not None else source.organization_id
+
+        event = Event(
+            id=uuid.uuid4(),
+            event_source_id=source.id,
+            event_type=topic,
+            organization_id=stamped_org,
+            received_at=datetime.now(timezone.utc),
+            headers=None,
+            data=data,
+            source_ip=None,
+            status=EventStatus.RECEIVED,
+        )
+        self.session.add(event)
+        await self.session.flush()
+
+        logger.info(
+            f"Topic event emitted: {event.id} (topic={log_safe(topic)})",
+            extra={
+                "event_id": str(event.id),
+                "topic": log_safe(topic),
+                "triggered_by": triggered_by,
+            },
+        )
+
+        subscriptions = await self._subscription_repo.get_active_for_event(
+            source_id=source.id,
+            event_type=topic,
+        )
+
+        if not subscriptions:
+            event.status = EventStatus.COMPLETED
+            await self.session.flush()
+            logger.info(f"No subscriptions for topic '{log_safe(topic)}': {event.id}")
+            return event.id, 0
+
+        event.status = EventStatus.PROCESSING
+        await self.session.flush()
+
+        for subscription in subscriptions:
+            target_type = getattr(subscription, "target_type", "workflow") or "workflow"
+            if target_type == "agent":
+                if not subscription.agent_id:
+                    logger.warning(
+                        f"Subscription {subscription.id} is agent type but has no agent_id, skipping"
+                    )
+                    continue
+            else:
+                if not subscription.workflow_id or not subscription.workflow:
+                    logger.warning(
+                        f"Subscription {subscription.id} has no workflow, skipping"
+                    )
+                    continue
+
+            delivery = EventDelivery(
+                id=uuid.uuid4(),
+                event_id=event.id,
+                event_subscription_id=subscription.id,
+                workflow_id=subscription.workflow_id,
+                status=EventDeliveryStatus.PENDING,
+            )
+            self.session.add(delivery)
+
+        await self.session.flush()
+        logger.info(
+            f"Created deliveries for topic '{log_safe(topic)}': {event.id}",
+            extra={
+                "event_id": str(event.id),
+                "subscription_count": len(subscriptions),
+            },
+        )
+        return event.id, len(subscriptions)
 
     async def _process_delivery(
         self,
@@ -569,6 +669,16 @@ class EventProcessor:
             "source_ip": event.source_ip,
         }
 
+        from src.sdk.context import EventContext
+
+        event_context = EventContext(
+            id=str(event.id),
+            type=event.event_type or "",
+            data=event.data if isinstance(event.data, dict) else {},
+            organization_id=str(event.organization_id) if getattr(event, "organization_id", None) else None,
+            received_at=event.received_at.isoformat() if event.received_at else "",
+        )
+
         # Use the centralized system execution helper
         # Use workflow's org_id so org-scoped workflows only access their org's data
         execution_id = await enqueue_system_workflow_execution(
@@ -576,6 +686,7 @@ class EventProcessor:
             parameters=parameters,
             source="Event System",
             org_id=str(workflow.organization_id) if workflow.organization_id else None,
+            event=event_context,
         )
 
         # Store the execution ID on the delivery for tracking

@@ -48,12 +48,15 @@ class EventSource(Base):
         PgEnum(
             "webhook",
             "schedule",
-            "internal",
+            "topic",
             name="event_source_type",
             create_type=False,
         ),
         nullable=False,
     )
+
+    # For topic sources: the validated topic string (e.g. "user.invited")
+    event_type: Mapped[str | None] = mapped_column(String(100), default=None)
 
     # Scope: NULL = global, otherwise org-specific
     organization_id: Mapped[UUID | None] = mapped_column(
@@ -266,7 +269,7 @@ class EventSubscription(Base):
     )
 
     # Relationships
-    event_source: Mapped["EventSource"] = relationship(back_populates="subscriptions")
+    event_source: Mapped["EventSource | None"] = relationship(back_populates="subscriptions")
     workflow: Mapped["Workflow | None"] = relationship(lazy="joined", foreign_keys=[workflow_id])
     agent = relationship("Agent", lazy="joined", foreign_keys=[agent_id])
     deliveries: Mapped[list["EventDelivery"]] = relationship(
@@ -296,6 +299,11 @@ class Event(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     event_source_id: Mapped[UUID] = mapped_column(
         ForeignKey("event_sources.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+
+    # Organization that owns this event (stamped at emit time)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), default=None
     )
 
     # Event metadata
@@ -332,7 +340,7 @@ class Event(Base):
     )
 
     # Relationships
-    event_source: Mapped["EventSource"] = relationship(back_populates="events")
+    event_source: Mapped["EventSource | None"] = relationship(back_populates="events")
     deliveries: Mapped[list["EventDelivery"]] = relationship(
         back_populates="event",
         cascade="all, delete-orphan",

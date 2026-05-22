@@ -2,7 +2,7 @@
 Event Repository
 
 Database operations for the event system:
-- Event sources (webhook, schedule, internal)
+- Event sources (webhook, schedule, topic)
 - Event subscriptions (link sources to workflows)
 - Events (immutable log of received events)
 - Event deliveries (tracking delivery to each workflow)
@@ -168,6 +168,27 @@ class EventSourceRepository(BaseRepository[EventSource]):
 
         result = await self.session.execute(stmt)
         return result.scalar() or 0
+
+    async def get_by_topic(self, topic: str) -> EventSource | None:
+        """Get an active topic EventSource by its event_type string."""
+        result = await self.session.execute(
+            select(EventSource)
+            .where(EventSource.source_type == EventSourceType.TOPIC)
+            .where(EventSource.event_type == topic)
+            .where(EventSource.is_active.is_(True))
+        )
+        return result.unique().scalar_one_or_none()
+
+    async def get_distinct_topic_types(self) -> list[str]:
+        """Return distinct event_type values for all active topic sources."""
+        result = await self.session.execute(
+            select(EventSource.event_type)
+            .where(EventSource.source_type == EventSourceType.TOPIC)
+            .where(EventSource.event_type.isnot(None))
+            .distinct()
+            .order_by(EventSource.event_type)
+        )
+        return [row[0] for row in result.all()]
 
 
 class WebhookSourceRepository(BaseRepository[WebhookSource]):

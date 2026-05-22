@@ -450,6 +450,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         form_id = pending.get("form_id")
         api_key_id = pending.get("api_key_id")  # Workflow ID whose API key triggered this
         startup = pending.get("startup")  # Launch workflow results
+        event_data = pending.get("event")  # EventContext dict if event-triggered
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
@@ -671,6 +672,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 },
                 "file_path": file_path,  # Path for __file__ injection and fallback loading
                 "content_hash": content_hash,  # Pinned hash at dispatch time
+                "event": event_data,  # EventContext dict (None if not event-triggered)
             }
 
             # Route to process pool

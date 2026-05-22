@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { $api } from "@/lib/api-client";
 
 /**
- * Fetch all users filtered by current scope (from X-Organization-Id header)
+ * Fetch all users filtered by current scope.
  */
 export function useUsers() {
 	return $api.useQuery("get", "/api/users", {});

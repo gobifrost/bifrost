@@ -152,6 +152,8 @@ describe("CreateUserDialog — happy path", () => {
 				is_active: true,
 				is_superuser: false,
 				organization_id: "org-1",
+				invite: true,
+				trigger_automation: true,
 			},
 		});
 		expect(onOpenChange).toHaveBeenCalledWith(false);

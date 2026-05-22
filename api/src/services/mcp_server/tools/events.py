@@ -45,7 +45,7 @@ async def list_event_sources(
                 source_type_enum = EventSourceType(source_type)
             except ValueError:
                 return error_result(
-                    f"Invalid source_type: {source_type}. Valid values: webhook, schedule, internal"
+                    f"Invalid source_type: {source_type}. Valid values: webhook, schedule, topic"
                 )
 
         org_id = UUID(organization_id) if organization_id else None
@@ -127,7 +127,7 @@ async def create_event_source(
         source_type_enum = EventSourceType(source_type)
     except ValueError:
         return error_result(
-            f"Invalid source_type: {source_type}. Valid values: webhook, schedule, internal"
+            f"Invalid source_type: {source_type}. Valid values: webhook, schedule, topic"
         )
 
     # Validate type-specific params

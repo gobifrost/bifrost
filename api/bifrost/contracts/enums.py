@@ -50,4 +50,4 @@ class EventSourceType(str, Enum):
 
     WEBHOOK = "webhook"
     SCHEDULE = "schedule"
-    INTERNAL = "internal"
+    TOPIC = "topic"

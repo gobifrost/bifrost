@@ -242,6 +242,13 @@ async def _run_execution(execution_id: str, context_data: dict[str, Any]) -> dic
                     },
                 }
 
+        # Reconstruct EventContext for event-triggered executions
+        event_ctx = None
+        event_dict = context_data.get("event")
+        if event_dict:
+            from bifrost._execution_context import EventContext
+            event_ctx = EventContext(**event_dict)
+
         # Build execution request
         request = ExecutionRequest(
             execution_id=execution_id,
@@ -260,6 +267,7 @@ async def _run_execution(execution_id: str, context_data: dict[str, Any]) -> dic
             no_cache=context_data.get("no_cache", False),
             is_platform_admin=context_data.get("is_platform_admin", False),
             broadcaster=None,  # Logs go to Redis Stream directly
+            event=event_ctx,
         )
 
         # Execute

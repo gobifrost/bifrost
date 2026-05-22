@@ -37,8 +37,6 @@ from src.routers.roi_settings import router as roi_settings_router
 from src.routers.roi_reports import router as roi_reports_router
 from src.routers.usage_reports import router as usage_reports_router
 from src.routers.ai_pricing import router as ai_pricing_router
-from src.routers.email_config import router as email_config_router
-from src.routers.email_config import sdk_router as email_sdk_router
 from src.routers.oauth_config import router as oauth_config_router
 from src.routers.tools import router as tools_router
 from src.routers.mcp import router as mcp_router
@@ -108,8 +106,6 @@ __all__ = [
     "roi_reports_router",
     "usage_reports_router",
     "ai_pricing_router",
-    "email_config_router",
-    "email_sdk_router",
     "oauth_config_router",
     "tools_router",
     "mcp_router",

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { EntityLogo } from "@/components/EntityLogo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -120,7 +121,7 @@ export function FleetPage() {
 	);
 
 	return (
-		<div className="mx-auto flex max-w-[1400px] flex-col gap-5 p-7">
+		<div className="mx-auto flex h-full max-w-[1400px] flex-col gap-5">
 			{/* Header */}
 			<div className="flex items-start justify-between gap-4">
 				<div>
@@ -279,40 +280,42 @@ export function FleetPage() {
 			</div>
 
 			{/* Content */}
-			{agentsLoading ? (
-				view === "grid" ? (
+			<div className="flex-1 min-h-0 overflow-auto">
+				{agentsLoading ? (
+					view === "grid" ? (
+						<div className={cn("grid md:grid-cols-2 xl:grid-cols-3", GAP_CARD)}>
+							{[...Array(6)].map((_, i) => (
+								<Skeleton key={i} className="h-52 w-full" />
+							))}
+						</div>
+					) : (
+						<div className="space-y-2">
+							{[...Array(3)].map((_, i) => (
+								<Skeleton key={i} className="h-12 w-full" />
+							))}
+						</div>
+					)
+				) : filtered.length === 0 ? (
+					<EmptyState hasQuery={query.trim().length > 0} />
+				) : view === "grid" ? (
 					<div className={cn("grid md:grid-cols-2 xl:grid-cols-3", GAP_CARD)}>
-						{[...Array(6)].map((_, i) => (
-							<Skeleton key={i} className="h-52 w-full" />
+						{filtered.map((agent) => (
+							<AgentGridCard
+								key={agent.id}
+								agent={agent}
+								showOrg={isPlatformAdmin}
+								orgName={getOrgName(agent.organization_id)}
+							/>
 						))}
 					</div>
 				) : (
-					<div className="space-y-2">
-						{[...Array(3)].map((_, i) => (
-							<Skeleton key={i} className="h-12 w-full" />
-						))}
-					</div>
-				)
-			) : filtered.length === 0 ? (
-				<EmptyState hasQuery={query.trim().length > 0} />
-			) : view === "grid" ? (
-				<div className={cn("grid md:grid-cols-2 xl:grid-cols-3", GAP_CARD)}>
-					{filtered.map((agent) => (
-						<AgentGridCard
-							key={agent.id}
-							agent={agent}
-							showOrg={isPlatformAdmin}
-							orgName={getOrgName(agent.organization_id)}
-						/>
-					))}
-				</div>
-			) : (
-				<AgentTable
-					agents={filtered}
-					showOrg={isPlatformAdmin}
-					getOrgName={getOrgName}
-				/>
-			)}
+					<AgentTable
+						agents={filtered}
+						showOrg={isPlatformAdmin}
+						getOrgName={getOrgName}
+					/>
+				)}
+			</div>
 		</div>
 	);
 }
@@ -382,7 +385,14 @@ function AgentGridCard({
 			<div className="border-b px-4 pb-3 pt-3.5">
 				<div className="flex items-start justify-between gap-3">
 					<div className="flex min-w-0 items-center gap-2">
-						<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+						<EntityLogo
+							entityType="agent"
+							entityId={agent.id}
+							logo={agent.logo ?? null}
+							fallback={<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+							size={20}
+							className="h-5 w-5 rounded shrink-0 object-cover"
+						/>
 						<span className={cn("truncate", TYPE_CARD_TITLE)}>
 							{agent.name}
 						</span>

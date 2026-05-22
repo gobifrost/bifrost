@@ -2,6 +2,44 @@
 
 MSP automation platform built with FastAPI and React.
 
+## Worktree rule (CRITICAL)
+
+All changes — features, fixes, refactors, doc edits — must be made in a git worktree, never directly on `main` (or any shared branch) in the primary checkout. If a task is about to modify files and the current working directory is the primary `bifrost` checkout, stop and create or enter a worktree first. Use `EnterWorktree` (or `git worktree add .claude/worktrees/<name>`). The only edits permitted on `main` are ones the user explicitly requests be made there.
+
+## Spinning up the dev environment and connecting
+
+Use this whenever you need a running Bifrost instance to exercise — clicking around, screenshots, browser testing, or driving the API directly via the CLI. Always do this from the worktree, not the primary checkout.
+
+1. **Boot the stack** from the worktree root:
+   ```bash
+   ./debug.sh up
+   ./debug.sh status
+   ```
+   Capture the URL from `./debug.sh status`. Under netbird mode (default when `NETBIRD_SETUP_KEY` is set), the host-reachable URL is the full `http://bifrost-debug-<name>-<n>-<n>.netbird.cloud` form — the short `http://bifrost-debug-<name>` form is only resolvable from inside the mesh. Under port mode, the URL is `http://localhost:<port>`.
+
+2. **Connect via the CLI** from an isolated scratch directory outside the repo (not the worktree, not `~`). This keeps `.env`/credentials out of the source tree and lets you install the API-matched CLI without disturbing the user's global `bifrost` install:
+   ```bash
+   mkdir -p /tmp/bifrost-cli-<name>
+   cd /tmp/bifrost-cli-<name>
+   python3 -m venv .venv
+   .venv/bin/pip install --quiet --upgrade pip
+   .venv/bin/pip install --quiet "<API_URL>/api/cli/download"
+   ```
+   The download endpoint serves the build matching the running API; installing this version avoids the version-mismatch warning that otherwise short-circuits subcommand output.
+
+3. **Log in** inside the scratch directory using password-grant. This writes `.env` (with `BIFROST_API_URL`, `BIFROST_ACCESS_TOKEN`, `BIFROST_REFRESH_TOKEN`) so subsequent commands in this directory pick the tokens up automatically:
+   ```bash
+   ./.venv/bin/bifrost login --url <API_URL> --email dev@gobifrost.com --password password
+   ```
+   Default credentials are `dev@gobifrost.com` / `password` (MFA off) — password-grant works only because the dev stack has MFA disabled.
+
+4. **Drive the API** with `./.venv/bin/bifrost <entity> <command> ...`. Use `--help` on any subcommand. Browser testing goes against the URL from step 1.
+
+Tips:
+- If a CLI command appears to succeed silently, run the matching `list` to verify — version-mismatch warnings can otherwise mask failures (do not pipe to `/dev/null` blindly).
+- The netbird sidecar can transiently drop the peer; if connections start failing, re-check `./debug.sh status` and re-fetch the URL.
+- For seeding entities to exercise a UI change (e.g. enough apps/agents to make a page overflow), use `bifrost apps create`, `bifrost agents create`, etc., from this same scratch venv.
+
 ## Technologies
 
 -   **Backend**: Python 3.11 (FastAPI), SQLAlchemy, Pydantic, PostgreSQL, RabbitMQ, Redis
@@ -274,6 +312,24 @@ cd client && npm run lint                 # Lint TypeScript
 1. Add to `pyproject.toml` (root)
 2. Regenerate the lock: `docker run --rm -v "$PWD":/repo -w /repo python:3.14-slim sh -c "pip install --quiet --require-hashes -r requirements-piptools.lock && pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml"`
 3. Rebuild and restart: `docker compose -f docker-compose.dev.yml up --build api`
+
+**Merging main into a long-lived branch:** Two specific gotchas:
+
+1. **`client/src/lib/v1.d.ts` always conflicts.** It's a generated file. Resolve by taking main's version, then regenerating against your running API:
+   ```bash
+   git checkout --theirs client/src/lib/v1.d.ts
+   cd client && OPENAPI_URL=<your-dev-url>/openapi.json npm run generate:types
+   cd .. && git add client/src/lib/v1.d.ts && git commit --no-edit
+   ```
+   Get the URL from `./debug.sh status`. The regen must happen *after* the merge is in place, because it reflects the merged code's schema.
+
+2. **Newly-added Python deps on main break the dev container silently.** If main introduced a new `import` (e.g. `defusedxml`) and your container was built before that dep landed in `requirements.lock`, the API will start failing with `ModuleNotFoundError` after the next restart, and `/openapi.json` will 502. Symptom: regen suddenly can't fetch the schema. Fix:
+   ```bash
+   docker logs bifrost-debug-<project>-api-1 --tail 20   # confirm ModuleNotFoundError
+   docker exec bifrost-debug-<project>-api-1 pip install <missing-pkg>
+   docker restart bifrost-debug-<project>-api-1
+   ```
+   This is a per-container quick fix. The lasting fix is `./debug.sh down` and a fresh `./debug.sh` (which rebuilds against the new lock), but the in-container `pip install` unblocks you in 10 seconds.
 
 ## Pre-Completion Verification (REQUIRED)
 

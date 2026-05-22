@@ -43,7 +43,7 @@ def test_org_id():
 
 
 @pytest.fixture
-def auth_headers(test_org_id):
+def auth_headers():
     """
     Headers for authenticated requests with admin role.
 
@@ -56,7 +56,6 @@ def auth_headers(test_org_id):
     # This is a placeholder - actual implementation depends on your auth setup
     return {
         "Authorization": "Bearer test-integration-token",
-        "X-Organization-Id": test_org_id,
         "Content-Type": "application/json",
     }
 
@@ -70,26 +69,23 @@ def platform_admin_headers():
     """
     return {
         "Authorization": "Bearer test-platform-admin-token",
-        "X-Organization-Id": "GLOBAL",
         "Content-Type": "application/json",
     }
 
 
 @pytest.fixture
-def admin_headers(test_org_id):
+def admin_headers():
     """Headers for admin user in test organization."""
     return {
         "Authorization": "Bearer test-admin-token",
-        "X-Organization-Id": test_org_id,
         "Content-Type": "application/json",
     }
 
 
 @pytest.fixture
-def user_headers(test_org_id):
+def user_headers():
     """Headers for regular user in test organization."""
     return {
         "Authorization": "Bearer test-user-token",
-        "X-Organization-Id": test_org_id,
         "Content-Type": "application/json",
     }

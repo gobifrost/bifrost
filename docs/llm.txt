@@ -170,13 +170,14 @@ Run `bifrost tables <verb> --help` for the complete flag list.
 
 ## Events
 
-Event sources (webhook / schedule / internal) and the subscriptions that dispatch events to workflows or agents.
+Event sources (webhook / schedule / topic) and the subscriptions that dispatch events to workflows or agents.
 
 Commands: `events list-sources / get-source / list-subscriptions / get-subscription / create-source / update-source / subscribe / update-subscription`.
 
 Examples:
 - `bifrost events create-source --name nightly --source-type schedule --cron "0 2 * * *" --timezone UTC`
 - `bifrost events create-source --name hook --source-type webhook --adapter generic`
+- `bifrost events create-source --name "User Invited" --source-type topic --event-type user.invited`
 - `bifrost events subscribe <source-ref> --workflow <wf-ref> --event-type ticket.created`
 - `bifrost events update-subscription <source-ref> <subscription-id> --event-type ticket.updated`
 
@@ -189,6 +190,29 @@ Non-obvious semantics:
 - `subscribe` accepts exactly one of `--workflow` or `--agent`; target type is inferred.
 
 Run `bifrost events <verb> --help` for the complete flag list.
+
+### Topic events (platform-emitted or SDK-emitted)
+
+Topic sources have `source_type=topic` and `event_type` set to the topic string. Each topic source is an `EventSource` row; subscriptions on that source fire for every emit. Subscribe with `bifrost events subscribe <source-ref> --workflow <ref>`.
+
+Emit from a workflow:
+```python
+from bifrost import events
+result = await events.emit("acme.deal_won", {"amount": 50000})
+# result: {"event_id": "...", "subscribers_notified": N}
+```
+
+When a workflow is triggered by a topic, `context.event` is set:
+- `context.event.type` — topic string
+- `context.event.data` — payload dict
+- `context.event.organization_id` — org stamped at emit time
+- `context.event.received_at` — ISO-8601 timestamp
+
+| Topic | When emitted | Key payload fields |
+|---|---|---|
+| `user.invited` | `POST /api/users` with `invite=true` (and `trigger_automation≠false`), or `POST /api/users/{id}/invite/resend` | `user_id`, `email`, `name`, `registration_url`, `expires_at`, `invited_by`, `reason` |
+
+Full topic docs: `docs/events/topics.md`.
 
 ## Requirements (Python workflow deps)
 

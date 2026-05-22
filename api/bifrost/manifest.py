@@ -295,7 +295,7 @@ class ManifestEventSource(BaseModel):
     """Event source entry in manifest."""
     id: str = Field(description="Event source UUID")
     name: str = Field(default="", description="Event source display name")
-    source_type: str = Field(description="webhook | schedule | internal")
+    source_type: str = Field(description="webhook | schedule | topic")
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)")
     is_active: bool = Field(default=True, description="Enable/disable this source")
     # Schedule config

@@ -49,6 +49,16 @@ class Caller:
 
 
 @dataclass
+class EventContext:
+    """Event metadata for event-triggered workflow executions."""
+    id: str
+    type: str
+    data: dict
+    organization_id: str | None
+    received_at: str
+
+
+@dataclass
 class ROIContext:
     """
     ROI tracking for workflow executions.
@@ -115,6 +125,11 @@ class ExecutionContext:
     # Results from the launch workflow (pre-execution context population)
     # Access via context.startup (None if no launch workflow)
     startup: dict[str, Any] | None = field(default=None)
+
+    # ==================== EVENT ====================
+    # Populated when a workflow is triggered by an Event row (topic, webhook, schedule).
+    # Access via context.event.type, context.event.data, etc.
+    event: "EventContext | None" = field(default=None)
 
     # ==================== ROI ====================
     # ROI tracking - initialized from workflow defaults, modifiable during execution

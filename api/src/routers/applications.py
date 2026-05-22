@@ -12,12 +12,14 @@ Applications use code-based files (TSX/TypeScript) stored in app_files table.
 File operations are handled through the app_files router.
 """
 
+import base64
 import logging
 import re
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +43,7 @@ from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.core.exceptions import AccessDeniedError
 from src.repositories.org_scoped import OrgScopedRepository
+from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
 
 logger = logging.getLogger(__name__)
 
@@ -614,6 +617,14 @@ export default function RootLayout() {
 # =============================================================================
 
 
+def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
+    """Encode a binary logo as a data URL, or None if no logo is set."""
+    if not data:
+        return None
+    mime = content_type or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
 async def application_to_public(
     application: Application,
     repo: "ApplicationRepository",
@@ -636,6 +647,7 @@ async def application_to_public(
         access_level=application.access_level,
         role_ids=role_ids,
         repo_path=application.repo_path,
+        logo=_logo_data_url(application.logo_data, application.logo_content_type),
     )
 
 
@@ -705,6 +717,10 @@ async def get_application_by_id_or_404(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_id}' not found",
         )
+
+
+LOGO_ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
 # =============================================================================
@@ -1328,3 +1344,91 @@ async def rollback_application(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+# =============================================================================
+# Logo Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/{app_id}/logo",
+    summary="Upload application logo",
+)
+async def upload_application_logo(
+    app_id: UUID,
+    ctx: Context,
+    file: UploadFile = File(..., description="Logo image (PNG/JPEG/SVG, ≤5MB)"),
+) -> dict:
+    """Upload a square logo for an application.
+
+    Requires the same permissions as updating the application.
+    """
+    application = await get_application_by_id_or_404(ctx, app_id)
+
+    if file.content_type not in LOGO_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed: {', '.join(sorted(LOGO_ALLOWED_CONTENT_TYPES))}",
+        )
+
+    content = await file.read()
+    if len(content) > LOGO_MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File too large. Maximum size: {LOGO_MAX_SIZE // 1024 // 1024} MB",
+        )
+
+    if file.content_type == "image/svg+xml":
+        try:
+            content = sanitize_svg(content)
+        except SvgSanitizationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid SVG: {exc}",
+            )
+
+    application.logo_data = content
+    application.logo_content_type = file.content_type
+    await ctx.db.commit()
+    return {"ok": True}
+
+
+@router.get(
+    "/{app_id}/logo",
+    summary="Get application logo",
+    responses={
+        200: {"content": {"image/png": {}, "image/jpeg": {}, "image/svg+xml": {}}},
+        404: {"description": "No logo set"},
+    },
+)
+async def get_application_logo(
+    app_id: UUID,
+    ctx: Context,
+) -> Response:
+    application = await get_application_by_id_or_404(ctx, app_id)
+    if not application.logo_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Logo not set",
+        )
+    return Response(
+        content=application.logo_data,
+        media_type=application.logo_content_type or "application/octet-stream",
+    )
+
+
+@router.delete(
+    "/{app_id}/logo",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete application logo",
+)
+async def delete_application_logo(
+    app_id: UUID,
+    ctx: Context,
+) -> Response:
+    application = await get_application_by_id_or_404(ctx, app_id)
+    application.logo_data = None
+    application.logo_content_type = None
+    await ctx.db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

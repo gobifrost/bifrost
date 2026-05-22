@@ -76,6 +76,7 @@ dependencies = [
     "PyYAML",
     "python-dateutil",
     "croniter",  # CRON expression parsing
+    "defusedxml>=0.7.1",  # Safe XML/SVG parsing — strips scripts/event-handlers from uploads
     "jmespath",
 
     # =========================================================================

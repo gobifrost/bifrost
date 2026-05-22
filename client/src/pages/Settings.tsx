@@ -3,13 +3,12 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkflowKeys } from "@/pages/settings/WorkflowKeys";
 import { Branding } from "@/pages/settings/Branding";
-import { Email } from "@/pages/settings/Email";
 import { OAuth } from "@/pages/settings/OAuth";
 import { GitHub } from "@/pages/settings/GitHub";
 import { LLMConfig } from "@/pages/settings/LLMConfig";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
-import { Bot, Key, Mail, Palette, Plug, Shield, Wrench } from "lucide-react";
+import { Bot, Key, Palette, Plug, Shield, Wrench } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
 
 export function Settings() {
@@ -31,7 +30,7 @@ export function Settings() {
 	}, [location.pathname, navigate]);
 
 	return (
-		<div className="max-w-3xl mx-auto space-y-6">
+		<div className="h-full flex flex-col max-w-3xl mx-auto space-y-6">
 			<div>
 				<h1 className="text-4xl font-extrabold tracking-tight">
 					Settings
@@ -41,7 +40,7 @@ export function Settings() {
 				</p>
 			</div>
 
-			<Tabs value={currentTab} onValueChange={handleTabChange}>
+			<Tabs value={currentTab} onValueChange={handleTabChange} className="flex-1 min-h-0 flex flex-col">
 				<div className="overflow-x-auto">
 				<TabsList>
 					<TabsTrigger value="ai">
@@ -55,10 +54,6 @@ export function Settings() {
 					<TabsTrigger value="branding">
 						<Palette className="h-4 w-4 mr-1" />
 						Branding
-					</TabsTrigger>
-					<TabsTrigger value="email">
-						<Mail className="h-4 w-4 mr-1" />
-						Email
 					</TabsTrigger>
 					<TabsTrigger value="sso">
 						<Shield className="h-4 w-4 mr-1" />
@@ -79,35 +74,31 @@ export function Settings() {
 				</TabsList>
 				</div>
 
-				<TabsContent value="ai" className="mt-6">
+				<TabsContent value="ai" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<LLMConfig />
 				</TabsContent>
 
-				<TabsContent value="mcp" className="mt-6">
+				<TabsContent value="mcp" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<MCP />
 				</TabsContent>
 
-				<TabsContent value="branding" className="mt-6">
+				<TabsContent value="branding" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<Branding />
 				</TabsContent>
 
-				<TabsContent value="email" className="mt-6">
-					<Email />
-				</TabsContent>
-
-				<TabsContent value="sso" className="mt-6">
+				<TabsContent value="sso" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<OAuth />
 				</TabsContent>
 
-				<TabsContent value="github" className="mt-6">
+				<TabsContent value="github" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<GitHub />
 				</TabsContent>
 
-				<TabsContent value="workflow-keys" className="mt-6">
+				<TabsContent value="workflow-keys" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<WorkflowKeys />
 				</TabsContent>
 
-				<TabsContent value="maintenance" className="mt-6">
+				<TabsContent value="maintenance" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<Maintenance />
 				</TabsContent>
 			</Tabs>

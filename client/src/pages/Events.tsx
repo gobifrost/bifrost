@@ -58,7 +58,7 @@ function getSourceTypeIcon(type: EventSourceType) {
 			return <Webhook className="h-4 w-4" />;
 		case "schedule":
 			return <Calendar className="h-4 w-4" />;
-		case "internal":
+		case "topic":
 			return <Zap className="h-4 w-4" />;
 	}
 }
@@ -69,8 +69,8 @@ function getSourceTypeLabel(type: EventSourceType) {
 			return "Webhook";
 		case "schedule":
 			return "Schedule";
-		case "internal":
-			return "Internal";
+		case "topic":
+			return "Topic";
 	}
 }
 
@@ -381,7 +381,14 @@ export function Events() {
 											{getSourceTypeIcon(
 												source.source_type,
 											)}
-											{source.name}
+											<div className="flex flex-col">
+												<span>{source.name}</span>
+												{source.source_type === "topic" && source.event_type && (
+													<span className="text-xs text-muted-foreground font-mono">
+														{source.event_type}
+													</span>
+												)}
+											</div>
 										</div>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">

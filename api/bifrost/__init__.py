@@ -81,8 +81,8 @@ Example:
 # (~1,078 modules) which are only needed if a workflow calls ai.complete().
 from .api import api
 from .config import config
+from .events import events
 from .executions import executions
-from .email import email
 from .files import files
 from .forms import forms
 from .integrations import integrations
@@ -221,7 +221,7 @@ __all__ = [
     'api',
     'ai',
     'config',
-    'email',
+    'events',
     'executions',
     'files',
     'forms',

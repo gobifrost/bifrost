@@ -8,11 +8,13 @@ Agents are virtual entities stored only in the database.
 Git sync serializes agents on-the-fly from the database.
 """
 
+import base64
 import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
@@ -41,6 +43,7 @@ from src.models.orm import (
     Role,
     Workflow,
 )
+from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
 from src.repositories.agents import AgentRepository
 from src.routers.tools import get_system_tool_ids
 from src.services.agent_stats import get_agent_stats, get_fleet_stats
@@ -49,6 +52,9 @@ from src.services.workflow_role_service import sync_agent_roles_to_workflows
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
+
+LOGO_ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
 async def _validate_agent_references(
@@ -184,6 +190,14 @@ async def _user_has_permission(
     return False
 
 
+def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
+    """Encode a binary logo as a data URL, or None if no logo is set."""
+    if not data:
+        return None
+    mime = content_type or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
 def _agent_to_public(agent: Agent) -> AgentPublic:
     """Convert Agent ORM to AgentPublic with relationships."""
     valid_system_tool_ids = set(get_system_tool_ids())
@@ -216,6 +230,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
         max_token_budget=agent.max_token_budget,
+        logo=_logo_data_url(agent.logo_data, agent.logo_content_type),
     )
 
 
@@ -301,6 +316,7 @@ async def list_agents(
         summary = AgentSummary.model_validate(a)
         summary.dependency_count = dep_counts.get(a.id, 0)
         summary.mcp_connection_count = mcp_counts.get(a.id, 0)
+        summary.logo = _logo_data_url(a.logo_data, a.logo_content_type)
         result.append(summary)
 
     return result
@@ -1001,4 +1017,115 @@ async def get_agent_delegations(
             detail=f"Agent {agent_id} not found",
         )
 
-    return [AgentSummary.model_validate(a) for a in agent.delegated_agents]
+    summaries = []
+    for a in agent.delegated_agents:
+        s = AgentSummary.model_validate(a)
+        s.logo = _logo_data_url(a.logo_data, a.logo_content_type)
+        summaries.append(s)
+    return summaries
+
+
+@router.post("/{agent_id}/logo")
+async def upload_agent_logo(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    file: UploadFile = File(..., description="Logo image (PNG/JPEG/SVG, ≤5MB)"),
+) -> dict:
+    """Upload a square logo for an agent."""
+    is_admin = user.is_platform_admin
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=is_admin,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+
+    if file.content_type not in LOGO_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type. Allowed: {', '.join(sorted(LOGO_ALLOWED_CONTENT_TYPES))}",
+        )
+
+    content = await file.read()
+    if len(content) > LOGO_MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File too large. Maximum size: {LOGO_MAX_SIZE // 1024 // 1024} MB",
+        )
+
+    if file.content_type == "image/svg+xml":
+        try:
+            content = sanitize_svg(content)
+        except SvgSanitizationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid SVG: {exc}",
+            )
+
+    agent.logo_data = content
+    agent.logo_content_type = file.content_type
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get(
+    "/{agent_id}/logo",
+    responses={
+        200: {"content": {"image/png": {}, "image/jpeg": {}, "image/svg+xml": {}}},
+        404: {"description": "No logo set"},
+    },
+)
+async def get_agent_logo(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> Response:
+    is_admin = user.is_platform_admin
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=is_admin,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if not agent or not agent.logo_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Logo not set",
+        )
+    return Response(
+        content=agent.logo_data,
+        media_type=agent.logo_content_type or "application/octet-stream",
+    )
+
+
+@router.delete("/{agent_id}/logo", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_logo(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> Response:
+    is_admin = user.is_platform_admin
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=is_admin,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+    agent.logo_data = None
+    agent.logo_content_type = None
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

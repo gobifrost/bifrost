@@ -1,7 +1,6 @@
 /**
  * React Query hooks for OAuth connections
  * Uses openapi-react-query pattern with $api for type-safe queries and mutations
- * All hooks automatically handle X-Organization-Id via api-client middleware
  */
 
 import { useQueryClient } from "@tanstack/react-query";

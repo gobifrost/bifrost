@@ -32,6 +32,7 @@ class EventSourceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     source_type: EventSourceType
     organization_id: UUID | None = Field(default=None)
+    event_type: str | None = Field(default=None, max_length=100)
     webhook: WebhookSourceConfig | None = Field(default=None)
     schedule: ScheduleSourceConfig | None = Field(default=None)
 

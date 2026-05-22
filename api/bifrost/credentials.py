@@ -243,20 +243,27 @@ class KeyringBackend:
 # Backend selection
 # --------------------------------------------------------------------------- #
 
+_keyring_fallback_reason: str | None = None
+
+
 def _select_persistent_backend() -> Backend:
     """
     Choose the persistent backend.
 
     Order: try `keyring` (probe with a no-op read so headless Linux fails
-    fast at startup), fall back to JSON. On fallback, print a one-time
-    stderr warning so users know why their tokens aren't in the OS keychain.
+    fast at startup), fall back to JSON. On fallback, stash the reason in
+    `_keyring_fallback_reason` so `warn_if_keyring_fallback()` can surface
+    it during interactive flows like `bifrost login`. Routine calls stay
+    silent — every `bifrost files` invocation would otherwise pollute
+    stderr (and tool_result text for MCP/agent callers).
     """
-    import sys
+    global _keyring_fallback_reason
 
     try:
         import keyring
         import keyring.errors
     except ImportError:
+        _keyring_fallback_reason = "keyring package not installed"
         return JsonBackend()
 
     try:
@@ -266,13 +273,27 @@ def _select_persistent_backend() -> Backend:
         keyring.get_password(KEYRING_SERVICE, "__probe__")
         return KeyringBackend(_keyring=keyring)
     except (keyring.errors.NoKeyringError, keyring.errors.KeyringError, Exception) as e:
+        _keyring_fallback_reason = type(e).__name__
+        return JsonBackend()
+
+
+def warn_if_keyring_fallback() -> None:
+    """
+    Print a one-time stderr warning if the persistent backend fell back to
+    JSON. Call this from interactive entry points (e.g. `bifrost login`)
+    where the user is actively configuring credentials and should know
+    their tokens aren't in the OS keychain.
+    """
+    import sys
+
+    get_persistent_backend()  # ensure selection has run
+    if _keyring_fallback_reason is not None:
         print(
-            f"warning: OS keychain unavailable ({type(e).__name__}); "
+            f"warning: OS keychain unavailable ({_keyring_fallback_reason}); "
             "falling back to ~/.bifrost/credentials.json. "
             "Install/enable a keyring service to upgrade.",
             file=sys.stderr,
         )
-        return JsonBackend()
 
 
 _persistent_backend: Backend | None = None
@@ -288,8 +309,9 @@ def get_persistent_backend() -> Backend:
 
 def _reset_persistent_backend_for_tests() -> None:
     """Clear the cached backend so tests can swap it out."""
-    global _persistent_backend
+    global _persistent_backend, _keyring_fallback_reason
     _persistent_backend = None
+    _keyring_fallback_reason = None
 
 
 # --------------------------------------------------------------------------- #

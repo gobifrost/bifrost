@@ -403,7 +403,7 @@ export function Workflows() {
 				)}
 
 				{/* Content Area */}
-				<div className="flex-1 min-w-0 min-h-0">
+				<div className="flex-1 min-w-0 min-h-0 overflow-auto">
 					{isLoading ? (
 						viewMode === "grid" ? (
 							<div className={"grid gap-4 grid-cols-[repeat(auto-fill,minmax(300px,1fr))]"}>

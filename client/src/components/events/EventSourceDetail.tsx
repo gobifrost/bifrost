@@ -58,7 +58,7 @@ function getSourceTypeIcon(type: EventSourceType) {
 			return <Webhook className="h-5 w-5" />;
 		case "schedule":
 			return <Calendar className="h-5 w-5" />;
-		case "internal":
+		case "topic":
 			return <Zap className="h-5 w-5" />;
 	}
 }
@@ -69,8 +69,8 @@ function getSourceTypeLabel(type: EventSourceType) {
 			return "Webhook";
 		case "schedule":
 			return "Schedule";
-		case "internal":
-			return "Internal";
+		case "topic":
+			return "Topic";
 	}
 }
 
@@ -271,6 +271,11 @@ export function EventSourceDetail({
 
 			{/* Metadata badges row */}
 			<div className="flex items-center gap-2 flex-wrap">
+				{source.source_type === "topic" && source.event_type && (
+					<Badge variant="outline" className="font-mono">
+						{source.event_type}
+					</Badge>
+				)}
 				{source.webhook?.adapter_name && (
 					<Badge variant="outline">
 						{source.webhook.adapter_name}

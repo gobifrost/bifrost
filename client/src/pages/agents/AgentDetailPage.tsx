@@ -10,6 +10,7 @@
  * run-count badge, plus per-tab body (Overview/Runs/Settings).
  */
 
+import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -19,6 +20,7 @@ import {
 	MessageSquare,
 	Pause,
 	PlayCircle,
+	Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +32,18 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { LogoDropZone } from "@/components/LogoDropZone";
+import { bumpEntityLogo } from "@/components/entityLogoVersions";
 import { AgentOverviewTab } from "@/components/agents/AgentOverviewTab";
 import { AgentRunsTab } from "@/components/agents/AgentRunsTab";
 import { AgentSettingsTab } from "@/components/agents/AgentSettingsTab";
@@ -42,7 +56,7 @@ import {
 	TYPE_PAGE_TITLE,
 } from "@/components/agents/design-tokens";
 import { cn } from "@/lib/utils";
-import { useAgent, useUpdateAgent } from "@/hooks/useAgents";
+import { useAgent, useDeleteAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useAgentRuns } from "@/services/agentRuns";
 import { useCreateConversation } from "@/hooks/useChat";
 import { useAuth } from "@/contexts/AuthContext";
@@ -86,8 +100,10 @@ export function AgentDetailPage() {
 	}
 
 	const updateAgent = useUpdateAgent();
+	const deleteAgent = useDeleteAgent();
 	const createConversation = useCreateConversation();
 	const { isPlatformAdmin } = useAuth();
+	const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
 	function handleCreated(newId: string) {
 		navigate(`/agents/${newId}`);
@@ -137,31 +153,44 @@ export function AgentDetailPage() {
 
 			{/* Header */}
 			<div className="flex flex-wrap items-start justify-between gap-4">
-				<div className="min-w-0 flex-1">
-					<h1 className={cn("flex items-center gap-2.5", TYPE_PAGE_TITLE)}>
-						<Bot className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
-						<span className="truncate">
-							{isCreate
-								? "New agent"
-								: isLoading
-									? "Loading…"
-									: (agent?.name ?? "Unknown agent")}
-						</span>
-						{!isCreate && agent ? (
-							isActive ? (
-								<span className={PILL_ACTIVE}>Active</span>
-							) : (
-								<Badge variant="secondary" className="text-[11px]">
-									Paused
-								</Badge>
-							)
-						) : null}
-					</h1>
-					{!isCreate && agent?.description ? (
-						<p className={cn("mt-1 line-clamp-2", TYPE_BODY, TONE_MUTED)}>
-							{agent.description}
-						</p>
+				<div className="flex items-start gap-3 min-w-0 flex-1">
+					{!isCreate && agent ? (
+						<LogoDropZone
+							uploadUrl={`/api/agents/${agent.id}/logo`}
+							deleteUrl={`/api/agents/${agent.id}/logo`}
+							previewUrl={`/api/agents/${agent.id}/logo`}
+							fallback={<Bot className="h-5 w-5" />}
+							size={48}
+							onChange={() =>
+								bumpEntityLogo("agent", agent.id ?? "")
+							}
+						/>
 					) : null}
+					<div className="min-w-0 flex-1">
+						<h1 className={cn("flex items-center gap-2.5", TYPE_PAGE_TITLE)}>
+							<span className="truncate">
+								{isCreate
+									? "New agent"
+									: isLoading
+										? "Loading…"
+										: (agent?.name ?? "Unknown agent")}
+							</span>
+							{!isCreate && agent ? (
+								isActive ? (
+									<span className={PILL_ACTIVE}>Active</span>
+								) : (
+									<Badge variant="secondary" className="text-[11px]">
+										Paused
+									</Badge>
+								)
+							) : null}
+						</h1>
+						{!isCreate && agent?.description ? (
+							<p className={cn("mt-1 line-clamp-2", TYPE_BODY, TONE_MUTED)}>
+								{agent.description}
+							</p>
+						) : null}
+					</div>
 				</div>
 				{!isCreate && agent ? (
 					<div className="flex items-center gap-2">
@@ -217,12 +246,58 @@ export function AgentDetailPage() {
 								</>
 							)}
 						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							className="text-destructive hover:text-destructive hover:bg-destructive/10"
+							onClick={() => setConfirmDeleteOpen(true)}
+							disabled={deleteAgent.isPending}
+							title="Delete agent"
+							aria-label="Delete agent"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+						</Button>
 						{isPlatformAdmin ? (
 							<SummaryBackfillButton agentId={agent.id ?? undefined} />
 						) : null}
 					</div>
 				) : null}
 			</div>
+
+			{!isCreate && agent ? (
+				<AlertDialog
+					open={confirmDeleteOpen}
+					onOpenChange={setConfirmDeleteOpen}
+				>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>Delete agent?</AlertDialogTitle>
+							<AlertDialogDescription>
+								This will delete <strong>{agent.name}</strong>{" "}
+								and its run history. This action cannot be
+								undone.
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<AlertDialogFooter>
+							<AlertDialogCancel>Cancel</AlertDialogCancel>
+							<AlertDialogAction
+								className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+								onClick={async () => {
+									await deleteAgent.mutateAsync({
+										params: {
+											path: { agent_id: agent.id ?? "" },
+										},
+									});
+									setConfirmDeleteOpen(false);
+									navigate("/agents");
+								}}
+							>
+								Delete
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
+			) : null}
 
 			{/* Pill tabs */}
 			<PillTabs

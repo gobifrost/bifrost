@@ -110,6 +110,9 @@ class ExecutionRequest:
     # Real-time updates
     broadcaster: Any = None              # WebPubSubBroadcaster for streaming logs
 
+    # Event context (set when triggered by an event subscription)
+    event: Any = None                    # EventContext | None
+
 
 @dataclass
 class ExecutionResult:
@@ -287,6 +290,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         public_url=get_settings().public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
         roi=roi,
+        event=request.event,
     )
 
     # Set bifrost SDK context if available

@@ -20,6 +20,8 @@ from src.models.contracts.events import (
     CreateDeliveryRequest,
     DynamicValuesRequest,
     DynamicValuesResponse,
+    EmitEventRequest,
+    EmitEventResponse,
     EventDeliveryListResponse,
     EventDeliveryResponse,
     EventListResponse,
@@ -35,6 +37,8 @@ from src.models.contracts.events import (
     RetryDeliveryRequest,
     RetryDeliveryResponse,
     ScheduleSourceResponse,
+    TopicRegistryEntry,
+    TopicsRegistryResponse,
     WebhookAdapterInfo,
     WebhookAdapterListResponse,
     WebhookSourceResponse,
@@ -55,6 +59,9 @@ from src.repositories.events import (
     EventSubscriptionRepository,
 )
 from src.core.cache import get_shared_redis
+from src.services.events import emit_event
+from src.services.events.registry import CURATED_TOPICS
+from src.services.events.validation import validate_topic
 from src.services.webhooks.registry import get_adapter_registry
 
 logger = logging.getLogger(__name__)
@@ -123,6 +130,7 @@ async def _build_event_source_response(
         id=source.id,
         name=source.name,
         source_type=source.source_type,
+        event_type=source.event_type,
         organization_id=source.organization_id,
         organization_name=source.organization.name if source.organization else None,
         is_active=source.is_active,
@@ -375,10 +383,26 @@ async def create_source(
     """
     now = datetime.now(timezone.utc)
 
+    # Validate topic sources
+    if request.source_type == EventSourceType.TOPIC:
+        if not request.event_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="event_type is required for topic sources",
+            )
+        try:
+            validate_topic(request.event_type)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            )
+
     # Create base event source
     source = EventSource(
         name=request.name,
         source_type=request.source_type,
+        event_type=request.event_type if request.source_type == EventSourceType.TOPIC else None,
         organization_id=request.organization_id,
         is_active=True,
         created_by=ctx.user.email,
@@ -977,6 +1001,66 @@ async def list_events(
         )
 
     return EventListResponse(items=items, total=total)
+
+
+@router.post(
+    "/emit",
+    response_model=EmitEventResponse,
+    summary="Emit a topic event",
+    description="Publish an event to a topic. All subscriptions on the matching topic source will be triggered.",
+)
+async def emit_topic_event(
+    request: EmitEventRequest,
+    user: CurrentSuperuser,
+) -> EmitEventResponse:
+    """Emit a topic event and return the event_id and subscriber count."""
+    try:
+        validate_topic(request.topic)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    organization_id: UUID | None = None
+    if request.scope and request.scope != "GLOBAL":
+        try:
+            organization_id = UUID(request.scope)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid scope: must be a UUID or 'GLOBAL', got '{request.scope}'",
+            )
+
+    event_id, subscribers_notified = await emit_event(
+        request.topic,
+        request.data,
+        organization_id=organization_id,
+        triggered_by=str(user.user_id),
+    )
+
+    return EmitEventResponse(
+        event_id=str(event_id),
+        subscribers_notified=subscribers_notified,
+    )
+
+
+@router.get(
+    "/topics",
+    response_model=TopicsRegistryResponse,
+    summary="List available topics",
+    description="Returns curated topic suggestions and topics currently in use.",
+)
+async def list_topics(
+    db: DbSession,
+) -> TopicsRegistryResponse:
+    """Return the curated topic registry plus topics currently in use."""
+    source_repo = EventSourceRepository(db)
+    in_use = await source_repo.get_distinct_topic_types()
+    return TopicsRegistryResponse(
+        curated=[TopicRegistryEntry(**entry) for entry in CURATED_TOPICS],
+        in_use=in_use,
+    )
 
 
 @router.get(

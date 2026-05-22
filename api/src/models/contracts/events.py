@@ -111,11 +111,16 @@ class EventSourceCreate(BaseModel):
     )
     source_type: EventSourceType = Field(
         ...,
-        description="Event source type (webhook, schedule, internal)",
+        description="Event source type (webhook, schedule, topic)",
     )
     organization_id: UUID | None = Field(
         default=None,
         description="Organization ID (null for global sources)",
+    )
+    event_type: str | None = Field(
+        default=None,
+        description="Topic string for topic sources (e.g. 'user.invited'). Required when source_type='topic'.",
+        max_length=100,
     )
 
     # Type-specific configuration
@@ -310,6 +315,10 @@ class EventSourceResponse(BaseModel):
     id: UUID = Field(..., description="Event source ID")
     name: str = Field(..., description="Event source name")
     source_type: EventSourceType = Field(..., description="Source type")
+    event_type: str | None = Field(
+        default=None,
+        description="Topic string for topic sources (e.g. 'user.invited')",
+    )
     organization_id: UUID | None = Field(
         default=None,
         description="Organization ID (null for global)",
@@ -638,4 +647,51 @@ class DynamicValuesResponse(BaseModel):
     items: list[dict[str, Any]] = Field(
         ...,
         description="List of option objects with fields matching value_path/label_path",
+    )
+
+
+# ==================== TOPIC EMIT MODELS ====================
+
+
+class EmitEventRequest(BaseModel):
+    """Request body for POST /api/events/emit."""
+
+    topic: str = Field(
+        ...,
+        description="Topic string, e.g. 'user.invited'. Validated: ^[a-z0-9_.]+$, must contain a dot.",
+    )
+    data: dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON-serializable event payload.",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Organization scope: org UUID string or None for GLOBAL.",
+    )
+
+
+class EmitEventResponse(BaseModel):
+    """Response from POST /api/events/emit."""
+
+    event_id: str = Field(..., description="UUID of the created Event row.")
+    subscribers_notified: int = Field(
+        ..., description="Number of subscriptions that will receive this event."
+    )
+
+
+class TopicRegistryEntry(BaseModel):
+    """A curated topic with a human-readable description."""
+
+    topic: str
+    description: str
+
+
+class TopicsRegistryResponse(BaseModel):
+    """Response from GET /api/events/topics."""
+
+    curated: list[TopicRegistryEntry] = Field(
+        ..., description="Hand-curated topics with descriptions."
+    )
+    in_use: list[str] = Field(
+        ..., description="Distinct topic strings currently in use as EventSources."
     )

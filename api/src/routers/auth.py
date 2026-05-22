@@ -1794,3 +1794,41 @@ async def authorize_device(
     )
 
     return DeviceAuthorizeResponse(success=True)
+
+
+# =============================================================================
+# Invite Registration
+# =============================================================================
+
+from src.models.contracts.user_invites import RegisterFromInviteRequest  # noqa: E402
+from src.models.contracts.users import UserPublic  # noqa: E402
+from src.services.user_invite_service import (  # noqa: E402
+    InviteConsumeError,
+    UserInviteService,
+)
+
+
+@router.post("/register-from-invite", response_model=UserPublic)
+async def register_from_invite(
+    request: RegisterFromInviteRequest,
+    db: DbSession,
+) -> UserPublic:
+    """Consume a single-use invite token and complete user registration.
+
+    This endpoint is intentionally unauthenticated — the token IS the
+    credential. On success the user is marked is_registered=True and (if a
+    password was supplied) their hashed_password is set.
+    """
+    svc = UserInviteService(db)
+    try:
+        registered = await svc.consume(token=request.token, password=request.password)
+    except InviteConsumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if request.name and not registered.name:
+        registered.name = request.name
+        await db.flush()
+
+    public = UserPublic.model_validate(registered)
+    public.invite_status = "active"
+    return public

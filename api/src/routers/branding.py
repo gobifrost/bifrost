@@ -13,6 +13,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
+from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
+
 from src.models import BrandingSettings, BrandingUpdateRequest
 from src.core.auth import Context, CurrentActiveUser
 from src.core.database import AsyncSession, get_db
@@ -154,6 +156,15 @@ async def upload_logo(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File too large. Maximum size: {MAX_LOGO_SIZE // 1024 // 1024}MB",
         )
+
+    if file.content_type == "image/svg+xml":
+        try:
+            content = sanitize_svg(content)
+        except SvgSanitizationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid SVG: {exc}",
+            )
 
     # Save logo binary data to database
     from src.repositories.branding import BrandingRepository

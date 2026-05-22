@@ -124,6 +124,9 @@ const Setup = lazyWithReload(() =>
 const MFASetup = lazyWithReload(() =>
 	import("@/pages/MFASetup").then((m) => ({ default: m.MFASetup })),
 );
+const Register = lazyWithReload(() =>
+	import("@/pages/Register").then((m) => ({ default: m.Register })),
+);
 const AuthCallback = lazyWithReload(() =>
 	import("@/pages/AuthCallback").then((m) => ({ default: m.AuthCallback })),
 );
@@ -249,6 +252,7 @@ function AppRoutes() {
 					{/* Public routes - no auth required */}
 					<Route path="login" element={<Login />} />
 					<Route path="setup" element={<Setup />} />
+					<Route path="accept-invite" element={<Register />} />
 					<Route path="mfa-setup" element={<MFASetup />} />
 					<Route
 						path="auth/callback/:provider"

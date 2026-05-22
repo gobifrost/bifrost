@@ -453,6 +453,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		const publicRoutes = [
 			"/login",
 			"/setup",
+			"/accept-invite",
 			"/auth/callback",
 			"/mfa-setup",
 		];

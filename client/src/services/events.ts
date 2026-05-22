@@ -42,6 +42,22 @@ export type DynamicValuesRequest =
 export type DynamicValuesResponse =
 	components["schemas"]["DynamicValuesResponse"];
 
+export type TopicsRegistryResponse =
+	components["schemas"]["TopicsRegistryResponse"];
+export type TopicRegistryEntry = components["schemas"]["TopicRegistryEntry"];
+
+// ============================================================================
+// Topics
+// ============================================================================
+
+/**
+ * Hook to fetch the topic registry (curated + in-use topics).
+ * No auth required — used to populate the topic picker in CreateEventSourceDialog.
+ */
+export function useTopics() {
+	return $api.useQuery("get", "/api/events/topics", {});
+}
+
 // ============================================================================
 // Webhook Adapters
 // ============================================================================

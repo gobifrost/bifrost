@@ -1303,3 +1303,88 @@ class TestWebhookAuthentication:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 202, f"Expected 202, got {response.status_code}: {response.text}"
+
+
+class TestTopicEmitEndpoints:
+    """Tests for POST /api/events/emit and GET /api/events/topics."""
+
+    @pytest.fixture
+    def topic_source(self, e2e_client, platform_admin):
+        """Create a topic EventSource for 'test.e2e_emit'."""
+        response = e2e_client.post(
+            "/api/events/sources",
+            headers=platform_admin.headers,
+            json={
+                "name": "E2E Emit Test Topic",
+                "source_type": "topic",
+                "event_type": "test.e2e_emit",
+            },
+        )
+        assert response.status_code == 201, f"Failed to create topic source: {response.text}"
+        source = response.json()
+        yield source
+        e2e_client.delete(
+            f"/api/events/sources/{source['id']}",
+            headers=platform_admin.headers,
+        )
+
+    def test_emit_valid_topic_with_source(self, e2e_client, platform_admin, topic_source):
+        """POST /api/events/emit with a valid topic returns event_id and subscriber count."""
+        response = e2e_client.post(
+            "/api/events/emit",
+            headers=platform_admin.headers,
+            json={"topic": "test.e2e_emit", "data": {"key": "value"}},
+        )
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        body = response.json()
+        assert "event_id" in body
+        assert isinstance(body["event_id"], str)
+        assert body["subscribers_notified"] == 0
+
+    def test_emit_invalid_topic_returns_400(self, e2e_client, platform_admin):
+        """POST /api/events/emit with invalid topic returns 400."""
+        response = e2e_client.post(
+            "/api/events/emit",
+            headers=platform_admin.headers,
+            json={"topic": "INVALID_TOPIC", "data": {}},
+        )
+        assert response.status_code == 400, f"Expected 400, got {response.status_code}: {response.text}"
+
+    def test_emit_missing_dot_returns_400(self, e2e_client, platform_admin):
+        """POST /api/events/emit with topic missing dot returns 400."""
+        response = e2e_client.post(
+            "/api/events/emit",
+            headers=platform_admin.headers,
+            json={"topic": "nodot", "data": {}},
+        )
+        assert response.status_code == 400, f"Expected 400, got {response.status_code}: {response.text}"
+
+    def test_emit_no_source_returns_zero_subscribers(self, e2e_client, platform_admin):
+        """POST /api/events/emit for a topic with no source is a no-op (0 subscribers)."""
+        response = e2e_client.post(
+            "/api/events/emit",
+            headers=platform_admin.headers,
+            json={"topic": "test.nonexistent_topic", "data": {}},
+        )
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        body = response.json()
+        assert body["subscribers_notified"] == 0
+
+    def test_topics_registry_returns_curated_and_in_use(self, e2e_client, platform_admin, topic_source):
+        """GET /api/events/topics returns curated list + in_use topics."""
+        response = e2e_client.get(
+            "/api/events/topics",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        body = response.json()
+        assert "curated" in body
+        assert "in_use" in body
+        curated_topics = [e["topic"] for e in body["curated"]]
+        assert "user.invited" in curated_topics
+        assert "test.e2e_emit" in body["in_use"]
+
+    def test_topics_registry_no_auth_required(self, e2e_client):
+        """GET /api/events/topics is accessible without authentication."""
+        response = e2e_client.get("/api/events/topics")
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
