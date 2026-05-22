@@ -93,12 +93,15 @@ function EditUserDialogContent({
 
 	// Find the provider org (for auto-selecting when promoting to platform admin)
 	const providerOrg = organizations?.find((org: Organization) => org.is_provider);
+	const providerOrgId =
+		providerOrg?.id ??
+		(currentUser?.isSuperuser ? currentUser.organizationId : null);
 
 	useEffect(() => {
-		if (isPlatformAdmin && providerOrg && orgId !== providerOrg.id) {
-			setOrgId(providerOrg.id);
+		if (isPlatformAdmin && providerOrgId && orgId !== providerOrgId) {
+			setOrgId(providerOrgId);
 		}
-	}, [isPlatformAdmin, orgId, providerOrg]);
+	}, [isPlatformAdmin, orgId, providerOrgId]);
 
 	// Check if editing own account
 	const isEditingSelf = !!(currentUser && user.id === currentUser.id);
@@ -111,9 +114,9 @@ function EditUserDialogContent({
 	const handleUserTypeChange = (value: string) => {
 		const isAdmin = value === "platform";
 		setIsPlatformAdmin(isAdmin);
-		if (isAdmin && providerOrg) {
-			setOrgId(providerOrg.id);
-		} else if (!isAdmin && orgId === providerOrg?.id) {
+		if (isAdmin && providerOrgId) {
+			setOrgId(providerOrgId);
+		} else if (!isAdmin && orgId === providerOrgId) {
 			// Clear provider org if switching to org user
 			setOrgId("");
 		}
@@ -150,7 +153,7 @@ function EditUserDialogContent({
 			setValidationError("Please enter a display name");
 			return false;
 		}
-		if (!orgId) {
+		if (!(isPlatformAdmin ? providerOrgId || orgId : orgId)) {
 			setValidationError("Please select an organization");
 			return false;
 		}
@@ -165,6 +168,8 @@ function EditUserDialogContent({
 			return;
 		}
 
+		const effectiveOrgId = isPlatformAdmin ? providerOrgId || orgId : orgId;
+
 		// Build request body - only send changed fields
 		const body = {
 			name:
@@ -178,8 +183,8 @@ function EditUserDialogContent({
 					? isPlatformAdmin
 					: null,
 			organization_id:
-				!isEditingSelf && orgId !== (user.organization_id || "")
-					? orgId || null
+				!isEditingSelf && effectiveOrgId !== (user.organization_id || "")
+					? effectiveOrgId || null
 					: null,
 		};
 

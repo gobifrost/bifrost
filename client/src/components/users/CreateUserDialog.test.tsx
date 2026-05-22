@@ -21,6 +21,7 @@ const mockCreateMutate = vi.fn();
 const mockAssignMutate = vi.fn();
 const mockOrganizations = vi.fn();
 const mockRoles = vi.fn();
+const mockAuth = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
 	useCreateUser: () => ({
@@ -39,6 +40,10 @@ vi.mock("@/hooks/useRoles", () => ({
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => mockOrganizations(),
+}));
+
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => mockAuth(),
 }));
 
 // Stub the Combobox to a native select so userEvent can drive it.
@@ -95,6 +100,14 @@ beforeEach(() => {
 		isLoading: false,
 	});
 	mockRoles.mockReturnValue({ data: [] });
+	mockAuth.mockReturnValue({
+		user: {
+			id: "admin-user",
+			email: "admin@example.com",
+			isSuperuser: true,
+			organizationId: "org-provider",
+		},
+	});
 });
 
 describe("CreateUserDialog — validation", () => {
@@ -205,6 +218,48 @@ describe("CreateUserDialog — happy path", () => {
 				is_superuser: true,
 				organization_id: "org-provider",
 			},
+		});
+		expect(screen.queryByText(/select an organization/i)).not.toBeInTheDocument();
+	});
+
+	it("falls back to the current platform admin organization when provider org is absent from the list", async () => {
+		const onOpenChange = vi.fn();
+		mockOrganizations.mockReturnValue({
+			data: [
+				{
+					id: "org-1",
+					name: "Acme",
+					domain: "acme.com",
+					is_provider: false,
+				},
+			],
+			isLoading: false,
+		});
+		mockAuth.mockReturnValue({
+			user: {
+				id: "admin-user",
+				email: "admin@example.com",
+				isSuperuser: true,
+				organizationId: "provider-from-auth",
+			},
+		});
+
+		const { user } = renderWithProviders(
+			<CreateUserDialog open={true} onOpenChange={onOpenChange} />,
+		);
+
+		await user.type(
+			screen.getByLabelText(/email address/i),
+			"admin@example.com",
+		);
+		await user.type(screen.getByLabelText(/display name/i), "Admin User");
+		await user.selectOptions(screen.getByLabelText(/userType/i), "platform");
+		await user.click(screen.getByRole("button", { name: /create user/i }));
+
+		await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+		expect(mockCreateMutate.mock.calls[0]![0].body).toMatchObject({
+			is_superuser: true,
+			organization_id: "provider-from-auth",
 		});
 		expect(screen.queryByText(/select an organization/i)).not.toBeInTheDocument();
 	});
