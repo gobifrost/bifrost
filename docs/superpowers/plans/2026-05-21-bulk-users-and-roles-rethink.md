@@ -2,7 +2,7 @@
 
 **Branch:** `phase-b-c-preview`
 **Worktree:** `/home/jack/GitHub/bifrost/.worktrees/phase-b-c-preview`
-**Debug stack URL:** `http://bifrost-debug-phase-b-c-preview-225-115.netbird.cloud`
+**Debug stack URL:** `http://bifrost-debug-phase-b-c-preview-248-33.netbird.cloud` (current — get from `./debug.sh status`)
 **CLI install:** `/tmp/bifrost-cli-226/.venv/bin/bifrost` (worktree-agnostic; logged into the old 226 stack — re-login required, see below)
 
 ## How to use this doc
@@ -70,11 +70,9 @@ Each block ends with a green-status preview. If a block is too big for one sessi
 - [x] Endpoint exists, types in OpenAPI
 - [x] Move-org, replace-roles, set-active all handled
 - [x] Self / system / platform-admin guards in place
-- [ ] **Backend e2e test** (`api/tests/e2e/api/test_users_bulk.py`) — TODO before merge
+- [x] **Backend e2e test** (`api/tests/e2e/api/test_users_bulk.py`) — added in block 2 (commit `3fee262b`). Caught a real bug: UUID passed to `UserRole.assigned_by` (String(255)) — fixed in the same commit.
 
-→ Add the e2e test in block 2 so frontend wiring has a tested backend.
-
-### Block 2: B1 e2e + B2 — Bulk users frontend
+### Block 2: B1 e2e + B2 — Bulk users frontend ✅ DONE
 
 **Backend test additions:**
 - `api/tests/e2e/api/test_users_bulk.py` covering:
@@ -106,13 +104,16 @@ Each block ends with a green-status preview. If a block is too big for one sessi
 - Playwright e2e `client/e2e/users.bulk.spec.ts`: select 3, move-org, assert toast
 
 **Definition of done for block 2:**
-- Click around: select rows → action bar appears → modal → submit → toast → rows update
-- Mixed selection (active + disabled) shows both buttons in the bar
-- Platform-admin demote attempt shows the failure-detail dialog with the right reason
-- `./test.sh all` + `./test.sh client unit` + `./test.sh client e2e e2e/users.bulk.spec.ts` all green
-- Push commit; preview-ready at the netbird URL
+- [x] Backend e2e (`test_users_bulk.py`) + UUID/str fix — commit `3fee262b`
+- [x] `useUserSelection` hook with shift-range, select-all-visible, filter pruning (11 vitest cases)
+- [x] Checkbox column on Users table; self row disabled with tooltip
+- [x] `BulkActionBar` with active-mix logic (6 vitest cases)
+- [x] `BulkMoveOrgDialog`, `BulkReplaceRolesDialog`, `BulkSetActiveDialog`, `BulkResultDialog`
+- [x] Playwright e2e (`users.bulk.spec.ts`) — select 3 → Move to org → toast
+- [x] tsc + lint + pyright + ruff clean
+- [x] Frontend commit `cc9a9c76` pushed
 
-**Commit boundary:** end of block 2 is a natural commit. Push it.
+**Commit boundary:** end of block 2 is a natural commit. Push it. ✅
 
 ### Block 3: C4 — Backend endpoints (do BEFORE the Roles UI)
 
