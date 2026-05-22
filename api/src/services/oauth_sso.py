@@ -16,7 +16,6 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlencode
 from uuid import UUID
 
 import httpx
@@ -26,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.log_safety import log_safe
 from src.models import User, UserOAuthAccount
 from src.services.oauth_config_service import OAuthConfigService
+from src.services.oauth_provider import append_query_params
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ class OAuthService:
             params["access_type"] = "offline"
             params["prompt"] = "consent"
 
-        return f"{config['authorize_url']}?{urlencode(params)}"
+        return append_query_params(config["authorize_url"], params)
 
     async def exchange_code_for_tokens(
         self,

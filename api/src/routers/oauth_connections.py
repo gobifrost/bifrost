@@ -9,7 +9,6 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -34,6 +33,7 @@ from src.models import OAuthProvider, OAuthToken
 from src.models.orm.integrations import IntegrationMapping
 from src.services.oauth_entity_id import extract_entity_id
 from src.services.oauth_provider import (
+    append_query_params,
     build_token_refresh_context,
     get_url_resolution_defaults,
     refresh_oauth_token_http,
@@ -614,7 +614,7 @@ async def authorize_connection(
         "redirect_uri": redirect_uri,
     }
 
-    authorization_url = f"{resolved_authorization_url}?{urlencode(params)}"
+    authorization_url = append_query_params(resolved_authorization_url, params)
 
     # Update status to waiting
     await repo.update_status(

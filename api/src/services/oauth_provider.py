@@ -94,6 +94,41 @@ def resolve_url_template(
     return result
 
 
+def append_query_params(url: str, params: dict[str, Any]) -> str:
+    """
+    Append query parameters to a URL, preserving any existing query string.
+
+    Uses ``&`` as the separator when the URL already contains ``?``, and ``?``
+    otherwise. This matters for authorize URLs that bake provider-specific
+    flags into the configured template (e.g. Google's ``access_type=offline``
+    or Microsoft's ``prompt=login``) — without this, a naive ``f"{url}?{...}"``
+    produces ``...?baked=1?client_id=...`` which providers reject.
+
+    Args:
+        url: Base URL, with or without an existing query string.
+        params: Mapping of parameter names to values to append.
+
+    Returns:
+        URL with the new parameters appended.
+
+    Examples:
+        >>> append_query_params("https://example.com/auth", {"client_id": "abc"})
+        'https://example.com/auth?client_id=abc'
+
+        >>> append_query_params(
+        ...     "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline",
+        ...     {"client_id": "abc"},
+        ... )
+        'https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&client_id=abc'
+    """
+    from urllib.parse import urlencode
+
+    if not params:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{urlencode(params)}"
+
+
 class OAuthProviderClient:
     """
     Client for interacting with OAuth 2.0 providers

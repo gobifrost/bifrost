@@ -24,7 +24,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Literal, Union
-from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -56,6 +55,7 @@ from src.services.mcp_client.oauth_state import (
 )
 from src.services.oauth_provider import (
     OAuthProviderClient,
+    append_query_params,
     get_url_resolution_defaults,
     resolve_url_template,
 )
@@ -279,7 +279,7 @@ async def _build_authorization_url(
     if provider.audience:
         params["audience"] = provider.audience
 
-    return f"{resolved}?{urlencode(params)}"
+    return append_query_params(resolved, params)
 
 
 async def _activate_client_credentials(

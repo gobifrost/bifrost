@@ -8,7 +8,6 @@ Integrations combine OAuth providers, data providers, and configuration schemas.
 import logging
 import secrets
 from datetime import datetime, timezone
-from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -47,7 +46,11 @@ from src.models import (
 from src.models.orm import Config as ConfigModel
 from src.models.orm import IntegrationConfigSchema
 from src.models.orm import OAuthToken
-from src.services.oauth_provider import get_url_resolution_defaults, resolve_url_template
+from src.services.oauth_provider import (
+    append_query_params,
+    get_url_resolution_defaults,
+    resolve_url_template,
+)
 from src.services.oauth_state import encode_state, remember_nonce
 
 logger = logging.getLogger(__name__)
@@ -1299,7 +1302,7 @@ async def authorize_mapping(
     )
 
     return MappingAuthorizeResponse(
-        authorization_url=f"{resolved_url}?{urlencode(params)}",
+        authorization_url=append_query_params(resolved_url, params),
     )
 
 
@@ -1511,7 +1514,7 @@ async def get_oauth_authorization_url(
         "redirect_uri": redirect_uri,
     }
 
-    authorization_url = f"{oauth_provider.authorization_url}?{urlencode(params)}"
+    authorization_url = append_query_params(oauth_provider.authorization_url, params)
 
     logger.info(
         f"Generated OAuth authorization URL for integration {log_safe(integration_id)}, "

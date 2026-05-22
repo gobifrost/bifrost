@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.services.oauth_provider import OAuthProviderClient
+from src.services.oauth_provider import OAuthProviderClient, append_query_params
 
 
 @pytest.fixture
@@ -602,3 +602,56 @@ class TestOAuthProviderRetry:
             # After max_retries, should fail
             assert success is False
             assert "max_retries_exceeded" in result["error"]
+
+
+class TestAppendQueryParams:
+    """Tests for append_query_params helper."""
+
+    def test_appends_with_question_mark_when_url_has_no_query(self):
+        url = append_query_params(
+            "https://example.com/auth", {"client_id": "abc"}
+        )
+        assert url == "https://example.com/auth?client_id=abc"
+
+    def test_appends_with_ampersand_when_url_already_has_query(self):
+        # Regression test: a naive f"{url}?{urlencode(params)}" produces
+        # "...?access_type=offline?client_id=abc", which Google rejects with
+        # "missing required parameter: client_id". The helper must detect the
+        # existing query string and use & instead.
+        url = append_query_params(
+            "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline",
+            {"client_id": "abc", "scope": "openid"},
+        )
+        assert url == (
+            "https://accounts.google.com/o/oauth2/v2/auth"
+            "?access_type=offline&client_id=abc&scope=openid"
+        )
+
+    def test_preserves_multiple_existing_params(self):
+        url = append_query_params(
+            "https://accounts.google.com/o/oauth2/v2/auth"
+            "?access_type=offline&prompt=consent",
+            {"client_id": "abc"},
+        )
+        assert url == (
+            "https://accounts.google.com/o/oauth2/v2/auth"
+            "?access_type=offline&prompt=consent&client_id=abc"
+        )
+
+    def test_empty_params_returns_url_unchanged(self):
+        assert append_query_params("https://example.com/auth", {}) == (
+            "https://example.com/auth"
+        )
+        assert append_query_params(
+            "https://example.com/auth?foo=bar", {}
+        ) == "https://example.com/auth?foo=bar"
+
+    def test_url_encodes_special_characters_in_values(self):
+        url = append_query_params(
+            "https://example.com/auth",
+            {"redirect_uri": "https://app.example.com/cb?env=prod"},
+        )
+        assert url == (
+            "https://example.com/auth"
+            "?redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb%3Fenv%3Dprod"
+        )
