@@ -22,8 +22,7 @@ def test_long_text_splits_at_paragraph_boundaries():
     text = f"{para}\n\n{para}\n\n{para}"
     chunks = split_into_chunks(text, target_chars=2000, overlap_chars=200)
     assert len(chunks) >= 2
-    # No chunk exceeds target by more than the overlap allowance.
-    assert all(len(c) <= 2000 + 200 for c in chunks)
+    assert all(len(c) <= 2000 for c in chunks)
     # Reassembled content is a superset of the original (overlap means
     # some text repeats, but every character of the original appears).
     rejoined = " ".join(chunks)
@@ -57,14 +56,12 @@ def test_overlap_repeats_trailing_context():
     chunks = split_into_chunks(text, target_chars=200, overlap_chars=50)
     assert len(chunks) >= 3
     for i in range(len(chunks) - 1):
-        tail = chunks[i][-30:]
-        # The next chunk should start with content that came from near
-        # the end of the previous chunk (overlap window). We check that
-        # *some* recent sentence from chunk i appears in chunk i+1.
+        # The last sentence of chunk i should reappear in chunk i+1
+        # — that's what overlap means.
         prev_sentences = [s for s in chunks[i].split(".") if s.strip()]
         if prev_sentences:
             last_sentence = prev_sentences[-1].strip()
-            assert last_sentence in chunks[i + 1] or last_sentence in tail
+            assert last_sentence in chunks[i + 1]
 
 
 def test_default_target_size_is_reasonable_for_embeddings():
