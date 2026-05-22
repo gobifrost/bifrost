@@ -22,6 +22,11 @@ from src.models.orm.audit import AuditLog
 from src.models.orm.base import Base
 from src.models.orm.branding import GlobalBranding
 from src.models.orm.cli import CLISession
+from src.models.orm.codex_gateway import (
+    CodexGatewayKey,
+    CodexGatewayRequestLog,
+    CodexGatewayUpstreamAccount,
+)
 from src.models.orm.config import Config, SystemConfig
 from src.models.orm.developer import DeveloperContext
 from src.models.orm.events import Event, EventDelivery, EventSource, EventSubscription, WebhookSource
@@ -88,6 +93,10 @@ __all__ = [
     "ExecutionLog",
     # CLI Sessions
     "CLISession",
+    # Codex Gateway
+    "CodexGatewayKey",
+    "CodexGatewayRequestLog",
+    "CodexGatewayUpstreamAccount",
     # Config
     "Config",
     "SystemConfig",
