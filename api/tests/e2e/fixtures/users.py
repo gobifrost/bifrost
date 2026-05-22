@@ -32,10 +32,3 @@ class E2EUser:
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
         }
-
-    def headers_with_org(self, org_id: str | UUID) -> dict[str, str]:
-        """Auth headers with explicit organization context."""
-        return {
-            **self.headers,
-            "X-Organization-Id": str(org_id),
-        }
