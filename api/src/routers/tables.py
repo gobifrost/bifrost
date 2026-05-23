@@ -20,6 +20,8 @@ from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
+from shared.claims.preresolve import preresolve_for_policies
+from shared.claims.registry import referenced_claim_names
 from shared.policies.probe import (
     compile_read_filter,
     evaluate_action,
@@ -51,6 +53,7 @@ from src.models.contracts.tables import (
     TablePublic,
     TableUpdate,
 )
+from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Document, Table
 from src.repositories.org_scoped import OrgScopedRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
@@ -156,6 +159,12 @@ async def _check_action_or_403(
     mutation or only after read-only operations.
     """
     policies = _load_policies(table)
+    await preresolve_for_policies(
+        user,
+        policies,
+        db,
+        table.organization_id,
+    )
     if evaluate_action(action, policies, row, user):
         return
 
@@ -659,6 +668,48 @@ def _resolve_target_org_safe(ctx: Context, scope: str | None) -> UUID | None:
         )
 
 
+def _validate_policy_claim_refs(
+    expr: object,
+    known_claim_names: set[str],
+) -> None:
+    """Reject policy claim references not defined in the table's org."""
+    refs = referenced_claim_names(expr)
+    missing = refs - known_claim_names
+    if missing:
+        raise ValueError(
+            f"policy references unknown claims: {sorted(missing)}; "
+            f"defined in this org: {sorted(known_claim_names)}"
+        )
+
+
+async def _known_claim_names_for_org(
+    db: AsyncSession,
+    organization_id: UUID | None,
+) -> set[str]:
+    if organization_id is None:
+        return set()
+    rows = (
+        await db.execute(
+            select(CustomClaimORM.name).where(
+                CustomClaimORM.organization_id == organization_id
+            )
+        )
+    ).scalars().all()
+    return set(rows)
+
+
+async def _validate_table_policy_claim_refs(
+    db: AsyncSession,
+    organization_id: UUID | None,
+    policies: TablePolicies | None,
+) -> None:
+    if policies is None:
+        return
+    known = await _known_claim_names_for_org(db, organization_id)
+    for policy in policies.policies:
+        _validate_policy_claim_refs(policy.when, known)
+
+
 async def get_table_or_404(
     ctx: Context,
     name_or_id: str,
@@ -730,8 +781,15 @@ async def create_table(
         target_org_id = _resolve_target_org_safe(ctx, scope)
     else:
         target_org_id = ctx.org_id
-    repo = TableRepository(ctx.db, target_org_id, is_superuser=True)
+    try:
+        await _validate_table_policy_claim_refs(ctx.db, target_org_id, data.policies)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
 
+    repo = TableRepository(ctx.db, target_org_id, is_superuser=True)
     try:
         table = await repo.create_table(data, created_by=user.email)
         return TablePublic.model_validate(table)
@@ -935,6 +993,27 @@ async def update_table(
     user: CurrentSuperuser,
 ) -> TablePublic:
     """Update table metadata by ID (platform admin only)."""
+    if "policies" in data.model_fields_set:
+        existing_table = (
+            await ctx.db.execute(select(Table).where(Table.id == table_id))
+        ).scalar_one_or_none()
+        if existing_table is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table '{table_id}' not found",
+            )
+        try:
+            await _validate_table_policy_claim_refs(
+                ctx.db,
+                existing_table.organization_id,
+                data.policies,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(e),
+            )
+
     repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
     try:
         table = await repo.update_table(table_id, data)
@@ -1127,6 +1206,12 @@ async def count_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
 
     policies = _load_policies(table)
+    await preresolve_for_policies(
+        ctx.user,
+        policies,
+        ctx.db,
+        table.organization_id,
+    )
     read_filter = compile_read_filter(policies, ctx.user)
     if read_filter is None:
         # No rule grants read → count zero. Same existence-leak rationale
@@ -1253,6 +1338,12 @@ async def query_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
 
     policies = _load_policies(table)
+    await preresolve_for_policies(
+        ctx.user,
+        policies,
+        ctx.db,
+        table.organization_id,
+    )
     read_filter = compile_read_filter(policies, ctx.user)
     if read_filter is None:
         # No rule grants read → empty result. Don't 403 to avoid leaking
@@ -1301,6 +1392,12 @@ async def batch_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
     policies = _load_policies(table)
+    await preresolve_for_policies(
+        ctx.user,
+        policies,
+        ctx.db,
+        table.organization_id,
+    )
 
     # Pre-resolve attribution per item up front so any forged-attribution
     # 403 surfaces before we do work and applies all-or-nothing across
@@ -1407,6 +1504,12 @@ async def batch_delete_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
     policies = _load_policies(table)
+    await preresolve_for_policies(
+        ctx.user,
+        policies,
+        ctx.db,
+        table.organization_id,
+    )
 
     # Pre-flight: load each existing row and check `delete` against policy.
     denied: list[int] = []

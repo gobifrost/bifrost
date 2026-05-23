@@ -39,6 +39,8 @@ def _eval_node(node: Any, row: dict | None, user: Any) -> Any:
             return _resolve_row_path(row, node["row"])
         if keys == {"user"}:
             return _resolve_user_field(user, node["user"])
+        if keys == {"claims"}:
+            return _resolve_claims_field(user, node["claims"])
         if "call" in keys:
             return _eval_call(node, row, user)
         # Operators: single-key dict
@@ -73,11 +75,24 @@ def _resolve_user_field(user: Any, field: str) -> Any:
     return val
 
 
+def _resolve_claims_field(user: Any, name: str) -> Any:
+    """Look up a pre-resolved claim on the principal.
+
+    The evaluator MUST NOT trigger DB I/O — the REST handler / websocket
+    fanout pre-resolves every claim referenced in the expression BEFORE
+    invoking the evaluator. If the claim is absent here, fail-closed.
+    """
+    cache = getattr(user, "claims", None) or {}
+    if name not in cache:
+        return []  # fail-closed
+    return cache[name]
+
+
 def _eval_call(node: dict, row: dict | None, user: Any) -> bool:
     target = node["call"]
     args = [_eval_node(a, row, user) for a in node.get("args", [])]
     fn = FUNCTIONS[target]
-    return fn.evaluate(args, user, row)
+    return fn.evaluate(args, user, row or {})
 
 
 def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
@@ -117,7 +132,10 @@ def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
         a = _eval_node(value[0], row, user)
         if a is None:
             return False
-        return a in value[1]
+        b = _eval_node(value[1], row, user)
+        if not isinstance(b, list):
+            return False
+        return a in b
     if op == "is_null":
         return _eval_node(value, row, user) is None
     raise ValueError(f"unknown operator {op!r}")

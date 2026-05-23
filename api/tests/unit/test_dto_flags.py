@@ -21,6 +21,7 @@ from bifrost.dto_flags import (  # noqa: E402
     DTO_REF_LOOKUPS,
     build_cli_flags,
 )
+from bifrost.contracts.claims import CustomClaimCreate, CustomClaimUpdate  # noqa: E402
 from src.models.contracts.agents import AgentCreate, AgentUpdate  # noqa: E402
 from src.models.contracts.applications import (  # noqa: E402
     ApplicationCreate,
@@ -70,6 +71,8 @@ COVERED_DTOS: list[type] = [
     IntegrationMappingUpdate,
     ConfigCreate,
     ConfigUpdate,
+    CustomClaimCreate,
+    CustomClaimUpdate,
     TableCreate,
     TableUpdate,
     EventSourceCreate,

@@ -36,6 +36,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from src.services.mcp_server.tools import (  # noqa: E402
+    claims as claims_mod,
     configs as configs_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
@@ -51,6 +52,13 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "create_config",
         "update_config",
         "delete_config",
+    },
+    "claims": {
+        "list_claims",
+        "get_claim",
+        "create_claim",
+        "update_claim",
+        "delete_claim",
     },
     "organizations": {"update_organization", "delete_organization"},
     "integrations": {
@@ -70,6 +78,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 MODULES = {
     "roles": roles_mod,
+    "claims": claims_mod,
     "configs": configs_mod,
     "organizations": organizations_mod,
     "integrations": integrations_mod,

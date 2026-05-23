@@ -1,7 +1,12 @@
 /**
  * Component tests for PolicyReferencePanel.
  *
- * The panel is a controlled `<Sheet>` documenting the policy AST. Coverage:
+ * The panel is now a self-contained wrapper around the shared `<HelpSlideout>`:
+ * it owns the help-icon trigger and the right-side sheet that documents the
+ * policy AST. Each test renders the component and clicks the trigger (labelled
+ * "Policy reference") to open the sheet before asserting body content.
+ *
+ * Coverage:
  *   - All four legacy reference sections render when open
  *   - Worked examples block renders >= 16 patterns and includes the
  *     canonical names (admin_bypass, manager_reads_reports, ...)
@@ -10,9 +15,9 @@
  *     jsdom omits navigator.clipboard and the spec calls that out.
  *   - Footguns section is present with at least 5 entries.
  *
- * Examples are now rendered through `CodeEditor` (the Monaco wrapper) so
- * mock `@monaco-editor/react` to a textarea labelled by its `path` prop —
- * matching the pattern in PolicyEditor.test.tsx / TableDialog.test.tsx.
+ * Examples are rendered through `CodeEditor` (the Monaco wrapper) so mock
+ * `@monaco-editor/react` to a textarea labelled by its `path` prop — matching
+ * the pattern in PolicyEditor.test.tsx / TableDialog.test.tsx.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -49,11 +54,25 @@ vi.mock("@/contexts/ThemeContext", () => ({
 
 import { PolicyReferencePanel } from "./PolicyReferencePanel";
 
+/**
+ * Render the panel and open its sheet by clicking the help-icon trigger.
+ * Returns the testing-library result for the caller.
+ */
+function renderAndOpen() {
+	const result = renderWithProviders(<PolicyReferencePanel />);
+	const triggers = screen.getAllByRole("button", {
+		name: /policy reference/i,
+	});
+	// The trigger is the first button labelled "Policy reference"; the sheet's
+	// SheetTitle is also accessible by that name once open, but the trigger is
+	// always rendered first in the DOM.
+	fireEvent.click(triggers[0]!);
+	return result;
+}
+
 describe("PolicyReferencePanel — legacy sections", () => {
 	it("renders USER fields, ROW fields, Functions, and Operators when open", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		expect(
 			screen.getByRole("heading", { name: /USER fields/i }),
 		).toBeInTheDocument();
@@ -68,10 +87,8 @@ describe("PolicyReferencePanel — legacy sections", () => {
 		).toBeInTheDocument();
 	});
 
-	it("does not render content when closed", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open={false} onClose={() => {}} />,
-		);
+	it("does not render body content until the trigger is clicked", () => {
+		renderWithProviders(<PolicyReferencePanel />);
 		expect(
 			screen.queryByRole("heading", { name: /USER fields/i }),
 		).not.toBeInTheDocument();
@@ -80,17 +97,13 @@ describe("PolicyReferencePanel — legacy sections", () => {
 
 describe("PolicyReferencePanel — worked examples", () => {
 	it("renders at least 16 example headings", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		const exampleHeadings = screen.getAllByRole("heading", { level: 5 });
 		expect(exampleHeadings.length).toBeGreaterThanOrEqual(16);
 	});
 
 	it("includes the canonical example names", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		expect(
 			screen.getByRole("heading", { level: 5, name: "admin_bypass" }),
 		).toBeInTheDocument();
@@ -112,9 +125,7 @@ describe("PolicyReferencePanel — worked examples", () => {
 	});
 
 	it("renders a Copy button for each example", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		const exampleHeadings = screen.getAllByRole("heading", { level: 5 });
 		const copyButtons = screen.getAllByRole("button", { name: /^copy$/i });
 		expect(copyButtons.length).toBe(exampleHeadings.length);
@@ -128,9 +139,7 @@ describe("PolicyReferencePanel — worked examples", () => {
 		//
 		// Examples render through CodeEditor (mocked to a textarea labelled
 		// `example-<idx>.json`); pull each textarea by its label and parse.
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		const headings = screen.getAllByRole("heading", { level: 5 });
 		const editors = screen.getAllByLabelText(/^example-\d+\.json$/);
 		expect(editors.length).toBe(headings.length);
@@ -162,7 +171,7 @@ describe("PolicyReferencePanel — worked examples", () => {
 		// transition we care about. We use fake timers ONLY around the
 		// 1500ms reset window so React Testing Library's async helpers
 		// (findBy*, waitFor) keep working with real timers everywhere else.
-		renderWithProviders(<PolicyReferencePanel open onClose={() => {}} />);
+		renderAndOpen();
 		const firstCopy = screen.getAllByRole("button", {
 			name: /^copy$/i,
 		})[0]!;
@@ -189,9 +198,7 @@ describe("PolicyReferencePanel — worked examples", () => {
 
 describe("PolicyReferencePanel — footguns", () => {
 	it("renders the Footguns section with at least 5 entries", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		const heading = screen.getByRole("heading", { name: /footguns/i });
 		expect(heading).toBeInTheDocument();
 		// The Footguns dl is the heading's next sibling; count <dt> entries.
@@ -202,9 +209,7 @@ describe("PolicyReferencePanel — footguns", () => {
 	});
 
 	it("calls out the null-in-eq and not+is_null gotchas", () => {
-		renderWithProviders(
-			<PolicyReferencePanel open onClose={() => {}} />,
-		);
+		renderAndOpen();
 		const heading = screen.getByRole("heading", { name: /footguns/i });
 		const section = heading.closest("section")!;
 		expect(

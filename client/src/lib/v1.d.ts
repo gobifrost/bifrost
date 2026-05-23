@@ -6962,6 +6962,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List custom claims
+         * @description List custom claims.
+         *
+         *     Platform admins see claims across every org by default — the
+         *     organization column lets them filter in the UI. Non-superusers don't
+         *     reach this endpoint (gated by ``CurrentSuperuser``).
+         */
+        get: operations["list_claims_api_claims_get"];
+        put?: never;
+        /** Create a custom claim (admin only) */
+        post: operations["create_claim_api_claims_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/claims/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a custom claim by name */
+        get: operations["get_claim_api_claims__name__get"];
+        put?: never;
+        post?: never;
+        /** Delete a custom claim (admin only) */
+        delete: operations["delete_claim_api_claims__name__delete"];
+        options?: never;
+        head?: never;
+        /** Update a custom claim (admin only) */
+        patch: operations["update_claim_api_claims__name__patch"];
+        trace?: never;
+    };
     "/api/knowledge-sources": {
         parameters: {
             query?: never;
@@ -10713,6 +10757,29 @@ export interface components {
             duration_ms?: number | null;
         };
         /**
+         * ClaimQuery
+         * @description The lookup that produces a claim's value for the calling user.
+         */
+        ClaimQuery: {
+            /**
+             * Table
+             * @description Source table name (org-scoped)
+             */
+            table: string;
+            /** @description Filter AST; same shape as policies */
+            where?: components["schemas"]["Expr"] | null;
+            /**
+             * Select
+             * @description Column or JSON path on the source table
+             */
+            select: string;
+        };
+        /** ClaimsList */
+        ClaimsList: {
+            /** Claims */
+            claims?: components["schemas"]["CustomClaim"][];
+        };
+        /**
          * CleanupOrphanedResponse
          * @description Response from orphaned entity cleanup.
          */
@@ -11300,6 +11367,67 @@ export interface components {
              * @description Error message for invalid expressions
              */
             error?: string | null;
+        };
+        /**
+         * CustomClaim
+         * @description Read-shape returned by REST.
+         */
+        CustomClaim: {
+            /**
+             * Name
+             * @description lower_snake; unique per org
+             */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Type
+             * @default list
+             * @enum {string}
+             */
+            type: "list" | "scalar";
+            query: components["schemas"]["ClaimQuery"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+        };
+        /**
+         * CustomClaimCreate
+         * @description Create-shape; organization_id is taken from the caller's context.
+         */
+        CustomClaimCreate: {
+            /**
+             * Name
+             * @description lower_snake; unique per org
+             */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Type
+             * @default list
+             * @enum {string}
+             */
+            type: "list" | "scalar";
+            query: components["schemas"]["ClaimQuery"];
+        };
+        /**
+         * CustomClaimUpdate
+         * @description Partial update; all fields optional.
+         */
+        CustomClaimUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Type */
+            type?: ("list" | "scalar") | null;
+            query?: components["schemas"]["ClaimQuery"] | null;
         };
         /**
          * DailyMetricsEntry
@@ -33569,6 +33697,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentBatchDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_claims_api_claims_get: {
+        parameters: {
+            query?: {
+                /** @description Filter scope: omit to list across all orgs (superuser default), or pass an org UUID. */
+                scope?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_claim_api_claims_post: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomClaimCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomClaim"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_claim_api_claims__name__get: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomClaim"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_claim_api_claims__name__delete: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_claim_api_claims__name__patch: {
+        parameters: {
+            query?: {
+                /** @description Target organization scope (org UUID). Defaults to caller's home org. */
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomClaimUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomClaim"];
                 };
             };
             /** @description Validation Error */

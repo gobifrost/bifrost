@@ -281,3 +281,84 @@ def test_eq_against_literal_none_rejected():
         _e({"eq": [{"row": "x"}, None]})
     # The correct shape:
     assert evaluate(_e({"is_null": {"row": "x"}}), row={"x": None}, user=user) is True
+
+
+# --- Custom Claims ({claims: <name>}) ---
+
+
+def test_in_with_claims_rhs_membership_hit():
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        user_id="u1", organization_id="o1",
+        role_ids=[], role_names=[], is_platform_admin=False,
+        email="u@x", claims={"allowed_campus_ids": ["c1", "c2"]},
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    assert evaluate(expr, {"campus_id": "c1"}, user) is True
+
+
+def test_in_with_claims_rhs_membership_miss():
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        user_id="u1", organization_id="o1",
+        role_ids=[], role_names=[], is_platform_admin=False,
+        email="u@x", claims={"allowed_campus_ids": ["c1", "c2"]},
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    assert evaluate(expr, {"campus_id": "c9"}, user) is False
+
+
+def test_in_with_claims_rhs_empty_list_denies():
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        user_id="u1", organization_id="o1",
+        role_ids=[], role_names=[], is_platform_admin=False,
+        email="u@x", claims={"allowed_campus_ids": []},
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    assert evaluate(expr, {"campus_id": "anything"}, user) is False
+
+
+def test_in_with_claims_rhs_missing_claim_denies():
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        user_id="u1", organization_id="o1",
+        role_ids=[], role_names=[], is_platform_admin=False,
+        email="u@x", claims={},
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    assert evaluate(expr, {"campus_id": "c1"}, user) is False
+
+
+def test_in_with_claims_rhs_user_has_no_claims_attribute():
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        user_id="u1", organization_id="o1",
+        role_ids=[], role_names=[], is_platform_admin=False,
+        email="u@x",
+    )  # NO `claims` attribute at all
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    assert evaluate(expr, {"campus_id": "c1"}, user) is False
+
+
+def test_claims_in_compound_and_expression():
+    """Realistic two-claim policy."""
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        user_id="u1", organization_id="o1",
+        role_ids=[], role_names=[], is_platform_admin=False,
+        email="u@x",
+        claims={"allowed_campus_ids": ["c1"], "allowed_doc_type_ids": ["d1"]},
+    )
+    expr = Expr({"and": [
+        {"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]},
+        {"in": [{"row": "doc_type_id"}, {"claims": "allowed_doc_type_ids"}]},
+    ]})
+    assert evaluate(expr, {"campus_id": "c1", "doc_type_id": "d1"}, user) is True
+    assert evaluate(expr, {"campus_id": "c1", "doc_type_id": "d2"}, user) is False

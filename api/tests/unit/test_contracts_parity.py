@@ -29,6 +29,7 @@ from bifrost.contracts import enums as cli_enums  # noqa: E402
 from src.models import enums as server_enums  # noqa: E402
 from src.models.contracts import agents as server_agents  # noqa: E402
 from src.models.contracts import applications as server_applications  # noqa: E402
+from src.models.contracts import claims as server_claims  # noqa: E402
 from src.models.contracts import config as server_config  # noqa: E402
 from src.models.contracts import events as server_events  # noqa: E402
 from src.models.contracts import forms as server_forms  # noqa: E402
@@ -64,6 +65,8 @@ DTO_PAIRS: list[tuple[type, type]] = [
     ),
     (cli_contracts.ConfigCreate, server_config.ConfigCreate),
     (cli_contracts.ConfigUpdate, server_config.ConfigUpdate),
+    (cli_contracts.CustomClaimCreate, server_claims.CustomClaimCreate),
+    (cli_contracts.CustomClaimUpdate, server_claims.CustomClaimUpdate),
     (cli_contracts.TableCreate, server_tables.TableCreate),
     (cli_contracts.TableUpdate, server_tables.TableUpdate),
     (cli_contracts.EventSourceCreate, server_events.EventSourceCreate),

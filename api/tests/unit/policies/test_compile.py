@@ -219,3 +219,99 @@ def test_eq_row_jsonb_string_literal_unchanged():
     sql = _compile({"eq": [{"row": "status"}, "open"]})
     assert "data ->> 'status'" in sql or "data->>'status'" in sql.replace(" ", "")
     assert "'open'" in sql
+
+
+# --- Custom Claims: {claims: <name>} as in-RHS -----------------------------
+
+
+def test_claims_rhs_compiles_to_in_clause():
+    from types import SimpleNamespace
+
+    from shared.policies.compile import compile_to_sql
+    from src.models.contracts.policies import Expr
+
+    user = SimpleNamespace(
+        user_id="u1",
+        organization_id="o1",
+        role_ids=[],
+        role_names=[],
+        is_platform_admin=False,
+        email="u@x",
+        claims={"allowed_campus_ids": ["c1", "c2"]},
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    sql = compile_to_sql(expr, user)
+    sql_str = str(sql.compile(compile_kwargs={"literal_binds": True}))
+    assert "'c1'" in sql_str and "'c2'" in sql_str
+
+
+def test_claims_rhs_empty_list_compiles_to_false():
+    from types import SimpleNamespace
+
+    from shared.policies.compile import compile_to_sql
+    from src.models.contracts.policies import Expr
+
+    user = SimpleNamespace(
+        user_id="u1",
+        organization_id="o1",
+        role_ids=[],
+        role_names=[],
+        is_platform_admin=False,
+        email="u@x",
+        claims={"allowed_campus_ids": []},
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    sql = compile_to_sql(expr, user)
+    sql_str = str(sql.compile(compile_kwargs={"literal_binds": True}))
+    normalized = sql_str.lower().replace(" ", "")
+    assert normalized in {"false", "0=1", "1=0", "1!=1"}
+
+
+def test_claims_rhs_missing_claim_compiles_to_false():
+    from types import SimpleNamespace
+
+    from shared.policies.compile import compile_to_sql
+    from src.models.contracts.policies import Expr
+
+    user = SimpleNamespace(
+        user_id="u1",
+        organization_id="o1",
+        role_ids=[],
+        role_names=[],
+        is_platform_admin=False,
+        email="u@x",
+        claims={},  # claim never resolved
+    )
+    expr = Expr({"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]})
+    sql = compile_to_sql(expr, user)
+    sql_str = str(sql.compile(compile_kwargs={"literal_binds": True}))
+    normalized = sql_str.lower().replace(" ", "")
+    assert normalized in {"false", "0=1", "1=0", "1!=1"}
+
+
+def test_claims_rhs_compound_and():
+    from types import SimpleNamespace
+
+    from shared.policies.compile import compile_to_sql
+    from src.models.contracts.policies import Expr
+
+    user = SimpleNamespace(
+        user_id="u1",
+        organization_id="o1",
+        role_ids=[],
+        role_names=[],
+        is_platform_admin=False,
+        email="u@x",
+        claims={"allowed_campus_ids": ["c1"], "allowed_doc_type_ids": ["d1"]},
+    )
+    expr = Expr(
+        {
+            "and": [
+                {"in": [{"row": "campus_id"}, {"claims": "allowed_campus_ids"}]},
+                {"in": [{"row": "doc_type_id"}, {"claims": "allowed_doc_type_ids"}]},
+            ]
+        }
+    )
+    sql = compile_to_sql(expr, user)
+    sql_str = str(sql.compile(compile_kwargs={"literal_binds": True}))
+    assert "'c1'" in sql_str and "'d1'" in sql_str

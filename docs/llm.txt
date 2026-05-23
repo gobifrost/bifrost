@@ -168,6 +168,30 @@ Non-obvious semantics:
 
 Run `bifrost tables <verb> --help` for the complete flag list.
 
+## Custom Claims
+
+Custom Claims are org-scoped, query-resolved facts about the calling user.
+Table policies reference them as `{claims: "<name>"}`.
+
+Example claim:
+  name: allowed_campus_ids
+  type: list
+  query:
+    table: user_campus_access
+    where: { eq: [{ row: user_id }, { user: user_id }] }
+    select: campus_id
+
+Example policy using a claim:
+  policies:
+    - name: scoped_read
+      actions: [read]
+      when:
+        in: [{ row: campus_id }, { claims: allowed_campus_ids }]
+
+CLI: `bifrost claims list|get|create|update|delete`
+MCP: `list_claims`, `get_claim`, `create_claim`, `update_claim`, `delete_claim`
+Spec: `docs/superpowers/specs/2026-05-21-table-policies-custom-claims.md`
+
 ## Events
 
 Event sources (webhook / schedule / topic) and the subscriptions that dispatch events to workflows or agents.

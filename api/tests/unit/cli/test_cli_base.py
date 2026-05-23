@@ -191,6 +191,7 @@ class TestSubgroupRegistration:
             "integrations",
             "configs",
             "tables",
+            "claims",
             "events",
             "files",
             "requirements",

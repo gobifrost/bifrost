@@ -67,5 +67,10 @@ class Organization(Base):
     tables: Mapped[list["Table"]] = relationship(back_populates="organization")
     applications: Mapped[list["Application"]] = relationship(back_populates="organization")
     workflows: Mapped[list["Workflow"]] = relationship(back_populates="organization")
+    # No reverse relationship for `custom_claims` — keeping the back-ref
+    # would create a bidirectional module-level cycle with custom_claims.py
+    # that CodeQL flags (py/cyclic-import), and no code path reads
+    # `Organization.custom_claims`. DB-level `ON DELETE CASCADE` on the
+    # FK still handles cascading deletes.
 
     __table_args__ = (Index("ix_organizations_domain", "domain"),)

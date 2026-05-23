@@ -189,6 +189,7 @@ def _build_side_effects(
         empty,                        # oauth_providers
         _make_result(mappings_order or []),  # integration_mappings
         empty,                        # configs
+        empty,                        # custom_claims
         empty,                        # tables
         _make_result([es]),           # event_sources
         _make_result([ss]),           # schedule_sources

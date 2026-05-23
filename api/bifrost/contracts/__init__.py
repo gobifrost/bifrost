@@ -23,6 +23,7 @@ request bodies with its own DTOs, so the mirror can be minimal.
 
 from bifrost.contracts.agents import AgentCreate, AgentUpdate
 from bifrost.contracts.applications import ApplicationCreate, ApplicationUpdate
+from bifrost.contracts.claims import CustomClaimCreate, CustomClaimUpdate
 from bifrost.contracts.config import ConfigCreate, ConfigUpdate
 from bifrost.contracts.enums import (
     AgentAccessLevel,
@@ -85,6 +86,9 @@ __all__ = [
     # Configs
     "ConfigCreate",
     "ConfigUpdate",
+    # Custom Claims
+    "CustomClaimCreate",
+    "CustomClaimUpdate",
     # Tables
     "TableCreate",
     "TableUpdate",

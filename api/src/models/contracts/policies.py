@@ -111,12 +111,27 @@ def _validate_op_node(op: str, value: Any, depth: int, path: str) -> None:
         return
     if op == "in":
         if not isinstance(value, list) or len(value) != 2:
-            raise ValueError(f"{path}.{op}: in requires [operand, [literal, ...]]")
+            raise ValueError(
+                f"{path}.{op}: in requires [operand, [literal, ...]] or "
+                f"[operand, {{claims: <name>}}]"
+            )
         left, right = value
         _validate_operand(left, depth + 1, f"{path}.{op}[0]")
+
+        # Claims reference RHS: {claims: <name>} — scoped to in-RHS only.
+        if isinstance(right, dict) and set(right.keys()) == {"claims"}:
+            ref = right["claims"]
+            if not isinstance(ref, str) or not ref:
+                raise ValueError(
+                    f"{path}.{op}[1]: claims reference must be a non-empty string, "
+                    f"got {ref!r}"
+                )
+            return
+
         if not isinstance(right, list) or not right:
             raise ValueError(
-                f"{path}.{op}: in requires a non-empty literal list as second arg"
+                f"{path}.{op}: in requires a non-empty literal list or "
+                f"{{claims: <name>}} as RHS"
             )
         for i, item in enumerate(right):
             if not isinstance(item, (str, int, float, bool)) and item is not None:

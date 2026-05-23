@@ -75,6 +75,21 @@ def _resolve_user_to_literal(user: Any, field: str) -> ColumnElement:
     return literal(val)
 
 
+class _ClaimsLiteral:
+    """Marker carried through compile to signal a resolved claim list."""
+
+    __slots__ = ("values",)
+
+    def __init__(self, values: object) -> None:
+        self.values = values
+
+
+def _resolve_claims_to_literal(user: Any, name: str) -> _ClaimsLiteral:
+    """Fold a pre-resolved claim into a marker for the `in` op handler."""
+    cache = getattr(user, "claims", None) or {}
+    return _ClaimsLiteral(cache.get(name, []))
+
+
 def _resolve_row_to_column(path: str) -> ColumnElement:
     parts = path.split(".")
     if len(parts) == 1 and parts[0] in _COLUMN_MAPPED_ROW_FIELDS:
@@ -228,8 +243,18 @@ def _compile_op(op: str, value: Any, user: Any) -> ColumnElement:
         if op == "gte":
             return left >= right
     if op == "in":
-        left = _compile_node(value[0], user)
-        return left.in_(value[1])
+        left_node, right_node = value[0], value[1]
+        # Claims-RHS short-circuit: `{in: [{row: x}, {claims: name}]}` expands
+        # to a SQL IN clause over the user's pre-resolved claim list.
+        if isinstance(right_node, dict) and set(right_node.keys()) == {"claims"}:
+            marker = _resolve_claims_to_literal(user, right_node["claims"])
+            values = marker.values if isinstance(marker.values, list) else []
+            if not values:
+                return sa_false()
+            left_sql = _compile_node(left_node, user)
+            return left_sql.in_([literal(v) for v in values])
+        left = _compile_node(left_node, user)
+        return left.in_(right_node)
     if op == "is_null":
         return _compile_node(value, user).is_(None)
     raise ValueError(f"unknown operator {op!r}")

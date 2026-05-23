@@ -2024,6 +2024,56 @@ class TestSplitManifestFormat:
         assert table.schema is not None
         assert len(table.schema["columns"]) == 2
 
+    async def test_pull_custom_claim_from_manifest(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Pull manifest with custom claim → creates CustomClaim in DB."""
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.custom_claims import CustomClaim
+
+        work_dir = Path(working_clone.working_dir)
+        org_id = str(uuid4())
+        claim_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "organizations.yaml").write_text(yaml.dump({
+            "organizations": [{"id": org_id, "name": "ClaimsImportOrg"}],
+        }, default_flow_style=False))
+        (bifrost_dir / "claims.yaml").write_text(yaml.dump({
+            "claims": {
+                claim_id: {
+                    "id": claim_id,
+                    "name": "allowed_campus_ids",
+                    "description": "Campuses this user can read",
+                    "organization_id": org_id,
+                    "type": "list",
+                    "query": {
+                        "table": "user_campus_access",
+                        "where": {"eq": [{"row": "user_id"}, {"user": "user_id"}]},
+                        "select": "campus_id",
+                    },
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add([".bifrost/organizations.yaml", ".bifrost/claims.yaml"])
+        working_clone.index.commit("add custom claim")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+
+        claim = await db_session.get(CustomClaim, UUIDType(claim_id))
+        assert claim is not None
+        assert claim.name == "allowed_campus_ids"
+        assert claim.organization_id == UUIDType(org_id)
+        assert claim.query["select"] == "campus_id"
+
     async def test_pull_table_with_policies_round_trip(
         self,
         db_session: AsyncSession,

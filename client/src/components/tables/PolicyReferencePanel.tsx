@@ -11,13 +11,7 @@
  */
 
 import { useState } from "react";
-import {
-	Sheet,
-	SheetContent,
-	SheetDescription,
-	SheetHeader,
-	SheetTitle,
-} from "@/components/ui/sheet";
+import { HelpSlideout } from "@/components/shared/HelpSlideout";
 import { Button } from "@/components/ui/button";
 import { CodeEditor } from "./CodeEditor";
 import { POLICY_TEMPLATES } from "./policy-templates";
@@ -502,39 +496,20 @@ function FootgunsSection({ entries }: { entries: FootgunEntry[] }) {
 	);
 }
 
-export interface PolicyReferencePanelProps {
-	open: boolean;
-	onClose: () => void;
-}
-
-export function PolicyReferencePanel({
-	open,
-	onClose,
-}: PolicyReferencePanelProps) {
+export function PolicyReferencePanel() {
 	return (
-		<Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-			<SheetContent
-				side="right"
-				className="w-[420px] sm:w-[480px] overflow-y-auto"
-				aria-label="Policy reference"
-			>
-				<SheetHeader>
-					<SheetTitle>Policy reference</SheetTitle>
-					<SheetDescription>
-						Building blocks for the <code>when</code> expression.
-						Each policy is a JSON expression evaluated per row;
-						true means the action is allowed.
-					</SheetDescription>
-				</SheetHeader>
-				<div className="space-y-6 px-4 pb-6">
-					<RefSection title="USER fields" rows={USER_FIELDS} />
-					<RefSection title="ROW fields" rows={ROW_FIELDS} />
-					<RefSection title="Functions" rows={FUNCTIONS} />
-					<RefSection title="Operators" rows={OPERATORS} />
-					<ExamplesSection examples={EXAMPLES} />
-					<FootgunsSection entries={FOOTGUNS} />
-				</div>
-			</SheetContent>
-		</Sheet>
+		<HelpSlideout title="Policy reference">
+			<p className="text-sm text-muted-foreground">
+				Building blocks for the <code>when</code> expression. Each
+				policy is a JSON expression evaluated per row; true means the
+				action is allowed.
+			</p>
+			<RefSection title="USER fields" rows={USER_FIELDS} />
+			<RefSection title="ROW fields" rows={ROW_FIELDS} />
+			<RefSection title="Functions" rows={FUNCTIONS} />
+			<RefSection title="Operators" rows={OPERATORS} />
+			<ExamplesSection examples={EXAMPLES} />
+			<FootgunsSection entries={FOOTGUNS} />
+		</HelpSlideout>
 	);
 }

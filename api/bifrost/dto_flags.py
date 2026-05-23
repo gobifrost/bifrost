@@ -116,6 +116,8 @@ DTO_REF_LOOKUPS: dict[str, dict[str, str]] = {
     "ApplicationCreate": {"organization_id": "org"},
     "ApplicationUpdate": {},  # ``scope`` is free-form, not a ref
     "ConfigCreate": {"organization_id": "org"},
+    "CustomClaimCreate": {},
+    "CustomClaimUpdate": {},
     "TableCreate": {"organization_id": "org"},
     "IntegrationUpdate": {"list_entities_data_provider_id": "workflow"},
     "IntegrationMappingCreate": {"organization_id": "org"},
