@@ -58,7 +58,47 @@ def context():
     )
 
 
+@pytest.fixture
+def org_user_context():
+    """Create an MCPContext for a regular organization user."""
+    return MCPContext(
+        user_id=str(uuid4()),
+        org_id=str(uuid4()),
+        is_platform_admin=False,
+        user_email="user@example.com",
+        user_name="Org User",
+    )
+
+
 # ==================== Event Source Tool Tests ====================
+
+
+class TestEventToolAuthorization:
+    """Event source and subscription MCP tools are platform-admin only."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "args"),
+        [
+            ("list_event_sources", ()),
+            ("create_event_source", ("source", "webhook")),
+            ("get_event_source", (str(uuid4()),)),
+            ("update_event_source", (str(uuid4()),)),
+            ("delete_event_source", (str(uuid4()),)),
+            ("list_event_subscriptions", (str(uuid4()),)),
+            ("create_event_subscription", (str(uuid4()), str(uuid4()))),
+            ("update_event_subscription", (str(uuid4()), str(uuid4()))),
+            ("delete_event_subscription", (str(uuid4()), str(uuid4()))),
+            ("list_webhook_adapters", ()),
+        ],
+    )
+    async def test_non_admin_event_tools_return_error(self, org_user_context, tool_name, args):
+        import src.services.mcp_server.tools.events as events
+
+        result = await getattr(events, tool_name)(org_user_context, *args)
+
+        assert is_error_result(result)
+        assert "Platform administrator privileges are required" in result.structured_content["error"]
 
 
 class TestListEventSources:

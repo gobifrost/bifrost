@@ -217,7 +217,7 @@ class SDKIntegrationsGetRequest(BaseModel):
     )
     oauth_scope: str | None = Field(
         default=None,
-        description="Override OAuth scope for token request (e.g., 'https://outlook.office365.com/.default'). "
+        description="Optional whitespace-delimited OAuth scopes to request from the provider's configured scope allowlist. "
         "When provided, triggers fresh token fetch for client_credentials flows."
     )
 

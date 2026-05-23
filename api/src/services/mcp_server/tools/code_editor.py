@@ -112,6 +112,12 @@ MAX_CONTENT_CHARS = 100_000  # ~100KB, similar to Claude Code's Read tool
 # =============================================================================
 
 
+def _require_platform_admin(context: Any) -> ToolResult | None:
+    if not getattr(context, "is_platform_admin", False):
+        return error_result("Platform administrator privileges are required for code editor tools.")
+    return None
+
+
 def _normalize_line_endings(content: str) -> str:
     """Normalize line endings to \\n for consistent matching."""
     return content.replace("\r\n", "\n").replace("\r", "\n")
@@ -279,6 +285,8 @@ async def list_content(
 ) -> ToolResult:
     """List files in the workspace. Optionally filter by path prefix."""
     logger.info(f"MCP list_content: path_prefix={path_prefix}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     try:
         repo = RepoStorage()
@@ -314,6 +322,8 @@ async def search_content(
 ) -> ToolResult:
     """Search for regex patterns across all workspace files."""
     logger.info(f"MCP search_content: pattern={pattern}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not pattern:
         return error_result("pattern is required")
@@ -382,6 +392,8 @@ async def read_content_lines(
     logger.info(
         f"MCP read_content_lines: path={path}, lines={start_line}-{end_line}"
     )
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not path:
         return error_result("path is required")
@@ -445,6 +457,8 @@ async def get_content(
 ) -> ToolResult:
     """Get the entire content of a file."""
     logger.info(f"MCP get_content: path={path}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not path:
         return error_result("path is required")
@@ -529,6 +543,8 @@ async def patch_content(
         replacements: Mapping of old_workflow_id -> new_function_name for renames
     """
     logger.info(f"MCP patch_content: path={path}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not path:
         return error_result("path is required")
@@ -638,6 +654,8 @@ async def replace_content(
         replacements: Mapping of old_workflow_id -> new_function_name for renames
     """
     logger.info(f"MCP replace_content: path={path}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not path:
         return error_result("path is required")
@@ -691,6 +709,8 @@ async def delete_content(
 ) -> ToolResult:
     """Delete a file."""
     logger.info(f"MCP delete_content: path={path}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not path:
         return error_result("path is required")

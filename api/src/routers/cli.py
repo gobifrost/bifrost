@@ -120,6 +120,27 @@ def should_auto_refresh_token(
     return False
 
 
+def _resolve_requested_oauth_scopes(provider: Any, oauth_scope: str | None) -> str:
+    """Return the configured OAuth scopes selected for a token request.
+
+    ``oauth_scope`` is a selector, not an arbitrary resource-audience override:
+    callers may request only scopes already configured on the provider.
+    """
+    configured_scopes = [str(scope) for scope in (provider.scopes or []) if str(scope).strip()]
+    if not oauth_scope:
+        return " ".join(configured_scopes)
+
+    requested_scopes = [scope for scope in oauth_scope.split() if scope]
+    if not requested_scopes:
+        return " ".join(configured_scopes)
+
+    unauthorized = sorted(set(requested_scopes) - set(configured_scopes))
+    if unauthorized:
+        raise ValueError("oauth_scope contains scopes that are not configured for this provider")
+
+    return " ".join(requested_scopes)
+
+
 # =============================================================================
 # Pydantic Models (Developer Context)
 # =============================================================================
@@ -756,10 +777,7 @@ async def _build_oauth_data(
             from src.services.oauth_provider import OAuthProviderClient
 
             oauth_client = OAuthProviderClient()
-            # Use oauth_scope override if provided, otherwise use provider's default
-            scopes = oauth_scope if oauth_scope else (
-                " ".join(provider.scopes) if provider.scopes else ""
-            )
+            scopes = _resolve_requested_oauth_scopes(provider, oauth_scope)
 
             success, result = await oauth_client.get_client_credentials_token(
                 token_url=resolved_token_url,

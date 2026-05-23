@@ -281,11 +281,11 @@ class TestBuildOAuthDataAutoRefresh:
             assert result.client_secret == "decrypted-client-secret"
 
     @pytest.mark.asyncio
-    async def test_build_oauth_data_uses_oauth_scope_override(self):
-        """_build_oauth_data should use oauth_scope instead of provider.scopes when provided."""
+    async def test_build_oauth_data_uses_configured_oauth_scope_selection(self):
+        """_build_oauth_data should let callers select only configured provider scopes."""
         from src.routers.cli import _build_oauth_data
 
-        # Mock provider with default Graph scopes
+        # Mock provider with an admin-configured scope allowlist
         provider = MagicMock()
         provider.provider_name = "Microsoft"
         provider.client_id = "test-client-id"
@@ -293,7 +293,10 @@ class TestBuildOAuthDataAutoRefresh:
         provider.token_url_defaults = {}
         provider.oauth_flow_type = "client_credentials"
         provider.authorization_url = None
-        provider.scopes = ["https://graph.microsoft.com/.default"]  # Default scope
+        provider.scopes = [
+            "https://graph.microsoft.com/.default",
+            "https://outlook.office365.com/.default",
+        ]
         provider.encrypted_client_secret = "encrypted-secret"
         provider.audience = None
 
@@ -318,26 +321,61 @@ class TestBuildOAuthDataAutoRefresh:
             )
             mock_client_class.return_value = mock_instance
 
-            # Call with oauth_scope override for Exchange
+            # Call with an explicitly configured Exchange scope
             result = await _build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret,
                 oauth_scope="https://outlook.office365.com/.default"
             )
 
-            # Verify OAuthProviderClient was called with the OVERRIDE scope
+            # Verify OAuthProviderClient was called with the selected allowed scope
             mock_instance.get_client_credentials_token.assert_called_once_with(
                 token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
                 client_id="test-client-id",
                 client_secret="decrypted-client-secret",
-                scopes="https://outlook.office365.com/.default",  # Override, not provider.scopes
+                scopes="https://outlook.office365.com/.default",
                 audience=None,
             )
 
             assert result.access_token == "exchange-access-token"
 
     @pytest.mark.asyncio
-    async def test_build_oauth_data_with_oauth_scope_and_entity_id(self):
-        """_build_oauth_data should use oauth_scope and resolve entity_id in token URL."""
+    async def test_build_oauth_data_rejects_unconfigured_oauth_scope(self):
+        """Caller-supplied oauth_scope must not mint arbitrary resource tokens."""
+        from src.routers.cli import _build_oauth_data
+
+        provider = MagicMock()
+        provider.provider_name = "Microsoft"
+        provider.client_id = "test-client-id"
+        provider.token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        provider.token_url_defaults = {}
+        provider.oauth_flow_type = "client_credentials"
+        provider.authorization_url = None
+        provider.scopes = ["https://graph.microsoft.com/.default"]
+        provider.encrypted_client_secret = "encrypted-secret"
+        provider.audience = None
+
+        def resolve_url_template(url, entity_id, defaults):
+            return url
+
+        def decrypt_secret(value):
+            return "decrypted-client-secret"
+
+        with patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class:
+            mock_instance = MagicMock()
+            mock_instance.get_client_credentials_token = AsyncMock()
+            mock_client_class.return_value = mock_instance
+
+            with pytest.raises(ValueError, match="not configured"):
+                await _build_oauth_data(
+                    provider, None, None, resolve_url_template, decrypt_secret,
+                    oauth_scope="https://outlook.office365.com/.default"
+                )
+
+        mock_instance.get_client_credentials_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_build_oauth_data_with_allowed_oauth_scope_and_entity_id(self):
+        """_build_oauth_data should select configured scope and resolve entity_id."""
         from src.routers.cli import _build_oauth_data
 
         # Mock provider with templated URL
@@ -348,7 +386,10 @@ class TestBuildOAuthDataAutoRefresh:
         provider.token_url_defaults = {}
         provider.oauth_flow_type = "client_credentials"
         provider.authorization_url = None
-        provider.scopes = ["https://graph.microsoft.com/.default"]  # Default scope
+        provider.scopes = [
+            "https://graph.microsoft.com/.default",
+            "https://outlook.office365.com/.default",
+        ]
         provider.encrypted_client_secret = "encrypted-secret"
         provider.audience = None
 

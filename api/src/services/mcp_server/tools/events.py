@@ -20,6 +20,12 @@ from src.services.mcp_server.tools.db import get_tool_db
 logger = logging.getLogger(__name__)
 
 
+def _require_platform_admin(context: Any) -> ToolResult | None:
+    if not getattr(context, "is_platform_admin", False):
+        return error_result("Platform administrator privileges are required for event tools.")
+    return None
+
+
 def _build_callback_url(source_id: UUID) -> str:
     """Build callback URL path from event source ID."""
     return f"/api/hooks/{source_id}"
@@ -36,6 +42,8 @@ async def list_event_sources(
     from src.repositories.events import EventSourceRepository, EventSubscriptionRepository
 
     logger.info(f"MCP list_event_sources called with type={source_type}, org={organization_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     try:
         # Parse source_type enum
@@ -122,6 +130,8 @@ async def create_event_source(
     from src.services.webhooks.registry import get_adapter_registry
 
     logger.info(f"MCP create_event_source called: name={name}, type={source_type}, workflow_id={workflow_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     try:
         source_type_enum = EventSourceType(source_type)
@@ -337,6 +347,8 @@ async def get_event_source(
     from src.repositories.events import EventSourceRepository, EventSubscriptionRepository
 
     logger.info(f"MCP get_event_source called with id={source_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id:
         return error_result("source_id is required")
@@ -403,6 +415,8 @@ async def update_event_source(
     from src.repositories.events import EventSourceRepository
 
     logger.info(f"MCP update_event_source called with id={source_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id:
         return error_result("source_id is required")
@@ -480,6 +494,8 @@ async def delete_event_source(
     from src.services.webhooks.registry import get_adapter_registry
 
     logger.info(f"MCP delete_event_source called with id={source_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id:
         return error_result("source_id is required")
@@ -529,6 +545,8 @@ async def list_event_subscriptions(
     )
 
     logger.info(f"MCP list_event_subscriptions called with source_id={source_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id:
         return error_result("source_id is required")
@@ -594,6 +612,8 @@ async def create_event_subscription(
     from src.repositories.events import EventSourceRepository
 
     logger.info(f"MCP create_event_subscription called: source={source_id}, workflow={workflow_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id:
         return error_result("source_id is required")
@@ -664,6 +684,8 @@ async def update_event_subscription(
     from src.models.orm.events import EventSubscription
 
     logger.info(f"MCP update_event_subscription called: sub={subscription_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id or not subscription_id:
         return error_result("source_id and subscription_id are required")
@@ -720,6 +742,8 @@ async def delete_event_subscription(
     from src.models.orm.events import EventSubscription
 
     logger.info(f"MCP delete_event_subscription called: sub={subscription_id}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not source_id or not subscription_id:
         return error_result("source_id and subscription_id are required")
@@ -755,6 +779,8 @@ async def list_webhook_adapters(
     from src.services.webhooks.registry import get_adapter_registry
 
     logger.info("MCP list_webhook_adapters called")
+    if denied := _require_platform_admin(context):
+        return denied
 
     try:
         registry = get_adapter_registry()

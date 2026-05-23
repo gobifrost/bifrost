@@ -29,6 +29,12 @@ from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 logger = logging.getLogger(__name__)
 
 
+def _require_platform_admin(context: Any) -> ToolResult | None:
+    if not getattr(context, "is_platform_admin", False):
+        return error_result("Platform administrator privileges are required for organization tools.")
+    return None
+
+
 def _ref_error_payload(exc: Exception) -> dict[str, Any]:
     from bifrost.refs import AmbiguousRefError, RefNotFoundError
 
@@ -45,6 +51,8 @@ async def list_organizations(context: Any) -> ToolResult:
     Platform admin only. Returns id, name, domain, is_active for each org.
     """
     logger.info("MCP list_organizations called")
+    if denied := _require_platform_admin(context):
+        return denied
 
     try:
         async with get_tool_db(context) as db:
@@ -80,6 +88,8 @@ async def get_organization(
     Platform admin only. Must provide at least one of organization_id or domain.
     """
     logger.info(f"MCP get_organization called with id={organization_id}, domain={domain}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not organization_id and not domain:
         return error_result("Either organization_id or domain is required")
@@ -140,6 +150,8 @@ async def create_organization(
         ToolResult with created organization details
     """
     logger.info(f"MCP create_organization called with name={name}")
+    if denied := _require_platform_admin(context):
+        return denied
 
     if not name:
         return error_result("name is required")
@@ -210,6 +222,9 @@ async def update_organization(
     :data:`bifrost.dto_flags.DTO_EXCLUDES` — ``domain`` is
     auto-provisioning policy, ``settings`` is a UI-managed JSON blob).
     """
+    if denied := _require_platform_admin(context):
+        return denied
+
     if not organization_ref:
         return error_result("organization_ref is required")
 
@@ -258,6 +273,9 @@ async def delete_organization(context: Any, organization_ref: str) -> ToolResult
     ``organization_ref`` is a UUID or organization name. Soft-delete
     semantics are owned by the REST endpoint.
     """
+    if denied := _require_platform_admin(context):
+        return denied
+
     if not organization_ref:
         return error_result("organization_ref is required")
 

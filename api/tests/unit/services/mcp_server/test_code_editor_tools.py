@@ -194,27 +194,18 @@ class TestListContent:
             mock_repo.list.assert_called_once_with("")
 
     @pytest.mark.asyncio
-    async def test_list_workflows_org_scoped(self, org_user_context):
-        """Should list files filtered by path_prefix for org users."""
+    async def test_list_content_denies_non_admin(self, org_user_context):
+        """Path-based code editor tools are platform-admin only."""
         from src.services.mcp_server.tools.code_editor import list_content
 
-        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
-            mock_repo = MagicMock()
-            mock_repo.list = AsyncMock(return_value=[
-                "workflows/sync_tickets.py",
-            ])
-            mock_repo_cls.return_value = mock_repo
+        result = await list_content(
+            context=org_user_context,
+            path_prefix="workflows/",
+        )
 
-            result = await list_content(
-                context=org_user_context,
-                path_prefix="workflows/",
-            )
-
-            assert isinstance(result, ToolResult)
-            data = get_result_data(result)
-            assert "files" in data
-            assert len(data["files"]) == 1
-            assert data["files"][0]["path"] == "workflows/sync_tickets.py"
+        assert is_error_result(result)
+        data = get_result_data(result)
+        assert "Platform administrator privileges are required" in data["error"]
 
 
 class TestSearchContent:
@@ -747,34 +738,49 @@ class TestDeleteContent:
         assert "path" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_delete_workflow_with_org_filter(self, org_user_context):
-        """Should delete a file for org-scoped users."""
+    async def test_delete_content_denies_non_admin(self, org_user_context):
+        """Non-admin users must not delete global workspace paths."""
         from src.services.mcp_server.tools.code_editor import delete_content
 
-        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
-            mock_repo = MagicMock()
-            mock_repo.exists = AsyncMock(return_value=True)
-            mock_repo_cls.return_value = mock_repo
+        result = await delete_content(
+            context=org_user_context,
+            path="workflows/test.py",
+        )
 
-            with patch("src.services.mcp_server.tools.code_editor.get_tool_db") as mock_db:
-                mock_session = AsyncMock()
-                mock_db.return_value.__aenter__.return_value = mock_session
+        assert is_error_result(result)
+        data = get_result_data(result)
+        assert "Platform administrator privileges are required" in data["error"]
 
-                with patch(
-                    "src.services.mcp_server.tools.code_editor.FileStorageService"
-                ) as mock_fs_cls:
-                    mock_fs_instance = MagicMock()
-                    mock_fs_instance.delete_file = AsyncMock()
-                    mock_fs_cls.return_value = mock_fs_instance
 
-                    result = await delete_content(
-                        context=org_user_context,
-                        path="workflows/test.py",
-                    )
+class TestCodeEditorAuthorization:
+    """All path-based code editor MCP tools are platform-admin only."""
 
-                    assert isinstance(result, ToolResult)
-                    data = get_result_data(result)
-                    assert data["success"] is True
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "args"),
+        [
+            ("list_content", ()),
+            ("search_content", ("needle",)),
+            ("read_content_lines", ("workflows/test.py",)),
+            ("get_content", ("workflows/test.py",)),
+            ("patch_content", ("workflows/test.py", "old", "new")),
+            ("replace_content", ("workflows/test.py", "content")),
+            ("delete_content", ("workflows/test.py",)),
+        ],
+    )
+    async def test_non_admin_code_editor_tools_return_error(
+        self,
+        org_user_context,
+        tool_name,
+        args,
+    ):
+        import src.services.mcp_server.tools.code_editor as code_editor
+
+        result = await getattr(code_editor, tool_name)(org_user_context, *args)
+
+        assert is_error_result(result)
+        data = get_result_data(result)
+        assert "Platform administrator privileges are required" in data["error"]
 
 
 class TestMultiFunctionWorkflows:
