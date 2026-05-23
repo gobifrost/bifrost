@@ -239,6 +239,11 @@ run_pytest() {
 }
 
 cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -v "$@"; }
+cmd_coverage() {
+    local target="${1:-coverage.xml}"
+    docker compose -f "$COMPOSE_FILE" --profile test run --rm test-runner \
+        sh -lc 'cat /coverage/coverage.xml' > "$target"
+}
 cmd_e2e_smoke() {
     run_pytest \
         tests/e2e/api/test_auth.py::TestHealthCheck \
@@ -353,6 +358,7 @@ fi
 case "$1" in
     stack) shift; cmd_stack "$@" ;;
     unit) shift; cmd_unit "$@" ;;
+    coverage) shift; cmd_coverage "$@" ;;
     e2e-smoke) shift; cmd_e2e_smoke "$@" ;;
     e2e) shift; cmd_e2e "$@" ;;
     all) shift; cmd_all "$@" ;;

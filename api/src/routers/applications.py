@@ -21,8 +21,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentUser
+from src.core.app_scaffold import APP_INDEX_SOURCE, APP_LAYOUT_SOURCE
+from src.core.exceptions import AccessDeniedError
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, resolve_org_filter
 from src.core.pubsub import publish_app_draft_update, publish_app_published
@@ -39,7 +42,6 @@ from src.models.contracts.applications import (
 )
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
-from src.core.exceptions import AccessDeniedError
 from src.repositories.org_scoped import OrgScopedRepository
 
 logger = logging.getLogger(__name__)
@@ -56,7 +58,7 @@ def stale_app_source_error(slug: str) -> str:
     )
 
 
-async def ensure_no_stale_app_source(session, slug: str) -> None:
+async def ensure_no_stale_app_source(session: AsyncSession, slug: str) -> None:
     """Reject app creation when files already exist for an unclaimed slug."""
     from src.models.orm.file_index import FileIndex
 
@@ -487,36 +489,15 @@ class ApplicationRepository(OrgScopedRepository[Application]):
 
         file_storage = FileStorageService(self.session)
 
-        layout_source = '''import { Outlet } from "bifrost";
-
-export default function RootLayout() {
-  return (
-    <div className="min-h-screen bg-background">
-      <Outlet />
-    </div>
-  );
-}
-'''
         await file_storage.write_file(
             path=f"apps/{slug}/_layout.tsx",
-            content=layout_source.encode("utf-8"),
+            content=APP_LAYOUT_SOURCE.encode("utf-8"),
             updated_by="system",
         )
 
-        index_source = '''export default function HomePage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold mb-4">Welcome</h1>
-      <p className="text-muted-foreground">
-        Start building your app by editing this page or adding new files.
-      </p>
-    </div>
-  );
-}
-'''
         await file_storage.write_file(
             path=f"apps/{slug}/pages/index.tsx",
-            content=index_source.encode("utf-8"),
+            content=APP_INDEX_SOURCE.encode("utf-8"),
             updated_by="system",
         )
 

@@ -143,8 +143,7 @@ jobs:
           chmod +x test.sh
           ./test.sh stack up
           ./test.sh unit --cov=. --cov-report=xml:/coverage/coverage.xml
-          docker compose -f docker-compose.test.yml --profile test run --rm test-runner \
-            sh -lc 'cat /coverage/coverage.xml' > coverage.xml
+          ./test.sh coverage coverage.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1

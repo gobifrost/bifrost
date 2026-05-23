@@ -15,6 +15,7 @@ from typing import Any
 
 from fastmcp.tools import ToolResult
 
+from src.core.app_scaffold import APP_INDEX_SOURCE, APP_LAYOUT_SOURCE
 from src.core.pubsub import publish_app_draft_update, publish_app_published
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest
@@ -157,35 +158,14 @@ async def create_app(
             scaffolded = 0
             file_storage = FileStorageService(db)
 
-            layout_source = '''import { Outlet } from "bifrost";
-
-export default function RootLayout() {
-  return (
-    <div className="min-h-screen bg-background">
-      <Outlet />
-    </div>
-  );
-}
-'''
-            index_source = '''export default function HomePage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold mb-4">Welcome</h1>
-      <p className="text-muted-foreground">
-        Start building your app by editing this page or adding new files.
-      </p>
-    </div>
-  );
-}
-'''
             await file_storage.write_file(
                 path=f"apps/{slug}/_layout.tsx",
-                content=layout_source.encode("utf-8"),
+                content=APP_LAYOUT_SOURCE.encode("utf-8"),
                 updated_by="system",
             )
             await file_storage.write_file(
                 path=f"apps/{slug}/pages/index.tsx",
-                content=index_source.encode("utf-8"),
+                content=APP_INDEX_SOURCE.encode("utf-8"),
                 updated_by="system",
             )
             scaffolded = 2

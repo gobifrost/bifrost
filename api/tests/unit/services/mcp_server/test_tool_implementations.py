@@ -166,7 +166,8 @@ class _CreateAppDb:
         self.flushed = True
 
     async def commit(self):
-        pass
+        # Intentionally no-op: the fake only records whether create_app reaches commit.
+        return None
 
 
 class TestAppToolImpl:
