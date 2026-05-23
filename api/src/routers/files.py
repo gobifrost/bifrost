@@ -69,56 +69,101 @@ Mode = Literal["local", "cloud"]
 
 class FileReadRequest(BaseModel):
     """Request to read a file."""
+
     path: str = Field(..., description="File path relative to location root")
-    location: str = Field(default="workspace", description="Storage location: reserved (workspace, temp, uploads) or freeform")
-    scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+    location: str = Field(
+        default="workspace",
+        description="Storage location: reserved (workspace, temp, uploads) or freeform",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Org scope. Required for non-workspace, non-uploads locations.",
+    )
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
-    binary: bool = Field(default=False, description="If true, return base64-encoded content")
+    binary: bool = Field(
+        default=False, description="If true, return base64-encoded content"
+    )
 
 
 class FileWriteRequest(BaseModel):
     """Request to write a file."""
+
     path: str = Field(..., description="File path relative to location root")
     content: str = Field(..., description="File content (text or base64 for binary)")
-    location: str = Field(default="workspace", description="Storage location: reserved (workspace, temp, uploads) or freeform")
-    scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+    location: str = Field(
+        default="workspace",
+        description="Storage location: reserved (workspace, temp, uploads) or freeform",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Org scope. Required for non-workspace, non-uploads locations.",
+    )
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
-    binary: bool = Field(default=False, description="If true, content is base64-encoded")
+    binary: bool = Field(
+        default=False, description="If true, content is base64-encoded"
+    )
 
 
 class FileDeleteRequest(BaseModel):
     """Request to delete a file."""
+
     path: str = Field(..., description="File path relative to location root")
-    location: str = Field(default="workspace", description="Storage location: reserved (workspace, temp, uploads) or freeform")
-    scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+    location: str = Field(
+        default="workspace",
+        description="Storage location: reserved (workspace, temp, uploads) or freeform",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Org scope. Required for non-workspace, non-uploads locations.",
+    )
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
 
 
 class FileListRequest(BaseModel):
     """Request to list files."""
-    directory: str = Field(default="", description="Directory path relative to location root")
-    location: str = Field(default="workspace", description="Storage location: reserved (workspace, temp, uploads) or freeform")
-    scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+
+    directory: str = Field(
+        default="", description="Directory path relative to location root"
+    )
+    location: str = Field(
+        default="workspace",
+        description="Storage location: reserved (workspace, temp, uploads) or freeform",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Org scope. Required for non-workspace, non-uploads locations.",
+    )
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
-    include_metadata: bool = Field(default=False, description="If true, return ETags + last_modified per file")
+    include_metadata: bool = Field(
+        default=False, description="If true, return ETags + last_modified per file"
+    )
 
 
 class FileExistsRequest(BaseModel):
     """Request to check file existence."""
+
     path: str = Field(..., description="File path relative to location root")
-    location: str = Field(default="workspace", description="Storage location: reserved (workspace, temp, uploads) or freeform")
-    scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+    location: str = Field(
+        default="workspace",
+        description="Storage location: reserved (workspace, temp, uploads) or freeform",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Org scope. Required for non-workspace, non-uploads locations.",
+    )
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
 
 
 class FileReadResponse(BaseModel):
     """Response for file read."""
+
     content: str = Field(..., description="File content (text or base64)")
     binary: bool = Field(default=False, description="True if content is base64-encoded")
 
 
 class FileListMetadataItem(BaseModel):
     """File metadata item with path, etag, and last_modified."""
+
     path: str
     etag: str
     last_modified: str  # ISO 8601
@@ -127,28 +172,54 @@ class FileListMetadataItem(BaseModel):
 
 class FileListResponse(BaseModel):
     """Response for file listing."""
-    files: list[str] = Field(default_factory=list, description="List of file/folder paths")
-    files_metadata: list[FileListMetadataItem] = Field(default_factory=list, description="Per-file metadata (when include_metadata=true)")
+
+    files: list[str] = Field(
+        default_factory=list, description="List of file/folder paths"
+    )
+    files_metadata: list[FileListMetadataItem] = Field(
+        default_factory=list,
+        description="Per-file metadata (when include_metadata=true)",
+    )
 
 
 class FileExistsResponse(BaseModel):
     """Response for file existence check."""
+
     exists: bool = Field(..., description="True if file exists")
 
 
 class SignedUrlRequest(BaseModel):
     """Request to generate a presigned S3 URL."""
-    path: str = Field(..., description="File path relative to location root (NOT including scope segment)")
-    method: Literal["PUT", "GET"] = Field(default="PUT", description="HTTP method: PUT for upload, GET for download")
-    content_type: str = Field(default="application/octet-stream", description="MIME type (only used for PUT)")
-    location: str = Field(default="uploads", description="Storage location. Defaults to 'uploads' for backwards compatibility with form upload flows.")
-    scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+
+    path: str = Field(
+        ...,
+        description="File path relative to location root (NOT including scope segment)",
+    )
+    method: Literal["PUT", "GET"] = Field(
+        default="PUT", description="HTTP method: PUT for upload, GET for download"
+    )
+    content_type: str = Field(
+        default="application/octet-stream", description="MIME type (only used for PUT)"
+    )
+    location: str = Field(
+        default="uploads",
+        description="Storage location. Defaults to 'uploads' for backwards compatibility with form upload flows.",
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Org scope. Required for non-workspace, non-uploads locations.",
+    )
 
 
 class SignedUrlResponse(BaseModel):
     """Response with presigned URL."""
+
     url: str = Field(..., description="Presigned S3 URL")
     path: str = Field(..., description="Full S3 path")
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Headers the client must send with the signed request",
+    )
     expires_in: int = Field(default=600, description="URL expiration in seconds")
 
 
@@ -167,10 +238,14 @@ async def read_file(
     """Read a file from workspace, temp, or uploads."""
     try:
         backend = get_backend(request.mode, db)
-        content = await backend.read(request.path, request.location, scope=request.scope)
+        content = await backend.read(
+            request.path, request.location, scope=request.scope
+        )
 
         if request.binary:
-            return FileReadResponse(content=base64.b64encode(content).decode(), binary=True)
+            return FileReadResponse(
+                content=base64.b64encode(content).decode(), binary=True
+            )
         return FileReadResponse(content=content.decode("utf-8"), binary=False)
 
     except FileNotFoundError:
@@ -207,9 +282,13 @@ async def write_file(
             content = request.content.encode("utf-8")
 
         updated_by = user.email if user else "system"
-        await backend.write(request.path, content, request.location, updated_by, scope=request.scope)
+        await backend.write(
+            request.path, content, request.location, updated_by, scope=request.scope
+        )
 
-        logger.info(f"Wrote file: {log_safe(request.path)} ({len(content)} bytes, mode={log_safe(request.mode)}, location={log_safe(request.location)})")
+        logger.info(
+            f"Wrote file: {log_safe(request.path)} ({len(content)} bytes, mode={log_safe(request.mode)}, location={log_safe(request.location)})"
+        )
 
     except ValueError as e:
         raise HTTPException(
@@ -230,7 +309,9 @@ async def delete_file(
         backend = get_backend(request.mode, db)
         await backend.delete(request.path, request.location, scope=request.scope)
 
-        logger.info(f"Deleted file: {log_safe(request.path)} (mode={log_safe(request.mode)}, location={log_safe(request.location)})")
+        logger.info(
+            f"Deleted file: {log_safe(request.path)} (mode={log_safe(request.mode)}, location={log_safe(request.location)})"
+        )
 
     except FileNotFoundError:
         raise HTTPException(
@@ -253,7 +334,11 @@ async def list_files_simple(
 ) -> FileListResponse:
     """List files in a directory (simple SDK-focused endpoint)."""
     try:
-        if request.include_metadata and request.mode == "cloud" and request.location == "workspace":
+        if (
+            request.include_metadata
+            and request.mode == "cloud"
+            and request.location == "workspace"
+        ):
             # Return ETags + last_modified via RepoStorage
             from src.services.repo_storage import RepoStorage
 
@@ -262,12 +347,14 @@ async def list_files_simple(
 
             # Filter out .git/ objects
             s3_metadata = {
-                path: meta for path, meta in s3_metadata.items()
+                path: meta
+                for path, meta in s3_metadata.items()
                 if not path.startswith(".git/")
             }
 
             # Look up updated_by from file_index
             from src.models.orm.file_index import FileIndex
+
             fi_result = await db.execute(
                 select(FileIndex.path, FileIndex.updated_by).where(
                     FileIndex.path.in_(list(s3_metadata.keys()))
@@ -289,7 +376,9 @@ async def list_files_simple(
             )
 
         backend = get_backend(request.mode, db)
-        files = await backend.list(request.directory, request.location, scope=request.scope)
+        files = await backend.list(
+            request.directory, request.location, scope=request.scope
+        )
         return FileListResponse(files=files)
 
     except ValueError as e:
@@ -309,7 +398,9 @@ async def file_exists(
     """Check if a file exists."""
     try:
         backend = get_backend(request.mode, db)
-        exists = await backend.exists(request.path, request.location, scope=request.scope)
+        exists = await backend.exists(
+            request.path, request.location, scope=request.scope
+        )
         return FileExistsResponse(exists=exists)
 
     except ValueError as e:
@@ -340,12 +431,14 @@ async def get_signed_url(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     file_storage = FileStorageService(db)
+    headers: dict[str, str] = {}
 
     if request.method == "PUT":
         url = await file_storage.generate_presigned_upload_url(
             path=s3_path,
             content_type=request.content_type,
         )
+        headers = file_storage.presigned_upload_headers(request.content_type)
     else:
         url = await file_storage.generate_presigned_download_url(
             path=s3_path,
@@ -354,6 +447,7 @@ async def get_signed_url(
     return SignedUrlResponse(
         url=url,
         path=s3_path,
+        headers=headers,
     )
 
 
@@ -388,7 +482,9 @@ async def pull_files(
             for key_candidate in [
                 f".bifrost/{filename}",
                 f"{request.prefix}/.bifrost/{filename}" if request.prefix else None,
-                f"{request.prefix.rstrip('/')}/.bifrost/{filename}" if request.prefix else None,
+                f"{request.prefix.rstrip('/')}/.bifrost/{filename}"
+                if request.prefix
+                else None,
             ]:
                 if key_candidate and key_candidate in request.local_hashes:
                     local_hash = request.local_hashes[key_candidate]
@@ -421,8 +517,12 @@ async def get_manifest(
 
 class ManifestImportRequest(BaseModel):
     """Request body for manifest import."""
+
     delete_removed_entities: bool = False
-    files: dict[str, str] = Field(default_factory=dict, description="Map of .bifrost/ path to base64-encoded content")
+    files: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of .bifrost/ path to base64-encoded content",
+    )
     dry_run: bool = False
     target_organization_id: UUID | None = Field(
         default=None,
@@ -463,6 +563,7 @@ async def import_manifest(
     if request and request.files:
         from src.services.repo_storage import RepoStorage
         import base64 as b64_mod
+
         repo = RepoStorage()
         for repo_path, content in request.files.items():
             try:
@@ -533,13 +634,19 @@ async def manage_watch_session(
     r = await get_shared_redis()
 
     if request.action in ("start", "heartbeat"):
-        await r.setex(key, WATCH_SESSION_TTL_SECONDS, json.dumps({
-            "user_id": str(user.user_id),
-            "user_name": user.name or user.email or "CLI",
-            "prefix": request.prefix,
-            "session_id": session_id,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        }))
+        await r.setex(
+            key,
+            WATCH_SESSION_TTL_SECONDS,
+            json.dumps(
+                {
+                    "user_id": str(user.user_id),
+                    "user_name": user.name or user.email or "CLI",
+                    "prefix": request.prefix,
+                    "session_id": session_id,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
+        )
         if request.action == "start":
             await publish_file_activity(
                 user_id=str(user.user_id),
@@ -582,7 +689,6 @@ async def list_active_watchers(user: CurrentSuperuser) -> dict:
 # =============================================================================
 
 
-
 @router.get(
     "/editor",
     response_model=list[FileMetadata],
@@ -592,7 +698,9 @@ async def list_files_editor(
     ctx: Context,
     user: CurrentSuperuser,
     path: str = Query(..., description="Directory path relative to workspace root"),
-    recursive: bool = Query(default=False, description="If true, return all files recursively"),
+    recursive: bool = Query(
+        default=False, description="If true, return all files recursively"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> list[FileMetadata]:
     """
@@ -611,6 +719,7 @@ async def list_files_editor(
 
         if recursive:
             from src.services.editor.file_filter import is_excluded_path
+
             all_paths = await repo.list(prefix)
             return [
                 FileMetadata(
@@ -639,26 +748,30 @@ async def list_files_editor(
                 continue
 
             clean = folder_path.rstrip("/")
-            files.append(FileMetadata(
-                path=clean,
-                name=clean.split("/")[-1],
-                type=FileType.FOLDER,
-                size=None,
-                extension=None,
-                modified=datetime.now(timezone.utc).isoformat(),
-            ))
+            files.append(
+                FileMetadata(
+                    path=clean,
+                    name=clean.split("/")[-1],
+                    type=FileType.FOLDER,
+                    size=None,
+                    extension=None,
+                    modified=datetime.now(timezone.utc).isoformat(),
+                )
+            )
 
         # Then files
         for file_path in child_files:
             name = file_path.split("/")[-1]
-            files.append(FileMetadata(
-                path=file_path,
-                name=name,
-                type=FileType.FILE,
-                size=None,
-                extension=name.split(".")[-1] if "." in name else None,
-                modified=datetime.now(timezone.utc).isoformat(),
-            ))
+            files.append(
+                FileMetadata(
+                    path=file_path,
+                    name=name,
+                    type=FileType.FILE,
+                    size=None,
+                    extension=name.split(".")[-1] if "." in name else None,
+                    modified=datetime.now(timezone.utc).isoformat(),
+                )
+            )
 
         return files
 
@@ -708,7 +821,9 @@ async def get_file_content_editor(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {path}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {path}"
+        )
 
 
 @router.put(
@@ -745,12 +860,15 @@ async def put_file_content_editor(
                 if existing_etag != request.expected_etag:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail={"reason": "content_changed", "message": "File has been modified"}
+                        detail={
+                            "reason": "content_changed",
+                            "message": "File has been modified",
+                        },
                     )
             except FileNotFoundError:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={"reason": "path_not_found", "message": "File was deleted"}
+                    detail={"reason": "path_not_found", "message": "File was deleted"},
                 )
 
         # Write file with deactivation protection
@@ -805,7 +923,7 @@ async def put_file_content_editor(
                     "message": f"{len(pending)} workflow(s) would be deactivated",
                     "pending_deactivations": [p.model_dump() for p in pending],
                     "available_replacements": [r.model_dump() for r in replacements],
-                }
+                },
             )
 
         etag = hashlib.md5(write_result.final_content).hexdigest()
@@ -823,24 +941,28 @@ async def put_file_content_editor(
         conflicts = []
         if write_result.workflow_id_conflicts:
             for c in write_result.workflow_id_conflicts:
-                conflicts.append(WorkflowIdConflict(
-                    name=c.name,
-                    function_name=c.function_name,
-                    existing_id=c.existing_id,
-                    file_path=c.file_path,
-                ))
+                conflicts.append(
+                    WorkflowIdConflict(
+                        name=c.name,
+                        function_name=c.function_name,
+                        existing_id=c.existing_id,
+                        file_path=c.file_path,
+                    )
+                )
 
         # Convert diagnostics to response model
         diagnostics = []
         if write_result.diagnostics:
             for d in write_result.diagnostics:
-                diagnostics.append(FileDiagnostic(
-                    severity=d.severity,  # type: ignore[arg-type]
-                    message=d.message,
-                    line=d.line,
-                    column=d.column,
-                    source=d.source,
-                ))
+                diagnostics.append(
+                    FileDiagnostic(
+                        severity=d.severity,  # type: ignore[arg-type]
+                        message=d.message,
+                        line=d.line,
+                        column=d.column,
+                        source=d.source,
+                    )
+                )
 
         return FileContentResponse(
             path=request.path,
@@ -865,7 +987,7 @@ async def put_file_content_editor(
                 _, reason, message = parts
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={"reason": reason, "message": message}
+                    detail={"reason": reason, "message": message},
                 )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
@@ -957,7 +1079,9 @@ async def delete_file_editor(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Not found: {path}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Not found: {path}"
+        )
 
 
 @router.post(
@@ -994,16 +1118,22 @@ async def rename_file_editor(
             name=new_path.split("/")[-1] if not is_folder else new_path.split("/")[-2],
             type=FileType.FOLDER if is_folder else FileType.FILE,
             size=None,
-            extension=new_path.split(".")[-1] if "." in new_path and not is_folder else None,
+            extension=new_path.split(".")[-1]
+            if "." in new_path and not is_folder
+            else None,
             modified=datetime.now(timezone.utc).isoformat(),
         )
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Not found: {old_path}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Not found: {old_path}"
+        )
     except FileExistsError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Already exists: {new_path}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Already exists: {new_path}"
+        )
 
 
 @router.post(
