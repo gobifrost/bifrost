@@ -77,15 +77,15 @@ class TestVerifyEmbedHmacHalopsa:
         secret = "halo-shared"
         agent_id = "42"
         sig = self._halo_sig(agent_id, secret)
-        params = {"agent_id": agent_id, "ticket_id": "1001", "hmac": sig}
+        params = {"agent_id": agent_id, "hmac": sig}
         assert verify_embed_hmac(params, secret, SCHEME_HALOPSA) is True
 
-    def test_extra_params_do_not_invalidate(self):
-        """HaloPSA scheme signs only agent_id; other params are not covered."""
+    def test_unsigned_extra_params_rejected(self):
+        """HaloPSA signatures must not authenticate params outside agent_id."""
         secret = "halo-shared"
         sig = self._halo_sig("42", secret)
         params = {"agent_id": "42", "anything": "else", "hmac": sig}
-        assert verify_embed_hmac(params, secret, SCHEME_HALOPSA) is True
+        assert verify_embed_hmac(params, secret, SCHEME_HALOPSA) is False
 
     def test_tampered_agent_id(self):
         secret = "halo-shared"

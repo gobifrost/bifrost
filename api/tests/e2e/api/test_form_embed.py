@@ -3,6 +3,7 @@
 import hashlib
 import hmac as hmac_module
 import uuid
+from urllib.parse import urlparse
 
 import pytest
 
@@ -10,6 +11,13 @@ import pytest
 def _compute_hmac(params: dict, secret: str) -> str:
     message = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
     return hmac_module.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+def _extract_token_from_redirect(response) -> str:
+    location = response.headers.get("location", "")
+    fragment = urlparse(location).fragment
+    assert fragment.startswith("embed_token="), f"Expected embed token in {location}"
+    return fragment.split("=", 1)[1]
 
 
 @pytest.mark.e2e
@@ -98,3 +106,31 @@ class TestFormEmbed:
         # Verify the form is accessible with embed token
         r = e2e_client.get(f"/api/forms/{form_id}", headers=embed_headers)
         assert r.status_code == 200
+
+    def test_form_embed_token_cannot_replay_to_another_form(
+        self, e2e_client, platform_admin, form_with_secret
+    ):
+        form_id = form_with_secret["form"]["id"]
+        r = e2e_client.post(
+            "/api/forms",
+            headers=platform_admin.headers,
+            json={
+                "name": "Other Embed Test Form",
+                "form_schema": {"fields": []},
+            },
+        )
+        assert r.status_code == 201, r.text
+        other_form_id = r.json()["id"]
+
+        params = {"agent_id": "42"}
+        hmac_sig = _compute_hmac(params, form_with_secret["secret"])
+        r = e2e_client.get(
+            f"/embed/forms/{form_id}",
+            params={**params, "hmac": hmac_sig},
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+        embed_headers = {"Authorization": f"Bearer {_extract_token_from_redirect(r)}"}
+
+        r = e2e_client.get(f"/api/forms/{other_form_id}", headers=embed_headers)
+        assert r.status_code == 403, r.text

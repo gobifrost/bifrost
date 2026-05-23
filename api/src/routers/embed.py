@@ -76,6 +76,7 @@ async def embed_app(
         "sub": SYSTEM_USER_ID,
         "jti": str(uuid.uuid4()),
         "app_id": str(app.id),
+        "app_slug": app.slug,
         "org_id": str(app.organization_id) if app.organization_id else None,
         "verified_params": verified_params,
         "email": "embed@internal.gobifrost.com",

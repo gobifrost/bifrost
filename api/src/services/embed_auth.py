@@ -6,8 +6,8 @@ Two signing schemes are supported, selected per stored secret via the
 1. ``shopify`` — hex-encoded HMAC-SHA256 over the sorted query parameters
    (`key=value&key=value`). All params are signed.
 2. ``halopsa`` — base64-encoded HMAC-SHA256 over only the ``agent_id`` value.
-   Other URL params are NOT covered by the signature and must be treated as
-   untrusted user input.
+   Because no other URL params are covered by the signature, requests using
+   this scheme are accepted only when they contain ``agent_id`` and ``hmac``.
 """
 
 import base64
@@ -45,6 +45,9 @@ def _verify_shopify(query_params: dict[str, str], secret: str) -> bool:
 
 
 def _verify_halopsa(query_params: dict[str, str], secret: str) -> bool:
+    if set(query_params) - {"agent_id", "hmac"}:
+        return False
+
     received_hmac = query_params.get("hmac")
     agent_id = query_params.get("agent_id")
     if not received_hmac or not agent_id:

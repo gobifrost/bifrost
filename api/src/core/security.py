@@ -264,11 +264,14 @@ def create_embed_token(
 
     to_encode = {
         "sub": SYSTEM_USER_ID,
+        "jti": secrets.token_urlsafe(16),
         "app_id": app_id,
         "org_id": org_id,
         "verified_params": verified_params,
         "email": "embed@internal.gobifrost.com",
-        "is_superuser": True,
+        "is_superuser": False,
+        "embed": True,
+        "roles": ["EmbedUser"],
         "exp": expire,
         "type": "embed",
         "iss": settings.jwt_issuer,

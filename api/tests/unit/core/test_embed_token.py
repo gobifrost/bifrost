@@ -22,6 +22,8 @@ class TestEmbedToken:
         assert payload["app_id"] == app_id
         assert payload["org_id"] == org_id
         assert payload["verified_params"] == verified_params
+        assert payload["embed"] is True
+        assert payload["is_superuser"] is False
         assert payload["type"] == "embed"
 
     def test_embed_token_rejected_as_access(self):
