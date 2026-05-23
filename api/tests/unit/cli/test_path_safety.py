@@ -68,9 +68,7 @@ async def test_pull_rejects_server_path_traversal(tmp_path: pathlib.Path) -> Non
 
 @pytest.mark.asyncio
 async def test_pull_rejects_absolute_server_path(tmp_path: pathlib.Path) -> None:
-    absolute = pathlib.Path(tmp_path.anchor) / "bifrost-escape.txt"
-    if not tmp_path.anchor:
-        absolute = pathlib.Path("/tmp/bifrost-escape.txt")
+    absolute = tmp_path / "absolute-server-path.txt"
 
     rc = await cli._sync_files(
         str(tmp_path),
@@ -79,3 +77,4 @@ async def test_pull_rejects_absolute_server_path(tmp_path: pathlib.Path) -> None
     )
 
     assert rc == 1
+    assert not absolute.exists()
