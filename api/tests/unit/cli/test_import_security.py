@@ -55,6 +55,20 @@ def test_code_symlink_is_rejected_before_upload(
         _collect_code_files(bundle)
 
 
+def test_bundle_directory_symlink_is_rejected(tmp_path: pathlib.Path) -> None:
+    real_bundle = tmp_path / "real-bundle"
+    (real_bundle / ".bifrost").mkdir(parents=True)
+    (real_bundle / ".bifrost/workflows.yaml").write_text("[]\n", encoding="utf-8")
+    bundle_link = tmp_path / "bundle-link"
+    try:
+        bundle_link.symlink_to(real_bundle, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(click.ClickException, match="must not be a symlink"):
+        _validate_bundle_dir(bundle_link)
+
+
 def test_regular_bundle_files_are_still_collected(tmp_path: pathlib.Path) -> None:
     bundle = tmp_path / "bundle"
     (bundle / ".bifrost").mkdir(parents=True)

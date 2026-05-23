@@ -61,6 +61,16 @@ def _validate_skill_relpath(relpath: str) -> str:
     return PurePosixPath(*parts).as_posix()
 
 
+def _validate_public_skill_link(linkname: str) -> str:
+    """Return the skill folder targeted by a public ``skills/`` symlink."""
+    if "\\" in linkname or PurePosixPath(linkname).is_absolute() or Path(linkname).drive:
+        raise ValueError(f"unsafe public skill link in tarball: {linkname!r}")
+    parts = PurePosixPath(linkname).parts
+    if len(parts) != 4 or parts[:3] != ("..", ".claude", "skills"):
+        raise ValueError(f"unsafe public skill link in tarball: {linkname!r}")
+    return _validate_skill_name(parts[3])
+
+
 def _safe_skill_target(root: Path, skill_name: str) -> Path:
     """Build a skill target path and prove it stays below ``root``."""
     safe_name = _validate_skill_name(skill_name)
@@ -285,7 +295,7 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
             _validate_skill_name(name)
             if member.issym() or member.islnk():
                 try:
-                    target_name = _validate_skill_name(PurePosixPath(member.linkname).name)
+                    target_name = _validate_public_skill_link(member.linkname)
                 except ValueError as exc:
                     raise ValueError(str(exc)) from exc
                 public_skills.add(target_name or name)

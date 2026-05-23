@@ -503,7 +503,7 @@ async def import_apply(
     """
     await _import_impl(
         client=client,
-        bundle_dir=bundle_dir.resolve(),
+        bundle_dir=bundle_dir,
         target_org=target_org,
         role_mode=role_mode.lower(),
         dry_run=dry_run,

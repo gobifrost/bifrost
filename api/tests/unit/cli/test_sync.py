@@ -52,6 +52,25 @@ class TestFormatSyncResult:
         assert "keep_remote" in text
         assert "keep_local" in text
 
+    def test_conflict_resolution_commands_quote_paths(self):
+        """Suggested resolve commands must be safe to copy into a shell."""
+        result = {
+            "status": "conflict",
+            "conflicts": [
+                {
+                    "path": "workflows/billing.py; echo owned",
+                    "display_name": "billing",
+                    "entity_type": "workflow",
+                },
+            ],
+        }
+
+        lines = _format_sync_result(result)
+        text = "\n".join(lines)
+
+        assert "bifrost git resolve 'workflows/billing.py; echo owned=keep_remote'" in text
+        assert "bifrost git resolve workflows/billing.py; echo owned=keep_remote" not in text
+
     def test_multiple_conflicts(self):
         """Should list all conflicts."""
         result = {

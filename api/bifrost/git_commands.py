@@ -5,6 +5,7 @@ Subcommands for `bifrost git` that mirror the UI's source control panel.
 Each command queues a job via the API and polls for results.
 """
 
+import shlex
 import sys
 import time
 
@@ -176,8 +177,14 @@ def _format_sync_result(result: dict) -> list[str]:
         lines.append("To resolve conflicts, run:")
         for conflict in conflicts:
             path = conflict.get("path", "unknown")
-            lines.append(f"  bifrost git resolve {path}=keep_remote")
-            lines.append(f"  bifrost git resolve {path}=keep_local")
+            lines.append(
+                "  "
+                + shlex.join(["bifrost", "git", "resolve", f"{path}=keep_remote"])
+            )
+            lines.append(
+                "  "
+                + shlex.join(["bifrost", "git", "resolve", f"{path}=keep_local"])
+            )
         lines.append("")
         lines.append(
             "Or manage this in the Code Editor's Source Control at your Bifrost instance."

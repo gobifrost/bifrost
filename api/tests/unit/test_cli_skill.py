@@ -252,6 +252,27 @@ class TestSkillUpdate:
         out = capsys.readouterr().out
         assert "Installed bifrost-build" in out
 
+    def test_rejects_public_skill_symlink_target_traversal(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        stub_github["install"](
+            {
+                ".claude/skills/evil/SKILL.md": b"evil\n",
+            },
+        )
+        stub_github["public_skills"] = ["build"]  # type: ignore[index]
+        stub_github["public_skill_targets"] = {"build": "../../evil"}  # type: ignore[index]
+
+        rc = skill_module.handle_skill(["update"])
+
+        assert rc == 1
+        assert "unsafe public skill link" in capsys.readouterr().err
+        assert not (workspace / ".claude/skills/evil").exists()
+        assert not (workspace / ".agents/skills/evil").exists()
+
     def test_repo_with_no_public_skills_errors(
         self,
         workspace: Path,

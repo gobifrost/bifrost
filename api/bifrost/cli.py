@@ -2511,14 +2511,8 @@ async def _process_incoming(
                     data = resp.json()
                     content = base64.b64decode(data["content"])
                     content_hash = _hash_for_cache(content)
-                    # Convert repo_path to local path
-                    if repo_prefix and repo_path.startswith(repo_prefix + "/"):
-                        rel = repo_path[len(repo_prefix) + 1:]
-                    elif repo_prefix and repo_path.startswith(repo_prefix):
-                        rel = repo_path[len(repo_prefix):]
-                    else:
-                        rel = repo_path
-                    local_file = base_path / rel
+                    rel = _strip_repo_prefix(repo_path, repo_prefix)
+                    local_file = _safe_local_path(base_path, rel)
                     local_file.parent.mkdir(parents=True, exist_ok=True)
                     # Skip if we already know the server has this content and
                     # the local file matches (cache hit). Falls back to a byte
@@ -2558,13 +2552,16 @@ async def _process_incoming(
     # Process incoming deletes
     for paths, user_name in deletes:
         for repo_path in paths:
-            if repo_prefix and repo_path.startswith(repo_prefix + "/"):
-                rel = repo_path[len(repo_prefix) + 1:]
-            elif repo_prefix and repo_path.startswith(repo_prefix):
-                rel = repo_path[len(repo_prefix):]
-            else:
-                rel = repo_path
-            local_file = base_path / rel
+            try:
+                rel = _strip_repo_prefix(repo_path, repo_prefix)
+                local_file = _safe_local_path(base_path, rel)
+            except ValueError as e:
+                if watch_app:
+                    watch_app.log_error(f"Error deleting {repo_path}: {e}")
+                else:
+                    print(f"  [{ts}] ← Error deleting {repo_path}: {e}", flush=True)
+                state.forget_known_hash(repo_path)
+                continue
             if local_file.exists():
                 try:
                     local_file.unlink()
@@ -2793,9 +2790,35 @@ def _strip_repo_prefix(repo_path: str, repo_prefix: str) -> str:
     """Strip the repo prefix from a repo path to get the local relative path."""
     if repo_prefix and repo_path.startswith(repo_prefix + "/"):
         return repo_path[len(repo_prefix) + 1:]
-    if repo_prefix and repo_path.startswith(repo_prefix):
-        return repo_path[len(repo_prefix):]
+    if repo_prefix and repo_path == repo_prefix:
+        return ""
     return repo_path
+
+
+def _validate_server_rel_path(rel_path: str) -> str:
+    """Return a normalized server path that is safe to join under a local root."""
+    if "\x00" in rel_path or "\\" in rel_path:
+        raise ValueError(f"unsafe server path: {rel_path!r}")
+    if pathlib.PureWindowsPath(rel_path).drive:
+        raise ValueError(f"unsafe server path: {rel_path!r}")
+    pure = pathlib.PurePosixPath(rel_path)
+    if pure.is_absolute():
+        raise ValueError(f"unsafe server path: {rel_path!r}")
+    parts = rel_path.split("/")
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"unsafe server path: {rel_path!r}")
+    return pure.as_posix()
+
+
+def _safe_local_path(base_path: pathlib.Path, rel_path: str) -> pathlib.Path:
+    """Resolve a server-provided relative path and prove it stays under base_path."""
+    safe_rel = _validate_server_rel_path(rel_path)
+    base_resolved = base_path.resolve(strict=False)
+    target = base_resolved / safe_rel
+    target_resolved = target.resolve(strict=False)
+    if target_resolved != base_resolved and base_resolved not in target_resolved.parents:
+        raise ValueError(f"unsafe server path: {rel_path!r}")
+    return target
 
 
 def _should_skip_path(rel_path: str, spec: "pathspec.PathSpec") -> bool:
@@ -2900,6 +2923,7 @@ async def _sync_files(
 
     # Track which server paths we've matched to a local file
     matched_server_paths: set[str] = set()
+    unsafe_errors: list[str] = []
 
     for repo_path, content in regular_files.items():
         rel = _strip_repo_prefix(repo_path, repo_prefix)
@@ -2970,6 +2994,11 @@ async def _sync_files(
         if server_path in files:
             continue
         rel = _strip_repo_prefix(server_path, repo_prefix)
+        try:
+            rel = _validate_server_rel_path(rel)
+        except ValueError as exc:
+            unsafe_errors.append(f"Unsafe server path {server_path!r}: {exc}")
+            continue
         if _is_bifrost_path(rel):
             continue
         if _should_skip_path(rel, spec):
@@ -2989,6 +3018,11 @@ async def _sync_files(
 
     # ── 4. Check if there's anything to sync ─────────────────────────────
     if not sync_items:
+        if unsafe_errors:
+            print(f"Errors ({len(unsafe_errors)}):", file=sys.stderr)
+            for error in unsafe_errors:
+                print(f"  {error}", file=sys.stderr)
+            return 1
         print("Already up to date.")
         return 0
 
@@ -3071,7 +3105,7 @@ async def _sync_files(
             if resp.status_code == 200:
                 file_data = resp.json()
                 content_bytes = base64.b64decode(file_data["content"])
-                local_file = path / item["rel"]
+                local_file = _safe_local_path(path, item["rel"])
                 local_file.parent.mkdir(parents=True, exist_ok=True)
                 local_file.write_bytes(content_bytes)
             else:
@@ -3081,7 +3115,7 @@ async def _sync_files(
             item = work_data["item"]
             # Delete locally-only files (new locally + user chose delete)
             if item.get("why") == "new locally":
-                local_file = path / item["rel"]
+                local_file = _safe_local_path(path, item["rel"])
                 if local_file.exists():
                     local_file.unlink()
             else:
@@ -3111,7 +3145,7 @@ async def _sync_files(
             parts.append(f"{unchanged} unchanged")
         return ", ".join(parts) if parts else "No changes"
 
-    errors: list[str] = []
+    errors: list[str] = list(unsafe_errors)
     if progress_items and _is_tty:
         from bifrost.tui.progress import ProgressApp
         app = ProgressApp("Syncing", progress_items, _do_sync_work, post_fn=_post_sync)
