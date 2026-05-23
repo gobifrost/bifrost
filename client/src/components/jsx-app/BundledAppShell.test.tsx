@@ -100,6 +100,9 @@ afterEach(() => {
 	document
 		.querySelectorAll("script[data-bifrost-import-map]")
 		.forEach((el) => el.remove());
+	document
+		.querySelectorAll('script[src*="es-module-shims"]')
+		.forEach((el) => el.remove());
 });
 
 async function renderShell() {
@@ -174,5 +177,42 @@ describe("BundledAppShell — websocket subscription", () => {
 			expect(mockConnectToAppDraft).toHaveBeenCalledWith("app-1"),
 		);
 		expect(mockOnAppCodeFileUpdate).toHaveBeenCalled();
+	});
+});
+
+describe("BundledAppShell — dependency shim", () => {
+	it("loads es-module-shims from Bifrost origin instead of a remote CDN", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		let shimScript: HTMLScriptElement | null = null;
+		const appendChild = document.head.appendChild.bind(document.head);
+		vi.spyOn(document.head, "appendChild").mockImplementation(
+			<T extends Node>(node: T): T => {
+				if (
+					node instanceof HTMLScriptElement &&
+					node.src.includes("es-module-shims")
+				) {
+					shimScript = node;
+					return node;
+				}
+				return appendChild(node) as T;
+			},
+		);
+		mockManifestOk({
+			dependencies: {
+				"date-fns": "4.2.1",
+			},
+		});
+
+		await renderShell();
+
+		await waitFor(() => {
+			expect(shimScript).not.toBeNull();
+			expect(shimScript?.src).toContain(
+				"/vendor/es-module-shims/es-module-shims-2.8.0.js",
+			);
+			expect(shimScript?.src).not.toMatch(
+				/^https?:\/\/(cdn\.jsdelivr\.net|ga\.jspm\.io)\//,
+			);
+		});
 	});
 });
