@@ -88,8 +88,30 @@ services:
       AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY:-bifrost}
       AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_KEY:?SEAWEEDFS_SECRET_KEY is required}
       S3_BUCKET: ${BIFROST_S3_BUCKET:-bifrost-local}
-    ports:
-      - "8333:8333"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      cat > /tmp/seaweedfs-s3.json <<EOF
+      {
+        "identities": [
+          {
+            "name": "bifrost",
+            "credentials": [
+              {
+                "accessKey": "$${AWS_ACCESS_KEY_ID}",
+                "secretKey": "$${AWS_SECRET_ACCESS_KEY}"
+              }
+            ],
+            "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+          }
+        ]
+      }
+      EOF
+      exec weed mini -dir=/data -s3.config=/tmp/seaweedfs-s3.json
+    # Do not publish the S3 API in the production stack. Bifrost services use
+    # the internal Docker DNS endpoint (http://seaweedfs:8333); expose it only
+    # in a local override when an operator explicitly needs host access.
+    expose:
+      - "8333"
     volumes:
       - seaweedfs_data:/data
 
