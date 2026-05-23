@@ -299,7 +299,9 @@ async def publish_agent_run_update(
 
     Broadcasts to:
     - agent-run:{run_id} - for the detail page
-    - agent-runs - for the list page
+    - agent-runs:org:{org_id} - for org-scoped list pages
+    - agent-runs:global - for platform/global runs
+    - agent-runs:all - for platform admins watching every run
     """
     message = {
         "type": "agent_run_update",
@@ -323,7 +325,11 @@ async def publish_agent_run_update(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await manager.broadcast(f"agent-run:{run.id}", message)
-    await manager.broadcast("agent-runs", message)
+    await manager.broadcast("agent-runs:all", message)
+    if run.org_id:
+        await manager.broadcast(f"agent-runs:org:{run.org_id}", message)
+    else:
+        await manager.broadcast("agent-runs:global", message)
 
 
 async def publish_summary_backfill_update(

@@ -28,8 +28,12 @@ from src.models.contracts.policies import Expr, TablePolicies
 from src.models.orm import Agent
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
+from src.services.agent_run_access import load_agent_run_for_user
 
 logger = logging.getLogger(__name__)
+
+_AGENT_RUNS_CHANNEL = "agent-runs"
+_AGENT_RUNS_CHANNEL_PREFIX = "agent-runs:"
 
 
 class WSError(Exception):
@@ -482,6 +486,41 @@ async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
         return org_id == user.organization_id
 
 
+def _agent_runs_channel_for_user(user: UserPrincipal) -> str | None:
+    if user.is_superuser:
+        return f"{_AGENT_RUNS_CHANNEL_PREFIX}all"
+    if user.organization_id:
+        return f"{_AGENT_RUNS_CHANNEL_PREFIX}org:{user.organization_id}"
+    return None
+
+
+def _resolve_agent_runs_channel(user: UserPrincipal, channel: str) -> str | None:
+    if channel == _AGENT_RUNS_CHANNEL:
+        return _agent_runs_channel_for_user(user)
+    if (
+        channel == f"{_AGENT_RUNS_CHANNEL_PREFIX}all"
+        or channel == f"{_AGENT_RUNS_CHANNEL_PREFIX}global"
+    ):
+        return channel if user.is_superuser else None
+    if channel.startswith(f"{_AGENT_RUNS_CHANNEL_PREFIX}org:"):
+        org_id = channel.split(":", 2)[2]
+        if user.is_superuser:
+            return channel
+        return channel if str(user.organization_id) == org_id else None
+    return None
+
+
+async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
+    try:
+        run_uuid = UUID(run_id)
+    except ValueError:
+        return False
+
+    async with get_db_context() as db:
+        run = await load_agent_run_for_user(db, run_uuid, user)
+        return run is not None
+
+
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
 
@@ -609,12 +648,16 @@ async def websocket_connect(
         elif channel == "system":
             allowed_channels.append(channel)
         elif channel.startswith("agent-run:"):
-            # Agent run detail channels - any authenticated user can subscribe
-            # Org-level access is enforced at the API query level
-            allowed_channels.append(channel)
-        elif channel == "agent-runs":
-            # Agent run list channel for real-time updates
-            allowed_channels.append(channel)
+            # Agent run detail channels carry per-run metadata/steps.
+            run_id = channel.split(":", 1)[1]
+            if await can_access_agent_run(user, run_id):
+                allowed_channels.append(channel)
+        elif channel == _AGENT_RUNS_CHANNEL or channel.startswith(
+            _AGENT_RUNS_CHANNEL_PREFIX
+        ):
+            scoped_channel = _resolve_agent_runs_channel(user, channel)
+            if scoped_channel:
+                allowed_channels.append(scoped_channel)
         elif channel.startswith("summary-backfill:"):
             # Summary backfill job progress — platform admins only
             if user.is_superuser:
@@ -761,15 +804,40 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": channel
                         })
-                    elif channel.startswith("agent-run:") or channel == "agent-runs":
-                        # Agent run channels - any authenticated user can subscribe
-                        if channel not in manager.connections:
-                            manager.connections[channel] = set()
-                        manager.connections[channel].add(websocket)
-                        await websocket.send_json({
-                            "type": "subscribed",
-                            "channel": channel
-                        })
+                    elif channel.startswith("agent-run:"):
+                        run_id = channel.split(":", 1)[1]
+                        if await can_access_agent_run(user, run_id):
+                            if channel not in manager.connections:
+                                manager.connections[channel] = set()
+                            manager.connections[channel].add(websocket)
+                            await websocket.send_json({
+                                "type": "subscribed",
+                                "channel": channel
+                            })
+                        else:
+                            await websocket.send_json({
+                                "type": "error",
+                                "channel": channel,
+                                "message": "Access denied"
+                            })
+                    elif channel == _AGENT_RUNS_CHANNEL or channel.startswith(
+                        _AGENT_RUNS_CHANNEL_PREFIX
+                    ):
+                        scoped_channel = _resolve_agent_runs_channel(user, channel)
+                        if scoped_channel:
+                            if scoped_channel not in manager.connections:
+                                manager.connections[scoped_channel] = set()
+                            manager.connections[scoped_channel].add(websocket)
+                            await websocket.send_json({
+                                "type": "subscribed",
+                                "channel": scoped_channel
+                            })
+                        else:
+                            await websocket.send_json({
+                                "type": "error",
+                                "channel": channel,
+                                "message": "Access denied"
+                            })
                     elif channel.startswith("summary-backfill:"):
                         # Summary backfill job progress — platform admins only.
                         # Mirrors the initial-connect whitelist above; without this
@@ -831,6 +899,10 @@ async def websocket_connect(
             elif data.get("type") == "unsubscribe":
                 channel = data.get("channel")
                 if channel:
+                    if channel == _AGENT_RUNS_CHANNEL or channel.startswith(
+                        _AGENT_RUNS_CHANNEL_PREFIX
+                    ):
+                        channel = _resolve_agent_runs_channel(user, channel) or channel
                     # Table channels may be subscribed by name but registered
                     # under the canonical UUID channel. Resolve before pop.
                     if channel.startswith("table:"):
