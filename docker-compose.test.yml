@@ -323,6 +323,7 @@ services:
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/pytest.ini:/app/pytest.ini:ro
       - ./api/pyproject.toml:/app/pyproject.toml:ro
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.

@@ -5,11 +5,17 @@ from pathlib import Path
 import yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+def _compose_path() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "docker-compose.yml"
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError("docker-compose.yml was not mounted for compose security tests")
 
 
 def _load_compose() -> dict:
-    with (REPO_ROOT / "docker-compose.yml").open(encoding="utf-8") as f:
+    with _compose_path().open(encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
