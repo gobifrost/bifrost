@@ -8,7 +8,11 @@ from fastapi.responses import JSONResponse
 from shared.models import CodexGatewayResponsesRequest
 
 from src.core.database import DbSession
-from src.repositories.codex_gateway import CodexGatewayRepository
+from src.models.contracts.codex_gateway import OpenAICompatibleError
+from src.repositories.codex_gateway import (
+    CodexGatewayRepository,
+    is_plausible_gateway_key,
+)
 from src.services.codex_gateway.runtime import (
     CODEX_GATEWAY_KEY_HEADER,
     CodexGatewayRuntime,
@@ -23,6 +27,18 @@ def get_codex_gateway_runtime(db: DbSession) -> CodexGatewayRuntime:
     return CodexGatewayRuntime(repository=CodexGatewayRepository(db))
 
 
+def _invalid_gateway_key_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={
+            "error": OpenAICompatibleError(
+                message="The Bifrost Codex Gateway key is invalid or revoked.",
+                code="invalid_gateway_key",
+            ).model_dump()
+        },
+    )
+
+
 @router.post("/v1/responses")
 async def create_response(
     request: Request,
@@ -35,8 +51,11 @@ async def create_response(
     ] = None,
 ) -> JSONResponse:
     gateway_key = extract_gateway_key(authorization, x_bifrost_codex_key)
+    if not is_plausible_gateway_key(gateway_key):
+        return _invalid_gateway_key_response()
+
     result = await runtime.create_response(
-        gateway_key=gateway_key or "",
+        gateway_key=gateway_key,
         payload=payload.model_dump(),
         source_ip=request.client.host if request.client else None,
         client_user_agent=request.headers.get("user-agent"),

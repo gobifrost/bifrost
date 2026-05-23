@@ -12,6 +12,8 @@ from src.services.codex_gateway.runtime import (
     extract_gateway_key,
 )
 
+VALID_GATEWAY_KEY = f"bfck_{'a' * 43}"
+
 
 class FakeUpstreamClient:
     def __init__(self):
@@ -93,7 +95,7 @@ async def test_allowed_response_uses_same_user_upstream_token_and_logs_metadata(
     runtime = CodexGatewayRuntime(repository=repository, upstream_client=upstream)
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex", "input": "do not log me"},
         source_ip="203.0.113.10",
         client_user_agent="codex-cli",
@@ -120,21 +122,38 @@ async def test_allowed_response_uses_same_user_upstream_token_and_logs_metadata(
 
 
 @pytest.mark.asyncio
-async def test_unknown_gateway_key_returns_openai_error_and_logs_denial():
+async def test_unknown_well_formed_gateway_key_returns_openai_error_without_log():
     repository = _repository(key_record=None, account_record=None)
     runtime = CodexGatewayRuntime(
         repository=repository, upstream_client=FakeUpstreamClient()
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_missing",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex"},
     )
 
     assert response.status_code == 401
     assert response.body["error"]["code"] == "invalid_gateway_key"
-    repository.create_request_log.assert_awaited_once()
-    assert repository.create_request_log.call_args.kwargs["policy_decision"] == "deny"
+    repository.create_request_log.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_malformed_gateway_key_returns_openai_error_without_lookup_or_log():
+    repository = _repository(key_record=None, account_record=None)
+    runtime = CodexGatewayRuntime(
+        repository=repository, upstream_client=FakeUpstreamClient()
+    )
+
+    response = await runtime.create_response(
+        gateway_key="not-a-bifrost-key",
+        payload={"model": "gpt-5.1-codex"},
+    )
+
+    assert response.status_code == 401
+    assert response.body["error"]["code"] == "invalid_gateway_key"
+    repository.get_active_gateway_key_by_plaintext.assert_not_awaited()
+    repository.create_request_log.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -145,7 +164,7 @@ async def test_gateway_key_authentication_happens_before_payload_validation():
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_missing",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"input": "missing model"},
     )
 
@@ -162,7 +181,7 @@ async def test_missing_upstream_account_fails_closed_and_logs_denial():
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex"},
     )
 
@@ -185,7 +204,7 @@ async def test_ambiguous_upstream_account_fails_closed_and_logs_denial():
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex"},
     )
 
@@ -207,7 +226,7 @@ async def test_denied_model_returns_structured_error_and_does_not_call_upstream(
     runtime = CodexGatewayRuntime(repository=repository, upstream_client=upstream)
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-4o"},
     )
 
@@ -227,7 +246,7 @@ async def test_denied_model_list_blocks_request_and_logs_denial():
     runtime = CodexGatewayRuntime(repository=repository, upstream_client=upstream)
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-4o"},
     )
 
@@ -252,7 +271,7 @@ async def test_decrypt_failure_returns_gateway_error_and_logs_denial(monkeypatch
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex"},
     )
 
@@ -278,7 +297,7 @@ async def test_upstream_failure_returns_gateway_error_and_logs_metadata(monkeypa
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex"},
     )
 
@@ -309,7 +328,7 @@ async def test_upstream_timeout_returns_gateway_error_and_logs_metadata(monkeypa
     )
 
     response = await runtime.create_response(
-        gateway_key="bfck_test",
+        gateway_key=VALID_GATEWAY_KEY,
         payload={"model": "gpt-5.1-codex"},
     )
 
@@ -323,7 +342,7 @@ async def test_upstream_timeout_returns_gateway_error_and_logs_metadata(monkeypa
 
 
 def test_extract_gateway_key_prefers_openai_compatible_bearer_auth():
-    assert extract_gateway_key("Bearer bfck_test", None) == "bfck_test"
-    assert extract_gateway_key("bearer bfck_lower", None) == "bfck_lower"
-    assert extract_gateway_key(None, "bfck_fallback") == "bfck_fallback"
+    assert extract_gateway_key(f"Bearer {VALID_GATEWAY_KEY}", None) == VALID_GATEWAY_KEY
+    assert extract_gateway_key(f"bearer {VALID_GATEWAY_KEY}", None) == VALID_GATEWAY_KEY
+    assert extract_gateway_key(None, VALID_GATEWAY_KEY) == VALID_GATEWAY_KEY
     assert extract_gateway_key("Basic abc", None) is None

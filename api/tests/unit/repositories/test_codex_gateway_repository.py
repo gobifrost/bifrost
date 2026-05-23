@@ -9,6 +9,8 @@ from src.repositories.codex_gateway import (
     CodexGatewayRepository,
 )
 
+VALID_GATEWAY_KEY = f"bfck_{'a' * 43}"
+
 
 class _Scalars:
     def __init__(self, values):
@@ -77,7 +79,7 @@ async def test_lookup_gateway_key_uses_hash_and_ignores_revoked_keys(
     repository,
     mock_session,
 ):
-    plaintext = "bfck_test_plaintext"
+    plaintext = VALID_GATEWAY_KEY
     key_hash = repository.hash_gateway_key(plaintext)
     active_record = MagicMock(key_hash=key_hash, revoked_at=None, status="active")
     revoked_record = MagicMock(
@@ -89,6 +91,17 @@ async def test_lookup_gateway_key_uses_hash_and_ignores_revoked_keys(
 
     assert result is active_record
     mock_session.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_lookup_gateway_key_rejects_malformed_key_before_database_query(
+    repository,
+    mock_session,
+):
+    result = await repository.get_active_gateway_key_by_plaintext("not-a-bifrost-key")
+
+    assert result is None
+    mock_session.execute.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,10 @@ from src.models.orm.codex_gateway import (
     CodexGatewayKey,
     CodexGatewayUpstreamAccount,
 )
-from src.repositories.codex_gateway import CodexGatewayRepository
+from src.repositories.codex_gateway import (
+    CodexGatewayRepository,
+    is_plausible_gateway_key,
+)
 from src.services.codex_gateway.policy import CodexGatewayPolicyEngine
 
 
@@ -110,25 +113,19 @@ class CodexGatewayRuntime:
         model = payload.get("model")
         streaming = bool(payload.get("stream") or payload.get("streaming"))
 
+        invalid_key_response = self._error(
+            status_code=401,
+            code="invalid_gateway_key",
+            message="The Bifrost Codex Gateway key is invalid or revoked.",
+        )
+        if not is_plausible_gateway_key(gateway_key):
+            return invalid_key_response
+
         key_record = await self.repository.get_active_gateway_key_by_plaintext(
             gateway_key
         )
         if key_record is None:
-            response = self._error(
-                status_code=401,
-                code="invalid_gateway_key",
-                message="The Bifrost Codex Gateway key is invalid or revoked.",
-            )
-            await self._log_denial(
-                request_id=request_id,
-                endpoint=CODEX_GATEWAY_RESPONSES_ENDPOINT,
-                model=model if isinstance(model, str) else None,
-                status_code=response.status_code,
-                code="invalid_gateway_key",
-                source_ip=source_ip,
-                client_user_agent=client_user_agent,
-            )
-            return response
+            return invalid_key_response
 
         if not isinstance(model, str) or not model:
             response = self._error(
