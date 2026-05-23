@@ -151,6 +151,8 @@ async def get_workflow_for_execution(
         - value: ROI value
         - execution_mode: sync or async
         - organization_id: Org scope (or None for global)
+        - type: Executable type (workflow, tool, or data_provider)
+        - cache_ttl_seconds: Data provider cache TTL
 
     Raises:
         WorkflowNotFoundError: If workflow doesn't exist in database
@@ -181,6 +183,8 @@ async def get_workflow_for_execution(
             "value": float(workflow_record.value) if workflow_record.value else 0.0,
             "execution_mode": workflow_record.execution_mode or "async",
             "organization_id": str(workflow_record.organization_id) if workflow_record.organization_id else None,
+            "type": workflow_record.type or "workflow",
+            "cache_ttl_seconds": workflow_record.cache_ttl_seconds or 0,
         }
 
     if db is not None:

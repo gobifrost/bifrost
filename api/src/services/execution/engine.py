@@ -353,7 +353,12 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             )
 
             # Cache result to Redis if data provider
-            if is_data_provider and DATA_PROVIDER_CACHE_AVAILABLE and cache_data_provider_result:
+            if (
+                is_data_provider
+                and request.cache_ttl_seconds > 0
+                and DATA_PROVIDER_CACHE_AVAILABLE
+                and cache_data_provider_result
+            ):
                 org_id = request.organization.id if request.organization else None
                 expires_at = await cache_data_provider_result(
                     org_id,

@@ -521,6 +521,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
             roi_value = 0.0
             workflow_function_name: str | None = None  # Function name for exec_from_db()
             content_hash: str | None = None  # Content hash pinned at dispatch time
+            workflow_type = "workflow"
+            cache_ttl_seconds = 300
 
             if not is_script and workflow_id:
                 from src.services.execution.service import get_workflow_for_execution, WorkflowNotFoundError
@@ -533,6 +535,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     workflow_name = workflow_data["name"]
                     workflow_function_name = workflow_data["function_name"]
                     file_path = workflow_data["path"]  # Used for __file__ injection and Redis/S3 loading
+                    workflow_type = workflow_data["type"]
+                    cache_ttl_seconds = workflow_data["cache_ttl_seconds"]
 
                     timeout_seconds = workflow_data["timeout_seconds"]
                     # Initialize ROI from workflow defaults
@@ -661,8 +665,9 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     "name": user_name,
                 },
                 "organization": org_data,
-                "tags": ["workflow"] if not is_script else [],
+                "tags": [workflow_type] if not is_script else [],
                 "timeout_seconds": timeout_seconds,
+                "cache_ttl_seconds": cache_ttl_seconds,
                 "transient": False,
                 "is_platform_admin": pending.get("is_platform_admin", False),
                 "startup": startup,  # Launch workflow results (available via context.startup)

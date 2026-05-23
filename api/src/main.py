@@ -21,7 +21,7 @@ from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
 from src.core.database import close_db, init_db
 from src.core.pubsub import manager as pubsub_manager
-from src.routers.health import close_rabbitmq_health_connection
+from src.routers.health import close_health_check_clients
 from src.routers import (
     auth_router,
     mfa_router,
@@ -162,7 +162,7 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down Bifrost API...")
 
     await pubsub_manager.close()
-    await close_rabbitmq_health_connection()
+    await close_health_check_clients()
     await close_db()
     logger.info("Bifrost API shutdown complete")
 

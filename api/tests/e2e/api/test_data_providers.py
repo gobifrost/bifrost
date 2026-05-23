@@ -6,6 +6,8 @@ Uses write_and_register() to write files and register decorated functions
 in a single step, avoiding poll-based discovery.
 """
 
+from uuid import uuid4
+
 import pytest
 
 from tests.e2e.conftest import write_and_register
@@ -139,6 +141,158 @@ async def e2e_creation_test():
         # Verify category and cache_ttl_seconds have defaults
         assert "category" in provider, "Provider missing category"
         assert "cache_ttl_seconds" in provider, "Provider missing cache_ttl_seconds"
+
+    def test_data_provider_cache_is_scoped_by_inputs_and_bypasses_execution(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """Repeated identical provider calls return from cache before worker dispatch."""
+        suffix = uuid4().hex[:8]
+        provider_name = f"e2e_cache_provider_{suffix}"
+        provider_path = f"e2e_cache_provider_{suffix}.py"
+        data_provider_content = f'''"""E2E Data Provider Cache Test"""
+from bifrost import data_provider
+
+@data_provider(
+    name="{provider_name}",
+    description="Test data provider cache"
+)
+async def {provider_name}(value: str = "default"):
+    """Returns input-sensitive test data."""
+    return [{{"value": value, "label": value}}]
+'''
+        result = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            provider_path,
+            data_provider_content,
+            provider_name,
+        )
+        provider_id = result["id"]
+
+        def execution_count() -> int:
+            response = e2e_client.get(
+                f"/api/executions?workflowId={provider_id}&limit=1000",
+                headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, response.text
+            return len(response.json()["executions"])
+
+        def execute(value: str) -> dict:
+            response = e2e_client.post(
+                "/api/workflows/execute",
+                headers=platform_admin.headers,
+                json={
+                    "workflow_id": provider_id,
+                    "input_data": {"value": value},
+                    "transient": True,
+                },
+                timeout=30,
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["status"] == "Success"
+            return data
+
+        try:
+            initial_count = execution_count()
+
+            first = execute("alpha")
+            assert first["result"] == [{"value": "alpha", "label": "alpha"}]
+            assert execution_count() == initial_count + 1
+
+            cached = execute("alpha")
+            assert cached["result"] == [{"value": "alpha", "label": "alpha"}]
+            assert execution_count() == initial_count + 1
+
+            miss = execute("beta")
+            assert miss["result"] == [{"value": "beta", "label": "beta"}]
+            assert execution_count() == initial_count + 2
+        finally:
+            e2e_client.delete(
+                f"/api/files/editor?path={provider_path}",
+                headers=platform_admin.headers,
+            )
+
+    def test_non_transient_data_provider_execution_is_tracked_and_bypasses_cache(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """transient=False (manual Execute) must produce a tracked row, not a cache hit."""
+        suffix = uuid4().hex[:8]
+        provider_name = f"e2e_tracked_provider_{suffix}"
+        provider_path = f"e2e_tracked_provider_{suffix}.py"
+        data_provider_content = f'''"""E2E Data Provider Non-Transient Test"""
+from bifrost import data_provider
+
+@data_provider(
+    name="{provider_name}",
+    description="Test tracked data provider execution"
+)
+async def {provider_name}(value: str = "default"):
+    return [{{"value": value, "label": value}}]
+'''
+        result = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            provider_path,
+            data_provider_content,
+            provider_name,
+        )
+        provider_id = result["id"]
+
+        def execution_count() -> int:
+            response = e2e_client.get(
+                f"/api/executions?workflowId={provider_id}&limit=1000",
+                headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, response.text
+            return len(response.json()["executions"])
+
+        def execute(transient: bool) -> dict:
+            response = e2e_client.post(
+                "/api/workflows/execute",
+                headers=platform_admin.headers,
+                json={
+                    "workflow_id": provider_id,
+                    "input_data": {"value": "gamma"},
+                    "transient": transient,
+                },
+                timeout=30,
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        try:
+            initial_count = execution_count()
+
+            # Warm the cache with a transient call.
+            warm = execute(transient=True)
+            assert warm["status"] == "Success"
+            assert execution_count() == initial_count + 1
+
+            # transient=False must NOT be served from cache: it should produce
+            # a new tracked row AND return a real execution_id that the history
+            # detail page can navigate to.
+            tracked = execute(transient=False)
+            assert tracked["status"] == "Success"
+            assert tracked["is_transient"] is False
+            assert execution_count() == initial_count + 2
+
+            detail = e2e_client.get(
+                f"/api/executions/{tracked['execution_id']}",
+                headers=platform_admin.headers,
+            )
+            assert detail.status_code == 200, (
+                f"execution_id from non-transient run must be retrievable: {detail.text}"
+            )
+        finally:
+            e2e_client.delete(
+                f"/api/files/editor?path={provider_path}",
+                headers=platform_admin.headers,
+            )
 
 
 @pytest.mark.e2e

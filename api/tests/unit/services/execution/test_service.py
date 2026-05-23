@@ -91,6 +91,8 @@ class TestGetWorkflowForExecution:
         mock_workflow.value = 10.0
         mock_workflow.execution_mode = "async"
         mock_workflow.organization_id = org_id
+        mock_workflow.type = "workflow"
+        mock_workflow.cache_ttl_seconds = 0
 
         mock_wf_result = MagicMock()
         mock_wf_result.scalar_one_or_none.return_value = mock_workflow
@@ -101,6 +103,7 @@ class TestGetWorkflowForExecution:
         expected_keys = {
             "name", "function_name", "path", "timeout_seconds",
             "time_saved", "value", "execution_mode", "organization_id",
+            "type", "cache_ttl_seconds",
         }
         assert set(result.keys()) == expected_keys
         assert "code" not in result
@@ -109,6 +112,8 @@ class TestGetWorkflowForExecution:
         assert result["path"] == "workflows/test.py"
         assert result["timeout_seconds"] == 300
         assert result["organization_id"] == str(org_id)
+        assert result["type"] == "workflow"
+        assert result["cache_ttl_seconds"] == 0
 
     @pytest.mark.asyncio
     async def test_workflow_not_found_raises(self):
