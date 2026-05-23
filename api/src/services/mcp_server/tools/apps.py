@@ -98,6 +98,7 @@ async def create_app(
     from sqlalchemy import select
 
     from src.models.orm.applications import Application
+    from src.routers.applications import ensure_no_stale_app_source
     from src.services.file_storage import FileStorageService
 
     logger.info(f"MCP create_app called with name={name}, scope={scope}")
@@ -133,6 +134,11 @@ async def create_app(
             if existing.scalar_one_or_none():
                 return error_result(f"Application with slug '{slug}' already exists")
 
+            try:
+                await ensure_no_stale_app_source(db, slug)
+            except ValueError as exc:
+                return error_result(str(exc))
+
             app = Application(
                 id=uuid4(),
                 name=name,
@@ -145,21 +151,13 @@ async def create_app(
             db.add(app)
             await db.flush()
 
-            # Write scaffold files via FileStorageService — but only if no
-            # files already exist under apps/{slug}/. Authors who created
-            # the source dir locally first should not lose their work to
-            # the default Welcome scaffold.
-            from src.models.orm.file_index import FileIndex
-
-            prefix = f"apps/{slug}/"
-            existing_files = await db.execute(
-                select(FileIndex.path).where(FileIndex.path.startswith(prefix)).limit(1)
-            )
+            # Write scaffold files via FileStorageService. Creation rejects
+            # pre-existing unclaimed source, so these defaults cannot adopt
+            # orphaned code from a deleted app with the same slug.
             scaffolded = 0
-            if existing_files.first() is None:
-                file_storage = FileStorageService(db)
+            file_storage = FileStorageService(db)
 
-                layout_source = '''import { Outlet } from "bifrost";
+            layout_source = '''import { Outlet } from "bifrost";
 
 export default function RootLayout() {
   return (
@@ -169,7 +167,7 @@ export default function RootLayout() {
   );
 }
 '''
-                index_source = '''export default function HomePage() {
+            index_source = '''export default function HomePage() {
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold mb-4">Welcome</h1>
@@ -180,17 +178,17 @@ export default function RootLayout() {
   );
 }
 '''
-                await file_storage.write_file(
-                    path=f"apps/{slug}/_layout.tsx",
-                    content=layout_source.encode("utf-8"),
-                    updated_by="system",
-                )
-                await file_storage.write_file(
-                    path=f"apps/{slug}/pages/index.tsx",
-                    content=index_source.encode("utf-8"),
-                    updated_by="system",
-                )
-                scaffolded = 2
+            await file_storage.write_file(
+                path=f"apps/{slug}/_layout.tsx",
+                content=layout_source.encode("utf-8"),
+                updated_by="system",
+            )
+            await file_storage.write_file(
+                path=f"apps/{slug}/pages/index.tsx",
+                content=index_source.encode("utf-8"),
+                updated_by="system",
+            )
+            scaffolded = 2
 
             await db.commit()
 

@@ -47,6 +47,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/applications", tags=["Applications"])
 
 
+def stale_app_source_error(slug: str) -> str:
+    """Return the app-create error used when an unclaimed source prefix exists."""
+    return (
+        f"Source files already exist under apps/{slug}/. "
+        "Create with a different slug, replace the app source after creation, "
+        "or remove the orphaned source explicitly before creating this app."
+    )
+
+
+async def ensure_no_stale_app_source(session, slug: str) -> None:
+    """Reject app creation when files already exist for an unclaimed slug."""
+    from src.models.orm.file_index import FileIndex
+
+    prefix = f"apps/{slug}/"
+    existing = await session.execute(
+        select(FileIndex.path).where(FileIndex.path.startswith(prefix)).limit(1)
+    )
+    if existing.first() is not None:
+        raise ValueError(stale_app_source_error(slug))
+
+
 class AppValidationIssue(BaseModel):
     severity: str  # "error" or "warning"
     file: str
@@ -200,6 +221,8 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         existing = await self.get_by_slug_global(data.slug)
         if existing:
             raise ValueError(f"Application with slug '{data.slug}' already exists")
+
+        await ensure_no_stale_app_source(self.session, data.slug)
 
         application = Application(
             name=data.name,
@@ -459,24 +482,8 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         Creates:
         - _layout.tsx: Root layout wrapper
         - pages/index.tsx: Home page
-
-        Skipped entirely if any file already exists under apps/{slug}/ — the
-        caller (e.g. `bifrost apps create` against a slug whose source dir
-        was authored locally first) is not expected to lose their work to
-        the default Welcome scaffold.
         """
-        from src.models.orm.file_index import FileIndex
         from src.services.file_storage import FileStorageService
-
-        prefix = f"apps/{slug}/"
-        existing = await self.session.execute(
-            select(FileIndex.path).where(FileIndex.path.startswith(prefix)).limit(1)
-        )
-        if existing.first() is not None:
-            logger.info(
-                f"Skipped scaffold for app {log_safe(slug)}: files already exist at {log_safe(prefix)}"
-            )
-            return
 
         file_storage = FileStorageService(self.session)
 

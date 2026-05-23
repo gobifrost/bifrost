@@ -5,7 +5,9 @@ Tests the actual tool implementation functions that handle
 workflow validation, execution tracking, and knowledge search.
 """
 
+from contextlib import asynccontextmanager
 from uuid import uuid4
+from unittest.mock import patch
 
 import pytest
 from fastmcp.tools import ToolResult
@@ -121,6 +123,72 @@ class TestValidateWorkflowImpl:
         text = get_content_text(result)
         assert text is not None
         assert "Error" in text or "error" in text.lower()
+
+
+# ==================== App Tool Tests ====================
+
+
+class _ScalarOneResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _FirstResult:
+    def __init__(self, value):
+        self._value = value
+
+    def first(self):
+        return self._value
+
+
+class _CreateAppDb:
+    def __init__(self, *, stale_source: bool):
+        self._stale_source = stale_source
+        self.execute_calls = 0
+        self.added = []
+        self.flushed = False
+
+    async def execute(self, _stmt):
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return _ScalarOneResult(None)
+        if self.execute_calls == 2:
+            return _FirstResult(("apps/stale-mcp/_layout.tsx",) if self._stale_source else None)
+        raise AssertionError(f"unexpected execute call {self.execute_calls}")
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def flush(self):
+        self.flushed = True
+
+    async def commit(self):
+        pass
+
+
+class TestAppToolImpl:
+    @pytest.mark.asyncio
+    async def test_create_app_rejects_unclaimed_existing_source(self, context):
+        """MCP app creation must not adopt stale source under apps/<slug>/."""
+        from src.services.mcp_server.tools.apps import create_app
+
+        db = _CreateAppDb(stale_source=True)
+
+        @asynccontextmanager
+        async def fake_get_tool_db(_context):
+            yield db
+
+        with patch("src.services.mcp_server.tools.apps.get_tool_db", fake_get_tool_db):
+            result = await create_app(context, "Stale MCP", slug="stale-mcp")
+
+        assert is_error_result(result)
+        assert result.structured_content is not None
+        assert "Source files already exist" in result.structured_content["error"]
+        assert db.added == []
+        assert db.flushed is False
 
 
 # ==================== Get Workflow Tool Tests ====================
