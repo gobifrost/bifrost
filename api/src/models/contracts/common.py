@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 class ErrorResponse(BaseModel):
     """API error response"""
+
     error: str = Field(..., description="Error code or type")
     message: str = Field(..., description="Human-readable error message")
     details: dict[str, Any] | None = None
@@ -23,30 +24,51 @@ class ErrorResponse(BaseModel):
 # ==================== BRANDING MODELS ====================
 
 
+def validate_hex_color(value: str | None) -> str | None:
+    """Validate hex color format."""
+    if value is None:
+        return value
+    if not value.startswith("#") or len(value) not in [4, 7]:
+        raise ValueError(
+            "Primary color must be a valid hex color (e.g., #FFF or #FF5733)"
+        )
+    try:
+        int(value[1:], 16)
+    except ValueError:
+        raise ValueError("Primary color must be a valid hex color") from None
+    return value
+
+
 class BrandingSettings(BaseModel):
     """Global platform branding configuration"""
-    square_logo_url: str | None = Field(default=None, description="Square logo URL (for icons, 1:1 ratio)")
-    rectangle_logo_url: str | None = Field(default=None, description="Rectangle logo URL (for headers, 16:9 ratio)")
-    primary_color: str | None = Field(default=None, description="Primary brand color (hex format, e.g., #FF5733)")
 
-    @field_validator('primary_color')
+    square_logo_url: str | None = Field(
+        default=None, description="Square logo URL (for icons, 1:1 ratio)"
+    )
+    rectangle_logo_url: str | None = Field(
+        default=None, description="Rectangle logo URL (for headers, 16:9 ratio)"
+    )
+    primary_color: str | None = Field(
+        default=None, description="Primary brand color (hex format, e.g., #FF5733)"
+    )
+
+    @field_validator("primary_color")
     @classmethod
     def validate_hex_color(cls, v):
-        """Validate hex color format"""
-        if v is None:
-            return v
-        if not v.startswith('#') or len(v) not in [4, 7]:
-            raise ValueError("Primary color must be a valid hex color (e.g., #FFF or #FF5733)")
-        try:
-            int(v[1:], 16)
-        except ValueError:
-            raise ValueError("Primary color must be a valid hex color")
-        return v
+        return validate_hex_color(v)
 
 
 class BrandingUpdateRequest(BaseModel):
     """Request model for updating primary color only - logos use POST /logo/{type}"""
-    primary_color: str | None = Field(default=None, description="Primary color (hex code, e.g., #0066CC)")
+
+    primary_color: str | None = Field(
+        default=None, description="Primary color (hex code, e.g., #0066CC)"
+    )
+
+    @field_validator("primary_color")
+    @classmethod
+    def validate_hex_color(cls, v):
+        return validate_hex_color(v)
 
 
 # ==================== FILE UPLOAD MODELS ====================
@@ -54,12 +76,13 @@ class BrandingUpdateRequest(BaseModel):
 
 class FileUploadRequest(BaseModel):
     """Request model for generating file upload SAS URL"""
+
     file_name: str = Field(..., description="Original file name")
     content_type: str = Field(..., description="MIME type of the file")
     file_size: int = Field(..., description="File size in bytes")
     field_name: str | None = Field(
         default=None,
-        description="Form field name for server-side validation of allowed types and max size"
+        description="Form field name for server-side validation of allowed types and max size",
     )
 
 
@@ -70,19 +93,32 @@ class UploadedFileMetadata(BaseModel):
     `files.read(path, location="uploads")` in a workflow and the SDK handles
     scoping. The full S3 key is `uploads/{scope}/{path}`.
     """
+
     name: str = Field(..., description="Original file name")
-    container: str = Field(..., description="Blob storage container name (e.g., 'uploads')")
-    path: str = Field(..., description="Path relative to uploads/ (e.g., '{form_id}/{uuid}/{filename}')")
+    container: str = Field(
+        ..., description="Blob storage container name (e.g., 'uploads')"
+    )
+    path: str = Field(
+        ...,
+        description="Path relative to uploads/ (e.g., '{form_id}/{uuid}/{filename}')",
+    )
     content_type: str = Field(..., description="MIME type of the file")
     size: int = Field(..., description="File size in bytes")
 
 
 class FileUploadResponse(BaseModel):
     """Response model for file upload SAS URL generation"""
+
     upload_url: str = Field(..., description="URL for direct upload")
+    upload_headers: dict[str, str] = Field(
+        ...,
+        description="Headers the client must send with the direct upload request",
+    )
     blob_uri: str = Field(..., description="Final file URI")
     expires_at: str = Field(..., description="Token expiration timestamp (ISO format)")
-    file_metadata: UploadedFileMetadata = Field(..., description="Metadata for accessing the uploaded file in workflows")
+    file_metadata: UploadedFileMetadata = Field(
+        ..., description="Metadata for accessing the uploaded file in workflows"
+    )
 
 
 # ==================== PACKAGE MANAGEMENT MODELS ====================
@@ -90,12 +126,20 @@ class FileUploadResponse(BaseModel):
 
 class InstallPackageRequest(BaseModel):
     """Request model for installing a package or recycling from requirements.txt"""
-    package_name: str | None = Field(default=None, min_length=1, description="Package name (e.g., 'requests'). If omitted, recycles workers to pick up requirements.txt changes.")
-    version: str | None = Field(default=None, description="Version specifier (e.g., '>=2.28.0')")
+
+    package_name: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Package name (e.g., 'requests'). If omitted, recycles workers to pick up requirements.txt changes.",
+    )
+    version: str | None = Field(
+        default=None, description="Version specifier (e.g., '>=2.28.0')"
+    )
 
 
 class PackageInstallResponse(BaseModel):
     """Response model for package installation"""
+
     package_name: str | None = None
     version: str | None = None
     status: str = Field(..., description="Installation status (success, queued)")
@@ -104,18 +148,21 @@ class PackageInstallResponse(BaseModel):
 
 class InstalledPackage(BaseModel):
     """Installed package information"""
+
     name: str
     version: str
 
 
 class InstalledPackagesResponse(BaseModel):
     """Response model for listing installed packages"""
+
     packages: list[InstalledPackage]
     total_count: int
 
 
 class PackageUpdate(BaseModel):
     """Package update information"""
+
     name: str
     current_version: str
     latest_version: str
@@ -123,5 +170,6 @@ class PackageUpdate(BaseModel):
 
 class PackageUpdatesResponse(BaseModel):
     """Response model for package update check"""
+
     updates_available: list[PackageUpdate]
     total_count: int

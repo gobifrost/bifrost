@@ -40,10 +40,10 @@ class TestFileUploadResponseValidation:
         with pytest.raises(ValidationError) as exc_info:
             FileUploadResponse(
                 upload_url="https://storage.blob.core.windows.net/uploads/file.pdf"
-                # Missing: blob_uri, expires_at
+                # Missing: upload_headers, blob_uri, expires_at
             )
 
         errors = exc_info.value.errors()
-        required_fields = {"blob_uri", "expires_at"}
+        required_fields = {"upload_headers", "blob_uri", "expires_at"}
         missing_fields = {e["loc"][0] for e in errors if e["type"] == "missing"}
         assert required_fields.issubset(missing_fields)

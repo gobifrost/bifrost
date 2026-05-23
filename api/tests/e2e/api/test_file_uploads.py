@@ -70,9 +70,11 @@ class TestFileUploads:
 
         # Verify response structure
         assert "upload_url" in data, "Missing upload_url"
+        assert "upload_headers" in data, "Missing upload_headers"
         assert "blob_uri" in data, "Missing blob_uri"
         assert "expires_at" in data, "Missing expires_at"
         assert "file_metadata" in data, "Missing file_metadata"
+        assert data["upload_headers"]["Content-Type"] == "text/plain"
 
         # blob_uri is now the path relative to the uploads/ location:
         # `{form_id}/{uuid}/{filename}`. The full S3 key is
@@ -111,6 +113,7 @@ class TestFileUploads:
         )
         data = response.json()
         upload_url = data["upload_url"]
+        upload_headers = data["upload_headers"]
         # blob_uri available in data["blob_uri"] if needed
 
         # Upload file content using presigned URL
@@ -121,7 +124,7 @@ class TestFileUploads:
             response = s3_client.put(
                 upload_url,
                 content=file_content,
-                headers={"Content-Type": "text/plain"},
+                headers=upload_headers,
             )
         # S3/Minio accepts 200, 201, or 204 for successful upload
         assert response.status_code in [200, 201, 204], (
@@ -147,6 +150,7 @@ class TestFileUploads:
         )
         upload_data = response.json()
         upload_url = upload_data["upload_url"]
+        upload_headers = upload_data["upload_headers"]
         # blob_uri is the path relative to the `uploads` location — pass it
         # straight to `files.read(..., location="uploads")` and the SDK adds
         # the `uploads/{scope}/` prefix.
@@ -158,7 +162,7 @@ class TestFileUploads:
             s3_response = s3_client.put(
                 upload_url,
                 content=file_content,
-                headers={"Content-Type": "text/plain"},
+                headers=upload_headers,
             )
         assert s3_response.status_code in [200, 201, 204], (
             f"S3 upload failed: {s3_response.status_code}"
@@ -275,6 +279,7 @@ class TestFileUploadAccessControl:
         )
         data = response.json()
         assert "upload_url" in data
+        assert data["upload_headers"]["Content-Type"] == "text/plain"
         assert "blob_uri" in data
 
     def test_anonymous_cannot_generate_upload_url(self, e2e_client, upload_form):

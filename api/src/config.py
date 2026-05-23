@@ -5,12 +5,17 @@ Uses pydantic-settings for environment variable loading with validation.
 All configuration is centralized here for easy management.
 """
 
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def default_temp_location() -> str:
+    return str(Path(tempfile.gettempdir()) / "bifrost")
 
 
 class Settings(BaseSettings):
@@ -33,36 +38,30 @@ class Settings(BaseSettings):
     # Environment
     # ==========================================================================
     environment: Literal["development", "testing", "production"] = Field(
-        default="development",
-        description="Runtime environment"
+        default="development", description="Runtime environment"
     )
 
-    debug: bool = Field(
-        default=False,
-        description="Enable debug mode"
-    )
+    debug: bool = Field(default=False, description="Enable debug mode")
 
     # ==========================================================================
     # Database (PostgreSQL)
     # ==========================================================================
     database_url: str = Field(
         default="postgresql+asyncpg://bifrost:bifrost_dev@localhost:5432/bifrost",
-        description="Async PostgreSQL connection URL"
+        description="Async PostgreSQL connection URL",
     )
 
     database_url_sync: str = Field(
         default="postgresql://bifrost:bifrost_dev@localhost:5432/bifrost",
-        description="Sync PostgreSQL connection URL (for Alembic)"
+        description="Sync PostgreSQL connection URL (for Alembic)",
     )
 
     database_pool_size: int = Field(
-        default=5,
-        description="Database connection pool size"
+        default=5, description="Database connection pool size"
     )
 
     database_max_overflow: int = Field(
-        default=10,
-        description="Max overflow connections beyond pool size"
+        default=10, description="Max overflow connections beyond pool size"
     )
 
     # ==========================================================================
@@ -70,7 +69,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     rabbitmq_url: str = Field(
         default="amqp://bifrost:bifrost_dev@localhost:5672/",
-        description="RabbitMQ connection URL"
+        description="RabbitMQ connection URL",
     )
 
     # ==========================================================================
@@ -78,84 +77,78 @@ class Settings(BaseSettings):
     # ==========================================================================
     max_concurrency: int = Field(
         default=10,
-        description="Max concurrent workflow executions (controls RabbitMQ prefetch)"
+        description="Max concurrent workflow executions (controls RabbitMQ prefetch)",
     )
 
     # Process Pool Configuration
     min_workers: int = Field(
-        default=2,
-        description="Minimum worker processes to maintain (warm pool)"
+        default=2, description="Minimum worker processes to maintain (warm pool)"
     )
     max_workers: int = Field(
-        default=10,
-        description="Maximum worker processes for scaling"
+        default=10, description="Maximum worker processes for scaling"
     )
     execution_timeout_seconds: int = Field(
-        default=300,
-        description="Default execution timeout in seconds (5 minutes)"
+        default=300, description="Default execution timeout in seconds (5 minutes)"
     )
     graceful_shutdown_seconds: int = Field(
-        default=5,
-        description="Seconds to wait after SIGTERM before SIGKILL"
+        default=5, description="Seconds to wait after SIGTERM before SIGKILL"
     )
     recycle_after_executions: int = Field(
         default=100,
-        description="Recycle process after N executions (0 = never). Safety net for memory leaks."
+        description="Recycle process after N executions (0 = never). Safety net for memory leaks.",
     )
     recycle_memory_mb: int = Field(
         default=768,
-        description="Recycle process when RSS exceeds this threshold in MB (0 = disabled)"
+        description="Recycle process when RSS exceeds this threshold in MB (0 = disabled)",
     )
     worker_heartbeat_interval_seconds: int = Field(
         default=10,
-        description="Interval in seconds between worker heartbeat publications"
+        description="Interval in seconds between worker heartbeat publications",
     )
     worker_registration_ttl_seconds: int = Field(
         default=30,
-        description="TTL in seconds for worker registration in Redis (refreshed by heartbeat)"
+        description="TTL in seconds for worker registration in Redis (refreshed by heartbeat)",
     )
     worker_install_requirements_on_startup: bool = Field(
         default=True,
-        description="Install workspace requirements.txt during worker template startup"
+        description="Install workspace requirements.txt during worker template startup",
     )
     memory_pressure_threshold: float = Field(
         default=0.85,
-        description="Reject new forks when container memory usage exceeds this ratio (0.0-1.0)"
+        description="Reject new forks when container memory usage exceeds this ratio (0.0-1.0)",
     )
 
     # ==========================================================================
     # Error Monitoring (Sentry)
     # ==========================================================================
     sentry_dsn: str | None = Field(
-        default=None,
-        description="Sentry DSN. When unset, Sentry is disabled."
+        default=None, description="Sentry DSN. When unset, Sentry is disabled."
     )
 
     sentry_traces_sample_rate: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Sentry performance trace sample rate. Defaults to errors only."
+        description="Sentry performance trace sample rate. Defaults to errors only.",
     )
 
     sentry_profiles_sample_rate: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Sentry profiling sample rate. Defaults to disabled."
+        description="Sentry profiling sample rate. Defaults to disabled.",
     )
 
     sentry_send_default_pii: bool = Field(
         default=False,
-        description="Allow Sentry to send default PII such as headers and user IPs."
+        description="Allow Sentry to send default PII such as headers and user IPs.",
     )
 
     # ==========================================================================
     # Redis
     # ==========================================================================
     redis_url: str = Field(
-        default="redis://localhost:6379/0",
-        description="Redis connection URL"
+        default="redis://localhost:6379/0", description="Redis connection URL"
     )
 
     # ==========================================================================
@@ -163,38 +156,29 @@ class Settings(BaseSettings):
     # ==========================================================================
     secret_key: str = Field(
         description="Secret key for JWT signing and encryption (BIFROST_SECRET_KEY env var required)",
-        min_length=32
+        min_length=32,
     )
 
-    algorithm: str = Field(
-        default="HS256",
-        description="JWT signing algorithm"
-    )
+    algorithm: str = Field(default="HS256", description="JWT signing algorithm")
 
     access_token_expire_minutes: int = Field(
-        default=30,
-        description="Access token expiration time in minutes"
+        default=30, description="Access token expiration time in minutes"
     )
 
     refresh_token_expire_days: int = Field(
-        default=7,
-        description="Refresh token expiration time in days"
+        default=7, description="Refresh token expiration time in days"
     )
 
     jwt_issuer: str = Field(
-        default="bifrost-api",
-        description="JWT issuer claim for token validation"
+        default="bifrost-api", description="JWT issuer claim for token validation"
     )
 
     jwt_audience: str = Field(
-        default="bifrost-client",
-        description="JWT audience claim for token validation"
+        default="bifrost-client", description="JWT audience claim for token validation"
     )
 
-
     oauth_require_mfa: bool = Field(
-        default=False,
-        description="If True, require MFA even for OAuth users"
+        default=False, description="If True, require MFA even for OAuth users"
     )
 
     # ==========================================================================
@@ -202,47 +186,77 @@ class Settings(BaseSettings):
     # ==========================================================================
     cors_origins: str = Field(
         default="http://localhost:3000",
-        description="Comma-separated list of allowed CORS origins"
+        description="Comma-separated list of allowed CORS origins",
     )
 
     @computed_field
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins into a list."""
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return [
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
+        ]
 
     # ==========================================================================
-    # S3 Storage (for horizontal scaling)
+    # Object Storage
     # ==========================================================================
+    object_storage_provider: str = Field(
+        default="s3",
+        description="Object storage backend provider: s3 or azure_blob",
+    )
+
     s3_bucket: str | None = Field(
         default=None,
-        description="S3 bucket name for workspace storage (required when S3 is configured)"
+        description="S3 bucket name for workspace storage (required when S3 is configured)",
     )
 
     s3_endpoint_url: str | None = Field(
         default=None,
-        description="S3 endpoint URL (None for AWS, local S3-compatible endpoint for self-hosted storage)"
+        description="S3 endpoint URL (None for AWS, local S3-compatible endpoint for self-hosted storage)",
     )
 
-    s3_access_key: str | None = Field(
-        default=None,
-        description="S3 access key"
-    )
+    s3_access_key: str | None = Field(default=None, description="S3 access key")
 
-    s3_secret_key: str | None = Field(
-        default=None,
-        description="S3 secret key"
-    )
+    s3_secret_key: str | None = Field(default=None, description="S3 secret key")
 
-    s3_region: str = Field(
-        default="us-east-1",
-        description="S3 region"
-    )
+    s3_region: str = Field(default="us-east-1", description="S3 region")
 
     s3_public_endpoint_url: str | None = Field(
         default=None,
-        description="Public S3 endpoint URL for presigned URLs (falls back to s3_endpoint_url)"
+        description="Public S3 endpoint URL for presigned URLs (falls back to s3_endpoint_url)",
     )
+
+    azure_blob_account_url: str | None = Field(
+        default=None,
+        description="Azure Blob account URL, e.g. https://acct.blob.core.windows.net",
+    )
+
+    azure_blob_container: str | None = Field(
+        default=None,
+        description="Azure Blob container name for workspace and upload storage",
+    )
+
+    azure_blob_auth: str = Field(
+        default="default_credential",
+        description="Azure Blob auth mode: default_credential or account_key",
+    )
+
+    azure_blob_account_key: str | None = Field(
+        default=None,
+        description="Azure Blob account key. Prefer managed identity/default credential in production.",
+    )
+
+    @computed_field
+    @property
+    def azure_blob_configured(self) -> bool:
+        """Check if Azure Blob storage is configured."""
+        if self.object_storage_provider != "azure_blob":
+            return False
+        if not self.azure_blob_account_url or not self.azure_blob_container:
+            return False
+        return self.azure_blob_auth == "default_credential" or bool(
+            self.azure_blob_account_key
+        )
 
     @computed_field
     @property
@@ -254,8 +268,8 @@ class Settings(BaseSettings):
     # File Storage
     # ==========================================================================
     temp_location: str = Field(
-        default="/tmp/bifrost",
-        description="Path to temporary storage directory"
+        default_factory=default_temp_location,
+        description="Path to temporary storage directory",
     )
 
     # ==========================================================================
@@ -263,60 +277,56 @@ class Settings(BaseSettings):
     # ==========================================================================
     default_user_email: str | None = Field(
         default=None,
-        description="Default admin user email (creates user on startup if set)"
+        description="Default admin user email (creates user on startup if set)",
     )
 
     default_user_password: str | None = Field(
-        default=None,
-        description="Default admin user password"
+        default=None, description="Default admin user password"
     )
 
     # ==========================================================================
     # MFA Settings
     # ==========================================================================
     mfa_enabled: bool = Field(
-        default=True,
-        description="Whether MFA is required for password authentication"
+        default=True, description="Whether MFA is required for password authentication"
     )
 
     mfa_totp_issuer: str = Field(
-        default="Bifrost",
-        description="Issuer name for TOTP QR codes"
+        default="Bifrost", description="Issuer name for TOTP QR codes"
     )
 
     mfa_recovery_code_count: int = Field(
-        default=10,
-        description="Number of recovery codes to generate for MFA"
+        default=10, description="Number of recovery codes to generate for MFA"
     )
 
     mfa_trusted_device_days: int = Field(
         default=30,
-        description="Number of days a device stays trusted after MFA verification"
+        description="Number of days a device stays trusted after MFA verification",
     )
 
     mfa_setup_token_expire_minutes: int = Field(
         default=15,
-        description="MFA setup token expiration time in minutes (longer than verify for setup flow)"
+        description="MFA setup token expiration time in minutes (longer than verify for setup flow)",
     )
 
     mfa_verify_token_expire_minutes: int = Field(
         default=5,
-        description="MFA verify token expiration time in minutes (during login)"
+        description="MFA verify token expiration time in minutes (during login)",
     )
 
     mfa_pending_validity_minutes: int = Field(
         default=10,
-        description="How long a pending TOTP setup remains valid before regeneration"
+        description="How long a pending TOTP setup remains valid before regeneration",
     )
 
     mfa_totp_enrollment_window: int = Field(
         default=2,
-        description="TOTP valid window for enrollment (+/- N*30 seconds, more lenient)"
+        description="TOTP valid window for enrollment (+/- N*30 seconds, more lenient)",
     )
 
     mfa_totp_login_window: int = Field(
         default=1,
-        description="TOTP valid window for login (+/- N*30 seconds, more strict)"
+        description="TOTP valid window for login (+/- N*30 seconds, more strict)",
     )
 
     # ==========================================================================
@@ -324,17 +334,16 @@ class Settings(BaseSettings):
     # ==========================================================================
     webauthn_rp_id: str = Field(
         default="localhost",
-        description="WebAuthn Relying Party ID (must match origin domain)"
+        description="WebAuthn Relying Party ID (must match origin domain)",
     )
 
     webauthn_rp_name: str = Field(
-        default="Bifrost",
-        description="WebAuthn Relying Party display name"
+        default="Bifrost", description="WebAuthn Relying Party display name"
     )
 
     webauthn_origin: str = Field(
         default="http://localhost:3000",
-        description="WebAuthn expected origin URLs (comma-separated for multiple)"
+        description="WebAuthn expected origin URLs (comma-separated for multiple)",
     )
 
     @property
@@ -347,7 +356,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     public_url: str = Field(
         default="http://localhost:8000",
-        description="Public URL for the Bifrost platform (used for MCP OAuth, workflow URLs, etc.)"
+        description="Public URL for the Bifrost platform (used for MCP OAuth, workflow URLs, etc.)",
     )
 
     # ==========================================================================
@@ -356,21 +365,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(
         default=None,
         validation_alias="ANTHROPIC_API_KEY",
-        description="Anthropic API key for Claude Agent SDK (ANTHROPIC_API_KEY or BIFROST_ANTHROPIC_API_KEY)"
+        description="Anthropic API key for Claude Agent SDK (ANTHROPIC_API_KEY or BIFROST_ANTHROPIC_API_KEY)",
     )
 
     # ==========================================================================
     # Server
     # ==========================================================================
-    host: str = Field(
-        default="0.0.0.0",
-        description="Server host"
-    )
+    host: str = Field(default="0.0.0.0", description="Server host")
 
-    port: int = Field(
-        default=8000,
-        description="Server port"
-    )
+    port: int = Field(default=8000, description="Server port")
 
     # ==========================================================================
     # Computed Properties

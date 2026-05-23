@@ -65,6 +65,7 @@ class TestFileUploadAPI:
         """Test valid file upload SAS URL response"""
         response = FileUploadResponse(
             upload_url="https://storage.blob.core.windows.net/uploads/file.pdf?sas_token=xyz",
+            upload_headers={"Content-Type": "application/pdf"},
             blob_uri="https://storage.blob.core.windows.net/uploads/file.pdf",
             expires_at="2024-01-01T13:00:00Z",
             file_metadata=UploadedFileMetadata(
@@ -86,11 +87,11 @@ class TestFileUploadAPI:
         with pytest.raises(ValidationError) as exc_info:
             FileUploadResponse(
                 upload_url="https://storage.blob.core.windows.net/uploads/file.pdf"
-                # Missing: blob_uri, expires_at, file_metadata
+                # Missing: upload_headers, blob_uri, expires_at, file_metadata
             )
 
         errors = exc_info.value.errors()
-        required_fields = {"blob_uri", "expires_at", "file_metadata"}
+        required_fields = {"upload_headers", "blob_uri", "expires_at", "file_metadata"}
         missing_fields = {e["loc"][0] for e in errors if e["type"] == "missing"}
         assert required_fields.issubset(missing_fields)
 

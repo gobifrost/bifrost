@@ -42,10 +42,13 @@ class TestSignedUrlResponseModel:
     """Test SignedUrlResponse shape."""
 
     def test_fields(self):
-        resp = SignedUrlResponse(url="https://s3/presigned", path="uploads/org-a/file.txt")
+        resp = SignedUrlResponse(
+            url="https://s3/presigned", path="uploads/org-a/file.txt"
+        )
         assert resp.url == "https://s3/presigned"
         assert resp.path == "uploads/org-a/file.txt"
         assert resp.expires_in == 600
+        assert resp.headers == {}
 
 
 class TestPathResolution:
@@ -55,7 +58,12 @@ class TestPathResolution:
     @patch("src.routers.files.FileStorageService")
     async def test_uploads_scoped(self, mock_fss_class):
         mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
+        mock_fss.generate_presigned_upload_url = AsyncMock(
+            return_value="https://s3/url"
+        )
+        mock_fss.presigned_upload_headers.return_value = {
+            "Content-Type": "application/octet-stream"
+        }
         mock_fss_class.return_value = mock_fss
 
         req = SignedUrlRequest(path="report.pdf", scope="org-a")
@@ -76,7 +84,12 @@ class TestPathResolution:
     @patch("src.routers.files.FileStorageService")
     async def test_workspace_unscoped(self, mock_fss_class):
         mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
+        mock_fss.generate_presigned_upload_url = AsyncMock(
+            return_value="https://s3/url"
+        )
+        mock_fss.presigned_upload_headers.return_value = {
+            "Content-Type": "application/octet-stream"
+        }
         mock_fss_class.return_value = mock_fss
 
         req = SignedUrlRequest(path="report.pdf", location="workspace")
@@ -87,10 +100,14 @@ class TestPathResolution:
     @patch("src.routers.files.FileStorageService")
     async def test_temp_scoped(self, mock_fss_class):
         mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/url")
+        mock_fss.generate_presigned_download_url = AsyncMock(
+            return_value="https://s3/url"
+        )
         mock_fss_class.return_value = mock_fss
 
-        req = SignedUrlRequest(path="x.bin", location="temp", scope="org-a", method="GET")
+        req = SignedUrlRequest(
+            path="x.bin", location="temp", scope="org-a", method="GET"
+        )
         result = await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
         assert result.path == "_tmp/org-a/x.bin"
 
@@ -98,10 +115,14 @@ class TestPathResolution:
     @patch("src.routers.files.FileStorageService")
     async def test_freeform_scoped(self, mock_fss_class):
         mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/url")
+        mock_fss.generate_presigned_download_url = AsyncMock(
+            return_value="https://s3/url"
+        )
         mock_fss_class.return_value = mock_fss
 
-        req = SignedUrlRequest(path="q1.pdf", location="reports", scope="org-a", method="GET")
+        req = SignedUrlRequest(
+            path="q1.pdf", location="reports", scope="org-a", method="GET"
+        )
         result = await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
         assert result.path == "reports/org-a/q1.pdf"
 
@@ -165,12 +186,21 @@ class TestPresignedUrlGeneration:
     @patch("src.routers.files.FileStorageService")
     async def test_put_calls_upload(self, mock_fss_class):
         mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/put-url")
+        mock_fss.generate_presigned_upload_url = AsyncMock(
+            return_value="https://s3/put-url"
+        )
+        mock_fss.presigned_upload_headers.return_value = {
+            "Content-Type": "application/pdf"
+        }
         mock_fss_class.return_value = mock_fss
 
-        req = SignedUrlRequest(path="file.pdf", method="PUT", content_type="application/pdf", scope="org-a")
+        req = SignedUrlRequest(
+            path="file.pdf", method="PUT", content_type="application/pdf", scope="org-a"
+        )
         result = await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
         assert result.url == "https://s3/put-url"
+        assert result.headers == {"Content-Type": "application/pdf"}
+        mock_fss.presigned_upload_headers.assert_called_once_with("application/pdf")
         mock_fss.generate_presigned_upload_url.assert_awaited_once_with(
             path="uploads/org-a/file.pdf",
             content_type="application/pdf",
@@ -180,12 +210,15 @@ class TestPresignedUrlGeneration:
     @patch("src.routers.files.FileStorageService")
     async def test_get_calls_download(self, mock_fss_class):
         mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/get-url")
+        mock_fss.generate_presigned_download_url = AsyncMock(
+            return_value="https://s3/get-url"
+        )
         mock_fss_class.return_value = mock_fss
 
         req = SignedUrlRequest(path="file.pdf", method="GET", scope="org-a")
         result = await get_signed_url(req, MagicMock(), MagicMock(), AsyncMock())
         assert result.url == "https://s3/get-url"
+        assert result.headers == {}
         mock_fss.generate_presigned_download_url.assert_awaited_once_with(
             path="uploads/org-a/file.pdf",
         )

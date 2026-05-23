@@ -19,6 +19,7 @@ from .models import (
     PendingDeactivationInfo,
     AvailableReplacementInfo,
 )
+from .azure_blob_client import AzureBlobStorageClient
 from .s3_client import S3StorageClient
 from .entity_detector import detect_platform_entity_type
 from .ast_parser import ASTMetadataParser
@@ -52,8 +53,11 @@ class FileStorageService:
         self.db = db
         self.settings = settings or get_settings()
 
-        # Initialize S3 client wrapper
-        self._s3_storage = S3StorageClient(self.settings)
+        # Initialize object storage client wrapper
+        if self.settings.object_storage_provider == "azure_blob":
+            self._s3_storage = AzureBlobStorageClient(self.settings)
+        else:
+            self._s3_storage = S3StorageClient(self.settings)
 
         # Initialize helper services
         self._ast_parser = ASTMetadataParser()
@@ -204,6 +208,10 @@ class FileStorageService:
             expires_in=expires_in,
         )
 
+    def presigned_upload_headers(self, content_type: str) -> dict[str, str]:
+        """Return headers clients must send with a presigned upload URL."""
+        return self._s3_storage.presigned_upload_headers(content_type)
+
     async def generate_presigned_download_url(
         self,
         path: str,
@@ -315,24 +323,37 @@ class FileStorageService:
                     # No AST means no decorators were found - skip indexing
                     # Still need to run deactivation check in case file previously had workflows
                     if workflows_to_deactivate:
-                        await self._deactivation.deactivate_workflows_by_id(workflows_to_deactivate)
+                        await self._deactivation.deactivate_workflows_by_id(
+                            workflows_to_deactivate
+                        )
                     if force_deactivation:
-                        await self._deactivation.deactivate_removed_workflows(path, set())
+                        await self._deactivation.deactivate_removed_workflows(
+                            path, set()
+                        )
                     else:
-                        pending, available = await self._deactivation.detect_pending_deactivations(
+                        (
+                            pending,
+                            available,
+                        ) = await self._deactivation.detect_pending_deactivations(
                             path=path,
                             new_function_names=set(),
                             new_decorator_info={},
                         )
                         if pending:
                             return content, False, False, None, [], pending, available
-                    logger.info(f"Skipping indexing for module without decorators: {path}")
+                    logger.info(
+                        f"Skipping indexing for module without decorators: {path}"
+                    )
                     return content, False, False, None, [], None, None
 
                 # Python files with decorators: do deactivation check then index
                 return await self._index_python_file_full(
-                    path, content, force_deactivation, replacements,
-                    cached_ast=cached_ast, cached_content_str=cached_content_str,
+                    path,
+                    content,
+                    force_deactivation,
+                    replacements,
+                    cached_ast=cached_ast,
+                    cached_content_str=cached_content_str,
                     workflows_to_deactivate=workflows_to_deactivate,
                 )
         except Exception as e:
@@ -384,13 +405,15 @@ class FileStorageService:
                 tree = ast.parse(content_str, filename=path)
             except SyntaxError as e:
                 logger.warning(f"Syntax error parsing {path}: {e}")
-                diagnostics.append(FileDiagnosticInfo(
-                    severity="error",
-                    message=f"Syntax error: {e.msg}" if e.msg else str(e),
-                    line=e.lineno,
-                    column=e.offset,
-                    source="syntax",
-                ))
+                diagnostics.append(
+                    FileDiagnosticInfo(
+                        severity="error",
+                        message=f"Syntax error: {e.msg}" if e.msg else str(e),
+                        line=e.lineno,
+                        column=e.offset,
+                        source="syntax",
+                    )
+                )
                 return content, False, False, None, diagnostics, None, None
 
         # Pre-scan: collect all decorated function names and their info
@@ -440,10 +463,20 @@ class FileStorageService:
                 pending_deactivations = pending
                 available_replacements = available
                 # Return early without indexing - caller will raise 409
-                return content, False, False, None, [], pending_deactivations, available_replacements
+                return (
+                    content,
+                    False,
+                    False,
+                    None,
+                    [],
+                    pending_deactivations,
+                    available_replacements,
+                )
         else:
             # Force deactivation: deactivate workflows that are no longer in the file
-            await self._deactivation.deactivate_removed_workflows(path, new_function_names)
+            await self._deactivation.deactivate_removed_workflows(
+                path, new_function_names
+            )
 
         # No deactivation issues - proceed with indexing
         # Pass cached AST and content string to avoid re-parsing

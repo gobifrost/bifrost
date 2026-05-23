@@ -26,7 +26,12 @@ from src.core.org_filter import resolve_org_filter
 from src.models.enums import FormAccessLevel
 from src.repositories.forms import FormRepository
 from src.models import Execution as ExecutionORM
-from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM, UserRole as UserRoleORM
+from src.models import (
+    Form as FormORM,
+    FormField as FormFieldORM,
+    FormRole as FormRoleORM,
+    UserRole as UserRoleORM,
+)
 from src.models import Role as RoleORM
 from src.models import Workflow as WorkflowORM
 from src.models import FormCreate, FormUpdate, FormPublic
@@ -39,6 +44,7 @@ from src.models.enums import ExecutionStatus
 # Import cache invalidation
 try:
     from src.core.cache import invalidate_form
+
     CACHE_INVALIDATION_AVAILABLE = True
 except ImportError:
     CACHE_INVALIDATION_AVAILABLE = False
@@ -145,7 +151,9 @@ async def _validate_form_references(
             )
             workflow = result.scalar_one_or_none()
             if workflow is None:
-                errors.append(f"workflow_id '{workflow_id}' does not reference an active workflow")
+                errors.append(
+                    f"workflow_id '{workflow_id}' does not reference an active workflow"
+                )
             elif workflow.type not in ("workflow", "tool"):
                 errors.append(
                     f"workflow_id '{workflow_id}' references a {workflow.type}, not a workflow or tool"
@@ -154,7 +162,9 @@ async def _validate_form_references(
     # Validate launch_workflow_id
     if launch_workflow_id:
         if not _is_valid_uuid(launch_workflow_id):
-            errors.append(f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID")
+            errors.append(
+                f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID"
+            )
         else:
             result = await db.execute(
                 select(WorkflowORM).where(
@@ -220,7 +230,7 @@ async def list_forms(
     scope: str | None = Query(
         None,
         description="Filter scope: omit for all (superusers), 'global' for global only, "
-        "or org UUID for specific org + global."
+        "or org UUID for specific org + global.",
     ),
 ) -> list[FormPublic]:
     """List all forms visible to the user.
@@ -273,9 +283,17 @@ async def list_forms(
             count += 1
         if form_public.form_schema:
             schema = form_public.form_schema
-            fields = schema.fields if isinstance(schema, FormSchema) else (schema or {}).get("fields", [])
+            fields = (
+                schema.fields
+                if isinstance(schema, FormSchema)
+                else (schema or {}).get("fields", [])
+            )
             for field in fields:
-                dp_id = field.data_provider_id if isinstance(field, FormField) else (field or {}).get("data_provider_id")
+                dp_id = (
+                    field.data_provider_id
+                    if isinstance(field, FormField)
+                    else (field or {}).get("data_provider_id")
+                )
                 if dp_id:
                     count += 1
         form_public.dependency_count = count
@@ -295,9 +313,7 @@ async def _replace_form_roles(
     form and inserts the new set. Empty list clears all assignments.
     """
     if role_ids:
-        existing = await db.execute(
-            select(RoleORM.id).where(RoleORM.id.in_(role_ids))
-        )
+        existing = await db.execute(select(RoleORM.id).where(RoleORM.id.in_(role_ids)))
         found = set(existing.scalars().all())
         missing = [str(rid) for rid in role_ids if rid not in found]
         if missing:
@@ -306,9 +322,7 @@ async def _replace_form_roles(
                 detail=f"Role(s) not found: {', '.join(missing)}",
             )
 
-    await db.execute(
-        delete(FormRoleORM).where(FormRoleORM.form_id == form_id)
-    )
+    await db.execute(delete(FormRoleORM).where(FormRoleORM.form_id == form_id))
     now = datetime.now(timezone.utc)
     for role_id in role_ids:
         db.add(
@@ -351,7 +365,7 @@ async def create_form(
     """
     # Prepare form_schema for validation
     form_schema_data: dict = request.form_schema  # type: ignore[assignment]
-    if hasattr(form_schema_data, 'model_dump'):
+    if hasattr(form_schema_data, "model_dump"):
         form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
 
     # Validate all references before creating the form
@@ -403,7 +417,9 @@ async def create_form(
     form = result.scalar_one()
 
     # Sync form roles to referenced workflows (additive)
-    await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=ctx.user.email)
+    await sync_form_roles_to_workflows(
+        db, form, form.fields, assigned_by=ctx.user.email
+    )
 
     logger.info(f"Created form {form.id}: {log_safe(form.name)}")
 
@@ -473,7 +489,9 @@ async def get_form(
         return await _to_public(form)
 
     # Role-based: check if user has a role assigned to this form
-    role_query = select(UserRoleORM.role_id).where(UserRoleORM.user_id == ctx.user.user_id)
+    role_query = select(UserRoleORM.role_id).where(
+        UserRoleORM.user_id == ctx.user.user_id
+    )
     role_result = await db.execute(role_query)
     user_role_ids = list(role_result.scalars().all())
 
@@ -528,7 +546,7 @@ async def update_form(
     form_schema_for_validation = None
     if request.form_schema is not None:
         form_schema_for_validation = request.form_schema
-        if hasattr(form_schema_for_validation, 'model_dump'):
+        if hasattr(form_schema_for_validation, "model_dump"):
             form_schema_for_validation = form_schema_for_validation.model_dump()
 
     await _validate_form_references(
@@ -552,15 +570,13 @@ async def update_form(
         form.allowed_query_params = request.allowed_query_params
     if request.form_schema is not None:
         # Delete all existing fields using bulk delete
-        await db.execute(
-            delete(FormFieldORM).where(FormFieldORM.form_id == form_id)
-        )
+        await db.execute(delete(FormFieldORM).where(FormFieldORM.form_id == form_id))
         # Expire the relationship to reflect the deletion
         db.expire(form, ["fields"])
 
         # Convert new form_schema to FormField records
         form_schema_data: dict = request.form_schema  # type: ignore[assignment]
-        if hasattr(form_schema_data, 'model_dump'):
+        if hasattr(form_schema_data, "model_dump"):
             form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
 
         field_records = _form_schema_to_fields(form_schema_data, form_id)
@@ -586,9 +602,7 @@ async def update_form(
             f"({len(request.role_ids)} role(s))"
         )
     elif request.clear_roles:
-        await db.execute(
-            delete(FormRoleORM).where(FormRoleORM.form_id == form_id)
-        )
+        await db.execute(delete(FormRoleORM).where(FormRoleORM.form_id == form_id))
         # Also set to role_based access level (effectively no access)
         form.access_level = FormAccessLevel.ROLE_BASED
         logger.info(f"Cleared all role assignments for form '{log_safe(form.name)}'")
@@ -606,7 +620,9 @@ async def update_form(
     form = result.scalar_one()
 
     # Sync form roles to referenced workflows (additive)
-    await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=ctx.user.email)
+    await sync_form_roles_to_workflows(
+        db, form, form.fields, assigned_by=ctx.user.email
+    )
 
     logger.info(f"Updated form {log_safe(form_id)}")
 
@@ -649,7 +665,10 @@ async def delete_form(
     ctx: Context,
     user: CurrentSuperuser,
     db: DbSession,
-    purge: bool = Query(False, description="Permanently remove the form from the database instead of soft-deleting"),
+    purge: bool = Query(
+        False,
+        description="Permanently remove the form from the database instead of soft-deleting",
+    ),
 ) -> None:
     """
     Delete a form.
@@ -657,10 +676,7 @@ async def delete_form(
     By default, sets is_active=False (soft delete).
     With purge=true, permanently removes the form and its related records from the database.
     """
-    result = await db.execute(
-        select(FormORM)
-        .where(FormORM.id == form_id)
-    )
+    result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
 
     if not form:
@@ -682,13 +698,9 @@ async def delete_form(
             .values(form_id=None)
         )
         # Delete form roles (no DB-level ondelete, must delete explicitly)
-        await db.execute(
-            delete(FormRoleORM).where(FormRoleORM.form_id == form_id)
-        )
+        await db.execute(delete(FormRoleORM).where(FormRoleORM.form_id == form_id))
         # Delete the form (form_fields and embed_secrets cascade via DB-level ondelete=CASCADE)
-        await db.execute(
-            delete(FormORM).where(FormORM.id == form_id)
-        )
+        await db.execute(delete(FormORM).where(FormORM.id == form_id))
         logger.info(f"Purged form {log_safe(form_id)}")
 
     if not purge:
@@ -763,7 +775,11 @@ async def execute_form(
     - startup_data: Results from /startup call (launch workflow) available via context.startup
     """
     from src.sdk.context import ExecutionContext as SharedContext, Organization
-    from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from src.services.execution.service import (
+        run_workflow,
+        WorkflowNotFoundError,
+        WorkflowLoadError,
+    )
 
     # Default request if None (backward compatibility with empty body)
     if request is None:
@@ -781,7 +797,9 @@ async def execute_form(
 
     # Check access — embed users are pre-authorized via HMAC
     if not ctx.user.embed:
-        has_access = await _check_form_access(db, form, ctx.user.user_id, ctx.org_id, ctx.user.is_superuser)
+        has_access = await _check_form_access(
+            db, form, ctx.user.user_id, ctx.org_id, ctx.user.is_superuser
+        )
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -797,14 +815,20 @@ async def execute_form(
 
     # Merge: defaults < verified HMAC params < user form input
     verified_params = ctx.user.verified_params or {}
-    merged_params = {**(form.default_launch_params or {}), **verified_params, **request.form_data}
+    merged_params = {
+        **(form.default_launch_params or {}),
+        **verified_params,
+        **request.form_data,
+    }
 
     # Scheduled execution: normalize delay_seconds -> scheduled_at and insert a
     # SCHEDULED row directly. The deferred_execution_promoter job picks it up
     # when it matures — we never call run_workflow here.
     scheduled_at: datetime | None = request.scheduled_at
     if request.delay_seconds is not None:
-        scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=request.delay_seconds)
+        scheduled_at = datetime.now(timezone.utc) + timedelta(
+            seconds=request.delay_seconds
+        )
 
     if scheduled_at is not None:
         from src.routers.workflows import _insert_scheduled_execution
@@ -872,7 +896,9 @@ async def execute_form(
             form_id=str(form.id),
         )
 
-        logger.info(f"Form {log_safe(form_id)} executed by user {ctx.user.email}, execution_id={response.execution_id}")
+        logger.info(
+            f"Form {log_safe(form_id)} executed by user {ctx.user.email}, execution_id={response.execution_id}"
+        )
 
         # Register execution in Redis for embed session scoping
         if ctx.user.embed and ctx.user.jti:
@@ -903,7 +929,9 @@ async def execute_form(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute form",
@@ -945,7 +973,11 @@ async def execute_startup_workflow(
         FormStartupResponse with the launch workflow's result
     """
     from src.sdk.context import ExecutionContext as SharedContext, Organization
-    from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from src.services.execution.service import (
+        run_workflow,
+        WorkflowNotFoundError,
+        WorkflowLoadError,
+    )
 
     # Get the form
     result = await db.execute(select(FormORM).where(FormORM.id == form_id))
@@ -959,7 +991,9 @@ async def execute_startup_workflow(
 
     # Check access — embed users are pre-authorized via HMAC
     if not ctx.user.embed:
-        has_access = await _check_form_access(db, form, ctx.user.user_id, ctx.org_id, ctx.user.is_superuser)
+        has_access = await _check_form_access(
+            db, form, ctx.user.user_id, ctx.org_id, ctx.user.is_superuser
+        )
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -972,7 +1006,11 @@ async def execute_startup_workflow(
 
     # Merge: defaults < verified HMAC params < user input
     verified_params = ctx.user.verified_params or {}
-    merged_params = {**(form.default_launch_params or {}), **verified_params, **input_data}
+    merged_params = {
+        **(form.default_launch_params or {}),
+        **verified_params,
+        **input_data,
+    }
 
     # Create organization object if org_id is set
     org = None
@@ -1000,18 +1038,24 @@ async def execute_startup_workflow(
             form_id=str(form.id),
         )
 
-        logger.info(f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}")
+        logger.info(
+            f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}"
+        )
 
         return FormStartupResponse(result=response.result)
 
     except WorkflowNotFoundError as e:
-        logger.error(f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        logger.error(
+            f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}"
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     except WorkflowLoadError as e:
-        logger.error(f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
+        logger.error(
+            f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load launch workflow: {str(e)}",
@@ -1019,7 +1063,10 @@ async def execute_startup_workflow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error executing launch workflow for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Error executing launch workflow for form {log_safe(form_id)}: {log_safe(e)}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute launch workflow",
@@ -1039,9 +1086,9 @@ def _sanitize_filename(filename: str) -> str:
     Preserves the file extension.
     """
     # Remove path separators and null bytes
-    sanitized = re.sub(r'[/\\:\x00]', '', filename)
+    sanitized = re.sub(r"[/\\:\x00]", "", filename)
     # Remove leading/trailing whitespace and dots (to prevent hidden files)
-    sanitized = sanitized.strip('. ')
+    sanitized = sanitized.strip(". ")
     # If nothing left, use a default name
     if not sanitized:
         sanitized = "unnamed_file"
@@ -1135,7 +1182,9 @@ async def generate_upload_url(
 
     # Check access — embed users are pre-authorized via HMAC
     if not ctx.user.embed:
-        has_access = await _check_form_access(db, form, ctx.user.user_id, ctx.org_id, ctx.user.is_superuser)
+        has_access = await _check_form_access(
+            db, form, ctx.user.user_id, ctx.org_id, ctx.user.is_superuser
+        )
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -1144,14 +1193,13 @@ async def generate_upload_url(
 
     # Server-side validation of file constraints if field_name provided
     if request.field_name:
-        field = next(
-            (f for f in form.fields if f.name == request.field_name),
-            None
-        )
+        field = next((f for f in form.fields if f.name == request.field_name), None)
         if field:
             # Validate file type
             if field.allowed_types:
-                if not _check_mime_type_allowed(request.content_type, field.allowed_types):
+                if not _check_mime_type_allowed(
+                    request.content_type, field.allowed_types
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"File type '{request.content_type}' not allowed. Allowed: {', '.join(field.allowed_types)}",
@@ -1171,6 +1219,7 @@ async def generate_upload_url(
     # caller's effective org (matches what the workflow's SDK will resolve to
     # when it reads the file with `location="uploads"` and no explicit scope).
     from shared.file_paths import resolve_s3_key
+
     file_uuid = str(uuid4())
     sanitized_name = _sanitize_filename(request.file_name)
     relative_path = f"{form_id}/{file_uuid}/{sanitized_name}"
@@ -1188,7 +1237,10 @@ async def generate_upload_url(
             expires_in=600,  # 10 minutes
         )
     except Exception as e:
-        logger.error(f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate upload URL",
@@ -1199,6 +1251,7 @@ async def generate_upload_url(
 
     return FileUploadResponse(
         upload_url=upload_url,
+        upload_headers=storage.presigned_upload_headers(request.content_type),
         blob_uri=relative_path,
         expires_at=expires_at,
         file_metadata=UploadedFileMetadata(
