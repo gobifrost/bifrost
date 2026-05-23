@@ -70,6 +70,36 @@ class TestEnvBackend:
         assert os.environ.get("BIFROST_ACCESS_TOKEN") in (None, "")  # didn't pollute env
 
 
+class TestDotenvAllowlist:
+    def test_load_allowed_dotenv_only_imports_api_url(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "\n".join(
+                [
+                    "BIFROST_API_URL=https://from-dotenv.example",
+                    "BIFROST_ACCESS_TOKEN=secret-access",
+                    "BIFROST_REFRESH_TOKEN=secret-refresh",
+                    "HTTPS_PROXY=http://proxy.example",
+                    "SSL_CERT_FILE=C:/tmp/ca.pem",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("BIFROST_API_URL", raising=False)
+        monkeypatch.delenv("BIFROST_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+
+        creds_mod.load_allowed_dotenv(env_file)
+
+        assert os.environ["BIFROST_API_URL"] == "https://from-dotenv.example"
+        assert "BIFROST_ACCESS_TOKEN" not in os.environ
+        assert "BIFROST_REFRESH_TOKEN" not in os.environ
+        assert "HTTPS_PROXY" not in os.environ
+        assert "SSL_CERT_FILE" not in os.environ
+
+
 # ---------- JsonBackend (multi-record) ----------
 
 class TestJsonBackendMultiRecord:

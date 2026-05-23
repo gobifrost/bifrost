@@ -34,6 +34,46 @@ _DEFAULT_REPO = "jackmusick/bifrost"
 _DEFAULT_REF = "main"
 
 
+def _is_unsafe_path_part(value: str) -> bool:
+    return (
+        not value
+        or value in {".", ".."}
+        or "\\" in value
+        or PurePosixPath(value).is_absolute()
+        or Path(value).drive != ""
+    )
+
+
+def _validate_skill_name(name: str) -> str:
+    """Return a safe single-directory skill name."""
+    if _is_unsafe_path_part(name) or "/" in name:
+        raise ValueError(f"unsafe skill name in tarball: {name!r}")
+    return name
+
+
+def _validate_skill_relpath(relpath: str) -> str:
+    """Return a normalized safe path under ``.claude/skills/``."""
+    if "\\" in relpath or PurePosixPath(relpath).is_absolute() or Path(relpath).drive:
+        raise ValueError(f"unsafe skill path in tarball: {relpath!r}")
+    parts = PurePosixPath(relpath).parts
+    if not parts or any(_is_unsafe_path_part(part) for part in parts):
+        raise ValueError(f"unsafe skill path in tarball: {relpath!r}")
+    return PurePosixPath(*parts).as_posix()
+
+
+def _safe_skill_target(root: Path, skill_name: str) -> Path:
+    """Build a skill target path and prove it stays below ``root``."""
+    safe_name = _validate_skill_name(skill_name)
+    target = root / safe_name
+    if target.exists() and target.is_symlink():
+        raise ValueError(f"refusing to replace symlinked skill directory: {target}")
+    root_resolved = root.resolve(strict=False)
+    target_resolved = target.resolve(strict=False)
+    if target_resolved != root_resolved and root_resolved not in target_resolved.parents:
+        raise ValueError(f"unsafe skill install target: {skill_name!r}")
+    return target
+
+
 def _print_help() -> None:
     print("""
 Usage: bifrost skill <subcommand> [options]
@@ -171,7 +211,7 @@ def _handle_update(args: list[str]) -> int:
         print(f"Error fetching tarball: {exc}", file=sys.stderr)
         return 1
 
-    targets = sorted({path.split("/", 1)[0] for path in skill_files})
+    targets = sorted({_validate_skill_name(path.split("/", 1)[0]) for path in skill_files})
     if not targets:
         print(
             f"No .claude/skills/ entries found in {repo}@{ref}.", file=sys.stderr
@@ -179,8 +219,12 @@ def _handle_update(args: list[str]) -> int:
         return 1
 
     for skill_name in targets:
-        claude_target = claude_dir / skill_name
-        agents_target = agents_dir / skill_name
+        try:
+            claude_target = _safe_skill_target(claude_dir, skill_name)
+            agents_target = _safe_skill_target(agents_dir, skill_name)
+        except ValueError as exc:
+            print(f"Error installing skills: {exc}", file=sys.stderr)
+            return 1
         files_for_skill = {
             relpath: contents
             for relpath, contents in skill_files.items()
@@ -214,10 +258,10 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
     """
     url = f"https://codeload.github.com/{repo}/tar.gz/refs/heads/{ref}"
     # Try the branch URL first, fall back to tag URL on 404.
-    response = httpx.get(url, timeout=60.0, follow_redirects=True)
+    response = httpx.get(url, timeout=60.0, follow_redirects=True, trust_env=False)
     if response.status_code == 404:
         url = f"https://codeload.github.com/{repo}/tar.gz/refs/tags/{ref}"
-        response = httpx.get(url, timeout=60.0, follow_redirects=True)
+        response = httpx.get(url, timeout=60.0, follow_redirects=True, trust_env=False)
     response.raise_for_status()
 
     public_skills: set[str] = set()
@@ -238,8 +282,12 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
             name = inner[len("skills/"):].rstrip("/")
             if not name or "/" in name:
                 continue
+            _validate_skill_name(name)
             if member.issym() or member.islnk():
-                target_name = PurePosixPath(member.linkname).name
+                try:
+                    target_name = _validate_skill_name(PurePosixPath(member.linkname).name)
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from exc
                 public_skills.add(target_name or name)
 
         if not public_skills:
@@ -262,7 +310,8 @@ def _fetch_skill_files(repo: str, ref: str) -> dict[str, bytes]:
             relpath = inner[len(prefix):]
             if not relpath:
                 continue
-            skill_name = relpath.split("/", 1)[0]
+            relpath = _validate_skill_relpath(relpath)
+            skill_name = _validate_skill_name(relpath.split("/", 1)[0])
             if skill_name not in public_skills:
                 continue
             extracted = tar.extractfile(member)
@@ -287,8 +336,12 @@ def _write_skill(target_root: Path, skill_name: str, files: dict[str, bytes]) ->
             continue
         if not relpath.startswith(prefix):
             continue
-        sub = relpath[len(prefix):]
+        sub = _validate_skill_relpath(relpath[len(prefix):])
         out_path = target_root / sub
+        target_resolved = target_root.resolve(strict=False)
+        out_resolved = out_path.resolve(strict=False)
+        if target_resolved != out_resolved and target_resolved not in out_resolved.parents:
+            raise ValueError(f"unsafe skill output path: {relpath!r}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(contents)
 

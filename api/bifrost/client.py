@@ -24,6 +24,7 @@ from .credentials import (
     clear_credentials,
     get_credentials,
     is_token_expired,
+    load_allowed_dotenv,
     save_credentials,
 )
 
@@ -123,16 +124,11 @@ def raise_for_status_with_detail(response: httpx.Response) -> None:
 # and httpx.AsyncClient is bound to the event loop that created it.
 _thread_local = threading.local()
 
-# Auto-load .env file if present (for local development).
+# Auto-load only the CLI-safe .env allowlist if present (for local development).
 # Walk upward from cwd, not from this file. With pipx-installed CLIs, __file__
 # lives in the pipx venv and the default upward walk never reaches the user's
 # workspace, so a .env in the project root is silently ignored.
-try:
-    from dotenv import find_dotenv, load_dotenv
-
-    load_dotenv(find_dotenv(usecwd=True))
-except ImportError:
-    pass  # dotenv not installed, rely on environment variables
+load_allowed_dotenv()
 
 
 async def refresh_tokens() -> bool:
@@ -153,7 +149,9 @@ async def refresh_tokens() -> bool:
     refresh_token = creds["refresh_token"]
 
     try:
-        async with httpx.AsyncClient(base_url=api_url, timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            base_url=api_url, timeout=30.0, trust_env=False
+        ) as client:
             response = await client.post(
                 "/auth/refresh",
                 json={"refresh_token": refresh_token}
@@ -204,7 +202,9 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
     api_url = api_url.rstrip("/")
 
     try:
-        async with httpx.AsyncClient(base_url=api_url, timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            base_url=api_url, timeout=30.0, trust_env=False
+        ) as client:
             # Step 1: Request device code
             response = await client.post("/auth/device/code")
             if response.status_code != 200:
@@ -346,6 +346,7 @@ class BifrostClient:
             base_url=self.api_url,
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=30.0,
+            trust_env=False,
         )
         self._context: dict[str, Any] | None = None
 
@@ -374,6 +375,7 @@ class BifrostClient:
                 base_url=self.api_url,
                 headers={"Authorization": f"Bearer {self._access_token}"},
                 timeout=30.0,
+                trust_env=False,
             )
             self._http_loop = current_loop
 

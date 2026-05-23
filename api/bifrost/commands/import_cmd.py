@@ -47,10 +47,14 @@ def _validate_bundle_dir(bundle_dir: pathlib.Path) -> pathlib.Path:
     """
     if not bundle_dir.exists():
         raise click.ClickException(f"bundle directory does not exist: {bundle_dir}")
+    if bundle_dir.is_symlink():
+        raise click.ClickException(f"bundle directory must not be a symlink: {bundle_dir}")
     if not bundle_dir.is_dir():
         raise click.ClickException(f"bundle path is not a directory: {bundle_dir}")
 
     bifrost_dir = bundle_dir / ".bifrost"
+    if bifrost_dir.is_symlink():
+        raise click.ClickException(f"bundle .bifrost/ must not be a symlink: {bifrost_dir}")
     if not bifrost_dir.is_dir():
         raise click.ClickException(
             f"bundle directory missing .bifrost/ subdirectory: {bundle_dir}"
@@ -119,6 +123,8 @@ def _read_manifest_files(
     """
     out: dict[str, str] = {}
     for yaml_path in sorted(bifrost_dir.glob("*.yaml")):
+        if yaml_path.is_symlink():
+            raise click.ClickException(f"bundle manifest file must not be a symlink: {yaml_path}")
         if drop_cross_env_seeds and yaml_path.name in _CROSS_ENV_DROPPED_FILES:
             continue
         raw = yaml_path.read_bytes()
@@ -138,9 +144,13 @@ def _collect_code_files(bundle_dir: pathlib.Path) -> dict[str, str]:
     skip_parts = {"__pycache__", "node_modules", ".venv", ".git"}
     for top in _CODE_DIRS:
         root = bundle_dir / top
+        if root.is_symlink():
+            raise click.ClickException(f"bundle code directory must not be a symlink: {root}")
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                raise click.ClickException(f"bundle code path must not be a symlink: {path}")
             if path.is_dir():
                 continue
             if any(part in skip_parts for part in path.parts):

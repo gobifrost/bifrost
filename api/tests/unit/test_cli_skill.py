@@ -270,6 +270,76 @@ class TestSkillUpdate:
         err = capsys.readouterr().err
         assert "No public skills" in err
 
+    def test_rejects_tarball_skill_path_traversal(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        stub_github["install"](
+            {
+                ".claude/skills/foo/../evil/SKILL.md": b"evil\n",
+            },
+        )
+        stub_github["public_skills"] = ["foo"]  # type: ignore[index]
+
+        rc = skill_module.handle_skill(["update"])
+
+        assert rc == 1
+        assert "unsafe skill path" in capsys.readouterr().err
+        assert not (workspace / ".claude/skills/evil").exists()
+        assert not (workspace / ".agents/skills/evil").exists()
+
+    def test_rejects_tarball_backslash_skill_path(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        stub_github["install"](
+            {
+                ".claude/skills/foo\\evil/SKILL.md": b"evil\n",
+            },
+        )
+        stub_github["public_skills"] = ["foo"]  # type: ignore[index]
+
+        rc = skill_module.handle_skill(["update"])
+
+        assert rc == 1
+        assert "unsafe skill path" in capsys.readouterr().err
+        assert not (workspace / ".claude/skills/foo\\evil").exists()
+        assert not (workspace / ".agents/skills/foo\\evil").exists()
+
+    def test_rejects_existing_symlink_skill_target_before_delete(
+        self,
+        workspace: Path,
+        stub_github,
+        capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outside = workspace / "outside"
+        outside.mkdir()
+        target = workspace / ".claude/skills/foo"
+        target.mkdir(parents=True)
+        original_is_symlink = Path.is_symlink
+
+        def fake_is_symlink(path: Path) -> bool:
+            return path == target or original_is_symlink(path)
+
+        monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+        stub_github["install"](
+            {
+                ".claude/skills/foo/SKILL.md": b"safe\n",
+            },
+        )
+
+        rc = skill_module.handle_skill(["update"])
+
+        assert rc == 1
+        assert "refusing to replace symlinked skill directory" in capsys.readouterr().err
+        assert target.exists()
+        assert outside.is_dir()
+
 
 class TestSkillList:
     def test_list_finds_skills_in_both_dirs(

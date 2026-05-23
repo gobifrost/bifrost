@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from unittest.mock import patch
 
 import httpx
@@ -35,7 +36,7 @@ def _isolate_version_check_state():
       which downstream credentials tests rely on being unset.
     * ``BIFROST_API_URL`` written to ``os.environ`` by ``python-dotenv`` in
       the dotenv-resolution test — monkeypatch doesn't track it because
-      load_dotenv writes to os.environ directly. Subsequent SDK credentials
+      the allowlisted dotenv loader writes to os.environ directly. Subsequent SDK credentials
       tests assume the env var is unset and resolve via the JSON store.
     """
     import os
@@ -300,12 +301,16 @@ class TestUrlResolution:
         """A project ``.env`` containing BIFROST_API_URL is honored.
 
         ``_check_cli_version`` runs before the rest of the CLI imports
-        ``bifrost.client`` (which is where dotenv is normally loaded). The
-        check must load dotenv itself so a CWD-local ``.env`` resolves the
-        URL just like the rest of the CLI would.
+        ``bifrost.client`` (which is where the dotenv allowlist is normally
+        loaded). The check must load the allowlist itself so a CWD-local
+        ``.env`` resolves the URL just like the rest of the CLI would.
         """
         env_file = tmp_path / ".env"
-        env_file.write_text("BIFROST_API_URL=https://from-dotenv.example\n")
+        env_file.write_text(
+            "BIFROST_API_URL=https://from-dotenv.example\n"
+            "BIFROST_ACCESS_TOKEN=from-dotenv-token\n"
+            "HTTPS_PROXY=http://proxy.example\n"
+        )
 
         monkeypatch.chdir(tmp_path)
         # Make sure the env var isn't already set in the test process so we
@@ -332,6 +337,9 @@ class TestUrlResolution:
         assert urlopen.called, "httpx.get never called — dotenv URL not resolved"
         url = urlopen.call_args[0][0]
         assert url == "https://from-dotenv.example/api/version"
+        assert urlopen.call_args.kwargs["trust_env"] is False
+        assert "BIFROST_ACCESS_TOKEN" not in os.environ
+        assert "HTTPS_PROXY" not in os.environ
 
     def test_cwd_dotenv_overrides_stale_env_url(self, monkeypatch, tmp_path):
         """The current project's ``.env`` wins over a stale inherited URL."""
@@ -357,6 +365,7 @@ class TestUrlResolution:
 
         url = urlopen.call_args[0][0]
         assert url == "https://from-current-dotenv.example/api/version"
+        assert urlopen.call_args.kwargs["trust_env"] is False
 
 
 class TestTransport:

@@ -149,16 +149,9 @@ def _check_cli_version() -> None:
         if installed in ("unknown", "0.0.0+source"):
             return  # dev/source install — nothing to compare against
 
-        # Re-load dotenv so a CWD-local .env's BIFROST_API_URL is honored even
-        # if bifrost.client's import-time load happened against a different cwd.
-        try:
-            from dotenv import find_dotenv, load_dotenv
-
-            dotenv_path = find_dotenv(usecwd=True)
-            if dotenv_path:
-                load_dotenv(dotenv_path, override=True)
-        except ImportError:
-            pass  # python-dotenv is optional; without it, only os.environ is consulted
+        # Re-load only the safe CWD-local .env allowlist so BIFROST_API_URL is
+        # honored even if bifrost.client imported against a different cwd.
+        credentials.load_allowed_dotenv()
 
         # Use credentials._resolve_url (not get_credentials) because the version
         # check only needs the URL — get_credentials returns None unless full
@@ -172,7 +165,7 @@ def _check_cli_version() -> None:
         # bifrost.gocovi.com being the live case) 403 the default
         # `Python-urllib/X.Y` User-Agent. httpx's default UA gets through
         # and matches what every other SDK request already sends.
-        resp = httpx.get(f"{api_url}/api/version", timeout=3)
+        resp = httpx.get(f"{api_url}/api/version", timeout=3, trust_env=False)
         resp.raise_for_status()
         data = resp.json()
 

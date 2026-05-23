@@ -124,12 +124,14 @@ class TestClientInjection:
             # Sync HTTP client should be initialized eagerly
             assert client._sync_http is not None
             assert client._sync_http.headers["Authorization"] == "Bearer token_abc123"
+            assert getattr(client._sync_http, "_trust_env") is False
 
             # Async HTTP client is now lazily initialized per event loop
             # Call _get_async_client() to create it
             http = client._get_async_client()
             assert http is not None
             assert http.headers["Authorization"] == "Bearer token_abc123"
+            assert getattr(http, "_trust_env") is False
         finally:
             # Clean up async client (don't use asyncio.run to avoid nested event loop)
             pass
