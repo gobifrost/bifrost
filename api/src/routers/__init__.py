@@ -23,6 +23,7 @@ from src.routers.github import router as github_router
 from src.routers.oauth_connections import router as oauth_connections_router
 from src.routers.endpoints import router as endpoints_router
 from src.routers.cli import router as cli_router
+from src.routers.codex_gateway import router as codex_gateway_router
 from src.routers.notifications import router as notifications_router
 from src.routers.profile import router as profile_router
 from src.routers.agents import router as agents_router
@@ -94,6 +95,7 @@ __all__ = [
     "oauth_connections_router",
     "endpoints_router",
     "cli_router",
+    "codex_gateway_router",
     "notifications_router",
     "profile_router",
     "agents_router",
