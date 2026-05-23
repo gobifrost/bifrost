@@ -9,6 +9,8 @@ from src.services.codex_gateway.runtime import (
     CodexGatewayResponse,
 )
 
+VALID_GATEWAY_KEY = f"bfck_{'a' * 43}"
+
 
 class FakeRuntime:
     def __init__(self):
@@ -32,14 +34,14 @@ def test_v1_responses_uses_openai_compatible_bearer_key():
 
     response = client.post(
         "/v1/responses",
-        headers={"Authorization": "Bearer bfck_route_test"},
+        headers={"Authorization": f"Bearer {VALID_GATEWAY_KEY}"},
         json={"model": "gpt-5.1-codex", "input": "do not log me"},
     )
 
     assert response.status_code == 200
     assert response.json()["id"] == "resp_route_test"
     [runtime_call] = runtime.calls
-    assert runtime_call["gateway_key"] == "bfck_route_test"
+    assert runtime_call["gateway_key"] == VALID_GATEWAY_KEY
     assert runtime_call["payload"] == {
         "model": "gpt-5.1-codex",
         "input": "do not log me",
@@ -55,7 +57,7 @@ def test_v1_responses_rejects_non_object_payload_before_runtime():
 
     response = client.post(
         "/v1/responses",
-        headers={"Authorization": "Bearer bfck_route_test"},
+        headers={"Authorization": f"Bearer {VALID_GATEWAY_KEY}"},
         json=["not", "an", "object"],
     )
 
@@ -72,14 +74,49 @@ def test_v1_responses_uses_fallback_gateway_key_header():
 
     response = client.post(
         "/v1/responses",
-        headers={CODEX_GATEWAY_KEY_HEADER: "bfck_fallback_test"},
+        headers={CODEX_GATEWAY_KEY_HEADER: VALID_GATEWAY_KEY},
         json={"model": "gpt-5.1-codex", "input": "fallback header"},
     )
 
     assert response.status_code == 200
     [runtime_call] = runtime.calls
-    assert runtime_call["gateway_key"] == "bfck_fallback_test"
+    assert runtime_call["gateway_key"] == VALID_GATEWAY_KEY
     assert runtime_call["payload"] == {
         "model": "gpt-5.1-codex",
         "input": "fallback header",
     }
+
+
+def test_v1_responses_rejects_missing_gateway_key_before_runtime():
+    app = FastAPI()
+    app.include_router(router)
+    runtime = FakeRuntime()
+    app.dependency_overrides[get_codex_gateway_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        json={"model": "gpt-5.1-codex", "input": "missing key"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_gateway_key"
+    assert runtime.calls == []
+
+
+def test_v1_responses_rejects_malformed_gateway_key_before_runtime():
+    app = FastAPI()
+    app.include_router(router)
+    runtime = FakeRuntime()
+    app.dependency_overrides[get_codex_gateway_runtime] = lambda: runtime
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer not-a-bifrost-key"},
+        json={"model": "gpt-5.1-codex", "input": "bad key"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_gateway_key"
+    assert runtime.calls == []

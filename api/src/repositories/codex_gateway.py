@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import secrets
-from typing import Any
+from typing import Any, TypeGuard
 from uuid import UUID
 
 from sqlalchemy import select
@@ -24,6 +24,23 @@ SENSITIVE_METADATA_KEYS = {
     "prompt",
     "response",
 }
+
+CODEX_GATEWAY_KEY_PREFIX = "bfck_"
+CODEX_GATEWAY_KEY_MIN_LENGTH = len(CODEX_GATEWAY_KEY_PREFIX) + 32
+CODEX_GATEWAY_KEY_MAX_LENGTH = 256
+CODEX_GATEWAY_KEY_BODY_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+)
+
+
+def is_plausible_gateway_key(value: str | None) -> TypeGuard[str]:
+    """Return whether a presented gateway key can match generated key material."""
+    if value is None or not value.startswith(CODEX_GATEWAY_KEY_PREFIX):
+        return False
+    if not (CODEX_GATEWAY_KEY_MIN_LENGTH <= len(value) <= CODEX_GATEWAY_KEY_MAX_LENGTH):
+        return False
+    body = value[len(CODEX_GATEWAY_KEY_PREFIX) :]
+    return bool(body) and all(char in CODEX_GATEWAY_KEY_BODY_CHARS for char in body)
 
 
 @dataclass(frozen=True)
@@ -88,6 +105,9 @@ class CodexGatewayRepository:
     async def get_active_gateway_key_by_plaintext(
         self, plaintext_key: str
     ) -> CodexGatewayKey | None:
+        if not is_plausible_gateway_key(plaintext_key):
+            return None
+
         result = await self.session.execute(
             select(CodexGatewayKey)
             .where(CodexGatewayKey.status == "active")
