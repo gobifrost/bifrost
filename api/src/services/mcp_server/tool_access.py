@@ -96,6 +96,7 @@ class MCPToolAccessService:
         accessible_agents = await self._get_accessible_agents(
             user_roles=user_roles,
             is_superuser=is_superuser,
+            user_id=user_id,
             org_id=org_id,
         )
 
@@ -204,7 +205,7 @@ class MCPToolAccessService:
             logger.warning(f"User denied org-scoped access to agent {agent_id}")
             return None
 
-        if not self._check_agent_access(agent, user_roles, is_superuser):
+        if not self._check_agent_access(agent, user_roles, is_superuser, user_id=user_id):
             logger.warning(f"User denied access to agent {agent_id}")
             return None
 
@@ -343,6 +344,7 @@ class MCPToolAccessService:
         agent: Agent,
         user_roles: list[str],
         is_superuser: bool,
+        user_id: UUID | str | None = None,
     ) -> bool:
         """Check if user has access to a specific agent (same rules as _get_accessible_agents)."""
         if agent.access_level == AgentAccessLevel.AUTHENTICATED:
@@ -354,12 +356,19 @@ class MCPToolAccessService:
                 return is_superuser
             return is_superuser or bool(set(user_roles) & agent_role_names)
 
+        if agent.access_level == AgentAccessLevel.PRIVATE:
+            owner_id = getattr(agent, "owner_user_id", None)
+            if is_superuser:
+                return True
+            return owner_id is not None and user_id is not None and str(owner_id) == str(user_id)
+
         return False
 
     async def _get_accessible_agents(
         self,
         user_roles: list[str],
         is_superuser: bool,
+        user_id: UUID | str | None = None,
         org_id: UUID | str | None = None,
     ) -> list[Agent]:
         """
@@ -400,18 +409,8 @@ class MCPToolAccessService:
                 # Any authenticated user can access
                 accessible_agents.append(agent)
 
-            elif agent.access_level == AgentAccessLevel.ROLE_BASED:
-                # Get role names from agent's roles
-                agent_role_names = {role.name for role in agent.roles}
-
-                if not agent_role_names:
-                    # ROLE_BASED with no roles = only superusers can access
-                    if is_superuser:
-                        accessible_agents.append(agent)
-                elif is_superuser or (user_role_set & agent_role_names):
-                    # User has at least one matching role, or is a platform
-                    # admin (superuser bypass — issue #244)
-                    accessible_agents.append(agent)
+            elif self._check_agent_access(agent, list(user_role_set), is_superuser, user_id=user_id):
+                accessible_agents.append(agent)
 
             # Note: PUBLIC agents are not included for MCP access
             # as MCP requires authentication

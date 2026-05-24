@@ -56,6 +56,7 @@ async def _validate_agent_references(
     tool_ids: list[str] | None,
     delegated_agent_ids: list[str] | None,
     agent_id: UUID | None = None,  # For self-delegation check
+    target_org_id: UUID | None = None,
 ) -> None:
     """
     Validate that all referenced tools and agents exist and are valid.
@@ -88,6 +89,8 @@ async def _validate_agent_references(
                     errors.append(
                         f"tool_id '{tool_id}' references a {workflow.type}, not a tool"
                     )
+                elif workflow.organization_id is not None and workflow.organization_id != target_org_id:
+                    errors.append(f"tool_id '{tool_id}' belongs to a different organization")
             except ValueError:
                 errors.append(f"tool_id '{tool_id}' is not a valid UUID")
 
@@ -110,6 +113,8 @@ async def _validate_agent_references(
                     errors.append(f"delegated_agent_id '{delegate_id}' does not reference an existing agent")
                 elif not delegate.is_active:
                     errors.append(f"delegated_agent_id '{delegate_id}' references an inactive agent")
+                elif delegate.organization_id is not None and delegate.organization_id != target_org_id:
+                    errors.append(f"delegated_agent_id '{delegate_id}' belongs to a different organization")
             except ValueError:
                 errors.append(f"delegated_agent_id '{delegate_id}' is not a valid UUID")
 
@@ -340,6 +345,7 @@ async def create_agent(
         tool_ids=agent_data.tool_ids,
         delegated_agent_ids=agent_data.delegated_agent_ids,
         agent_id=None,
+        target_org_id=agent_data.organization_id,
     )
 
     agent_id = uuid4()
@@ -649,6 +655,7 @@ async def update_agent(
         tool_ids=agent_data.tool_ids,
         delegated_agent_ids=agent_data.delegated_agent_ids,
         agent_id=agent_id,  # For self-delegation check
+        target_org_id=agent_data.organization_id if "organization_id" in agent_data.model_fields_set else agent.organization_id,
     )
 
     # Update fields
@@ -859,6 +866,8 @@ async def promote_agent(
     if not is_admin:
         if agent.owner_user_id != user.user_id:
             raise HTTPException(403, "You can only promote your own agents")
+        if agent.organization_id != user.organization_id:
+            raise HTTPException(403, "You can only promote agents in your own organization")
         if not await _user_has_permission(db, user.user_id, "can_promote_agent"):
             raise HTTPException(403, "You do not have permission to promote agents")
 

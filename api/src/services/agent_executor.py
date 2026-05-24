@@ -1191,7 +1191,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         # Check if this is a delegation tool call
         if tool_call.name.startswith("delegate_to_") and agent:
-            return await self._execute_delegation(tool_call, agent)
+            return await self._execute_delegation(tool_call, agent, conversation)
 
         # Check if this is a system tool call
         if agent and tool_call.name in (agent.system_tools or []):
@@ -1551,6 +1551,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         self,
         tool_call: ToolCallRequest,
         agent: Agent,
+        conversation: Conversation | None = None,
     ) -> ToolResult:
         """Execute a delegation to another agent via AutonomousAgentExecutor."""
         start_time = time.time()
@@ -1594,11 +1595,23 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             redis_client = await get_shared_redis()
             sub_executor = AutonomousAgentExecutor(self._session_factory, redis_client=redis_client)
             try:
+                user = conversation.user if conversation else None
+                caller = None
+                if user is not None:
+                    caller = {
+                        "user_id": str(user.id),
+                        "email": user.email,
+                        "name": user.name,
+                        "is_platform_admin": bool(user.is_superuser),
+                    }
+                run_kwargs: dict[str, Any] = {
+                    "agent": delegated_agent,
+                    "input_data": {"task": task, "_delegated_from": agent.name},
+                }
+                if caller is not None:
+                    run_kwargs["_caller"] = caller
                 sub_result = await asyncio.wait_for(
-                    sub_executor.run(
-                        agent=delegated_agent,
-                        input_data={"task": task, "_delegated_from": agent.name},
-                    ),
+                    sub_executor.run(**run_kwargs),
                     timeout=DELEGATION_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:

@@ -53,6 +53,11 @@ def _ensure_can_manage_agent_privileges(
     return None
 
 
+def _reference_in_agent_scope(reference_org_id: Any, agent_org_id: UUID | None) -> bool:
+    """Return whether a referenced tool/agent may be linked to this agent."""
+    return reference_org_id is None or reference_org_id == agent_org_id
+
+
 # ==================== SCHEMA TOOL ====================
 
 
@@ -397,8 +402,11 @@ async def create_agent(
                         )
                         workflow = result.scalar_one_or_none()
                         if workflow:
+                            if not _reference_in_agent_scope(workflow.organization_id, effective_org_id):
+                                return error_result(
+                                    f"Tool workflow '{tool_id}' belongs to a different organization."
+                            )
                             tools.append(workflow)
-                            db.add(AgentTool(agent_id=agent_id, workflow_id=workflow.id))
                         else:
                             logger.warning(f"Tool workflow not found or inactive: {tool_id}")
                     except ValueError:
@@ -420,15 +428,23 @@ async def create_agent(
                         )
                         delegate = result.scalar_one_or_none()
                         if delegate:
+                            if not _reference_in_agent_scope(delegate.organization_id, effective_org_id):
+                                return error_result(
+                                    f"Delegated agent '{delegate_id}' belongs to a different organization."
+                            )
                             delegated_agents.append(delegate)
-                            db.add(AgentDelegation(
-                                parent_agent_id=agent_id,
-                                child_agent_id=delegate.id,
-                            ))
                         else:
                             logger.warning(f"Delegate agent not found or inactive: {delegate_id}")
                     except ValueError:
                         logger.warning(f"Invalid delegate agent ID: {delegate_id}")
+
+            for workflow in tools:
+                db.add(AgentTool(agent_id=agent_id, workflow_id=workflow.id))
+            for delegate in delegated_agents:
+                db.add(AgentDelegation(
+                    parent_agent_id=agent_id,
+                    child_agent_id=delegate.id,
+                ))
 
             await db.flush()
 
@@ -603,9 +619,6 @@ async def update_agent(
             # Update tool relationships if provided
             tools: list[Workflow] = []
             if tool_ids is not None:
-                await db.execute(
-                    delete(AgentTool).where(AgentTool.agent_id == uuid_id)
-                )
                 for tool_id in tool_ids:
                     try:
                         workflow_uuid = UUID(tool_id)
@@ -617,18 +630,23 @@ async def update_agent(
                         )
                         workflow = result.scalar_one_or_none()
                         if workflow:
+                            if not _reference_in_agent_scope(workflow.organization_id, agent.organization_id):
+                                return error_result(
+                                    f"Tool workflow '{tool_id}' belongs to a different organization."
+                            )
                             tools.append(workflow)
-                            db.add(AgentTool(agent_id=uuid_id, workflow_id=workflow.id))
                     except ValueError:
                         logger.warning(f"Invalid tool ID: {tool_id}")
+                await db.execute(
+                    delete(AgentTool).where(AgentTool.agent_id == uuid_id)
+                )
+                for workflow in tools:
+                    db.add(AgentTool(agent_id=uuid_id, workflow_id=workflow.id))
                 updates_made.append("tool_ids")
 
             # Update delegation relationships if provided
             delegated_agents: list[Agent] = []
             if delegated_agent_ids is not None:
-                await db.execute(
-                    delete(AgentDelegation).where(AgentDelegation.parent_agent_id == uuid_id)
-                )
                 for delegate_id in delegated_agent_ids:
                     try:
                         delegate_uuid = UUID(delegate_id)
@@ -642,13 +660,21 @@ async def update_agent(
                         )
                         delegate = result.scalar_one_or_none()
                         if delegate:
+                            if not _reference_in_agent_scope(delegate.organization_id, agent.organization_id):
+                                return error_result(
+                                    f"Delegated agent '{delegate_id}' belongs to a different organization."
+                            )
                             delegated_agents.append(delegate)
-                            db.add(AgentDelegation(
-                                parent_agent_id=uuid_id,
-                                child_agent_id=delegate.id,
-                            ))
                     except ValueError:
                         logger.warning(f"Invalid delegate agent ID: {delegate_id}")
+                await db.execute(
+                    delete(AgentDelegation).where(AgentDelegation.parent_agent_id == uuid_id)
+                )
+                for delegate in delegated_agents:
+                    db.add(AgentDelegation(
+                        parent_agent_id=uuid_id,
+                        child_agent_id=delegate.id,
+                    ))
                 updates_made.append("delegated_agent_ids")
 
             if not updates_made:

@@ -33,6 +33,7 @@ def make_user(
     user.email = email
     user.organization_id = organization_id or uuid4()
     user.is_superuser = is_superuser
+    user.is_platform_admin = is_superuser
     user.roles = roles or []
     return user
 
@@ -265,3 +266,46 @@ class TestPromoteAgentPermission:
 
         result = await _user_has_permission(mock_session, user_id, "can_promote_agent")
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_promote_agent_outside_own_org(self):
+        """A promote-capable user cannot promote a private agent in another tenant."""
+        from fastapi import HTTPException
+        from src.models.contracts.agents import AgentPromoteRequest
+        from src.routers.agents import promote_agent
+
+        user_id = uuid4()
+        user_org_id = uuid4()
+        foreign_org_id = uuid4()
+        agent = make_agent(
+            owner_user_id=user_id,
+            access_level=AgentAccessLevel.PRIVATE,
+            organization_id=foreign_org_id,
+        )
+        user = make_user(user_id=user_id, organization_id=user_org_id)
+
+        agent_lookup = MagicMock()
+        agent_lookup.scalar_one_or_none.return_value = agent
+        permission_lookup = MagicMock()
+        permission_lookup.scalars.return_value.all.return_value = [
+            {"can_promote_agent": True}
+        ]
+        reload_lookup = MagicMock()
+        reload_lookup.scalar_one.return_value = agent
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(
+            side_effect=[agent_lookup, permission_lookup, reload_lookup]
+        )
+        mock_session.flush = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc:
+            await promote_agent(
+                agent.id,
+                AgentPromoteRequest(access_level=AgentAccessLevel.AUTHENTICATED),
+                mock_session,
+                user,
+            )
+
+        assert exc.value.status_code == 403
+        assert "own organization" in exc.value.detail

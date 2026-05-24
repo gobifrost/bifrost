@@ -310,6 +310,9 @@ async def register_workflow(context: Any, path: str, function_name: str, organiz
     Takes a file path and function name, validates the function has a
     @workflow/@tool/@data_provider decorator, and registers it in the system.
     """
+    if not getattr(context, "is_platform_admin", False):
+        return error_result("Only platform admins can register workflows via MCP.")
+
     import ast
     from uuid import UUID, uuid4
 

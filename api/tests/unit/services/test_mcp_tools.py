@@ -1237,6 +1237,20 @@ class TestRegisterWorkflow:
     """Tests for the register_workflow MCP tool."""
 
     @pytest.mark.asyncio
+    async def test_non_admin_cannot_register_workflow(self, org_user_context):
+        """register_workflow cannot bypass platform-admin REST authorization."""
+        from src.services.mcp_server.tools.workflow import register_workflow
+
+        result = await register_workflow(
+            org_user_context,
+            "workflows/test.py",
+            "my_function",
+        )
+        data = result.structured_content
+        assert "error" in data
+        assert "Only platform admins" in data["error"]
+
+    @pytest.mark.asyncio
     async def test_rejects_missing_path(self, platform_admin_context):
         """register_workflow MCP tool rejects missing path."""
         from src.services.mcp_server.tools.workflow import register_workflow

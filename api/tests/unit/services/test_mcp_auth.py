@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi.security import HTTPAuthorizationCredentials
 
 from src.core.security import create_access_token
 from src.services.mcp_server.auth import (
@@ -167,6 +168,34 @@ class TestProtectedResourceMetadata:
         assert "https://test.example.com" in metadata["authorization_servers"]
         assert "mcp:access" in metadata["scopes_supported"]
         assert "header" in metadata["bearer_methods_supported"]
+
+
+class TestMcpBoundTokens:
+    """MCP OAuth tokens must not be reusable as first-party REST API tokens."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_access_token_is_rejected_by_rest_auth(self):
+        from src.core.auth import get_current_user_optional
+
+        token = create_access_token({
+            "sub": str(uuid4()),
+            "email": "user@org.local",
+            "name": "Regular User",
+            "is_superuser": False,
+            "org_id": str(uuid4()),
+            "mcp": True,
+            "scope": "mcp:access",
+        })
+        request = MagicMock()
+        request.cookies = {}
+        credentials = HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=token,
+        )
+
+        user = await get_current_user_optional(request, credentials, MagicMock())
+
+        assert user is None
 
 
 class TestCheckMcpAccess:

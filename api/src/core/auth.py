@@ -169,6 +169,10 @@ async def get_current_user_optional(
     if payload is None:
         return None
 
+    if payload.get("mcp"):
+        logger.warning("Rejecting MCP-scoped bearer token on REST auth path")
+        return None
+
     # Extract user ID from token
     user_id_str = payload.get("sub")
     if not user_id_str:
@@ -437,6 +441,9 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     # Decode and validate token - must be an access token
     payload = decode_token(token, expected_type="access")
     if payload is None:
+        return None
+    if payload.get("mcp"):
+        logger.warning("Rejecting MCP-scoped bearer token on WebSocket auth path")
         return None
 
     user_id_str = payload.get("sub")

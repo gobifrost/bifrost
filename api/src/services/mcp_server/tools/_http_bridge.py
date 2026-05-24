@@ -65,7 +65,11 @@ def _token_from_context(context: "MCPContext") -> str:
 
         token = get_access_token()
         if token is not None and getattr(token, "token", None):
-            return token.token
+            from src.core.security import decode_token
+
+            payload = decode_token(token.token, expected_type="access")
+            if payload is not None and not payload.get("mcp"):
+                return token.token
     except Exception:
         # Not in a FastMCP HTTP request — fall through to minting.
         pass

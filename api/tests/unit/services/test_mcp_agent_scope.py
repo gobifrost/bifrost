@@ -276,6 +276,27 @@ class TestCheckAgentAccess:
         assert MCPToolAccessService._check_agent_access(agent, [], False) is False
         assert MCPToolAccessService._check_agent_access(agent, [], True) is False
 
+    def test_private_agent_requires_owner_for_non_superuser(self):
+        """PRIVATE agents are visible to their owner only in MCP agent-scoped mode."""
+        from src.models.enums import AgentAccessLevel
+        from src.services.mcp_server.tool_access import MCPToolAccessService
+
+        owner_id = uuid4()
+        agent = MagicMock()
+        agent.access_level = AgentAccessLevel.PRIVATE
+        agent.owner_user_id = owner_id
+        agent.roles = []
+
+        assert MCPToolAccessService._check_agent_access(
+            agent, [], False, user_id=owner_id
+        ) is True
+        assert MCPToolAccessService._check_agent_access(
+            agent, [], False, user_id=uuid4()
+        ) is False
+        assert MCPToolAccessService._check_agent_access(
+            agent, [], True, user_id=uuid4()
+        ) is True
+
 
 # =============================================================================
 # ToolFilterMiddleware agent-scoped behavior tests

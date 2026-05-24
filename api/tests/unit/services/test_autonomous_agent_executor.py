@@ -58,6 +58,35 @@ def mock_agent():
 
 class TestAutonomousAgentExecutor:
     @pytest.mark.asyncio
+    async def test_workflow_tool_uses_agent_identity_not_system_user(
+        self, mock_session, mock_agent
+    ):
+        """Autonomous workflow tools should not silently inherit system identity."""
+        workflow_id = uuid4()
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._tool_workflow_id_map["do_work"] = workflow_id
+
+        response = MagicMock()
+        response.status.value = "Success"
+        response.result = {"ok": True}
+
+        with patch(
+            "src.services.execution.service.execute_tool",
+            new_callable=AsyncMock,
+            return_value=response,
+        ) as mock_execute:
+            result = await executor._execute_tool(
+                ToolCallRequest(id="tc1", name="do_work", arguments={}),
+                mock_agent,
+            )
+
+        assert result == '{"ok": true}'
+        kwargs = mock_execute.await_args.kwargs
+        assert kwargs["user_id"] == str(mock_agent.id)
+        assert kwargs["user_email"] != "system@internal.gobifrost.com"
+        assert kwargs["is_platform_admin"] is False
+
+    @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.get_llm_client")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_run_returns_structured_result(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):

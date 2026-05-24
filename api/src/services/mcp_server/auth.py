@@ -220,6 +220,19 @@ class BifrostAuthProvider:
 
         # Store OAuth state in Redis for callback
         r = await get_shared_redis()
+        client_data_json = await r.get(_mcp_client_key(client_id))
+        if not client_data_json:
+            return JSONResponse(
+                {"error": "invalid_client", "error_description": "Unknown MCP client"},
+                status_code=400,
+            )
+        client_data = json.loads(client_data_json)
+        if redirect_uri not in client_data.get("redirect_uris", []):
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "redirect_uri is not registered for this client"},
+                status_code=400,
+            )
+
         oauth_data = {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -389,6 +402,11 @@ class BifrostAuthProvider:
                     {"error": "invalid_grant", "error_description": "redirect_uri mismatch"},
                     status_code=400
                 )
+            if client_id != auth_code_data["client_id"]:
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "client_id mismatch"},
+                    status_code=400
+                )
 
             # Validate PKCE code_verifier
             code_challenge = auth_code_data["code_challenge"]
@@ -423,10 +441,12 @@ class BifrostAuthProvider:
                     "name": user.name,
                     "is_superuser": user.is_superuser,
                     "org_id": str(user.organization_id) if user.organization_id else None,
-                                        "type": "access",
+                    "mcp": True,
+                    "scope": "mcp:access",
+                    "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
-                refresh_token, _jti = create_refresh_token(data={"sub": str(user.id)})
+                refresh_token, _jti = create_refresh_token(data={"sub": str(user.id), "mcp": True})
 
             logger.info(f"MCP OAuth: Token issued for user {auth_code_data['email']}")
 
@@ -451,7 +471,7 @@ class BifrostAuthProvider:
             from src.core.security import decode_token
 
             payload = decode_token(refresh_token, expected_type="refresh")
-            if payload is None:
+            if payload is None or not payload.get("mcp"):
                 return JSONResponse(
                     {"error": "invalid_grant", "error_description": "Invalid refresh token"},
                     status_code=400
@@ -476,10 +496,12 @@ class BifrostAuthProvider:
                     "name": user.name,
                     "is_superuser": user.is_superuser,
                     "org_id": str(user.organization_id) if user.organization_id else None,
-                                        "type": "access",
+                    "mcp": True,
+                    "scope": "mcp:access",
+                    "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
-                new_refresh_token, _jti = create_refresh_token(data={"sub": str(user.id)})
+                new_refresh_token, _jti = create_refresh_token(data={"sub": str(user.id), "mcp": True})
 
             return JSONResponse({
                 "access_token": access_token,
