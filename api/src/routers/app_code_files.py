@@ -239,6 +239,15 @@ class FileMode(str, Enum):
     live = "live"
 
 
+def require_platform_admin(user: CurrentUser) -> None:
+    """Require platform-admin privileges for app code execution mutations."""
+    if not user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin privileges required",
+        )
+
+
 # =============================================================================
 # S3-backed App File Endpoints
 # =============================================================================
@@ -377,6 +386,7 @@ async def write_app_file(
     Validates the path, then writes via FileStorageService (which handles
     S3 _repo/ storage, file_index update, pubsub, and preview sync).
     """
+    require_platform_admin(user)
     app = await get_application_or_404(ctx, app_id)
 
     # Validate path conventions
@@ -416,13 +426,14 @@ async def delete_app_file(
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> None:
     """Delete a file at the given path.
 
     Deletes via FileStorageService (which handles S3 _repo/ deletion,
     file_index cleanup, pubsub, and preview sync).
     """
+    require_platform_admin(user)
     app = await get_application_or_404(ctx, app_id)
     prefix = app.repo_prefix
     full_path = f"{prefix}{file_path}"
@@ -589,6 +600,15 @@ async def get_bundle_manifest(
                 needs_rebuild = True
 
     if needs_rebuild:
+        if storage_mode == "live":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Live bundle manifest is missing or stale. "
+                    "Publish the application to rebuild the live bundle."
+                ),
+            )
+
         repo_prefix = app.repo_prefix
         # Serialize migrate+rebuild across concurrent first-viewers so two
         # requests don't double-migrate or race on writes. Hold the lock
@@ -751,12 +771,13 @@ async def put_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> dict[str, str]:
     """Replace the app's npm dependencies.
 
     Validates every package name and version, enforces the max-dependency limit.
     """
+    require_platform_admin(user)
     app = await get_application_or_404(ctx, app_id)
 
     # Validate

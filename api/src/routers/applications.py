@@ -70,6 +70,25 @@ async def ensure_no_stale_app_source(session: AsyncSession, slug: str) -> None:
         raise ValueError(stale_app_source_error(slug))
 
 
+def require_platform_admin(user: CurrentUser) -> None:
+    """Require platform-admin privileges for application control-plane changes."""
+    if not user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin privileges required",
+        )
+
+
+def update_requires_platform_admin(data: ApplicationUpdate) -> bool:
+    """Return true when a metadata patch changes routing or access control."""
+    return (
+        data.slug is not None
+        or data.scope is not None
+        or data.access_level is not None
+        or data.role_ids is not None
+    )
+
+
 class AppValidationIssue(BaseModel):
     severity: str  # "error" or "warning"
     file: str
@@ -816,6 +835,9 @@ async def update_application(
     user: CurrentUser,
 ) -> ApplicationPublic:
     """Update application metadata and access control by ID."""
+    if update_requires_platform_admin(data):
+        require_platform_admin(user)
+
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
