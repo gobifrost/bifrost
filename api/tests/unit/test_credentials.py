@@ -71,6 +71,28 @@ class TestEnvBackend:
 
 
 class TestDotenvAllowlist:
+    def test_load_allowed_dotenv_ignores_cwd_without_opt_in(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env"
+        env_file.write_text("BIFROST_API_URL=https://from-cwd.example\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("BIFROST_LOAD_CWD_ENV", raising=False)
+        monkeypatch.delenv("BIFROST_API_URL", raising=False)
+
+        creds_mod.load_allowed_dotenv()
+
+        assert "BIFROST_API_URL" not in os.environ
+
+    def test_load_allowed_dotenv_imports_cwd_only_with_opt_in(self, tmp_path, monkeypatch):
+        env_file = tmp_path / ".env"
+        env_file.write_text("BIFROST_API_URL=https://from-cwd.example\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("BIFROST_LOAD_CWD_ENV", "1")
+        monkeypatch.delenv("BIFROST_API_URL", raising=False)
+
+        creds_mod.load_allowed_dotenv()
+
+        assert os.environ["BIFROST_API_URL"] == "https://from-cwd.example"
+
     def test_load_allowed_dotenv_only_imports_api_url(self, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"
         env_file.write_text(

@@ -5,7 +5,7 @@ Tests the database operations for integration management and mapping.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from src.models.contracts.integrations import (
@@ -165,6 +165,67 @@ class TestIntegrationsRepository:
         assert result == mock_integration
         assert result.name == "Test Integration"
         mock_session.execute.assert_called_once()
+
+    async def test_get_config_for_mapping_skips_default_secrets(
+        self, repository, mock_session
+    ):
+        """Org mapping config must not receive decrypted global secret defaults."""
+        from src.models.enums import ConfigType
+
+        integration_id = uuid4()
+        org_id = uuid4()
+
+        default_secret = MagicMock()
+        default_secret.key = "api_key"
+        default_secret.value = {"value": "encrypted-global-secret"}
+        default_secret.config_type = ConfigType.SECRET
+        default_secret.organization_id = None
+
+        default_plain = MagicMock()
+        default_plain.key = "base_url"
+        default_plain.value = {"value": "https://example.test"}
+        default_plain.config_type = ConfigType.STRING
+        default_plain.organization_id = None
+
+        org_secret = MagicMock()
+        org_secret.key = "org_api_key"
+        org_secret.value = {"value": "encrypted-org-secret"}
+        org_secret.config_type = ConfigType.SECRET
+        org_secret.organization_id = org_id
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [default_secret, default_plain, org_secret]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        with patch("src.repositories.integrations.decrypt_secret", return_value="org-secret"):
+            result = await repository.get_config_for_mapping(integration_id, org_id)
+
+        assert "api_key" not in result
+        assert result["base_url"] == "https://example.test"
+        assert result["org_api_key"] == "org-secret"
+
+    async def test_get_provider_org_token_filters_by_organization(
+        self, repository, mock_session
+    ):
+        """Org-owned token fallback must not match a user-null token from another org."""
+        provider_id = uuid4()
+        org_id = uuid4()
+        expected_token = MagicMock()
+
+        mock_scalars = MagicMock()
+        mock_scalars.first.return_value = expected_token
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        result = await repository.get_provider_org_token(provider_id, org_id)
+
+        assert result == expected_token
+        statement = mock_session.execute.call_args.args[0]
+        compiled = statement.compile()
+        assert org_id in compiled.params.values()
 
     async def test_list_integrations(self, repository, mock_session, mock_integration):
         """Test listing all non-deleted integrations."""

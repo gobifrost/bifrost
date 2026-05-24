@@ -362,14 +362,14 @@ async def update_dev_context(
 
 
 async def _get_cli_org_id(
-    user_id: UUID,
+    current_user: Any,
     scope: str | None,
     db: AsyncSession,
 ) -> str | None:
     """Get the organization ID for CLI config operations.
 
     Args:
-        user_id: Current user's ID
+        current_user: Current authenticated user
         scope: Organization scope - can be:
             - None: Use execution context default org
             - org UUID string: Target specific organization
@@ -385,6 +385,36 @@ async def _get_cli_org_id(
             value flows into raw SQL and surfaces as a downstream
             asyncpg type error (500).
     """
+    user_id = current_user.user_id
+    user_org_id = current_user.organization_id
+    is_superuser = bool(current_user.is_superuser)
+
+    if not is_superuser:
+        if user_org_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CLI scope requires an organization",
+            )
+        if scope and scope != "global":
+            try:
+                requested_org_id = UUID(scope)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"scope must be 'global', a UUID, or null; got {scope!r}",
+                ) from None
+            if requested_org_id != user_org_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cannot access another organization's CLI scope",
+                )
+        elif scope == "global":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only superusers can access global CLI scope",
+            )
+        return str(user_org_id)
+
     # "global" scope means no org resolution
     if scope == "global":
         return None
@@ -424,7 +454,7 @@ async def cli_get_config(
     """Get a config value via CLI API."""
     from src.core.config_resolver import ConfigResolver
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     scope = org_id or "GLOBAL"
 
     resolver = ConfigResolver()
@@ -479,7 +509,7 @@ async def cli_set_config(
     from src.models import Config as ConfigModel
     from src.models.enums import ConfigType as ConfigTypeEnum
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
     now = datetime.now(timezone.utc)
 
@@ -505,6 +535,7 @@ async def cli_set_config(
     stmt = select(ConfigModel).where(
         ConfigModel.key == request.key,
         ConfigModel.organization_id == org_uuid,
+        ConfigModel.integration_id.is_(None),
     )
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -551,7 +582,7 @@ async def cli_list_config(
     """List all config values via CLI API."""
     from src.core.config_resolver import ConfigResolver
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     scope = org_id or "GLOBAL"
 
     resolver = ConfigResolver()
@@ -597,12 +628,13 @@ async def cli_delete_config(
     """Delete a config value via CLI API."""
     from src.models import Config as ConfigModel
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     stmt = select(ConfigModel).where(
         ConfigModel.key == request.key,
         ConfigModel.organization_id == org_uuid,
+        ConfigModel.integration_id.is_(None),
     )
     result = await db.execute(stmt)
     config = result.scalar_one_or_none()
@@ -651,7 +683,7 @@ async def sdk_integrations_get(
     from src.services.oauth_provider import resolve_url_template
     from src.core.security import decrypt_secret
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     try:
@@ -682,7 +714,10 @@ async def sdk_integrations_get(
             if integration and integration.oauth_provider:
                 token = mapping.oauth_token
                 if not token:
-                    token = await repo.get_provider_org_token(integration.oauth_provider.id)
+                    token = await repo.get_provider_org_token(
+                        integration.oauth_provider.id,
+                        org_uuid,
+                    )
                 response_data["oauth"] = await _build_oauth_data(
                     integration.oauth_provider, token, entity_id, resolve_url_template, decrypt_secret,
                     oauth_scope=request.oauth_scope,
@@ -698,7 +733,10 @@ async def sdk_integrations_get(
             return None
 
         entity_id = integration.default_entity_id or integration.entity_id
-        config = await repo.get_integration_defaults(integration.id)
+        config = await repo.get_integration_defaults(
+            integration.id,
+            include_secrets=org_uuid is None,
+        )
 
         secret_keys = [s.key for s in integration.config_schema if s.type == "secret"]
         response_data = {
@@ -712,7 +750,10 @@ async def sdk_integrations_get(
 
         # Build OAuth data if provider exists
         if integration.oauth_provider:
-            token = await repo.get_provider_org_token(integration.oauth_provider.id)
+            token = await repo.get_provider_org_token(
+                integration.oauth_provider.id,
+                org_uuid,
+            )
             response_data["oauth"] = await _build_oauth_data(
                 integration.oauth_provider, token, entity_id, resolve_url_template, decrypt_secret,
                 oauth_scope=request.oauth_scope,
@@ -1107,7 +1148,7 @@ async def sdk_integrations_refresh_token(
         refresh_oauth_token_http,
     )
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     try:
@@ -1887,7 +1928,7 @@ async def cli_ai_complete(
             from src.core.cache import get_shared_redis
 
             redis_client = await get_shared_redis()
-            org_id = await _get_cli_org_id(current_user.user_id, request.org_id, db)
+            org_id = await _get_cli_org_id(current_user, request.org_id, db)
             await record_ai_usage(
                 session=db,
                 redis_client=redis_client,
@@ -1975,7 +2016,7 @@ async def cli_ai_stream(
                         from src.core.cache import get_shared_redis
 
                         redis_client = await get_shared_redis()
-                        org_id = await _get_cli_org_id(user_id, org_id_str, db)
+                        org_id = await _get_cli_org_id(current_user, org_id_str, db)
                         await record_ai_usage(
                             session=db,
                             redis_client=redis_client,
@@ -2064,7 +2105,7 @@ async def cli_knowledge_store(
     from src.services.embeddings import get_embedding_client
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+        org_id = await _get_cli_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         # Generate embedding
@@ -2114,7 +2155,7 @@ async def cli_knowledge_store_many(
     from src.services.embeddings import get_embedding_client
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+        org_id = await _get_cli_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         # Extract contents for batch embedding
@@ -2171,7 +2212,7 @@ async def cli_knowledge_search(
     from src.services.embeddings import get_embedding_client
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+        org_id = await _get_cli_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         # Generate query embedding
@@ -2230,7 +2271,7 @@ async def cli_knowledge_delete(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+        org_id = await _get_cli_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2266,7 +2307,7 @@ async def cli_knowledge_delete_namespace(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, scope, db)
+        org_id = await _get_cli_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2302,7 +2343,7 @@ async def cli_knowledge_list_namespaces(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, scope, db)
+        org_id = await _get_cli_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2341,7 +2382,7 @@ async def cli_knowledge_get(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user.user_id, scope, db)
+        org_id = await _get_cli_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2537,7 +2578,7 @@ async def cli_create_table(
     """Create a new table via SDK."""
     from src.models.orm.tables import Table
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     # Check if table exists in the same scope.
@@ -2597,7 +2638,7 @@ async def cli_list_tables(
     from src.models.orm.tables import Table
     from sqlalchemy import or_
 
-    org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
+    org_id = await _get_cli_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     # Build query with cascade scoping (org + global)

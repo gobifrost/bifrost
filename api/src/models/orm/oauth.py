@@ -93,7 +93,7 @@ class OAuthToken(Base):
         ForeignKey("organizations.id"), default=None
     )
     provider_id: Mapped[UUID] = mapped_column(ForeignKey("oauth_providers.id"))
-    user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None)
+    user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), default=None)
     encrypted_access_token: Mapped[bytes] = mapped_column(LargeBinary)
     encrypted_refresh_token: Mapped[bytes | None] = mapped_column(
         LargeBinary, default=None

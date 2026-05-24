@@ -69,15 +69,18 @@ def get_credentials_path() -> Path:
 def load_allowed_dotenv(
     dotenv_path: str | os.PathLike[str] | None = None, *, override: bool = True
 ) -> None:
-    """Load the CWD ``.env`` allowlist used by the CLI.
+    """Load the explicit ``.env`` allowlist used by the CLI.
 
-    The CLI still supports project-local ``BIFROST_API_URL`` discovery, but it
+    The CLI supports opt-in project-local ``BIFROST_API_URL`` discovery, but it
     must not import credentials, proxy settings, CA bundle paths, or other
     security-sensitive process environment from an attacker-controlled CWD.
     """
     try:
         from dotenv import dotenv_values, find_dotenv
     except ImportError:
+        return
+
+    if dotenv_path is None and os.environ.get("BIFROST_LOAD_CWD_ENV") != "1":
         return
 
     path = str(dotenv_path) if dotenv_path is not None else find_dotenv(usecwd=True)

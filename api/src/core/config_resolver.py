@@ -294,7 +294,11 @@ class ConfigResolver:
             logger.warning(f"Failed to populate org cache: {e}")
 
     async def load_config_for_scope(
-        self, scope: str, db: AsyncSession | None = None
+        self,
+        scope: str,
+        db: AsyncSession | None = None,
+        *,
+        include_global_secrets: bool = False,
     ) -> dict[str, Any]:
         """
         Load all config for a scope (org_id or "GLOBAL").
@@ -307,6 +311,9 @@ class ConfigResolver:
         Args:
             scope: "GLOBAL" or organization ID
             db: Optional AsyncSession. If not provided, creates its own.
+            include_global_secrets: For org scopes, include global secret
+                fallback values. CLI-facing callers leave this false so a
+                global secret cannot be decrypted through an org fallback.
 
         Returns:
             Configuration dictionary
@@ -323,6 +330,26 @@ class ConfigResolver:
 
         # Try Redis cache first
         cached = await self._get_config_from_cache(org_id_for_cache)
+        if cached is not None:
+            if org_id_for_cache is not None and not include_global_secrets:
+                has_unscoped_secret = any(
+                    isinstance(entry, dict)
+                    and entry.get("type") == ConfigType.SECRET.value
+                    and entry.get("scope") not in {"org", "global"}
+                    for entry in cached.values()
+                )
+                if has_unscoped_secret:
+                    cached = None
+                else:
+                    cached = {
+                        key: entry
+                        for key, entry in cached.items()
+                        if not (
+                            isinstance(entry, dict)
+                            and entry.get("type") == ConfigType.SECRET.value
+                            and entry.get("scope") == "global"
+                        )
+                    }
         if cached is not None:
             logger.debug(f"Config cache hit for scope={log_safe(scope)}")
             return cached
@@ -352,6 +379,7 @@ class ConfigResolver:
                     config_dict[config.key] = {
                         "value": config.value.get("value") if isinstance(config.value, dict) else config.value,
                         "type": config.config_type.value if config.config_type else "string",
+                        "scope": "global",
                     }
             else:
                 try:
@@ -368,9 +396,15 @@ class ConfigResolver:
                     )
                 )
                 for config in global_result.scalars():
+                    if (
+                        not include_global_secrets
+                        and config.config_type == ConfigType.SECRET
+                    ):
+                        continue
                     config_dict[config.key] = {
                         "value": config.value.get("value") if isinstance(config.value, dict) else config.value,
                         "type": config.config_type.value if config.config_type else "string",
+                        "scope": "global",
                     }
 
                 # Get org-specific configs (these override global)
@@ -384,6 +418,7 @@ class ConfigResolver:
                     config_dict[config.key] = {
                         "value": config.value.get("value") if isinstance(config.value, dict) else config.value,
                         "type": config.config_type.value if config.config_type else "string",
+                        "scope": "org",
                     }
 
             # Populate cache for next time

@@ -743,26 +743,26 @@ Examples:
         assert password is not None
         rc, data = asyncio.run(password_login_flow(api_url, email, password))
         if rc == 0 and data is not None:
-            # Persist URL + tokens to CWD's .env so subsequent `bifrost`
-            # commands from this directory just work — no shell-eval needed.
-            # Isolation is by directory: each sandbox dir has its own .env.
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=data.get("expires_in", 1800)
+            )
+            credentials.save_credentials(
+                api_url=api_url,
+                access_token=data["access_token"],
+                refresh_token=data["refresh_token"],
+                expires_at=expires_at.isoformat(),
+            )
+            # Persist only the target URL to CWD's .env. Tokens belong in the
+            # credential backend, never in a project directory.
             try:
                 _write_env_url(api_url)
-                _upsert_env_vars(
-                    {
-                        "BIFROST_ACCESS_TOKEN": data["access_token"],
-                        "BIFROST_REFRESH_TOKEN": data["refresh_token"],
-                    }
-                )
             except OSError as e:
                 print(
                     f"Warning: could not update .env in current directory: {e}",
                     file=sys.stderr,
                 )
-                # Fall back to printing so the caller can eval them.
+                # Fall back to printing the non-secret URL only.
                 print(f"BIFROST_API_URL={api_url}")
-                print(f"BIFROST_ACCESS_TOKEN={data['access_token']}")
-                print(f"BIFROST_REFRESH_TOKEN={data['refresh_token']}")
         return rc
 
     # Browser device-code flow (persistent → keychain or JSON fallback).

@@ -69,3 +69,50 @@ class TestConfigResolverWithSession:
 
         assert "test_key" in result
         mock_session.execute.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_load_config_for_org_scope_omits_global_secrets(self, resolver):
+        """Org-scoped CLI config fallback must not inherit global secrets."""
+        from src.models.enums import ConfigType
+
+        org_id = str(uuid4())
+        resolver._get_config_from_cache = AsyncMock(return_value=None)
+        resolver._set_config_cache = AsyncMock()
+
+        global_secret = MagicMock()
+        global_secret.key = "api_key"
+        global_secret.value = {"value": "encrypted-global-secret"}
+        global_secret.config_type = ConfigType.SECRET
+
+        global_plain = MagicMock()
+        global_plain.key = "base_url"
+        global_plain.value = {"value": "https://example.test"}
+        global_plain.config_type = ConfigType.STRING
+
+        org_secret = MagicMock()
+        org_secret.key = "org_api_key"
+        org_secret.value = {"value": "encrypted-org-secret"}
+        org_secret.config_type = ConfigType.SECRET
+
+        def _result(entries):
+            scalars = MagicMock()
+            scalars.__iter__ = MagicMock(return_value=iter(entries))
+            result = MagicMock()
+            result.scalars.return_value = scalars
+            return result
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                _result([global_secret, global_plain]),
+                _result([org_secret]),
+            ]
+        )
+
+        result = await resolver.load_config_for_scope(f"ORG:{org_id}", db=mock_session)
+
+        assert "api_key" not in result
+        assert result["base_url"]["value"] == "https://example.test"
+        assert result["base_url"]["scope"] == "global"
+        assert result["org_api_key"]["value"] == "encrypted-org-secret"
+        assert result["org_api_key"]["scope"] == "org"

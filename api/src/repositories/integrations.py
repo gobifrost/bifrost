@@ -608,7 +608,11 @@ class IntegrationsRepository(BaseRepository[Integration]):
         return config
 
     async def get_config_for_mapping(
-        self, integration_id: UUID, org_id: UUID
+        self,
+        integration_id: UUID,
+        org_id: UUID,
+        *,
+        include_default_secrets: bool = False,
     ) -> dict:
         """
         Get merged configuration for an integration mapping.
@@ -619,6 +623,9 @@ class IntegrationsRepository(BaseRepository[Integration]):
         Args:
             integration_id: Integration UUID
             org_id: Organization UUID
+            include_default_secrets: Include integration-default secret
+                fallback values. SDK mapping reads leave this false so global
+                defaults do not leak as decrypted org config.
 
         Returns:
             dict: Merged configuration (integration defaults + org overrides)
@@ -650,7 +657,15 @@ class IntegrationsRepository(BaseRepository[Integration]):
             else:
                 val = value
 
-            if entry.config_type == ConfigType.SECRET and isinstance(val, str):
+            is_secret = entry.config_type == ConfigType.SECRET
+            if (
+                is_secret
+                and entry.organization_id is None
+                and not include_default_secrets
+            ):
+                continue
+
+            if is_secret and isinstance(val, str):
                 try:
                     val = decrypt_secret(val)
                 except Exception:
@@ -667,7 +682,12 @@ class IntegrationsRepository(BaseRepository[Integration]):
 
         return config
 
-    async def get_integration_defaults(self, integration_id: UUID) -> dict[str, Any]:
+    async def get_integration_defaults(
+        self,
+        integration_id: UUID,
+        *,
+        include_secrets: bool = False,
+    ) -> dict[str, Any]:
         """
         Get integration-level config defaults (org_id=NULL).
 
@@ -675,6 +695,8 @@ class IntegrationsRepository(BaseRepository[Integration]):
 
         Args:
             integration_id: Integration UUID
+            include_secrets: Include decrypted default secret values. Leave
+                false when serving org-scoped fallback responses.
 
         Returns:
             dict: Integration-level config defaults
@@ -698,6 +720,9 @@ class IntegrationsRepository(BaseRepository[Integration]):
             else:
                 val = value
 
+            if entry.config_type == ConfigType.SECRET and not include_secrets:
+                continue
+
             if entry.config_type == ConfigType.SECRET and isinstance(val, str):
                 try:
                     val = decrypt_secret(val)
@@ -709,7 +734,11 @@ class IntegrationsRepository(BaseRepository[Integration]):
 
         return config
 
-    async def get_provider_org_token(self, provider_id: UUID) -> Any:
+    async def get_provider_org_token(
+        self,
+        provider_id: UUID,
+        organization_id: UUID | None,
+    ) -> Any:
         """
         Get org-level OAuth token for a provider (user_id=NULL).
 
@@ -718,16 +747,21 @@ class IntegrationsRepository(BaseRepository[Integration]):
 
         Args:
             provider_id: OAuthProvider UUID
+            organization_id: Owning organization, or None for global tokens
 
         Returns:
             OAuthToken or None if not found
         """
         from src.models.orm.oauth import OAuthToken
 
-        result = await self.session.execute(
-            select(OAuthToken).where(
-                OAuthToken.provider_id == provider_id,
-                OAuthToken.user_id.is_(None),
-            )
+        stmt = select(OAuthToken).where(
+            OAuthToken.provider_id == provider_id,
+            OAuthToken.user_id.is_(None),
         )
+        if organization_id is None:
+            stmt = stmt.where(OAuthToken.organization_id.is_(None))
+        else:
+            stmt = stmt.where(OAuthToken.organization_id == organization_id)
+
+        result = await self.session.execute(stmt)
         return result.scalars().first()

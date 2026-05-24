@@ -124,10 +124,8 @@ def raise_for_status_with_detail(response: httpx.Response) -> None:
 # and httpx.AsyncClient is bound to the event loop that created it.
 _thread_local = threading.local()
 
-# Auto-load only the CLI-safe .env allowlist if present (for local development).
-# Walk upward from cwd, not from this file. With pipx-installed CLIs, __file__
-# lives in the pipx venv and the default upward walk never reaches the user's
-# workspace, so a .env in the project root is silently ignored.
+# Auto-load only the CLI-safe .env allowlist when explicitly opted in for local
+# development. Arbitrary working directories must not be able to steer CLI auth.
 load_allowed_dotenv()
 
 
