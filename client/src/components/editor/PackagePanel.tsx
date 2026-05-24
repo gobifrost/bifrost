@@ -14,6 +14,8 @@ import {
 import { webSocketService } from "@/services/websocket";
 import { useEditorStore } from "@/stores/editorStore";
 import { useExecutionStreamStore } from "@/stores/executionStreamStore";
+import { handleProgressEvent } from "./packageProgress";
+import type { ProgressState } from "./packageProgress";
 
 /**
  * Package management panel for installing and managing Python packages.
@@ -36,12 +38,16 @@ export function PackagePanel() {
 	>(null);
 
 	// Track whether we've already handled completion for this installation.
-	// Multiple workers send complete events; we only process the first one.
+	// Multiple workers publish progress; we only fire completeExecution once.
 	const completionHandledRef = useRef(false);
 
 	// Ref for installationId so WebSocket callbacks can read it synchronously.
 	// React state updates are batched; the closure would capture stale values.
 	const currentInstallationIdRef = useRef<string | null>(null);
+
+	// Tracks the last progress line we appended so identical consecutive lines
+	// from multiple workers can be collapsed to a single entry.
+	const lastProgressLineRef = useRef<string>("");
 
 	const setCurrentStreamingExecutionId = useEditorStore(
 		(state) => state.setCurrentStreamingExecutionId,
@@ -84,7 +90,7 @@ export function PackagePanel() {
 		}
 	}, []);
 
-	// Subscribe to shared package:install channel for streaming logs
+	// Subscribe to shared package:install channel for streaming progress
 	useEffect(() => {
 		if (!isConnected) {
 			return;
@@ -93,40 +99,29 @@ export function PackagePanel() {
 		const packageChannel = "package:install";
 		webSocketService.subscribe(packageChannel);
 
-		const unsubscribeLog = webSocketService.onPackageLog((log) => {
+		const unsubscribeProgress = webSocketService.onPackageProgress((p) => {
 			const id = currentInstallationIdRef.current;
-			if (id) {
-				const store = useExecutionStreamStore.getState();
-				store.appendLog(id, {
-					level: log.level.toUpperCase(),
-					message: log.message,
-					timestamp: new Date().toISOString(),
-				});
+			if (!id) return;
+
+			const progressState: ProgressState = {
+				lastLine: lastProgressLineRef.current,
+				completionHandled: completionHandledRef.current,
+			};
+
+			const store = useExecutionStreamStore.getState();
+			const triggered = handleProgressEvent(p, progressState, store, id);
+
+			// Sync mutated state back to refs
+			lastProgressLineRef.current = progressState.lastLine;
+			completionHandledRef.current = progressState.completionHandled;
+
+			if (triggered) {
+				loadPackages();
 			}
 		});
 
-		// Handle completion — only process the first complete event
-		const unsubscribeComplete = webSocketService.onPackageComplete(
-			(complete) => {
-				if (completionHandledRef.current) return;
-				completionHandledRef.current = true;
-
-				const id = currentInstallationIdRef.current;
-				if (id) {
-					const store = useExecutionStreamStore.getState();
-					store.completeExecution(
-						id,
-						undefined,
-						complete.status === "success" ? "Success" : "Failed",
-					);
-				}
-				loadPackages();
-			},
-		);
-
 		return () => {
-			unsubscribeLog();
-			unsubscribeComplete();
+			unsubscribeProgress();
 			webSocketService.unsubscribe(packageChannel);
 		};
 	}, [isConnected, loadPackages]);
@@ -234,6 +229,7 @@ export function PackagePanel() {
 		currentInstallationIdRef.current = installationId;
 		setCurrentInstallationId(installationId);
 		completionHandledRef.current = false;
+		lastProgressLineRef.current = "";
 		setIsInstalling(true);
 
 		try {
@@ -279,6 +275,7 @@ export function PackagePanel() {
 		currentInstallationIdRef.current = installationId;
 		setCurrentInstallationId(installationId);
 		completionHandledRef.current = false;
+		lastProgressLineRef.current = "";
 		setIsInstalling(true);
 
 		try {
