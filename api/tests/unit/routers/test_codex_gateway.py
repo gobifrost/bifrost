@@ -38,8 +38,13 @@ class FakeRepository:
         self.created = []
         self.listed_for = []
         self.revoked = []
+        self.oauth_upserts = []
+        self.oauth_revoked_for = []
+        self.oauth_status_lookups = []
         self.key_id = uuid4()
+        self.oauth_account_id = uuid4()
         self.plaintext_key = VALID_GATEWAY_KEY
+        self.upstream_account = None
 
     async def create_gateway_key(self, **kwargs):
         await sleep(0)
@@ -112,6 +117,50 @@ class FakeRepository:
                 "last_used_at": None,
             },
         )()
+
+    async def get_active_upstream_account_for_user(self, user_id, provider="chatgpt_codex"):
+        await sleep(0)
+        self.oauth_status_lookups.append({"user_id": user_id, "provider": provider})
+        if self.upstream_account is None:
+            return None
+        if self.upstream_account.user_id != user_id:
+            return None
+        if self.upstream_account.provider != provider:
+            return None
+        return self.upstream_account
+
+    async def upsert_upstream_account_for_user(self, **kwargs):
+        await sleep(0)
+        self.oauth_upserts.append(kwargs)
+        account = type(
+            "UpstreamAccount",
+            (),
+            {
+                "id": self.oauth_account_id,
+                "user_id": kwargs["user_id"],
+                "provider": kwargs.get("provider", "chatgpt_codex"),
+                "upstream_subject": kwargs["upstream_subject"],
+                "upstream_email": kwargs.get("upstream_email"),
+                "upstream_workspace_id": kwargs.get("upstream_workspace_id"),
+                "access_token_expires_at": kwargs.get("access_token_expires_at"),
+                "scopes": kwargs.get("scopes") or [],
+                "last_refresh_at": None,
+                "last_used_at": None,
+                "revoked_at": None,
+                "created_at": None,
+                "updated_at": None,
+            },
+        )()
+        self.upstream_account = account
+        return account
+
+    async def revoke_upstream_account_for_user(self, *, user_id, provider="chatgpt_codex"):
+        await sleep(0)
+        self.oauth_revoked_for.append({"user_id": user_id, "provider": provider})
+        if self.upstream_account is None:
+            return None
+        self.upstream_account.revoked_at = "now"
+        return self.upstream_account
 
 
 def _principal(user_id):
@@ -319,3 +368,130 @@ def test_v1_responses_rejects_malformed_gateway_key_before_runtime():
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "invalid_gateway_key"
     assert runtime.calls == []
+
+
+def test_codex_gateway_oauth_status_reports_disconnected_without_tokens():
+    app = FastAPI()
+    app.include_router(router)
+    repository = FakeRepository()
+    user_id = uuid4()
+    app.dependency_overrides[get_codex_gateway_repository] = lambda: repository
+    app.dependency_overrides[get_current_active_user] = lambda: _principal(user_id)
+    client = TestClient(app)
+
+    response = client.get("/api/codex-gateway/oauth/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "connected": False,
+        "provider": "chatgpt_codex",
+        "account": None,
+        "supported_connect_methods": ["device_code", "auth_cache_import"],
+    }
+    assert repository.oauth_status_lookups == [
+        {"user_id": user_id, "provider": "chatgpt_codex"}
+    ]
+
+
+def test_start_codex_oauth_connect_prefers_device_code_with_import_fallback():
+    app = FastAPI()
+    app.include_router(router)
+    user_id = uuid4()
+    app.dependency_overrides[get_current_active_user] = lambda: _principal(user_id)
+    client = TestClient(app)
+
+    response = client.post("/api/codex-gateway/oauth/connect")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "chatgpt_codex",
+        "preferred_method": "device_code",
+        "device_code_enabled": True,
+        "client_command": "codex login --device-auth",
+        "fallback_import_endpoint": "/api/codex-gateway/oauth/import-auth-cache",
+    }
+
+
+def test_import_codex_auth_cache_stores_tokens_without_returning_them(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    repository = FakeRepository()
+    user_id = uuid4()
+    audit = AsyncMock()
+    app.dependency_overrides[get_codex_gateway_repository] = lambda: repository
+    app.dependency_overrides[get_current_active_user] = lambda: _principal(user_id)
+    monkeypatch.setattr("src.routers.codex_gateway.emit_audit", audit)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/codex-gateway/oauth/import-auth-cache",
+        json={
+            "auth_cache": {
+                "tokens": {
+                    "access_token": "access-token-secret",
+                    "refresh_token": "refresh-token-secret",
+                    "id_token": "id-token",
+                    "expires_at": "2026-05-25T12:00:00Z",
+                    "scope": "openid profile offline_access",
+                },
+                "account": {
+                    "sub": "chatgpt-user-123",
+                    "email": "dev@example.test",
+                    "workspace_id": "workspace-midtown",
+                },
+            }
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["connected"] is True
+    assert body["account"]["upstream_subject"] == "chatgpt-user-123"
+    assert "access-token-secret" not in response.text
+    assert "refresh-token-secret" not in response.text
+    assert "refresh_token" not in response.text
+    assert len(repository.oauth_upserts) == 1
+    [oauth_upsert] = repository.oauth_upserts
+    assert oauth_upsert["user_id"] == user_id
+    assert oauth_upsert["access_token"] == "access-token-secret"
+    assert oauth_upsert["refresh_token"] == "refresh-token-secret"
+    audit.assert_awaited_once()
+
+
+def test_disconnect_codex_oauth_revokes_user_account_and_audits(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    repository = FakeRepository()
+    user_id = uuid4()
+    repository.upstream_account = type(
+        "UpstreamAccount",
+        (),
+        {
+            "id": repository.oauth_account_id,
+            "user_id": user_id,
+            "provider": "chatgpt_codex",
+            "upstream_subject": "chatgpt-user-123",
+            "upstream_email": "dev@example.test",
+            "upstream_workspace_id": "workspace-midtown",
+            "access_token_expires_at": None,
+            "scopes": [],
+            "last_refresh_at": None,
+            "last_used_at": None,
+            "revoked_at": None,
+        },
+    )()
+    audit = AsyncMock()
+    app.dependency_overrides[get_codex_gateway_repository] = lambda: repository
+    app.dependency_overrides[get_current_active_user] = lambda: _principal(user_id)
+    monkeypatch.setattr("src.routers.codex_gateway.emit_audit", audit)
+    client = TestClient(app)
+
+    response = client.delete("/api/codex-gateway/oauth")
+
+    assert response.status_code == 200
+    assert response.json() == {"connected": False, "revoked": True}
+    assert repository.oauth_revoked_for == [
+        {"user_id": user_id, "provider": "chatgpt_codex"}
+    ]
+    audit.assert_awaited_once()

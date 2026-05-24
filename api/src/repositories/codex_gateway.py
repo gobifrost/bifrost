@@ -194,6 +194,71 @@ class CodexGatewayRepository:
         await self.session.refresh(account)
         return account
 
+    async def upsert_upstream_account_for_user(
+        self,
+        *,
+        user_id: UUID,
+        upstream_subject: str,
+        upstream_email: str | None = None,
+        upstream_workspace_id: str | None = None,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+        access_token_expires_at: Any = None,
+        scopes: list[str] | None = None,
+        provider: str = "chatgpt_codex",
+    ) -> CodexGatewayUpstreamAccount:
+        result = await self.session.execute(
+            select(CodexGatewayUpstreamAccount)
+            .where(CodexGatewayUpstreamAccount.user_id == user_id)
+            .where(CodexGatewayUpstreamAccount.provider == provider)
+            .where(CodexGatewayUpstreamAccount.revoked_at.is_(None))
+        )
+        account = result.scalar_one_or_none()
+        if account is None:
+            return await self.create_upstream_account(
+                user_id=user_id,
+                upstream_subject=upstream_subject,
+                upstream_email=upstream_email,
+                upstream_workspace_id=upstream_workspace_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                access_token_expires_at=access_token_expires_at,
+                scopes=scopes,
+                provider=provider,
+            )
+
+        account.upstream_subject = upstream_subject
+        account.upstream_email = upstream_email
+        account.upstream_workspace_id = upstream_workspace_id
+        account.access_token_expires_at = access_token_expires_at
+        account.scopes = scopes or []
+        if access_token is not None:
+            account.encrypted_access_token = encrypt_secret(access_token)
+        if refresh_token is not None:
+            account.encrypted_refresh_token = encrypt_secret(refresh_token)
+        account.last_refresh_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return account
+
+    async def revoke_upstream_account_for_user(
+        self,
+        *,
+        user_id: UUID,
+        provider: str = "chatgpt_codex",
+    ) -> CodexGatewayUpstreamAccount | None:
+        result = await self.session.execute(
+            select(CodexGatewayUpstreamAccount)
+            .where(CodexGatewayUpstreamAccount.user_id == user_id)
+            .where(CodexGatewayUpstreamAccount.provider == provider)
+            .where(CodexGatewayUpstreamAccount.revoked_at.is_(None))
+        )
+        account = result.scalar_one_or_none()
+        if account is None:
+            return None
+        account.revoked_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return account
+
     async def create_request_log(
         self,
         *,

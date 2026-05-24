@@ -15,6 +15,12 @@ from src.models.contracts.codex_gateway import (
     CodexGatewayKeyCreateResponse,
     CodexGatewayKeyListResponse,
     CodexGatewayKeyRecord,
+    CodexGatewayOAuthAccountRecord,
+    CodexGatewayOAuthConnectResponse,
+    CodexGatewayOAuthDisconnectResponse,
+    CodexGatewayOAuthImportRequest,
+    CodexGatewayOAuthImportResponse,
+    CodexGatewayOAuthStatusResponse,
     OpenAICompatibleError,
 )
 from src.repositories.codex_gateway import (
@@ -22,6 +28,7 @@ from src.repositories.codex_gateway import (
     is_plausible_gateway_key,
 )
 from src.services.audit import emit_audit
+from src.services.codex_gateway.oauth import CodexAuthCacheError, parse_codex_auth_cache
 from src.services.codex_gateway.runtime import (
     CODEX_GATEWAY_KEY_HEADER,
     CodexGatewayRuntime,
@@ -66,6 +73,22 @@ def _key_record_response(record) -> CodexGatewayKeyRecord:
         created_at=record.created_at,
         revoked_at=record.revoked_at,
         last_used_at=record.last_used_at,
+    )
+
+
+def _oauth_account_response(record) -> CodexGatewayOAuthAccountRecord:
+    return CodexGatewayOAuthAccountRecord(
+        id=record.id,
+        user_id=record.user_id,
+        provider=getattr(record, "provider", "chatgpt_codex"),
+        upstream_subject=record.upstream_subject,
+        upstream_email=record.upstream_email,
+        upstream_workspace_id=record.upstream_workspace_id,
+        access_token_expires_at=record.access_token_expires_at,
+        scopes=list(getattr(record, "scopes", None) or []),
+        last_refresh_at=record.last_refresh_at,
+        last_used_at=record.last_used_at,
+        revoked_at=record.revoked_at,
     )
 
 
@@ -162,6 +185,113 @@ async def revoke_gateway_key(
         },
     )
     return _key_record_response(record)
+
+
+@router.get(
+    "/api/codex-gateway/oauth/status",
+    operation_id="get_codex_gateway_oauth_status",
+)
+async def get_oauth_status(
+    current_user: CurrentActiveUser,
+    repository: Annotated[
+        CodexGatewayRepository,
+        Depends(get_codex_gateway_repository),
+    ],
+) -> CodexGatewayOAuthStatusResponse:
+    account = await repository.get_active_upstream_account_for_user(
+        current_user.user_id
+    )
+    return CodexGatewayOAuthStatusResponse(
+        connected=account is not None,
+        account=_oauth_account_response(account) if account is not None else None,
+    )
+
+
+@router.post(
+    "/api/codex-gateway/oauth/connect",
+    operation_id="start_codex_gateway_oauth_connect",
+)
+async def start_oauth_connect(
+    _current_user: CurrentActiveUser,
+) -> CodexGatewayOAuthConnectResponse:
+    return CodexGatewayOAuthConnectResponse()
+
+
+@router.post(
+    "/api/codex-gateway/oauth/import-auth-cache",
+    operation_id="import_codex_gateway_oauth_auth_cache",
+)
+async def import_oauth_auth_cache(
+    payload: CodexGatewayOAuthImportRequest,
+    current_user: CurrentActiveUser,
+    repository: Annotated[
+        CodexGatewayRepository,
+        Depends(get_codex_gateway_repository),
+    ],
+    db: DbSession,
+) -> CodexGatewayOAuthImportResponse:
+    try:
+        parsed = parse_codex_auth_cache(payload.auth_cache)
+    except CodexAuthCacheError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    account = await repository.upsert_upstream_account_for_user(
+        user_id=current_user.user_id,
+        upstream_subject=parsed.upstream_subject,
+        upstream_email=parsed.upstream_email,
+        upstream_workspace_id=parsed.upstream_workspace_id,
+        access_token=parsed.access_token,
+        refresh_token=parsed.refresh_token,
+        access_token_expires_at=parsed.access_token_expires_at,
+        scopes=parsed.scopes,
+    )
+    await emit_audit(
+        db,
+        "codex_gateway.oauth.import",
+        resource_type="codex_gateway_upstream_account",
+        resource_id=account.id,
+        details={
+            "provider": getattr(account, "provider", "chatgpt_codex"),
+            "upstream_workspace_id": account.upstream_workspace_id,
+            "has_refresh_token": parsed.refresh_token is not None,
+        },
+    )
+    return CodexGatewayOAuthImportResponse(
+        connected=True,
+        account=_oauth_account_response(account),
+    )
+
+
+@router.delete(
+    "/api/codex-gateway/oauth",
+    operation_id="disconnect_codex_gateway_oauth",
+)
+async def disconnect_oauth_account(
+    current_user: CurrentActiveUser,
+    repository: Annotated[
+        CodexGatewayRepository,
+        Depends(get_codex_gateway_repository),
+    ],
+    db: DbSession,
+) -> CodexGatewayOAuthDisconnectResponse:
+    account = await repository.revoke_upstream_account_for_user(
+        user_id=current_user.user_id
+    )
+    if account is not None:
+        await emit_audit(
+            db,
+            "codex_gateway.oauth.disconnect",
+            resource_type="codex_gateway_upstream_account",
+            resource_id=account.id,
+            details={
+                "provider": getattr(account, "provider", "chatgpt_codex"),
+                "upstream_workspace_id": account.upstream_workspace_id,
+            },
+        )
+    return CodexGatewayOAuthDisconnectResponse(revoked=account is not None)
 
 
 @router.post(

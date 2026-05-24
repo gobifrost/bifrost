@@ -16,6 +16,12 @@ from shared.models import (
     CodexGatewayKeyCreateResponse,
     CodexGatewayKeyListResponse,
     CodexGatewayKeyRecord,
+    CodexGatewayOAuthAccountRecord,
+    CodexGatewayOAuthConnectResponse,
+    CodexGatewayOAuthDisconnectResponse,
+    CodexGatewayOAuthImportRequest,
+    CodexGatewayOAuthImportResponse,
+    CodexGatewayOAuthStatusResponse,
 )
 
 
@@ -27,6 +33,12 @@ __all__ = [
     "CodexGatewayKeyCreateResponse",
     "CodexGatewayKeyListResponse",
     "CodexGatewayKeyRecord",
+    "CodexGatewayOAuthAccountRecord",
+    "CodexGatewayOAuthConnectResponse",
+    "CodexGatewayOAuthDisconnectResponse",
+    "CodexGatewayOAuthImportRequest",
+    "CodexGatewayOAuthImportResponse",
+    "CodexGatewayOAuthStatusResponse",
     "CodexGatewayPolicyDecision",
     "CodexGatewayRequestContext",
     "CodexGatewayUpstreamAccount",

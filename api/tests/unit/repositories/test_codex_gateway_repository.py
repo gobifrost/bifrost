@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.core.security import decrypt_secret
 from src.repositories.codex_gateway import (
     CodexGatewayKeyMaterial,
     CodexGatewayRepository,
@@ -183,6 +184,64 @@ async def test_create_upstream_account_stores_encrypted_tokens(
     mock_session.add.assert_called_once()
     mock_session.flush.assert_called_once()
     mock_session.refresh.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_upsert_upstream_account_updates_existing_account_with_encrypted_tokens(
+    repository,
+    mock_session,
+):
+    user_id = uuid4()
+    existing = MagicMock(
+        user_id=user_id,
+        provider="chatgpt_codex",
+        revoked_at=None,
+        encrypted_access_token="old-access",
+        encrypted_refresh_token="old-refresh",
+    )
+    old_encrypted_access_token = existing.encrypted_access_token
+    old_encrypted_refresh_token = existing.encrypted_refresh_token
+    mock_session.execute.return_value = _Result(one=existing)
+
+    account = await repository.upsert_upstream_account_for_user(
+        user_id=user_id,
+        upstream_subject="chatgpt-user-123",
+        upstream_email="dev@example.test",
+        upstream_workspace_id="workspace-midtown",
+        access_token="new-access-token",
+        refresh_token="new-refresh-token",
+        scopes=["openid", "profile"],
+    )
+
+    assert account is existing
+    assert existing.upstream_subject == "chatgpt-user-123"
+    assert existing.upstream_email == "dev@example.test"
+    assert existing.upstream_workspace_id == "workspace-midtown"
+    assert existing.encrypted_access_token != old_encrypted_access_token
+    assert existing.encrypted_refresh_token != old_encrypted_refresh_token
+    assert existing.encrypted_access_token != "new-access-token"
+    assert existing.encrypted_refresh_token != "new-refresh-token"
+    assert decrypt_secret(existing.encrypted_access_token) == "new-access-token"
+    assert decrypt_secret(existing.encrypted_refresh_token) == "new-refresh-token"
+    assert existing.scopes == ["openid", "profile"]
+    mock_session.add.assert_not_called()
+    mock_session.flush.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_revoke_upstream_account_for_user_marks_active_account_revoked(
+    repository,
+    mock_session,
+):
+    user_id = uuid4()
+    account = MagicMock(user_id=user_id, provider="chatgpt_codex", revoked_at=None)
+    mock_session.execute.return_value = _Result(one=account)
+
+    result = await repository.revoke_upstream_account_for_user(user_id=user_id)
+
+    assert result is account
+    assert account.revoked_at is not None
+    mock_session.flush.assert_called_once()
 
 
 @pytest.mark.asyncio
