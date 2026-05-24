@@ -20,6 +20,10 @@ from src.services.execution.process_pool import (
     ProcessPoolManager,
     ProcessState,
 )
+from src.services.execution.simple_worker import (
+    FailedPackage,
+    RequirementsInstallResult,
+)
 
 
 class TestProcessState:
@@ -991,3 +995,69 @@ class TestCrashedProcessReport:
 
         # Handle still removed from pool (cleanup still happens)
         assert "process-sigkill-2" not in pool.processes
+
+
+# ---------------------------------------------------------------------------
+# _notify_requirements_failures
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failed_install_notifies_admins():
+    """A result with failed packages creates a deduped admin notification."""
+    from src.services.execution.process_pool import _notify_requirements_failures
+
+    result = RequirementsInstallResult(
+        attempted=["anthropic", "xhtml2pdf"],
+        installed=["anthropic"],
+        failed=[FailedPackage(package="xhtml2pdf", error="Unknown compiler(s): cc")],
+    )
+
+    svc = AsyncMock()
+    svc.find_admin_notification_by_title.return_value = None  # no existing dup
+    with patch(
+        "src.services.execution.process_pool.get_notification_service",
+        return_value=svc,
+    ):
+        await _notify_requirements_failures(result)
+
+    svc.create_notification.assert_awaited_once()
+    kwargs = svc.create_notification.await_args.kwargs
+    assert kwargs["for_admins"] is True
+    assert kwargs["user_id"] == "system"
+    assert "xhtml2pdf" in kwargs["request"].description
+
+
+@pytest.mark.asyncio
+async def test_failed_install_dedups_existing_notification():
+    from src.services.execution.process_pool import _notify_requirements_failures
+
+    result = RequirementsInstallResult(
+        attempted=["xhtml2pdf"],
+        installed=[],
+        failed=[FailedPackage(package="xhtml2pdf", error="boom")],
+    )
+    svc = AsyncMock()
+    svc.find_admin_notification_by_title.return_value = object()  # dup exists
+    with patch(
+        "src.services.execution.process_pool.get_notification_service",
+        return_value=svc,
+    ):
+        await _notify_requirements_failures(result)
+
+    svc.create_notification.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_successful_install_does_not_notify():
+    from src.services.execution.process_pool import _notify_requirements_failures
+
+    result = RequirementsInstallResult(
+        attempted=["anthropic"], installed=["anthropic"], failed=[]
+    )
+    with patch(
+        "src.services.execution.process_pool.get_notification_service",
+    ) as get_svc:
+        await _notify_requirements_failures(result)
+
+    get_svc.assert_not_called()
