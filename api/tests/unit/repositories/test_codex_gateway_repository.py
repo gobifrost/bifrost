@@ -120,6 +120,9 @@ async def test_list_gateway_keys_for_user_excludes_hashes_and_other_users(
 
     assert result == keys
     mock_session.execute.assert_called_once()
+    statement = mock_session.execute.call_args.args[0]
+    compiled = statement.compile(compile_kwargs={"literal_binds": True})
+    assert user_id.hex in str(compiled)
 
 
 @pytest.mark.asyncio
