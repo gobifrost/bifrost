@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from bifrost.manifest import (
+    ManifestApp,
     ManifestPolicy,
     ManifestTable,
 )
@@ -167,3 +168,108 @@ class TestManifestImportPolicyValidationContract:
         assert mtable.policies is not None
         # No exception parsing the manifest. The gate must run at write time.
         assert mtable.policies[0].when == {"has_role": "support"}
+
+
+class TestManifestDestructiveScope:
+    """Pin fail-closed import boundaries for destructive git-sync behavior."""
+
+    def test_removed_entity_ids_include_only_explicit_delete_diffs(self):
+        from src.services.manifest_import import _collect_removed_entity_ids
+
+        removed = _collect_removed_entity_ids([
+            {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "action": "delete",
+                "entity_type": "workflows",
+                "name": "deleted",
+            },
+            {
+                "id": "22222222-2222-2222-2222-222222222222",
+                "action": "update",
+                "entity_type": "forms",
+                "name": "updated",
+            },
+        ])
+
+        assert removed == {
+            "workflows": {"11111111-1111-1111-1111-111111111111"},
+        }
+
+    def test_scope_filter_prevents_unrelated_absent_workflow_delete_diff(self):
+        from bifrost.manifest import Manifest, ManifestWorkflow
+        from src.services.manifest_import import (
+            _collect_removed_entity_ids,
+            _diff_and_collect,
+            _filter_manifest_to_scope,
+        )
+
+        local_id = "11111111-1111-1111-1111-111111111111"
+        unrelated_id = "22222222-2222-2222-2222-222222222222"
+        incoming = Manifest(workflows={
+            local_id: ManifestWorkflow(
+                id=local_id,
+                path="workflows/local.py",
+                function_name="local",
+            ),
+        })
+        current = Manifest(workflows={
+            local_id: ManifestWorkflow(
+                id=local_id,
+                path="workflows/local.py",
+                function_name="local",
+            ),
+            unrelated_id: ManifestWorkflow(
+                id=unrelated_id,
+                path="workflows/other-workspace.py",
+                function_name="other",
+            ),
+        })
+
+        _filter_manifest_to_scope(
+            current,
+            path_exists=lambda path: path == "workflows/local.py",
+            dir_exists=lambda path: False,
+        )
+        changes, _changed_ids = _diff_and_collect(incoming, current)
+
+        assert _collect_removed_entity_ids(changes) == {}
+
+
+class TestManifestAppPathSafety:
+    """Manifest app paths must stay inside one app source directory."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "README.md",
+            ".bifrost/apps.yaml",
+            "../apps/customer",
+            "apps/customer/../other",
+            "/apps/customer",
+            "apps/customer/src",
+        ],
+    )
+    def test_rejects_non_app_or_escaped_app_paths(self, path):
+        from src.services.manifest_import import _safe_app_repo_path
+
+        mapp = ManifestApp(
+            id="11111111-1111-1111-1111-111111111111",
+            name="Customer",
+            slug="customer",
+            path=path,
+        )
+
+        with pytest.raises(ValueError):
+            _safe_app_repo_path(mapp)
+
+    def test_accepts_slug_matched_apps_directory(self):
+        from src.services.manifest_import import _safe_app_repo_path
+
+        mapp = ManifestApp(
+            id="11111111-1111-1111-1111-111111111111",
+            name="Customer",
+            slug="customer",
+            path="apps/customer",
+        )
+
+        assert _safe_app_repo_path(mapp) == "apps/customer"

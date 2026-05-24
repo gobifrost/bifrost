@@ -115,6 +115,21 @@ workflows:
     assert "organization_id" not in wf  # default is None
 
 
+def test_workflow_manifest_default_is_role_based():
+    """Omitting access_level must not widen workflow execution access."""
+    from bifrost.manifest import parse_manifest
+
+    manifest = parse_manifest("""
+workflows:
+  wf1:
+    id: "11111111-1111-1111-1111-111111111111"
+    path: workflows/wf1.py
+    function_name: wf1
+""")
+
+    assert manifest.workflows["wf1"].access_level == "role_based"
+
+
 def test_validate_manifest_broken_ref(sample_manifest):
     """Detect broken cross-references."""
     from bifrost.manifest import parse_manifest, validate_manifest

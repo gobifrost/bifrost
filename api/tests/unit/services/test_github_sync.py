@@ -13,6 +13,67 @@ from src.models.contracts.github import (
 from src.services.github_sync import SyncError
 
 
+def test_manifest_regeneration_filters_inline_forms_and_agents_to_repo_scope(tmp_path):
+    """Inline forms/agents should not leak when their workflows are outside this repo."""
+    from bifrost.manifest import Manifest, ManifestAgent, ManifestForm, ManifestWorkflow
+    from src.services.github_sync import _filter_manifest_to_work_dir
+
+    local_wf_id = "11111111-1111-1111-1111-111111111111"
+    other_wf_id = "22222222-2222-2222-2222-222222222222"
+    local_form_id = "33333333-3333-3333-3333-333333333333"
+    other_form_id = "44444444-4444-4444-4444-444444444444"
+    local_agent_id = "55555555-5555-5555-5555-555555555555"
+    other_agent_id = "66666666-6666-6666-6666-666666666666"
+
+    (tmp_path / "workflows").mkdir()
+    (tmp_path / "workflows" / "local.py").write_text("from bifrost import workflow\n")
+
+    manifest = Manifest(
+        workflows={
+            local_wf_id: ManifestWorkflow(
+                id=local_wf_id,
+                path="workflows/local.py",
+                function_name="local",
+            ),
+            other_wf_id: ManifestWorkflow(
+                id=other_wf_id,
+                path="workflows/other.py",
+                function_name="other",
+            ),
+        },
+        forms={
+            local_form_id: ManifestForm(
+                id=local_form_id,
+                name="Local",
+                workflow_id=local_wf_id,
+            ),
+            other_form_id: ManifestForm(
+                id=other_form_id,
+                name="Other",
+                workflow_id=other_wf_id,
+            ),
+        },
+        agents={
+            local_agent_id: ManifestAgent(
+                id=local_agent_id,
+                name="Local Agent",
+                tool_ids=[local_wf_id],
+            ),
+            other_agent_id: ManifestAgent(
+                id=other_agent_id,
+                name="Other Agent",
+                tool_ids=[other_wf_id],
+            ),
+        },
+    )
+
+    _filter_manifest_to_work_dir(manifest, tmp_path)
+
+    assert set(manifest.workflows) == {local_wf_id}
+    assert set(manifest.forms) == {local_form_id}
+    assert set(manifest.agents) == {local_agent_id}
+
+
 class TestWorkflowReference:
     """Tests for WorkflowReference model."""
 

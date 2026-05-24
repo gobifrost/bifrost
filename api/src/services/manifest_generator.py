@@ -87,7 +87,7 @@ def serialize_workflow(wf: Workflow, roles: list[str] | None = None) -> Manifest
         description=wf.description,
         organization_id=str(wf.organization_id) if wf.organization_id else None,
         roles=roles or [],
-        access_level=wf.access_level or "authenticated",
+        access_level=wf.access_level or "role_based",
         endpoint_enabled=wf.endpoint_enabled or False,
         timeout_seconds=wf.timeout_seconds if wf.timeout_seconds is not None else 1800,
         public_endpoint=wf.public_endpoint or False,
@@ -252,7 +252,7 @@ def serialize_integration(
                 organization_id=str(im.organization_id) if im.organization_id else None,
                 entity_id=im.entity_id,
                 entity_name=im.entity_name,
-                oauth_token_id=str(im.oauth_token_id) if im.oauth_token_id else None,
+                oauth_token_id=None,
             )
             for im in (mappings or [])
         ],

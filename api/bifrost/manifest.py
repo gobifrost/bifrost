@@ -73,7 +73,7 @@ class ManifestWorkflow(BaseModel):
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
     )
-    access_level: str = Field(default="authenticated", description="role_based | authenticated | public")
+    access_level: str = Field(default="role_based", description="role_based | authenticated | public")
     endpoint_enabled: bool = Field(default=False, description="Expose as HTTP API endpoint")
     timeout_seconds: int = Field(default=1800, description="Max execution time in seconds. 0 = no timeout. Default 1800 (30 min), max 86400 (24h).")
     public_endpoint: bool = Field(default=False, description="Allow unauthenticated API access")
