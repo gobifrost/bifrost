@@ -1,6 +1,7 @@
 """Persistence helpers for the Bifrost Codex Gateway."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import secrets
 from typing import Any, TypeGuard
 from uuid import UUID
@@ -120,6 +121,34 @@ class CodexGatewayRepository:
             if self.verify_gateway_key(plaintext_key, candidate.key_hash):
                 return candidate
         return None
+
+    async def list_gateway_keys_for_user(self, user_id: UUID) -> list[CodexGatewayKey]:
+        result = await self.session.execute(
+            select(CodexGatewayKey)
+            .where(CodexGatewayKey.user_id == user_id)
+            .order_by(CodexGatewayKey.created_at.desc(), CodexGatewayKey.id.desc())
+        )
+        return list(result.scalars().all())
+
+    async def revoke_gateway_key_for_user(
+        self,
+        *,
+        key_id: UUID,
+        user_id: UUID,
+    ) -> CodexGatewayKey | None:
+        result = await self.session.execute(
+            select(CodexGatewayKey)
+            .where(CodexGatewayKey.id == key_id)
+            .where(CodexGatewayKey.user_id == user_id)
+        )
+        key = result.scalar_one_or_none()
+        if key is None:
+            return None
+        if key.revoked_at is None:
+            key.status = "revoked"
+            key.revoked_at = datetime.now(timezone.utc)
+            await self.session.flush()
+        return key
 
     async def get_active_upstream_account_for_user(
         self, user_id: UUID, provider: str = "chatgpt_codex"

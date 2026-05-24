@@ -1,18 +1,27 @@
 """OpenAI-compatible facade routes for the Bifrost Codex Gateway."""
 
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from shared.models import CodexGatewayResponsesRequest
 
+from src.core.auth import CurrentActiveUser
 from src.core.database import DbSession
-from src.models.contracts.codex_gateway import OpenAICompatibleError
+from src.models.contracts.codex_gateway import (
+    CodexGatewayKeyCreateRequest,
+    CodexGatewayKeyCreateResponse,
+    CodexGatewayKeyListResponse,
+    CodexGatewayKeyRecord,
+    OpenAICompatibleError,
+)
 from src.repositories.codex_gateway import (
     CodexGatewayRepository,
     is_plausible_gateway_key,
 )
+from src.services.audit import emit_audit
 from src.services.codex_gateway.runtime import (
     CODEX_GATEWAY_KEY_HEADER,
     CodexGatewayRuntime,
@@ -21,6 +30,10 @@ from src.services.codex_gateway.runtime import (
 
 
 router = APIRouter(tags=["Codex Gateway"])
+
+
+def get_codex_gateway_repository(db: DbSession) -> CodexGatewayRepository:
+    return CodexGatewayRepository(db)
 
 
 def get_codex_gateway_runtime(db: DbSession) -> CodexGatewayRuntime:
@@ -37,6 +50,118 @@ def _invalid_gateway_key_response() -> JSONResponse:
             ).model_dump()
         },
     )
+
+
+def _key_record_response(record) -> CodexGatewayKeyRecord:
+    return CodexGatewayKeyRecord(
+        id=record.id,
+        user_id=record.user_id,
+        project_id=record.project_id,
+        name=record.name,
+        allowed_models=list(record.allowed_models or []),
+        denied_models=list(record.denied_models or []),
+        daily_limit=record.daily_limit,
+        monthly_limit=record.monthly_limit,
+        status=record.status,
+        created_at=record.created_at,
+        revoked_at=record.revoked_at,
+        last_used_at=record.last_used_at,
+    )
+
+
+@router.post(
+    "/api/codex-gateway/keys",
+    response_model=CodexGatewayKeyCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_codex_gateway_key",
+)
+async def create_gateway_key(
+    payload: CodexGatewayKeyCreateRequest,
+    current_user: CurrentActiveUser,
+    repository: Annotated[
+        CodexGatewayRepository,
+        Depends(get_codex_gateway_repository),
+    ],
+    db: DbSession,
+) -> CodexGatewayKeyCreateResponse:
+    material = await repository.create_gateway_key(
+        user_id=current_user.user_id,
+        project_id=payload.project_id,
+        name=payload.name,
+        allowed_models=payload.allowed_models,
+        denied_models=payload.denied_models,
+        daily_limit=payload.daily_limit,
+        monthly_limit=payload.monthly_limit,
+    )
+    await emit_audit(
+        db,
+        "codex_gateway.key.create",
+        resource_type="codex_gateway_key",
+        resource_id=material.record.id,
+        details={
+            "project_id": str(material.record.project_id)
+            if material.record.project_id
+            else None,
+            "name": material.record.name,
+            "allowed_models": material.record.allowed_models,
+            "denied_models": material.record.denied_models,
+        },
+    )
+    return CodexGatewayKeyCreateResponse(
+        record=_key_record_response(material.record),
+        key=material.plaintext_key,
+    )
+
+
+@router.get(
+    "/api/codex-gateway/keys",
+    response_model=CodexGatewayKeyListResponse,
+    operation_id="list_codex_gateway_keys",
+)
+async def list_gateway_keys(
+    current_user: CurrentActiveUser,
+    repository: Annotated[
+        CodexGatewayRepository,
+        Depends(get_codex_gateway_repository),
+    ],
+) -> CodexGatewayKeyListResponse:
+    keys = await repository.list_gateway_keys_for_user(current_user.user_id)
+    return CodexGatewayKeyListResponse(
+        items=[_key_record_response(record) for record in keys]
+    )
+
+
+@router.delete(
+    "/api/codex-gateway/keys/{key_id}",
+    response_model=CodexGatewayKeyRecord,
+    operation_id="revoke_codex_gateway_key",
+)
+async def revoke_gateway_key(
+    key_id: UUID,
+    current_user: CurrentActiveUser,
+    repository: Annotated[
+        CodexGatewayRepository,
+        Depends(get_codex_gateway_repository),
+    ],
+    db: DbSession,
+) -> CodexGatewayKeyRecord:
+    record = await repository.revoke_gateway_key_for_user(
+        key_id=key_id,
+        user_id=current_user.user_id,
+    )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    await emit_audit(
+        db,
+        "codex_gateway.key.revoke",
+        resource_type="codex_gateway_key",
+        resource_id=record.id,
+        details={
+            "project_id": str(record.project_id) if record.project_id else None,
+            "name": record.name,
+        },
+    )
+    return _key_record_response(record)
 
 
 @router.post(

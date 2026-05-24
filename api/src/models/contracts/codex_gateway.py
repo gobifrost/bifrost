@@ -11,9 +11,27 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+from shared.models import (
+    CodexGatewayKeyCreateRequest,
+    CodexGatewayKeyCreateResponse,
+    CodexGatewayKeyListResponse,
+    CodexGatewayKeyRecord,
+)
 
 
 CodexGatewayKeyStatus = Literal["active", "revoked"]
+
+__all__ = [
+    "CodexGatewayKeyContext",
+    "CodexGatewayKeyCreateRequest",
+    "CodexGatewayKeyCreateResponse",
+    "CodexGatewayKeyListResponse",
+    "CodexGatewayKeyRecord",
+    "CodexGatewayPolicyDecision",
+    "CodexGatewayRequestContext",
+    "CodexGatewayUpstreamAccount",
+    "OpenAICompatibleError",
+]
 
 
 class CodexGatewayKeyContext(BaseModel):

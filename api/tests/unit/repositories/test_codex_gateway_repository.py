@@ -105,6 +105,45 @@ async def test_lookup_gateway_key_rejects_malformed_key_before_database_query(
 
 
 @pytest.mark.asyncio
+async def test_list_gateway_keys_for_user_excludes_hashes_and_other_users(
+    repository,
+    mock_session,
+):
+    user_id = uuid4()
+    keys = [
+        MagicMock(user_id=user_id, key_hash="secret-hash-1"),
+        MagicMock(user_id=user_id, key_hash="secret-hash-2"),
+    ]
+    mock_session.execute.return_value = _Result(values=keys)
+
+    result = await repository.list_gateway_keys_for_user(user_id)
+
+    assert result == keys
+    mock_session.execute.assert_called_once()
+    statement = mock_session.execute.call_args.args[0]
+    compiled = statement.compile(compile_kwargs={"literal_binds": True})
+    assert user_id.hex in str(compiled)
+
+
+@pytest.mark.asyncio
+async def test_revoke_gateway_key_for_user_marks_key_revoked(repository, mock_session):
+    user_id = uuid4()
+    key_id = uuid4()
+    key = MagicMock(user_id=user_id, status="active", revoked_at=None)
+    mock_session.execute.return_value = _Result(one=key)
+
+    result = await repository.revoke_gateway_key_for_user(
+        key_id=key_id,
+        user_id=user_id,
+    )
+
+    assert result is key
+    assert key.status == "revoked"
+    assert key.revoked_at is not None
+    mock_session.flush.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_get_active_upstream_account_for_user_excludes_revoked_accounts(
     repository,
     mock_session,
