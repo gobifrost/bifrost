@@ -18,9 +18,9 @@
 #   ./debug.sh status       print mode, project name, URL, login
 #   ./debug.sh logs [svc]   docker compose logs -f, optionally for one service
 #
-# Login (configured via .env.debug + the seed-user provisioning fix):
-#   email:    dev@gobifrost.com
-#   password: password
+# Login:
+#   email:    dev@localhost by default
+#   password: generated per worktree unless explicitly configured
 #   MFA:      off
 
 set -euo pipefail
@@ -43,26 +43,74 @@ mkdir -p "$LOG_DIR"
 # =============================================================================
 # Env loading
 # =============================================================================
-# Order (later overrides earlier):
+# Order (later overrides earlier, process env wins everything):
 #   1. .env             — repo defaults (POSTGRES_PASSWORD, BIFROST_SECRET_KEY, etc.)
 #   2. .env.debug       — checked-in debug defaults (dev user, MFA off)
 #   3. ~/.config/bifrost/debug.env  — per-user overrides (NETBIRD_SETUP_KEY)
-#   4. process env      — already exported, wins everything
+load_env_file() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 0
+
+    local line key value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in
+            ""|\#*) continue ;;
+            export\ *) line="${line#export }" ;;
+        esac
+
+        key="${line%%=*}"
+        value="${line#*=}"
+        if [ "$key" = "$line" ] || ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "WARNING: ignoring invalid env line in $env_file: $line" >&2
+            continue
+        fi
+        if [ -n "${!key+x}" ]; then
+            continue
+        fi
+
+        case "$value" in
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+            \'*\') value="${value#\'}"; value="${value%\'}" ;;
+        esac
+
+        export "$key=$value"
+    done < "$env_file"
+}
+
 load_env_files() {
-    set -a
-    if [ -f "$SCRIPT_DIR/.env" ]; then
-        # shellcheck disable=SC1091
-        source "$SCRIPT_DIR/.env"
+    load_env_file "$SCRIPT_DIR/.env"
+    load_env_file "$SCRIPT_DIR/.env.debug"
+    load_env_file "$HOME/.config/bifrost/debug.env"
+}
+
+configure_debug_admin() {
+    export BIFROST_DEFAULT_USER_EMAIL="${BIFROST_DEFAULT_USER_EMAIL:-dev@localhost}"
+
+    if [ -n "${BIFROST_DEFAULT_USER_PASSWORD:-}" ]; then
+        return 0
     fi
-    if [ -f "$SCRIPT_DIR/.env.debug" ]; then
-        # shellcheck disable=SC1091
-        source "$SCRIPT_DIR/.env.debug"
+
+    local debug_config_dir debug_secret_file
+    debug_config_dir="$HOME/.config/bifrost/debug"
+    debug_secret_file="$debug_config_dir/$COMPOSE_PROJECT_NAME.env"
+    mkdir -p "$debug_config_dir"
+    chmod 700 "$debug_config_dir" 2>/dev/null || true
+
+    if [ -f "$debug_secret_file" ]; then
+        load_env_file "$debug_secret_file"
     fi
-    if [ -f "$HOME/.config/bifrost/debug.env" ]; then
-        # shellcheck disable=SC1091
-        source "$HOME/.config/bifrost/debug.env"
+
+    if [ -z "${BIFROST_DEFAULT_USER_PASSWORD:-}" ]; then
+        local generated_password
+        local previous_umask
+        generated_password="$(openssl rand -base64 24 2>/dev/null || uuidgen)"
+        previous_umask="$(umask)"
+        umask 077
+        printf 'BIFROST_DEFAULT_USER_PASSWORD=%s\n' "$generated_password" > "$debug_secret_file"
+        umask "$previous_umask"
+        export BIFROST_DEFAULT_USER_PASSWORD="$generated_password"
     fi
-    set +a
 }
 
 # =============================================================================
@@ -145,7 +193,7 @@ print_header() {
 }
 
 print_login() {
-    echo "Login:    ${BIFROST_DEFAULT_USER_EMAIL:-dev@gobifrost.com} / ${BIFROST_DEFAULT_USER_PASSWORD:-password}"
+    echo "Login:    ${BIFROST_DEFAULT_USER_EMAIL:-dev@localhost} / ${BIFROST_DEFAULT_USER_PASSWORD:-<not configured>}"
 }
 
 # =============================================================================
@@ -267,6 +315,7 @@ cmd_logs() {
 # =============================================================================
 
 load_env_files
+configure_debug_admin
 
 if [ $# -eq 0 ]; then
     cmd_up

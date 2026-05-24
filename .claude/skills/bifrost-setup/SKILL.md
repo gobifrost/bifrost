@@ -63,10 +63,21 @@ Do NOT suggest placeholder URLs - every Bifrost instance has a unique URL provid
 
 ### Install SDK
 
-**Use the detected pip command** (from `$BIFROST_PIP_CMD`):
+**Use the detected pip command** (from `$BIFROST_PIP_CMD`), but keep the URL in
+an argument variable so shell metacharacters in the URL are not executed:
 
 ```bash
-$BIFROST_PIP_CMD {url}/api/cli/download
+download_url="{url}/api/cli/download"
+case "$BIFROST_PIP_CMD" in
+  "pipx install --force") pipx install --force "$download_url" ;;
+  "pip3 install --force-reinstall") pip3 install --force-reinstall "$download_url" ;;
+  "pip install --force-reinstall") pip install --force-reinstall "$download_url" ;;
+  python*\ -m\ pip\ install\ --force-reinstall)
+    set -- $BIFROST_PIP_CMD
+    "$1" -m pip install --force-reinstall "$download_url"
+    ;;
+  *) echo "Unsupported installer command: $BIFROST_PIP_CMD" >&2; exit 1 ;;
+esac
 ```
 
 Verify with:
@@ -77,7 +88,7 @@ bifrost help
 ## Login
 
 ```bash
-bifrost login --url {url}
+bifrost login --url "{url}"
 ```
 
 This opens a browser for authentication and saves credentials to `~/.bifrost/credentials.json`.
@@ -93,7 +104,8 @@ claude mcp list
 
 **Add/update MCP server:**
 ```bash
-claude mcp remove bifrost 2>/dev/null; claude mcp add --transport http bifrost {url}/mcp
+claude mcp remove bifrost 2>/dev/null
+claude mcp add --transport http bifrost "{url}/mcp"
 ```
 
 ## Restart Required (MCP only)
@@ -113,7 +125,7 @@ If MCP was skipped (SDK-first only), tell the user:
 ## Troubleshooting
 
 ### pipx install fails with network error
-- Verify URL is accessible: `curl {url}/api/cli/download -o /dev/null -w "%{http_code}"`
+- Verify URL is accessible: `curl --fail --silent --show-error --output /dev/null --write-out "%{http_code}" "{url}/api/cli/download"`
 
 ### bifrost login hangs
 - Check if URL is accessible in browser

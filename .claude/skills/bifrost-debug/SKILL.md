@@ -48,7 +48,7 @@ The user picks the mode by setting (or not setting) `NETBIRD_SETUP_KEY` in `~/.c
    - `Open:     http://...` — success. Hand the URL to the user.
    - `ERROR: api did not become ready` — failure. Run `./debug.sh logs api` and report what's wrong.
 
-3. **Tell the user the credentials.** Login is `dev@gobifrost.com` / `password`. MFA is off. No setup wizard. Mention this once with the URL.
+3. **Tell the user the credentials.** Login defaults to `dev@localhost` and the password printed by `./debug.sh status`. MFA is off. No setup wizard. Mention this once with the URL.
 
 4. **Point at logs if they ask.** `./debug.sh logs <service>` — services include `api`, `client`, `worker`, `scheduler`, `postgres`, `rabbitmq`, `redis`, `minio`.
 
@@ -79,7 +79,7 @@ That removes the keychain entry and prompts to remove the matching `BIFROST_API_
 If the user wants tokens that *don't* persist anywhere — POC folders, throwaway sessions — use the password-grant path:
 
 ```bash
-bifrost login --url <URL> --email dev@gobifrost.com --password password
+bifrost login --url <URL> --email <EMAIL_FROM_DEBUG_STATUS> --password <PASSWORD_FROM_DEBUG_STATUS>
 ```
 
 This prints three `BIFROST_*` lines to stdout and writes nothing to disk. The caller can `eval` them or pipe them into `.env`. Only works on instances with `BIFROST_MFA_ENABLED=false`. Do not suggest this as the default — it exists for the "leave no trace" use case.
