@@ -211,6 +211,118 @@ def _collect_changed_ids(incoming: "Manifest", current: "Manifest") -> set[str]:
     return ids
 
 
+def _collect_removed_entity_ids(changes: list[dict[str, str]]) -> dict[str, set[str]]:
+    """Return entity IDs that the manifest diff explicitly removed.
+
+    Destructive sync must be driven by the diff, not by broad absence from a
+    partial or mismatched manifest. The returned map is keyed by manifest
+    entity_type, for example ``{"workflows": {"..."}}``.
+    """
+    removed: dict[str, set[str]] = {}
+    for change in changes:
+        if change.get("action") != "delete":
+            continue
+        entity_type = change.get("entity_type")
+        entity_id = change.get("id")
+        if not entity_type or not entity_id:
+            continue
+        removed.setdefault(entity_type, set()).add(entity_id)
+    return removed
+
+
+def _safe_app_repo_path(mapp) -> str:
+    """Return a normalized app source path or raise on unsafe manifest input."""
+    from pathlib import PurePosixPath
+
+    raw_path = (mapp.path or "").strip().replace("\\", "/").rstrip("/")
+    if not raw_path:
+        slug = mapp.slug
+        if not slug:
+            raise ValueError(f"App {mapp.id} has no slug or path")
+        raw_path = f"apps/{slug}"
+
+    path = PurePosixPath(raw_path)
+    parts = path.parts
+    if (
+        path.is_absolute()
+        or len(parts) != 2
+        or parts[0] != "apps"
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise ValueError(
+            f"App {mapp.id} path must be exactly apps/<slug>, got {mapp.path!r}"
+        )
+
+    slug = mapp.slug or parts[1]
+    if parts[1] != slug:
+        raise ValueError(
+            f"App {mapp.id} path {raw_path!r} does not match slug {slug!r}"
+        )
+
+    return f"apps/{slug}"
+
+
+def _filter_manifest_to_scope(
+    manifest: "Manifest",
+    path_exists: Callable[[str], bool],
+    dir_exists: Callable[[str], bool],
+) -> None:
+    """Restrict a DB manifest to the source paths owned by the current repo."""
+    manifest.workflows = {
+        k: v for k, v in manifest.workflows.items()
+        if path_exists(v.path)
+    }
+    present_workflow_ids = {v.id for v in manifest.workflows.values()}
+    present_workflow_paths = {v.path for v in manifest.workflows.values()}
+
+    def _form_in_scope(mform) -> bool:
+        workflow_refs = {
+            getattr(mform, "workflow_id", None),
+            getattr(mform, "launch_workflow_id", None),
+        }
+        if workflow_refs & present_workflow_ids:
+            return True
+        path_refs = {
+            getattr(mform, "workflow_path", None),
+            getattr(mform, "launch_workflow_path", None),
+        }
+        return bool(path_refs & present_workflow_paths)
+
+    manifest.forms = {
+        k: v for k, v in manifest.forms.items()
+        if _form_in_scope(v)
+    }
+
+    scoped_agents = {
+        k: v for k, v in manifest.agents.items()
+        if set(getattr(v, "tool_ids", []) or []) & present_workflow_ids
+    }
+    while True:
+        present_agent_ids = {v.id for v in scoped_agents.values()}
+        next_agents = {
+            k: v for k, v in manifest.agents.items()
+            if (
+                k in scoped_agents
+                or set(getattr(v, "delegated_agent_ids", []) or []) & present_agent_ids
+            )
+        }
+        if next_agents.keys() == scoped_agents.keys():
+            break
+        scoped_agents = next_agents
+    manifest.agents = scoped_agents
+
+    safe_apps = {}
+    for k, app in manifest.apps.items():
+        try:
+            app_path = _safe_app_repo_path(app)
+        except ValueError as exc:
+            logger.warning("Skipping unsafe app manifest path: %s", exc)
+            continue
+        if dir_exists(app_path):
+            safe_apps[k] = app.model_copy(update={"path": app_path})
+    manifest.apps = safe_apps
+
+
 # =============================================================================
 # Inline-content helpers
 # =============================================================================
@@ -580,6 +692,15 @@ async def import_manifest_from_repo(
 
     # 4. Compute diff against current DB state
     db_manifest = await generate_manifest(db)
+    all_repo_paths = set(await repo.list(""))
+    _filter_manifest_to_scope(
+        db_manifest,
+        path_exists=lambda path: path in all_repo_paths,
+        dir_exists=lambda path: any(
+            repo_path.startswith(path.rstrip("/") + "/")
+            for repo_path in all_repo_paths
+        ),
+    )
     entity_changes, changed_ids = _diff_and_collect(manifest, db_manifest)
 
     # 4a. Dry-run: return diff without writing
@@ -602,7 +723,8 @@ async def import_manifest_from_repo(
         return result
 
     # Check if diff has any deletes (to skip _resolve_deletions later)
-    has_deletes = any(c["action"] == "delete" for c in entity_changes)
+    removed_entity_ids = _collect_removed_entity_ids(entity_changes)
+    has_deletes = bool(removed_entity_ids)
 
     # Helper: read a file from S3, returning None on failure
     async def _read_or_none(path: str) -> bytes | None:
@@ -621,7 +743,10 @@ async def import_manifest_from_repo(
             deletion_changes = []
             if delete_removed_entities and has_deletes:
                 deletion_changes = await resolver._resolve_deletions(
-                    manifest=manifest, repo=repo, dry_run=False,
+                    manifest=manifest,
+                    repo=repo,
+                    dry_run=False,
+                    removed_entity_ids=removed_entity_ids,
                 )
 
             await resolver.plan_import(manifest, repo=repo, dry_run=False, changed_ids=changed_ids)
@@ -1562,12 +1687,22 @@ class ManifestResolver:
                     resolved_list.append(item)
             data[field_name] = resolved_list
 
-    async def _resolve_deletions(self, work_dir: Path | None = None, manifest: "Manifest | None" = None, repo: "RepoStorage | None" = None, dry_run: bool = False) -> list:
+    async def _resolve_deletions(
+        self,
+        work_dir: Path | None = None,
+        manifest: "Manifest | None" = None,
+        repo: "RepoStorage | None" = None,
+        dry_run: bool = False,
+        removed_entity_ids: dict[str, set[str]] | None = None,
+        removed_paths: set[str] | None = None,
+    ) -> list:
         """Compute delete/deactivate ops for entities removed from the manifest.
 
         Optimized: pushes filtering to SQL with NOT IN clauses, returning only
         stale entity IDs. Executes bulk deletes inline instead of generating
-        individual Delete/Deactivate ops.
+        individual Delete/Deactivate ops. Fail closed: only entity IDs that
+        were explicitly removed by the manifest diff are eligible for
+        destructive action.
 
         Deletion strategy per entity type:
         - Workflows, Forms, Agents, Apps: hard-delete (existing behavior)
@@ -1673,15 +1808,24 @@ class ManifestResolver:
 
         entity_changes: list[EntityChange] = []
         now = datetime.now(timezone.utc)
+        removed_entity_ids = removed_entity_ids or {}
+        removed_paths = removed_paths or set()
+
+        def _removed_uuids(entity_type: str) -> list[UUID]:
+            return [UUID(eid) for eid in removed_entity_ids.get(entity_type, set())]
 
         # Helper: query stale IDs (+ names when available) and bulk-delete
         async def _bulk_delete(model: type, base_filter: list, present: list[UUID], entity_type: str) -> int:
             """Find IDs not in present list and delete them. Returns count."""
+            candidates = _removed_uuids(entity_type)
+            if not candidates:
+                return 0
             has_name = "name" in model.__table__.columns  # type: ignore[attr-defined]
             if has_name:
                 q = select(model.id, model.name).where(*base_filter)  # type: ignore[attr-defined]
             else:
                 q = select(model.id).where(*base_filter)  # type: ignore[attr-defined]
+            q = q.where(model.id.in_(candidates))  # type: ignore[attr-defined]
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
             result = await self.db.execute(q)
@@ -1707,11 +1851,15 @@ class ManifestResolver:
 
         # Helper: query stale IDs and soft-delete (deactivate)
         async def _bulk_deactivate(model: type, base_filter: list, present: list[UUID], entity_type: str) -> int:
+            candidates = _removed_uuids(entity_type)
+            if not candidates:
+                return 0
             has_name = "name" in model.__table__.columns  # type: ignore[attr-defined]
             if has_name:
                 q = select(model.id, model.name).where(*base_filter)  # type: ignore[attr-defined]
             else:
                 q = select(model.id).where(*base_filter)  # type: ignore[attr-defined]
+            q = q.where(model.id.in_(candidates))  # type: ignore[attr-defined]
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
             result = await self.db.execute(q)
@@ -1737,13 +1885,19 @@ class ManifestResolver:
                 )
             return len(stale_ids)
 
-        # Delete workflows synced from git that are no longer present
-        await _bulk_delete(
-            Workflow,
-            [Workflow.is_active == True, Workflow.path.isnot(None)],  # noqa: E712
-            present_wf_uuids,
-            "workflows",
-        )
+        # Delete workflows only when both the manifest diff removed the entity
+        # and git recorded the backing file deletion in this repo.
+        if removed_paths:
+            await _bulk_delete(
+                Workflow,
+                [
+                    Workflow.is_active == True,  # noqa: E712
+                    Workflow.path.isnot(None),
+                    Workflow.path.in_(removed_paths),
+                ],
+                present_wf_uuids,
+                "workflows",
+            )
 
         # Delete integrations not in manifest
         await _bulk_delete(
@@ -1755,7 +1909,11 @@ class ManifestResolver:
 
         # Delete configs not in manifest (skip integration-schema-linked configs —
         # those are user-set values managed by IntegrationConfigSchema cascade)
-        cfg_q = select(Config.id).where(Config.config_schema_id.is_(None))
+        removed_config_uuids = _removed_uuids("configs")
+        cfg_q = select(Config.id).where(
+            Config.config_schema_id.is_(None),
+            Config.id.in_(removed_config_uuids),
+        )
         if present_config_uuids:
             cfg_q = cfg_q.where(Config.id.notin_(present_config_uuids))
         cfg_result = await self.db.execute(cfg_q)
@@ -1774,7 +1932,8 @@ class ManifestResolver:
                 )
 
         # Tables not in manifest (data preserved — report as "keep")
-        table_q = select(Table.id, Table.name)
+        removed_table_uuids = _removed_uuids("tables")
+        table_q = select(Table.id, Table.name).where(Table.id.in_(removed_table_uuids))
         if present_table_uuids:
             table_q = table_q.where(Table.id.notin_(present_table_uuids))
         table_result = await self.db.execute(table_q)
@@ -2055,7 +2214,9 @@ class ManifestResolver:
             )
             await self.db.execute(op_stmt)
 
-        # Sync mappings: upsert by (integration_id, organization_id) to preserve oauth_token_id
+        # Sync mappings: upsert by (integration_id, organization_id).
+        # OAuth tokens are user/environment-owned and are never trusted from
+        # manifest input; existing linked tokens are preserved in place.
         if cache is not None:
             existing_m_by_org: dict[str | None, IntegrationMapping] = dict(cache["integ_mappings"].get(integ_id, {}))
         else:
@@ -2076,15 +2237,13 @@ class ManifestResolver:
                 existing_m = existing_m_by_org[org_key]
                 existing_m.entity_id = mapping.entity_id
                 existing_m.entity_name = mapping.entity_name
-                if mapping.oauth_token_id is not None:
-                    existing_m.oauth_token_id = UUID(mapping.oauth_token_id)
             else:
                 m_stmt = insert(IntegrationMapping).values(
                     integration_id=integ_id,
                     organization_id=UUID(mapping.organization_id) if mapping.organization_id else None,
                     entity_id=mapping.entity_id,
                     entity_name=mapping.entity_name,
-                    oauth_token_id=UUID(mapping.oauth_token_id) if mapping.oauth_token_id else None,
+                    oauth_token_id=None,
                 )
                 await self.db.execute(m_stmt)
 
@@ -2170,24 +2329,17 @@ class ManifestResolver:
         """Resolve an app from manifest into SyncOps (metadata only).
         Uses prefetch cache for slug lookup.
         """
-        from pathlib import PurePosixPath
         from uuid import UUID
 
         from src.models.orm.app_roles import AppRole
         from src.models.orm.applications import Application
         from src.services.sync_ops import SyncOp, SyncRoles, Upsert  # noqa: F401
 
-        # repo_path is now the directory directly (no /app.yaml to strip)
-        repo_path = mapp.path.rstrip("/") if mapp.path else None
-
-        # Slug from manifest entry, or derive from repo_path leaf
-        slug = mapp.slug or (PurePosixPath(repo_path).name if repo_path else None)
+        repo_path = _safe_app_repo_path(mapp)
+        slug = mapp.slug or repo_path.rsplit("/", 1)[1]
         if not slug:
             logger.warning(f"App {mapp.id} has no slug or path, skipping")
             return []
-
-        if not repo_path:
-            repo_path = f"apps/{slug}"
 
         app_id = UUID(mapp.id)
         org_id = UUID(mapp.organization_id) if mapp.organization_id else None

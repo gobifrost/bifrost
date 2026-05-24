@@ -361,3 +361,25 @@ async def test_generate_manifest_access_levels(mock_db):
     assert manifest.apps[str(app.id)].access_level == "role_based"
 
 
+def test_serialize_integration_does_not_export_oauth_token_ids():
+    """OAuth token IDs are environment-owned and must not become portable state."""
+    from src.services.manifest_generator import serialize_integration
+
+    integ = MagicMock()
+    integ.id = uuid4()
+    integ.name = "Tokenless"
+    integ.entity_id = None
+    integ.entity_id_name = None
+    integ.default_entity_id = None
+    integ.list_entities_data_provider_id = None
+
+    mapping = MagicMock()
+    mapping.organization_id = uuid4()
+    mapping.entity_id = "tenant-1"
+    mapping.entity_name = "Tenant 1"
+    mapping.oauth_token_id = uuid4()
+
+    manifest_integration = serialize_integration(integ, mappings=[mapping])
+
+    assert manifest_integration.mappings[0].oauth_token_id is None
+
