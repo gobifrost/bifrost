@@ -27,7 +27,7 @@ async def test_get_by_id_filters_to_repo_org_or_global():
 
     compiled = str(session.statement.compile(compile_kwargs={"literal_binds": True}))
     assert "knowledge_store.organization_id" in compiled
-    assert str(ORG_ID) in compiled
+    assert (str(ORG_ID) in compiled) or (ORG_ID.hex in compiled)
     assert "IS NULL" in compiled
 
 
