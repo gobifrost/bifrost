@@ -112,17 +112,23 @@ elif [ -n "$WINDIR" ]; then
 fi
 
 # Write all variables to CLAUDE_ENV_FILE
+shell_export() {
+  local key="$1"
+  local value="$2"
+  printf 'export %s=%q\n' "$key" "$value"
+}
+
 {
-  echo "export BIFROST_HAS_SOURCE=$BIFROST_HAS_SOURCE"
-  echo "export BIFROST_SDK_INSTALLED=$BIFROST_SDK_INSTALLED"
-  echo "export BIFROST_LOGGED_IN=$BIFROST_LOGGED_IN"
-  echo "export BIFROST_MCP_CONFIGURED=$BIFROST_MCP_CONFIGURED"
-  [ -n "$BIFROST_DEV_URL" ] && echo "export BIFROST_DEV_URL=\"$BIFROST_DEV_URL\""
-  [ -n "$BIFROST_SOURCE_PATH" ] && echo "export BIFROST_SOURCE_PATH=\"$BIFROST_SOURCE_PATH\""
-  [ -n "$BIFROST_PYTHON_CMD" ] && echo "export BIFROST_PYTHON_CMD=\"$BIFROST_PYTHON_CMD\""
-  [ -n "$BIFROST_PYTHON_VERSION" ] && echo "export BIFROST_PYTHON_VERSION=\"$BIFROST_PYTHON_VERSION\""
-  [ -n "$BIFROST_PIP_CMD" ] && echo "export BIFROST_PIP_CMD=\"$BIFROST_PIP_CMD\""
-  [ -n "$BIFROST_OS" ] && echo "export BIFROST_OS=\"$BIFROST_OS\""
+  shell_export BIFROST_HAS_SOURCE "$BIFROST_HAS_SOURCE"
+  shell_export BIFROST_SDK_INSTALLED "$BIFROST_SDK_INSTALLED"
+  shell_export BIFROST_LOGGED_IN "$BIFROST_LOGGED_IN"
+  shell_export BIFROST_MCP_CONFIGURED "$BIFROST_MCP_CONFIGURED"
+  [ -n "$BIFROST_DEV_URL" ] && shell_export BIFROST_DEV_URL "$BIFROST_DEV_URL"
+  [ -n "$BIFROST_SOURCE_PATH" ] && shell_export BIFROST_SOURCE_PATH "$BIFROST_SOURCE_PATH"
+  [ -n "$BIFROST_PYTHON_CMD" ] && shell_export BIFROST_PYTHON_CMD "$BIFROST_PYTHON_CMD"
+  [ -n "$BIFROST_PYTHON_VERSION" ] && shell_export BIFROST_PYTHON_VERSION "$BIFROST_PYTHON_VERSION"
+  [ -n "$BIFROST_PIP_CMD" ] && shell_export BIFROST_PIP_CMD "$BIFROST_PIP_CMD"
+  [ -n "$BIFROST_OS" ] && shell_export BIFROST_OS "$BIFROST_OS"
 } >> "$CLAUDE_ENV_FILE"
 
 exit 0

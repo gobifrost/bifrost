@@ -54,7 +54,8 @@ Before any code, before any worktree, get an issue number.
 Search for existing issues:
 
 ```bash
-gh issue list --search "<2-3 key terms>" --state all --limit 5
+search_terms="<2-3 key terms>"
+gh issue list --search "$search_terms" --state all --limit 5
 ```
 
 If a plausible match exists, surface it: "This looks related to #N — is that the same thing, or a new one?"
@@ -257,9 +258,8 @@ Do **not** add priority labels, milestones, or status labels.
 ## The `gh issue create` Pattern
 
 ```bash
-gh issue create \
-  --title "[bug]: <summary>" \
-  --body "$(cat <<'EOF'
+tmp_body="$(mktemp)"
+cat > "$tmp_body" <<'EOF'
 ## Summary
 ...
 
@@ -279,9 +279,12 @@ gh issue create \
 - File paths and line numbers where relevant
 - Proposed approach if known
 EOF
-)" \
+gh issue create \
+  --title "[bug]: <summary>" \
+  --body-file "$tmp_body" \
   --label "bug" \
   --assignee "@me"   # only if user is doing the work
+rm -f "$tmp_body"
 ```
 
 Mirror the relevant template in `.github/ISSUE_TEMPLATE/`. Use `[bug]:`, `[feature]:`, or `[chore]:` title prefixes.

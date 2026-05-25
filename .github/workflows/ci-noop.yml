@@ -1,24 +1,9 @@
-# Branch-protection bypass for docs-only PRs.
+# Lightweight visibility for documentation-only PRs.
 #
-# Background: ci.yml uses paths-ignore to skip Lint/Unit/E2E on docs-only
-# changes. But branch protection requires named status checks (e.g.
-# "Lint & Type Check") to report green before merge — and a job that
-# never runs reports nothing, blocking merge forever.
-#
-# This workflow has the INVERSE trigger (paths: matches the same set
-# that ci.yml's paths-ignore: skips) and reports the same status-check
-# names with always-green stub jobs. GitHub branch protection looks up
-# checks by name only, so it accepts these as satisfying the requirement.
-#
-# Keep the `name:` of each job below in EXACT sync with the corresponding
-# job's `name:` in ci.yml.
-#
-# The `paths:` list below MUST stay byte-identical to ci.yml's
-# `paths-ignore:` list — any drift breaks branch protection (either CI
-# runs twice on the same change, or neither workflow runs and merge is
-# blocked forever).
+# This workflow intentionally does not reuse CI's required check names.
+# Branch protection must be satisfied by the real jobs in ci.yml.
 
-name: CI
+name: Docs-only CI Notice
 
 on:
   pull_request:
@@ -52,20 +37,8 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  docs-only-notice:
     runs-on: ubuntu-latest
-    name: Lint & Type Check
+    name: Docs-only CI notice
     steps:
-      - run: echo "Skipped — docs/config-only PR."
-
-  test-unit:
-    runs-on: ubuntu-latest
-    name: Unit Tests
-    steps:
-      - run: echo "Skipped — docs/config-only PR."
-
-  test-e2e:
-    runs-on: ubuntu-latest
-    name: E2E Tests
-    steps:
-      - run: echo "Skipped — docs/config-only PR."
+      - run: echo "Real required checks run from ci.yml on every pull request."

@@ -1,22 +1,20 @@
-# Auto-regenerate requirements.lock on Dependabot PRs.
+# Validate requirements.lock on Dependabot PRs.
 #
 # Why: PR #112 pinned every pip dep by sha256 in `requirements.lock`, installed
 # with `pip install --require-hashes`. Dependabot only edits `pyproject.toml`
 # — it does not regenerate the lock — so every Dependabot Python bump leaves
 # the lock stale and CI fails until a maintainer regenerates it by hand.
 #
-# This workflow detects Dependabot PRs that touch `pyproject.toml`,
-# regenerates `requirements.lock` with the same `pip-compile --generate-hashes`
-# command documented at the top of the lock file, and pushes the regenerated
-# lock back onto the PR branch. The PR's existing CI re-runs against the
-# updated lock, and `dependabot-auto-merge.yml` takes over from there.
+# This workflow detects Dependabot PRs that touch `pyproject.toml` and verifies
+# that `requirements.lock` is already in sync with the same
+# `pip-compile --generate-hashes` command documented at the top of the lock
+# file. It does not commit back to the PR branch; lockfile updates must arrive
+# as reviewable Dependabot or maintainer commits.
 #
-# Trigger: `pull_request` (not `pull_request_target`) — we only need read
-# access to the base repo and write access to the PR branch via the standard
-# GITHUB_TOKEN. The job-level `contents: write` permission is what allows the
-# push back; the workflow-level permission stays read-only.
+# Trigger: `pull_request` (not `pull_request_target`) — validation only needs
+# read access and must not push commits back to the PR branch.
 
-name: Regen requirements.lock for Dependabot
+name: Validate requirements.lock for Dependabot
 
 on:
   pull_request:
@@ -27,24 +25,21 @@ permissions:
   contents: read
 
 jobs:
-  regen:
+  validate:
     # Same gating pattern as dependabot-auto-merge.yml — only run for PRs
     # opened by the Dependabot bot account.
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Check out the PR's head ref so the regenerated lock is committed
-          # back to the same branch Dependabot is tracking.
+          # Check out the PR's head ref so validation runs against the proposed
+          # dependency metadata without granting this workflow write authority.
           ref: ${{ github.head_ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Regenerate requirements.lock
+      - name: Validate requirements.lock
         # Use the same Python minor as api/Dockerfile's FROM line (3.14-slim).
         # Hash sets are tied to the Python version that resolved them, so
         # regenerating with a different minor would produce a lock the
@@ -60,13 +55,8 @@ jobs:
             pip install --quiet --require-hashes -r requirements-piptools.lock
             pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
           "
-
-      - name: Commit and push if changed
-        run: |
           if [[ -n "$(git status --porcelain requirements.lock)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add requirements.lock
-            git commit -m "chore(deps): regenerate requirements.lock for Dependabot bump"
-            git push
+            git diff -- requirements.lock
+            echo "::error::requirements.lock is stale. Regenerate it in a trusted maintainer environment and commit the lockfile update."
+            exit 1
           fi
