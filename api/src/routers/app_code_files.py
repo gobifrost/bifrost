@@ -40,6 +40,7 @@ from src.routers.applications import ApplicationRepository
 from src.services.app_storage import AppStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.service import get_file_storage_service
+from shared.app_authorization import require_platform_admin
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +378,7 @@ async def write_app_file(
     Validates the path, then writes via FileStorageService (which handles
     S3 _repo/ storage, file_index update, pubsub, and preview sync).
     """
+    require_platform_admin(user)
     app = await get_application_or_404(ctx, app_id)
 
     # Validate path conventions
@@ -416,13 +418,14 @@ async def delete_app_file(
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> None:
     """Delete a file at the given path.
 
     Deletes via FileStorageService (which handles S3 _repo/ deletion,
     file_index cleanup, pubsub, and preview sync).
     """
+    require_platform_admin(user)
     app = await get_application_or_404(ctx, app_id)
     prefix = app.repo_prefix
     full_path = f"{prefix}{file_path}"
@@ -562,11 +565,9 @@ async def get_bundle_manifest(
     from src.core.cache import get_shared_redis
 
     # A manifest is "stale" when it's missing the schema_version field or has
-    # an older value. We treat stale manifests the same as missing manifests:
-    # run auto-migration against _repo/<app>/, then rebuild. This is how a
-    # deploy that bumps SCHEMA_VERSION transparently heals every app (preview
-    # AND live) — the first viewer after deploy pays the migrate+rebuild
-    # cost, subsequent views are cached.
+    # an older value. Preview manifests can auto-migrate and rebuild from draft
+    # source. Live manifests fail closed with 409 and require publishing the app
+    # to rebuild the live bundle.
     manifest_bytes: bytes | None = None
     try:
         manifest_bytes = await app_storage.read_file(
@@ -589,6 +590,15 @@ async def get_bundle_manifest(
                 needs_rebuild = True
 
     if needs_rebuild:
+        if storage_mode == "live":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Live bundle manifest is missing or stale. "
+                    "Publish the application to rebuild the live bundle."
+                ),
+            )
+
         repo_prefix = app.repo_prefix
         # Serialize migrate+rebuild across concurrent first-viewers so two
         # requests don't double-migrate or race on writes. Hold the lock
@@ -751,12 +761,13 @@ async def put_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> dict[str, str]:
     """Replace the app's npm dependencies.
 
     Validates every package name and version, enforces the max-dependency limit.
     """
+    require_platform_admin(user)
     app = await get_application_or_404(ctx, app_id)
 
     # Validate

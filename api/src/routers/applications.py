@@ -43,6 +43,10 @@ from src.models.contracts.applications import (
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.repositories.org_scoped import OrgScopedRepository
+from shared.app_authorization import (
+    require_platform_admin,
+    update_requires_platform_admin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -816,6 +820,9 @@ async def update_application(
     user: CurrentUser,
 ) -> ApplicationPublic:
     """Update application metadata and access control by ID."""
+    if update_requires_platform_admin(data):
+        require_platform_admin(user)
+
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
