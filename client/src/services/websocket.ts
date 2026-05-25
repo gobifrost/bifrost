@@ -150,6 +150,21 @@ export interface PackageComplete {
 	message: string;
 }
 
+export interface PackageProgress {
+	action: "install" | "uninstall";
+	line: string;
+	total: number;
+	installing: number;
+	// FOLDED count: workers past the install step (installed + recycling +
+	// recycled). recycling/recycled below are raw — don't sum installed with
+	// them or you'll double-count.
+	installed: number;
+	recycling: number;
+	recycled: number;
+	failed: number;
+	failures: { worker: string; package: string | null; error: string | null }[];
+}
+
 export interface LocalRunnerStateUpdate {
 	file_path: string;
 	workflows: Array<{
@@ -438,8 +453,18 @@ type WebSocketMessage =
 	| { type: "notification_created"; notification: NotificationPayload }
 	| { type: "notification_updated"; notification: NotificationPayload }
 	| { type: "notification_dismissed"; notification_id: string }
-	| { type: "log"; level: string; message: string }
-	| { type: "complete"; status: "success" | "error"; message: string }
+	| {
+			type: "progress";
+			action: "install" | "uninstall";
+			line: string;
+			total: number;
+			installing: number;
+			installed: number;
+			recycling: number;
+			recycled: number;
+			failed: number;
+			failures: { worker: string; package: string | null; error: string | null }[];
+	  }
 	| { type: "git_log"; jobId: string; level: string; message: string }
 	| { type: "git_progress"; jobId: string; phase: string; current: number; total: number; path?: string | null }
 	| { type: "git_complete"; jobId: string; status: "success" | "error"; message: string; [key: string]: unknown }
@@ -491,8 +516,7 @@ type ExecutionUpdateCallback = (update: ExecutionUpdate) => void;
 type ExecutionLogCallback = (log: ExecutionLog) => void;
 type NewExecutionCallback = (execution: NewExecution) => void;
 type HistoryUpdateCallback = (update: HistoryUpdate) => void;
-type PackageLogCallback = (log: PackageLog) => void;
-type PackageCompleteCallback = (complete: PackageComplete) => void;
+type PackageProgressCallback = (p: PackageProgress) => void;
 // Git sync progress type
 export interface GitProgress {
 	phase: string;
@@ -560,8 +584,7 @@ class WebSocketService {
 	>();
 	private newExecutionCallbacks = new Set<NewExecutionCallback>();
 	private historyUpdateCallbacks = new Set<HistoryUpdateCallback>();
-	private packageLogCallbacks = new Set<PackageLogCallback>();
-	private packageCompleteCallbacks = new Set<PackageCompleteCallback>();
+	private packageProgressCallbacks = new Set<PackageProgressCallback>();
 	private gitLogCallbacks = new Map<string, Set<GitLogCallback>>();
 	private gitProgressCallbacks = new Map<string, Set<GitProgressCallback>>();
 	private gitCompleteCallbacks = new Map<string, Set<GitCompleteCallback>>();
@@ -822,17 +845,20 @@ class WebSocketService {
 					.removeNotification(message.notification_id);
 				break;
 
-			case "log":
-				// Package installation log message
-				this.packageLogCallbacks.forEach((cb) =>
-					cb({ level: message.level, message: message.message }),
-				);
-				break;
-
-			case "complete":
-				// Package installation complete message
-				this.packageCompleteCallbacks.forEach((cb) =>
-					cb({ status: message.status, message: message.message }),
+			case "progress":
+				// Aggregated package-install progress (one rolling line across workers)
+				this.packageProgressCallbacks.forEach((cb) =>
+					cb({
+						action: message.action,
+						line: message.line,
+						total: message.total,
+						installing: message.installing,
+						installed: message.installed,
+						recycling: message.recycling,
+						recycled: message.recycled,
+						failed: message.failed,
+						failures: message.failures,
+					}),
 				);
 				break;
 
@@ -1285,22 +1311,12 @@ class WebSocketService {
 	}
 
 	/**
-	 * Subscribe to package installation logs
+	 * Subscribe to aggregated package-install progress events
 	 */
-	onPackageLog(callback: PackageLogCallback): () => void {
-		this.packageLogCallbacks.add(callback);
+	onPackageProgress(callback: PackageProgressCallback): () => void {
+		this.packageProgressCallbacks.add(callback);
 		return () => {
-			this.packageLogCallbacks.delete(callback);
-		};
-	}
-
-	/**
-	 * Subscribe to package installation completion
-	 */
-	onPackageComplete(callback: PackageCompleteCallback): () => void {
-		this.packageCompleteCallbacks.add(callback);
-		return () => {
-			this.packageCompleteCallbacks.delete(callback);
+			this.packageProgressCallbacks.delete(callback);
 		};
 	}
 

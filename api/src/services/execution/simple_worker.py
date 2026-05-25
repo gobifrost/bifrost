@@ -28,67 +28,156 @@ import json
 import logging
 import os
 import resource
+import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def install_requirements() -> None:
+@dataclass
+class FailedPackage:
+    """One requirements line that failed to install."""
+
+    package: str
+    error: str
+
+
+@dataclass
+class RequirementsInstallResult:
+    """Outcome of a pool requirements install attempt.
+
+    `ok` is True when nothing failed (including the trivial no-requirements
+    case). `installed` + `failed` partition `attempted`.
     """
-    Install packages from requirements.txt.
 
-    Called once at pool startup to ensure user-installed packages persist
-    across container restarts. Reads requirements via get_requirements_sync()
-    which handles Redis → S3 fallback automatically.
+    attempted: list[str] = field(default_factory=list)
+    installed: list[str] = field(default_factory=list)
+    failed: list[FailedPackage] = field(default_factory=list)
 
-    Since all child processes share the same filesystem as the parent,
-    installing once in the parent process is sufficient.
+    @property
+    def ok(self) -> bool:
+        return not self.failed
 
-    This function never raises — failures are logged and execution continues.
+
+def _parse_requirement_lines(content: str) -> list[str]:
+    """Return real package specs (non-comment, non-blank, non-option lines)."""
+    packages, _options = _parse_requirements(content)
+    return packages
+
+
+def _parse_requirements(content: str) -> tuple[list[str], list[str]]:
+    """Split requirements file content into package specs and pip option tokens.
+
+    Lines starting with ``-`` (e.g. ``-i``, ``--index-url``,
+    ``--extra-index-url``, ``-r other.txt``) are pip options, not packages.
+    Their whitespace-split tokens are collected so the per-package fallback can
+    reapply the same index/source configuration to each individual install.
+    Comment and blank lines are ignored.
     """
-    import subprocess
+    packages: list[str] = []
+    options: list[str] = []
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("-"):
+            options.extend(line.split())
+            continue
+        packages.append(line)
+    return packages, options
+
+
+def _pip_install(args: list[str]) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(
+        [sys.executable, "-m", "pip", "install", *args, "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=300,  # 5 minute timeout
+    )
+
+
+def install_requirements() -> RequirementsInstallResult:
+    """
+    Install packages from requirements.txt resiliently.
+
+    Called once at pool startup (and on recycle_all) to ensure user-installed
+    packages persist across container restarts. Reads requirements via
+    get_requirements_sync() (Redis → S3 fallback).
+
+    Strategy: attempt a single batch ``pip install -r`` for speed. If the batch
+    fails (e.g. one package can't build), fall back to installing each
+    requirement individually so a single bad package no longer strips the whole
+    runtime. Returns a structured result; the async caller surfaces failures.
+
+    This function never raises — failures are captured in the returned result.
+    """
     import tempfile
 
     from src.core.requirements_cache import get_requirements_sync
 
+    result = RequirementsInstallResult()
+
     content = get_requirements_sync()
     if not content:
         logger.info("[pool] No requirements.txt found")
-        return
+        return result
 
-    # Write to temp file and install
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(content)
-        temp_path = f.name
+    packages, options = _parse_requirements(content)
+    result.attempted = list(packages)
+    if not packages:
+        return result
 
+    # Fast path: one batch install.
+    temp_path: str | None = None
     try:
-        logger.info("[pool] Installing packages from requirements.txt")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
 
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", temp_path, "--quiet"],
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5 minute timeout
+        logger.info(f"[pool] Installing {len(packages)} packages from requirements.txt")
+        batch = _pip_install(["-r", temp_path])
+        if batch.returncode == 0:
+            logger.info(f"[pool] Installed {len(packages)} packages from requirements.txt")
+            result.installed = list(packages)
+            return result
+
+        logger.warning(
+            "[pool] Batch pip install failed; falling back to per-package install. "
+            f"pip output: {batch.stderr or batch.stdout}"
         )
-
-        if result.returncode == 0:
-            pkg_count = len([line for line in content.strip().split("\n") if line.strip()])
-            logger.info(f"[pool] Installed {pkg_count} packages from requirements.txt")
-        else:
-            logger.warning(f"[pool] pip install failed: {result.stderr or result.stdout}")
-
     except subprocess.TimeoutExpired:
-        logger.warning("[pool] pip install timed out after 5 minutes")
-    except Exception as e:
-        logger.warning(f"[pool] Failed to install requirements: {e}")
+        logger.warning("[pool] Batch pip install timed out; trying per-package install")
+    except Exception as e:  # noqa: BLE001 - batch failure must not abort the fallback path
+        logger.warning(f"[pool] Batch install error ({e}); trying per-package install")
     finally:
+        if temp_path is not None:
+            try:
+                os.unlink(temp_path)
+            except OSError as e:
+                logger.debug(f"[pool] could not remove temp requirements file {temp_path}: {e}")
+
+    # Fallback: install each requirement on its own so one bad package only
+    # fails itself.
+    for pkg in packages:
         try:
-            os.unlink(temp_path)
-        except OSError as e:
-            # Temp file may already be gone — best-effort cleanup
-            logger.debug(f"[pool] could not remove temp requirements file {temp_path}: {e}")
+            single = _pip_install([*options, pkg])
+            if single.returncode == 0:
+                result.installed.append(pkg)
+            else:
+                err = (single.stderr or single.stdout or "").strip()
+                result.failed.append(FailedPackage(package=pkg, error=err[:2000]))
+                logger.warning(f"[pool] Failed to install '{pkg}': {err[:500]}")
+        except subprocess.TimeoutExpired:
+            result.failed.append(FailedPackage(package=pkg, error="pip install timed out (300s)"))
+            logger.warning(f"[pool] Timed out installing '{pkg}'")
+        except Exception as e:  # noqa: BLE001 - per-package install must never abort the loop
+            result.failed.append(FailedPackage(package=pkg, error=str(e)))
+            logger.warning(f"[pool] Error installing '{pkg}': {e}")
+
+    return result
 
 
 def _clear_workspace_modules() -> None:

@@ -48,10 +48,63 @@ import redis.asyncio as redis
 
 from src.config import get_settings
 from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
-from src.services.execution.simple_worker import install_requirements
+from src.models.contracts.notifications import NotificationCategory, NotificationCreate, NotificationStatus
+from src.services.execution.simple_worker import install_requirements, RequirementsInstallResult
+from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
 
 logger = logging.getLogger(__name__)
+
+
+async def _notify_requirements_failures(result: RequirementsInstallResult) -> None:
+    """Publish a deduped admin notification when requirements failed to install.
+
+    No-op when the install fully succeeded. Best-effort: notification errors
+    are logged, never raised, so install/recycle is never blocked by it.
+    """
+    if result.ok:
+        return
+
+    names = [f.package for f in result.failed]
+    shown = ", ".join(names[:5])
+    if len(names) > 5:
+        shown += f" and {len(names) - 5} more"
+    title = "Workflow package install failed"
+    description = (
+        f"{len(result.failed)} package(s) failed to install on workers: "
+        f"{shown}. Workflows importing them will fail until fixed."
+    )
+    try:
+        service = get_notification_service()
+        # Dedup is best-effort: concurrent workers can race past this check and
+        # create duplicate notifications. The failure case is rare and duplicates
+        # are cheap to dismiss, so no distributed lock is warranted.
+        existing = await service.find_admin_notification_by_title(
+            title, NotificationCategory.PACKAGE_INSTALL
+        )
+        if existing is not None:
+            logger.info("[pool] requirements-failure notification already exists; skipping")
+            return
+        await service.create_notification(
+            user_id="system",
+            request=NotificationCreate(
+                category=NotificationCategory.PACKAGE_INSTALL,
+                title=title,
+                description=description[:500],
+                metadata={
+                    "failed": [
+                        {"package": f.package, "error": f.error[:500]}
+                        for f in result.failed
+                    ],
+                    "installed": result.installed,
+                },
+            ),
+            for_admins=True,
+            initial_status=NotificationStatus.FAILED,
+        )
+        logger.info(f"[pool] Notified admins of requirements install failures: {shown}")
+    except Exception as e:  # noqa: BLE001 - notification must never block the pool
+        logger.warning(f"[pool] Could not publish requirements-failure notification: {e}")
 
 
 def _get_installed_packages() -> list[dict[str, str]]:
@@ -460,7 +513,8 @@ class ProcessPoolManager:
         self._started_at = datetime.now(timezone.utc)
 
         # Install requirements once (shared filesystem — all child processes inherit)
-        await asyncio.to_thread(install_requirements)
+        install_result = await asyncio.to_thread(install_requirements)
+        await _notify_requirements_failures(install_result)
 
         # Compute requirements status for heartbeat reporting
         self._update_requirements_status()
@@ -980,7 +1034,8 @@ class ProcessPoolManager:
         # Pick up any requirements changes published to S3/Redis since
         # last start (recycle is typically triggered after a package
         # install on the API container).
-        await asyncio.to_thread(install_requirements)
+        install_result = await asyncio.to_thread(install_requirements)
+        await _notify_requirements_failures(install_result)
         self._update_requirements_status()
 
         in_flight = len(self.processes)

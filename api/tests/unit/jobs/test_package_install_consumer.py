@@ -21,28 +21,30 @@ class TestProcessMessage:
 
     @pytest.mark.asyncio
     async def test_specific_package_update_recycles(self, consumer: PackageInstallConsumer):
-        """Test that updating a package (is_update=True) triggers recycle."""
+        """Test that updating a package (is_update=True) triggers recycle with correct phases."""
         with (
+            patch("src.jobs.consumers.package_install.report_phase", new_callable=AsyncMock) as rp,
             patch.object(
-                consumer, "_pip_install", new_callable=AsyncMock, return_value=True
+                consumer, "_pip_install", new_callable=AsyncMock, return_value=None
             ) as mock_pip,
             patch.object(consumer, "_recycle_workers", new_callable=AsyncMock) as mock_recycle,
             patch.object(
                 consumer, "_update_pool_packages", new_callable=AsyncMock
             ) as mock_update,
-            patch.object(consumer, "_send_log", new_callable=AsyncMock),
-            patch.object(consumer, "_send_complete", new_callable=AsyncMock),
         ):
             await consumer.process_message({
                 "type": "recycle_workers",
                 "package": "requests",
                 "version": "2.31.0",
                 "is_update": True,
+                "run_id": "test-run-1",
             })
 
             mock_pip.assert_called_once_with("requests", "2.31.0")
             mock_recycle.assert_called_once()
             mock_update.assert_called_once()
+            phases = [c.kwargs["phase"] for c in rp.await_args_list]
+            assert phases == ["installing", "recycling", "recycled"]
 
     @pytest.mark.asyncio
     async def test_new_package_also_recycles(self, consumer: PackageInstallConsumer):
@@ -52,72 +54,123 @@ class TestProcessMessage:
         recycling to see newly installed packages on the filesystem.
         """
         with (
+            patch("src.jobs.consumers.package_install.report_phase", new_callable=AsyncMock) as rp,
             patch.object(
-                consumer, "_pip_install", new_callable=AsyncMock, return_value=True
+                consumer, "_pip_install", new_callable=AsyncMock, return_value=None
             ) as mock_pip,
             patch.object(consumer, "_recycle_workers", new_callable=AsyncMock) as mock_recycle,
             patch.object(
                 consumer, "_update_pool_packages", new_callable=AsyncMock
             ) as mock_update,
-            patch.object(consumer, "_send_log", new_callable=AsyncMock),
-            patch.object(consumer, "_send_complete", new_callable=AsyncMock),
         ):
             await consumer.process_message({
                 "type": "recycle_workers",
                 "package": "new-package",
                 "version": "1.0.0",
                 "is_update": False,
+                "run_id": "test-run-2",
             })
 
             mock_pip.assert_called_once_with("new-package", "1.0.0")
             mock_recycle.assert_called_once()
             mock_update.assert_called_once()
+            phases = [c.kwargs["phase"] for c in rp.await_args_list]
+            assert phases == ["installing", "recycling", "recycled"]
 
     @pytest.mark.asyncio
     async def test_missing_is_update_defaults_to_recycle(self, consumer: PackageInstallConsumer):
         """Test that missing is_update defaults to True (safe default)."""
         with (
+            patch("src.jobs.consumers.package_install.report_phase", new_callable=AsyncMock) as rp,
             patch.object(
-                consumer, "_pip_install", new_callable=AsyncMock, return_value=True
+                consumer, "_pip_install", new_callable=AsyncMock, return_value=None
             ),
             patch.object(consumer, "_recycle_workers", new_callable=AsyncMock) as mock_recycle,
             patch.object(
                 consumer, "_update_pool_packages", new_callable=AsyncMock
             ),
-            patch.object(consumer, "_send_log", new_callable=AsyncMock),
-            patch.object(consumer, "_send_complete", new_callable=AsyncMock),
         ):
             await consumer.process_message({
                 "type": "recycle_workers",
                 "package": "requests",
                 "version": "2.31.0",
+                "run_id": "test-run-3",
             })
 
             mock_recycle.assert_called_once()
+            phases = [c.kwargs["phase"] for c in rp.await_args_list]
+            assert phases == ["installing", "recycling", "recycled"]
 
     @pytest.mark.asyncio
     async def test_requirements_install(self, consumer: PackageInstallConsumer):
         """Test that no package triggers requirements.txt install + recycle."""
         with (
+            patch("src.jobs.consumers.package_install.report_phase", new_callable=AsyncMock) as rp,
             patch.object(
-                consumer, "_pip_install_requirements", new_callable=AsyncMock, return_value=True
+                consumer, "_pip_install_requirements", new_callable=AsyncMock, return_value=None
             ) as mock_pip_req,
             patch.object(consumer, "_recycle_workers", new_callable=AsyncMock) as mock_recycle,
             patch.object(
                 consumer, "_update_pool_packages", new_callable=AsyncMock
             ) as mock_update,
-            patch.object(consumer, "_send_log", new_callable=AsyncMock),
-            patch.object(consumer, "_send_complete", new_callable=AsyncMock),
         ):
             await consumer.process_message({
                 "type": "recycle_workers",
                 "package": None,
                 "is_update": True,
+                "run_id": "test-run-4",
             })
 
             mock_pip_req.assert_called_once()
             mock_recycle.assert_called_once()
             mock_update.assert_called_once()
+            phases = [c.kwargs["phase"] for c in rp.await_args_list]
+            assert phases == ["installing", "recycling", "recycled"]
+
+    @pytest.mark.asyncio
+    async def test_install_failure_reports_failed_and_skips_recycle(
+        self, consumer: PackageInstallConsumer
+    ):
+        """Test that pip failure reports failed phase with the real error and skips recycle."""
+        with (
+            patch("src.jobs.consumers.package_install.report_phase", new_callable=AsyncMock) as rp,
+            patch.object(
+                consumer, "_pip_install", new_callable=AsyncMock,
+                return_value="ERROR: no C compiler",
+            ),
+            patch.object(consumer, "_recycle_workers", new_callable=AsyncMock) as recycle,
+        ):
+            await consumer.process_message({
+                "action": "install",
+                "package": "badpkg",
+                "run_id": "test-run-fail",
+            })
+
+        phases = [c.kwargs["phase"] for c in rp.await_args_list]
+        assert phases[0] == "installing"
+        assert phases[-1] == "failed"
+        # The real pip error must flow through to the aggregator.
+        assert rp.await_args_list[-1].kwargs["error"] == "ERROR: no C compiler"
+        recycle.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_uninstall_without_package_reports_failed_and_skips_recycle(
+        self, consumer: PackageInstallConsumer
+    ):
+        """Test that uninstall with no package name fails before any pip call."""
+        with (
+            patch("src.jobs.consumers.package_install.report_phase", new_callable=AsyncMock) as rp,
+            patch.object(consumer, "_recycle_workers", new_callable=AsyncMock) as recycle,
+        ):
+            await consumer.process_message({
+                "action": "uninstall",
+                "package": None,
+                "run_id": "x",
+            })
+
+        phases = [c.kwargs["phase"] for c in rp.await_args_list]
+        assert phases == ["installing", "failed"]
+        recycle.assert_not_awaited()
 
 
 class TestRecycleWorkers:

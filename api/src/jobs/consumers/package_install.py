@@ -6,21 +6,23 @@ Uses broadcast delivery so all worker instances install the package.
 
 Flow:
 1. API handler updates requirements.txt in S3 + Redis cache (persistence)
-2. API broadcasts message to this consumer on all workers
+2. API broadcasts message to this consumer on all workers (with a shared run_id)
 3. Consumer runs pip install (makes package available on worker filesystem)
 4. Consumer recycles processes (clears Python import cache)
 5. Consumer updates package list in Redis (so /api/packages reflects changes)
 
-Progress is streamed via WebSocket to the shared package:install channel.
+Progress is aggregated via Redis per run_id (see install_progress.py) so that
+each phase is reported once across all workers, not once per worker.
 """
 
 import asyncio
 import logging
+import os
 import sys
 from typing import Any
 
-from src.core.pubsub import manager as pubsub_manager
 from src.jobs.rabbitmq import BroadcastConsumer
+from src.services.execution.install_progress import report_phase
 
 logger = logging.getLogger(__name__)
 
@@ -38,30 +40,26 @@ class PackageInstallConsumer(BroadcastConsumer):
     Message format:
     {
         "type": "recycle_workers",
+        "action": "install" | "uninstall" (optional, default "install"),
         "package": "package-name" (optional),
-        "version": "1.0.0" (optional)
+        "version": "1.0.0" (optional),
+        "is_update": true | false (optional),
+        "run_id": "<uuid>" (shared across workers for phase aggregation),
     }
     """
 
     def __init__(self):
         super().__init__(exchange_name=EXCHANGE_NAME)
 
-    async def _send_log(self, message: str, level: str = "info") -> None:
-        """Send a log message via WebSocket to the shared package:install channel."""
-        await pubsub_manager.broadcast(
-            "package:install",
-            {"type": "log", "level": level, "message": message},
-        )
+    @property
+    def _worker_id(self) -> str:
+        return os.environ.get("HOSTNAME", "unknown")
 
-    async def _send_complete(self, status: str, message: str) -> None:
-        """Send a completion message via WebSocket to the shared package:install channel."""
-        await pubsub_manager.broadcast(
-            "package:install",
-            {"type": "complete", "status": status, "message": message},
-        )
+    async def _pip_uninstall(self, package: str) -> str | None:
+        """Run pip uninstall for a package on this worker.
 
-    async def _pip_uninstall(self, package: str) -> bool:
-        """Run pip uninstall for a package on this worker."""
+        Returns None on success, or the error message on failure.
+        """
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pip", "uninstall", "-y", package, "--quiet",
@@ -71,30 +69,30 @@ class PackageInstallConsumer(BroadcastConsumer):
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             if proc.returncode == 0:
                 logger.info(f"Uninstalled {package}")
-                return True
+                return None
             err = stderr.decode()
             # pip exits non-zero when the package isn't installed; that's fine
             # for our purposes — the post-condition (package absent) holds.
             if "not installed" in err.lower() or "skipping" in err.lower():
                 logger.info(f"Package {package} was not installed; nothing to do")
-                return True
+                return None
             logger.warning(f"pip uninstall {package} failed: {err}")
-            return False
+            return err.strip()
         except asyncio.TimeoutError:
             logger.error(f"pip uninstall {package} timed out")
-            return False
+            return f"pip uninstall {package} timed out"
         except Exception as e:
             logger.error(f"pip uninstall {package} error: {e}")
-            return False
+            return f"pip uninstall {package} error: {e}"
 
-    async def _pip_install(self, package: str, version: str | None) -> bool:
+    async def _pip_install(self, package: str, version: str | None) -> str | None:
         """
         Run pip install for a specific package on this worker.
 
         Installs into the worker's Python environment so all child processes
         (which share the same filesystem) can import it after recycle.
 
-        Returns True on success, False on failure.
+        Returns None on success, or the error message on failure.
         """
         package_spec = f"{package}=={version}" if version else package
 
@@ -108,25 +106,26 @@ class PackageInstallConsumer(BroadcastConsumer):
 
             if proc.returncode == 0:
                 logger.info(f"Installed {package_spec}")
-                return True
+                return None
             else:
-                logger.warning(f"pip install {package_spec} failed: {stderr.decode()}")
-                return False
+                err = stderr.decode()
+                logger.warning(f"pip install {package_spec} failed: {err}")
+                return err.strip()
         except asyncio.TimeoutError:
             logger.error(f"pip install {package_spec} timed out")
-            return False
+            return f"pip install {package_spec} timed out"
         except Exception as e:
             logger.error(f"pip install {package_spec} error: {e}")
-            return False
+            return f"pip install {package_spec} error: {e}"
 
-    async def _pip_install_requirements(self) -> bool:
+    async def _pip_install_requirements(self) -> str | None:
         """
         Run pip install from the cached requirements.txt.
 
         Used when no specific package is provided (e.g., "Install from
         requirements.txt" button).
 
-        Returns True on success, False on failure.
+        Returns None on success, or the error message on failure.
         """
         import tempfile
 
@@ -135,7 +134,7 @@ class PackageInstallConsumer(BroadcastConsumer):
         cached = await get_requirements()
         if not cached or not cached["content"].strip():
             logger.info("No cached requirements.txt to install from")
-            return True
+            return None
 
         try:
             with tempfile.NamedTemporaryFile(
@@ -151,7 +150,6 @@ class PackageInstallConsumer(BroadcastConsumer):
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
-            import os
             os.unlink(temp_path)
 
             if proc.returncode == 0:
@@ -159,16 +157,17 @@ class PackageInstallConsumer(BroadcastConsumer):
                     line for line in cached["content"].strip().split("\n") if line.strip()
                 ])
                 logger.info(f"Installed {pkg_count} packages from requirements.txt")
-                return True
+                return None
             else:
-                logger.warning(f"pip install -r requirements.txt failed: {stderr.decode()}")
-                return False
+                err = stderr.decode()
+                logger.warning(f"pip install -r requirements.txt failed: {err}")
+                return err.strip()
         except asyncio.TimeoutError:
             logger.error("pip install -r requirements.txt timed out")
-            return False
+            return "pip install -r requirements.txt timed out"
         except Exception as e:
             logger.error(f"pip install -r requirements.txt error: {e}")
-            return False
+            return f"pip install -r requirements.txt error: {e}"
 
     async def _update_pool_packages(self) -> None:
         """Update the pool's packages in Redis after installation."""
@@ -204,40 +203,46 @@ class PackageInstallConsumer(BroadcastConsumer):
 
         `action` is "install" (default) or "uninstall". For "install" with
         `package=None`, runs pip install -r requirements.txt (sync from cache).
+
+        Phases are reported via report_phase() to a shared Redis hash keyed by
+        run_id so the frontend sees one aggregate status, not one per worker.
         """
         action = body.get("action", "install")
         package = body.get("package")
         version = body.get("version")
-        package_spec = f"{package}=={version}" if package and version else (package or "requirements.txt")
+        run_id = body.get("run_id", "current")
+        package_spec = (
+            f"{package}=={version}" if package and version else (package or "requirements.txt")
+        )
+        wid = self._worker_id
+        logger.info(f"Processing package {action}: {package_spec} (run={run_id})")
 
-        logger.info(f"Processing package {action}: {package_spec}")
+        await report_phase(run_id, wid, phase="installing", action=action)
 
         if action == "uninstall":
             if not package:
-                await self._send_complete("error", "uninstall requires a package name")
+                await report_phase(
+                    run_id, wid, phase="failed", action=action,
+                    package="(none)", error="uninstall requires a package name",
+                )
                 return
-            await self._send_log(f"Uninstalling {package}...")
-            success = await self._pip_uninstall(package)
+            err = await self._pip_uninstall(package)
         elif package:
-            await self._send_log(f"Installing {package_spec}...")
-            success = await self._pip_install(package, version)
+            err = await self._pip_install(package, version)
         else:
-            await self._send_log("Installing from requirements.txt...")
-            success = await self._pip_install_requirements()
+            err = await self._pip_install_requirements()
 
-        if success:
-            await self._send_log(f"{action.capitalize()}ed {package_spec}")
-        else:
-            await self._send_log(f"Failed to {action} {package_spec}", "error")
-            await self._send_complete("error", f"{action.capitalize()} failed: {package_spec}")
+        if err is not None:
+            await report_phase(
+                run_id, wid, phase="failed", action=action,
+                package=package_spec, error=err or "pip command failed",
+            )
             return
 
         # Worker subprocesses are forked before pip runs; recycle so they pick
         # up the new on-disk state.
-        await self._send_log("Recycling worker processes...")
+        await report_phase(run_id, wid, phase="recycling", action=action)
         await self._recycle_workers()
-
         await self._update_pool_packages()
-
-        await self._send_complete("success", f"{action.capitalize()} complete")
-        logger.info(f"Package {action} completed")
+        await report_phase(run_id, wid, phase="recycled", action=action)
+        logger.info(f"Package {action} completed on {wid}")

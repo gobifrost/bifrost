@@ -12,6 +12,7 @@ import asyncio
 import logging
 import json
 from typing import Awaitable, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -335,15 +336,17 @@ async def install_package(
             is_update = True
             logger.info("Warmed requirements cache from S3 for recycle")
 
-        # Broadcast to all workers — they pip install + recycle processes
+        # Broadcast to all workers — they pip install + recycle processes.
+        # run_id ties all workers' phase reports to the same Redis hash so
+        # the frontend sees one aggregate status instead of N per-worker logs.
         await publish_broadcast(
             exchange_name="package-installations",
             message={
                 "type": "recycle_workers",
                 "package": request.package_name,
                 "version": request.version if request.version else None,
-
                 "is_update": is_update,
+                "run_id": str(uuid4()),
             },
         )
 
@@ -396,6 +399,7 @@ async def uninstall_package(
 
         # Tell workers to pip uninstall and recycle. The "action" field
         # is what distinguishes install from uninstall in the consumer.
+        # run_id ties all workers' phase reports to the same Redis hash.
         await publish_broadcast(
             exchange_name="package-installations",
             message={
@@ -404,6 +408,7 @@ async def uninstall_package(
                 "package": package_name,
                 "version": None,
                 "is_update": True,
+                "run_id": str(uuid4()),
             },
         )
 
