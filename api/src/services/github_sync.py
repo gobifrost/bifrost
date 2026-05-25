@@ -105,6 +105,20 @@ def _filter_manifest_to_work_dir(manifest: Manifest, work_dir: Path) -> None:
     )
 
 
+def _filter_db_manifest_to_import_scope(
+    db_manifest: Manifest,
+    incoming_manifest: Manifest,
+    work_dir: Path,
+) -> None:
+    """Restrict DB-side diff candidates to this repo/import scope."""
+    _filter_manifest_to_scope(
+        db_manifest,
+        path_exists=lambda path: (work_dir / path).exists(),
+        dir_exists=lambda path: (work_dir / path).is_dir(),
+        scope_manifest=incoming_manifest,
+    )
+
+
 def _deleted_paths_in_head(repo: GitRepo) -> set[str]:
     """Return paths deleted by the current HEAD commit."""
     try:
@@ -852,18 +866,18 @@ class GitHubSyncService:
                 # Step 4: Entity import — always full import (safe, idempotent upserts)
                 await _progress("Importing entities...")
                 all_entity_changes: list = []
+                removed_paths = _deleted_paths_in_head(repo)
                 async with self.db.begin_nested():
                     entities_imported, entity_changes, removed_entity_ids = await self._import_all_entities(
                         work_dir, progress_fn=_progress,
                     )
                     all_entity_changes.extend(entity_changes)
                     await _progress("Updating file index...")
-                    await self._update_file_index(work_dir)
+                    await self._update_file_index(work_dir, removed_paths=removed_paths)
                 await self.db.commit()
 
                 # Step 5: Clean up removed entities (gated on confirmation)
                 await _progress("Checking for removed entities...")
-                removed_paths = _deleted_paths_in_head(repo)
                 pending_deletes = await self._resolver._resolve_deletions(
                     work_dir=work_dir,
                     dry_run=True,
@@ -1184,6 +1198,7 @@ class GitHubSyncService:
 
         # Diff against current DB state to find what actually changed
         db_manifest = await generate_manifest(self.db)
+        _filter_db_manifest_to_import_scope(db_manifest, manifest, work_dir)
         diff_changes, changed_ids = _diff_and_collect(manifest, db_manifest)
         removed_entity_ids = _collect_removed_entity_ids(diff_changes)
 
@@ -1386,7 +1401,11 @@ class GitHubSyncService:
                 return repo
             raise SyncError(f"Failed to clone {self.repo_url}: {e}") from e
 
-    async def _update_file_index(self, work_dir: Path) -> None:
+    async def _update_file_index(
+        self,
+        work_dir: Path,
+        removed_paths: set[str] | None = None,
+    ) -> None:
         """Update file_index from all files in the working tree, remove stale entries.
 
         Optimized: prefetches existing (path, content_hash) pairs in one query,
@@ -1446,8 +1465,12 @@ class GitHubSyncService:
         if pending_upserts:
             logger.info(f"File index: upserted {len(pending_upserts)} changed files, skipped {len(files) - len(pending_upserts)} unchanged")
 
-        # Remove file_index entries that no longer exist in the repo
+        # Remove file_index entries only when git explicitly deleted those
+        # paths in this sync. A partial checkout/import must not turn absence
+        # from the current working tree into global file-index deletion.
         stale_paths = set(existing_hashes.keys()) - repo_paths
+        if removed_paths is not None:
+            stale_paths &= removed_paths
         if stale_paths:
             await self.db.execute(
                 delete(FileIndex).where(FileIndex.path.in_(stale_paths))

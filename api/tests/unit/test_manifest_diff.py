@@ -1,7 +1,7 @@
 """Tests for manifest diff logic (_diff_and_collect).
 
 Validates round-trip fidelity (YAML → parse → diff should show no changes),
-correct detection of add/update/delete, and interaction with UI-managed fields
+correct detection of add/update/delete, and safe handling for UI-managed fields
 like oauth_token_id that are set in the platform UI but not in local YAML.
 """
 import copy
@@ -281,13 +281,14 @@ class TestRoundTripFidelity:
         )
         assert changed_ids == set()
 
-    def test_ui_managed_fields_cause_diff(self, kitchen_sink_manifest: Manifest):
+    def test_ui_managed_oauth_token_id_does_not_cause_diff(self, kitchen_sink_manifest: Manifest):
         """Local manifest without oauth_token_id vs DB manifest with it set.
 
-        Documents whether this causes a false-positive "update" in the diff.
         This is the scenario: user defines integration in YAML without
         oauth_token_id, then connects OAuth in the UI. On next startup,
         local YAML has oauth_token_id=None, DB has it populated.
+        The token link is environment-owned and must not trigger a manifest
+        import update.
         """
         # "Local" manifest: no oauth_token_id
         local = copy.deepcopy(kitchen_sink_manifest)
@@ -298,15 +299,8 @@ class TestRoundTripFidelity:
 
         changes, changed_ids = _diff_and_collect(local, db_side)
 
-        # Document current behavior — this test tells us if the diff catches it
-        integration_changes = [c for c in changes if c["entity_type"] == "integrations"]
-        # We expect this IS flagged as update (the field differs), which is
-        # the root cause of false positives. If this assertion passes, the
-        # hypothesis is confirmed.
-        assert len(integration_changes) == 1, (
-            "Expected oauth_token_id mismatch to cause a diff"
-        )
-        assert integration_changes[0]["action"] == "update"
+        assert changes == []
+        assert changed_ids == set()
 
     def test_secret_config_round_trip(self, kitchen_sink_manifest: Manifest):
         """Config with config_type=secret, value=None on both sides → no diff."""

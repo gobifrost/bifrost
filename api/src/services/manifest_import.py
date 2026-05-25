@@ -115,8 +115,10 @@ def _diff_and_collect(
                 entity = cur
             else:
                 assert inc is not None and cur is not None
-                # Compare serialized form
-                if inc.model_dump(mode="json", by_alias=True) == cur.model_dump(mode="json", by_alias=True):
+                # Compare serialized form. Environment-owned fields such as
+                # OAuth token links must not make a portable manifest look
+                # different or trigger an import update.
+                if _dump_for_diff(attr, inc) == _dump_for_diff(attr, cur):
                     continue  # No change
                 action = "update"
                 entity = inc
@@ -153,6 +155,15 @@ def _diff_and_collect(
     changes.sort(key=lambda c: (c["entity_type"], _ACTION_ORDER.get(c["action"], 9), c["name"]))
 
     return changes, changed_ids
+
+
+def _dump_for_diff(attr: str, entity: object) -> dict:
+    """Return a manifest entity dump with environment-owned fields stripped."""
+    data = entity.model_dump(mode="json", by_alias=True)
+    if attr == "integrations":
+        for mapping in data.get("mappings") or []:
+            mapping["oauth_token_id"] = None
+    return data
 
 
 def _diff_list_entities(
@@ -262,10 +273,138 @@ def _safe_app_repo_path(mapp) -> str:
     return f"apps/{slug}"
 
 
+def _manifest_org_scope(manifest: "Manifest") -> set[str]:
+    """Collect org IDs explicitly declared or referenced by a manifest."""
+    org_ids = {org.id for org in manifest.organizations}
+
+    def _add_entity_orgs(values) -> None:
+        for entity in values:
+            org_id = getattr(entity, "organization_id", None)
+            if org_id:
+                org_ids.add(org_id)
+
+    _add_entity_orgs(manifest.workflows.values())
+    _add_entity_orgs(manifest.forms.values())
+    _add_entity_orgs(manifest.agents.values())
+    _add_entity_orgs(manifest.apps.values())
+    _add_entity_orgs(manifest.configs.values())
+    _add_entity_orgs(manifest.tables.values())
+    _add_entity_orgs(manifest.events.values())
+    _add_entity_orgs(manifest.mcp_servers.values())
+
+    for integration in manifest.integrations.values():
+        for mapping in integration.mappings:
+            if mapping.organization_id:
+                org_ids.add(mapping.organization_id)
+
+    for server in manifest.mcp_servers.values():
+        for connection in server.connections.values():
+            if connection.organization_id:
+                org_ids.add(connection.organization_id)
+
+    return org_ids
+
+
+def _entity_in_org_scope(entity: object, scoped_org_ids: set[str]) -> bool:
+    org_id = getattr(entity, "organization_id", None)
+    return bool(org_id and org_id in scoped_org_ids)
+
+
+def _filter_non_file_entities_to_scope(
+    manifest: "Manifest",
+    scope_manifest: "Manifest",
+) -> None:
+    """Restrict DB manifest sections that are not directly backed by files.
+
+    File-backed entities are scoped by repo path in ``_filter_manifest_to_scope``.
+    Integrations, configs, tables, events, roles, orgs, and MCP templates need
+    an explicit org/entity scope; otherwise a partial manifest can turn mere
+    absence into a global delete diff.
+    """
+    scoped_org_ids = _manifest_org_scope(scope_manifest)
+    scoped_role_ids = {role.id for role in scope_manifest.roles}
+    scoped_integration_ids = {
+        integration.id for integration in scope_manifest.integrations.values()
+    }
+    scoped_config_ids = {config.id for config in scope_manifest.configs.values()}
+    scoped_table_ids = {table.id for table in scope_manifest.tables.values()}
+    scoped_event_ids = {event.id for event in scope_manifest.events.values()}
+    scoped_mcp_server_ids = {
+        server.id for server in scope_manifest.mcp_servers.values()
+    }
+
+    manifest.organizations = [
+        org for org in manifest.organizations
+        if scope_manifest.organizations and org.id in scoped_org_ids
+    ]
+    manifest.roles = [
+        role for role in manifest.roles
+        if scope_manifest.roles and role.id in scoped_role_ids
+    ]
+
+    manifest.integrations = {
+        key: integration
+        for key, integration in manifest.integrations.items()
+        if scope_manifest.integrations
+        if (
+            integration.id in scoped_integration_ids
+            or any(
+                mapping.organization_id in scoped_org_ids
+                for mapping in integration.mappings
+                if mapping.organization_id
+            )
+        )
+    }
+    scoped_integration_ids |= {
+        integration.id for integration in manifest.integrations.values()
+    }
+
+    manifest.configs = {
+        key: config
+        for key, config in manifest.configs.items()
+        if scope_manifest.configs
+        if (
+            config.id in scoped_config_ids
+            or _entity_in_org_scope(config, scoped_org_ids)
+            or (
+                config.integration_id is not None
+                and config.integration_id in scoped_integration_ids
+            )
+        )
+    }
+    manifest.tables = {
+        key: table
+        for key, table in manifest.tables.items()
+        if scope_manifest.tables
+        if table.id in scoped_table_ids or _entity_in_org_scope(table, scoped_org_ids)
+    }
+    manifest.events = {
+        key: event
+        for key, event in manifest.events.items()
+        if scope_manifest.events
+        if event.id in scoped_event_ids or _entity_in_org_scope(event, scoped_org_ids)
+    }
+
+    manifest.mcp_servers = {
+        key: server
+        for key, server in manifest.mcp_servers.items()
+        if scope_manifest.mcp_servers
+        if (
+            server.id in scoped_mcp_server_ids
+            or _entity_in_org_scope(server, scoped_org_ids)
+            or any(
+                connection.organization_id in scoped_org_ids
+                for connection in server.connections.values()
+            )
+        )
+    }
+
+
 def _filter_manifest_to_scope(
     manifest: "Manifest",
     path_exists: Callable[[str], bool],
     dir_exists: Callable[[str], bool],
+    scope_manifest: "Manifest | None" = None,
 ) -> None:
     """Restrict a DB manifest to the source paths owned by the current repo."""
     manifest.workflows = {
@@ -321,6 +460,18 @@ def _filter_manifest_to_scope(
         if dir_exists(app_path):
             safe_apps[k] = app.model_copy(update={"path": app_path})
     manifest.apps = safe_apps
+
+    if scope_manifest is not None:
+        _filter_non_file_entities_to_scope(manifest, scope_manifest)
+
+
+def _manifest_access_level(access_level: str | None, roles: list[str] | None) -> str | None:
+    """Use role_based when a manifest declares roles but omits access_level."""
+    if access_level is not None:
+        return access_level
+    if roles:
+        return "role_based"
+    return None
 
 
 # =============================================================================
@@ -700,6 +851,7 @@ async def import_manifest_from_repo(
             repo_path.startswith(path.rstrip("/") + "/")
             for repo_path in all_repo_paths
         ),
+        scope_manifest=manifest,
     )
     entity_changes, changed_ids = _diff_and_collect(manifest, db_manifest)
 
@@ -1116,7 +1268,8 @@ class ManifestResolver:
                     from src.services.app_storage import AppStorageService
 
                     _synced, errors = await AppStorageService().sync_preview_compiled(
-                        mapp.id, mapp.path,
+                        mapp.id,
+                        _safe_app_repo_path(mapp),
                     )
                     if errors:
                         logger.warning(f"App {mapp.name} compile warnings: {errors}")
@@ -1783,7 +1936,7 @@ class ManifestResolver:
         ]
         present_app_uuids = [
             UUID(mapp.id) for mapp in manifest.apps.values()
-            if _dir_exists(mapp.path)
+            if _dir_exists(_safe_app_repo_path(mapp))
         ]
 
         present_integ_uuids = [UUID(m.id) for m in manifest.integrations.values()]
@@ -2248,12 +2401,12 @@ class ManifestResolver:
                 await self.db.execute(m_stmt)
 
         for org_key, existing_m in existing_m_by_org.items():
-            if org_key not in manifest_org_ids:
-                await self.db.execute(
-                    sa_delete(IntegrationMapping).where(
-                        IntegrationMapping.id == existing_m.id
-                    )
-                )
+            if org_key in manifest_org_ids:
+                continue
+            logger.info(
+                "Preserving integration mapping %s outside manifest org scope",
+                existing_m.id,
+            )
 
         # Return empty list — all operations executed directly above
         return []
@@ -2355,8 +2508,9 @@ class ManifestResolver:
             "organization_id": org_id,
             "dependencies": mapp.dependencies or None,
         }
-        if mapp.access_level is not None:
-            app_values["access_level"] = mapp.access_level
+        access_level = _manifest_access_level(mapp.access_level, getattr(mapp, "roles", None))
+        if access_level is not None:
+            app_values["access_level"] = access_level
 
         ops: list[SyncOp] = []
 
@@ -2844,8 +2998,12 @@ class ManifestResolver:
                 "created_by": "git-sync",
                 "organization_id": org_id,
             }
-            if mform.access_level is not None:
-                form_values["access_level"] = mform.access_level
+            access_level = _manifest_access_level(
+                mform.access_level,
+                getattr(mform, "roles", None),
+            )
+            if access_level is not None:
+                form_values["access_level"] = access_level
             ops.append(Upsert(
                 model=Form,
                 id=form_id,
@@ -2895,8 +3053,12 @@ class ManifestResolver:
                 "max_iterations": data.get("max_iterations"),
                 "max_token_budget": data.get("max_token_budget"),
             }
-            if magent.access_level is not None:
-                agent_values["access_level"] = magent.access_level
+            access_level = _manifest_access_level(
+                magent.access_level,
+                getattr(magent, "roles", None),
+            )
+            if access_level is not None:
+                agent_values["access_level"] = access_level
             ops.append(Upsert(
                 model=Agent,
                 id=agent_id,
