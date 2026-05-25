@@ -1,4 +1,5 @@
 """Authorization helpers for agent-run HTTP and WebSocket surfaces."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -14,6 +15,10 @@ from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.users import UserRole
 
 
+def _is_global_principal(user: UserPrincipal) -> bool:
+    return user.is_superuser and user.organization_id is None
+
+
 def _agent_role_exists_for_user(user: UserPrincipal):
     user_role_ids = select(UserRole.role_id).where(UserRole.user_id == user.user_id)
     return (
@@ -25,17 +30,24 @@ def _agent_role_exists_for_user(user: UserPrincipal):
 
 def agent_access_conditions(user: UserPrincipal) -> list:
     """Return SQLAlchemy conditions matching the normal agent access model."""
-    if user.is_superuser:
+    if _is_global_principal(user):
         return []
 
     if user.organization_id is None:
         return [false()]
 
+    in_scope = or_(
+        Agent.organization_id == user.organization_id,
+        Agent.organization_id.is_(None),
+    )
+    if user.is_superuser:
+        return [in_scope]
+
     private_owner = and_(
         Agent.access_level == AgentAccessLevel.PRIVATE,
         Agent.owner_user_id == user.user_id,
     )
-    in_scope = or_(
+    user_in_scope = or_(
         Agent.organization_id == user.organization_id,
         Agent.organization_id.is_(None),
         private_owner,
@@ -48,7 +60,7 @@ def agent_access_conditions(user: UserPrincipal) -> list:
             _agent_role_exists_for_user(user),
         ),
     )
-    return [in_scope, has_access]
+    return [user_in_scope, has_access]
 
 
 def apply_agent_run_access(
@@ -57,7 +69,7 @@ def apply_agent_run_access(
 ) -> Select[tuple[AgentRun]]:
     """Apply tenant and agent visibility checks to an AgentRun query."""
     query = query.join(Agent, AgentRun.agent_id == Agent.id)
-    if user.is_superuser:
+    if _is_global_principal(user):
         return query
 
     if user.organization_id is None:

@@ -1,4 +1,5 @@
 """Agent-run authorization and stream scoping regressions."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -95,7 +96,9 @@ async def _make_role_based_agent(
     )
     db.add_all([role, agent])
     await db.flush()
-    db.add(AgentRole(agent_id=agent.id, role_id=role.id, assigned_by="test@example.com"))
+    db.add(
+        AgentRole(agent_id=agent.id, role_id=role.id, assigned_by="test@example.com")
+    )
     await db.flush()
     return agent, role
 
@@ -237,7 +240,9 @@ async def test_execute_agent_run_blocks_cross_org_authenticated_agent(
         ),
         pytest.raises(HTTPException) as exc_info,
     ):
-        await execute_agent_run(request, db_session, _principal(caller.id, caller_org.id))
+        await execute_agent_run(
+            request, db_session, _principal(caller.id, caller_org.id)
+        )
 
     assert exc_info.value.status_code == 404
 
@@ -253,6 +258,63 @@ async def test_user_with_agent_role_can_list_agent_run(db_session: AsyncSession)
     await db_session.flush()
 
     response = await _list_runs_for_user(db_session, _principal(user.id, org.id))
+
+    assert response.total == 1
+    assert response.items[0].id == run.id
+
+
+async def test_org_platform_admin_list_agent_runs_hides_foreign_org_runs(
+    db_session: AsyncSession,
+):
+    admin_org = await _make_org(db_session, "AdminOrg")
+    foreign_org = await _make_org(db_session, "ForeignOrg")
+    admin_user = await _make_user(db_session, admin_org)
+    admin_agent, _admin_role = await _make_role_based_agent(db_session, admin_org)
+    foreign_agent, _foreign_role = await _make_role_based_agent(db_session, foreign_org)
+    admin_run = await _make_run(db_session, admin_agent, admin_org)
+    foreign_run = await _make_run(db_session, foreign_agent, foreign_org)
+
+    response = await _list_runs_for_user(
+        db_session,
+        _principal(admin_user.id, admin_org.id, is_superuser=True),
+    )
+
+    assert response.total == 1
+    assert [item.id for item in response.items] == [admin_run.id]
+    assert foreign_run.id not in {item.id for item in response.items}
+
+
+async def test_org_platform_admin_cannot_rerun_foreign_org_run(
+    db_session: AsyncSession,
+):
+    admin_org = await _make_org(db_session, "AdminOrg")
+    foreign_org = await _make_org(db_session, "ForeignOrg")
+    admin_user = await _make_user(db_session, admin_org)
+    foreign_agent, _foreign_role = await _make_role_based_agent(db_session, foreign_org)
+    foreign_run = await _make_run(db_session, foreign_agent, foreign_org)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await rerun_agent_run(
+            foreign_run.id,
+            db_session,
+            _principal(admin_user.id, admin_org.id, is_superuser=True),
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+async def test_org_platform_admin_can_list_same_org_role_based_run_without_agent_role(
+    db_session: AsyncSession,
+):
+    org = await _make_org(db_session, "AdminOrg")
+    admin_user = await _make_user(db_session, org)
+    agent, _role = await _make_role_based_agent(db_session, org)
+    run = await _make_run(db_session, agent, org)
+
+    response = await _list_runs_for_user(
+        db_session,
+        _principal(admin_user.id, org.id, is_superuser=True),
+    )
 
     assert response.total == 1
     assert response.items[0].id == run.id
@@ -296,3 +358,69 @@ async def test_websocket_agent_runs_alias_subscribes_to_user_org_channel():
     subscribed_channels = connect.await_args.args[1]
     assert f"agent-runs:org:{org_id}" in subscribed_channels
     assert "agent-runs" not in subscribed_channels
+
+
+async def test_websocket_agent_runs_alias_for_org_platform_admin_stays_org_scoped():
+    org_id = uuid4()
+    user_id = uuid4()
+    websocket = SimpleNamespace(state=SimpleNamespace())
+    websocket.send_json = AsyncMock()
+    websocket.receive_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+    with (
+        patch(
+            "src.routers.websocket.get_current_user_ws",
+            new=AsyncMock(return_value=_principal(user_id, org_id, is_superuser=True)),
+        ),
+        patch("src.routers.websocket.manager.connect", new=AsyncMock()) as connect,
+        patch("src.routers.websocket.manager.disconnect"),
+    ):
+        await websocket_connect(cast(Any, websocket), channels=["agent-runs"])
+
+    assert connect.await_args is not None
+    subscribed_channels = connect.await_args.args[1]
+    assert f"agent-runs:org:{org_id}" in subscribed_channels
+    assert "agent-runs:all" not in subscribed_channels
+
+
+async def test_websocket_agent_runs_all_denied_for_org_platform_admin():
+    org_id = uuid4()
+    user_id = uuid4()
+    websocket = SimpleNamespace(state=SimpleNamespace())
+    websocket.send_json = AsyncMock()
+    websocket.receive_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+    with (
+        patch(
+            "src.routers.websocket.get_current_user_ws",
+            new=AsyncMock(return_value=_principal(user_id, org_id, is_superuser=True)),
+        ),
+        patch("src.routers.websocket.manager.connect", new=AsyncMock()) as connect,
+        patch("src.routers.websocket.manager.disconnect"),
+    ):
+        await websocket_connect(cast(Any, websocket), channels=["agent-runs:all"])
+
+    assert connect.await_args is not None
+    subscribed_channels = connect.await_args.args[1]
+    assert "agent-runs:all" not in subscribed_channels
+
+
+async def test_websocket_agent_runs_alias_for_system_account_subscribes_all():
+    user_id = uuid4()
+    websocket = SimpleNamespace(state=SimpleNamespace())
+    websocket.send_json = AsyncMock()
+    websocket.receive_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+    with (
+        patch(
+            "src.routers.websocket.get_current_user_ws",
+            new=AsyncMock(return_value=_principal(user_id, None, is_superuser=True)),
+        ),
+        patch("src.routers.websocket.manager.connect", new=AsyncMock()) as connect,
+        patch("src.routers.websocket.manager.disconnect"),
+    ):
+        await websocket_connect(cast(Any, websocket), channels=["agent-runs"])
+
+    assert connect.await_args is not None
+    subscribed_channels = connect.await_args.args[1]
+    assert "agent-runs:all" in subscribed_channels

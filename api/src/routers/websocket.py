@@ -487,7 +487,7 @@ async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
 
 
 def _agent_runs_channel_for_user(user: UserPrincipal) -> str | None:
-    if user.is_superuser:
+    if user.is_superuser and user.organization_id is None:
         return f"{_AGENT_RUNS_CHANNEL_PREFIX}all"
     if user.organization_id:
         return f"{_AGENT_RUNS_CHANNEL_PREFIX}org:{user.organization_id}"
@@ -501,10 +501,10 @@ def _resolve_agent_runs_channel(user: UserPrincipal, channel: str) -> str | None
         channel == f"{_AGENT_RUNS_CHANNEL_PREFIX}all"
         or channel == f"{_AGENT_RUNS_CHANNEL_PREFIX}global"
     ):
-        return channel if user.is_superuser else None
+        return channel if user.is_superuser and user.organization_id is None else None
     if channel.startswith(f"{_AGENT_RUNS_CHANNEL_PREFIX}org:"):
         org_id = channel.split(":", 2)[2]
-        if user.is_superuser:
+        if user.is_superuser and user.organization_id is None:
             return channel
         return channel if str(user.organization_id) == org_id else None
     return None
