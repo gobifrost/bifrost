@@ -35,7 +35,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchBox } from "@/components/search/SearchBox";
-import { useSearch } from "@/hooks/useSearch";
+import { useWeightedSearch } from "@/hooks/useSearch";
 import { toast } from "sonner";
 
 import { useConfigs, useDeleteConfig } from "@/hooks/useConfig";
@@ -91,13 +91,15 @@ export function Config() {
 		return org?.name || orgId;
 	};
 
-	// Apply search filter
-	const filteredConfigs = useSearch(configs || [], searchTerm, [
-		"key",
-		"value",
-		"type",
-		"description",
-		"integration_name",
+	// Apply weighted search — key matches dominate, integration_name/value/type
+	// still match but rank lower so a specific key search isn't drowned out by
+	// every config tied to a matching integration.
+	const filteredConfigs = useWeightedSearch(configs || [], searchTerm, [
+		{ field: "key", weight: 10 },
+		{ field: "description", weight: 5 },
+		{ field: "integration_name", weight: 3 },
+		{ field: "value", weight: 1 },
+		{ field: "type", weight: 1 },
 	]);
 
 	// React Query automatically refetches when scope changes (via orgId in query key)
