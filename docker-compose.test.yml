@@ -324,6 +324,12 @@ services:
       - ./api/pytest.ini:/app/pytest.ini:ro
       - ./api/pyproject.toml:/app/pyproject.toml:ro
       - ./docker-compose.yml:/app/docker-compose.yml:ro
+      - ./.github:/app/.github:ro
+      - ./.claude:/app/.claude:ro
+      - ./.env.debug:/app/.env.debug:ro
+      - ./debug.sh:/app/debug.sh:ro
+      - ./docker-compose.debug.yml:/app/docker-compose.debug.yml:ro
+      - ./docker-compose.debug.port.yml:/app/docker-compose.debug.port.yml:ro
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
