@@ -457,6 +457,15 @@ def test_import_codex_auth_cache_stores_tokens_without_returning_them(monkeypatc
     assert oauth_upsert["access_token"] == "access-token-secret"
     assert oauth_upsert["refresh_token"] == "refresh-token-secret"
     audit.assert_awaited_once()
+    audit_details = audit.await_args.kwargs["details"]
+    assert audit_details == {
+        "provider": "chatgpt_codex",
+        "upstream_workspace_id": "workspace-midtown",
+        "has_refresh_token": True,
+    }
+    assert "dev@example.test" not in str(audit_details)
+    assert "access-token-secret" not in str(audit_details)
+    assert "refresh-token-secret" not in str(audit_details)
 
 
 def test_disconnect_codex_oauth_revokes_user_account_and_audits(monkeypatch):

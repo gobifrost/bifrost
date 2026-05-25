@@ -38,6 +38,9 @@ def parse_codex_auth_cache(auth_cache: dict[str, Any]) -> ParsedCodexAuthCache:
         auth_cache.get("account"),
         auth_cache.get("user"),
         auth_cache.get("profile"),
+        auth_cache.get("tokens"),
+        auth_cache.get("openai"),
+        auth_cache.get("chatgpt"),
         auth_cache,
     )
 
@@ -117,18 +120,26 @@ def _find_value(sources: list[dict[str, Any]], *keys: str) -> Any:
 
 def _parse_expiry(token_sources: list[dict[str, Any]]) -> datetime | None:
     raw = _find_value(token_sources, "expires_at", "expiry", "expiration")
+    if isinstance(raw, (int, float)):
+        return _datetime_from_epoch(raw)
     if isinstance(raw, str) and raw:
+        if raw.isdigit():
+            return _datetime_from_epoch(int(raw))
         try:
             return datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
             return None
     exp = _find_value(token_sources, "expires_at_epoch", "expires_at_unix")
     if isinstance(exp, (int, float)):
-        try:
-            return datetime.fromtimestamp(exp, tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
+        return _datetime_from_epoch(exp)
     return None
+
+
+def _datetime_from_epoch(value: int | float) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _parse_scopes(value: Any) -> list[str]:
