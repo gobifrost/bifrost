@@ -1,10 +1,13 @@
 """Shared authorization policy for App Builder control-plane changes."""
 
-from typing import Protocol
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import HTTPException, status
 
-from src.models.contracts.applications import ApplicationUpdate
+if TYPE_CHECKING:
+    from src.models.contracts.applications import ApplicationUpdate
 
 
 class PlatformAdminUser(Protocol):

@@ -58,6 +58,62 @@ async def test_non_admin_cannot_update_app_control_plane_fields(
 
 
 @pytest.mark.asyncio
+async def test_admin_update_app_slug_proceeds_past_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRepo:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def update_application(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(applications, "ApplicationRepository", FakeRepo)
+
+    with pytest.raises(HTTPException) as exc:
+        await applications.update_application(
+            uuid4(),
+            ApplicationUpdate(slug="new-slug"),
+            ctx=SimpleNamespace(
+                db=None,
+                org_id=uuid4(),
+                user=SimpleNamespace(email="admin@example.com"),
+            ),
+            user=_user(is_platform_admin=True),
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_non_admin_can_update_non_sensitive_app_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRepo:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def update_application(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(applications, "ApplicationRepository", FakeRepo)
+
+    with pytest.raises(HTTPException) as exc:
+        await applications.update_application(
+            uuid4(),
+            ApplicationUpdate(title="Renamed App"),
+            ctx=SimpleNamespace(
+                db=None,
+                org_id=uuid4(),
+                user=SimpleNamespace(email="user@example.com"),
+            ),
+            user=_user(is_platform_admin=False),
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_non_admin_cannot_update_browser_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fail_if_lookup_runs(*args, **kwargs):  # pragma: no cover - assertion helper
         raise AssertionError("dependency mutation should fail before app lookup")
