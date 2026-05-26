@@ -66,8 +66,8 @@ _INLINE_ORG_RE = re.compile(
 # progress.
 ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/agents.py', 'MCPConnection.organization_id == agent_data.organization_id,', 'agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository'),
-    ('routers/applications.py', 'query = query.where(self.model.organization_id.is_(None))', 'ApplicationRepository cascade override; phase 6 relocates'),
-    ('routers/applications.py', 'query = query.where(self.model.organization_id == self.org_id)', 'ApplicationRepository cascade override; phase 6 relocates'),
+    # ApplicationRepository entries removed in phase 6 — repository relocated
+    # from routers/applications.py to repositories/applications.py.
     ('routers/claims.py', 'Table.organization_id == org_id, Table.name == table_name', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'ClaimORM.organization_id == org_id, ClaimORM.name.in_(refs)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'select(ClaimORM).where(ClaimORM.organization_id == org_id)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
@@ -75,9 +75,8 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == filter_org)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'ClaimORM.organization_id == org_id, ClaimORM.name == name', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/cli.py', 'ConfigModel.organization_id == org_uuid,', 'cli config inline; phase 5 migrates'),
-    ('routers/cli.py', 'Table.organization_id == org_uuid,', 'cli_create_table / cli_list_tables inline; phase 6 migrates'),
-    ('routers/cli.py', 'Table.organization_id.is_(None),', 'cli_create_table / cli_list_tables inline; phase 6 migrates'),
-    ('routers/cli.py', 'stmt = stmt.where(Table.organization_id.is_(None))', 'cli_list_tables inline; phase 6 migrates'),
+    ('routers/cli.py', 'Table.organization_id == org_uuid,', 'cli_create_table exact-scope uniqueness check (NOT cascade)'),
+    # cli_list_tables migrated to TableRepository.list() in phase 6.
     ('routers/config.py', 'query = query.where(self.model.organization_id.is_(None))', 'ConfigRepository cascade override; phase 5 absorbs into base'),
     ('routers/config.py', 'query = query.where(self.model.organization_id == self.org_id)', 'ConfigRepository cascade override; phase 5 absorbs into base'),
     ('routers/config.py', 'self.model.organization_id == self.org_id,', 'ConfigRepository cascade override; phase 5 absorbs into base'),

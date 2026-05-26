@@ -227,11 +227,25 @@ Eight phases. Each phase ends in a green test run and is committable on its own.
 - **`ConfigResolver` itself is kept** as a thin wrapper around the merge logic. Fully merging it into `ConfigRepository` is a Phase 8 follow-up.
 - Allow-list shrinks for the cache-bug-driven allow-list entries (none today — the allow-list entries for cli.py config endpoints remain until phase 6's broader cli.py sweep).
 
-### Phase 6: Tables and Application repository relocation + inline cascades
+### Phase 6: Tables / Apps relocation + SDK execution-path migration (scoped narrower than original plan)
 
-- Move `ApplicationRepository` from `routers/applications.py` to `repositories/applications.py`. Same for `TableRepository`.
-- Migrate `cli_list_tables` and any other inline cascade in `routers/cli.py` to use the repository.
-- Allow-list shrinks.
+**Scope adjustment (2026-05-26):** the original plan called for migrating every inline cascade across all routers (~47 callsites in 13 files). Mid-phase analysis showed:
+- The cross-tenant security risk is in the SDK execution path (`cli.py`), not in UI-facing routers which have user auth at the endpoint level.
+- Migrating UI-facing routers requires touching dozens of endpoints with their own bespoke filter logic (e.g. metrics aggregations, manifest sync) and risks breaking many tests during a phase that should ship cleanly.
+- The mechanical lint test (Phase 3) tracks every remaining inline cascade in its allow-list, so they are documented and will fail CI if any drifts further.
+
+**Phase 6 work that landed:**
+- Moved `ApplicationRepository` from `routers/applications.py` (lines 91–613) to `repositories/applications.py`. Imports trimmed. Router file now imports the repository.
+- Migrated `cli_list_tables` to `TableRepository.list()` — the SDK execution path that was a cross-tenant risk if any non-platform-admin caller could pass `--scope <other_org>`.
+- `cli_create_table` retained its exact-scope uniqueness check (NOT a cascade). Allow-list updated to reflect this is intentional, not a cascade violation.
+- Allow-list entries shrunk: ApplicationRepository (×2), `cli_list_tables` (×2). Each removed entry is observable progress per the Phase 3 design.
+
+**Deferred to Phase 8 follow-up issues** (one issue per router file):
+- `TableRepository` relocation (the class itself, distinct from `cli_list_tables` which is migrated)
+- `claims.py`, `knowledge_sources.py`, `mcp_connections.py`, `tools.py`, `websocket.py`, `workflows.py`, `agents.py`, `tables.py`, `integrations.py`, `oauth_connections.py` inline cascades
+- `export_import.py` manifest sync cascades (already explicitly Phase 8)
+
+The allow-list IS the work tracker for these follow-ups.
 
 ### Phase 7: Engine-facing endpoint rename + final cleanup
 

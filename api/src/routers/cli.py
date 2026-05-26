@@ -2541,7 +2541,9 @@ async def cli_create_table(
     org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
-    # Check if table exists in the same scope.
+    # Exact-scope uniqueness check (not a cascade): "is there already a
+    # table named X in MY scope?" Cascade would mask collisions when a
+    # global Table with the same name exists. See repositories/README.md.
     stmt = select(Table).where(
         Table.name == request.name,
         Table.organization_id == org_uuid,
@@ -2594,28 +2596,21 @@ async def cli_list_tables(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> list[SDKTableInfo]:
-    """List tables via SDK."""
-    from src.models.orm.tables import Table
-    from sqlalchemy import or_
+    """List tables via SDK.
+
+    Engine sentinel: the SDK has already resolved scope, so we pass
+    is_superuser=True to TableRepository and trust the org_uuid.
+    The base class handles the cascade (org + global) for us.
+    """
+    # Local import keeps the router file's top-level imports lean.
+    from src.routers.tables import TableRepository
 
     org_id = await _get_cli_org_id(current_user.user_id, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
-    # Build query with cascade scoping (org + global)
-    stmt = select(Table)
-    if org_uuid:
-        stmt = stmt.where(
-            or_(
-                Table.organization_id == org_uuid,
-                Table.organization_id.is_(None),
-            )
-        )
-    else:
-        stmt = stmt.where(Table.organization_id.is_(None))
-
-    stmt = stmt.order_by(Table.name)
-    result = await db.execute(stmt)
-    tables = result.scalars().all()
+    repo = TableRepository(db, org_id=org_uuid, is_superuser=True)
+    tables = await repo.list()
+    tables = sorted(tables, key=lambda t: t.name)
 
     return [
         SDKTableInfo(
