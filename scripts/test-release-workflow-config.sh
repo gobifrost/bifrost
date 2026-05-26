@@ -23,6 +23,9 @@ grep -Fq 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.API_IMAGE }}' "$workflow" \
 grep -Fq 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}' "$workflow" \
   || fail "client image refs must use IMAGE_NAMESPACE + CLIENT_IMAGE"
 
+grep -Fq 'ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}' "$workflow" \
+  || fail "worker image refs must use IMAGE_NAMESPACE + WORKER_IMAGE"
+
 grep -Fq "image_tag=" "$workflow" \
   || fail "release notes must use image tags without the leading v prefix"
 

@@ -21,6 +21,7 @@ env:
   IMAGE_NAMESPACE: mtg-thomas
   API_IMAGE: bifrost-api
   CLIENT_IMAGE: bifrost-client
+  WORKER_IMAGE: bifrost-worker
 
 permissions:
   contents: read
@@ -254,6 +255,37 @@ jobs:
           subject-digest: ${{ steps.build-api.outputs.digest }}
           push-to-registry: true
 
+      - name: Build and push worker dev image
+        id: build-worker
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: ./api/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}:dev
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
+          build-args: |
+            BIFROST_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign worker dev image
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}@${{ steps.build-worker.outputs.digest }}
+
+      - name: Attest worker dev image provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}
+          subject-digest: ${{ steps.build-worker.outputs.digest }}
+          push-to-registry: true
+
       - name: Build and push client dev image
         id: build-client
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
@@ -476,6 +508,92 @@ jobs:
           push-to-registry: true
 
   # =============================================================================
+  # Build Worker Image - Only on version tags, after tests pass
+  # =============================================================================
+  build-worker:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-unit, test-e2e, lint]
+    runs-on: ubuntu-latest
+    name: Build Worker Image
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # OIDC for keyless cosign signing
+      attestations: write # for actions/attest-build-provenance
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Release tag '${GITHUB_REF#refs/tags/}' must be strict semver like v1.2.3 or v1.2.3-beta.1."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}
+          tags: |
+            # Semantic version tags
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            # SHA for traceability
+            type=sha
+            # Latest tag only on stable releases (not pre-releases like v1.0.0-beta)
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
+
+      - name: Build and push worker image
+        id: build-worker
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: ./api/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: BIFROST_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign worker image
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}@${{ steps.build-worker.outputs.digest }}
+
+      - name: Attest worker image provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}
+          subject-digest: ${{ steps.build-worker.outputs.digest }}
+          push-to-registry: true
+
+  # =============================================================================
   # Create GitHub Release - Only on version tags, after images are built.
   # Release assets are signed with Sigstore/cosign (keyless OIDC) and a SLSA
   # build provenance attestation is generated via GitHub's native attestation
@@ -483,7 +601,7 @@ jobs:
   # =============================================================================
   create-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-api, build-client]
+    needs: [build-api, build-client, build-worker]
     runs-on: ubuntu-latest
     name: Create Release
     permissions:
@@ -589,6 +707,11 @@ jobs:
             **Client:**
             ```bash
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.CLIENT_IMAGE }}:${{ steps.get_version.outputs.image_tag }}
+            ```
+
+            **Worker:**
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ env.WORKER_IMAGE }}:${{ steps.get_version.outputs.image_tag }}
             ```
 
             ### Type Stubs for IDEs
