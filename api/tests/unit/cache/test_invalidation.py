@@ -19,6 +19,7 @@ from src.core.cache.invalidation import (
     invalidate_role,
     invalidate_role_forms,
     invalidate_role_users,
+    upsert_config,
 )
 
 
@@ -30,6 +31,14 @@ class TestConfigInvalidation:
         """Create mock async Redis client."""
         mock_r = AsyncMock()
         mock_r.delete = AsyncMock()
+        mock_r.hset = AsyncMock()
+        mock_r.ttl = AsyncMock(return_value=60)
+
+        async def empty_iter():
+            if False:
+                yield
+
+        mock_r.scan_iter = lambda *args, **kwargs: empty_iter()
         return mock_r
 
     @pytest.mark.asyncio
@@ -74,6 +83,33 @@ class TestConfigInvalidation:
             await invalidate_all_config("org-999")
 
             mock_redis.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_upsert_config_org_scope_invalidates_merged_org_cache(self, mock_redis):
+        """Org config writes must not create partial hashes that hide global fallback."""
+        with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
+            await upsert_config("org-123", "api_key", "encrypted", "secret")
+
+            mock_redis.hset.assert_not_called()
+            mock_redis.delete.assert_any_call("bifrost:org:org-123:config")
+            mock_redis.delete.assert_any_call("bifrost:org:org-123:config:api_key")
+
+    @pytest.mark.asyncio
+    async def test_upsert_config_global_scope_invalidates_org_merged_caches(self, mock_redis):
+        """Global config writes should clear org caches that include global fallback."""
+
+        async def org_config_keys():
+            yield "bifrost:org:org-123:config"
+            yield "bifrost:org:org-456:config"
+
+        mock_redis.scan_iter = lambda *args, **kwargs: org_config_keys()
+
+        with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
+            await upsert_config(None, "api_key", "encrypted", "secret")
+
+            mock_redis.hset.assert_called_once()
+            mock_redis.delete.assert_any_call("bifrost:org:org-123:config")
+            mock_redis.delete.assert_any_call("bifrost:org:org-456:config")
 
 
 class TestFormInvalidation:

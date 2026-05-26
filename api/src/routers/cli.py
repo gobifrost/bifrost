@@ -70,8 +70,13 @@ from src.models.contracts.cli import (
     SDKTableListRequest,
     SDKTableInfo,
 )
+from src.models.orm.oauth import OAuthToken
 from src.core.pubsub import publish_cli_session_update, publish_execution_log, publish_execution_update, publish_history_update
 from src.repositories.cli_sessions import CLISessionRepository
+from src.services.oauth_scope_resolution import (
+    get_oauth_provider_for_scope,
+    get_oauth_token_for_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1142,7 +1147,6 @@ async def sdk_integrations_refresh_token(
     :func:`src.services.oauth_provider.refresh_oauth_token_http`; this handler
     only owns the provider lookup, context build, and persistence.
     """
-    from src.models.orm.oauth import OAuthProvider, OAuthToken
     from src.services.oauth_provider import (
         build_token_refresh_context,
         refresh_oauth_token_http,
@@ -1152,18 +1156,13 @@ async def sdk_integrations_refresh_token(
     org_uuid = UUID(org_id) if org_id else None
 
     try:
-        # Look up provider by connection_name (== provider_name), scoped to the
-        # caller's resolved CLI org/global context. Provider names are not
-        # globally unique.
-        provider_stmt = select(OAuthProvider).where(
-            OAuthProvider.provider_name == request.connection_name
+        # Look up provider by connection_name (== provider_name), preferring
+        # org-specific rows while allowing global providers for scoped mappings.
+        provider = await get_oauth_provider_for_scope(
+            db,
+            request.connection_name,
+            org_uuid,
         )
-        if org_uuid is None:
-            provider_stmt = provider_stmt.where(OAuthProvider.organization_id.is_(None))
-        else:
-            provider_stmt = provider_stmt.where(OAuthProvider.organization_id == org_uuid)
-        result = await db.execute(provider_stmt)
-        provider = result.scalars().first()
 
         if not provider:
             raise HTTPException(
@@ -1175,19 +1174,7 @@ async def sdk_integrations_refresh_token(
         # build_token_refresh_context can carry the encrypted refresh token.
         stored_token = None
         if provider.oauth_flow_type == "authorization_code":
-            token_stmt = (
-                select(OAuthToken)
-                .where(
-                    OAuthToken.provider_id == provider.id,
-                    OAuthToken.user_id.is_(None),
-                )
-            )
-            if org_uuid is None:
-                token_stmt = token_stmt.where(OAuthToken.organization_id.is_(None))
-            else:
-                token_stmt = token_stmt.where(OAuthToken.organization_id == org_uuid)
-            token_result = await db.execute(token_stmt)
-            stored_token = token_result.scalars().first()
+            stored_token = await get_oauth_token_for_scope(db, provider.id, org_uuid)
             if not stored_token or not stored_token.encrypted_refresh_token:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1236,19 +1223,7 @@ async def sdk_integrations_refresh_token(
         token_obj = stored_token
         if token_obj is None:
             # client_credentials path — fetch (or later create) the user_id=NULL row
-            token_stmt = (
-                select(OAuthToken)
-                .where(
-                    OAuthToken.provider_id == provider.id,
-                    OAuthToken.user_id.is_(None),
-                )
-            )
-            if org_uuid is None:
-                token_stmt = token_stmt.where(OAuthToken.organization_id.is_(None))
-            else:
-                token_stmt = token_stmt.where(OAuthToken.organization_id == org_uuid)
-            token_result = await db.execute(token_stmt)
-            token_obj = token_result.scalars().first()
+            token_obj = await get_oauth_token_for_scope(db, provider.id, org_uuid)
 
         if token_obj:
             token_obj.encrypted_access_token = outcome["encrypted_access_token"]

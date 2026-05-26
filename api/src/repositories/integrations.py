@@ -754,14 +754,23 @@ class IntegrationsRepository(BaseRepository[Integration]):
         """
         from src.models.orm.oauth import OAuthToken
 
-        stmt = select(OAuthToken).where(
-            OAuthToken.provider_id == provider_id,
-            OAuthToken.user_id.is_(None),
-        )
-        if organization_id is None:
-            stmt = stmt.where(OAuthToken.organization_id.is_(None))
-        else:
-            stmt = stmt.where(OAuthToken.organization_id == organization_id)
+        if organization_id is not None:
+            result = await self.session.execute(
+                select(OAuthToken).where(
+                    OAuthToken.provider_id == provider_id,
+                    OAuthToken.organization_id == organization_id,
+                    OAuthToken.user_id.is_(None),
+                ).order_by(OAuthToken.created_at.desc(), OAuthToken.id.desc())
+            )
+            token = result.scalars().first()
+            if token:
+                return token
 
-        result = await self.session.execute(stmt)
+        result = await self.session.execute(
+            select(OAuthToken).where(
+                OAuthToken.provider_id == provider_id,
+                OAuthToken.organization_id.is_(None),
+                OAuthToken.user_id.is_(None),
+            ).order_by(OAuthToken.created_at.desc(), OAuthToken.id.desc())
+        )
         return result.scalars().first()

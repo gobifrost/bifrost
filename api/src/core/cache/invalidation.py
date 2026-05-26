@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+async def _delete_org_config_hashes(r: Any) -> None:
+    """Delete merged org config hashes, which include global fallback values."""
+    async for key in r.scan_iter(match="bifrost:org:*:config"):
+        await r.delete(key)
+
+
 async def upsert_config(
     org_id: str | None,
     key: str,
@@ -70,6 +76,18 @@ async def upsert_config(
         r = await get_shared_redis()
         hash_key = config_hash_key(org_id)
 
+        if org_id:
+            # Org config hashes are merged views (global fallback overlaid with
+            # org values). Updating one field would create a partial hash that
+            # hides the remaining global config values on the next read.
+            await r.delete(hash_key)
+            await r.delete(config_key(org_id, key))
+            logger.debug(
+                f"Invalidated merged org config cache after upsert: "
+                f"org={log_safe(org_id)}, key={log_safe(key)}"
+            )
+            return
+
         # Store as JSON with type info for proper parsing at read time
         cache_value = json.dumps({"value": value, "type": config_type})
 
@@ -80,6 +98,8 @@ async def upsert_config(
         ttl = await r.ttl(hash_key)
         if ttl < 0:  # -1 = no TTL, -2 = key doesn't exist
             await r.expire(hash_key, TTL_CONFIG)
+
+        await _delete_org_config_hashes(r)
 
         logger.debug(f"Upserted config to cache: org={log_safe(org_id)}, key={log_safe(key)}")
     except Exception as e:
@@ -104,6 +124,9 @@ async def invalidate_config(org_id: str | None, key: str | None = None) -> None:
         # Also invalidate specific key if provided
         if key:
             await r.delete(config_key(org_id, key))
+
+        if org_id is None:
+            await _delete_org_config_hashes(r)
 
         logger.debug(f"Invalidated config cache: org={log_safe(org_id)}, key={log_safe(key)}")
     except Exception as e:
