@@ -45,20 +45,6 @@ export function AuthCallback() {
 				return;
 			}
 
-			// Get stored state
-			// Note: code_verifier is now handled server-side (stored in Redis when init is called)
-			const storedState = sessionStorage.getItem("oauth_state");
-
-			// Clear stored OAuth data
-			sessionStorage.removeItem("oauth_state");
-			sessionStorage.removeItem("oauth_provider");
-
-			// Verify state matches
-			if (state !== storedState) {
-				setError("Invalid OAuth state - possible CSRF attack");
-				return;
-			}
-
 			try {
 				// Exchange code for tokens (server handles PKCE verification)
 				await loginWithOAuth(provider, code, state);

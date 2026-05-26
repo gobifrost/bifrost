@@ -252,20 +252,11 @@ export function Login() {
 				throw new Error("OAuth provider is not available");
 			}
 
-			// Note: PKCE (code_verifier) is now handled server-side
-			sessionStorage.setItem("oauth_provider", provider);
-
 			// Build callback URL
 			const callbackUrl = `${window.location.origin}/auth/callback/${provider}`;
 
 			// Get authorization URL (server generates and stores PKCE verifier)
-			const { authorization_url, state } = await initOAuth(
-				provider,
-				callbackUrl,
-			);
-
-			// Store state for verification
-			sessionStorage.setItem("oauth_state", state);
+			const { authorization_url } = await initOAuth(provider, callbackUrl);
 
 			// Redirect to OAuth provider
 			window.location.assign(authorization_url);
