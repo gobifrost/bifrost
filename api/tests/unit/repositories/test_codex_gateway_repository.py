@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -6,8 +5,10 @@ import pytest
 
 from src.core.security import decrypt_secret
 from src.repositories.codex_gateway import (
+    CodexGatewayKeyLimitError,
     CodexGatewayKeyMaterial,
     CodexGatewayRepository,
+    MAX_ACTIVE_GATEWAY_KEYS_PER_USER,
 )
 
 VALID_GATEWAY_KEY = f"bfck_{'a' * 43}"
@@ -27,6 +28,9 @@ class _Result:
         self._values = values or []
 
     def scalar_one_or_none(self):
+        return self._one
+
+    def scalar_one(self):
         return self._one
 
     def scalars(self):
@@ -53,6 +57,7 @@ async def test_create_gateway_key_hashes_secret_and_returns_key_material(
 ):
     user_id = uuid4()
     project_id = uuid4()
+    mock_session.execute.return_value = _Result(one=0)
 
     result = await repository.create_gateway_key(
         user_id=user_id,
@@ -67,30 +72,67 @@ async def test_create_gateway_key_hashes_secret_and_returns_key_material(
     assert result.record.user_id == user_id
     assert result.record.project_id == project_id
     assert result.record.key_hash != result.plaintext_key
-    assert result.record.key_hash.startswith("$")
+    assert result.record.key_hash.startswith("sha256:")
     assert result.record.allowed_models == ["gpt-5.1-codex"]
     assert result.record.daily_limit == 100
+    mock_session.execute.assert_called_once()
     mock_session.add.assert_called_once()
     mock_session.flush.assert_called_once()
     mock_session.refresh.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_lookup_gateway_key_uses_hash_and_ignores_revoked_keys(
+async def test_create_gateway_key_enforces_active_key_quota(
+    repository,
+    mock_session,
+):
+    mock_session.execute.return_value = _Result(one=MAX_ACTIVE_GATEWAY_KEYS_PER_USER)
+
+    with pytest.raises(CodexGatewayKeyLimitError):
+        await repository.create_gateway_key(
+            user_id=uuid4(),
+            project_id=None,
+            name="extra key",
+        )
+
+    mock_session.add.assert_not_called()
+    mock_session.flush.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lookup_gateway_key_uses_indexed_hash(
     repository,
     mock_session,
 ):
     plaintext = VALID_GATEWAY_KEY
     key_hash = repository.hash_gateway_key(plaintext)
     active_record = MagicMock(key_hash=key_hash, revoked_at=None, status="active")
-    revoked_record = MagicMock(
-        key_hash=key_hash, revoked_at=datetime.now(timezone.utc), status="revoked"
-    )
-    mock_session.execute.return_value = _Result(values=[revoked_record, active_record])
+    mock_session.execute.return_value = _Result(one=active_record)
 
     result = await repository.get_active_gateway_key_by_plaintext(plaintext)
 
     assert result is active_record
+    mock_session.execute.assert_called_once()
+    statement = mock_session.execute.call_args.args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": False}))
+    assert "codex_gateway_keys.key_hash" in compiled
+
+
+@pytest.mark.asyncio
+async def test_lookup_gateway_key_rejects_legacy_bcrypt_hash_without_scan(
+    repository,
+    mock_session,
+):
+    legacy_record = MagicMock(
+        key_hash="$2b$12$legacybcryptvalue",
+        revoked_at=None,
+        status="active",
+    )
+    mock_session.execute.return_value = _Result(one=legacy_record)
+
+    result = await repository.get_active_gateway_key_by_plaintext(VALID_GATEWAY_KEY)
+
+    assert result is None
     mock_session.execute.assert_called_once()
 
 

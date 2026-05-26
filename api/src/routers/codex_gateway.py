@@ -24,6 +24,7 @@ from src.models.contracts.codex_gateway import (
     OpenAICompatibleError,
 )
 from src.repositories.codex_gateway import (
+    CodexGatewayKeyLimitError,
     CodexGatewayRepository,
     is_plausible_gateway_key,
 )
@@ -107,15 +108,21 @@ async def create_gateway_key(
     ],
     db: DbSession,
 ) -> CodexGatewayKeyCreateResponse:
-    material = await repository.create_gateway_key(
-        user_id=current_user.user_id,
-        project_id=payload.project_id,
-        name=payload.name,
-        allowed_models=payload.allowed_models,
-        denied_models=payload.denied_models,
-        daily_limit=payload.daily_limit,
-        monthly_limit=payload.monthly_limit,
-    )
+    try:
+        material = await repository.create_gateway_key(
+            user_id=current_user.user_id,
+            project_id=payload.project_id,
+            name=payload.name,
+            allowed_models=payload.allowed_models,
+            denied_models=payload.denied_models,
+            daily_limit=payload.daily_limit,
+            monthly_limit=payload.monthly_limit,
+        )
+    except CodexGatewayKeyLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
     await emit_audit(
         db,
         "codex_gateway.key.create",
