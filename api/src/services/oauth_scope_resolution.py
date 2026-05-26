@@ -35,7 +35,7 @@ async def get_oauth_provider_for_scope(
 async def get_oauth_token_for_scope(
     db: AsyncSession, provider_id: UUID, org_uuid: UUID | None
 ) -> OAuthToken | None:
-    """Load an org-level OAuth token, falling back to the global provider token."""
+    """Load an OAuth token for the caller scope without crossing org/global boundaries."""
     if org_uuid is not None:
         result = await db.execute(
             select(OAuthToken)
@@ -46,9 +46,7 @@ async def get_oauth_token_for_scope(
             )
             .order_by(OAuthToken.created_at.desc(), OAuthToken.id.desc())
         )
-        token = result.scalars().first()
-        if token:
-            return token
+        return result.scalars().first()
 
     result = await db.execute(
         select(OAuthToken)

@@ -762,9 +762,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                     OAuthToken.user_id.is_(None),
                 ).order_by(OAuthToken.created_at.desc(), OAuthToken.id.desc())
             )
-            token = result.scalars().first()
-            if token:
-                return token
+            return result.scalars().first()
 
         result = await self.session.execute(
             select(OAuthToken).where(

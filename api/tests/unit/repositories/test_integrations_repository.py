@@ -153,25 +153,21 @@ class TestIntegrationsRepository:
         assert result is None
         mock_session.execute.assert_called_once()
 
-    async def test_get_provider_org_token_falls_back_to_global_token(
+    async def test_get_provider_org_token_does_not_fall_back_to_global_token(
         self, repository, mock_session
     ):
-        """Org-scoped lookups should fall back to the provider-level token."""
+        """Org-scoped lookups must not return global provider tokens."""
         provider_id = uuid4()
         organization_id = uuid4()
-        global_token = MagicMock()
-        global_token.organization_id = None
 
         org_result = MagicMock()
         org_result.scalars.return_value.first.return_value = None
-        global_result = MagicMock()
-        global_result.scalars.return_value.first.return_value = global_token
-        mock_session.execute.side_effect = [org_result, global_result]
+        mock_session.execute.return_value = org_result
 
         result = await repository.get_provider_org_token(provider_id, organization_id)
 
-        assert result == global_token
-        assert mock_session.execute.call_count == 2
+        assert result is None
+        mock_session.execute.assert_called_once()
 
     async def test_get_provider_org_token_prefers_org_specific_token(
         self, repository, mock_session

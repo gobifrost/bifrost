@@ -245,8 +245,8 @@ class TestRefreshTokenClientCredentials:
         assert created_token.organization_id == org_id
 
     @pytest.mark.asyncio
-    async def test_scoped_refresh_falls_back_to_global_provider_and_token(self):
-        """Scoped refresh should work when the provider/token are global rows."""
+    async def test_scoped_refresh_uses_org_scoped_token_persistence(self):
+        """Scoped refresh should create/update org-scoped token rows only."""
         from src.routers.cli import sdk_integrations_refresh_token
         from src.models.contracts.cli import SDKIntegrationsRefreshTokenRequest
 
@@ -275,24 +275,18 @@ class TestRefreshTokenClientCredentials:
         mock_provider.organization_id = None
         mock_provider.audience = None
 
-        mock_existing_token = MagicMock()
-        mock_existing_token.organization_id = None
-
         scoped_provider_result = MagicMock()
         scoped_provider_result.scalars.return_value.first.return_value = None
         global_provider_result = MagicMock()
         global_provider_result.scalars.return_value.first.return_value = mock_provider
         scoped_token_result = MagicMock()
         scoped_token_result.scalars.return_value.first.return_value = None
-        global_token_result = MagicMock()
-        global_token_result.scalars.return_value.first.return_value = mock_existing_token
 
         mock_db.execute = AsyncMock(
             side_effect=[
                 scoped_provider_result,
                 global_provider_result,
                 scoped_token_result,
-                global_token_result,
             ]
         )
         mock_db.add = MagicMock()
@@ -323,9 +317,10 @@ class TestRefreshTokenClientCredentials:
             result = await sdk_integrations_refresh_token(request, mock_user, mock_db)
 
         assert result.refreshed is True
-        assert mock_db.execute.call_count == 4
-        mock_db.add.assert_not_called()
-        assert mock_existing_token.expires_at == expires_at
+        assert mock_db.execute.call_count == 3
+        mock_db.add.assert_called_once()
+        created_token = mock_db.add.call_args.args[0]
+        assert created_token.organization_id == org_id
 
     @pytest.mark.asyncio
     async def test_global_refresh_only_selects_global_provider(self):
