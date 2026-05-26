@@ -216,13 +216,16 @@ Eight phases. Each phase ends in a green test run and is committable on its own.
 - E2E test: two orgs, each with their own OAuth mapping. Assert org A's SDK call cannot surface org B's token.
 - Allow-list entries for the migrated sites are removed.
 
-### Phase 5: Config migration
+### Phase 5: Config cache invalidation (scoped narrower than original plan)
 
-- Delete `ConfigResolver`. Callers move to `ConfigRepository.get(key=...)` for single values and `ConfigRepository.list()` for full enumeration. The merge IS the cascade — no "merge" method needed.
-- Move cache concerns onto `ConfigRepository` as a thin transparent layer wrapping the standard methods.
-- Versioned global cache key. Org writes do single `delete` (no `hset`). Global writes do `INCR` on version. Cache invalidation hooks live on the repository, not in `core/cache/invalidation.py`.
-- Callers that wanted a `{key: value}` dict do the shape transform at the call site.
-- Allow-list shrinks.
+**Scope adjustment (2026-05-26):** the original plan called for deleting `ConfigResolver` entirely. Mid-phase audit found `ConfigResolver` has 3 callsites across `cli.py`, `workflow_execution.py`, and its own test files with substantial mocking. Deleting it would inflate Phase 5 well beyond the goal of "fix the cache invalidation bug." Narrowing the scope:
+
+- **Fix the partial-hash bug** in `core/cache/invalidation.py`. Org-scoped writes now DELETE the merged hash instead of HSET-ing one field. This is the security-relevant fix.
+- **Introduce versioned global key**. `CONFIG_GLOBAL_VERSION_KEY` is INCR'd on every global config write. Org-scoped cache keys embed the version via `config_hash_key_versioned`, so a global write naturally invalidates every org cache without enumeration. No `scan_iter`.
+- **Wire reader and writer through the versioned key**. `ConfigResolver._get_config_from_cache` and `_set_config_cache` use `config_hash_key_versioned`. `upsert_config` and `invalidate_config` use it for org-scoped writes and INCR the version for global writes.
+- **Regression tests** in `tests/unit/cache/test_invalidation.py` pin the partial-hash bug closed and assert the version-bump contract.
+- **`ConfigResolver` itself is kept** as a thin wrapper around the merge logic. Fully merging it into `ConfigRepository` is a Phase 8 follow-up.
+- Allow-list shrinks for the cache-bug-driven allow-list entries (none today — the allow-list entries for cli.py config endpoints remain until phase 6's broader cli.py sweep).
 
 ### Phase 6: Tables and Application repository relocation + inline cascades
 

@@ -403,12 +403,17 @@ class ConfigResolver:
         Get all config from Redis cache.
 
         Returns None on cache miss or error.
+
+        Org-scoped reads use the versioned key so a global config write
+        (which bumps ``CONFIG_GLOBAL_VERSION_KEY``) naturally causes a
+        miss on every org's merged cache without enumeration.
         """
         try:
-            from src.core.cache import get_shared_redis, config_hash_key
+            from src.core.cache.keys import config_hash_key_versioned
+            from src.core.cache.redis_client import get_shared_redis
 
             r = await get_shared_redis()
-            hash_key = config_hash_key(org_id)
+            hash_key = await config_hash_key_versioned(r, org_id)
 
             # Get all fields from the hash
             data = await r.hgetall(hash_key)  # type: ignore[misc]
@@ -436,15 +441,22 @@ class ConfigResolver:
     async def _set_config_cache(self, org_id: str | None, config_dict: dict[str, Any]) -> None:
         """
         Populate Redis cache with config data.
+
+        Writes go to the versioned key so they're naturally invalidated
+        when ``CONFIG_GLOBAL_VERSION_KEY`` is bumped on a global write.
         """
         if not config_dict:
             return
 
         try:
-            from src.core.cache import get_shared_redis, config_hash_key, TTL_CONFIG
+            from src.core.cache.keys import (
+                TTL_CONFIG,
+                config_hash_key_versioned,
+            )
+            from src.core.cache.redis_client import get_shared_redis
 
             r = await get_shared_redis()
-            hash_key = config_hash_key(org_id)
+            hash_key = await config_hash_key_versioned(r, org_id)
 
             # Convert to JSON strings for Redis
             mapping = {

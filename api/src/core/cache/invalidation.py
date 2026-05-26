@@ -21,9 +21,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from .keys import (
+    CONFIG_GLOBAL_VERSION_KEY,
     TTL_CONFIG,
     TTL_ORGS,
     config_hash_key,
+    config_hash_key_versioned,
     config_key,
     form_key,
     forms_hash_key,
@@ -60,6 +62,17 @@ async def upsert_config(
 
     Secrets are stored ENCRYPTED - decryption happens at read time.
 
+    Two important behaviors fixed in the 2026-05 org-scoping overhaul:
+
+    1. Org-scoped writes DELETE the merged hash instead of HSET-ing one
+       field. The cached hash is a merged view (global fallback overlaid
+       with org values); HSET-ing one field would create a partial hash
+       that hides the other global values on the next read.
+
+    2. Global writes ``INCR`` the global-config version counter. Org-scoped
+       cache keys embed this version, so every org's merged cache becomes
+       stale by key — no SCAN required to enumerate orgs.
+
     Args:
         org_id: Organization ID or None for global config
         key: Config key
@@ -68,20 +81,34 @@ async def upsert_config(
     """
     try:
         r = await get_shared_redis()
-        hash_key = config_hash_key(org_id)
 
-        # Store as JSON with type info for proper parsing at read time
+        if org_id is not None and org_id != "GLOBAL":
+            # Org-scoped write: drop the merged hash so the next read
+            # re-fetches from DB and re-merges. NEVER hset a single field
+            # into a merged hash — that's the partial-hash bug.
+            versioned_hash = await config_hash_key_versioned(r, org_id)
+            await r.delete(versioned_hash)
+            await r.delete(config_key(org_id, key))
+            logger.debug(
+                f"Org-scoped config upsert invalidated merged hash: "
+                f"org={log_safe(org_id)}, key={log_safe(key)}"
+            )
+            return
+
+        # Global write: HSET the global hash (no merge concern at global
+        # scope) and INCR the global version so every org's merged cache
+        # is invalidated by key on the next read.
+        global_hash = config_hash_key(None)
         cache_value = json.dumps({"value": value, "type": config_type})
+        await r.hset(global_hash, key, cache_value)  # type: ignore[misc]
+        ttl = await r.ttl(global_hash)
+        if ttl < 0:
+            await r.expire(global_hash, TTL_CONFIG)
 
-        # HSET the field in the hash
-        await r.hset(hash_key, key, cache_value)  # type: ignore[misc]
-
-        # Ensure TTL is set (HSET doesn't reset TTL, so check if key exists)
-        ttl = await r.ttl(hash_key)
-        if ttl < 0:  # -1 = no TTL, -2 = key doesn't exist
-            await r.expire(hash_key, TTL_CONFIG)
-
-        logger.debug(f"Upserted config to cache: org={log_safe(org_id)}, key={log_safe(key)}")
+        await r.incr(CONFIG_GLOBAL_VERSION_KEY)
+        logger.debug(
+            f"Global config upsert bumped version; key={log_safe(key)}"
+        )
     except Exception as e:
         # Log but don't fail - cache is best-effort
         logger.warning(f"Failed to upsert config cache: {e}")
@@ -91,6 +118,9 @@ async def invalidate_config(org_id: str | None, key: str | None = None) -> None:
     """
     Invalidate config cache after a config write operation.
 
+    Mirrors ``upsert_config``'s versioning logic so deletes propagate the
+    same way writes do.
+
     Args:
         org_id: Organization ID or None for global config
         key: Specific config key to invalidate, or None to invalidate all
@@ -98,12 +128,18 @@ async def invalidate_config(org_id: str | None, key: str | None = None) -> None:
     try:
         r = await get_shared_redis()
 
-        # Always invalidate the hash (contains all configs)
-        await r.delete(config_hash_key(org_id))
-
-        # Also invalidate specific key if provided
-        if key:
-            await r.delete(config_key(org_id, key))
+        if org_id is not None and org_id != "GLOBAL":
+            versioned_hash = await config_hash_key_versioned(r, org_id)
+            await r.delete(versioned_hash)
+            if key:
+                await r.delete(config_key(org_id, key))
+        else:
+            # Global invalidate: drop the global hash and bump the version
+            # so every org's merged cache is invalidated by key.
+            await r.delete(config_hash_key(None))
+            if key:
+                await r.delete(config_key(None, key))
+            await r.incr(CONFIG_GLOBAL_VERSION_KEY)
 
         logger.debug(f"Invalidated config cache: org={log_safe(org_id)}, key={log_safe(key)}")
     except Exception as e:

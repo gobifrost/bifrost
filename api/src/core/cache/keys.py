@@ -28,6 +28,18 @@ def config_hash_key(org_id: str | None) -> str:
     Key for the hash containing all config values for an org.
 
     Structure: HASH where field = config key, value = JSON config data
+
+    NOTE: Org-scoped config caches are merged views (global fallback
+    overlaid with org-specific values). To invalidate every org cache
+    efficiently on a global config write — without enumerating org
+    keys via SCAN — the org-scoped key embeds a version suffix that
+    advances when ``CONFIG_GLOBAL_VERSION_KEY`` is bumped.
+
+    The lookup for the current version is async, so use
+    ``config_hash_key_versioned`` instead from any caller that has
+    a Redis client. This sync helper returns the BASE key (no version
+    suffix) and is reserved for cases where the version is not needed
+    (e.g. global-only reads, ``invalidate_all_config``).
     """
     scope = _get_scope(org_id)
     return f"bifrost:{scope}:config"
@@ -42,6 +54,46 @@ def config_key(org_id: str | None, key: str) -> str:
     """
     scope = _get_scope(org_id)
     return f"bifrost:{scope}:config:{key}"
+
+
+CONFIG_GLOBAL_VERSION_KEY = "bifrost:config:global_version"
+
+
+async def _current_global_version(redis_client) -> int:  # type: ignore[no-untyped-def]
+    """Return the current global-config version, initializing to 0 if absent.
+
+    The version is incremented on every global config write to invalidate
+    every org's merged cache in O(1) without enumerating keys.
+    """
+    raw = await redis_client.get(CONFIG_GLOBAL_VERSION_KEY)
+    if raw is None:
+        return 0
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def config_hash_key_versioned(
+    redis_client,  # type: ignore[no-untyped-def]
+    org_id: str | None,
+) -> str:
+    """Versioned variant of ``config_hash_key``.
+
+    Org-scoped keys embed the current global-version. Global keys are
+    unversioned (the version IS the global-config-write signal).
+
+    Reader and writer must use this helper so a global write naturally
+    causes every org read to see a fresh cache key (and thus a DB
+    re-merge on next read).
+    """
+    base = config_hash_key(org_id)
+    if org_id is None or org_id == "GLOBAL":
+        return base
+    version = await _current_global_version(redis_client)
+    return f"{base}:v{version}"
 
 
 # =============================================================================
