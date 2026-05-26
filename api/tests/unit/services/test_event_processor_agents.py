@@ -8,6 +8,8 @@ enqueue_agent_run with the expected parameters.
 """
 
 import uuid
+import sys
+import types
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,11 +26,13 @@ def _make_event(
     event_id: uuid.UUID | None = None,
     event_type: str = "ticket.created",
     data: dict | None = None,
+    event_source_org_id: uuid.UUID | None = None,
 ) -> MagicMock:
     event = MagicMock()
     event.id = event_id or uuid.uuid4()
     event.event_type = event_type
     event.event_source_id = uuid.uuid4()
+    event.event_source.organization_id = event_source_org_id
     event.data = data or {"ticket_id": "123"}
     event.headers = {"content-type": "application/json"}
     event.received_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -86,6 +90,13 @@ def _create_processor() -> "EventProcessor":
         processor._subscription_repo = MagicMock()
         processor._webhook_repo = MagicMock()
         return processor
+
+
+def _fake_module(name: str, **attributes: object) -> types.ModuleType:
+    module = types.ModuleType(name)
+    for key, value in attributes.items():
+        setattr(module, key, value)
+    return module
 
 
 @pytest.mark.asyncio
@@ -170,11 +181,13 @@ async def test_queue_agent_run_calls_enqueue():
     delivery = _make_delivery(target_type="agent", agent=agent)
     event = _make_event(data={"ticket_id": "456", "priority": "high"})
 
-    with patch(
-        "src.services.execution.agent_run_service.enqueue_agent_run",
-        new_callable=AsyncMock,
-        return_value="run-abc-123",
-    ) as mock_enqueue:
+    mock_enqueue = AsyncMock(return_value="run-abc-123")
+    fake_agent_run_service = _fake_module(
+        "src.services.execution.agent_run_service",
+        enqueue_agent_run=mock_enqueue,
+    )
+
+    with patch.dict(sys.modules, {"src.services.execution.agent_run_service": fake_agent_run_service}):
         await processor._queue_agent_run(delivery, event)
 
         mock_enqueue.assert_awaited_once()
@@ -196,3 +209,54 @@ async def test_queue_agent_run_calls_enqueue():
         assert input_data["_event"]["body"] == event.data
         assert input_data["_event"]["headers"] == event.headers
         assert input_data["_event"]["source_ip"] == event.source_ip
+
+
+@pytest.mark.asyncio
+async def test_queue_workflow_execution_inherits_event_source_org_for_global_workflow():
+    """Global workflows triggered by org-scoped event sources should run in the source org."""
+    processor = _create_processor()
+
+    event_source_org_id = uuid.uuid4()
+    workflow = MagicMock()
+    workflow.id = uuid.uuid4()
+    workflow.organization_id = None
+    delivery = _make_delivery(target_type="workflow", workflow=workflow)
+    event = _make_event(event_source_org_id=event_source_org_id)
+
+    mock_enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    fake_async_executor = _fake_module(
+        "src.services.execution.async_executor",
+        enqueue_system_workflow_execution=mock_enqueue,
+    )
+
+    with patch.dict(sys.modules, {"src.services.execution.async_executor": fake_async_executor}):
+        await processor._queue_workflow_execution(delivery, event)
+
+        mock_enqueue.assert_awaited_once()
+        assert mock_enqueue.call_args.kwargs["org_id"] == str(event_source_org_id)
+
+
+@pytest.mark.asyncio
+async def test_queue_workflow_execution_prefers_workflow_org():
+    """Org-scoped workflows keep their own scope even if the event source is also scoped."""
+    processor = _create_processor()
+
+    event_source_org_id = uuid.uuid4()
+    workflow_org_id = uuid.uuid4()
+    workflow = MagicMock()
+    workflow.id = uuid.uuid4()
+    workflow.organization_id = workflow_org_id
+    delivery = _make_delivery(target_type="workflow", workflow=workflow)
+    event = _make_event(event_source_org_id=event_source_org_id)
+
+    mock_enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    fake_async_executor = _fake_module(
+        "src.services.execution.async_executor",
+        enqueue_system_workflow_execution=mock_enqueue,
+    )
+
+    with patch.dict(sys.modules, {"src.services.execution.async_executor": fake_async_executor}):
+        await processor._queue_workflow_execution(delivery, event)
+
+        mock_enqueue.assert_awaited_once()
+        assert mock_enqueue.call_args.kwargs["org_id"] == str(workflow_org_id)

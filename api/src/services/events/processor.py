@@ -569,13 +569,18 @@ class EventProcessor:
             "source_ip": event.source_ip,
         }
 
-        # Use the centralized system execution helper
-        # Use workflow's org_id so org-scoped workflows only access their org's data
+        workflow_org_id = workflow.organization_id
+        event_source_org_id = event.event_source.organization_id if event.event_source else None
+        execution_org_id = workflow_org_id or event_source_org_id
+
+        # Use the centralized system execution helper. Org-scoped workflows keep
+        # their own scope; global workflows inherit the triggering event source
+        # scope so provider-owned schedules/webhooks can use provider credentials.
         execution_id = await enqueue_system_workflow_execution(
             workflow_id=str(workflow.id),
             parameters=parameters,
             source="Event System",
-            org_id=str(workflow.organization_id) if workflow.organization_id else None,
+            org_id=str(execution_org_id) if execution_org_id else None,
         )
 
         # Store the execution ID on the delivery for tracking
