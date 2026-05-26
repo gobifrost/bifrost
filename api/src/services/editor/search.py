@@ -15,6 +15,7 @@ import logging
 import importlib
 from typing import Any, List
 
+import regex as bounded_regex
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Maximum results per entity type to prevent overwhelming queries
 MAX_RESULTS_PER_TYPE = 500
 MAX_REGEX_PATTERN_LENGTH = 512
+REGEX_SEARCH_TIMEOUT_SECONDS = 0.05
 _REGEX_PARSER = importlib.import_module("re._parser")
 _REPEAT_OPS = {"MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"}
 
@@ -171,9 +173,14 @@ def _search_content(
             # Escape special regex characters for literal search
             pattern = re.escape(query)
 
-        # Compile regex with appropriate flags
+        # Compile regex with appropriate flags. Literal search stays on the
+        # stdlib engine with re.escape(); explicit regex mode uses a
+        # timeout-capable engine to bound user-provided pattern execution.
         flags = 0 if case_sensitive else re.IGNORECASE
-        regex = re.compile(pattern, flags)
+        if is_regex:
+            regex = bounded_regex.compile(pattern, flags)
+        else:
+            regex = re.compile(pattern, flags)
 
         # Split into lines
         lines = content.split('\n')
@@ -181,7 +188,15 @@ def _search_content(
         # Search each line
         for line_num, line in enumerate(lines, start=1):
             # Find all matches in this line
-            for match in regex.finditer(line):
+            if is_regex:
+                matches = regex.finditer(
+                    line,
+                    timeout=REGEX_SEARCH_TIMEOUT_SECONDS,
+                )
+            else:
+                matches = regex.finditer(line)
+
+            for match in matches:
                 # Get context lines (previous and next)
                 context_before = lines[line_num - 2] if line_num > 1 else None
                 context_after = lines[line_num] if line_num < len(lines) else None
@@ -195,7 +210,9 @@ def _search_content(
                     context_after=context_after
                 ))
 
-    except re.error as e:
+    except TimeoutError as e:
+        logger.warning(f"Regex search timed out in {path}: {e}")
+    except (bounded_regex.error, re.error) as e:
         logger.warning(f"Error searching {path}: {e}")
 
     return results
@@ -230,10 +247,10 @@ async def search_files_db(
         try:
             _validate_regex_pattern(request.query)
             flags = 0 if request.case_sensitive else re.IGNORECASE
-            re.compile(request.query, flags)
+            bounded_regex.compile(request.query, flags)
         except ValueError as e:
             raise ValueError(f"Invalid regex pattern: {str(e)}") from e
-        except re.error as e:
+        except (bounded_regex.error, re.error) as e:
             raise ValueError(f"Invalid regex pattern: {str(e)}") from e
 
     all_results: List[SearchResult] = []

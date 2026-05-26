@@ -2,6 +2,7 @@
 
 import pytest
 
+from src.services.editor import search as editor_search
 from src.services.editor.search import _search_content, _validate_regex_pattern
 
 
@@ -64,6 +65,57 @@ class TestRegexSearch:
     def test_invalid_regex_returns_empty(self):
         content = "hello world"
         results = _search_content(content, "test.py", "[invalid", case_sensitive=False, is_regex=True)
+        assert results == []
+
+    def test_regex_search_uses_timeout_capable_engine(self, monkeypatch):
+        """Explicit regex mode must bound user-provided pattern execution."""
+        observed = {}
+
+        class FakeRegex:
+            def finditer(self, line, *, timeout):
+                observed["line"] = line
+                observed["timeout"] = timeout
+                return iter(())
+
+        def fake_compile(pattern, flags):
+            observed["pattern"] = pattern
+            observed["flags"] = flags
+            return FakeRegex()
+
+        monkeypatch.setattr(editor_search.bounded_regex, "compile", fake_compile)
+
+        results = _search_content(
+            "hello world",
+            "test.py",
+            r"hello|world",
+            case_sensitive=False,
+            is_regex=True,
+        )
+
+        assert results == []
+        assert observed["pattern"] == r"hello|world"
+        assert observed["line"] == "hello world"
+        assert observed["timeout"] == editor_search.REGEX_SEARCH_TIMEOUT_SECONDS
+
+    def test_regex_timeout_returns_empty(self, monkeypatch):
+        class FakeRegex:
+            def finditer(self, line, *, timeout):
+                raise TimeoutError("timed out")
+
+        monkeypatch.setattr(
+            editor_search.bounded_regex,
+            "compile",
+            lambda pattern, flags: FakeRegex(),
+        )
+
+        results = _search_content(
+            "hello world",
+            "test.py",
+            r"hello|world",
+            case_sensitive=False,
+            is_regex=True,
+        )
+
         assert results == []
 
     def test_nested_quantifier_regex_rejected_before_search(self):
