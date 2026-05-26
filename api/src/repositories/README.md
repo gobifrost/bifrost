@@ -134,6 +134,52 @@ methods. The cache layer calls the cascade primitive on miss; it does
 NOT reimplement cascade. Cache invalidation hooks live on the repository,
 not in `core/cache/invalidation.py`.
 
+### How global-config writes invalidate org caches without enumeration
+
+Org-scoped config caches are merged views — a write to a global config
+needs to make every org's cached merge stale. Pre-overhaul, this either
+(a) didn't happen (orgs served stale fallback until TTL) or (b) was
+attempted via `SCAN bifrost:org:*:config` (a hot-path enumeration that
+scales O(N) with org count).
+
+The fix is a **version-bumped key**: `bifrost:config:global_version` is
+an integer counter. Org-scoped cache keys embed the current version
+(`bifrost:org:{uuid}:config:v{N}`). A global config write does one
+`INCR` and every org's cache becomes stale by key — no SCAN, no
+enumeration. Old keys age out via TTL.
+
+Cascade reader/writer use `core/cache/keys.py::config_hash_key_versioned`
+to read the current version. The invalidation hooks live on
+`ConfigRepository`, not in `core/cache/invalidation.py`.
+
+---
+
+## Endpoint surfaces
+
+The HTTP API has two surfaces for org-scoped data, with different trust
+boundaries:
+
+**`/api/sdk/*` — SDK execution surface.** Called by the engine
+(authenticated as the sentinel superuser) on behalf of executing
+workflows. The engine has already resolved scope locally via
+`resolve_effective_scope`; the endpoints trust the resolved scope and
+pass `is_superuser=True` to the repository. Org users do NOT hit these
+directly. See `api/src/routers/cli.py` (file rename to `sdk.py`
+deferred).
+
+**`/api/*` — Direct REST surface.** Called by the UI as the
+authenticated user. The endpoints apply `resolve_effective_scope`
+against the authenticated principal and pass the user's actual
+privileges (`is_superuser=user.is_superuser`) to the repository so
+role-based filters fire.
+
+**`/api/cli/download` is a deliberate exception.** It serves the
+`pip install` URL for the Bifrost CLI itself and stays at its current
+path because the URL IS the install command users type. Served by a
+separate `install_router` in `routers/cli.py` so its semantics are
+explicit, not a router-prefix carve-out. This is the only path under
+`/api/cli/*` that survives the 2026-05 rename.
+
 ---
 
 ## Entity classification
@@ -157,8 +203,8 @@ model without classifying it fails CI.
 | SystemConfig        | None               | Admin-only         | System settings with per-org overrides         |
 | KnowledgeStore      | None               | No (SDK only)      | Cascade only, no RBAC                          |
 | IntegrationMapping  | None               | No (SDK only)      | Cascade only, no RBAC                          |
-| OAuthProvider       | None               | Admin-only         | Cascade only                                   |
-| OAuthToken          | None               | No (SDK only)      | Cascade only — must filter by org              |
+| OAuthProvider       | None               | Admin-only         | `OAuthProviderRepository` — cascade + OAuth-domain methods (create/update/delete/store_token/to_detail) |
+| OAuthToken          | None               | No (SDK only)      | `OAuthTokenRepository` — cascade + `get_org_level_for_provider` helper. MUST filter by org. |
 | MCPServer           | None               | No (SDK only)      | Cascade only                                   |
 | MCPConnection       | None               | No (SDK only)      | Cascade only                                   |
 | EventSource         | None               | Admin-only         | Resolved when event arrives to find trigger    |

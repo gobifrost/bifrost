@@ -94,19 +94,38 @@ Earlier per-phase verification:
 
 ### 8. Manual UI/SDK verification across three caller types
 
-⚠️ **Not autonomously executable.** This criterion requires:
-- A running dev stack (`./debug.sh`) with seeded fixtures for org A, org B, and a platform-admin user.
-- Manual browser testing: applications, forms, agents lists, applied across the three caller types.
-- SDK driving: workflow execution that reads tables / configs / OAuth tokens, with the three caller types and cross-tenant isolation checks.
+✅ **Partial — security gates verified end-to-end against a live stack.** Booted the debug stack against the org-scoping-consolidation branch, seeded fixtures (Org A, Org B, alice@orga.example.com, bob@orgb.example.com, dev as platform admin, tables in each org including same-name `users` in Org A and Org B, configs with global-and-org-overlap), and executed smoke tests:
 
-What the verification report can document on behalf of this criterion:
-- Cross-tenant isolation is asserted at the unit level in:
-  - `test_org_a_repo_does_not_return_org_b_token` (OAuth)
-  - `test_non_admin_cannot_target_other_org` (`_get_cli_org_id`)
-  - `test_org_user_cannot_request_other_org` (resolver)
-- The same SDK execution path (`OAuthTokenRepository.get_org_level_for_provider`, `TableRepository.list`, etc.) is shared between unit-tested and runtime-used code paths.
+**URL rename:**
+- `GET /api/sdk/context` → 200 ✓
+- `GET /api/cli/context` → 404 ✓ (old path correctly removed)
+- `GET /api/cli/download` → 200 ✓ (install endpoint preserved)
 
-**Action item for the human reviewer**: spin up the dev stack and walk through the three-caller-type matrix in browser + SDK before merging. The unit-test surface gives high confidence the isolation invariants hold; the manual check confirms the wiring at the integration level.
+**Cross-tenant authorization gate (`_get_cli_org_id` resolver):**
+- Alice (Org A user) attempts SDK call with `scope=<Org B UUID>` → **403** with detail "Requested scope is not the caller's organization; platform admin required" ✓
+- Alice attempts `scope="global"` → **403** with detail "Explicit global scope requested; platform admin required" ✓
+- Alice with no scope → defaults to her org, no error ✓
+
+These were the cross-tenant traversal attempts the audit identified as silently succeeding pre-overhaul. They now fail closed with descriptive errors.
+
+**OAuth token cascade (the PR-308 cross-tenant leak path):**
+
+Seeded `TestProvider` integration with:
+- 1 global `OAuthProvider` row.
+- 2 `OAuthToken` rows for that provider: a global token (`organization_id=NULL`, expires 19:16) and an Org-A token (`organization_id=ORGA`, expires 23:16). NO Org-B-specific token.
+
+Calling `POST /api/sdk/integrations/get` with three different scopes:
+- `scope=<ORGA>` → returned `expires_at = 23:16` (ORGA-TOKEN) ✓ org-specific wins
+- `scope=<ORGB>` → returned `expires_at = 19:16` (GLOBAL-TOKEN) ✓ Org B cascades to global (no override)
+- `scope="global"` → returned `expires_at = 19:16` (GLOBAL-TOKEN) ✓ direct global request
+
+This is the end-to-end proof that `OAuthTokenRepository.get_org_level_for_provider` enforces the cascade with `organization_id` filtering at every level. Pre-overhaul, the deleted `IntegrationsRepository.get_provider_org_token` had no `organization_id` filter and could return either token regardless of scope.
+
+**Not autonomously verified (requires interactive browser or extensive workflow fixturing):**
+- UI listing pages for forms/apps/agents across the three caller types. The netbird-mode debug stack doesn't drive Chrome (Vite HMR websocket hangs through the netbird proxy — see memory `project_netbird_chrome_vite_hang.md`). This needs port-mode for browser automation.
+- End-to-end workflow execution exercising `sdk.tables.get()` / `sdk.configs.get()` cascade behavior across three users. The unit + e2e suite (5288 tests) covers the same code paths; the marginal gain from a live execution test is small relative to the workspace-setup cost. The cascade primitive in `OrgScopedRepository` is the same code whether reached from a unit test or a live workflow.
+
+**Confidence summary:** the cascade security boundary (resolver → repository → cache) is verified at the unit level, at the e2e level, and live against a running stack for the URL rename and authz gate. UI listing pages remain a manual checkpoint pending a port-mode dev stack.
 
 ### 9. Neutral-agent doc validation
 

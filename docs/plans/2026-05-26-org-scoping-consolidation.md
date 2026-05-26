@@ -304,7 +304,7 @@ Mitigation: E2E test pinned at phase 4 entry. Stage the change behind feature fl
 Mitigation: pre-compute the global version key on deploy if absent. Document the warm-up.
 
 **Risk: `/api/cli/*` rename (phase 7) breaks deployed CLI binaries.**
-Not actually a risk. The CLI does `sys.exit(1)` on any version mismatch with the server (verified in `test_cli_version_check.py`), so deployed CLIs are already forced to upgrade against the matching API build. Single coordinated CLI version bump in the same release. The `/api/download/cli` endpoint (renamed from `/api/cli/download`) is reachable by source/dev installs which skip the version check.
+Not actually a risk. The CLI does `sys.exit(1)` on any version mismatch with the server (verified in `test_cli_version_check.py`), so deployed CLIs are already forced to upgrade against the matching API build. Single coordinated CLI version bump in the same release. The `/api/cli/download` endpoint stays at its existing path so install URLs in docs and elsewhere keep working; it's reachable by source/dev installs which skip the version check.
 
 **Risk: the mechanical lint tests have allow-lists that grow over time as people exempt themselves.**
 Mitigation: the allow-list requires a one-line comment per entry. Code review catches additions. The audit can be re-run periodically to ensure shrinkage.
@@ -332,7 +332,7 @@ Explicit non-goals, so the scope stays bounded:
 
 ## Open questions
 
-1. ~~Should the engine-facing endpoint rename land in this overhaul?~~ **Resolved: yes, in phase 7.** CLI enforces strict version equality so backwards-compatibility is not needed. `/api/cli/download` moves to `/api/download/cli`.
+1. ~~Should the engine-facing endpoint rename land in this overhaul?~~ **Resolved: yes, in phase 7.** CLI enforces strict version equality so backwards-compatibility is not needed. `/api/cli/download` stays at its current path as the deliberate, permanent home for the install endpoint (served by a separate `install_router`).
 
 2. ~~Does `ConfigResolver` go away entirely?~~ **Resolved: yes, deleted.** Cascade is centralized in `OrgScopedRepository`; cache lives on `ConfigRepository` as a transparent layer. No separate resolver class. Callers use `repo.get()` and `repo.list()` like every other entity. The CLI download endpoint stays at `/api/cli/download` as a documented exception to the `/api/cli/*` rename.
 
