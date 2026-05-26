@@ -18,6 +18,7 @@ from src.models.orm.codex_gateway import (
     CodexGatewayRequestLog,
     CodexGatewayUpstreamAccount,
 )
+from src.models.orm.users import User
 
 
 SENSITIVE_METADATA_KEYS = {
@@ -103,6 +104,12 @@ class CodexGatewayRepository:
         daily_limit: int | None = None,
         monthly_limit: int | None = None,
     ) -> CodexGatewayKeyMaterial:
+        lock_result = await self.session.execute(
+            select(User.id).where(User.id == user_id).with_for_update()
+        )
+        if lock_result.scalar_one_or_none() is None:
+            raise ValueError("Cannot create Codex Gateway key for unknown user")
+
         result = await self.session.execute(
             select(func.count())
             .select_from(CodexGatewayKey)

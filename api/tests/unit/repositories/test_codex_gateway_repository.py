@@ -57,7 +57,7 @@ async def test_create_gateway_key_hashes_secret_and_returns_key_material(
 ):
     user_id = uuid4()
     project_id = uuid4()
-    mock_session.execute.return_value = _Result(one=0)
+    mock_session.execute.side_effect = [_Result(one=user_id), _Result(one=0)]
 
     result = await repository.create_gateway_key(
         user_id=user_id,
@@ -75,7 +75,10 @@ async def test_create_gateway_key_hashes_secret_and_returns_key_material(
     assert result.record.key_hash.startswith("sha256:")
     assert result.record.allowed_models == ["gpt-5.1-codex"]
     assert result.record.daily_limit == 100
-    mock_session.execute.assert_called_once()
+    assert mock_session.execute.await_count == 2
+    lock_statement = mock_session.execute.await_args_list[0].args[0]
+    compiled_lock = str(lock_statement.compile(compile_kwargs={"literal_binds": False}))
+    assert "FOR UPDATE" in compiled_lock
     mock_session.add.assert_called_once()
     mock_session.flush.assert_called_once()
     mock_session.refresh.assert_called_once()
@@ -86,15 +89,39 @@ async def test_create_gateway_key_enforces_active_key_quota(
     repository,
     mock_session,
 ):
-    mock_session.execute.return_value = _Result(one=MAX_ACTIVE_GATEWAY_KEYS_PER_USER)
+    user_id = uuid4()
+    mock_session.execute.side_effect = [
+        _Result(one=user_id),
+        _Result(one=MAX_ACTIVE_GATEWAY_KEYS_PER_USER),
+    ]
 
     with pytest.raises(CodexGatewayKeyLimitError):
         await repository.create_gateway_key(
-            user_id=uuid4(),
+            user_id=user_id,
             project_id=None,
             name="extra key",
         )
 
+    assert mock_session.execute.await_count == 2
+    mock_session.add.assert_not_called()
+    mock_session.flush.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_gateway_key_fails_for_unknown_user_before_insert(
+    repository,
+    mock_session,
+):
+    mock_session.execute.return_value = _Result(one=None)
+
+    with pytest.raises(ValueError):
+        await repository.create_gateway_key(
+            user_id=uuid4(),
+            project_id=None,
+            name="orphan key",
+        )
+
+    mock_session.execute.assert_awaited_once()
     mock_session.add.assert_not_called()
     mock_session.flush.assert_not_called()
 
