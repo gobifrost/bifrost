@@ -82,6 +82,7 @@ dependencies = [
     # Code Transformation
     # =========================================================================
     "libcst",  # Concrete Syntax Tree for Python - preserves formatting when modifying code
+    "regex",  # Timeout-capable regex engine for user-provided editor searches
 
     # =========================================================================
     # Templating
