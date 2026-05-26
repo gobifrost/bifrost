@@ -2,19 +2,23 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import secrets
 from typing import Any, TypeGuard
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.security import encrypt_secret, get_password_hash, verify_password
+from src.config import get_settings
+from src.core.security import encrypt_secret
 from src.models.orm.codex_gateway import (
     CodexGatewayKey,
     CodexGatewayRequestLog,
     CodexGatewayUpstreamAccount,
 )
+from src.models.orm.users import User
 
 
 SENSITIVE_METADATA_KEYS = {
@@ -32,6 +36,8 @@ CODEX_GATEWAY_KEY_MAX_LENGTH = 256
 CODEX_GATEWAY_KEY_BODY_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 )
+CODEX_GATEWAY_KEY_HASH_PREFIX = "sha256:"
+MAX_ACTIVE_GATEWAY_KEYS_PER_USER = 10
 
 
 def is_plausible_gateway_key(value: str | None) -> TypeGuard[str]:
@@ -52,6 +58,10 @@ class CodexGatewayKeyMaterial:
     plaintext_key: str
 
 
+class CodexGatewayKeyLimitError(Exception):
+    """Raised when a user has reached the active gateway key quota."""
+
+
 class CodexGatewayRepository:
     """Repository for gateway keys, upstream accounts, and request logs."""
 
@@ -65,16 +75,23 @@ class CodexGatewayRepository:
 
     @staticmethod
     def hash_gateway_key(plaintext_key: str) -> str:
-        """Hash a gateway key for storage."""
-        return get_password_hash(plaintext_key)
+        """Return the indexed keyed digest for a gateway key."""
+        digest = hmac.new(
+            get_settings().secret_key.encode("utf-8"),
+            plaintext_key.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"{CODEX_GATEWAY_KEY_HASH_PREFIX}{digest}"
 
     @staticmethod
     def verify_gateway_key(plaintext_key: str, key_hash: str) -> bool:
-        """Verify a gateway key without leaking hash parsing failures."""
-        try:
-            return verify_password(plaintext_key, key_hash)
-        except Exception:
+        """Verify a gateway key digest in constant time."""
+        if not key_hash.startswith(CODEX_GATEWAY_KEY_HASH_PREFIX):
             return False
+        return hmac.compare_digest(
+            CodexGatewayRepository.hash_gateway_key(plaintext_key),
+            key_hash,
+        )
 
     async def create_gateway_key(
         self,
@@ -87,6 +104,25 @@ class CodexGatewayRepository:
         daily_limit: int | None = None,
         monthly_limit: int | None = None,
     ) -> CodexGatewayKeyMaterial:
+        lock_result = await self.session.execute(
+            select(User.id).where(User.id == user_id).with_for_update()
+        )
+        if lock_result.scalar_one_or_none() is None:
+            raise ValueError("Cannot create Codex Gateway key for unknown user")
+
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(CodexGatewayKey)
+            .where(CodexGatewayKey.user_id == user_id)
+            .where(CodexGatewayKey.status == "active")
+            .where(CodexGatewayKey.revoked_at.is_(None))
+        )
+        active_key_count = int(result.scalar_one() or 0)
+        if active_key_count >= MAX_ACTIVE_GATEWAY_KEYS_PER_USER:
+            raise CodexGatewayKeyLimitError(
+                f"At most {MAX_ACTIVE_GATEWAY_KEYS_PER_USER} active Codex Gateway keys are allowed per user"
+            )
+
         plaintext_key = self.generate_gateway_key()
         record = CodexGatewayKey(
             user_id=user_id,
@@ -109,18 +145,21 @@ class CodexGatewayRepository:
         if not is_plausible_gateway_key(plaintext_key):
             return None
 
+        key_hash = self.hash_gateway_key(plaintext_key)
         result = await self.session.execute(
             select(CodexGatewayKey)
             .where(CodexGatewayKey.status == "active")
             .where(CodexGatewayKey.revoked_at.is_(None))
+            .where(CodexGatewayKey.key_hash == key_hash)
         )
-        candidates = result.scalars().all()
-        for candidate in candidates:
-            if candidate.status != "active" or candidate.revoked_at is not None:
-                continue
-            if self.verify_gateway_key(plaintext_key, candidate.key_hash):
-                return candidate
-        return None
+        candidate = result.scalar_one_or_none()
+        if candidate is None:
+            return None
+        if candidate.status != "active" or candidate.revoked_at is not None:
+            return None
+        if not self.verify_gateway_key(plaintext_key, candidate.key_hash):
+            return None
+        return candidate
 
     async def list_gateway_keys_for_user(self, user_id: UUID) -> list[CodexGatewayKey]:
         result = await self.session.execute(
