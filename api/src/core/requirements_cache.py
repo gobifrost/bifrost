@@ -7,13 +7,13 @@ installed packages survive container restarts.
 
 Persistence Flow:
 1. User installs package via /api/packages/install
-2. API handler appends package to requirements, saves to S3 + Redis cache
+2. API handler appends package to requirements, saves to object storage + Redis cache
 3. API broadcasts "recycle_workers" to all workers
 4. Workers recycle processes; ProcessPoolManager calls install_requirements() at pool startup
 5. pip install runs from requirements.txt (shared filesystem, all workers inherit)
 
-Read path: Redis cache → S3 fallback (re-caches on hit)
-Source of truth: S3 (_repo/requirements.txt) via RepoStorage
+Read path: Redis cache → object storage fallback (re-caches on hit)
+Source of truth: object storage (_repo/requirements.txt) via RepoStorage
 
 Related Files:
 - api/src/routers/packages.py - Saves requirements + broadcasts recycle
@@ -51,7 +51,7 @@ async def get_requirements() -> CachedRequirements | None:
 
     Lookup order:
     1. Redis cache (fast path)
-    2. S3 _repo/requirements.txt (fallback, re-caches to Redis)
+    2. Object storage _repo/requirements.txt (fallback, re-caches to Redis)
     3. None (not found)
 
     Returns:
@@ -76,12 +76,12 @@ def get_requirements_sync() -> str | None:
     Fetch requirements.txt content (synchronous).
 
     Used by install_requirements() which runs in a worker thread.
-    Same lookup order as get_requirements(): Redis → S3 → None.
+    Same lookup order as get_requirements(): Redis → object storage → None.
 
     Returns:
         Requirements content string, or None if not found
     """
-    from src.core.module_cache_sync import _get_s3_client, _get_sync_redis
+    from src.core.module_cache_sync import _get_sync_redis
 
     try:
         client = _get_sync_redis()
@@ -93,9 +93,9 @@ def get_requirements_sync() -> str | None:
                 return content
             return None
 
-        # Redis miss — fall back to S3
-        logger.info("[requirements] Redis cache empty, falling back to S3")
-        content = _read_requirements_from_s3(_get_s3_client)
+        # Redis miss — fall back to the configured object storage provider.
+        logger.info("[requirements] Redis cache empty, falling back to object storage")
+        content = _read_requirements_from_object_storage()
         if not content:
             return None
 
@@ -103,8 +103,12 @@ def get_requirements_sync() -> str | None:
         try:
             content_hash = hashlib.sha256(content.encode()).hexdigest()
             cached_data = CachedRequirements(content=content, hash=content_hash)
-            client.setex(REQUIREMENTS_KEY, REQUIREMENTS_CACHE_TTL, json.dumps(cached_data))
-            logger.info("[requirements] Re-cached requirements from S3 to Redis")
+            client.setex(
+                REQUIREMENTS_KEY, REQUIREMENTS_CACHE_TTL, json.dumps(cached_data)
+            )
+            logger.info(
+                "[requirements] Re-cached requirements from object storage to Redis"
+            )
         except Exception as e:
             logger.warning(f"[requirements] Failed to re-cache to Redis: {e}")
 
@@ -112,6 +116,41 @@ def get_requirements_sync() -> str | None:
 
     except Exception as e:
         logger.warning(f"[requirements] Error reading requirements: {e}")
+        return None
+
+
+def _object_storage_provider() -> str:
+    return os.environ.get("BIFROST_OBJECT_STORAGE_PROVIDER", "s3").lower()
+
+
+def _read_requirements_from_object_storage() -> str | None:
+    if _object_storage_provider() == "azure_blob":
+        return _read_requirements_from_blob()
+    from src.core.module_cache_sync import _get_s3_client
+
+    return _read_requirements_from_s3(_get_s3_client)
+
+
+def _read_requirements_from_blob() -> str | None:
+    """Read _repo/requirements.txt from Azure Blob using the sync Blob client."""
+    from src.core.module_cache_sync import _get_blob_container_client
+
+    client = _get_blob_container_client()
+    if client is None:
+        return None
+
+    try:
+        content = client.download_blob("_repo/requirements.txt").readall().decode()
+        if content.strip():
+            logger.info("[requirements] Loaded requirements.txt from Azure Blob")
+            return content
+        return None
+    except Exception as e:
+        error_code = getattr(e, "error_code", "")
+        if error_code == "BlobNotFound":
+            logger.info("[requirements] No requirements.txt in Azure Blob")
+            return None
+        logger.warning(f"[requirements] Azure Blob read error: {e}")
         return None
 
 
@@ -159,7 +198,7 @@ async def set_requirements(content: str, content_hash: str) -> None:
 
 async def warm_requirements_cache() -> bool:
     """
-    Load requirements.txt from S3 into Redis cache.
+    Load requirements.txt from object storage into Redis cache.
 
     Called by init container or API startup to ensure cache is warm.
     Also called before broadcasting recycle when installing from requirements.txt,
@@ -178,20 +217,20 @@ async def warm_requirements_cache() -> bool:
         if content.strip():
             content_hash = hashlib.sha256(content.encode()).hexdigest()
             await set_requirements(content=content, content_hash=content_hash)
-            logger.info("Warmed requirements cache from S3")
+            logger.info("Warmed requirements cache from object storage")
             return True
 
-        logger.info("requirements.txt in S3 is empty")
+        logger.info("requirements.txt in object storage is empty")
         return False
     except Exception as e:
-        # File may not exist yet in S3
-        logger.info(f"No requirements.txt found in S3: {e}")
+        # File may not exist yet in object storage
+        logger.info(f"No requirements.txt found in object storage: {e}")
         return False
 
 
 async def save_requirements(content: str) -> None:
     """
-    Save requirements.txt to S3 and update Redis cache.
+    Save requirements.txt to object storage and update Redis cache.
 
     Args:
         content: Full requirements.txt content
@@ -200,13 +239,13 @@ async def save_requirements(content: str) -> None:
 
     content_hash = hashlib.sha256(content.encode()).hexdigest()
 
-    # Write to S3 (source of truth)
+    # Write to object storage (source of truth)
     repo = RepoStorage()
     await repo.write("requirements.txt", content.encode())
 
     # Update Redis cache (workers read this synchronously at startup)
     await set_requirements(content, content_hash)
-    logger.info("Saved requirements.txt to S3 and cache")
+    logger.info("Saved requirements.txt to object storage and cache")
 
 
 def append_package_to_requirements(

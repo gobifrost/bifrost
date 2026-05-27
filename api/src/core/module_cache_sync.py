@@ -7,7 +7,7 @@ for the MetaPathFinder to fetch modules during import.
 This module provides synchronous versions of the cache functions
 specifically for use in virtual_import.py's MetaPathFinder.
 
-When a cache miss occurs, we fall back to S3 to fetch the module
+When a cache miss occurs, we fall back to object storage to fetch the module
 and re-cache it in Redis. This provides self-healing behavior when:
 - Redis cache entries expire (24hr TTL)
 - Redis restarts or evicts keys
@@ -32,9 +32,11 @@ MODULE_CACHE_TTL = 86400
 
 REPO_PREFIX = "_repo/"
 
-# Cached S3 client — reused across calls to avoid repeated setup
+# Cached object storage clients — reused across calls to avoid repeated setup
 _s3_client: Any = None
 _s3_available: bool | None = None
+_blob_container_client: Any = None
+_blob_available: bool | None = None
 
 
 @lru_cache(maxsize=1)
@@ -92,6 +94,81 @@ def _get_s3_client() -> Any:
         return None
 
 
+def _object_storage_provider() -> str:
+    return os.environ.get("BIFROST_OBJECT_STORAGE_PROVIDER", "s3").lower()
+
+
+def _get_blob_container_client() -> Any:
+    """
+    Get or create a sync Azure Blob container client.
+
+    This is used by the synchronous import hook and requirements-cache fallback
+    paths that run outside the async RepoStorage API.
+    """
+    global _blob_available, _blob_container_client
+
+    if _blob_available is False:
+        return None
+
+    if _blob_container_client is not None:
+        return _blob_container_client
+
+    account_url = os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_URL")
+    container = os.environ.get("BIFROST_AZURE_BLOB_CONTAINER")
+    auth_mode = os.environ.get("BIFROST_AZURE_BLOB_AUTH", "default_credential")
+    account_key = os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_KEY")
+
+    if not account_url or not container:
+        logger.debug("Azure Blob not configured, skipping Blob fallback")
+        _blob_available = False
+        return None
+
+    try:
+        from azure.storage.blob import BlobServiceClient
+
+        credential: Any
+        if auth_mode == "account_key":
+            if not account_key:
+                logger.debug("Azure Blob account_key auth selected without account key")
+                _blob_available = False
+                return None
+            credential = account_key
+        elif auth_mode == "default_credential":
+            from azure.identity import DefaultAzureCredential
+
+            credential = DefaultAzureCredential()
+        else:
+            logger.debug("Unsupported Azure Blob auth mode: %s", auth_mode)
+            _blob_available = False
+            return None
+
+        service_client = BlobServiceClient(account_url, credential=credential)
+        _blob_container_client = service_client.get_container_client(container)
+        _blob_available = True
+        return _blob_container_client
+    except Exception as e:
+        _blob_available = False
+        logger.debug("Azure Blob fallback disabled: %s", e)
+        return None
+
+
+def _get_blob_module(path: str) -> bytes | None:
+    """Fetch a module from Azure Blob _repo/ prefix (synchronous)."""
+    client = _get_blob_container_client()
+    if client is None:
+        return None
+
+    try:
+        return client.download_blob(f"{REPO_PREFIX}{path}").readall()
+    except Exception as e:
+        error_code = getattr(e, "error_code", "")
+        if error_code == "BlobNotFound":
+            logger.debug(f"Module not found in Azure Blob: {path}")
+            return None
+        logger.warning(f"Azure Blob fallback error for {path}: {e}")
+        return None
+
+
 def _get_s3_module(path: str) -> bytes | None:
     """
     Fetch a module from S3 _repo/ prefix (synchronous).
@@ -124,6 +201,12 @@ def _get_s3_module(path: str) -> bytes | None:
         return None
 
 
+def _get_object_storage_module(path: str) -> bytes | None:
+    if _object_storage_provider() == "azure_blob":
+        return _get_blob_module(path)
+    return _get_s3_module(path)
+
+
 def get_module_sync(path: str) -> CachedModule | None:
     """
     Fetch a single module from cache (synchronous).
@@ -142,16 +225,18 @@ def get_module_sync(path: str) -> CachedModule | None:
         if data:
             return json.loads(data)
 
-        # Redis miss — try S3 fallback
-        s3_content = _get_s3_module(path)
-        if s3_content is not None:
+        # Redis miss — try object storage fallback
+        storage_content = _get_object_storage_module(path)
+        if storage_content is not None:
             try:
-                content_str = s3_content.decode("utf-8")
+                content_str = storage_content.decode("utf-8")
             except UnicodeDecodeError:
-                logger.warning(f"Could not decode S3 module as UTF-8: {path}")
+                logger.warning(
+                    f"Could not decode object storage module as UTF-8: {path}"
+                )
                 return None
 
-            content_hash = hashlib.sha256(s3_content).hexdigest()
+            content_hash = hashlib.sha256(storage_content).hexdigest()
             module: CachedModule = {
                 "content": content_str,
                 "path": path,
@@ -164,11 +249,11 @@ def get_module_sync(path: str) -> CachedModule | None:
                 # Also add to module index
                 client.sadd(MODULE_INDEX_KEY, path)
             except redis.RedisError as e:
-                logger.warning(f"Failed to cache S3 module to Redis: {e}")
+                logger.warning(f"Failed to cache object storage module to Redis: {e}")
 
             return module
 
-        logger.debug(f"Module not in cache or S3: {path}")
+        logger.debug(f"Module not in cache or object storage: {path}")
         return None
 
     except redis.RedisError as e:
@@ -200,11 +285,37 @@ def _list_s3_modules() -> set[str]:
                 key: str = obj["Key"]
                 if key.endswith(".py"):
                     # Strip the _repo/ prefix to get the relative path
-                    paths.add(key[len(REPO_PREFIX):])
+                    paths.add(key[len(REPO_PREFIX) :])
     except Exception as e:
         logger.warning(f"S3 list error when rebuilding module index: {e}")
 
     return paths
+
+
+def _list_blob_modules() -> set[str]:
+    """
+    List all Python module paths in Azure Blob _repo/ (synchronous).
+    """
+    client = _get_blob_container_client()
+    if client is None:
+        return set()
+
+    paths: set[str] = set()
+    try:
+        for blob in client.list_blobs(name_starts_with=REPO_PREFIX):
+            key: str = blob.name
+            if key.endswith(".py"):
+                paths.add(key[len(REPO_PREFIX) :])
+    except Exception as e:
+        logger.warning(f"Azure Blob list error when rebuilding module index: {e}")
+
+    return paths
+
+
+def _list_object_storage_modules() -> set[str]:
+    if _object_storage_provider() == "azure_blob":
+        return _list_blob_modules()
+    return _list_s3_modules()
 
 
 def get_module_index_sync() -> set[str]:
@@ -220,17 +331,19 @@ def get_module_index_sync() -> set[str]:
         if paths:
             return {p if isinstance(p, str) else p.decode() for p in paths}
 
-        # Redis index is empty — could be cold cache. Try S3.
-        logger.debug("Module index empty in Redis, falling back to S3 listing")
-        s3_paths = _list_s3_modules()
-        if s3_paths:
+        # Redis index is empty — could be cold cache. Try object storage.
+        logger.debug(
+            "Module index empty in Redis, falling back to object storage listing"
+        )
+        storage_paths = _list_object_storage_modules()
+        if storage_paths:
             # Repopulate Redis index so subsequent calls are fast
             try:
-                client.sadd(MODULE_INDEX_KEY, *s3_paths)
+                client.sadd(MODULE_INDEX_KEY, *storage_paths)
                 client.expire(MODULE_INDEX_KEY, MODULE_CACHE_TTL)
             except redis.RedisError as e:
                 logger.warning(f"Failed to repopulate module index in Redis: {e}")
-            return s3_paths
+            return storage_paths
 
         return set()
     except redis.RedisError as e:
@@ -248,3 +361,10 @@ def reset_s3_client() -> None:
     global _s3_client, _s3_available
     _s3_client = None
     _s3_available = None
+
+
+def reset_blob_client() -> None:
+    """Reset the cached Azure Blob client. Used for testing."""
+    global _blob_available, _blob_container_client
+    _blob_container_client = None
+    _blob_available = None
