@@ -1,4 +1,5 @@
 """Tests for virtual import S3 fallback."""
+
 import json
 import logging
 from unittest.mock import MagicMock, patch
@@ -10,9 +11,10 @@ def test_s3_fallback_on_redis_miss():
     """When Redis returns None, should try S3 and cache result."""
     from src.core.module_cache_sync import get_module_sync
 
-    with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-         patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
-
+    with (
+        patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+        patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+    ):
         # Redis returns None (cache miss)
         mock_redis = MagicMock()
         mock_redis.get.return_value = None
@@ -36,11 +38,14 @@ def test_redis_hit_skips_s3():
     """When Redis has the module, should not touch S3."""
     from src.core.module_cache_sync import get_module_sync
 
-    cached = json.dumps({"content": "cached content", "path": "shared/utils.py", "hash": "abc"})
+    cached = json.dumps(
+        {"content": "cached content", "path": "shared/utils.py", "hash": "abc"}
+    )
 
-    with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-         patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
-
+    with (
+        patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+        patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+    ):
         mock_redis = MagicMock()
         mock_redis.get.return_value = cached
         mock_redis_factory.return_value = mock_redis
@@ -56,9 +61,10 @@ def test_s3_miss_returns_none():
     """When both Redis and S3 miss, should return None."""
     from src.core.module_cache_sync import get_module_sync
 
-    with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-         patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
-
+    with (
+        patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+        patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+    ):
         mock_redis = MagicMock()
         mock_redis.get.return_value = None
         mock_redis_factory.return_value = mock_redis
@@ -82,9 +88,12 @@ class TestModuleIndexS3Fallback:
             "features/spotify_journal/__init__.py",
         }
 
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._list_s3_modules", return_value=s3_paths) as mock_list:
-
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+            patch(
+                "src.core.module_cache_sync._list_s3_modules", return_value=s3_paths
+            ) as mock_list,
+        ):
             mock_redis = MagicMock()
             mock_redis.smembers.return_value = set()  # Redis index empty
             mock_redis_factory.return_value = mock_redis
@@ -101,11 +110,14 @@ class TestModuleIndexS3Fallback:
         """When Redis index has entries, should not touch S3."""
         from src.core.module_cache_sync import get_module_index_sync
 
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._list_s3_modules") as mock_list:
-
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+            patch("src.core.module_cache_sync._list_s3_modules") as mock_list,
+        ):
             mock_redis = MagicMock()
-            mock_redis.smembers.return_value = {"features/spotify_journal/services/spotify_api.py"}
+            mock_redis.smembers.return_value = {
+                "features/spotify_journal/services/spotify_api.py"
+            }
             mock_redis_factory.return_value = mock_redis
 
             result = get_module_index_sync()
@@ -117,9 +129,10 @@ class TestModuleIndexS3Fallback:
         """When both Redis and S3 are empty, should return empty set."""
         from src.core.module_cache_sync import get_module_index_sync
 
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._list_s3_modules", return_value=set()):
-
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+            patch("src.core.module_cache_sync._list_s3_modules", return_value=set()),
+        ):
             mock_redis = MagicMock()
             mock_redis.smembers.return_value = set()
             mock_redis_factory.return_value = mock_redis
@@ -143,9 +156,16 @@ class TestModuleIndexS3Fallback:
                 return {"content": "API = True", "path": path, "hash": "abc"}
             return None
 
-        with patch("src.services.execution.virtual_import.get_module_sync", side_effect=mock_get_module), \
-             patch("src.services.execution.virtual_import.get_module_index_sync", return_value=s3_paths):
-
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                side_effect=mock_get_module,
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value=s3_paths,
+            ),
+        ):
             # "features" should be recognized as a namespace package
             spec = finder.find_spec("features")
 
@@ -161,6 +181,7 @@ class TestS3ClientCaching:
     def reset_cache(self):
         """Reset S3 client cache before each test."""
         from src.core.module_cache_sync import reset_s3_client
+
         reset_s3_client()
         yield
         reset_s3_client()
@@ -211,9 +232,10 @@ class TestS3ClientCaching:
         """S3 fallback should add module to Redis index after caching."""
         from src.core.module_cache_sync import get_module_sync
 
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
-
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+            patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+        ):
             mock_redis = MagicMock()
             mock_redis.get.return_value = None
             mock_redis_factory.return_value = mock_redis
@@ -226,6 +248,96 @@ class TestS3ClientCaching:
             mock_redis.sadd.assert_called_once()
             # The key should be the module index key
             from src.core.module_cache import MODULE_INDEX_KEY
+
             call_args = mock_redis.sadd.call_args
             assert call_args[0][0] == MODULE_INDEX_KEY
             assert call_args[0][1] == "modules/helper.py"
+
+
+class TestAzureBlobFallback:
+    """Tests for Azure Blob fallback when Blob is the storage provider."""
+
+    @pytest.fixture(autouse=True)
+    def reset_cache(self):
+        """Reset object storage client caches before each test."""
+        from src.core.module_cache_sync import reset_blob_client, reset_s3_client
+
+        reset_blob_client()
+        reset_s3_client()
+        yield
+        reset_blob_client()
+        reset_s3_client()
+
+    def test_blob_provider_reads_blob_on_redis_miss(self):
+        """When Blob is selected, Redis misses should read from Blob, not S3."""
+        from src.core.module_cache_sync import get_module_sync
+
+        with (
+            patch.dict("os.environ", {"BIFROST_OBJECT_STORAGE_PROVIDER": "azure_blob"}),
+            patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+            patch("src.core.module_cache_sync._get_blob_module") as mock_blob,
+            patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+        ):
+            mock_redis = MagicMock()
+            mock_redis.get.return_value = None
+            mock_redis_factory.return_value = mock_redis
+            mock_blob.return_value = b"def helper(): return 42"
+
+            result = get_module_sync("shared/utils.py")
+
+            mock_blob.assert_called_once_with("shared/utils.py")
+            mock_s3.assert_not_called()
+            assert result is not None
+            assert result["content"] == "def helper(): return 42"
+            assert mock_redis.setex.called
+
+    def test_blob_provider_lists_blob_when_index_is_empty(self):
+        """When Blob is selected, cold Redis index should rebuild from Blob."""
+        from src.core.module_cache import MODULE_INDEX_KEY
+        from src.core.module_cache_sync import get_module_index_sync
+
+        blob_paths = {
+            "features/ninjaone/workflows/seed_bifrost_webhook_custom_fields.py",
+            "modules/ninjaone.py",
+        }
+
+        with (
+            patch.dict("os.environ", {"BIFROST_OBJECT_STORAGE_PROVIDER": "azure_blob"}),
+            patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory,
+            patch(
+                "src.core.module_cache_sync._list_blob_modules", return_value=blob_paths
+            ) as mock_blob_list,
+            patch("src.core.module_cache_sync._list_s3_modules") as mock_s3_list,
+        ):
+            mock_redis = MagicMock()
+            mock_redis.smembers.return_value = set()
+            mock_redis_factory.return_value = mock_redis
+
+            result = get_module_index_sync()
+
+            mock_blob_list.assert_called_once()
+            mock_s3_list.assert_not_called()
+            assert result == blob_paths
+            mock_redis.sadd.assert_called_once()
+            assert mock_redis.sadd.call_args[0][0] == MODULE_INDEX_KEY
+
+    def test_blob_not_found_logs_debug_not_warning(self, caplog):
+        """BlobNotFound should be a cache miss, not a noisy warning."""
+        import src.core.module_cache_sync as mod
+
+        class BlobNotFound(Exception):
+            error_code = "BlobNotFound"
+
+        mock_client = MagicMock()
+        mock_client.download_blob.side_effect = BlobNotFound("missing")
+        mod._blob_container_client = mock_client
+        mod._blob_available = True
+
+        with caplog.at_level(logging.DEBUG, logger="src.core.module_cache_sync"):
+            result = mod._get_blob_module("missing/module.py")
+
+        assert result is None
+        debug_msgs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        warning_msgs = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("not found in Azure Blob" in r.message for r in debug_msgs)
+        assert not any("Azure Blob fallback error" in r.message for r in warning_msgs)
