@@ -66,7 +66,10 @@ class WorkspaceReindexService:
         Returns:
             Number of files indexed
         """
-        if not self.settings.s3_configured:
+        if self.settings.object_storage_provider == "azure_blob":
+            if not self.settings.azure_blob_configured:
+                raise RuntimeError("Azure Blob storage not configured")
+        elif not self.settings.s3_configured:
             raise RuntimeError("S3 storage not configured")
 
         count = 0
@@ -89,18 +92,22 @@ class WorkspaceReindexService:
 
                     # Upsert file_index
                     now = datetime.now(timezone.utc)
-                    stmt = insert(FileIndex).values(
-                        path=key,
-                        content=content_str,
-                        content_hash=content_hash,
-                        updated_at=now,
-                    ).on_conflict_do_update(
-                        index_elements=[FileIndex.path],
-                        set_={
-                            "content": content_str,
-                            "content_hash": content_hash,
-                            "updated_at": now,
-                        },
+                    stmt = (
+                        insert(FileIndex)
+                        .values(
+                            path=key,
+                            content=content_str,
+                            content_hash=content_hash,
+                            updated_at=now,
+                        )
+                        .on_conflict_do_update(
+                            index_elements=[FileIndex.path],
+                            set_={
+                                "content": content_str,
+                                "content_hash": content_hash,
+                                "updated_at": now,
+                            },
+                        )
                     )
                     await self.db.execute(stmt)
 
@@ -179,18 +186,22 @@ class WorkspaceReindexService:
             content_str = content.decode("utf-8", errors="replace")
 
             # Upsert file_index record
-            stmt = insert(FileIndex).values(
-                path=rel_path,
-                content=content_str,
-                content_hash=content_hash,
-                updated_at=now,
-            ).on_conflict_do_update(
-                index_elements=[FileIndex.path],
-                set_={
-                    "content": content_str,
-                    "content_hash": content_hash,
-                    "updated_at": now,
-                },
+            stmt = (
+                insert(FileIndex)
+                .values(
+                    path=rel_path,
+                    content=content_str,
+                    content_hash=content_hash,
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=[FileIndex.path],
+                    set_={
+                        "content": content_str,
+                        "content_hash": content_hash,
+                        "updated_at": now,
+                    },
+                )
             )
             await self.db.execute(stmt)
 
@@ -221,10 +232,14 @@ class WorkspaceReindexService:
                 )
 
         # 5. Mark orphaned workflows as inactive
-        stmt = update(Workflow).where(
-            Workflow.is_active == True,  # noqa: E712
-            ~Workflow.path.in_(existing_paths) if existing_paths else True,
-        ).values(is_active=False)
+        stmt = (
+            update(Workflow)
+            .where(
+                Workflow.is_active == True,  # noqa: E712
+                ~Workflow.path.in_(existing_paths) if existing_paths else True,
+            )
+            .values(is_active=False)
+        )
         result = await self.db.execute(stmt)
         counts["workflows_deactivated"] = result.rowcount if result.rowcount > 0 else 0
 

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.database import get_db
+from src.services.file_storage.azure_blob_client import AzureBlobStorageClient
 from shared.version import get_version
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -177,6 +178,7 @@ _s3_health_client = S3HealthClient()
 
 class HealthCheck(BaseModel):
     """Health check response model."""
+
     status: str
     timestamp: datetime
     version: str = Field(default_factory=get_version)
@@ -185,6 +187,7 @@ class HealthCheck(BaseModel):
 
 class DetailedHealthCheck(BaseModel):
     """Detailed health check with component status."""
+
     status: str
     timestamp: datetime
     version: str = Field(default_factory=get_version)
@@ -220,7 +223,9 @@ async def _checked_component(
 
 
 async def check_database(db: AsyncSession) -> tuple[str, ComponentStatus]:
-    return await _checked_component("database", "postgresql", db.execute(text("SELECT 1")))
+    return await _checked_component(
+        "database", "postgresql", db.execute(text("SELECT 1"))
+    )
 
 
 async def check_redis(settings: Settings) -> tuple[str, ComponentStatus]:
@@ -245,7 +250,9 @@ async def close_rabbitmq_health_connection() -> None:
     await close_health_check_clients()
 
 
-async def _get_rabbitmq_health_connection(settings: Settings) -> AbstractRobustConnection:
+async def _get_rabbitmq_health_connection(
+    settings: Settings,
+) -> AbstractRobustConnection:
     return await _rabbitmq_health_connection.get(settings)
 
 
@@ -263,6 +270,21 @@ async def check_rabbitmq(settings: Settings) -> tuple[str, ComponentStatus]:
 
 
 async def check_s3(settings: Settings) -> tuple[str, ComponentStatus]:
+    if settings.object_storage_provider == "azure_blob":
+        await _s3_health_client.close()
+        if not settings.azure_blob_configured:
+            return "s3", _component("not_configured", "azure_blob")
+
+        async def head_container() -> None:
+            storage = AzureBlobStorageClient(settings)
+            try:
+                async with storage.get_client() as client:
+                    await cast(Awaitable[object], client.head_bucket(Bucket=""))
+            finally:
+                await storage.close()
+
+        return await _checked_component("s3", "azure_blob", head_container())
+
     if not settings.s3_configured:
         await _s3_health_client.close()
         return "s3", _component("not_configured", "s3")

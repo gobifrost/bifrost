@@ -10,11 +10,8 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-
-from aiobotocore.session import get_session
 
 from src.config import Settings, get_settings
 
@@ -26,39 +23,31 @@ REPO_PREFIX = "_repo/"
 @dataclass
 class S3FileMetadata:
     """Metadata for a file stored in S3."""
+
     etag: str
     last_modified: datetime
 
 
-_shared_session = None
-
-
-def _get_shared_session():
-    """Reuse a single aiobotocore session to share the connection pool."""
-    global _shared_session
-    if _shared_session is None:
-        _shared_session = get_session()
-    return _shared_session
-
-
 class RepoStorage:
-    """S3 storage scoped to _repo/ prefix."""
+    """Object storage scoped to _repo/ prefix."""
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
+        if self._settings.object_storage_provider == "azure_blob":
+            from src.services.file_storage.azure_blob_client import (
+                AzureBlobStorageClient,
+            )
 
-    @asynccontextmanager
-    async def _get_client(self):
-        session = _get_shared_session()
-        async with session.create_client(
-            "s3",
-            endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
-        ) as client:
-            yield client
+            self._storage = AzureBlobStorageClient(self._settings)
+            self._bucket = self._settings.azure_blob_container or ""
+        else:
+            from src.services.file_storage.s3_client import S3StorageClient
+
+            self._storage = S3StorageClient(self._settings)
+            self._bucket = self._settings.s3_bucket or ""
+
+    def _get_client(self):
+        return self._storage.get_client()
 
     def _repo_key(self, path: str) -> str:
         """Convert relative path to S3 key with _repo/ prefix."""
@@ -101,7 +90,9 @@ class RepoStorage:
         async with self._get_client() as client:
             return await self._list_with_metadata_from_s3(client, prefix)
 
-    async def _list_with_metadata_from_s3(self, client, prefix: str = "") -> dict[str, S3FileMetadata]:
+    async def _list_with_metadata_from_s3(
+        self, client, prefix: str = ""
+    ) -> dict[str, S3FileMetadata]:
         full_prefix = self._repo_key(prefix)
         result: dict[str, S3FileMetadata] = {}
         continuation_token = None
@@ -113,11 +104,13 @@ class RepoStorage:
 
             response = await client.list_objects_v2(**kwargs)
             for obj in response.get("Contents", []):
-                rel_path = obj["Key"][len(REPO_PREFIX):]
+                rel_path = obj["Key"][len(REPO_PREFIX) :]
                 # S3 ETags are quoted — strip quotes for clean comparison
                 etag = obj["ETag"].strip('"')
                 last_modified = obj["LastModified"]
-                result[rel_path] = S3FileMetadata(etag=etag, last_modified=last_modified)
+                result[rel_path] = S3FileMetadata(
+                    etag=etag, last_modified=last_modified
+                )
 
             if not response.get("IsTruncated"):
                 break
@@ -138,7 +131,7 @@ class RepoStorage:
             response = await client.list_objects_v2(**kwargs)
             for obj in response.get("Contents", []):
                 # Strip _repo/ prefix from key
-                rel_path = obj["Key"][len(REPO_PREFIX):]
+                rel_path = obj["Key"][len(REPO_PREFIX) :]
                 paths.append(rel_path)
 
             if not response.get("IsTruncated"):
@@ -202,13 +195,13 @@ class RepoStorage:
 
             # Direct child files
             for obj in response.get("Contents", []):
-                rel_path = obj["Key"][len(REPO_PREFIX):]
+                rel_path = obj["Key"][len(REPO_PREFIX) :]
                 if rel_path:
                     files.append(rel_path)
 
             # Direct child folders (CommonPrefixes)
             for prefix_obj in response.get("CommonPrefixes", []):
-                folder_path = prefix_obj["Prefix"][len(REPO_PREFIX):]
+                folder_path = prefix_obj["Prefix"][len(REPO_PREFIX) :]
                 if folder_path:
                     folders.append(folder_path)
 

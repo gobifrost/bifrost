@@ -8,9 +8,11 @@ at a time.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from src.config import Settings
@@ -110,6 +112,71 @@ class AzureBlobStorageClient:
         if operation_name != "list_objects_v2":
             raise NotImplementedError(f"Unsupported paginator: {operation_name}")
         return _ListObjectsV2Paginator(self)
+
+    async def head_bucket(self, *, Bucket: str):
+        """S3-compatible container availability check used by health probes."""
+        del Bucket
+        await self._ensure_client()
+        return await self._container_client.get_container_properties()
+
+    async def list_objects_v2(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str = "",
+        Delimiter: str | None = None,
+        ContinuationToken: str | None = None,
+        MaxKeys: int | None = None,
+    ) -> dict:
+        """S3-shaped list operation for RepoStorage."""
+        del Bucket
+        await self._ensure_client()
+
+        pager = self._container_client.list_blobs(name_starts_with=Prefix).by_page(
+            continuation_token=ContinuationToken,
+            results_per_page=MaxKeys,
+        )
+        try:
+            page = await anext(pager)
+        except StopAsyncIteration:
+            page = []
+        next_token = getattr(pager, "continuation_token", None)
+
+        contents: list[dict] = []
+        common_prefixes: set[str] = set()
+        if hasattr(page, "__aiter__"):
+            blobs = [blob async for blob in cast(AsyncIterator[Any], page)]
+        else:
+            blobs = list(cast(Iterable[Any], page))
+
+        for blob in blobs:
+            name = blob.name
+            if Delimiter:
+                remainder = name[len(Prefix) :]
+                if Delimiter in remainder:
+                    folder = Prefix + remainder.split(Delimiter, 1)[0] + Delimiter
+                    common_prefixes.add(folder)
+                    continue
+            contents.append(
+                {
+                    "Key": name,
+                    "Size": getattr(blob, "size", None),
+                    "ETag": str(getattr(blob, "etag", "") or "").strip('"'),
+                    "LastModified": getattr(blob, "last_modified", None),
+                }
+            )
+
+        response = {
+            "Contents": contents,
+            "IsTruncated": bool(next_token),
+        }
+        if Delimiter:
+            response["CommonPrefixes"] = [
+                {"Prefix": prefix} for prefix in sorted(common_prefixes)
+            ]
+        if next_token:
+            response["NextContinuationToken"] = next_token
+        return response
 
     async def put_object(
         self,
