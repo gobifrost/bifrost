@@ -15,6 +15,19 @@ from urllib.parse import urlparse
 from src.config import Settings
 
 
+_shared_session = None
+
+
+def _get_shared_session():
+    """Reuse a single aiobotocore session to share the connection pool."""
+    global _shared_session
+    if _shared_session is None:
+        from aiobotocore.session import get_session
+
+        _shared_session = get_session()
+    return _shared_session
+
+
 class S3StorageClient:
     """Client for S3 storage operations."""
 
@@ -41,9 +54,7 @@ class S3StorageClient:
         if not self.settings.s3_configured:
             raise RuntimeError("S3 storage not configured")
 
-        from aiobotocore.session import get_session
-
-        session = get_session()
+        session = _get_shared_session()
         async with session.create_client(
             "s3",
             endpoint_url=self.settings.s3_endpoint_url,
