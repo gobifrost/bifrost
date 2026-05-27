@@ -339,6 +339,14 @@ class ProcessPoolManager:
         # Process tracking
         self.processes: dict[str, ProcessHandle] = {}
         self._process_counter = 0
+        self._admission_attempts = 0
+        self._admission_successes = 0
+        self._admission_rejections: dict[str, int] = {
+            "slot_timeout": 0,
+            "memory_pressure": 0,
+        }
+        self._admission_wait_seconds_total = 0.0
+        self._admission_wait_seconds_max = 0.0
 
         # State
         self._shutdown = False
@@ -369,6 +377,38 @@ class ProcessPoolManager:
         # installs don't race — the second call waits for the first to
         # finish rather than trying to fork while the template is down.
         self._restart_lock = asyncio.Lock()
+
+    def _record_admission_success(self, wait_seconds: float) -> None:
+        self._admission_successes += 1
+        self._admission_wait_seconds_total += wait_seconds
+        self._admission_wait_seconds_max = max(
+            self._admission_wait_seconds_max,
+            wait_seconds,
+        )
+
+    def _record_admission_rejection(
+        self,
+        reason: str,
+        wait_seconds: float,
+        execution_id: str,
+    ) -> None:
+        self._admission_rejections[reason] = self._admission_rejections.get(reason, 0) + 1
+        self._admission_wait_seconds_total += wait_seconds
+        self._admission_wait_seconds_max = max(
+            self._admission_wait_seconds_max,
+            wait_seconds,
+        )
+        logger.warning(
+            "process_pool_admission_rejected",
+            extra={
+                "execution_id": execution_id,
+                "reason": reason,
+                "wait_seconds": wait_seconds,
+                "active_processes": len(self.processes),
+                "max_workers": self.max_workers,
+                "available_slots": max(0, self.max_workers - len(self.processes)),
+            },
+        )
 
     async def _get_redis(self) -> redis.Redis:  # type: ignore[type-arg]
         """Get or create Redis connection."""
@@ -684,6 +724,9 @@ class ProcessPoolManager:
             execution_id: Unique identifier for the execution
             context: Execution context data (written to Redis)
         """
+        self._admission_attempts += 1
+        admission_started = time.monotonic()
+
         # Wait for any in-progress drain+restart to complete before routing.
         # Without this, executions arriving during a package-install restart
         # would hit a dead template and fail with ConnectionResetError.
@@ -699,6 +742,11 @@ class ProcessPoolManager:
             # Clean up the context we just wrote
             r = await self._get_redis()
             await r.delete(f"bifrost:exec:{execution_id}:context")
+            self._record_admission_rejection(
+                reason="memory_pressure",
+                wait_seconds=time.monotonic() - admission_started,
+                execution_id=execution_id,
+            )
             raise MemoryError(
                 f"Cannot route execution {execution_id[:8]}: memory pressure "
                 f"exceeds {settings.memory_pressure_threshold:.0%} threshold"
@@ -708,6 +756,13 @@ class ProcessPoolManager:
         # _slot_condition, so this wakes immediately once a slot frees.
         if len(self.processes) >= self.max_workers:
             if not await self._wait_for_slot():
+                r = await self._get_redis()
+                await r.delete(f"bifrost:exec:{execution_id}:context")
+                self._record_admission_rejection(
+                    reason="slot_timeout",
+                    wait_seconds=time.monotonic() - admission_started,
+                    execution_id=execution_id,
+                )
                 raise ProcessPoolAdmissionRejected("No worker slot available after timeout")
 
         # Fork the worker. _fork_process returns a handle already in BUSY.
@@ -722,6 +777,7 @@ class ProcessPoolManager:
             timeout_seconds=timeout,
         )
         handle.result_reported = False
+        self._record_admission_success(time.monotonic() - admission_started)
 
         return handle
 
@@ -1528,6 +1584,8 @@ class ProcessPoolManager:
         busy_count = len([p for p in self.processes.values() if p.state == ProcessState.BUSY])
 
         memory_current, memory_max = get_cgroup_memory()
+        max_workers = getattr(self, "max_workers", len(self.processes))
+        available_slots = max(0, max_workers - len(self.processes))
 
         return {
             "type": "worker_heartbeat",
@@ -1538,8 +1596,17 @@ class ProcessPoolManager:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "processes": processes,
             "pool_size": len(self.processes),
+            "max_workers": max_workers,
+            "available_slots": available_slots,
             "idle_count": idle_count,
             "busy_count": busy_count,
+            "admission": {
+                "attempts": getattr(self, "_admission_attempts", 0),
+                "successes": getattr(self, "_admission_successes", 0),
+                "rejections": dict(getattr(self, "_admission_rejections", {})),
+                "wait_seconds_total": getattr(self, "_admission_wait_seconds_total", 0.0),
+                "wait_seconds_max": getattr(self, "_admission_wait_seconds_max", 0.0),
+            },
             "requirements_installed": self._requirements_installed,
             "requirements_total": self._requirements_total,
             "memory_current_bytes": memory_current,

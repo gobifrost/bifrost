@@ -17,6 +17,7 @@ import pytest
 from src.services.execution.process_pool import (
     ExecutionInfo,
     ProcessHandle,
+    ProcessPoolAdmissionRejected,
     ProcessPoolManager,
     ProcessState,
 )
@@ -739,6 +740,32 @@ class TestAdmissionControl:
             with patch.object(pool, '_write_context_to_redis', new_callable=AsyncMock):
                 with pytest.raises(MemoryError, match="memory pressure"):
                     await pool.route_execution("exec-123", {"timeout_seconds": 300})
+
+        assert pool._admission_attempts == 1
+        assert pool._admission_rejections["memory_pressure"] == 1
+
+    @pytest.mark.asyncio
+    async def test_route_execution_records_slot_timeout_admission_rejection(self):
+        """Should count slot-timeout rejection when no local process slot opens."""
+        pool = ProcessPoolManager(max_workers=1)
+        pool._started = True
+        pool.processes["busy"] = MagicMock()
+
+        with (
+            patch(
+                "src.services.execution.process_pool.has_sufficient_memory_cgroup",
+                return_value=True,
+            ),
+            patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock),
+            patch.object(pool, "_wait_for_slot", new_callable=AsyncMock, return_value=False),
+        ):
+            with pytest.raises(ProcessPoolAdmissionRejected, match="No worker slot"):
+                await pool.route_execution("exec-123", {"timeout_seconds": 300})
+
+        assert pool._admission_attempts == 1
+        assert pool._admission_successes == 0
+        assert pool._admission_rejections["slot_timeout"] == 1
+        assert pool._admission_wait_seconds_total >= 0
 
     @pytest.mark.asyncio
     async def test_route_execution_allows_when_memory_ok(self):

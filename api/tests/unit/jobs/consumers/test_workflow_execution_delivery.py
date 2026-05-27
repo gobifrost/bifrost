@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer, workflow_prefetch_count
 from src.jobs.rabbitmq import (
     DomainFailureHandled,
     DuplicateMessage,
@@ -32,6 +32,48 @@ def pending_context() -> dict[str, object]:
         "user_name": "Test User",
         "user_email": "test@example.com",
     }
+
+
+def test_workflow_prefetch_count_is_capped_by_process_capacity() -> None:
+    """Workflow consumer prefetch should not exceed local process slots."""
+    settings = type(
+        "Settings",
+        (),
+        {
+            "max_concurrency": 20,
+            "max_workers": 5,
+        },
+    )()
+
+    assert workflow_prefetch_count(settings) == 5
+
+
+def test_workflow_prefetch_count_keeps_lower_global_concurrency() -> None:
+    """A lower global concurrency limit should still constrain prefetch."""
+    settings = type(
+        "Settings",
+        (),
+        {
+            "max_concurrency": 3,
+            "max_workers": 10,
+        },
+    )()
+
+    assert workflow_prefetch_count(settings) == 3
+
+
+def test_workflow_prefetch_count_has_minimum_of_one() -> None:
+    """Workflow consumer prefetch must never be configured below one."""
+    settings = type(
+        "Settings",
+        (),
+        {
+            "max_concurrency": 0,
+            "max_workers": 0,
+        },
+    )()
+
+    assert workflow_prefetch_count(settings) == 1
 
 
 @pytest.mark.asyncio

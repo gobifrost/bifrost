@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 QUEUE_NAME = "workflow-executions"
 
 
+def workflow_prefetch_count(settings: Any) -> int:
+    """Cap workflow prefetch at local process admission capacity."""
+    return max(1, min(settings.max_concurrency, settings.max_workers))
+
+
 class WorkflowExecutionConsumer(BaseConsumer):
     """
     Consumer for workflow execution queue.
@@ -67,7 +72,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         settings = get_settings()
         super().__init__(
             queue_name=QUEUE_NAME,
-            prefetch_count=settings.max_concurrency,
+            prefetch_count=workflow_prefetch_count(settings),
         )
         self._redis_client = get_redis_client()
 

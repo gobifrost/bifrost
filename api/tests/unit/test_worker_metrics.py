@@ -3,6 +3,8 @@
 from unittest.mock import patch
 from datetime import datetime, timezone
 
+import pytest
+
 
 class TestHeartbeatCgroupData:
     """Tests for cgroup memory data in heartbeat payload."""
@@ -72,6 +74,43 @@ class TestHeartbeatCgroupData:
 
         assert heartbeat["memory_current_bytes"] == 322_834_432
         assert heartbeat["memory_max_bytes"] == -1
+
+    def test_heartbeat_includes_admission_pressure(self):
+        """Heartbeat should expose admission wait and rejection counters."""
+        from src.services.execution.process_pool import ProcessPoolManager
+
+        pool = ProcessPoolManager.__new__(ProcessPoolManager)
+        pool.worker_id = "test-worker"
+        pool.processes = {}
+        pool.max_workers = 10
+        pool._started_at = datetime.now(timezone.utc)
+        pool._requirements_installed = 0
+        pool._requirements_total = 0
+        pool.heartbeat_interval_seconds = 10
+        pool._admission_attempts = 8
+        pool._admission_successes = 6
+        pool._admission_rejections = {
+            "slot_timeout": 1,
+            "memory_pressure": 1,
+        }
+        pool._admission_wait_seconds_total = 3.25
+        pool._admission_wait_seconds_max = 1.5
+
+        with patch(
+            "src.services.execution.process_pool.get_cgroup_memory",
+            return_value=(-1, -1),
+        ):
+            heartbeat = pool._build_heartbeat()
+
+        assert heartbeat["available_slots"] == 10
+        assert heartbeat["admission"]["attempts"] == 8
+        assert heartbeat["admission"]["successes"] == 6
+        assert heartbeat["admission"]["rejections"] == {
+            "slot_timeout": 1,
+            "memory_pressure": 1,
+        }
+        assert heartbeat["admission"]["wait_seconds_total"] == pytest.approx(3.25)
+        assert heartbeat["admission"]["wait_seconds_max"] == pytest.approx(1.5)
 
     def test_fork_memory_mb_uses_private_dirty(self):
         """Per-fork memory_mb should reflect private-dirty (USS), not COW-inflated RSS."""
