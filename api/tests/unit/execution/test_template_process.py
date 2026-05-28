@@ -16,6 +16,7 @@ import pytest
 from src.services.execution.template_process import (
     TemplateProcess,
     _load_execution_infrastructure,
+    _reap_exited_children,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,18 @@ class TestTemplateProcessLifecycle:
         template.shutdown()  # Should not raise
 
 
+class TestTemplateProcessReaping:
+    """Tests for zombie child reaping behavior in template process."""
+
+    def test_reap_exited_children_drains_until_no_more_exits(self):
+        """Should call waitpid repeatedly until no exited children remain."""
+        with patch("src.services.execution.template_process.os.waitpid") as waitpid:
+            waitpid.side_effect = [(101, 0), (102, 0), (0, 0)]
+            _reap_exited_children()
+
+        assert waitpid.call_count == 3
+
+
 class TestTemplateProcessFork:
     """Tests for forking children from the template."""
 
@@ -123,10 +136,12 @@ class TestTemplateProcessFork:
         template = TemplateProcess()
         template.start()
         children = []
+        queue_handles = []
         try:
             for _ in range(3):
                 child_pid, wq, rq = template.fork()
                 children.append(child_pid)
+                queue_handles.append((wq, rq))
 
             # All should be unique PIDs
             assert len(set(children)) == 3
@@ -135,6 +150,9 @@ class TestTemplateProcessFork:
             for pid in children:
                 os.kill(pid, 0)  # Should not raise
         finally:
+            for wq, rq in queue_handles:
+                wq.close()
+                rq.close()
             for pid in children:
                 try:
                     os.kill(pid, signal.SIGTERM)
@@ -254,16 +272,18 @@ class TestForkPerformance:
         template = TemplateProcess()
         template.start()
         children = []
+        queue_handles = []
         try:
             template_rss_kb = _get_rss_kb(template.pid)
             template_rss_mb = template_rss_kb / 1024 if template_rss_kb > 0 else -1
 
             start = time.monotonic()
             for i in range(10):
-                child_pid, _, _ = template.fork(
+                child_pid, wq, rq = template.fork(
                     worker_id=f"mem-{i}", persistent=True,
                 )
                 children.append(child_pid)
+                queue_handles.append((wq, rq))
             fork_all_ms = (time.monotonic() - start) * 1000
 
             time.sleep(0.1)
@@ -277,6 +297,9 @@ class TestForkPerformance:
 
             assert alive >= 8, f"Only {alive}/10 children alive"
         finally:
+            for wq, rq in queue_handles:
+                wq.close()
+                rq.close()
             for pid in children:
                 try:
                     os.kill(pid, signal.SIGTERM)

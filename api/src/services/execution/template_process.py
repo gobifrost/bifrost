@@ -90,6 +90,25 @@ CMD_FORK = "fork"
 CMD_SHUTDOWN = "shutdown"
 
 
+def _reap_exited_children() -> None:
+    """Reap exited forked children to avoid zombie accumulation."""
+    while True:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            # No child processes exist.
+            break
+        except OSError as e:
+            logger.debug(f"template waitpid ignored: {e}")
+            break
+
+        if pid == 0:
+            # At least one child exists, but none has exited yet.
+            break
+
+        logger.debug(f"Reaped exited child process {pid}")
+
+
 def _load_execution_infrastructure(install_requirements_on_startup: bool) -> None:
     """Load execution helpers and optionally install workspace requirements."""
     from src.services.execution.virtual_import import install_virtual_import_hook
@@ -190,6 +209,7 @@ def _template_main(
     # ----- Fork loop -----
     # Single-threaded, no event loop. Just wait for commands and fork.
     while True:
+        _reap_exited_children()
         try:
             if not pipe.poll(timeout=1.0):
                 continue
@@ -211,6 +231,7 @@ def _template_main(
             result_send: Connection = cmd["result_send"]
             _handle_fork_request(pipe, worker_id, persistent, work_recv, result_send)
 
+    _reap_exited_children()
     logger.info("Template process exiting")
 
 
