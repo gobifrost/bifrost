@@ -37,9 +37,9 @@ async def record_backfill_outcome(
         async with session_factory() as db:
             job = (
                 await db.execute(
-                    select(SummaryBackfillJob).where(
-                        SummaryBackfillJob.id == job_id
-                    )
+                    select(SummaryBackfillJob)
+                    .where(SummaryBackfillJob.id == job_id)
+                    .with_for_update()
                 )
             ).scalar_one_or_none()
             if job is None:
@@ -53,6 +53,14 @@ async def record_backfill_outcome(
                 # Admin cancelled the job — keep processing the per-run summary
                 # (no harm in it) but don't touch the terminal counters.
                 return
+            processed = set(job.processed_run_ids or [])
+            run_key = str(run_id)
+            if run_key in processed:
+                logger.info(
+                    "Ignoring duplicate backfill outcome",
+                    extra={"job_id": str(job_id), "run_id": run_key},
+                )
+                return
 
             if succeeded:
                 job.succeeded = (job.succeeded or 0) + 1
@@ -63,6 +71,7 @@ async def record_backfill_outcome(
                     ) + cost
             else:
                 job.failed = (job.failed or 0) + 1
+            job.processed_run_ids = sorted(processed | {run_key})
 
             finished = (job.succeeded + job.failed) >= job.total
             if finished and job.status == "running":
