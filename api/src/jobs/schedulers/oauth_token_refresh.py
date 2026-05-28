@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from src.core.database import get_db_context
 from src.models import OAuthToken, OAuthProvider
+from src.models.orm.integrations import Integration, IntegrationMapping
 from src.services.oauth_provider import (
     build_token_refresh_context,
     refresh_oauth_token_http,
@@ -189,6 +190,22 @@ async def run_refresh_job(
                     if not token or not provider:
                         continue
 
+                    prior_status = token.status
+                    previous_success_at = (
+                        token.last_refresh_at if prior_status == "completed" else None
+                    )
+                    mapping_result = await db.execute(
+                        select(IntegrationMapping).where(
+                            IntegrationMapping.oauth_token_id == token.id
+                        )
+                    )
+                    mapping = mapping_result.scalar_one_or_none()
+                    integration = (
+                        await db.get(Integration, provider.integration_id)
+                        if provider.integration_id
+                        else None
+                    )
+
                     # Per-token status always gets written
                     if outcome["success"]:
                         token.encrypted_access_token = outcome["encrypted_access_token"]
@@ -200,10 +217,64 @@ async def run_refresh_job(
                         token.status = "completed"
                         token.status_message = None
                         token.last_refresh_at = datetime.now(timezone.utc)
+                        if prior_status == "failed":
+                            try:
+                                from src.services.events.builtins import emit_integration_refresh_recovered
+
+                                await emit_integration_refresh_recovered(
+                                    integration_id=provider.integration_id,
+                                    integration_name=(
+                                        integration.name if integration else provider.display_name
+                                    ),
+                                    organization_id=token.organization_id,
+                                    organization_name=(
+                                        mapping.organization.name
+                                        if mapping and mapping.organization
+                                        else None
+                                    ),
+                                    connection_id=mapping.id if mapping else token.id,
+                                    external_account_id=mapping.entity_id if mapping else None,
+                                    external_account_name=mapping.entity_name if mapping else None,
+                                    attempt=1,
+                                    last_success_at=token.last_refresh_at,
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to emit integration.refresh_recovered: {e}",
+                                    exc_info=True,
+                                )
                     else:
                         token.status = "failed"
                         token.status_message = (outcome.get("error", "Refresh failed"))[:200]
                         token.last_refresh_at = datetime.now(timezone.utc)
+                        try:
+                            from src.services.events.builtins import emit_integration_refresh_failed
+
+                            await emit_integration_refresh_failed(
+                                integration_id=provider.integration_id,
+                                integration_name=(
+                                    integration.name if integration else provider.display_name
+                                ),
+                                organization_id=token.organization_id,
+                                organization_name=(
+                                    mapping.organization.name
+                                    if mapping and mapping.organization
+                                    else None
+                                ),
+                                connection_id=mapping.id if mapping else token.id,
+                                external_account_id=mapping.entity_id if mapping else None,
+                                external_account_name=mapping.entity_name if mapping else None,
+                                attempt=1,
+                                last_success_at=previous_success_at,
+                                error_message=token.status_message or "Refresh failed",
+                                retryable=False,
+                                reauth_required=True,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to emit integration.refresh_failed: {e}",
+                                exc_info=True,
+                            )
 
                     # Provider status mirrors the integration-level (fallback) token only.
                     # Per-org tokens (organization_id IS NOT NULL) don't poison provider status.

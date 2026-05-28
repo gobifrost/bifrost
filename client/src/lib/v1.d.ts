@@ -19949,6 +19949,23 @@ export interface components {
             topic: string;
             /** Description */
             description: string;
+            /**
+             * Category
+             * @description Grouping for this built-in topic.
+             */
+            category: string;
+            /**
+             * Emitted By
+             * @description Platform surface that emits this topic.
+             */
+            emitted_by: string;
+            /**
+             * Example Body
+             * @description Representative context.event.data body for this topic.
+             */
+            example_body?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * TopicsRegistryResponse

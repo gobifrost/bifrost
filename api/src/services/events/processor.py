@@ -783,6 +783,7 @@ async def update_delivery_from_execution(
                  caller is responsible for commit. If None, creates own session.
     """
     from sqlalchemy import select
+    from sqlalchemy.orm import joinedload
 
     # Map execution status to delivery status
     status_map = {
@@ -797,11 +798,14 @@ async def update_delivery_from_execution(
     async def _do_update(db: AsyncSession) -> None:
         # Find delivery by execution_id
         result = await db.execute(
-            select(EventDelivery).where(
+            select(EventDelivery).options(
+                joinedload(EventDelivery.event),
+                joinedload(EventDelivery.subscription),
+            ).where(
                 EventDelivery.execution_id == uuid.UUID(execution_id)
             )
         )
-        delivery = result.scalar_one_or_none()
+        delivery = result.unique().scalar_one_or_none()
 
         if not delivery:
             # Not an event-triggered execution, nothing to update
@@ -829,6 +833,31 @@ async def update_delivery_from_execution(
                 "status": delivery_status.value,
             },
         )
+
+        if delivery_status == EventDeliveryStatus.FAILED:
+            event_obj = delivery.event or await EventRepository(db).get_by_id(delivery.event_id)
+            subscription = delivery.subscription
+            target_type = getattr(subscription, "target_type", "workflow") or "workflow"
+            target_id = (
+                getattr(subscription, "agent_id", None)
+                if target_type == "agent"
+                else delivery.workflow_id
+            )
+            from src.services.events.builtins import emit_event_delivery_retry_exhausted
+
+            await emit_event_delivery_retry_exhausted(
+                event_id=delivery.event_id,
+                event_type=event_obj.event_type if event_obj else None,
+                source_id=event_obj.event_source_id if event_obj else None,
+                organization_id=event_obj.organization_id if event_obj else None,
+                delivery_id=delivery.id,
+                target_type=target_type,
+                target_id=target_id,
+                attempt=delivery.attempt_count,
+                max_attempts=delivery.attempt_count,
+                error_type="DeliveryError",
+                error_message=error_message or "Delivery failed after all retry attempts.",
+            )
 
         # Broadcast event status update to WebSocket subscribers
         event = await EventRepository(db).get_by_id(delivery.event_id)
