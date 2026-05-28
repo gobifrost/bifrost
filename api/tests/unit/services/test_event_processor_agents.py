@@ -260,3 +260,27 @@ async def test_queue_workflow_execution_prefers_workflow_org():
 
         mock_enqueue.assert_awaited_once()
         assert mock_enqueue.call_args.kwargs["org_id"] == str(workflow_org_id)
+
+
+@pytest.mark.asyncio
+async def test_queue_workflow_execution_defaults_to_provider_org():
+    """Global workflow + global event source should still run in provider org."""
+    processor = _create_processor()
+
+    workflow = MagicMock()
+    workflow.id = uuid.uuid4()
+    workflow.organization_id = None
+    delivery = _make_delivery(target_type="workflow", workflow=workflow)
+    event = _make_event(event_source_org_id=None)
+
+    mock_enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    fake_async_executor = _fake_module(
+        "src.services.execution.async_executor",
+        enqueue_system_workflow_execution=mock_enqueue,
+    )
+
+    with patch.dict(sys.modules, {"src.services.execution.async_executor": fake_async_executor}):
+        await processor._queue_workflow_execution(delivery, event)
+
+        mock_enqueue.assert_awaited_once()
+        assert mock_enqueue.call_args.kwargs["org_id"] == "00000000-0000-0000-0000-000000000002"

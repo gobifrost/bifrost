@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
+from src.core.constants import PROVIDER_ORG_ID, SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.jobs.rabbitmq import publish_message
@@ -98,6 +98,7 @@ async def enqueue_workflow_execution(
     sync: bool = False,
     api_key_id: str | None = None,
     file_path: str | None = None,
+    org_id_override: str | None = None,
 ) -> str:
     """
     Enqueue a workflow for async execution.
@@ -114,6 +115,7 @@ async def enqueue_workflow_execution(
         sync: If True, worker will push result to Redis for caller to BLPOP
         api_key_id: Optional workflow ID whose API key triggered this execution
         file_path: Optional file path (for fast direct loading, avoids filesystem scan)
+        org_id_override: Optional org scope for queueing when context.organization is unset
 
     Returns:
         execution_id: UUID of the queued execution
@@ -122,11 +124,17 @@ async def enqueue_workflow_execution(
     if execution_id is None:
         execution_id = str(uuid.uuid4())
 
+    effective_org_id = (
+        org_id_override
+        if org_id_override is not None
+        else context.org_id
+    )
+
     await _publish_pending(
         execution_id=execution_id,
         workflow_id=workflow_id,
         parameters=parameters,
-        org_id=context.org_id,
+        org_id=effective_org_id,
         user_id=context.user_id,
         user_name=context.name,
         user_email=context.email,
@@ -143,7 +151,7 @@ async def enqueue_workflow_execution(
         extra={
             "execution_id": execution_id,
             "workflow_id": workflow_id,
-            "org_id": context.org_id
+            "org_id": effective_org_id
         }
     )
 
@@ -247,11 +255,16 @@ async def enqueue_system_workflow_execution(
 
     from src.config import get_settings
 
+    # System-triggered runs default to the provider org so MSP-wide integrations
+    # and cross-scope SDK calls work without requiring every schedule/webhook to
+    # restate the provider org explicitly.
+    effective_org_id = org_id or str(PROVIDER_ORG_ID)
+
     context = ExecutionContext(
         user_id=SYSTEM_USER_ID,
         email=SYSTEM_USER_EMAIL,
         name=source,
-        scope=f"ORG:{org_id}" if org_id else "GLOBAL",
+        scope=f"ORG:{effective_org_id}",
         organization=None,
         is_platform_admin=True,
         is_function_key=False,
@@ -265,4 +278,5 @@ async def enqueue_system_workflow_execution(
         workflow_id=workflow_id,
         parameters=parameters,
         execution_id=execution_id,  # Pass explicitly to avoid double generation
+        org_id_override=effective_org_id,
     )

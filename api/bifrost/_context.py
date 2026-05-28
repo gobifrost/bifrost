@@ -130,6 +130,8 @@ def resolve_scope(scope: str | None) -> str | None:
 
     If explicit scope differs from default scope, requires provider org context.
     """
+    if scope == "global":
+        scope = None
     default = get_default_scope()
     if scope is None:
         return default

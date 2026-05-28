@@ -148,6 +148,26 @@ class TestResolveScope:
         result = resolve_scope(None)
         assert result is None
 
+    def test_global_string_matches_default_global_scope(self):
+        from bifrost._context import resolve_scope, set_execution_context, clear_execution_context
+
+        ctx = ExecutionContext(
+            user_id="u1",
+            email="e@e.com",
+            name="Test",
+            scope="GLOBAL",
+            organization=None,
+            is_platform_admin=True,
+            is_function_key=False,
+            execution_id="exec-1",
+        )
+        set_execution_context(ctx)
+        try:
+            assert resolve_scope("global") is None
+            assert resolve_scope(None) is None
+        finally:
+            clear_execution_context()
+
 
 class TestOrganizationIsProvider:
     """Test that is_provider field exists and defaults correctly."""

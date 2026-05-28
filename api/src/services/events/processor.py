@@ -23,6 +23,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from src.core.constants import PROVIDER_ORG_ID
 from src.core.log_safety import log_safe
 from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus
 from src.models.orm.events import (
@@ -571,7 +572,7 @@ class EventProcessor:
 
         workflow_org_id = workflow.organization_id
         event_source_org_id = event.event_source.organization_id if event.event_source else None
-        execution_org_id = workflow_org_id or event_source_org_id
+        execution_org_id = workflow_org_id or event_source_org_id or PROVIDER_ORG_ID
 
         # Use the centralized system execution helper. Org-scoped workflows keep
         # their own scope; global workflows inherit the triggering event source
@@ -580,7 +581,7 @@ class EventProcessor:
             workflow_id=str(workflow.id),
             parameters=parameters,
             source="Event System",
-            org_id=str(execution_org_id) if execution_org_id else None,
+            org_id=str(execution_org_id),
         )
 
         # Store the execution ID on the delivery for tracking
