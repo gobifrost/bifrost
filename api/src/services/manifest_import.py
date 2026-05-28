@@ -677,6 +677,24 @@ async def import_manifest_from_repo(
         except Exception as e:
             logger.warning(f"Failed to refresh MCP workflow tools after manifest import: {e}")
 
+    # 6c. Invalidate the config read-through cache for every config the import
+    # upserted or deleted. The import writes Config rows directly (raw ops),
+    # bypassing the PUT /api/config handler that normally invalidates — so
+    # without this, a renamed/moved/deleted config (or a changed non-secret
+    # value) keeps serving stale from ConfigRepository's cache until TTL.
+    if result.applied and not dry_run and resolver.configs_touched:
+        from src.core.cache import invalidate_config
+        from src.core.log_safety import log_safe
+
+        for cfg_org_id, cfg_key in resolver.configs_touched:
+            try:
+                await invalidate_config(cfg_org_id, cfg_key)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to invalidate config cache after import "
+                    f"(org={cfg_org_id}, key={log_safe(cfg_key)}): {e}"
+                )
+
     # 7. Regenerate manifest from DB (partial: only changed entities).
     # NOTE: control reaches this point only when ``changed_ids`` is truthy —
     # the empty-changes case returns at step 4c (around line 596) before
@@ -705,6 +723,14 @@ class ManifestResolver:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        # (org_id_str_or_None, key) for every Config touched (upserted or
+        # deleted) during this import. The import writes Config rows directly
+        # (raw Upsert/delete ops), bypassing the PUT /api/config handler that
+        # normally invalidates the read-through cache in ConfigRepository. The
+        # importer drains this set after the transaction commits and calls
+        # invalidate_config on each, so a renamed/moved/deleted config (or a
+        # changed non-secret value) does not keep serving stale until TTL.
+        self.configs_touched: set[tuple[str | None, str]] = set()
 
     async def _prefetch_existing_entities(self) -> dict:
         """Prefetch all existing entity IDs/natural-keys in bulk queries.
@@ -1785,19 +1811,27 @@ class ManifestResolver:
 
         # Delete configs not in manifest (skip integration-schema-linked configs —
         # those are user-set values managed by IntegrationConfigSchema cascade)
-        cfg_q = select(Config.id).where(Config.config_schema_id.is_(None))
+        cfg_q = select(
+            Config.id, Config.organization_id, Config.key
+        ).where(Config.config_schema_id.is_(None))
         if present_config_uuids:
             cfg_q = cfg_q.where(Config.id.notin_(present_config_uuids))
         cfg_result = await self.db.execute(cfg_q)
-        stale_cfg_ids = [row[0] for row in cfg_result.all()]
+        stale_cfg_rows = cfg_result.all()
+        stale_cfg_ids = [row[0] for row in stale_cfg_rows]
         if stale_cfg_ids:
-            for sid in stale_cfg_ids:
+            for sid, s_org_id, s_key in stale_cfg_rows:
                 logger.info(f"Deleting config {sid} — removed from repo")
                 entity_changes.append(EntityChange(
                     action="removed",
                     entity_type="configs",
                     name=str(sid),
                 ))
+                # Record for post-commit cache invalidation (the deleted row
+                # would otherwise keep serving from the read-through cache).
+                self.configs_touched.add(
+                    (str(s_org_id) if s_org_id is not None else None, s_key)
+                )
             if not dry_run:
                 await self.db.execute(
                     sa_delete(Config).where(Config.id.in_(stale_cfg_ids))
@@ -2148,6 +2182,15 @@ class ManifestResolver:
         cfg_id = UUID(mcfg.id)
         integ_id = UUID(mcfg.integration_id) if mcfg.integration_id else None
         org_id = UUID(mcfg.organization_id) if mcfg.organization_id else None
+
+        # Record for post-commit cache invalidation. Only non-integration
+        # configs are read through ConfigRepository's cache (merged_for_sdk /
+        # get_config exclude integration_id IS NOT NULL), so those are the only
+        # ones whose cache can go stale on a value/key change here.
+        if integ_id is None:
+            self.configs_touched.add(
+                (str(org_id) if org_id is not None else None, mcfg.key)
+            )
 
         # Check prefetch cache for existing config by natural key
         cache_hit = cache["config_by_natural"].get((mcfg.key, integ_id, org_id))
