@@ -13,7 +13,7 @@ import { useWorkflowQuery, Alert, AlertTitle, AlertDescription, Skeleton } from 
 import { Loader2 } from "lucide-react";
 
 export default function ClientsPage() {
-  const { data, isLoading, isError, error } = useWorkflowQuery<{ items: any[] }>("uuid-here");
+  const { data, isLoading, isError, errorMessage } = useWorkflowQuery<{ items: any[] }>("uuid-here");
 
   if (isLoading) {
     return (
@@ -26,7 +26,7 @@ export default function ClientsPage() {
     return (
       <Alert variant="destructive">
         <AlertTitle>Error</AlertTitle>
-        <AlertDescription>{error ?? "Failed to load"}</AlertDescription>
+        <AlertDescription>{errorMessage ?? "Failed to load"}</AlertDescription>
       </Alert>
     );
   }
@@ -104,6 +104,37 @@ export default function SaveButton({ payload }: { payload: any }) {
   return <Button onClick={onClick} disabled={isLoading}>Save</Button>;
 }
 ```
+
+### Execution IDs and redirects
+
+`execute()` resolves with the final workflow result, not the execution ID. Both `useWorkflowMutation` and `useWorkflowQuery` expose `executionId` as reactive state; it becomes non-null after the workflow execution is created and before the final result is available. If you need to navigate to the execution page, react to `executionId` in `useEffect`.
+
+```tsx
+import { useEffect, useState, useWorkflowMutation, useNavigate, Button, toast } from "bifrost";
+
+export default function StartReportButton() {
+  const navigate = useNavigate();
+  const [shouldRedirect, setShouldRedirect] = useState(false);
+  const { execute, executionId, isLoading } = useWorkflowMutation("start-report-uuid");
+
+  useEffect(() => {
+    if (!shouldRedirect || !executionId) return;
+    navigate(`/executions/${executionId}`);
+  }, [shouldRedirect, executionId, navigate]);
+
+  function start() {
+    setShouldRedirect(true);
+    execute({ reportType: "monthly" }).catch((e) => {
+      setShouldRedirect(false);
+      toast.error(e instanceof Error ? e.message : "Could not start report");
+    });
+  }
+
+  return <Button onClick={start} disabled={isLoading}>Start report</Button>;
+}
+```
+
+Use the `shouldRedirect` guard so an old latest `executionId` does not redirect immediately. For concurrent/background runs, remember that the hook's `executionId`, `data`, `errorMessage`, and `isLoading` describe the latest run from that hook, not separate per-run state.
 
 ### Optimistic update reversal
 

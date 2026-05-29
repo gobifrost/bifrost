@@ -113,6 +113,13 @@ Non-obvious semantics:
 - `update` is patch-without-draft — metadata changes apply to the live app, no staging step.
 - `replace <ref> --repo-path <new>` repoints an app's source directory. Validates uniqueness (no other app already owns `<new>`), nesting (no other app's `repo_path` sits above or below `<new>`), and that source files exist under `<new>`. `--force` bypasses all three. Metadata-only: no S3 file moves — caller reconciles files via `bifrost sync`.
 
+Workflow hooks in apps:
+- Use `useWorkflowQuery(workflowUuid, params?, options?)` for page-load / param-driven data. It starts a workflow on mount and again when `JSON.stringify(params ?? {})` changes. Use `enabled: false` to gate execution.
+- Use `useWorkflowMutation(workflowUuid)` for click/submit actions. `execute(params)` resolves with the final workflow result, not the execution ID.
+- Both hooks expose `executionId`, `status`, `logs`, `data`, `isLoading`, `isError`, and `errorMessage` (`error` is only a deprecated string alias). `executionId` is reactive state: it becomes non-null once the platform creates the execution, before the final result is available. To redirect to an execution page, watch `executionId` in `useEffect`.
+- Hook state is latest-run state, not per-call state. Do not use one hook instance for concurrent `execute()` calls if the UI needs separate execution IDs/loading/error state per run.
+- There is currently no public workflow SDK method named `execution.publish`, `execution.update`, or `executions.publish` for arbitrary structured progress events. For live structured progress, write rows to a table and read them with `useTable`; for textual progress, use workflow logs.
+
 Run `bifrost apps <verb> --help` for the complete flag list.
 
 ## Integrations
@@ -162,7 +169,8 @@ Non-obvious semantics:
 - The policy `when` is a JSON AST. Operators: `and`/`or`/`not`, `eq`/`neq`/`lt`/`lte`/`gt`/`gte`, `in`, `is_null`, `call`. References: `{row: "field"}`, `{user: "field"}`. Functions: `has_role(name_or_uuid)`.
 - Browser apps call tables directly via `import { tables, useTable } from "bifrost"`. SDK calls return what the policy permits; no execution records.
 - Workflow SDK auto-attributes `created_by`/`updated_by` from `context.user_id`; pass `created_by=` to override.
-- Subscriptions: `useTable(name, query?)` is the unified live-query hook. Lower-level `tables.subscribe(tableId, filter, onEvent)` for non-React code. Server filters per-policy AND per-user-filter; the four-way fanout emits insert/update/delete including transitions into and out of visibility.
+- Subscriptions: `useTable(name, query?)` is the unified live-query hook. Its `where` uses the field-keyed shorthand DSL (`{status: "open"}`, `{amount: {gte: 100}}`), not raw policy `Expr` (`{eq: [...]}`). Lower-level `tables.subscribe(tableId, filter, onEvent)` is for non-React code and takes policy `Expr`. Server filters per-policy AND per-user-filter; the four-way fanout emits insert/update/delete including transitions into and out of visibility.
+- Query-only operators `contains`, `starts_with`, `ends_with`, and `has_key` work with `tables.query` but not with live `useTable.where`; using them in `useTable` surfaces an error because the subscription filter cannot represent them.
 - `update --name` prints a warning to stderr about workflow SDK references (SDK calls like `sdk.tables.get("clients")` reference tables by name). It does not block — the author must grep the workspace before pushing.
 - `--application` accepts app slug / UUID / name.
 
