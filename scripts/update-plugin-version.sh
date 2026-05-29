@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Update `.claude-plugin/plugin.json`'s `version` field in place.
+# Update all Bifrost plugin manifest `version` fields in place.
 #
 # Usage: scripts/update-plugin-version.sh <version>
 #
-# Claude Code's plugin marketplace only fetches plugin updates when the
-# manifest's `version` field changes. Wire this to the dev version
-# (`scripts/compute-dev-version.sh`) at release time so users on the plugin
-# actually get our latest skill content.
+# Claude Code and Codex plugin marketplaces key installed content by manifest
+# version. Wire this to the release version at tag time so users on the
+# installed plugin actually get our latest skill content.
 #
-# Idempotent — if the file already matches, this is a no-op.
+# Idempotent — if a manifest already matches, that file is a no-op.
 # Requires: jq (standard in GitHub Actions runners and most dev environments).
 set -euo pipefail
 
@@ -19,31 +18,38 @@ fi
 
 version="$1"
 
-# Resolve the manifest path relative to the repo root (this script lives in
+# Resolve manifest paths relative to the repo root (this script lives in
 # scripts/, so go one directory up).
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-manifest="${script_dir}/../.claude-plugin/plugin.json"
+repo_root="${script_dir}/.."
+manifests=(
+  "${repo_root}/.claude-plugin/plugin.json"
+  "${repo_root}/.codex-plugin/plugin.json"
+  "${repo_root}/plugins/bifrost/.codex-plugin/plugin.json"
+)
 
-if [[ ! -f "$manifest" ]]; then
-  echo "update-plugin-version: manifest not found at $manifest" >&2
-  exit 1
-fi
+for manifest in "${manifests[@]}"; do
+  if [[ ! -f "$manifest" ]]; then
+    echo "update-plugin-version: manifest not found at $manifest" >&2
+    exit 1
+  fi
+done
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "update-plugin-version: jq is required but not installed" >&2
   exit 1
 fi
 
-current=$(jq -r '.version' "$manifest")
-if [[ "$current" == "$version" ]]; then
-  echo "update-plugin-version: already at $version, no change"
-  exit 0
-fi
+for manifest in "${manifests[@]}"; do
+  current=$(jq -r '.version' "$manifest")
+  if [[ "$current" == "$version" ]]; then
+    echo "update-plugin-version: ${manifest#"$repo_root"/} already at $version"
+    continue
+  fi
 
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
-jq --arg v "$version" '.version = $v' "$manifest" > "$tmp"
-mv "$tmp" "$manifest"
-trap - EXIT
+  tmp=$(mktemp)
+  jq --arg v "$version" '.version = $v' "$manifest" > "$tmp"
+  mv "$tmp" "$manifest"
 
-echo "update-plugin-version: $current -> $version"
+  echo "update-plugin-version: ${manifest#"$repo_root"/}: $current -> $version"
+done
