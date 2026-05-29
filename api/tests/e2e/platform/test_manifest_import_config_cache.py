@@ -106,6 +106,12 @@ class TestManifestImportConfigCache:
         db_session.add(cfg)
         await db_session.commit()
 
+        # Start from a clean global cache so the warm step re-merges from DB
+        # and includes the just-seeded key (a prior test's write-through can
+        # otherwise leave a stale global hash — test-order state pollution).
+        from src.core.cache import invalidate_config
+        await invalidate_config(None, None)
+
         # Warm the read-through cache; confirm the key is cached.
         merged = await _warm_cache_for_global(db_session)
         assert key in merged, "precondition: config should be in the merged read"
@@ -155,7 +161,9 @@ class TestManifestImportConfigCache:
         db_session.add(cfg)
         await db_session.commit()
 
-        # Warm cache with the old value.
+        # Clean global cache first (avoid stale cross-test state), then warm.
+        from src.core.cache import invalidate_config
+        await invalidate_config(None, None)
         await _warm_cache_for_global(db_session)
         cached_before = await _read_cache_global()
         assert cached_before.get(key, {}).get("value") == "old_value"
