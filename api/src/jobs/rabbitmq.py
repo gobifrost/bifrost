@@ -82,6 +82,22 @@ class RabbitMQConnection:
             await self._connection_pool.close()
         logger.info("RabbitMQ connections closed")
 
+    def reset_pools(self) -> None:
+        """Drop the cached pools without awaiting (for testing).
+
+        The pools bind their connections to whichever asyncio loop first
+        touched them (via ``init_pools``). When a test runs on a fresh
+        function-scoped loop, the next ``init_pools`` short-circuits on the
+        stale pool and hands back a connection pinned to the dead loop,
+        surfacing as ``RuntimeError: Event loop is closed`` on the first
+        channel open. Nulling the references forces ``init_pools`` to rebuild
+        on the current loop. We do NOT ``await close()`` here precisely
+        because the old loop is already gone — awaiting it would raise the
+        same error we are clearing. Mirrors ``reset_db_state``.
+        """
+        self._connection_pool = None
+        self._channel_pool = None
+
 
 # Global connection manager
 rabbitmq = RabbitMQConnection()
