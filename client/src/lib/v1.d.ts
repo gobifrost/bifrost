@@ -2437,7 +2437,7 @@ export interface paths {
         put?: never;
         /**
          * Read File
-         * @description Read a file from workspace, temp, or uploads.
+         * @description Read a file from a managed or custom location.
          */
         post: operations["read_file_api_files_read_post"];
         delete?: never;
@@ -2457,7 +2457,7 @@ export interface paths {
         put?: never;
         /**
          * Write File
-         * @description Write a file to workspace, temp, or uploads.
+         * @description Write a file to a managed or custom location.
          */
         post: operations["write_file_api_files_write_post"];
         delete?: never;
@@ -2477,7 +2477,7 @@ export interface paths {
         put?: never;
         /**
          * Delete File
-         * @description Delete a file from workspace, temp, or uploads.
+         * @description Delete a file from a managed or custom location.
          */
         post: operations["delete_file_api_files_delete_post"];
         delete?: never;
@@ -3645,22 +3645,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -13411,7 +13411,7 @@ export interface components {
             path: string;
             /**
              * Location
-             * @description Storage location: reserved (workspace, temp, uploads) or freeform
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
              * @default workspace
              */
             location: string;
@@ -13476,7 +13476,7 @@ export interface components {
             path: string;
             /**
              * Location
-             * @description Storage location: reserved (workspace, temp, uploads) or freeform
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
              * @default workspace
              */
             location: string;
@@ -13531,7 +13531,7 @@ export interface components {
             directory: string;
             /**
              * Location
-             * @description Storage location: reserved (workspace, temp, uploads) or freeform
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
              * @default workspace
              */
             location: string;
@@ -13679,7 +13679,7 @@ export interface components {
             path: string;
             /**
              * Location
-             * @description Storage location: reserved (workspace, temp, uploads) or freeform
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
              * @default workspace
              */
             location: string;
@@ -13791,7 +13791,7 @@ export interface components {
             content: string;
             /**
              * Location
-             * @description Storage location: reserved (workspace, temp, uploads) or freeform
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
              * @default workspace
              */
             location: string;
@@ -19949,6 +19949,23 @@ export interface components {
             topic: string;
             /** Description */
             description: string;
+            /**
+             * Category
+             * @description Grouping for this built-in topic.
+             */
+            category: string;
+            /**
+             * Emitted By
+             * @description Platform surface that emits this topic.
+             */
+            emitted_by: string;
+            /**
+             * Example Body
+             * @description Representative context.event.data body for this topic.
+             */
+            example_body?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * TopicsRegistryResponse
@@ -27683,7 +27700,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -27716,7 +27733,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -27749,7 +27766,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -27782,7 +27799,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {

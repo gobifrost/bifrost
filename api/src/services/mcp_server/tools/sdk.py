@@ -22,7 +22,7 @@ The `files` module resolves every operation as `{location}/{scope}/{path}`,
 with `scope` derived from the current execution's organization. `workspace`
 is the only unscoped location.
 
-**Reserved locations:**
+**Special locations:**
 
 | Location | Usage | Example |
 |----------|-------|---------|
@@ -31,7 +31,8 @@ is the only unscoped location.
 | `"temp"` | Ephemeral scratch space | `files.write("scratch.txt", content, location="temp")` |
 
 **Freeform locations** are user-defined (e.g. `"reports"`, `"exports"`) and
-resolve as `{location}/{scope}/{path}`. Names must match `^[a-z0-9][a-z0-9-]*$`.
+resolve as `{location}/{scope}/{path}`. Names must match `^[a-z0-9][a-z0-9-]*$`;
+internal prefixes `_repo`, `_tmp`, and `_apps` are blocked.
 
 ```python
 await files.write_bytes("q1.pdf", pdf, location="reports")

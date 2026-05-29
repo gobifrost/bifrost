@@ -684,6 +684,12 @@ class TopicRegistryEntry(BaseModel):
 
     topic: str
     description: str
+    category: str = Field(..., description="Grouping for this built-in topic.")
+    emitted_by: str = Field(..., description="Platform surface that emits this topic.")
+    example_body: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Representative context.event.data body for this topic.",
+    )
 
 
 class TopicsRegistryResponse(BaseModel):

@@ -1061,3 +1061,141 @@ async def test_successful_install_does_not_notify():
         await _notify_requirements_failures(result)
 
     get_svc.assert_not_called()
+
+
+class TestBurstRaceRegression:
+    """Regression tests for issue #316 follow-up:
+
+    Under concurrent burst load, _check_process_health, _check_timeouts, and
+    _handle_cancel_request all hold a handle reference across an await
+    (_report_crash / _kill_process / _report_cancellation) and then issue an
+    unconditional `del self.processes[id]`. If a peer coroutine
+    (_handle_result, another health-check pass, a cancellation) removes the
+    same id during that await, the `del` raises KeyError and aborts the
+    cleanup before `_notify_slot_free()` runs — leaving slot waiters parked
+    until the 30s _wait_for_slot timeout.
+    """
+
+    @pytest.mark.asyncio
+    async def test_check_process_health_concurrent_delete_does_not_raise(self):
+        """A concurrent _handle_result for the same id must not break
+        _check_process_health's cleanup loop with KeyError / RuntimeError.
+
+        Reporter symptom on prod (`KeyError: 'process-N'`) matches the post-
+        iteration `del self.processes[process_id]` path at line 1164 when a
+        peer coroutine (result loop, cancel handler) deleted the same id
+        during the `_report_crash` await mid-iteration.
+        """
+        crash_started = asyncio.Event()
+        crash_release = asyncio.Event()
+
+        async def slow_report_crash(_h):
+            crash_started.set()
+            await crash_release.wait()
+
+        pool = ProcessPoolManager(max_workers=5)
+        # Patch _report_crash so we get a deterministic suspension point
+        # without needing on_result (whose await is what trips the race in
+        # prod, but is equivalent to suspending inside _report_crash here).
+        pool._report_crash = slow_report_crash  # type: ignore[method-assign]
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = -9
+
+        exec_info = ExecutionInfo(
+            execution_id="exec-race",
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            timeout_seconds=300,
+        )
+        handle = ProcessHandle(
+            id="process-race",
+            process=mock_process,
+            pid=12345,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+            current_execution=exec_info,
+            result_reported=False,
+        )
+        pool.processes["process-race"] = handle
+
+        health_task = asyncio.create_task(pool._check_process_health())
+        await crash_started.wait()
+
+        # Simulate _handle_result deleting the id during the await.
+        del pool.processes["process-race"]
+
+        crash_release.set()
+
+        # Must complete without raising. Pre-fix this raises either
+        # `KeyError` (at the post-iteration `del`) or `RuntimeError:
+        # dictionary changed size during iteration` (at the iterator
+        # advance after the await).
+        await asyncio.wait_for(health_task, timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_check_process_health_notifies_waiters_even_on_concurrent_delete(self):
+        """If a concurrent delete races the cleanup loop, slot waiters must
+        still be notified — otherwise route_execution parks for 30s.
+
+        Mirrors the reporter's `No worker slot available after timeout` at
+        30s on a 30-burst test: the KeyError aborted cleanup so the
+        `_notify_slot_free()` after the cleanup loop never ran, leaving
+        `_wait_for_slot` parked until its own 30s timeout.
+        """
+        crash_started = asyncio.Event()
+        crash_release = asyncio.Event()
+
+        async def slow_report_crash(_h):
+            crash_started.set()
+            await crash_release.wait()
+
+        pool = ProcessPoolManager(max_workers=1)
+        pool._report_crash = slow_report_crash  # type: ignore[method-assign]
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = -9
+
+        exec_info = ExecutionInfo(
+            execution_id="exec-race-2",
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            timeout_seconds=300,
+        )
+        handle = ProcessHandle(
+            id="process-race-2",
+            process=mock_process,
+            pid=12346,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+            current_execution=exec_info,
+            result_reported=False,
+        )
+        pool.processes["process-race-2"] = handle
+
+        waiter = asyncio.create_task(pool._wait_for_slot(timeout=2.0))
+        await asyncio.sleep(0.05)
+        assert not waiter.done(), "waiter must be parked while pool is full"
+
+        health_task = asyncio.create_task(pool._check_process_health())
+        await crash_started.wait()
+
+        # Race: peer deletes the id during _report_crash's await. In real
+        # code, the peer is _handle_result which ALSO notifies on its own
+        # removal — simulate that complete behavior here. The cleanup loop
+        # must not crash; the waiter must wake from one of the notifies.
+        pool.processes.pop("process-race-2", None)
+        await pool._notify_slot_free()
+
+        crash_release.set()
+        await asyncio.wait_for(health_task, timeout=2.0)
+
+        got_slot = await asyncio.wait_for(waiter, timeout=1.0)
+        assert got_slot is True, (
+            "waiter never woke — _notify_slot_free was skipped because "
+            "cleanup aborted with KeyError"
+        )

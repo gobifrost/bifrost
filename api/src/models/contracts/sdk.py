@@ -8,7 +8,7 @@ Includes:
 All response models use `str` for UUIDs and datetime fields (JSON-friendly, matches SDK patterns).
 """
 
-from typing import TYPE_CHECKING, Any, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,11 +19,17 @@ if TYPE_CHECKING:
 # ==================== SDK FILE OPERATIONS ====================
 
 
+FILE_LOCATION_DESCRIPTION = (
+    "Storage location. Special values: workspace (default), temp, uploads. "
+    "Custom names like reports are accepted; internal prefixes _repo, _tmp, "
+    "and _apps are blocked."
+)
+
+
 class SDKFileReadRequest(BaseModel):
     """Request to read a file via SDK."""
     path: str = Field(..., description="Relative path to file")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -32,8 +38,7 @@ class SDKFileWriteRequest(BaseModel):
     """Request to write a file via SDK."""
     path: str = Field(..., description="Relative path to file")
     content: str = Field(..., description="File content (text)")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,8 +46,7 @@ class SDKFileWriteRequest(BaseModel):
 class SDKFileListRequest(BaseModel):
     """Request to list files in a directory via SDK."""
     directory: str = Field(default="", description="Directory path (relative)")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -50,8 +54,7 @@ class SDKFileListRequest(BaseModel):
 class SDKFileDeleteRequest(BaseModel):
     """Request to delete a file or directory via SDK."""
     path: str = Field(..., description="Path to file or directory")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -240,5 +243,4 @@ class ConfigData:
     def to_dict(self) -> dict[str, Any]:
         """Return underlying dict (for serialization)."""
         return self._data.copy()
-
 

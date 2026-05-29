@@ -69,6 +69,16 @@ class TestRead:
         )
         assert captured["calls"][0]["body"]["location"] == "uploads"
 
+    def test_passes_custom_location_flag(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            ["read", "q1.pdf", "--location", "reports"],
+            captured,
+            {"/api/files/read": {"content": ""}},
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["calls"][0]["body"]["location"] == "reports"
+
 
 class TestWrite:
     def test_writes_with_content_flag(self) -> None:

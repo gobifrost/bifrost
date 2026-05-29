@@ -21,11 +21,13 @@ informational metadata only — the lock itself is the FD, not the file.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import pathlib
 import sys
+import tempfile
 import threading
 from datetime import datetime, timezone
 from typing import IO, Any
@@ -46,7 +48,8 @@ _HELD_LOCK = threading.Lock()
 
 
 def _lock_path(workspace: pathlib.Path) -> pathlib.Path:
-    return workspace / ".bifrost" / _LOCK_NAME
+    digest = hashlib.sha256(str(workspace.resolve()).encode("utf-8")).hexdigest()
+    return pathlib.Path(tempfile.gettempdir()) / "bifrost" / "workspace-locks" / f"{digest}-{_LOCK_NAME}"
 
 
 def _platform_lock(fh: IO[Any]) -> None:
@@ -182,7 +185,6 @@ class WorkspaceLock:
             self._fh = None
         with _HELD_LOCK:
             _HELD.discard(str(self.path))
-
 
 
 

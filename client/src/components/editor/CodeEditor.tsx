@@ -14,7 +14,6 @@ import type * as Monaco from "monaco-editor";
 import { initializeMonaco, setCurrentFilePath } from "@/lib/monaco-setup";
 import { registerWorkflow } from "@/hooks/useWorkflows";
 import { useReloadWorkflowFile } from "@/hooks/useWorkflows";
-import { isBifrostSystemFile } from "@/lib/file-filter";
 import { ConflictDiffView } from "./ConflictDiffView";
 import { SyncDiffView } from "./SyncDiffView";
 import { IndexingOverlay } from "./IndexingOverlay";
@@ -51,9 +50,6 @@ export function CodeEditor() {
 
 	// Indexing state for blocking overlay during ID injection
 	const isIndexing = useEditorStore((state) => state.isIndexing);
-
-	// Check if current file is a read-only system file (.bifrost/)
-	const isReadOnly = openFile ? isBifrostSystemFile(openFile.path) : false;
 
 	// Diff preview state for sync UI
 	const diffPreview = useEditorStore((state) => state.diffPreview);
@@ -195,7 +191,7 @@ export function CodeEditor() {
 
 	// Manual save handler
 	const handleManualSave = useCallback(async () => {
-		if (!openFile || !unsavedChanges || isReadOnly) {
+		if (!openFile || !unsavedChanges) {
 			return;
 		}
 
@@ -233,7 +229,6 @@ export function CodeEditor() {
 		openFile,
 		fileContent,
 		unsavedChanges,
-		isReadOnly,
 		markSaved,
 		setDiagnostics,
 		activeTabIndex,
@@ -662,11 +657,7 @@ export function CodeEditor() {
 						// Code lens (for conflict resolution buttons)
 						codeLens: true,
 
-						// Read-only for system files (.bifrost/) or during indexing
-						readOnly: isReadOnly || isIndexing,
-						readOnlyMessage: isReadOnly
-							? { value: "This file is system-generated and cannot be edited." }
-							: undefined,
+						readOnly: isIndexing,
 					}}
 					loading={
 						<div className="flex h-full items-center justify-center">

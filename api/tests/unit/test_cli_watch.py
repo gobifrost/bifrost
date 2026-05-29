@@ -3,7 +3,7 @@ import pathlib
 import threading
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -289,6 +289,34 @@ def test_watch_handler_respects_gitignore(tmp_path):
 
     assert str(secret_path) not in state.pending_changes
     assert str(log_path) not in state.pending_changes
+    assert str(real_path) in state.pending_changes
+
+
+def test_watch_handler_respects_root_gitignore_for_subdirectory_watch(tmp_path):
+    """Root .gitignore patterns should apply when watching a subdirectory."""
+    (tmp_path / ".gitignore").write_text("/apps/my-app/generated/\n*.local\n")
+    app_dir = tmp_path / "apps" / "my-app"
+    app_dir.mkdir(parents=True)
+    state = _WatchState(app_dir)
+    with patch("pathlib.Path.cwd", return_value=tmp_path):
+        handler = _WatchChangeHandler(state)
+
+        generated = app_dir / "generated" / "out.py"
+        generated.parent.mkdir()
+        generated.write_text("print('generated')\n")
+
+        local_config = app_dir / "settings.local"
+        local_config.write_text("secret\n")
+
+        real_path = app_dir / "workflow.py"
+        real_path.write_text("def run(): pass\n")
+
+        handler.dispatch(_fake_event("modified", str(generated)))
+        handler.dispatch(_fake_event("modified", str(local_config)))
+        handler.dispatch(_fake_event("modified", str(real_path)))
+
+    assert str(generated) not in state.pending_changes
+    assert str(local_config) not in state.pending_changes
     assert str(real_path) in state.pending_changes
 
 

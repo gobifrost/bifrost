@@ -37,8 +37,8 @@ files_group = entity_group("files", "Read, write, list, search workspace files."
 
 
 _LOCATION_HELP = (
-    'Storage location. Reserved: "workspace" (default), "temp", "uploads". '
-    'Freeform names (e.g. "reports") are also accepted.'
+    'Storage location. Special: "workspace" (default), "temp", "uploads". '
+    'Custom names (e.g. "reports") are accepted; "_repo", "_tmp", and "_apps" are blocked.'
 )
 
 

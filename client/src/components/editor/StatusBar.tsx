@@ -8,13 +8,11 @@ import {
 	Loader2,
 	CheckCircle,
 	AlertCircle,
-	Lock,
 	Radio,
 	X,
 } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { Progress } from "@/components/ui/progress";
-import { isBifrostSystemFile } from "@/lib/file-filter";
 
 /**
  * Status bar showing file info, cursor position, and save status
@@ -154,14 +152,6 @@ export function StatusBar() {
 						{openFile && (
 							<span className="font-mono truncate">
 								{openFile.path}
-							</span>
-						)}
-
-						{/* Read-only badge for .bifrost/ system files */}
-						{openFile && isBifrostSystemFile(openFile.path) && (
-							<span className="flex items-center gap-1 rounded px-2 py-0.5 font-medium shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-								<Lock className="h-3 w-3" />
-								Read-only
 							</span>
 						)}
 

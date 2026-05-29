@@ -827,6 +827,27 @@ async def _apply_callback_to_mapping(
             captured = extracted
 
     await db.flush()
+
+    try:
+        from src.models.orm import Integration
+        from src.services.events.builtins import emit_integration_connected
+
+        integration = None
+        if provider.integration_id:
+            integration = await db.get(Integration, provider.integration_id)
+
+        await emit_integration_connected(
+            integration_id=provider.integration_id,
+            integration_name=integration.name if integration else provider.display_name,
+            organization_id=mapping.organization_id,
+            organization_name=mapping.organization.name if mapping.organization else None,
+            connection_id=mapping.id,
+            external_account_id=mapping.entity_id,
+            external_account_name=mapping.entity_name,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to emit integration.connected: {e}", exc_info=True)
+
     return captured
 
 
@@ -978,6 +999,24 @@ async def oauth_callback(
     )
 
     logger.info(f"OAuth callback completed for {log_safe(connection_name)}")
+
+    if mapping_id_from_state is None:
+        try:
+            from src.services.events.builtins import emit_integration_connected
+
+            await emit_integration_connected(
+                integration_id=provider.integration_id,
+                integration_name=provider.display_name or provider.provider_name,
+                organization_id=org_id,
+                connection_id=provider.id,
+                external_account_id=None,
+                external_account_name=provider.display_name,
+                actor_user_id=ctx.user.user_id,
+                actor_email=ctx.user.email,
+                actor_name=ctx.user.name,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to emit integration.connected: {e}", exc_info=True)
 
     # Per-mapping flow: link the freshly-stored (org-scoped) token to the mapping
     # and capture entity_id from the provider's configured source. State + org_id

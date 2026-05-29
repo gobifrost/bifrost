@@ -5,10 +5,14 @@ Provides async Python API for file operations with two storage modes:
 - local: Local filesystem (CWD, /tmp/bifrost/temp, /tmp/bifrost/uploads)
 - cloud: S3 storage (default)
 
-Location Options:
-- "workspace": Persistent workspace files (CWD in local mode, S3 bucket root in cloud mode)
+Location options:
+- "workspace": Persistent workspace files (CWD in local mode, _repo/ in cloud mode)
 - "temp": Temporary files (_tmp/ prefix in cloud, /tmp/bifrost/temp in local)
 - "uploads": Files uploaded via form file fields (uploads/ prefix in cloud, /tmp/bifrost/uploads in local)
+- Custom names like "reports" or "exports": scoped user-defined storage locations
+
+Internal bucket prefixes "_repo", "_tmp", and "_apps" are blocked as
+custom location names.
 
 Usage:
     from bifrost import files
@@ -34,8 +38,9 @@ from .client import get_client, raise_for_status_with_detail
 from ._context import resolve_scope
 
 Mode = Literal["local", "cloud"]
-# `location` is a free string. Reserved names: "workspace", "temp", "uploads".
-# Anything else is a freeform user-defined location (e.g. "reports", "exports").
+# `location` is a free string. Special names: "workspace", "temp", "uploads".
+# Anything else is a freeform user-defined location (e.g. "reports", "exports"),
+# except blocked internal prefixes such as "_repo", "_tmp", and "_apps".
 
 
 class files:
@@ -61,8 +66,9 @@ class files:
 
         Args:
             path: File path relative to location root
-            location: Storage location. Reserved: "workspace", "temp", "uploads".
-                Freeform names (e.g. "reports") are also allowed.
+            location: Storage location. Special: "workspace", "temp", "uploads".
+                Freeform names (e.g. "reports") are also allowed; internal
+                prefixes "_repo", "_tmp", and "_apps" are blocked.
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope. Defaults to the current execution's org.
                 Provider orgs may pass an explicit scope to read from another org.
@@ -93,7 +99,7 @@ class files:
 
         Args:
             path: File path relative to location root
-            location: Storage location (reserved or freeform)
+            location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
@@ -121,7 +127,7 @@ class files:
         Args:
             path: File path relative to location root
             content: Text content to write
-            location: Storage location (reserved or freeform)
+            location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
@@ -147,7 +153,7 @@ class files:
         Args:
             path: File path relative to location root
             content: Binary content to write
-            location: Storage location (reserved or freeform)
+            location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
@@ -173,7 +179,7 @@ class files:
 
         Args:
             directory: Directory path relative to location root (default: root)
-            location: Storage location (workspace or temp)
+            location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
 
         Returns:
@@ -209,7 +215,7 @@ class files:
 
         Args:
             path: File path relative to location root
-            location: Storage location (reserved or freeform)
+            location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
 
@@ -237,7 +243,7 @@ class files:
 
         Args:
             path: File path relative to location root
-            location: Storage location (reserved or freeform)
+            location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """

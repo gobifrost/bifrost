@@ -305,6 +305,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         workflow_name = pending.get("workflow_name", "unknown")
         org_id = pending.get("org_id")
         user_id = pending.get("user_id")
+        user_email = pending.get("user_email")
         user_name = pending.get("user_name")
         is_sync = pending.get("sync", False)
 
@@ -408,6 +409,22 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 "duration_ms": duration_ms,
                 "execution_model": "process",
             },
+        )
+
+        from src.services.events.builtins import emit_workflow_failure_events
+
+        await emit_workflow_failure_events(
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            execution_id=execution_id,
+            organization_id=org_id,
+            user_id=user_id,
+            user_email=user_email,
+            user_name=user_name,
+            error_type=error_type,
+            error_message=error,
+            status=status.value,
+            trigger_event=pending.get("event"),
         )
 
     async def process_message(self, message_data: dict[str, Any]) -> None:

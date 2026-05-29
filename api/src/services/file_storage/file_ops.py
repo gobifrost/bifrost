@@ -13,8 +13,6 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import HTTPException
-
 from src.config import Settings
 from src.models import Workflow
 from src.models.orm.file_index import FileIndex
@@ -155,13 +153,6 @@ class FileOperationsService:
         Raises:
             ValueError: If path is excluded (system files, caches, etc.)
         """
-        # .bifrost/ files are generated artifacts, not user-editable
-        if path.startswith(".bifrost/") or path == ".bifrost":
-            raise HTTPException(
-                status_code=403,
-                detail=".bifrost/ files are system-generated and cannot be edited directly",
-            )
-
         # Check if path is excluded (system files, caches, metadata, etc.)
         from src.services.editor.file_filter import is_excluded_path
         if is_excluded_path(path):
@@ -326,12 +317,6 @@ class FileOperationsService:
 
         Pattern: S3 first (source of truth), then conditional side effects.
         """
-        if path.startswith(".bifrost/") or path == ".bifrost":
-            raise HTTPException(
-                status_code=403,
-                detail=".bifrost/ files are system-generated and cannot be edited directly",
-            )
-
         # === S3: Source of truth (must succeed) ===
         await self._delete_from_s3(path)
 

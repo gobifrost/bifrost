@@ -28,13 +28,16 @@ from bifrost import UserError, WorkflowError, ValidationError
 
 ### File Locations
 
-The `files` module operates on three storage locations:
+The `files` module accepts special locations plus custom, user-defined
+locations. Custom location names must match `^[a-z0-9][a-z0-9-]*$`; internal
+prefixes `_repo`, `_tmp`, and `_apps` are blocked.
 
 | Location | Usage | Example |
 |----------|-------|---------|
 | `"workspace"` (default) | General-purpose file storage | `files.read("data/report.csv")` |
 | `"temp"` | Temporary files scoped to a single execution | `files.write("scratch.txt", content, location="temp")` |
 | `"uploads"` | Files uploaded via form file fields (read-only) | `files.read(path, location="uploads")` |
+| custom, e.g. `"reports"` | Scoped user-defined storage | `files.write("q1.pdf", pdf_bytes, location="reports")` |
 
 When a form has a `file` field, the workflow receives the S3 path as a string (or list if `multiple: true`). Read with `location="uploads"`:
 

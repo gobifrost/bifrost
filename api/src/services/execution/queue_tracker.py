@@ -12,27 +12,29 @@ import time
 
 import redis.asyncio as aioredis
 
+from src.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 # Redis key for the queue sorted set
 QUEUE_KEY = "bifrost:queue:pending"
 
-# Module-level redis client
-_redis: aioredis.Redis | None = None
-
 
 async def _get_redis() -> aioredis.Redis:
-    """Get Redis client, creating if needed."""
-    global _redis
-    if _redis is None:
-        from src.config import get_settings
-        settings = get_settings()
-        _redis = aioredis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_timeout=5.0,
-        )
-    return _redis
+    """Create a Redis client scoped to the caller's event loop."""
+    settings = get_settings()
+    return aioredis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_timeout=5.0,
+        socket_connect_timeout=5.0,
+    )
+
+
+async def _close_redis(r: aioredis.Redis) -> None:
+    close = getattr(r, "aclose", None)
+    if close is not None:
+        await close()
 
 
 async def add_to_queue(execution_id: str) -> int:
@@ -46,14 +48,17 @@ async def add_to_queue(execution_id: str) -> int:
         Position in queue (1-based)
     """
     r = await _get_redis()
-    timestamp = time.time()
+    try:
+        timestamp = time.time()
 
-    # Add to sorted set with timestamp as score
-    await r.zadd(QUEUE_KEY, {execution_id: timestamp})
+        # Add to sorted set with timestamp as score
+        await r.zadd(QUEUE_KEY, {execution_id: timestamp})
 
-    # Get position (0-based rank + 1 for 1-based position)
-    rank = await r.zrank(QUEUE_KEY, execution_id)
-    position = (rank + 1) if rank is not None else 1
+        # Get position (0-based rank + 1 for 1-based position)
+        rank = await r.zrank(QUEUE_KEY, execution_id)
+        position = (rank + 1) if rank is not None else 1
+    finally:
+        await _close_redis(r)
 
     logger.debug(f"Added execution {execution_id} to queue at position {position}")
 
@@ -73,9 +78,11 @@ async def remove_from_queue(execution_id: str) -> None:
         execution_id: Execution ID to remove
     """
     r = await _get_redis()
-
-    # Remove from sorted set
-    removed = await r.zrem(QUEUE_KEY, execution_id)
+    try:
+        # Remove from sorted set
+        removed = await r.zrem(QUEUE_KEY, execution_id)
+    finally:
+        await _close_redis(r)
 
     if removed:
         logger.debug(f"Removed execution {execution_id} from queue")
@@ -94,7 +101,10 @@ async def get_queue_position(execution_id: str) -> int | None:
         Position (1-based) or None if not in queue
     """
     r = await _get_redis()
-    rank = await r.zrank(QUEUE_KEY, execution_id)
+    try:
+        rank = await r.zrank(QUEUE_KEY, execution_id)
+    finally:
+        await _close_redis(r)
 
     if rank is not None:
         return rank + 1  # Convert 0-based to 1-based
@@ -109,7 +119,10 @@ async def get_queue_depth() -> int:
         Queue depth (number of pending executions)
     """
     r = await _get_redis()
-    return await r.zcard(QUEUE_KEY)
+    try:
+        return await r.zcard(QUEUE_KEY)
+    finally:
+        await _close_redis(r)
 
 
 async def get_all_queue_positions() -> list[tuple[str, int]]:
@@ -120,9 +133,11 @@ async def get_all_queue_positions() -> list[tuple[str, int]]:
         List of (execution_id, position) tuples, ordered by position
     """
     r = await _get_redis()
-
-    # Get all members in order (lowest score = earliest = position 1)
-    members = await r.zrange(QUEUE_KEY, 0, -1)
+    try:
+        # Get all members in order (lowest score = earliest = position 1)
+        members = await r.zrange(QUEUE_KEY, 0, -1)
+    finally:
+        await _close_redis(r)
 
     # Return as list of (execution_id, 1-based position) tuples
     return [(member, idx + 1) for idx, member in enumerate(members)]
@@ -168,10 +183,13 @@ async def cleanup_stale_entries(max_age_seconds: int = 600) -> int:
         Number of entries removed
     """
     r = await _get_redis()
-    cutoff = time.time() - max_age_seconds
+    try:
+        cutoff = time.time() - max_age_seconds
 
-    # Remove entries with score (timestamp) less than cutoff
-    removed = await r.zremrangebyscore(QUEUE_KEY, "-inf", cutoff)
+        # Remove entries with score (timestamp) less than cutoff
+        removed = await r.zremrangebyscore(QUEUE_KEY, "-inf", cutoff)
+    finally:
+        await _close_redis(r)
 
     if removed:
         logger.info(f"Cleaned up {removed} stale queue entries")
@@ -189,28 +207,37 @@ async def get_all_pending_executions() -> list[dict]:
         organization_name, and queued_at for each pending execution.
     """
     r = await _get_redis()
+    try:
+        # Get execution IDs from sorted set
+        exec_ids = await r.zrange(QUEUE_KEY, 0, -1)
 
-    # Get execution IDs from sorted set
-    exec_ids = await r.zrange(QUEUE_KEY, 0, -1)
-
-    items = []
-    for exec_id in exec_ids:
-        # Get execution context from Redis (stored when queued)
-        context = await r.get(f"bifrost:exec:{exec_id}:context")
-        if context:
-            try:
-                data = json.loads(context)
-                items.append({
-                    "execution_id": exec_id,
-                    "workflow_id": data.get("workflow_id"),
-                    "workflow_name": data.get("name"),
-                    "organization_name": data.get("organization", {}).get("name")
-                    if isinstance(data.get("organization"), dict)
-                    else None,
-                    "queued_at": data.get("queued_at"),
-                })
-            except json.JSONDecodeError:
-                # Invalid context, include execution_id only
+        items = []
+        for exec_id in exec_ids:
+            # Get execution context from Redis (stored when queued)
+            context = await r.get(f"bifrost:exec:{exec_id}:context")
+            if context:
+                try:
+                    data = json.loads(context)
+                    items.append({
+                        "execution_id": exec_id,
+                        "workflow_id": data.get("workflow_id"),
+                        "workflow_name": data.get("name"),
+                        "organization_name": data.get("organization", {}).get("name")
+                        if isinstance(data.get("organization"), dict)
+                        else None,
+                        "queued_at": data.get("queued_at"),
+                    })
+                except json.JSONDecodeError:
+                    # Invalid context, include execution_id only
+                    items.append({
+                        "execution_id": exec_id,
+                        "workflow_id": None,
+                        "workflow_name": None,
+                        "organization_name": None,
+                        "queued_at": None,
+                    })
+            else:
+                # No context found, include execution_id only
                 items.append({
                     "execution_id": exec_id,
                     "workflow_id": None,
@@ -218,14 +245,7 @@ async def get_all_pending_executions() -> list[dict]:
                     "organization_name": None,
                     "queued_at": None,
                 })
-        else:
-            # No context found, include execution_id only
-            items.append({
-                "execution_id": exec_id,
-                "workflow_id": None,
-                "workflow_name": None,
-                "organization_name": None,
-                "queued_at": None,
-            })
+    finally:
+        await _close_redis(r)
 
     return items

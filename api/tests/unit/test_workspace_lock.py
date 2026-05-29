@@ -12,7 +12,7 @@ Properties under test:
   the user can find and stop them.
 - Releasing (or letting the FD go out of scope) lets a fresh acquire
   succeed.
-- The lock file lives under `.bifrost/.session.lock`. We do not test
+- The lock file lives outside the workspace. We do not test
   `flock` semantics on NFS / Windows here — the wrappers in
   `_workspace_lock.py` rely on platform-native primitives that the
   kernel manages.
@@ -37,7 +37,7 @@ from bifrost._workspace_lock import WorkspaceLock, WorkspaceLockError
 
 
 def _make_workspace(tmp_path: pathlib.Path) -> pathlib.Path:
-    (tmp_path / ".bifrost").mkdir(parents=True, exist_ok=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -67,19 +67,20 @@ def test_release_allows_reacquire(tmp_path: pathlib.Path) -> None:
         pass
 
 
-def test_lock_file_is_under_dot_bifrost(tmp_path: pathlib.Path) -> None:
+def test_lock_file_is_outside_workspace(tmp_path: pathlib.Path) -> None:
     ws = _make_workspace(tmp_path)
     with WorkspaceLock(ws, "watch"):
-        assert (ws / ".bifrost" / ".session.lock").exists()
+        assert not (ws / ".bifrost").exists()
 
 
-def test_acquire_creates_dot_bifrost_if_missing(tmp_path: pathlib.Path) -> None:
-    """The lock helper should mkdir(parents=True, exist_ok=True) so callers
-    don't need to bootstrap the dir themselves."""
-    # Note: in real callers the workspace marker is checked first; this is
-    # purely about the helper's robustness.
+def test_acquire_does_not_create_dot_bifrost(tmp_path: pathlib.Path) -> None:
+    """The lock helper must not bootstrap `.bifrost/`.
+
+    `.bifrost/` is import/export-only; sync command coordination state lives
+    outside the workspace.
+    """
     with WorkspaceLock(tmp_path, "watch"):
-        assert (tmp_path / ".bifrost").is_dir()
+        assert not (tmp_path / ".bifrost").exists()
 
 
 def test_holder_metadata_records_command(tmp_path: pathlib.Path) -> None:
@@ -88,7 +89,7 @@ def test_holder_metadata_records_command(tmp_path: pathlib.Path) -> None:
     import json
     ws = _make_workspace(tmp_path)
     with WorkspaceLock(ws, "watch"):
-        meta = json.loads((ws / ".bifrost" / ".session.lock").read_text())
+        meta = json.loads(_workspace_lock._lock_path(ws).read_text())
         assert meta["command"] == "watch"
         assert meta["pid"] == os.getpid()
         assert "started_at" in meta

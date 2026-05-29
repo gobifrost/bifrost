@@ -3,7 +3,7 @@ CLI contract models for Bifrost (sessions, file operations, config, oauth).
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,11 +112,17 @@ class CLISessionResultRequest(BaseModel):
 # ==================== CLI FILE OPERATIONS ====================
 
 
+FILE_LOCATION_DESCRIPTION = (
+    "Storage location. Special values: workspace (default), temp, uploads. "
+    "Custom names like reports are accepted; internal prefixes _repo, _tmp, "
+    "and _apps are blocked."
+)
+
+
 class CLIFileReadRequest(BaseModel):
     """Request to read a file via CLI."""
     path: str = Field(..., description="Relative path to file")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,8 +131,7 @@ class CLIFileWriteRequest(BaseModel):
     """Request to write a file via CLI."""
     path: str = Field(..., description="Relative path to file")
     content: str = Field(..., description="File content (text)")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -134,8 +139,7 @@ class CLIFileWriteRequest(BaseModel):
 class CLIFileListRequest(BaseModel):
     """Request to list files in a directory via CLI."""
     directory: str = Field(default="", description="Directory path (relative)")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -143,8 +147,7 @@ class CLIFileListRequest(BaseModel):
 class CLIFileDeleteRequest(BaseModel):
     """Request to delete a file or directory via CLI."""
     path: str = Field(..., description="Path to file or directory")
-    location: Literal["temp", "workspace"] = Field(
-        default="workspace", description="Storage location")
+    location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -484,5 +487,4 @@ class SDKTableInfo(BaseModel):
     updated_at: str = Field(..., description="Last update timestamp (ISO format)")
 
     model_config = ConfigDict(from_attributes=True)
-
 

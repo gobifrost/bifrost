@@ -47,7 +47,7 @@ Then use `Grep/Read` on `/tmp/bifrost-docs/llms.txt` whenever you need reference
 
 ## Step 2: Detect Development Mode
 
-**Auto-detect:** If a `.bifrost/` directory exists in the workspace, use **SDK-First**. Otherwise, **MCP-Only**. Only ask the user if ambiguous.
+**Auto-detect:** If `BIFROST_HAS_SOURCE` is true or `BIFROST_SOURCE_PATH` points at a source workspace, use **SDK-First**. Otherwise, use **MCP-Only**. Do not use `.bifrost/` as a mode marker; `.bifrost/*.yaml` is import/export-only and may be absent from an SDK-first workspace. Only ask the user if ambiguous.
 
 ## SDK-First Mode
 

@@ -101,13 +101,3 @@ export function isExcludedPath(path: string): boolean {
 export function isAllowedPath(path: string): boolean {
 	return !isExcludedPath(path);
 }
-
-/**
- * Check if a path is a system-generated .bifrost/ file (read-only).
- *
- * @param path - File path to check (relative)
- * @returns True if the path is under .bifrost/ and should be read-only
- */
-export function isBifrostSystemFile(path: string): boolean {
-	return path === ".bifrost" || path.startsWith(".bifrost/");
-}

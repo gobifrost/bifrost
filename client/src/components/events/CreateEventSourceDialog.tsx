@@ -35,6 +35,7 @@ import {
 } from "@/services/events";
 import { useIntegrations } from "@/services/integrations";
 import { DynamicConfigForm, type ConfigSchema } from "./DynamicConfigForm";
+import { EventTopicReferencePanel } from "./EventTopicReferencePanel";
 import { authFetch } from "@/lib/api-client";
 
 interface CronValidationResult {
@@ -51,9 +52,12 @@ const TOPIC_MAX_LEN = 100;
 
 function validateTopicClient(topic: string): string | null {
 	if (!topic) return "Topic is required";
-	if (topic.length > TOPIC_MAX_LEN) return `Topic must be at most ${TOPIC_MAX_LEN} characters`;
-	if (!TOPIC_REGEX.test(topic)) return "Topic must match ^[a-z0-9_.]+$ (lowercase, digits, dots, underscores)";
-	if (!topic.includes(".")) return "Topic must contain at least one dot (e.g. 'user.invited')";
+	if (topic.length > TOPIC_MAX_LEN)
+		return `Topic must be at most ${TOPIC_MAX_LEN} characters`;
+	if (!TOPIC_REGEX.test(topic))
+		return "Topic must match ^[a-z0-9_.]+$ (lowercase, digits, dots, underscores)";
+	if (!topic.includes("."))
+		return "Topic must contain at least one dot (e.g. 'user.invited')";
 	return null;
 }
 
@@ -125,7 +129,9 @@ function CreateEventSourceDialogContent({
 	];
 
 	const effectiveTopic =
-		topicPickerValue === CUSTOM_TOPIC_VALUE ? customTopic : topicPickerValue;
+		topicPickerValue === CUSTOM_TOPIC_VALUE
+			? customTopic
+			: topicPickerValue;
 
 	// Dynamic config for adapters with config_schema
 	const [webhookConfig, setWebhookConfig] = useState<Record<string, unknown>>(
@@ -133,7 +139,9 @@ function CreateEventSourceDialogContent({
 	);
 
 	// Webhook rate-limit state
-	const [rateLimitPerMinute, setRateLimitPerMinute] = useState<number | null>(60);
+	const [rateLimitPerMinute, setRateLimitPerMinute] = useState<number | null>(
+		60,
+	);
 	const [rateLimitWindowSeconds, setRateLimitWindowSeconds] = useState(60);
 	const [rateLimitEnabled, setRateLimitEnabled] = useState(true);
 
@@ -246,7 +254,9 @@ function CreateEventSourceDialogContent({
 
 		if (sourceType === "schedule") {
 			if (!cronExpression.trim()) {
-				newErrors.push("Cron expression is required for schedule sources");
+				newErrors.push(
+					"Cron expression is required for schedule sources",
+				);
 			} else if (cronValidation && !cronValidation.valid) {
 				newErrors.push(
 					"Cron expression is invalid: " +
@@ -274,7 +284,8 @@ function CreateEventSourceDialogContent({
 					name: resolvedName,
 					source_type: sourceType,
 					organization_id: organizationId || undefined,
-					event_type: sourceType === "topic" ? effectiveTopic : undefined,
+					event_type:
+						sourceType === "topic" ? effectiveTopic : undefined,
 					webhook:
 						sourceType === "webhook"
 							? {
@@ -282,7 +293,8 @@ function CreateEventSourceDialogContent({
 									integration_id: integrationId || undefined,
 									config: webhookConfig,
 									rate_limit_per_minute: rateLimitPerMinute,
-									rate_limit_window_seconds: rateLimitWindowSeconds,
+									rate_limit_window_seconds:
+										rateLimitWindowSeconds,
 									rate_limit_enabled: rateLimitEnabled,
 								}
 							: undefined,
@@ -310,7 +322,10 @@ function CreateEventSourceDialogContent({
 	return (
 		<form onSubmit={handleSubmit}>
 			<DialogHeader>
-				<DialogTitle>Create Event Source</DialogTitle>
+				<div className="flex items-center gap-2">
+					<DialogTitle>Create Event Source</DialogTitle>
+					<EventTopicReferencePanel topics={curatedTopics} />
+				</div>
 				<DialogDescription>
 					Create a new event source to receive webhooks, run on a
 					schedule, or trigger workflows.
@@ -319,7 +334,11 @@ function CreateEventSourceDialogContent({
 
 			<div className="space-y-4 py-4">
 				{errors.length > 0 && (
-					<Alert variant="destructive" role="alert" aria-live="polite">
+					<Alert
+						variant="destructive"
+						role="alert"
+						aria-live="polite"
+					>
 						<AlertCircle className="h-4 w-4" />
 						<AlertDescription>
 							<ul className="list-disc list-inside">
@@ -391,9 +410,11 @@ function CreateEventSourceDialogContent({
 				{sourceType === "topic" && (
 					<>
 						<div className="border-t pt-4">
-							<h4 className="text-sm font-medium mb-3">
-								Topic Configuration
-							</h4>
+							<div className="mb-3">
+								<h4 className="text-sm font-medium">
+									Topic Configuration
+								</h4>
+							</div>
 						</div>
 
 						<div className="space-y-2">
@@ -403,7 +424,10 @@ function CreateEventSourceDialogContent({
 								onValueChange={(value) => {
 									setTopicPickerValue(value);
 									setTopicError(null);
-									if (value !== CUSTOM_TOPIC_VALUE && !name.trim()) {
+									if (
+										value !== CUSTOM_TOPIC_VALUE &&
+										!name.trim()
+									) {
 										setName(topicToName(value));
 									}
 								}}
@@ -415,9 +439,14 @@ function CreateEventSourceDialogContent({
 									{allKnownTopics.length > 0 && (
 										<>
 											<SelectGroup>
-												<SelectLabel>Known Topics</SelectLabel>
+												<SelectLabel>
+													Known Topics
+												</SelectLabel>
 												{allKnownTopics.map((topic) => (
-													<SelectItem key={topic} value={topic}>
+													<SelectItem
+														key={topic}
+														value={topic}
+													>
 														{topic}
 													</SelectItem>
 												))}
@@ -436,7 +465,9 @@ function CreateEventSourceDialogContent({
 									value={customTopic}
 									onChange={(e) => {
 										setCustomTopic(e.target.value);
-										setTopicError(validateTopicClient(e.target.value));
+										setTopicError(
+											validateTopicClient(e.target.value),
+										);
 									}}
 									placeholder="e.g. acme.deal_won"
 									className="font-mono"
@@ -444,10 +475,14 @@ function CreateEventSourceDialogContent({
 								/>
 							)}
 							{topicError && (
-								<p className="text-xs text-destructive">{topicError}</p>
+								<p className="text-xs text-destructive">
+									{topicError}
+								</p>
 							)}
 							<p className="text-xs text-muted-foreground">
-								Lowercase, dot-separated (e.g. <code>user.invited</code>). Must contain at least one dot.
+								Lowercase, dot-separated (e.g.{" "}
+								<code>user.invited</code>). Must contain at
+								least one dot.
 							</p>
 						</div>
 					</>
@@ -545,7 +580,9 @@ function CreateEventSourceDialogContent({
 						</div>
 
 						<div className="space-y-2">
-							<Label htmlFor="rate-limit-per-minute">Max events</Label>
+							<Label htmlFor="rate-limit-per-minute">
+								Max events
+							</Label>
 							<Input
 								id="rate-limit-per-minute"
 								type="number"
@@ -575,12 +612,14 @@ function CreateEventSourceDialogContent({
 								min={1}
 								value={rateLimitWindowSeconds}
 								onChange={(e) =>
-									setRateLimitWindowSeconds(Number(e.target.value))
+									setRateLimitWindowSeconds(
+										Number(e.target.value),
+									)
 								}
 							/>
 							<p className="text-xs text-muted-foreground">
-								Window duration. Default 60 means the limit above
-								applies per minute.
+								Window duration. Default 60 means the limit
+								above applies per minute.
 							</p>
 						</div>
 
@@ -590,7 +629,8 @@ function CreateEventSourceDialogContent({
 									Enabled
 								</Label>
 								<p className="text-xs text-muted-foreground">
-									Disable to bypass rate limiting for this source.
+									Disable to bypass rate limiting for this
+									source.
 								</p>
 							</div>
 							<Switch
@@ -656,7 +696,9 @@ function CreateEventSourceDialogContent({
 									<Alert className="bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-800">
 										<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
 										<AlertDescription className="text-green-800 dark:text-green-200">
-											{displayCronValidation.human_readable}
+											{
+												displayCronValidation.human_readable
+											}
 										</AlertDescription>
 									</Alert>
 								) : (
@@ -679,7 +721,8 @@ function CreateEventSourceDialogContent({
 								)}
 
 								{displayCronValidation.next_runs &&
-									displayCronValidation.next_runs.length > 0 && (
+									displayCronValidation.next_runs.length >
+										0 && (
 										<div>
 											<h4 className="text-sm font-semibold mb-1">
 												Next runs:
@@ -706,8 +749,7 @@ function CreateEventSourceDialogContent({
 																	{formatDistanceToNow(
 																		date,
 																		{
-																			addSuffix:
-																				true,
+																			addSuffix: true,
 																		},
 																	)}
 																	)

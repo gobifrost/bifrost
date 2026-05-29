@@ -823,7 +823,9 @@ class ProcessPoolManager:
 
                 # Remove from pool — one-shot workers don't get replaced;
                 # the next execution's route_execution will fork on demand.
-                del self.processes[handle.id]
+                # pop() not del: a peer (_handle_result) may have removed it
+                # during the _kill_process / _report_timeout awaits above.
+                self.processes.pop(handle.id, None)
                 await self._notify_slot_free()
 
     async def _kill_process(self, handle: ProcessHandle) -> None:
@@ -1076,8 +1078,10 @@ class ProcessPoolManager:
                 # Report cancellation
                 await self._report_cancellation(handle)
 
-                # Remove from pool — one-shot worker, no replacement
-                del self.processes[handle.id]
+                # Remove from pool — one-shot worker, no replacement.
+                # pop() not del: a peer (_handle_result) may have removed it
+                # during the _kill_process / _report_cancellation awaits.
+                self.processes.pop(handle.id, None)
                 await self._notify_slot_free()
 
                 return
@@ -1125,7 +1129,12 @@ class ProcessPoolManager:
         """
         to_remove: list[str] = []
 
-        for process_id, handle in self.processes.items():
+        # Snapshot to a list — items() iterator is unsafe across the awaits
+        # below (peer coroutines like _handle_result mutate self.processes).
+        for process_id, handle in list(self.processes.items()):
+            # Peer may have already cleaned this id during a prior await.
+            if process_id not in self.processes:
+                continue
             if not handle.is_alive and handle.state != ProcessState.KILLED:
                 # Case A: unexpected crash
                 logger.warning(
@@ -1159,10 +1168,17 @@ class ProcessPoolManager:
 
         # Remove crashed/orphaned processes. One-shot workers don't get
         # replaced — the next execution's route_execution will fork.
+        # Use pop() not del because a peer (e.g. _handle_result) may have
+        # already removed the id during one of the awaits above. We still
+        # notify slot waiters if anything was removed here, since the
+        # peer-delete path also notifies and double-notify is harmless.
         if to_remove:
+            removed_any = False
             for process_id in to_remove:
-                del self.processes[process_id]
-            await self._notify_slot_free()
+                if self.processes.pop(process_id, None) is not None:
+                    removed_any = True
+            if removed_any:
+                await self._notify_slot_free()
 
     async def _report_orphan(self, handle: ProcessHandle) -> None:
         """
@@ -1271,8 +1287,8 @@ class ProcessPoolManager:
 
         # Remove the handle (frees a slot under max_workers) and wake any
         # waiters in route_execution that were blocked on a free slot.
-        if handle.id in self.processes:
-            del self.processes[handle.id]
+        # pop() not check-then-del: race-safe against concurrent cleaners.
+        self.processes.pop(handle.id, None)
         await self._notify_slot_free()
 
         # Forward result to callback
