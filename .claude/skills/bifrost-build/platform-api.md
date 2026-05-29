@@ -451,6 +451,8 @@ useWorkflowMutation<T = unknown>(workflowId: string): {
   execute: (params?: Record<string, unknown>) => Promise<T>;
   isLoading: boolean;
   isError: boolean;
+  errorMessage: string | null;
+  /** @deprecated use errorMessage */
   error: string | null;
   data: T | null;
   logs: StreamingLog[];
@@ -460,7 +462,9 @@ useWorkflowMutation<T = unknown>(workflowId: string): {
 }
 ```
 
-Imperative workflow execution. Does nothing until `execute()` is called. Every call is independent (concurrent calls don't interfere). `execute()` resolves with the workflow result or rejects on failure / timeout (5min).
+Imperative workflow execution. Use it for click/submit actions: save, approve, delete, sync, generate, send. It does nothing until `execute()` is called. `execute()` resolves with the final workflow result or rejects on failure / timeout (5min); it does **not** return the execution ID.
+
+`executionId` is reactive hook state. It becomes non-null as soon as the platform returns `execution_id` from `POST /api/workflows/execute`, before the workflow result resolves. If you need to redirect or show an execution link, watch `executionId` with `useEffect`. The hook state is latest-execution state, not per-call state; avoid concurrent `execute()` calls from one hook if the UI needs separate state for each run.
 
 ```tsx
 import { useWorkflowMutation, Button, toast } from "bifrost";
@@ -481,6 +485,30 @@ export default function SaveButton({ client }: { client: any }) {
 }
 ```
 
+```tsx
+import { useEffect, useState, useWorkflowMutation, useNavigate, Button } from "bifrost";
+
+const WF_START_REPORT = "uuid-here";
+
+export default function StartReportButton() {
+  const navigate = useNavigate();
+  const [shouldRedirect, setShouldRedirect] = useState(false);
+  const { execute, executionId, isLoading } = useWorkflowMutation(WF_START_REPORT);
+
+  useEffect(() => {
+    if (!shouldRedirect || !executionId) return;
+    navigate(`/executions/${executionId}`);
+  }, [shouldRedirect, executionId, navigate]);
+
+  function start() {
+    setShouldRedirect(true);
+    execute({ reportType: "monthly" }).catch(() => setShouldRedirect(false));
+  }
+
+  return <Button onClick={start} disabled={isLoading}>Start report</Button>;
+}
+```
+
 ### useWorkflowQuery
 
 Signature:
@@ -493,6 +521,8 @@ useWorkflowQuery<T = unknown>(
   data: T | null;
   isLoading: boolean;
   isError: boolean;
+  errorMessage: string | null;
+  /** @deprecated use errorMessage */
   error: string | null;
   logs: StreamingLog[];
   refetch: () => Promise<T>;
@@ -501,7 +531,9 @@ useWorkflowQuery<T = unknown>(
 }
 ```
 
-Declarative fetching. Executes on mount and re-executes when `params` change (JSON-stable shallow compare). Pass `{ enabled: false }` to gate execution.
+Declarative workflow execution for page data. Use it when rendering the page should run the workflow: list pages, detail pages, dashboards, and reports. It executes on mount and re-executes when `params` change (`JSON.stringify(params ?? {})`, so object key order matters). Pass `{ enabled: false }` to gate execution.
+
+`useWorkflowQuery` wraps `useWorkflowMutation`, so `executionId`, `status`, and `logs` behave the same way: `executionId` starts as `null`, becomes non-null after the execution is created, and stays as the latest execution ID for this hook. Use `useEffect` if you need to react when it appears.
 
 ```tsx
 import { useWorkflowQuery, Alert, AlertDescription } from "bifrost";
@@ -509,9 +541,9 @@ import { useWorkflowQuery, Alert, AlertDescription } from "bifrost";
 const WF_LIST_CLIENTS = "uuid-here";
 
 export default function Clients() {
-  const { data, isLoading, isError, error, refetch } = useWorkflowQuery<{ items: any[] }>(WF_LIST_CLIENTS);
+  const { data, isLoading, isError, errorMessage, refetch } = useWorkflowQuery<{ items: any[] }>(WF_LIST_CLIENTS);
   if (isLoading) return <div>Loading…</div>;
-  if (isError) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
+  if (isError) return <Alert variant="destructive"><AlertDescription>{errorMessage}</AlertDescription></Alert>;
   return <ul>{data?.items?.map((c) => <li key={c.id}>{c.name}</li>)}</ul>;
 }
 ```
@@ -1432,7 +1464,7 @@ await tables.insert("clients", [
 
 // Live query — preferred React surface
 const { rows, loading, error } = useTable("clients", {
-  where: { eq: [{ row: "status" }, "active"] },
+  where: { status: "active" },
 });
 ```
 
@@ -1465,12 +1497,18 @@ The `where` filter uses the **dict-shorthand DSL** — same shape the Python SDK
 ```tsx
 useTable("notes",    { where: { client_id: clientId } });
 useTable("invoices", { where: { amount: { gte: 100, lt: 1000 } } });
-useTable("clients",  { where: { name: { contains: "acme" } } });
+useTable("clients",  { where: { name: "Acme" } });
 useTable("tickets",  { where: { status: { in: ["open", "pending"] } } });
 useTable("tasks",    { where: { deleted_at: { is_null: true } } });
 ```
 
-Operators: `eq`, `neq` / `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `is_null`, `has_key`, `contains`, `starts_with`, `ends_with`. The last four are query-only (no policy `Expr` equivalent) — using them in `useTable.where` raises a clear error via `error`. For those, use `tables.query` for one-shot reads or filter client-side.
+Live `useTable.where` supports: equality shorthand, `eq`, `neq` / `ne`, `gt`, `gte`, `lt`, `lte`, `in`, and `is_null`. Query-only operators `contains`, `starts_with`, `ends_with`, and `has_key` work with `tables.query` but cannot be represented as the live subscription policy `Expr`; using them in `useTable.where` raises a clear error via `error`.
+
+```tsx
+const matches = await tables.query("clients", {
+  where: { name: { contains: "acme" } },
+});
+```
 
 ```tsx
 import { useTable } from "bifrost";
@@ -1542,4 +1580,3 @@ The native `WeakSet` constructor (`globalThis.WeakSet`). Re-asserted for symmetr
 ### Date
 
 The native `Date` constructor (`globalThis.Date`). Lucide ships a `Calendar`-adjacent icon set — re-asserted to keep `new Date()` resolving to the constructor.
-

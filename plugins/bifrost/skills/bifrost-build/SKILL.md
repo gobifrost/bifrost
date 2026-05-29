@@ -333,7 +333,7 @@ Before writing any app code, design what you're building.
 
 1. **Every `<PascalCase>` tag and identifier needs an explicit import.** There is no auto-injection. See [import-patterns.md](import-patterns.md) for which name comes from which source.
 2. **Root layout:** `_layout.tsx` uses `<Outlet />` from `"bifrost"` (or `"react-router-dom"`) — NOT `{children}`.
-3. **Workflow hooks:** Always use UUIDs, never names — `useWorkflowQuery("uuid-here")`. Resolve UUIDs with `bifrost workflows list --json` or `bifrost workflows get <ref> --json`.
+3. **Workflow hooks:** Always use UUIDs, never names — `useWorkflowQuery("uuid-here")`. Resolve UUIDs with `bifrost workflows list --json` or `bifrost workflows get <ref> --json`. Use `useWorkflowQuery` for page-load / param-driven data. Use `useWorkflowMutation` for click/submit actions. `execute()` resolves with the final result, not the execution ID; read `executionId` from hook state and react to it in `useEffect` if you need to redirect to `/executions/{executionId}`.
 4. **Fixed-height container:** Your app renders in a fixed-height box — manage your own scrolling (see [app-patterns.md](app-patterns.md) "Custom components" for layout patterns).
 5. **Styling:** Tailwind v4 with the full feature set — arbitrary values (`bg-[color:var(--x)]`, `lg:grid-cols-[1fr_360px]`), `@apply` and `@layer components` in `styles.css`, optional per-app `tailwind.config.{ts,js,mjs,cjs}` for custom theme tokens. Dark mode via `.dark` selector. See [app-patterns.md](app-patterns.md) §10.
 6. **Dependencies:** Declare npm packages with `bifrost apps create --deps`, `bifrost apps update <ref> --deps`, or `bifrost apps set-deps <ref> --deps` (max 20, loaded from esm.sh at runtime — no `package.json` required at runtime, though `--deps @package.json` works for one-shot import).
@@ -347,11 +347,15 @@ These patterns are required for every data-fetching page. Full code examples in 
 - Handle `isLoading` / `isError` on every `useWorkflowQuery`.
 - Null-safe access: `data?.items?.map(...)`, never `data.items.map(...)`.
 - Every `useWorkflowMutation` must handle errors (toast + stay on page).
+- Prefer `errorMessage` over deprecated `error` on workflow hooks.
+- Treat workflow hook `executionId`, `data`, `errorMessage`, and `isLoading` as latest-run state. Do not assume they are per-call state for concurrent `execute()` calls.
 - Verify `useEffect` dep arrays — no stale closures.
 - Custom components go in `components/<Name>.tsx`, imported relatively.
 - Heavy routes: split with `React.lazy(() => import("./pages/heavy"))` + `<Suspense>`.
 
 **Tables:** When you need to read or write structured data from an app, use the `tables.*` SDK + `useTable` hook directly (see [platform-api.md](platform-api.md) → tables). **If you're about to write a workflow just to read/write a table, configure policies and use the SDK directly.** See [app-patterns.md](app-patterns.md) §11 for the CRUD-with-live-updates pattern.
+
+**Workflow progress:** Apps can observe workflow status/logs through `useWorkflowQuery` / `useWorkflowMutation` (`status`, `logs`, `executionId`). There is currently no public workflow SDK method named `execution.publish`, `execution.update`, or `executions.publish` for arbitrary structured progress events. For live structured data, write rows to a table and read them with `useTable`; for textual progress, use workflow logs.
 
 ### Platform API Reference
 

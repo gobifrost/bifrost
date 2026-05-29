@@ -366,13 +366,15 @@ export declare const tables: typeof import("./app-sdk/tables").tables;
  * sees exactly the same row visibility as the snapshot.
  *
  * @param name - Table name (or id) to query and subscribe to
- * @param query - Optional `where` / `limit` / `offset` query parameters
- * @returns `{ rows, loading, error }`
+ * @param query - Optional `where` / `page` / `pageSize` / order / scope query parameters
+ * @returns `{ rows, total, totalPages, loading, error }`
  *
  * @example
  * ```tsx
- * const { rows, loading, error } = useTable("tickets", {
- *   where: { eq: ["status", "open"] },
+ * const { rows, totalPages, loading, error } = useTable("tickets", {
+ *   where: { status: "open" },
+ *   page: 1,
+ *   pageSize: 50,
  * });
  *
  * if (loading) return <Skeleton />;

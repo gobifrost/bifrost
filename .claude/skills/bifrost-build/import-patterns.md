@@ -85,10 +85,10 @@ const WF_LIST_CLIENTS = "4f262085-f4d1-4b3d-a601-575ba4c9d207";
 export default function ClientsPage() {
   const [q, setQ] = useState("");
   const navigate = useNavigate();
-  const { data, isLoading, isError, error } = useWorkflowQuery(WF_LIST_CLIENTS, { q });
+  const { data, isLoading, isError, errorMessage } = useWorkflowQuery(WF_LIST_CLIENTS, { q });
 
   if (isError) {
-    toast.error(error ?? "Failed to load clients");
+    toast.error(errorMessage ?? "Failed to load clients");
     return null;
   }
 
