@@ -206,25 +206,28 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-      # Surface manifest drift to the job summary. The plugin manifest is
-      # updated at tag time (see bifrost-release skill) — between tags the
-      # `version` field reflects the last released version, not the current
-      # dev version. This step is informational only; it does not fail the
-      # build and does not commit anything back. See PR #246 for the
-      # rationale (branch protection + commit-back loop avoidance).
+      # Surface manifest drift to the job summary. Plugin manifests are updated
+      # at tag time (see bifrost-release skill) — between tags the `version`
+      # field reflects the last released version, not the current dev version.
+      # This step is informational only; it does not fail the build and does
+      # not commit anything back. See PR #246 for the rationale (branch
+      # protection + commit-back loop avoidance).
       - name: Report plugin manifest drift
         run: |
-          MANIFEST_VERSION=$(jq -r '.version' .claude-plugin/plugin.json)
           DEV_VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "## Plugin manifest version"
+            echo "## Plugin manifest versions"
             echo ""
-            echo "- Manifest (.claude-plugin/plugin.json): \`${MANIFEST_VERSION}\`"
             echo "- Computed dev version: \`${DEV_VERSION}\`"
-            if [[ "$MANIFEST_VERSION" != "$DEV_VERSION" ]]; then
-              echo ""
-              echo "Manifest reflects the last tagged release; it advances at tag time via the bifrost-release skill."
-            fi
+            for manifest in \
+              .claude-plugin/plugin.json \
+              .codex-plugin/plugin.json \
+              plugins/bifrost/.codex-plugin/plugin.json; do
+              manifest_version=$(jq -r '.version' "$manifest")
+              echo "- Manifest (${manifest}): \`${manifest_version}\`"
+            done
+            echo ""
+            echo "Manifests reflect the last tagged release; they advance at tag time via the bifrost-release skill."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Docker Buildx
@@ -448,18 +451,27 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-      # Hard guard: the plugin manifest version must match the tag, otherwise
-      # Claude Code's plugin marketplace will keep serving stale skill content
-      # to users who installed via this repo. The bifrost-release skill runs
-      # `scripts/update-plugin-version.sh <version>` locally before tagging,
-      # so when this fails the maintainer either forgot the skill step or the
-      # bump commit didn't make it onto the tagged ref.
+      # Hard guard: plugin manifest versions must match the tag, otherwise
+      # Claude Code and Codex plugin marketplaces can keep serving stale skill
+      # content to users who installed via this repo. The bifrost-release skill
+      # runs `scripts/update-plugin-version.sh <version>` locally before
+      # tagging, so when this fails the maintainer either forgot the skill step
+      # or the bump commit didn't make it onto the tagged ref.
       - name: Verify plugin manifest matches tag
         run: |
-          MANIFEST_VERSION=$(jq -r '.version' .claude-plugin/plugin.json)
           TAG_VERSION="${{ steps.version.outputs.version }}"
-          if [[ "$MANIFEST_VERSION" != "$TAG_VERSION" ]]; then
-            echo "::error::.claude-plugin/plugin.json version ($MANIFEST_VERSION) does not match tag ($TAG_VERSION)."
+          failed=0
+          for manifest in \
+            .claude-plugin/plugin.json \
+            .codex-plugin/plugin.json \
+            plugins/bifrost/.codex-plugin/plugin.json; do
+            manifest_version=$(jq -r '.version' "$manifest")
+            if [[ "$manifest_version" != "$TAG_VERSION" ]]; then
+              echo "::error::${manifest} version (${manifest_version}) does not match tag (${TAG_VERSION})."
+              failed=1
+            fi
+          done
+          if [[ "$failed" -ne 0 ]]; then
             echo "::error::Run 'scripts/update-plugin-version.sh $TAG_VERSION' on main, commit, then re-tag."
             exit 1
           fi
