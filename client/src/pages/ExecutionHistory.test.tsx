@@ -83,7 +83,7 @@ vi.mock("@/components/agents/AgentRunsPanel", () => ({
 }));
 
 vi.mock("@/components/forms/WorkflowSelector", () => ({
-	WorkflowSelector: () => null,
+	WorkflowSelector: () => <div aria-label="Workflow selector" />,
 }));
 
 vi.mock("@/components/forms/OrganizationSelect", () => ({
@@ -154,9 +154,9 @@ beforeEach(() => {
 	});
 });
 
-async function renderPage() {
+async function renderPage(initialEntries?: string[]) {
 	const { ExecutionHistory } = await import("./ExecutionHistory");
-	return renderWithProviders(<ExecutionHistory />);
+	return renderWithProviders(<ExecutionHistory />, { initialEntries });
 }
 
 // -----------------------------------------------------------------------------
@@ -171,6 +171,32 @@ describe("ExecutionHistory — status filter", () => {
 		expect(
 			screen.getByRole("tab", { name: /^Scheduled$/i }),
 		).toBeInTheDocument();
+	});
+});
+
+describe("ExecutionHistory — workflow filter visibility", () => {
+	it("hides the workflow selector and ignores workflow query params for regular users", async () => {
+		await renderPage(["/history?workflow=workflow-1"]);
+
+		expect(
+			screen.queryByLabelText(/workflow selector/i),
+		).not.toBeInTheDocument();
+		expect(mockUseExecutions).toHaveBeenLastCalledWith(
+			undefined,
+			expect.not.objectContaining({ workflow_id: "workflow-1" }),
+			undefined,
+		);
+	});
+
+	it("shows the workflow selector for platform admins", async () => {
+		mockAuth.mockReturnValue({
+			isPlatformAdmin: true,
+			user: { id: "admin-1", email: "admin@example.com" },
+		});
+
+		await renderPage();
+
+		expect(screen.getByLabelText(/workflow selector/i)).toBeInTheDocument();
 	});
 });
 

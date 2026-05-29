@@ -153,8 +153,10 @@ export function ExecutionDetails({
 	const setSidebarPanel = useEditorStore((state) => state.setSidebarPanel);
 	const minimizeEditor = useEditorStore((state) => state.minimizeEditor);
 
-	// Fetch workflow metadata to get source file path
-	const { data: metadataData } = useWorkflowsMetadata();
+	// Workflow metadata is only needed for admin-only editor/rerun actions.
+	const { data: metadataData } = useWorkflowsMetadata({
+		enabled: isPlatformAdmin,
+	});
 	const metadata = metadataData as WorkflowsMetadataResponse | undefined;
 
 	// Wrap onComplete in useCallback to prevent infinite loop
@@ -500,7 +502,7 @@ export function ExecutionDetails({
 
 		const actionButtons = (
 			<>
-				{isComplete && (
+				{isPlatformAdmin && isComplete && (
 					<Button
 						variant="ghost"
 						size="icon"
@@ -708,7 +710,7 @@ export function ExecutionDetails({
 										Editor
 									</Button>
 								)}
-								{isComplete && (
+								{isPlatformAdmin && isComplete && (
 									<Button
 										variant="ghost"
 										size="sm"
