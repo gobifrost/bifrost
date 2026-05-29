@@ -4,7 +4,7 @@ The SDK runs inside the workflow process and resolves scope locally before
 making API calls. This is the *engine-side* security boundary — the API
 trusts the resolved scope because the engine authenticates as the sentinel
 superuser identity. So whatever rule applies here must match the API-side
-``_get_cli_org_id`` rule exactly:
+``_resolve_sdk_org_id`` rule exactly:
 
     bypass = is_platform_admin OR ctx.organization.is_provider
 

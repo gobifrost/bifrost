@@ -165,9 +165,9 @@ class TestCrossTenantRequiresPlatformAdmin:
 # ---------------------------------------------------------------------------
 # UNSET vs explicit None must NOT be collapsed.
 #
-# This is the bug class that today's `_get_cli_org_id` exhibits: it treats
-# "didn't pass scope" and "passed scope=null" the same way. The resolver
-# must distinguish them because they have different security semantics.
+# This is the bug class this resolver exists to prevent: adapters must not
+# treat "didn't pass scope" and "passed scope=null" the same way, because they
+# have different security semantics.
 # ---------------------------------------------------------------------------
 
 

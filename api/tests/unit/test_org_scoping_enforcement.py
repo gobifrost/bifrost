@@ -404,14 +404,14 @@ SDK_ROUTER_FILES = {
 
 
 # Handlers under /api/sdk/* that are exempt from the
-# "must call _get_cli_org_id or resolve_effective_scope" rule. Keyed on
+# "must call _resolve_sdk_org_id or resolve_effective_scope" rule. Keyed on
 # handler function name (qualname is fine too but FastAPI handlers are
 # module-level so the simple name is unambiguous). The key TRAVELS with
 # the function across URL renames; the path-based version would have
 # missed the same drift the resolver test was meant to catch.
 EXEMPT_SDK_HANDLERS: dict[str, str] = {
     # As of 2026-05-26 every scope-taking SDK handler in cli.py routes
-    # through _get_cli_org_id. This list is left in place so that future
+    # through _resolve_sdk_org_id. This list is left in place so that future
     # exempt handlers can be added with an explicit justification — adding
     # an entry without a one-line reason is itself a CI failure
     # (test_exempt_list_well_formed).
@@ -419,8 +419,8 @@ EXEMPT_SDK_HANDLERS: dict[str, str] = {
 
 
 # Names that count as "calling the resolver" — direct call to
-# resolve_effective_scope, or call to the thin _get_cli_org_id wrapper.
-RESOLVER_CALL_NAMES = {"resolve_effective_scope", "_get_cli_org_id"}
+# resolve_effective_scope, or call to the thin _resolve_sdk_org_id wrapper.
+RESOLVER_CALL_NAMES = {"resolve_effective_scope", "_resolve_sdk_org_id"}
 
 
 def _handler_names_taking_scope(tree: ast.AST) -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
@@ -554,7 +554,7 @@ def _handler_calls_resolver(node: ast.AsyncFunctionDef | ast.FunctionDef) -> boo
 class TestSDKEndpointsUseResolver:
     """Every SDK handler that takes a ``scope`` (either as a direct
     parameter or via the ``request.scope`` pattern that is standard in
-    cli.py) must call ``_get_cli_org_id`` or ``resolve_effective_scope``.
+    cli.py) must call ``_resolve_sdk_org_id`` or ``resolve_effective_scope``.
 
     The original placeholder (pre-2026-05-26 audit) only verified the
     exempt list was well-formed and the resolver module imported. That
@@ -591,7 +591,7 @@ class TestSDKEndpointsUseResolver:
         @router-decorated handler that accepts a scope (direct parameter,
         ``request.scope`` body access, OR a Pydantic body annotation whose
         model declares a ``scope`` field). If it does, the handler body
-        must call ``_get_cli_org_id`` or ``resolve_effective_scope``
+        must call ``_resolve_sdk_org_id`` or ``resolve_effective_scope``
         unless it's on the exempt list.
 
         The Pydantic-annotation tripwire (added post-Codex 2026-05-26) is
@@ -618,7 +618,7 @@ class TestSDKEndpointsUseResolver:
                 if not _handler_calls_resolver(node):
                     violations.append(
                         f"{path.name}::{name} accepts `scope` but does not call "
-                        f"_get_cli_org_id or resolve_effective_scope; "
+                        f"_resolve_sdk_org_id or resolve_effective_scope; "
                         f"add it to EXEMPT_SDK_HANDLERS with a one-line reason "
                         f"if exemption is justified."
                     )

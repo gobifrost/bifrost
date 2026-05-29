@@ -268,8 +268,10 @@ class SDKIntegrationsListMappingsRequest(BaseModel):
         default=None,
         description=(
             "Optional org scope. Omit / pass null to list only the caller's "
-            "own org mapping. Platform admins and provider-org members may "
-            "pass 'global' (no filter, all orgs) or a specific org UUID."
+            "own org mapping, unless the resolved org is a provider org, "
+            "which lists all mappings. Platform admins and provider-org "
+            "members may pass 'global' (no filter, all orgs) or a specific "
+            "org UUID."
         ),
     )
 
@@ -495,4 +497,3 @@ class SDKTableInfo(BaseModel):
     updated_at: str = Field(..., description="Last update timestamp (ISO format)")
 
     model_config = ConfigDict(from_attributes=True)
-

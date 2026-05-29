@@ -117,7 +117,7 @@ flags from an auth-verified principal:
 
 | Call site                                       | Caller principal source                                   |
 | ----------------------------------------------- | --------------------------------------------------------- |
-| `_get_cli_org_id` (API-side, `/api/sdk/*`)      | `current_user` from JWT (auth-verified)                   |
+| `_resolve_sdk_org_id` (API-side, `/api/sdk/*`)  | `current_user` from JWT (auth-verified)                   |
 | `resolve_scope()` (SDK-side, in workflow proc)  | `ExecutionContext` populated by engine from request       |
 | `ExecutionContext.set_scope()` (ambient)        | Same `ExecutionContext` instance                          |
 | REST routers using the resolver directly        | `current_user` from JWT                                   |
@@ -235,13 +235,13 @@ exclusive to it.
    triggers because the principal is `is_superuser=True`. The SDK-side
    resolver is the security boundary for this caller.
 2. **The user's local CLI** (`bifrost ...`), authenticated as that user
-   directly. The API-side `_get_cli_org_id` gate fires against the real
+   directly. The API-side `_resolve_sdk_org_id` gate fires against the real
    principal — same `is_platform_admin OR is_provider_org` rule the
    resolver enforces everywhere. The C2 e2e tests
    (`test_org_scoping_scenarios.py`) cover this path explicitly.
 
 The handlers do not differentiate the two callers — every scope-taking
-handler routes through `_get_cli_org_id` (the mechanical lint test
+handler routes through `_resolve_sdk_org_id` (the mechanical lint test
 asserts this). What differs is which gate ultimately catches an
 unauthorized request: SDK-side for engine traffic, API-side for direct
 CLI traffic.
@@ -424,7 +424,7 @@ If it doesn't fit, use the pattern.
   the repository. The lint test catches this on PR.
 - **Trusting `requested_scope` directly.** Passing whatever the request
   body contained as `org_id` to the repository without going through
-  `resolve_effective_scope`. This was the `_get_cli_org_id` bug class.
+  `resolve_effective_scope`. This was the `_resolve_sdk_org_id` bug class.
 - **Using `BaseRepository` for org-scoped entities.** Always use
   `OrgScopedRepository`. The lint test catches missing repositories on
   models with `organization_id`.

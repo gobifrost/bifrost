@@ -310,7 +310,7 @@ async def get_dev_context(
 # =============================================================================
 
 
-async def _get_cli_org_id(
+async def _resolve_sdk_org_id(
     current_user: "UserPrincipal",
     scope: str | None,
     db: AsyncSession,
@@ -409,7 +409,7 @@ async def cli_get_config(
     """Get a config value via CLI API."""
     from src.routers.config import ConfigRepository
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     # Canonical SDK config load: cascade (global + org-specific) merged.
@@ -465,7 +465,7 @@ async def cli_set_config(
     from src.models import Config as ConfigModel
     from src.models.enums import ConfigType as ConfigTypeEnum
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
     now = datetime.now(timezone.utc)
 
@@ -537,7 +537,7 @@ async def cli_list_config(
     """List all config values via CLI API."""
     from src.routers.config import ConfigRepository
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
@@ -583,7 +583,7 @@ async def cli_delete_config(
     """Delete a config value via CLI API."""
     from src.models import Config as ConfigModel
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     stmt = select(ConfigModel).where(
@@ -638,7 +638,7 @@ async def sdk_integrations_get(
     from src.services.oauth_provider import resolve_url_template
     from src.core.security import decrypt_secret
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     try:
@@ -723,7 +723,7 @@ async def sdk_integrations_get(
         return SDKIntegrationsGetResponse(**response_data)
 
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.get failed: {log_safe(e)}")
@@ -870,7 +870,9 @@ async def sdk_integrations_list_mappings(
         # platform-admin or provider-org bypass. UNSET (None / "") falls
         # back to the caller's own org. ``scope="global"`` returns None
         # from the resolver — list all mappings (bypass already enforced).
-        resolved_org_id = await _get_cli_org_id(current_user, request.scope, db)
+        # A resolved provider org is also an enumerate-all scope for mapping
+        # listing: providers need to see every customer mapping by default.
+        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         if resolved_org_id is None and request.scope in (None, ""):
             # Caller has no org — system account on UNSET. Return empty.
             mappings = []
@@ -878,9 +880,16 @@ async def sdk_integrations_list_mappings(
             # Bypass verified by the resolver — request was "global".
             mappings = await repo.list_mappings(integration.id)
         else:
-            mappings = await repo.list_mappings(
-                integration.id, organization_id=UUID(resolved_org_id)
+            resolved_org_uuid = UUID(resolved_org_id)
+            org_row = await db.execute(
+                select(Organization.is_provider).where(Organization.id == resolved_org_uuid)
             )
+            if bool(org_row.scalar_one_or_none()):
+                mappings = await repo.list_mappings(integration.id)
+            else:
+                mappings = await repo.list_mappings(
+                    integration.id, organization_id=resolved_org_uuid
+                )
 
         logger.info(f"SDK listed {len(mappings)} mappings for integration '{log_safe(request.name)}' for user {current_user.email}")
 
@@ -903,7 +912,7 @@ async def sdk_integrations_list_mappings(
         return SDKIntegrationsListMappingsResponse(items=items)
 
     except HTTPException:
-        # Authorization failures (e.g. 403 from _get_cli_org_id) must
+        # Authorization failures (e.g. 403 from _resolve_sdk_org_id) must
         # surface to the client. The blanket ``except Exception`` below
         # would otherwise downgrade a 403 to a 200/null response and
         # make unauthorized requests indistinguishable from misses.
@@ -936,7 +945,7 @@ async def sdk_integrations_get_mapping(
 
         # Apply the C2 gate. Non-bypass callers can only target their own
         # org; cross-org or "global" requires platform-admin / provider-org.
-        resolved_org_id = await _get_cli_org_id(current_user, request.scope, db)
+        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         mapping = None
 
         # Direct lookup by org_id.
@@ -980,7 +989,7 @@ async def sdk_integrations_get_mapping(
         )
 
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.get_mapping failed: {log_safe(e)}")
@@ -1012,7 +1021,7 @@ async def sdk_integrations_upsert_mapping(
             )
 
         # Apply the C2 gate before touching another org's mapping row.
-        resolved_org_id = await _get_cli_org_id(current_user, request.scope, db)
+        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         if resolved_org_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1104,7 +1113,7 @@ async def sdk_integrations_delete_mapping(
             return {"deleted": False}
 
         # Apply the C2 gate before touching another org's mapping row.
-        resolved_org_id = await _get_cli_org_id(current_user, request.scope, db)
+        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         if resolved_org_id is None:
             return {"deleted": False}
         org_uuid = UUID(resolved_org_id)
@@ -1125,7 +1134,7 @@ async def sdk_integrations_delete_mapping(
         return {"deleted": deleted}
 
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.delete_mapping failed: {log_safe(e)}")
@@ -1164,7 +1173,7 @@ async def sdk_integrations_refresh_token(
         refresh_oauth_token_http,
     )
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     try:
@@ -1918,7 +1927,7 @@ async def cli_ai_complete(
             from src.core.cache import get_shared_redis
 
             redis_client = await get_shared_redis()
-            org_id = await _get_cli_org_id(current_user, request.org_id, db)
+            org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
             await record_ai_usage(
                 session=db,
                 redis_client=redis_client,
@@ -1978,7 +1987,7 @@ async def cli_ai_stream(
     # the authenticated user so the streaming closure doesn't have to
     # re-derive bypass after CurrentUser falls out of scope.
     user_id = current_user.user_id
-    resolved_org_id = await _get_cli_org_id(current_user, request.org_id, db)
+    resolved_org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
     execution_id_str = request.execution_id
 
     async def generate():
@@ -2096,7 +2105,7 @@ async def cli_knowledge_store(
     from src.services.embeddings import get_embedding_client
 
     try:
-        org_id = await _get_cli_org_id(current_user, request.scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         embedding_client = await get_embedding_client(db)
@@ -2124,7 +2133,7 @@ async def cli_knowledge_store(
             detail=str(e),
         )
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"CLI knowledge store failed: {log_safe(e)}")
@@ -2148,7 +2157,7 @@ async def cli_knowledge_store_many(
     from src.services.embeddings import get_embedding_client
 
     try:
-        org_id = await _get_cli_org_id(current_user, request.scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         embedding_client = await get_embedding_client(db)
@@ -2179,7 +2188,7 @@ async def cli_knowledge_store_many(
             detail=str(e),
         )
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"CLI knowledge store-many failed: {log_safe(e)}")
@@ -2204,7 +2213,7 @@ async def cli_knowledge_search(
     from src.services.embeddings import get_embedding_client
 
     try:
-        org_id = await _get_cli_org_id(current_user, request.scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         # Generate query embedding
@@ -2243,7 +2252,7 @@ async def cli_knowledge_search(
             detail=str(e),
         )
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"CLI knowledge search failed: {log_safe(e)}")
@@ -2266,7 +2275,7 @@ async def cli_knowledge_delete(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user, request.scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2281,7 +2290,7 @@ async def cli_knowledge_delete(
 
         return {"deleted": deleted}
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"CLI knowledge delete failed: {log_safe(e)}")
@@ -2305,7 +2314,7 @@ async def cli_knowledge_delete_namespace(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user, scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2319,7 +2328,7 @@ async def cli_knowledge_delete_namespace(
 
         return {"deleted_count": deleted_count}
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"CLI knowledge delete namespace failed: {log_safe(e)}")
@@ -2344,7 +2353,7 @@ async def cli_knowledge_list_namespaces(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user, scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2360,7 +2369,7 @@ async def cli_knowledge_list_namespaces(
             for ns in results
         ]
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _get_cli_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     except Exception as e:
         logger.error(f"CLI knowledge list namespaces failed: {log_safe(e)}")
@@ -2386,7 +2395,7 @@ async def cli_knowledge_get(
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
-        org_id = await _get_cli_org_id(current_user, scope, db)
+        org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
         repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2582,7 +2591,7 @@ async def cli_create_table(
     """Create a new table via SDK."""
     from src.models.orm.tables import Table
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     # Exact-scope uniqueness check (not a cascade): "is there already a
@@ -2649,7 +2658,7 @@ async def cli_list_tables(
     # Local import keeps the router file's top-level imports lean.
     from src.routers.tables import TableRepository
 
-    org_id = await _get_cli_org_id(current_user, request.scope, db)
+    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
     repo = TableRepository(db, org_id=org_uuid, is_superuser=True)
@@ -2668,4 +2677,3 @@ async def cli_list_tables(
         )
         for t in tables
     ]
-

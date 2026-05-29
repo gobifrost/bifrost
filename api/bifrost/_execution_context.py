@@ -163,7 +163,7 @@ class ExecutionContext:
     def set_scope(self, org_id: str | None) -> None:
         """Override the effective scope for all subsequent SDK calls.
 
-        C2 rule (matches ``resolve_scope`` and ``_get_cli_org_id``):
+        C2 rule (matches ``resolve_scope`` and ``_resolve_sdk_org_id``):
         platform admins (``is_platform_admin``) AND provider-org members
         (``organization.is_provider``) can both override to another org.
         Pass None to reset to the original scope.

@@ -79,7 +79,7 @@ class TestRefreshTokenClientCredentials:
         }
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-token"),
@@ -149,7 +149,7 @@ class TestRefreshTokenClientCredentials:
         }
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-token"),
@@ -224,7 +224,7 @@ class TestRefreshTokenAuthorizationCode:
         }
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-value"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-value"),
@@ -295,7 +295,7 @@ class TestRefreshTokenAuthorizationCode:
         }
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-value"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-value"),
@@ -355,7 +355,7 @@ class TestRefreshTokenAuthorizationCode:
         ])
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             pytest.raises(HTTPException) as exc_info,
         ):
             await sdk_integrations_refresh_token(request, mock_user, mock_db)
@@ -386,7 +386,7 @@ class TestRefreshTokenErrorHandling:
         mock_db.execute = AsyncMock(return_value=provider_result)
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             pytest.raises(HTTPException) as exc_info,
         ):
             await sdk_integrations_refresh_token(request, mock_user, mock_db)
@@ -424,7 +424,7 @@ class TestRefreshTokenErrorHandling:
         mock_db.execute = AsyncMock(return_value=provider_result)
 
         with (
-            patch("src.routers.cli._get_cli_org_id", new_callable=AsyncMock, return_value=None),
+            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
             pytest.raises(HTTPException) as exc_info,

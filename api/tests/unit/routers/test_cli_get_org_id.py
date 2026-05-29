@@ -1,4 +1,4 @@
-"""Unit tests for ``_get_cli_org_id`` scope validation and authorization.
+"""Unit tests for ``_resolve_sdk_org_id`` scope validation and authorization.
 
 The 2026-05 org-scoping overhaul replaced the pre-existing forgery surface
 (``DeveloperContext.default_org_id``, settable by any authenticated user
@@ -26,7 +26,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.core.auth import UserPrincipal
-from src.routers.cli import _get_cli_org_id
+from src.routers.cli import _resolve_sdk_org_id
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def _db_no_lookup():
 async def test_platform_admin_global_returns_none():
     user = _user(org_id=uuid4(), is_superuser=True)
     db = _db_with_provider(False)
-    assert await _get_cli_org_id(user, "global", db) is None
+    assert await _resolve_sdk_org_id(user, "global", db) is None
 
 
 @pytest.mark.asyncio
@@ -79,7 +79,7 @@ async def test_platform_admin_can_target_any_org():
     user = _user(org_id=uuid4(), is_superuser=True)
     target = str(uuid4())
     db = _db_with_provider(False)
-    assert await _get_cli_org_id(user, target, db) == target
+    assert await _resolve_sdk_org_id(user, target, db) == target
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ async def test_provider_org_member_can_request_global():
     """A regular user in a provider org gets the bypass even without is_superuser."""
     user = _user(org_id=uuid4(), is_superuser=False)
     db = _db_with_provider(True)
-    assert await _get_cli_org_id(user, "global", db) is None
+    assert await _resolve_sdk_org_id(user, "global", db) is None
 
 
 @pytest.mark.asyncio
@@ -101,7 +101,7 @@ async def test_provider_org_member_can_target_other_org():
     user = _user(org_id=uuid4(), is_superuser=False)
     other = str(uuid4())
     db = _db_with_provider(True)
-    assert await _get_cli_org_id(user, other, db) == other
+    assert await _resolve_sdk_org_id(user, other, db) == other
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ async def test_non_admin_non_provider_cannot_request_global():
     user = _user(org_id=uuid4(), is_superuser=False)
     db = _db_with_provider(False)
     with pytest.raises(HTTPException) as exc:
-        await _get_cli_org_id(user, "global", db)
+        await _resolve_sdk_org_id(user, "global", db)
     assert exc.value.status_code == 403
 
 
@@ -125,7 +125,7 @@ async def test_non_admin_non_provider_cannot_target_other_org():
     other = str(uuid4())
     db = _db_with_provider(False)
     with pytest.raises(HTTPException) as exc:
-        await _get_cli_org_id(user, other, db)
+        await _resolve_sdk_org_id(user, other, db)
     assert exc.value.status_code == 403
 
 
@@ -139,7 +139,7 @@ async def test_non_admin_can_target_own_org():
     own_org = uuid4()
     user = _user(org_id=own_org, is_superuser=False)
     db = _db_no_lookup()
-    assert await _get_cli_org_id(user, str(own_org), db) == str(own_org)
+    assert await _resolve_sdk_org_id(user, str(own_org), db) == str(own_org)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ async def test_unset_scope_uses_current_user_org():
     own_org = uuid4()
     user = _user(org_id=own_org, is_superuser=False)
     db = _db_no_lookup()
-    assert await _get_cli_org_id(user, None, db) == str(own_org)
+    assert await _resolve_sdk_org_id(user, None, db) == str(own_org)
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_unset_scope_with_no_org_returns_none():
     """A user with no organization_id (e.g. system account) on UNSET → None."""
     user = _user(org_id=None, is_superuser=True)
     db = _db_no_lookup()
-    assert await _get_cli_org_id(user, None, db) is None
+    assert await _resolve_sdk_org_id(user, None, db) is None
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_empty_string_treated_as_unset():
     own_org = uuid4()
     user = _user(org_id=own_org, is_superuser=False)
     db = _db_no_lookup()
-    assert await _get_cli_org_id(user, "", db) == str(own_org)
+    assert await _resolve_sdk_org_id(user, "", db) == str(own_org)
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ async def test_garbage_scope_raises_422():
     user = _user(org_id=uuid4(), is_superuser=False)
     db = _db_no_lookup()
     with pytest.raises(HTTPException) as exc:
-        await _get_cli_org_id(user, "not-a-uuid", db)
+        await _resolve_sdk_org_id(user, "not-a-uuid", db)
     assert exc.value.status_code == 422
 
 
@@ -196,5 +196,5 @@ async def test_uppercase_uuid_accepted_for_admin():
     user = _user(org_id=uuid4(), is_superuser=True)
     upper = str(uuid4()).upper()
     db = _db_with_provider(False)
-    result = await _get_cli_org_id(user, upper, db)
+    result = await _resolve_sdk_org_id(user, upper, db)
     assert UUID(result) == UUID(upper)

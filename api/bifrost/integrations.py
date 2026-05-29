@@ -133,9 +133,10 @@ class integrations:
         Args:
             name: Integration name
             scope: Organization scope to list. Defaults to the execution
-                context's default scope. Pass ``"global"`` (only valid for
+                context's default scope. When that resolves to a provider org,
+                all mappings are returned. Pass ``"global"`` (only valid for
                 bypass callers — platform admin or provider-org member) to
-                list across all orgs.
+                list across all orgs explicitly.
 
         Returns:
             list[IntegrationMappingResponse] | None: List of mappings.

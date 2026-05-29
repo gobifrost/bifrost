@@ -165,7 +165,7 @@ class TestScenario2b_ProviderOrgBypass:
     """A non-superuser in the provider org bypasses scope restrictions.
 
     Pre-overhaul this case would have failed in two ways:
-    (a) The pre-overhaul ``_get_cli_org_id`` accepted any UUID without
+    (a) The pre-overhaul ``_resolve_sdk_org_id`` accepted any UUID without
         a gate, so even regular users could traverse — not a "test passes
         for the right reason" outcome.
     (b) Post-overhaul fix had to grant the provider-org membership path.
@@ -211,6 +211,67 @@ class TestScenario2b_ProviderOrgBypass:
         )
         assert r.json() is not None
 
+    def test_provider_member_unset_list_mappings_returns_all_orgs(
+        self, e2e_client, platform_admin, provider_org_user, org1, org1_user, org2
+    ):
+        integration_name = f"prov_list_mappings_{uuid4().hex[:8]}"
+        integration_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={
+                "name": integration_name,
+                "config_schema": [
+                    {"key": "endpoint", "type": "string", "required": True, "description": ""}
+                ],
+            },
+        )
+        assert integration_resp.status_code == 201, integration_resp.text
+        integration = integration_resp.json()
+
+        try:
+            for org_id, entity_id in (
+                (str(PROVIDER_ORG_ID), "provider-tenant"),
+                (org1["id"], "org1-tenant"),
+                (org2["id"], "org2-tenant"),
+            ):
+                mapping_resp = e2e_client.post(
+                    f"/api/integrations/{integration['id']}/mappings",
+                    headers=platform_admin.headers,
+                    json={
+                        "organization_id": org_id,
+                        "entity_id": entity_id,
+                        "entity_name": entity_id,
+                    },
+                )
+                assert mapping_resp.status_code == 201, mapping_resp.text
+
+            provider_resp = e2e_client.post(
+                "/api/sdk/integrations/list_mappings",
+                headers=provider_org_user.headers,
+                json={"name": integration_name},
+            )
+            assert provider_resp.status_code == 200, provider_resp.text
+            provider_items = provider_resp.json()["items"]
+            assert {item["entity_id"] for item in provider_items} == {
+                "provider-tenant",
+                "org1-tenant",
+                "org2-tenant",
+            }
+
+            org1_resp = e2e_client.post(
+                "/api/sdk/integrations/list_mappings",
+                headers=org1_user.headers,
+                json={"name": integration_name},
+            )
+            assert org1_resp.status_code == 200, org1_resp.text
+            org1_items = org1_resp.json()["items"]
+            assert [item["entity_id"] for item in org1_items] == ["org1-tenant"]
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
     def test_provider_member_cross_org_read_through_engine(
         self, e2e_client, platform_admin, provider_org_user, org1
     ):
@@ -218,7 +279,7 @@ class TestScenario2b_ProviderOrgBypass:
 
         This is the path the two tests above do NOT cover. They hit
         ``/api/sdk/config/get`` directly, where the API authenticates the
-        *user* and the API-side ``_get_cli_org_id`` resolves scope.
+        *user* and the API-side ``_resolve_sdk_org_id`` resolves scope.
 
         Under real workflow execution the path is different and is the one
         that actually matters for the C2 bypass:
@@ -663,7 +724,7 @@ class TestScenario4_CrossOrgBlocked:
         org's integration mapping via the SDK endpoints.
 
         Seeds a REAL integration with a REAL org2 mapping so the
-        handler's _get_cli_org_id call actually fires — the previous
+        handler's _resolve_sdk_org_id call actually fires — the previous
         version of this test used a nonexistent integration name and
         returned before the gate ran, which Codex correctly flagged as
         too weak to catch a swallowed-403 regression.
