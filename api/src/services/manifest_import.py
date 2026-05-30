@@ -2089,6 +2089,16 @@ class ManifestResolver:
                 )
             )
 
+        if cache is not None:
+            cs_refresh = await self.db.execute(
+                select(IntegrationConfigSchema).where(
+                    IntegrationConfigSchema.integration_id == integ_id
+                )
+            )
+            cache["integ_cs"][integ_id] = {
+                cs.key: cs for cs in cs_refresh.scalars().all()
+            }
+
         # Sync OAuth provider (structure only — client_secret never imported)
         if minteg.oauth_provider:
             op_data = minteg.oauth_provider
@@ -2194,6 +2204,10 @@ class ManifestResolver:
 
         # Check prefetch cache for existing config by natural key
         cache_hit = cache["config_by_natural"].get((mcfg.key, integ_id, org_id))
+        schema_id = None
+        if integ_id is not None:
+            schema = cache.get("integ_cs", {}).get(integ_id, {}).get(mcfg.key)
+            schema_id = schema.id if schema is not None else None
 
         # Convert string config_type to enum for proper DB storage
         from src.models.enums import ConfigType
@@ -2204,7 +2218,7 @@ class ManifestResolver:
             existing_id, existing_value, _config_schema_id = cache_hit
 
             # Secret with existing value — don't overwrite
-            if is_secret and existing_value is not None:
+            if is_secret and existing_value is not None and schema_id is None:
                 return []
 
             # Update existing row (including ID if it changed)
@@ -2217,6 +2231,8 @@ class ManifestResolver:
                 "organization_id": org_id,
                 "updated_by": "git-sync",
             }
+            if schema_id is not None:
+                update_values["config_schema_id"] = schema_id
             if not is_secret:
                 update_values["value"] = mcfg.value if mcfg.value is not None else {}
 
@@ -2237,6 +2253,8 @@ class ManifestResolver:
                 "value": mcfg.value if mcfg.value is not None else {},
                 "updated_by": "git-sync",
             }
+            if schema_id is not None:
+                insert_values["config_schema_id"] = schema_id
             return [Upsert(
                 model=Config,
                 id=cfg_id,
