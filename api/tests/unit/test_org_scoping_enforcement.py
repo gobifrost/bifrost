@@ -118,8 +118,6 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/roi_reports.py', '.join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)', 'identity-entity scope filter (permanent)'),
     ('routers/roles.py', 'KnowledgeNamespaceRoleORM.organization_id == entry.organization_id,', 'KnowledgeNamespaceRole identity-entity filter (permanent)'),
     ('routers/tables.py', 'CustomClaimORM.organization_id == organization_id', 'tables custom claim cross-ref; phase 6 migrates'),
-    ('routers/tools.py', 'query = query.where(Workflow.organization_id == filter_org_id)', 'tools workflow list; phase 6 migrates'),
-    ('routers/tools.py', 'query = query.where(Workflow.organization_id.is_(None))', 'tools workflow list; phase 6 migrates'),
     ('routers/usage_reports.py', 'base_conditions.append(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'exec_conditions.append(Execution.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
