@@ -407,7 +407,7 @@ async def cli_get_config(
     db: AsyncSession = Depends(get_db),
 ) -> CLIConfigValue | None:
     """Get a config value via CLI API."""
-    from src.routers.config import ConfigRepository
+    from src.repositories.config import ConfigRepository
 
     org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
@@ -535,7 +535,7 @@ async def cli_list_config(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """List all config values via CLI API."""
-    from src.routers.config import ConfigRepository
+    from src.repositories.config import ConfigRepository
 
     org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
@@ -2656,7 +2656,7 @@ async def cli_list_tables(
     The base class handles the cascade (org + global) for us.
     """
     # Local import keeps the router file's top-level imports lean.
-    from src.routers.tables import TableRepository
+    from src.repositories.tables import TableRepository
 
     org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None

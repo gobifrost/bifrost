@@ -25,12 +25,11 @@ from shared.claims.registry import referenced_claim_names
 from shared.policies.probe import (
     compile_read_filter,
     evaluate_action,
-    make_seed_admin_bypass,
 )
 from src.core.auth import Context, CurrentSuperuser, UserPrincipal
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
-from src.core.org_filter import OrgFilterType, resolve_org_filter, resolve_target_org
+from src.core.org_filter import resolve_org_filter, resolve_target_org
 from src.models.contracts.policies import (
     PolicyValidationError,
     PolicyValidationResponse,
@@ -55,7 +54,7 @@ from src.models.contracts.tables import (
 )
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Document, Table
-from src.repositories.org_scoped import OrgScopedRepository
+from src.repositories.tables import TableRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
 from src.services.audit import emit_audit
 
@@ -202,153 +201,6 @@ async def _check_action_or_403(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Access denied",
     )
-
-
-# =============================================================================
-# Repository
-# =============================================================================
-
-
-class TableRepository(OrgScopedRepository[Table]):
-    """Repository for table operations.
-
-    Tables do NOT have role-based access control - they are SDK/superuser-only
-    resources. All endpoints use CurrentSuperuser dependency.
-    """
-
-    model = Table
-    role_table = None  # Explicit: Tables have NO role-based access control
-
-    async def list_tables(
-        self,
-        filter_type: OrgFilterType = OrgFilterType.ORG_PLUS_GLOBAL,
-    ) -> list[Table]:
-        """List tables with specified filter type.
-
-        Supports all OrgFilterType values for superuser flexibility:
-        - ALL: No org filter (show everything)
-        - GLOBAL_ONLY: Only global records (org_id IS NULL)
-        - ORG_ONLY: Only specific org's records (no global)
-        - ORG_PLUS_GLOBAL: Cascade scoping (org + global)
-        """
-        query = select(self.model)
-
-        if filter_type == OrgFilterType.ALL:
-            # No organization filter - show all tables
-            pass
-        elif filter_type == OrgFilterType.GLOBAL_ONLY:
-            # Only global records
-            query = query.where(self.model.organization_id.is_(None))
-        elif filter_type == OrgFilterType.ORG_ONLY:
-            # Only specific org, no global fallback
-            query = query.where(self.model.organization_id == self.org_id)
-        else:
-            # ORG_PLUS_GLOBAL: Use cascade scoping
-            query = self._apply_cascade_scope(query)
-
-        query = query.order_by(self.model.name)
-
-        result = await self.session.execute(query)
-        return list(result.scalars().all())
-
-    async def get_by_name(self, name: str) -> Table | None:
-        """Get by name with cascade scoping: org-specific > global.
-
-        Uses cascade lookup to avoid MultipleResultsFound when
-        the same name exists in both org scope and global scope.
-        """
-        return await self.get(name=name)
-
-    async def get_by_name_strict(self, name: str) -> Table | None:
-        """Get table by name strictly in current org scope (no fallback)."""
-        query = select(self.model).where(
-            self.model.name == name,
-            self.model.organization_id == self.org_id,
-        )
-        result = await self.session.execute(query)
-        return result.scalar_one_or_none()
-
-    async def create_table(
-        self,
-        data: TableCreate,
-        created_by: str,
-    ) -> Table:
-        """Create a new table.
-
-        When `policies` is omitted from the request, the table is seeded
-        with `admin_bypass` so platform admins can still operate on it
-        without an explicit rule. Callers who want a strictly-empty policy
-        set must pass `policies=TablePolicies()` explicitly.
-        """
-        # Check if table already exists in this scope
-        existing = await self.get_by_name_strict(data.name)
-        if existing:
-            raise ValueError(f"Table '{data.name}' already exists")
-
-        if data.policies is not None:
-            access_json: dict[str, Any] | None = data.policies.model_dump(mode="json")
-        else:
-            access_json = make_seed_admin_bypass()
-
-        table = Table(
-            name=data.name,
-            description=data.description,
-            schema=data.schema,
-            organization_id=self.org_id,
-            created_by=created_by,
-            access=access_json,
-        )
-        self.session.add(table)
-        await self.session.flush()
-        await self.session.refresh(table)
-
-        logger.info(f"Created table '{log_safe(data.name)}' in org {self.org_id}")
-        return table
-
-    async def update_table(
-        self,
-        table_id: UUID,
-        data: TableUpdate,
-    ) -> Table | None:
-        """Update a table by ID."""
-        query = select(self.model).where(self.model.id == table_id)
-        result = await self.session.execute(query)
-        table = result.scalar_one_or_none()
-        if not table:
-            return None
-
-        if data.name is not None:
-            table.name = data.name
-        if data.description is not None:
-            table.description = data.description
-        if data.schema is not None:
-            table.schema = data.schema
-        if "policies" in data.model_fields_set:
-            table.access = (
-                data.policies.model_dump(mode="json")
-                if data.policies is not None
-                else None
-            )
-
-        await self.session.flush()
-        await self.session.refresh(table)
-
-        logger.info(f"Updated table '{log_safe(table.name)}' (id={log_safe(table_id)})")
-        return table
-
-    async def delete_table(self, table_id: UUID) -> bool:
-        """Delete a table and all its documents (cascade) by ID."""
-        query = select(self.model).where(self.model.id == table_id)
-        result = await self.session.execute(query)
-        table = result.scalar_one_or_none()
-        if not table:
-            return False
-
-        await self.session.delete(table)
-        await self.session.flush()
-
-        logger.info(f"Deleted table '{log_safe(table.name)}' (id={log_safe(table_id)})")
-        return True
 
 
 def _escape_like(value: str) -> str:

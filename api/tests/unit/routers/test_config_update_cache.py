@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.routers.config import ConfigRepository
+from src.repositories.config import ConfigRepository
 from src.models.contracts.config import (
     UpdateConfigRequest,
     ConfigType,

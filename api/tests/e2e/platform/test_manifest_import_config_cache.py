@@ -32,7 +32,7 @@ from src.config import get_settings
 from src.core.cache.keys import config_hash_key_versioned
 from src.core.cache.redis_client import get_shared_redis
 from src.models.orm.config import Config
-from src.routers.config import ConfigRepository
+from src.repositories.config import ConfigRepository
 from src.services.manifest_import import import_manifest_from_repo
 from src.services.repo_storage import RepoStorage
 
