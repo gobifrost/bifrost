@@ -9,14 +9,12 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentActiveUser
 from src.core.database import DbSession
 from src.core.org_filter import resolve_org_filter
 from src.models.contracts.agents import ToolInfo, ToolsResponse
-from src.models.orm import Workflow
+from src.repositories.workflows import WorkflowRepository
 
 from src.services.mcp_server.server import get_system_tools as get_system_tools_from_server
 
@@ -97,24 +95,17 @@ async def list_tools(
             # Invalid scope - just return system tools
             return ToolsResponse(tools=tools)
 
-        # Query workflows that are tools
-        query = (
-            select(Workflow)
-            .where(Workflow.type == "tool")
-            .options(selectinload(Workflow.organization))
+        workflow_repo = WorkflowRepository(
+            db,
+            org_id=user.organization_id,
+            user_id=user.user_id,
+            is_superuser=user.is_superuser,
         )
-        if not include_inactive:
-            query = query.where(Workflow.is_active.is_(True))
-
-        # Apply org filter
-        if filter_type == "org" and filter_org_id:
-            query = query.where(Workflow.organization_id == filter_org_id)
-        elif filter_type == "global":
-            query = query.where(Workflow.organization_id.is_(None))
-        # "all" means no additional filter (superuser sees everything)
-
-        result = await db.execute(query.order_by(Workflow.name))
-        workflows = result.scalars().all()
+        workflows = await workflow_repo.list_tools_for_filter(
+            filter_type,
+            filter_org_id,
+            active_only=not include_inactive,
+        )
 
         for workflow in workflows:
             tools.append(

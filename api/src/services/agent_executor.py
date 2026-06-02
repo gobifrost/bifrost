@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from src.core.auth import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
     ChatStreamChunk,
@@ -35,6 +36,7 @@ from src.models.contracts.agents import (
 )
 from src.models.enums import MessageRole
 from src.models.orm import Agent, Conversation, Message, Workflow
+from src.repositories.agents import AgentRepository
 from src.services.llm import (
     LLMMessage,
     ToolCallRequest,
@@ -116,7 +118,9 @@ class AgentExecutor:
         conversation: Conversation,
         new_agent: Agent,
         reason: str,
-    ) -> AsyncIterator[ChatStreamChunk]:
+        *,
+        user: UserPrincipal | None,
+    ) -> tuple[ChatStreamChunk | None, Agent | None]:
         """
         Centralized agent switching with all rule checks.
 
@@ -127,27 +131,56 @@ class AgentExecutor:
             conversation: The conversation to update
             new_agent: The agent to switch to
             reason: Why the switch happened ("@mention", "routed", etc.)
+            user: Current user whose agent access must authorize the switch
 
-        Yields:
-            - agent_switch event (always)
+        Returns:
+            Tuple of optional agent_switch event and the access-checked agent.
         """
-        # 1. Emit agent switch event
-        yield ChatStreamChunk(
-            type="agent_switch",
-            agent_switch=AgentSwitch(
-                agent_id=str(new_agent.id),
-                agent_name=new_agent.name,
-                reason=reason,
-            ),
-        )
+        if user is None:
+            logger.warning(
+                "Denied agent switch without user context: conversation_id=%s agent_id=%s reason=%s",
+                conversation.id,
+                new_agent.id,
+                reason,
+            )
+            return None, None
 
-        # 2. Persist to conversation
+        # Persist only after reloading the target through the repository access
+        # boundary. This prevents high-level routing or mention logic from
+        # binding a conversation to an otherwise inaccessible agent.
         async with self._db() as session:
+            repo = AgentRepository(
+                session,
+                org_id=user.organization_id,
+                user_id=user.user_id,
+                is_superuser=user.is_superuser,
+            )
+            accessible_agent = await repo.get_agent_with_access_check(new_agent.id)
+            if accessible_agent is None:
+                logger.warning(
+                    "Denied agent switch because user lacks access: user_id=%s conversation_id=%s agent_id=%s reason=%s",
+                    user.user_id,
+                    conversation.id,
+                    new_agent.id,
+                    reason,
+                )
+                return None, None
+
             conv = await session.get(Conversation, conversation.id)
             if conv:
-                conv.agent_id = new_agent.id
+                conv.agent_id = accessible_agent.id
+
         # Update in-memory object too so caller sees the change
-        conversation.agent_id = new_agent.id
+        conversation.agent_id = accessible_agent.id
+
+        return ChatStreamChunk(
+            type="agent_switch",
+            agent_switch=AgentSwitch(
+                agent_id=str(accessible_agent.id),
+                agent_name=accessible_agent.name,
+                reason=reason,
+            ),
+        ), accessible_agent
 
     async def chat(
         self,
@@ -158,6 +191,7 @@ class AgentExecutor:
         stream: bool = True,
         enable_routing: bool = True,
         local_id: str | None = None,
+        user: UserPrincipal | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -171,6 +205,7 @@ class AgentExecutor:
             user_message: The user's message text
             stream: Whether to stream the response (default True)
             enable_routing: Whether to enable @mention and AI routing (default True)
+            user: Current user for permission-aware agent routing
 
         Yields:
             ChatStreamChunk objects with response content, tool calls, etc.
@@ -178,19 +213,30 @@ class AgentExecutor:
         from src.services.agent_router import AgentRouter
 
         start_time = time.time()
-        router = AgentRouter(self._session_factory)
+        router = AgentRouter(
+            self._session_factory,
+            user_id=user.user_id if user else None,
+            org_id=user.organization_id if user else None,
+            is_superuser=user.is_superuser if user else False,
+        )
 
         try:
             # 1. Check for @mention agent switching
             if enable_routing:
                 mentioned_agent = await router.parse_mention(user_message)
                 if mentioned_agent:
-                    # Strip @mention from message for cleaner processing
-                    user_message = router.strip_mention(user_message)
                     # Switch to mentioned agent (handles events and persistence)
-                    async for chunk in self._switch_agent(conversation, mentioned_agent, "@mention"):
-                        yield chunk
-                    agent = mentioned_agent
+                    switch_chunk, switched_agent = await self._switch_agent(
+                        conversation,
+                        mentioned_agent,
+                        "@mention",
+                        user=user,
+                    )
+                    if switch_chunk and switched_agent:
+                        # Strip @mention from message for cleaner processing
+                        user_message = router.strip_mention(user_message)
+                        yield switch_chunk
+                        agent = switched_agent
 
             # 2. AI-based routing for agentless chat (first message only)
             if enable_routing and agent is None:
@@ -202,9 +248,15 @@ class AgentExecutor:
                     )
                     if routed_agent:
                         # Switch to routed agent (handles events and persistence)
-                        async for chunk in self._switch_agent(conversation, routed_agent, "routed"):
-                            yield chunk
-                        agent = routed_agent
+                        switch_chunk, switched_agent = await self._switch_agent(
+                            conversation,
+                            routed_agent,
+                            "routed",
+                            user=user,
+                        )
+                        if switch_chunk and switched_agent:
+                            yield switch_chunk
+                            agent = switched_agent
 
             # 3. Save user message
             user_msg = await self._save_message(

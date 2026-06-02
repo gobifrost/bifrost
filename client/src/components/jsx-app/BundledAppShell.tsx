@@ -311,27 +311,29 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 
 		loadBundle();
 
-		// Subscribe to bundle updates for this app. Success → reload entry.
-		// Failure → show banner over last-good render.
+		// Preview-only: subscribe to draft bundle updates for this app.
+		// Success → reload entry. Failure → show banner over last-good render.
 		let unsub: (() => void) | null = null;
-		(async () => {
-			try {
-				await webSocketService.connectToAppDraft(appId);
-				unsub = webSocketService.onAppCodeFileUpdate(
-					appId,
-					(update: AppCodeFileUpdate) => {
-						if (update.error && update.error.messages.length > 0) {
-							setBuildErrors(update.error.messages);
-							setBuildErrorDismissed(false);
-						} else if (update.bundle) {
-							loadBundle(update.bundle.entry, update.bundle.css);
-						}
-					},
-				);
-			} catch (e) {
-				console.warn("[Bifrost] Failed to subscribe to app updates:", e);
-			}
-		})();
+		if (isPreview) {
+			(async () => {
+				try {
+					await webSocketService.connectToAppDraft(appId);
+					unsub = webSocketService.onAppCodeFileUpdate(
+						appId,
+						(update: AppCodeFileUpdate) => {
+							if (update.error && update.error.messages.length > 0) {
+								setBuildErrors(update.error.messages);
+								setBuildErrorDismissed(false);
+							} else if (update.bundle) {
+								loadBundle(update.bundle.entry, update.bundle.css);
+							}
+						},
+					);
+				} catch (e) {
+					console.warn("[Bifrost] Failed to subscribe to app updates:", e);
+				}
+			})();
+		}
 
 		return () => {
 			controller.abort();

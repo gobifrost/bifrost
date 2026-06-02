@@ -340,6 +340,12 @@ async def send_message(
             detail=f"Conversation {conversation_id} not found",
         )
 
+    if conversation.agent and not await _check_agent_access(db, user, conversation.agent):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this agent",
+        )
+
     # Agent is now optional - agentless chat uses default system prompt
 
     # Execute chat — executor manages its own short-lived sessions
@@ -359,6 +365,7 @@ async def send_message(
         conversation=conversation,
         user_message=request.message,
         stream=False,
+        user=user,
     ):
         if chunk.type == "delta" and chunk.content:
             final_content += chunk.content

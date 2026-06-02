@@ -1979,6 +1979,125 @@ class TestSplitManifestFormat:
         assert cfg.config_type == "string"
         assert cfg.value == "https://api.example.com"
 
+    async def test_pull_integration_config_links_config_schema_id(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Integration configs imported from split manifests must link to
+        their IntegrationConfigSchema rows and keep that link after export.
+        """
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.config import Config
+        from src.models.orm.integrations import Integration, IntegrationConfigSchema
+
+        work_dir = Path(working_clone.working_dir)
+        integ_id = str(uuid4())
+        config_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "integrations.yaml").write_text(yaml.dump({
+            "integrations": {
+                "TestIntegConfigSchemaLink": {
+                    "id": integ_id,
+                    "config_schema": [
+                        {
+                            "key": "EXAMPLE_TOKEN",
+                            "type": "secret",
+                            "required": True,
+                            "position": 0,
+                        },
+                    ],
+                },
+            },
+        }, default_flow_style=False))
+        (bifrost_dir / "configs.yaml").write_text(yaml.dump({
+            "configs": {
+                "EXAMPLE_TOKEN": {
+                    "id": config_id,
+                    "integration_id": integ_id,
+                    "key": "EXAMPLE_TOKEN",
+                    "config_type": "secret",
+                    "value": {"value": ""},
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add([
+            ".bifrost/integrations.yaml",
+            ".bifrost/configs.yaml",
+        ])
+        working_clone.index.commit("add integration config with schema")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+
+        schema = (
+            await db_session.execute(
+                select(IntegrationConfigSchema).where(
+                    IntegrationConfigSchema.integration_id == UUIDType(integ_id),
+                    IntegrationConfigSchema.key == "EXAMPLE_TOKEN",
+                )
+            )
+        ).scalar_one()
+        cfg = await db_session.get(Config, UUIDType(config_id))
+
+        assert cfg is not None
+        assert cfg.config_schema_id == schema.id
+
+        # Existing secret configs keep their value during import, but sync
+        # must still repair a missing schema link.
+        cfg.config_schema_id = None
+        await db_session.commit()
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+        await db_session.refresh(cfg)
+        assert cfg.value == {"value": ""}
+        assert cfg.config_schema_id == schema.id
+
+        # Export should preserve the portable shape: schema lives under the
+        # integration and the config references that integration by UUID.
+        commit_result = await sync_service.desktop_commit("round trip integration config")
+        assert commit_result.success is True
+        exported = read_manifest_from_dir(sync_service._persistent_dir / ".bifrost")
+        exported_integ = exported.integrations[integ_id]
+        assert [cs.key for cs in exported_integ.config_schema] == ["EXAMPLE_TOKEN"]
+        exported_cfg = exported.configs[config_id]
+        assert exported_cfg.integration_id == integ_id
+        assert exported_cfg.key == "EXAMPLE_TOKEN"
+
+        # Re-import the exported manifest into an empty DB state; the schema
+        # linkage must be restored from integration_id + key.
+        await db_session.execute(delete(Config).where(Config.id == UUIDType(config_id)))
+        await db_session.execute(
+            delete(IntegrationConfigSchema).where(
+                IntegrationConfigSchema.integration_id == UUIDType(integ_id)
+            )
+        )
+        await db_session.execute(
+            delete(Integration).where(Integration.id == UUIDType(integ_id))
+        )
+        await db_session.commit()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+
+        roundtrip_schema = (
+            await db_session.execute(
+                select(IntegrationConfigSchema).where(
+                    IntegrationConfigSchema.integration_id == UUIDType(integ_id),
+                    IntegrationConfigSchema.key == "EXAMPLE_TOKEN",
+                )
+            )
+        ).scalar_one()
+        roundtrip_cfg = await db_session.get(Config, UUIDType(config_id))
+        assert roundtrip_cfg is not None
+        assert roundtrip_cfg.config_schema_id == roundtrip_schema.id
+
     async def test_pull_table_from_manifest(
         self,
         db_session: AsyncSession,

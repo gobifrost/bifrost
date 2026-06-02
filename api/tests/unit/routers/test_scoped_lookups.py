@@ -78,7 +78,7 @@ class TestTableRepositoryScopedLookup:
         self, mock_session, org_id
     ):
         """When same name exists in org AND global, return org-specific."""
-        from src.routers.tables import TableRepository
+        from src.repositories.tables import TableRepository
 
         org_table = make_table("shared_table", org_id)
 
@@ -98,7 +98,7 @@ class TestTableRepositoryScopedLookup:
 
     async def test_name_only_in_global_returns_global(self, mock_session, org_id):
         """When name only exists in global scope, return global."""
-        from src.routers.tables import TableRepository
+        from src.repositories.tables import TableRepository
 
         global_table = make_table("shared_table", None)
 
@@ -123,7 +123,7 @@ class TestTableRepositoryScopedLookup:
 
     async def test_name_only_in_org_returns_org_specific(self, mock_session, org_id):
         """When name only exists in org scope, return org-specific."""
-        from src.routers.tables import TableRepository
+        from src.repositories.tables import TableRepository
 
         org_table = make_table("shared_table", org_id)
 
@@ -143,7 +143,7 @@ class TestTableRepositoryScopedLookup:
 
     async def test_no_org_id_only_checks_global(self, mock_session):
         """When no org_id, only check global scope."""
-        from src.routers.tables import TableRepository
+        from src.repositories.tables import TableRepository
 
         global_table = make_table("shared_table", None)
 
@@ -162,7 +162,7 @@ class TestTableRepositoryScopedLookup:
 
     async def test_name_not_found_returns_none(self, mock_session, org_id):
         """When name doesn't exist anywhere, return None."""
-        from src.routers.tables import TableRepository
+        from src.repositories.tables import TableRepository
 
         # Both queries return None
         mock_result = MagicMock()
@@ -194,7 +194,7 @@ class TestConfigRepositoryScopedLookup:
         self, mock_session, org_id
     ):
         """When same key exists in org AND global, return org-specific."""
-        from src.routers.config import ConfigRepository
+        from src.repositories.config import ConfigRepository
 
         org_config = make_config("shared_key", org_id, "org_value")
 
@@ -214,7 +214,7 @@ class TestConfigRepositoryScopedLookup:
 
     async def test_key_only_in_global_returns_global(self, mock_session, org_id):
         """When key only exists in global scope, return global."""
-        from src.routers.config import ConfigRepository
+        from src.repositories.config import ConfigRepository
 
         global_config = make_config("shared_key", None, "global_value")
 
@@ -239,7 +239,7 @@ class TestConfigRepositoryScopedLookup:
 
     async def test_key_only_in_org_returns_org_specific(self, mock_session, org_id):
         """When key only exists in org scope, return org-specific."""
-        from src.routers.config import ConfigRepository
+        from src.repositories.config import ConfigRepository
 
         org_config = make_config("shared_key", org_id, "org_value")
 

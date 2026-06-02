@@ -24,8 +24,10 @@ from datetime import datetime, timezone
 from typing import Literal, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import selectinload
 
+from src.core.org_filter import OrgFilterType
 from src.models import Workflow
 from src.models.orm.workflow_roles import WorkflowRole
 from src.repositories.org_scoped import OrgScopedRepository
@@ -156,6 +158,40 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Convenience method for get_by_type('tool').
         """
         return await self.get_by_type("tool", active_only=active_only)
+
+    async def list_tools_for_filter(
+        self,
+        filter_type: OrgFilterType,
+        filter_org_id: UUID | None,
+        active_only: bool = True,
+    ) -> Sequence[Workflow]:
+        """List workflow tools for an already-resolved organization filter."""
+        stmt = (
+            select(Workflow)
+            .where(Workflow.type == "tool")
+            .options(selectinload(Workflow.organization))
+        )
+        if active_only:
+            stmt = stmt.where(Workflow.is_active.is_(True))
+
+        if filter_type is OrgFilterType.ORG_PLUS_GLOBAL:
+            if filter_org_id is None:
+                stmt = stmt.where(Workflow.organization_id.is_(None))
+            else:
+                stmt = stmt.where(
+                    or_(
+                        Workflow.organization_id == filter_org_id,
+                        Workflow.organization_id.is_(None),
+                    )
+                )
+        elif filter_type is OrgFilterType.ORG_ONLY:
+            stmt = stmt.where(Workflow.organization_id == filter_org_id)
+        elif filter_type is OrgFilterType.GLOBAL_ONLY:
+            stmt = stmt.where(Workflow.organization_id.is_(None))
+
+        stmt = stmt.order_by(Workflow.name)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def get_workflows_only(
         self,

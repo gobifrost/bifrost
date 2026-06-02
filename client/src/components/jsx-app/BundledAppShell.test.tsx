@@ -102,10 +102,10 @@ afterEach(() => {
 		.forEach((el) => el.remove());
 });
 
-async function renderShell() {
+async function renderShell({ isPreview = true }: { isPreview?: boolean } = {}) {
 	const { BundledAppShell } = await import("./BundledAppShell");
 	return renderWithProviders(
-		<BundledAppShell appId="app-1" appSlug="my-app" isPreview={true} />,
+		<BundledAppShell appId="app-1" appSlug="my-app" isPreview={isPreview} />,
 	);
 }
 
@@ -174,5 +174,21 @@ describe("BundledAppShell — websocket subscription", () => {
 			expect(mockConnectToAppDraft).toHaveBeenCalledWith("app-1"),
 		);
 		expect(mockOnAppCodeFileUpdate).toHaveBeenCalled();
+	});
+
+	it("does not subscribe to draft rebuilds in live mode", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockManifestOk({ mode: "live" });
+
+		await renderShell({ isPreview: false });
+
+		await waitFor(() =>
+			expect(mockAuthFetch).toHaveBeenCalledWith(
+				"/api/applications/app-1/bundle-manifest?mode=live",
+				expect.any(Object),
+			),
+		);
+		expect(mockConnectToAppDraft).not.toHaveBeenCalled();
+		expect(mockOnAppCodeFileUpdate).not.toHaveBeenCalled();
 	});
 });

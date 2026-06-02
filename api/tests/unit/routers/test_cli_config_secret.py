@@ -30,7 +30,7 @@ class TestConfigGetDecryptsSecrets:
         request = CLIConfigGetRequest(key="test_secret")
 
         with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
-             patch("src.routers.config.ConfigRepository", return_value=mock_resolver):
+             patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
             result = await cli_get_config(request=request, current_user=mock_user, db=AsyncMock())
 
         assert isinstance(result, CLIConfigValue)
@@ -56,7 +56,7 @@ class TestConfigGetDecryptsSecrets:
         request = CLIConfigGetRequest(key="bad_secret")
 
         with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
-             patch("src.routers.config.ConfigRepository", return_value=mock_resolver):
+             patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
             result = await cli_get_config(request=request, current_user=mock_user, db=AsyncMock())
 
         assert isinstance(result, CLIConfigValue)
@@ -81,7 +81,7 @@ class TestConfigGetDecryptsSecrets:
         request = CLIConfigGetRequest(key="normal_key")
 
         with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
-             patch("src.routers.config.ConfigRepository", return_value=mock_resolver):
+             patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
             result = await cli_get_config(request=request, current_user=mock_user, db=AsyncMock())
 
         assert isinstance(result, CLIConfigValue)
@@ -113,7 +113,7 @@ class TestConfigListMasksSecrets:
         request = CLIConfigListRequest()
 
         with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
-             patch("src.routers.config.ConfigRepository", return_value=mock_resolver):
+             patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
             result = await cli_list_config(request=request, current_user=mock_user, db=AsyncMock())
 
         assert result["normal_key"] == "normal_value"
@@ -140,7 +140,7 @@ class TestConfigListMasksSecrets:
         request = CLIConfigListRequest()
 
         with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
-             patch("src.routers.config.ConfigRepository", return_value=mock_resolver):
+             patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
             result = await cli_list_config(request=request, current_user=mock_user, db=AsyncMock())
 
         assert result["empty_secret"] == "[SECRET]"

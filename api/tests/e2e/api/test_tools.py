@@ -123,3 +123,79 @@ class TestToolsEndpointOrgFields:
             assert tool["organization_name"] is None, (
                 f"system tool {tool['id']} unexpectedly has organization_name"
             )
+
+
+@pytest.fixture
+def scoped_workflow_tools(e2e_client, platform_admin, org1, org2):
+    """Create one global tool and one tool in each test org."""
+    tools = [
+        _register_tool(e2e_client, platform_admin.headers, organization_id=None),
+        _register_tool(
+            e2e_client, platform_admin.headers, organization_id=str(org1["id"])
+        ),
+        _register_tool(
+            e2e_client, platform_admin.headers, organization_id=str(org2["id"])
+        ),
+    ]
+    try:
+        yield tools
+    finally:
+        for tool in tools:
+            _cleanup_tool(e2e_client, platform_admin.headers, tool)
+
+
+@pytest.mark.e2e
+class TestToolsEndpointOrgScope:
+    """The /api/tools workflow list uses resolved org-scope semantics."""
+
+    def _workflow_tool_ids(self, e2e_client, headers, scope: str | None = None) -> set[str]:
+        params = {"type": "workflow"}
+        if scope is not None:
+            params["scope"] = scope
+        resp = e2e_client.get("/api/tools", headers=headers, params=params)
+        assert resp.status_code == 200, resp.text
+        return {tool["id"] for tool in resp.json()["tools"]}
+
+    def test_platform_admin_no_scope_sees_all_workflow_tools(
+        self, e2e_client, platform_admin, scoped_workflow_tools
+    ):
+        ids = self._workflow_tool_ids(e2e_client, platform_admin.headers)
+
+        assert {tool["id"] for tool in scoped_workflow_tools}.issubset(ids)
+
+    def test_platform_admin_global_scope_sees_only_global_workflow_tools(
+        self, e2e_client, platform_admin, scoped_workflow_tools
+    ):
+        global_tool, org1_tool, org2_tool = scoped_workflow_tools
+
+        ids = self._workflow_tool_ids(
+            e2e_client, platform_admin.headers, scope="global"
+        )
+
+        assert global_tool["id"] in ids
+        assert org1_tool["id"] not in ids
+        assert org2_tool["id"] not in ids
+
+    def test_platform_admin_org_scope_sees_only_that_org_workflow_tools(
+        self, e2e_client, platform_admin, org1, scoped_workflow_tools
+    ):
+        global_tool, org1_tool, org2_tool = scoped_workflow_tools
+
+        ids = self._workflow_tool_ids(
+            e2e_client, platform_admin.headers, scope=str(org1["id"])
+        )
+
+        assert global_tool["id"] not in ids
+        assert org1_tool["id"] in ids
+        assert org2_tool["id"] not in ids
+
+    def test_org_user_sees_own_org_plus_global_workflow_tools(
+        self, e2e_client, org1_user, scoped_workflow_tools
+    ):
+        global_tool, org1_tool, org2_tool = scoped_workflow_tools
+
+        ids = self._workflow_tool_ids(e2e_client, org1_user.headers)
+
+        assert global_tool["id"] in ids
+        assert org1_tool["id"] in ids
+        assert org2_tool["id"] not in ids

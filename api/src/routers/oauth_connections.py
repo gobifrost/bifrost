@@ -422,10 +422,21 @@ async def refresh_token(
             detail="No token URL configured for this connection",
         )
 
+    # The token's scope follows the PROVIDER, not the caller. A global
+    # connection (provider.organization_id IS NULL) must store a global
+    # (NULL) token regardless of which admin triggers the refresh —
+    # otherwise a provider-org admin re-stamps the shared token with their
+    # own org and every other org's read cascade misses it. Mirrors the SDK
+    # path in cli.py. See api/src/repositories/README.md and the
+    # project_oauth_global_token_restamp note.
+    token_repo = OAuthProviderRepository(
+        ctx.db, org_id=provider.organization_id, is_superuser=True
+    )
+
     # For authorization_code flows we need the stored token up front.
     stored_token: OAuthToken | None = None
     if provider.oauth_flow_type != "client_credentials":
-        stored_token = await repo.get_token(connection_name)
+        stored_token = await token_repo.get_token(connection_name)
         if not stored_token or not stored_token.encrypted_refresh_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -441,11 +452,14 @@ async def refresh_token(
     # Build context and delegate. The {entity_id} fallback chain lives in
     # build_token_refresh_context so this handler, the SDK endpoint, and the
     # scheduler cannot drift.
+    # Resolve {entity_id} against the token's scope (the provider's org), not
+    # the caller's. A global connection must template against integration
+    # defaults, not the connecting admin's org mapping.
     td = await build_token_refresh_context(
         db=ctx.db,
         provider=provider,
         token=stored_token,
-        org_id=org_id,
+        org_id=provider.organization_id,
     )
     outcome = await refresh_oauth_token_http(td)
 
@@ -470,7 +484,7 @@ async def refresh_token(
             # Default to 1 hour from now if no expiry provided
             new_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
-        await repo.store_token(
+        await token_repo.store_token(
             connection_name=connection_name,
             access_token=outcome["access_token"],
             refresh_token=None,  # client_credentials doesn't have refresh tokens
@@ -496,10 +510,12 @@ async def refresh_token(
 
         logger.info(f"Token refreshed successfully for {log_safe(connection_name)}")
 
-    # Invalidate cache (token was updated)
+    # Invalidate cache (token was updated). Key on the token's scope —
+    # the provider's org — not the caller's, so the cached entry that
+    # actually changed is the one busted.
     if CACHE_INVALIDATION_AVAILABLE and invalidate_oauth_token:
-        org_id_str = str(org_id) if org_id else None
-        await invalidate_oauth_token(org_id_str, connection_name)
+        token_org_str = str(provider.organization_id) if provider.organization_id else None
+        await invalidate_oauth_token(token_org_str, connection_name)
 
     expires_at_str = new_expires_at.isoformat() if new_expires_at else None
     return RefreshTokenResponse(

@@ -18,7 +18,14 @@ import {
 	CardHeader,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, Terminal, CheckCircle, AlertCircle } from "lucide-react";
+import {
+	Loader2,
+	Terminal,
+	CheckCircle,
+	AlertCircle,
+	Home,
+	LogOut,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { Logo } from "@/components/branding/Logo";
 import { toast } from "sonner";
@@ -28,7 +35,12 @@ type AuthorizationStep = "input" | "authorized" | "error";
 export function DevicePage() {
 	const navigate = useNavigate();
 	const location = useLocation();
-	const { isAuthenticated, isLoading: authLoading, user } = useAuth();
+	const {
+		isAuthenticated,
+		isLoading: authLoading,
+		logout,
+		user,
+	} = useAuth();
 
 	const [step, setStep] = useState<AuthorizationStep>("input");
 	const [userCode, setUserCode] = useState("");
@@ -128,6 +140,10 @@ export function DevicePage() {
 		setStep("input");
 		setUserCode("");
 		setError(null);
+	};
+
+	const returnHome = () => {
+		navigate("/");
 	};
 
 	if (authLoading) {
@@ -239,6 +255,25 @@ export function DevicePage() {
 										)}
 										Authorize Device
 									</Button>
+
+									<div className="grid gap-2 sm:grid-cols-2">
+										<Button
+											type="button"
+											variant="outline"
+											onClick={returnHome}
+										>
+											<Home className="h-4 w-4" />
+											Return to Dashboard
+										</Button>
+										<Button
+											type="button"
+											variant="ghost"
+											onClick={logout}
+										>
+											<LogOut className="h-4 w-4" />
+											Sign Out
+										</Button>
+									</div>
 								</form>
 							</>
 						)}
@@ -267,13 +302,31 @@ export function DevicePage() {
 									</p>
 								</div>
 
-								<Button
-									variant="outline"
-									className="w-full"
-									onClick={handleReset}
-								>
-									Authorize Another Device
-								</Button>
+								<div className="space-y-2">
+									<Button
+										className="w-full"
+										onClick={returnHome}
+									>
+										<Home className="h-4 w-4" />
+										Return to Dashboard
+									</Button>
+									<Button
+										variant="outline"
+										className="w-full"
+										onClick={handleReset}
+									>
+										<Terminal className="h-4 w-4" />
+										Authorize Another Device
+									</Button>
+									<Button
+										variant="ghost"
+										className="w-full"
+										onClick={logout}
+									>
+										<LogOut className="h-4 w-4" />
+										Sign Out
+									</Button>
+								</div>
 							</motion.div>
 						)}
 
@@ -318,9 +371,18 @@ export function DevicePage() {
 									<Button
 										variant="outline"
 										className="w-full"
-										onClick={() => navigate("/")}
+										onClick={returnHome}
 									>
+										<Home className="h-4 w-4" />
 										Return to Dashboard
+									</Button>
+									<Button
+										variant="ghost"
+										className="w-full"
+										onClick={logout}
+									>
+										<LogOut className="h-4 w-4" />
+										Sign Out
 									</Button>
 								</div>
 							</motion.div>
