@@ -89,6 +89,28 @@ def test_noninteractive_env_var_is_honored(tmp_path: pathlib.Path) -> None:
     assert "Unknown option" not in r.stderr, r.stderr
 
 
+def test_sync_use_tui_headless_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The single TUI gate is False whenever headless, True only on an
+    unforced TTY. This guards BOTH the selection TUI and the progress TUI
+    (which blocks on "press Enter" for errors) — see _sync_use_tui."""
+    from bifrost.cli import _sync_use_tui
+
+    monkeypatch.delenv("BIFROST_NONINTERACTIVE", raising=False)
+
+    # Unforced TTY → interactive.
+    assert _sync_use_tui(force=False, is_tty=True) is True
+    # --yes/-y on a real TTY → headless (the bug Codex caught: progress TUI
+    # must not run here, or an error would block on Enter).
+    assert _sync_use_tui(force=True, is_tty=True) is False
+    # No TTY → headless regardless of force.
+    assert _sync_use_tui(force=False, is_tty=False) is False
+    assert _sync_use_tui(force=True, is_tty=False) is False
+
+    # BIFROST_NONINTERACTIVE=1 forces headless even on a TTY.
+    monkeypatch.setenv("BIFROST_NONINTERACTIVE", "1")
+    assert _sync_use_tui(force=False, is_tty=True) is False
+
+
 @pytest.mark.xfail(reason="deploy command implemented in Sub-plan 1", strict=False)
 def test_deploy_help_is_noninteractive(tmp_path: pathlib.Path) -> None:
     """``bifrost deploy --help`` exists and advertises a non-interactive contract.

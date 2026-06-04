@@ -1524,6 +1524,25 @@ def _warn_if_git_workspace(target_path: str) -> None:
             return
 
 
+def _sync_use_tui(force: bool, is_tty: bool) -> bool:
+    """Single source of truth for whether sync may use any interactive TUI.
+
+    Returns False (headless) when --yes/-y (``force``) is set, when
+    ``BIFROST_NONINTERACTIVE=1`` is in the environment, or when stdin/stdout
+    is not a TTY. Gating BOTH the selection TUI and the progress TUI on this
+    keeps the headless contract whole: the progress TUI blocks on "press Enter"
+    when a file errors, so honoring noninteractivity only for the selection TUI
+    would still hang an unattended run (criterion 17).
+    """
+    if not is_tty:
+        return False
+    if force:
+        return False
+    if os.environ.get("BIFROST_NONINTERACTIVE") == "1":
+        return False
+    return True
+
+
 @dataclass
 class _PushWatchArgs:
     """Parsed arguments for push/watch commands."""
@@ -2935,12 +2954,14 @@ async def _sync_files(
 
     # ── 6. Interactive TUI or auto-accept ────────────────────────────────
     _is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-    # BIFROST_NONINTERACTIVE=1 forces the headless path even on a TTY, so a
-    # scripted/CI run never blocks on the selection TUI (criterion 17). --yes/-y
-    # set `force`; this env var is the ambient equivalent.
-    _noninteractive = os.environ.get("BIFROST_NONINTERACTIVE") == "1"
+    # _use_tui is the single source of truth for both the selection TUI (below)
+    # AND the progress TUI (further down). When --yes/-y (force), or
+    # BIFROST_NONINTERACTIVE=1, or no TTY, we must use NEITHER — the progress TUI
+    # blocks on "press Enter" when a file errors, which would hang an unattended
+    # run despite skipping the selection TUI (criterion 17).
+    _use_tui = _sync_use_tui(force=force, is_tty=_is_tty)
 
-    if force or _noninteractive or not _is_tty:
+    if not _use_tui:
         # Auto-accept: use default actions
         from bifrost.tui.sync_app import SyncResult
         result = SyncResult()
@@ -2951,7 +2972,7 @@ async def _sync_files(
                 bucket.append(item)
             else:
                 result.skip.append(item)
-        if not _is_tty:
+        if not _use_tui:
             push_count = len(result.push)
             pull_count = len(result.pull)
             delete_count = len(result.delete)
@@ -3051,7 +3072,7 @@ async def _sync_files(
         return ", ".join(parts) if parts else "No changes"
 
     errors: list[str] = []
-    if progress_items and _is_tty:
+    if progress_items and _use_tui:
         from bifrost.tui.progress import ProgressApp
         app = ProgressApp("Syncing", progress_items, _do_sync_work, post_fn=_post_sync)
         errors = await app.run_async() or []
