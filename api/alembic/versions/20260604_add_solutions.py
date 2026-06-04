@@ -70,8 +70,25 @@ def upgrade() -> None:
             server_default=sa.text("NOW()"),
         ),
     )
-    op.create_index("ix_solutions_slug", "solutions", ["slug"])
     op.create_index("ix_solutions_organization_id", "solutions", ["organization_id"])
+    # Install identity is unique per (slug, scope) — no scope overlap between
+    # installs (success-criteria §3.4). Partial unique indexes because
+    # organization_id is nullable (NULL == global; NULL != NULL in a plain
+    # UNIQUE). The org-scoped index also serves slug lookups.
+    op.create_index(
+        "uq_solutions_slug_global",
+        "solutions",
+        ["slug"],
+        unique=True,
+        postgresql_where=sa.text("organization_id IS NULL"),
+    )
+    op.create_index(
+        "uq_solutions_slug_org",
+        "solutions",
+        ["slug", "organization_id"],
+        unique=True,
+        postgresql_where=sa.text("organization_id IS NOT NULL"),
+    )
 
     for table, index_name in _MANAGED:
         op.add_column(
@@ -154,6 +171,7 @@ def downgrade() -> None:
         op.drop_index(index_name, table_name=table)
         op.drop_column(table, "solution_id")
 
+    op.drop_index("uq_solutions_slug_org", table_name="solutions")
+    op.drop_index("uq_solutions_slug_global", table_name="solutions")
     op.drop_index("ix_solutions_organization_id", table_name="solutions")
-    op.drop_index("ix_solutions_slug", table_name="solutions")
     op.drop_table("solutions")

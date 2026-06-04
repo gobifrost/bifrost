@@ -41,6 +41,11 @@ def _org_is_null(model: Any) -> Any:
     return model.organization_id.is_(None)
 
 
+def _model_has_solution_id(model: Any) -> bool:
+    """True if the model carries a solution_id column (solution-capable entity)."""
+    return "solution_id" in model.__table__.columns
+
+
 class OrgScopedRepository(Generic[ModelT]):
     """
     The single canonical repository for all org-scoped data access in Bifrost.
@@ -296,15 +301,26 @@ class OrgScopedRepository(Generic[ModelT]):
 
         - org_id set: WHERE (organization_id = org_id OR organization_id IS NULL)
         - org_id None: WHERE organization_id IS NULL
+
+        Cascade resolution is a ``_repo/``-tier concept: solution-managed
+        entities (``solution_id IS NOT NULL``) are a separate world resolved by
+        id at execution, never by name/path cascade. So for solution-capable
+        models we also require ``solution_id IS NULL`` — this both honors that
+        boundary and prevents MultipleResultsFound now that a solution may reuse
+        a _repo/ name/path (success-criteria §3.5).
         """
         if self.org_id is not None:
-            return query.where(
+            query = query.where(
                 or_(
                     _org_filter(self.model, self.org_id),
                     _org_is_null(self.model),
                 )
             )
-        return query.where(_org_is_null(self.model))
+        else:
+            query = query.where(_org_is_null(self.model))
+        if _model_has_solution_id(self.model):
+            query = query.where(self.model.solution_id.is_(None))  # type: ignore[attr-defined]
+        return query
 
     def _has_role_table(self) -> bool:
         """Check if this repository has role-based access control configured."""

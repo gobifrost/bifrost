@@ -13,9 +13,15 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+import pytest as _pytest
+
 from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
-from src.services.solutions.deploy import SolutionDeployer, SolutionBundle
+from src.services.solutions.deploy import (
+    SolutionBundle,
+    SolutionDeployConflict,
+    SolutionDeployer,
+)
 
 
 def _wf_entry(wf_id: str, name: str) -> dict:
@@ -39,6 +45,19 @@ async def _active_wf_names(db, solution_id) -> set[str]:
         )
     ).scalars().all()
     return set(rows)
+
+
+@_pytest.fixture(autouse=True)
+async def _reset_redis_singleton():
+    """The deployer's cache-sync opens the async Redis singleton, which binds
+    its pool to this test's event loop. Reset it around each test so a later
+    test on a fresh loop doesn't hit a closed-loop pool (these tests live in
+    tests/unit/ where the global redis-isolation fixture is skipped)."""
+    from src.core.redis_client import close_redis_client
+
+    await close_redis_client()
+    yield
+    await close_redis_client()
 
 
 @pytest.mark.e2e
@@ -154,3 +173,105 @@ class TestSolutionDeployReconcile:
         assert wf is not None
         assert wf.solution_id == org_install.id
         assert wf.organization_id == org_install.organization_id
+
+    async def test_unique_install_per_slug_and_scope(self, db_session) -> None:
+        """Install identity is unique per (slug, scope) — §3.4 (Codex P2)."""
+        from sqlalchemy.exc import IntegrityError
+
+        db = db_session
+        slug = f"dup-{uuid4().hex[:8]}"
+
+        # Two global installs with the same slug must collide.
+        db.add(Solution(id=uuid4(), slug=slug, name="A", organization_id=None))
+        await db.flush()
+        db.add(Solution(id=uuid4(), slug=slug, name="B", organization_id=None))
+        with _pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
+    async def test_deploy_rejects_foreign_entity_id(self, db_session) -> None:
+        """A bundle may not reuse a UUID owned by _repo/ or another install —
+        that would re-stamp solution_id and hijack the row (Codex P1)."""
+        db = db_session
+
+        # A _repo/ workflow (solution_id IS NULL).
+        repo_id = uuid4()
+        db.add(Workflow(
+            id=repo_id, name="victim", function_name="run", path="workflows/victim.py",
+            type="workflow", organization_id=None, solution_id=None,
+        ))
+        await db.flush()
+
+        sol = await self._make_install(db, f"thief-{uuid4().hex[:8]}")
+        deployer = SolutionDeployer(db)
+
+        # Bundle tries to claim the _repo/ workflow's id. The guard raises BEFORE
+        # any UPDATE to the victim row, so no rollback is needed to prove it's safe.
+        with _pytest.raises(SolutionDeployConflict):
+            await deployer._upsert_workflows(sol, [_wf_entry(str(repo_id), "victim")])
+
+        # The _repo/ row is untouched (still NULL solution_id).
+        victim = await db.get(Workflow, repo_id)
+        assert victim is not None
+        assert victim.solution_id is None
+
+    async def test_redeploy_changed_source_refreshes_cache(self, db_session) -> None:
+        """Redeploying changed source must update the Redis module cache, not
+        leave stale bytes for the 24h TTL (Codex P1)."""
+        from src.core.module_cache import get_module
+        from src.services.solutions.storage import SolutionStorage
+
+        db = db_session
+        sol = await self._make_install(db, f"cache-{uuid4().hex[:8]}")
+        deployer = SolutionDeployer(db)
+        w1 = str(uuid4())
+        storage_key = SolutionStorage(sol.id)._key("workflows/w1.py")
+
+        await deployer.deploy(SolutionBundle(
+            solution=sol,
+            python_files={"workflows/w1.py": "VALUE = 1\n"},
+            workflows=[_wf_entry(w1, "w1")],
+        ))
+        cached = await get_module(storage_key)
+        assert cached is not None and "VALUE = 1" in cached["content"]
+
+        # Redeploy with changed bytes — cache must reflect the new content.
+        await deployer.deploy(SolutionBundle(
+            solution=sol,
+            python_files={"workflows/w1.py": "VALUE = 2\n"},
+            workflows=[_wf_entry(w1, "w1")],
+        ))
+        cached2 = await get_module(storage_key)
+        assert cached2 is not None and "VALUE = 2" in cached2["content"]
+
+    async def test_repo_resolver_ignores_solution_rows(self, db_session) -> None:
+        """A _repo/-tier name/path lookup must not raise MultipleResultsFound
+        when a solution reuses the same name/path (Codex P2). The cascade is
+        _repo/-only; solution workflows resolve by id."""
+        from src.repositories.workflows import WorkflowRepository
+
+        db = db_session
+        shared_path = f"workflows/dup_{uuid4().hex[:8]}.py"
+        # _repo/ workflow.
+        db.add(Workflow(
+            id=uuid4(), name="dupname", function_name="run", path=shared_path,
+            type="workflow", organization_id=None, solution_id=None,
+        ))
+        await db.flush()
+        # Solution workflow with the SAME name + path.
+        sol = await self._make_install(db, f"dupsol-{uuid4().hex[:8]}")
+        db.add(Workflow(
+            id=uuid4(), name="dupname", function_name="run", path=shared_path,
+            type="workflow", organization_id=None, solution_id=sol.id,
+        ))
+        await db.flush()
+
+        repo = WorkflowRepository(db, org_id=None, is_superuser=True)
+        # Path-ref resolution returns exactly the _repo/ row (no MultipleResultsFound).
+        resolved = await repo._resolve_by_path_ref(f"{shared_path}::run")
+        assert resolved is not None
+        assert resolved.solution_id is None
+        # Name+type lookup likewise excludes the solution row.
+        by_name = await repo.get_by_name_and_type("dupname", "workflow")
+        assert by_name is not None
+        assert by_name.solution_id is None

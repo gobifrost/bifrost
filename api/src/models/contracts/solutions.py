@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 SolutionScope = Literal["org", "global"]
 
@@ -39,13 +39,27 @@ class SolutionUpdate(BaseModel):
     git_repo_url: str | None = None
 
 
-class Solution(SolutionBase):
-    """Read-shape returned by REST."""
+class Solution(BaseModel):
+    """Read-shape returned by REST.
+
+    ``scope`` is DERIVED from ``organization_id`` (NULL == global), not stored
+    on the ORM row — so it always reflects the install's true scope.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    slug: str
+    name: str
     organization_id: UUID | None = None
+    global_repo_access: bool = False
+    git_connected: bool = False
+    git_repo_url: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def scope(self) -> SolutionScope:
+        return "org" if self.organization_id is not None else "global"
 
 
 class SolutionsList(BaseModel):

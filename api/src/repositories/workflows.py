@@ -244,6 +244,9 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         stmt = select(Workflow).where(
             Workflow.name == name,
             Workflow.type == type,
+            # _repo/-tier lookup: solution workflows are resolved by id, and may
+            # reuse a _repo/ name — exclude them to avoid MultipleResultsFound.
+            Workflow.solution_id.is_(None),
         )
         if active_only:
             stmt = stmt.where(Workflow.is_active.is_(True))

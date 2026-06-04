@@ -39,6 +39,10 @@ from src.services.sync_ops import Upsert
 logger = logging.getLogger(__name__)
 
 
+class SolutionDeployConflict(Exception):
+    """A bundle references an entity id owned by _repo/ or another install."""
+
+
 @dataclass
 class DeployResult:
     """Counts from one full-replace deploy."""
@@ -86,19 +90,66 @@ class SolutionDeployer:
             workflows_deleted=deleted,
         )
 
-    # ── 1. Python source → SolutionStorage ──────────────────────────────────
+    # ── 1. Python source → SolutionStorage (full replace + cache sync) ───────
     async def _write_python(self, sid: UUID, python_files: dict[str, str]) -> None:
-        if not python_files:
-            return
+        """Full-replace this install's Python source and keep the module cache
+        consistent.
+
+        get_module_sync reads Redis (keyed by the _solutions/{id}/ storage path)
+        BEFORE S3, so a plain S3 write would leave stale bytes cached for the
+        24h TTL and removed files would still resolve. So: write-through each
+        bundle file to Redis with fresh content, and delete (S3 + Redis) any
+        prior solution file absent from the new bundle (Codex P1).
+        """
+        from src.core.module_cache import invalidate_module, set_module
+
         storage = SolutionStorage(sid)
+
+        # Prior state: every file currently under this install's prefix.
+        prior = set(await storage.list(""))
+        new_rel = set(python_files.keys())
+
         for rel_path, content in python_files.items():
-            await storage.write(rel_path, content.encode("utf-8"))
+            content_hash = await storage.write(rel_path, content.encode("utf-8"))
+            storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
+            # Write-through so the next execution reads the new bytes, not the
+            # 24h-TTL cache. Only .py files are import-cached.
+            if rel_path.endswith(".py"):
+                await set_module(storage_key, content, content_hash)
+
+        # Remove files dropped from the bundle (full replace of source).
+        for rel_path in prior - new_rel:
+            await storage.delete(rel_path)
+            if rel_path.endswith(".py"):
+                await invalidate_module(storage._key(rel_path))
 
     # ── 2. Entity upserts (stamp solution_id + inherited scope) ──────────────
     async def _upsert_workflows(
         self, solution: Solution, workflows: list[dict[str, Any]]
     ) -> None:
+        sid = solution.id
         for mwf in workflows:
+            wf_id = UUID(mwf["id"])
+
+            # Guard: a bundle UUID must not collide with a row owned elsewhere
+            # (a _repo/ row, or another install). Updating it would re-stamp
+            # solution_id and silently hijack an unrelated workflow — the very
+            # thing the scoped full-replace guarantee forbids. Fetch (exists,
+            # owner) as a row so a real NULL owner is distinct from "absent".
+            row = (
+                await self.db.execute(
+                    select(Workflow.id, Workflow.solution_id).where(Workflow.id == wf_id)
+                )
+            ).first()
+            if row is not None:
+                owner = row[1]
+                if owner != sid:
+                    raise SolutionDeployConflict(
+                        f"workflow {wf_id} is already owned by "
+                        f"{'_repo/' if owner is None else f'solution {owner}'}; "
+                        f"a bundle may not reuse another owner's entity id"
+                    )
+
             values = {
                 "name": mwf["name"],
                 "function_name": mwf["function_name"],
@@ -107,14 +158,15 @@ class SolutionDeployer:
                 "is_active": True,
                 # Scope is inherited from the install — no per-entity binding.
                 "organization_id": solution.organization_id,
-                "solution_id": solution.id,
+                "solution_id": sid,
             }
             if mwf.get("description") is not None:
                 values["description"] = mwf["description"]
             if mwf.get("access_level") is not None:
                 values["access_level"] = mwf["access_level"]
+            # Safe now: the id is either absent or already this install's.
             await Upsert(
-                model=Workflow, id=UUID(mwf["id"]), values=values, match_on="id"
+                model=Workflow, id=wf_id, values=values, match_on="id"
             ).execute(self.db)
 
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────

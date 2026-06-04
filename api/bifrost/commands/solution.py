@@ -91,13 +91,13 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     data = yaml.safe_load(wf_file.read_text()) or {}
     raw = data.get("workflows", {})
     entries: list[dict] = []
-    # workflows.yaml maps name -> {id, function_name, path, ...}
-    for name, body in raw.items():
+    # workflows.yaml is keyed by workflow UUID; the display name is body["name"].
+    for key, body in raw.items():
         if not isinstance(body, dict):
             continue
         entries.append({
-            "id": body["id"],
-            "name": name,
+            "id": body.get("id", key),
+            "name": body.get("name") or key,
             "function_name": body["function_name"],
             "path": body["path"],
             "type": body.get("type", "workflow"),
