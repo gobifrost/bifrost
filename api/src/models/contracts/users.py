@@ -114,6 +114,7 @@ class UserPublic(UserBase):
     created_at: datetime
     updated_at: datetime
     invite_status: str = "active"  # one of InviteStatus values; populated by router
+    registration_url: str | None = None  # only populated immediately after invite creation
 
     @field_serializer("created_at", "updated_at", "last_login")
     def serialize_dt(self, dt: datetime | None) -> str | None:

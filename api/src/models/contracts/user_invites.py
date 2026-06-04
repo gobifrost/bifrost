@@ -36,6 +36,12 @@ class CreateInviteResponse(BaseModel):
     event_id: UUID | None = None
 
 
+class SendInviteRequest(BaseModel):
+    """Request to emit invite automation for an existing raw registration link."""
+
+    registration_url: str
+
+
 class RegisterFromInviteRequest(BaseModel):
     """Invitee submits this to consume the token and set up auth."""
 

@@ -14,6 +14,7 @@ interface Props {
 }
 
 export function AuthSetupSteps({
+	email,
 	onPasskeyRegister,
 	onPasswordRegister,
 	isPending,
@@ -21,9 +22,13 @@ export function AuthSetupSteps({
 }: Props) {
 	const [showPassword, setShowPassword] = useState(false);
 	const [password, setPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
+
+	const passwordsMatch = password === confirmPassword;
 
 	const handlePasswordSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
+		if (!password || !passwordsMatch) return;
 		await onPasswordRegister(password);
 	};
 
@@ -63,6 +68,18 @@ export function AuthSetupSteps({
 				</div>
 			) : (
 				<form onSubmit={handlePasswordSubmit} className="space-y-4">
+					{/* Hidden username field lets password managers associate the
+					    saved credential with the right account. */}
+					{email && (
+						<input
+							type="text"
+							name="username"
+							autoComplete="username"
+							value={email}
+							readOnly
+							hidden
+						/>
+					)}
 					<div className="space-y-2">
 						<Label htmlFor="auth-password">Password</Label>
 						<div className="relative">
@@ -76,14 +93,44 @@ export function AuthSetupSteps({
 								className="pl-10"
 								required
 								minLength={8}
+								autoComplete="new-password"
 								autoFocus
 							/>
 						</div>
 					</div>
+					<div className="space-y-2">
+						<Label htmlFor="auth-confirm-password">
+							Confirm password
+						</Label>
+						<div className="relative">
+							<Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+							<Input
+								id="auth-confirm-password"
+								type="password"
+								placeholder="Re-enter your password"
+								value={confirmPassword}
+								onChange={(e) =>
+									setConfirmPassword(e.target.value)
+								}
+								className="pl-10"
+								required
+								minLength={8}
+								autoComplete="new-password"
+								aria-invalid={
+									confirmPassword.length > 0 && !passwordsMatch
+								}
+							/>
+						</div>
+						{confirmPassword.length > 0 && !passwordsMatch && (
+							<p className="text-sm text-destructive">
+								Passwords do not match.
+							</p>
+						)}
+					</div>
 					<Button
 						type="submit"
 						className="w-full"
-						disabled={isPending || !password}
+						disabled={isPending || !password || !passwordsMatch}
 					>
 						{isPending && (
 							<Loader2 className="h-4 w-4 animate-spin mr-2" />

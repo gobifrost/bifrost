@@ -24,6 +24,23 @@ def _reset_actor():
     clear_actor()
 
 
+class _SavepointCM:
+    """Async context-manager stand-in for AsyncSession.begin_nested()."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _session_mock() -> MagicMock:
+    """A session mock whose begin_nested() is a usable async savepoint."""
+    db = MagicMock()
+    db.begin_nested = MagicMock(return_value=_SavepointCM())
+    return db
+
+
 class TestActorContext:
     def test_current_actor_empty_by_default(self):
         assert current_actor() is None
@@ -90,7 +107,7 @@ class TestEmitAudit:
             )
         )
 
-        db = MagicMock()
+        db = _session_mock()
         resource_id = uuid4()
         await emit_audit(
             db,
@@ -129,7 +146,7 @@ class TestEmitAudit:
         )
 
         # Should NOT raise.
-        await emit_audit(MagicMock(), "user.create")
+        await emit_audit(_session_mock(), "user.create")
 
     @pytest.mark.asyncio
     async def test_actor_override_wins(self, monkeypatch):
@@ -153,7 +170,7 @@ class TestEmitAudit:
         # Override says Bob
         bob_id = uuid4()
         await emit_audit(
-            MagicMock(),
+            _session_mock(),
             "auth.login.success",
             actor_override=ActorContext(
                 user_id=bob_id,

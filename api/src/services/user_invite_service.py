@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import get_password_hash
 from src.models.contracts.user_invites import InviteStatus
-from src.models.orm import User, UserInvite
+from src.models.orm import User, UserInvite, UserOAuthAccount
 
 # Invites expire after 7 days by default.
 INVITE_TTL = timedelta(days=7)
@@ -62,6 +62,17 @@ class UserInviteService:
             await self.session.flush()
 
     async def consume(self, *, token: str, password: str | None = None) -> User:
+        invite, user = await self.get_valid_invite_user(token=token)
+
+        if password:
+            user.hashed_password = get_password_hash(password)
+        user.is_registered = True
+        invite.consumed_at = datetime.now(timezone.utc)
+
+        await self.session.flush()
+        return user
+
+    async def get_valid_invite_user(self, *, token: str) -> tuple[UserInvite, User]:
         token_hash = _hash_token(token)
         invite = (
             await self.session.execute(
@@ -81,16 +92,13 @@ class UserInviteService:
             await self.session.execute(select(User).where(User.id == invite.user_id))
         ).scalar_one()
 
-        if password:
-            user.hashed_password = get_password_hash(password)
-        user.is_registered = True
-        invite.consumed_at = datetime.now(timezone.utc)
+        if user.is_registered or await self._has_oauth_account(user.id):
+            raise InviteConsumeError("User is already registered")
 
-        await self.session.flush()
-        return user
+        return invite, user
 
     async def status_for(self, user: User) -> str:
-        if user.is_registered:
+        if user.is_registered or await self._has_oauth_account(user.id):
             return InviteStatus.ACTIVE
         invite = await self._get_for_user(user.id)
         if invite is None:
@@ -107,3 +115,12 @@ class UserInviteService:
                 select(UserInvite).where(UserInvite.user_id == user_id)
             )
         ).scalar_one_or_none()
+
+    async def _has_oauth_account(self, user_id: UUID) -> bool:
+        return (
+            await self.session.execute(
+                select(UserOAuthAccount.id)
+                .where(UserOAuthAccount.user_id == user_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none() is not None

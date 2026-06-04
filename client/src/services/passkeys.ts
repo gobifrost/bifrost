@@ -334,3 +334,73 @@ export async function setupWithPasskey(
 
 	return verifyRes.json();
 }
+
+export async function registerInviteWithPasskey(
+	token: string,
+	deviceName?: string,
+): Promise<SetupPasskeyResult> {
+	const optionsRes = await fetch(
+		"/auth/register-from-invite/passkey/options",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ token }),
+		},
+	);
+
+	if (!optionsRes.ok) {
+		const error = await optionsRes.json().catch(() => ({}));
+		throw new Error(error.detail || "Failed to start passkey registration");
+	}
+
+	const { options } = await optionsRes.json();
+
+	let credential;
+	try {
+		credential = await startRegistration({
+			optionsJSON: options as PublicKeyCredentialCreationOptionsJSON,
+		});
+	} catch (error) {
+		if (error instanceof Error) {
+			if (error.name === "NotAllowedError") {
+				throw new Error(
+					"Passkey creation was cancelled or not allowed",
+					{ cause: error },
+				);
+			}
+			if (error.name === "InvalidStateError") {
+				throw new Error(
+					"This passkey is already registered on this device",
+					{ cause: error },
+				);
+			}
+			if (error.name === "NotSupportedError") {
+				throw new Error(
+					"Your browser or device does not support passkeys",
+					{ cause: error },
+				);
+			}
+		}
+		throw error;
+	}
+
+	const verifyRes = await fetch("/auth/register-from-invite/passkey/verify", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		credentials: "same-origin",
+		body: JSON.stringify({
+			token,
+			credential,
+			device_name: deviceName,
+		}),
+	});
+
+	if (!verifyRes.ok) {
+		const error = await verifyRes.json().catch(() => ({}));
+		throw new Error(
+			error.detail || "Failed to complete passkey registration",
+		);
+	}
+
+	return verifyRes.json();
+}

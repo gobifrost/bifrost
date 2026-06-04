@@ -38,7 +38,7 @@ export function Setup() {
 		needsSetup,
 		isLoading: authLoading,
 		checkAuthStatus,
-		loginWithPasskey,
+		completeLoginWithToken,
 	} = useAuth();
 
 	const [isLoading, setIsLoading] = useState(false);
@@ -59,13 +59,15 @@ export function Setup() {
 		setError(null);
 		setIsLoading(true);
 		try {
-			await setupWithPasskey(email, name);
+			const result = await setupWithPasskey(email, name);
+			completeLoginWithToken(result.access_token);
 			await checkAuthStatus();
-			await loginWithPasskey(email);
 			toast.success("Account created successfully!");
 			navigate("/");
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Passkey setup failed");
+			setError(
+				err instanceof Error ? err.message : "Passkey setup failed",
+			);
 			setIsLoading(false);
 		}
 	};
@@ -76,9 +78,13 @@ export function Setup() {
 		try {
 			await registerUser(email, password, name);
 			await checkAuthStatus();
-			navigate("/login", { state: { message: "Account created! Please sign in." } });
+			navigate("/login", {
+				state: { message: "Account created! Please sign in." },
+			});
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Account creation failed");
+			setError(
+				err instanceof Error ? err.message : "Account creation failed",
+			);
 			setIsLoading(false);
 		}
 	};
@@ -127,7 +133,10 @@ export function Setup() {
 				type="button"
 				className="w-full mt-2"
 				disabled={!email}
-				onClick={() => { setError(null); setMode("auth"); }}
+				onClick={() => {
+					setError(null);
+					setMode("auth");
+				}}
 			>
 				Continue
 			</Button>

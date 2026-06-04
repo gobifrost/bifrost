@@ -6,6 +6,7 @@ List and manage users, view user roles and forms.
 
 import logging
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -30,7 +31,11 @@ from src.models import (
     UserRolesResponse,
     UserFormsResponse,
 )
-from src.models.contracts.user_invites import CreateInviteResponse, InviteStatus
+from src.models.contracts.user_invites import (
+    CreateInviteResponse,
+    InviteStatus,
+    SendInviteRequest,
+)
 from src.core.constants import PROVIDER_ORG_ID
 
 logger = logging.getLogger(__name__)
@@ -156,39 +161,18 @@ async def create_user(
         },
     )
 
-    invite_status = InviteStatus.NEVER_INVITED
-    if request.invite:
-        svc = UserInviteService(db)
-        raw_token, invite = await svc.create_or_replace(
-            user_id=new_user.id, created_by=user.user_id
-        )
-        invite_status = InviteStatus.PENDING
-        should_emit = request.trigger_automation is True or request.trigger_automation is None
-        if should_emit:
-            registration_url = (
-                f"{get_settings().public_url.rstrip('/')}/accept-invite?token={raw_token}"
-            )
-            await emit_event(
-                "user.invited",
-                {
-                    "user_id": str(new_user.id),
-                    "email": new_user.email,
-                    "name": new_user.name or "",
-                    "registration_url": registration_url,
-                    "expires_at": invite.expires_at.isoformat(),
-                    "invited_by": {
-                        "user_id": str(user.user_id),
-                        "email": user.email,
-                        "name": getattr(user, "name", None) or "",
-                    },
-                    "reason": "created",
-                },
-                organization_id=new_user.organization_id,
-                triggered_by=str(user.user_id),
-            )
+    svc = UserInviteService(db)
+    raw_token, invite = await svc.create_or_replace(
+        user_id=new_user.id, created_by=user.user_id
+    )
+    invite_status = InviteStatus.PENDING
+    registration_url = (
+        f"{get_settings().public_url.rstrip('/')}/accept-invite?token={raw_token}"
+    )
 
     response = UserPublic.model_validate(new_user)
     response.invite_status = invite_status
+    response.registration_url = registration_url
     return response
 
 
@@ -293,6 +277,45 @@ async def resend_invite(
 
 
 @router.post(
+    "/{user_id}/invite/send",
+    response_model=CreateInviteResponse,
+    summary="Send invite",
+    description="Emit invite automation for an existing registration link without rotating the token.",
+)
+async def send_invite(
+    user_id: UUID,
+    request: SendInviteRequest,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> CreateInviteResponse:
+    token = _extract_invite_token(request.registration_url)
+    svc = UserInviteService(db)
+    try:
+        invite, target = await svc.get_valid_invite_user(token=token)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invite is not valid") from exc
+
+    if target.id != user_id:
+        raise HTTPException(status_code=400, detail="Invite does not belong to user")
+
+    event_id = await _emit_user_invited_event(
+        actor=user,
+        invite=invite,
+        reason="sent",
+        registration_url=request.registration_url,
+        target=target,
+    )
+
+    return CreateInviteResponse(
+        user_id=user_id,
+        expires_at=invite.expires_at,
+        registration_url=request.registration_url,
+        event_emitted=True,
+        event_id=event_id,
+    )
+
+
+@router.post(
     "/{user_id}/invite/regenerate",
     response_model=CreateInviteResponse,
     summary="Regenerate invite link",
@@ -342,23 +365,12 @@ async def _generate_invite(
 
     event_id = None
     if send:
-        event_id, _ = await emit_event(
-            "user.invited",
-            {
-                "user_id": str(user_id),
-                "email": target.email,
-                "name": target.name or "",
-                "registration_url": registration_url,
-                "expires_at": invite.expires_at.isoformat(),
-                "invited_by": {
-                    "user_id": str(actor.user_id),
-                    "email": actor.email,
-                    "name": getattr(actor, "name", None) or "",
-                },
-                "reason": "resent",
-            },
-            organization_id=target.organization_id,
-            triggered_by=str(actor.user_id),
+        event_id = await _emit_user_invited_event(
+            actor=actor,
+            invite=invite,
+            reason="resent",
+            registration_url=registration_url,
+            target=target,
         )
 
     return CreateInviteResponse(
@@ -368,6 +380,43 @@ async def _generate_invite(
         event_emitted=send,
         event_id=event_id,
     )
+
+
+def _extract_invite_token(registration_url: str) -> str:
+    parsed = urlparse(registration_url)
+    token = parse_qs(parsed.query).get("token", [None])[0]
+    if not token:
+        raise HTTPException(status_code=400, detail="registration_url must include token")
+    return token
+
+
+async def _emit_user_invited_event(
+    *,
+    actor,
+    invite,
+    reason: str,
+    registration_url: str,
+    target: UserORM,
+) -> UUID:
+    event_id, _ = await emit_event(
+        "user.invited",
+        {
+            "user_id": str(target.id),
+            "email": target.email,
+            "name": target.name or "",
+            "registration_url": registration_url,
+            "expires_at": invite.expires_at.isoformat(),
+            "invited_by": {
+                "user_id": str(actor.user_id),
+                "email": actor.email,
+                "name": getattr(actor, "name", None) or "",
+            },
+            "reason": reason,
+        },
+        organization_id=target.organization_id,
+        triggered_by=str(actor.user_id),
+    )
+    return event_id
 
 
 @router.get(

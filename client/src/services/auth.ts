@@ -145,3 +145,25 @@ export async function registerUser(
 		throw new Error(error.detail || "Registration failed");
 	}
 }
+
+/**
+ * Complete an invite by setting a password. Uses a raw fetch (not apiClient)
+ * because the invitee is unauthenticated — the invite token IS the credential.
+ * Routing this through apiClient would trip its token-refresh middleware, which
+ * redirects unauthenticated callers to /login before the request is ever sent.
+ */
+export async function registerFromInvite(
+	token: string,
+	password: string,
+): Promise<void> {
+	const res = await fetch("/auth/register-from-invite", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ token, password }),
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({}));
+		throw new Error(error.detail || "Registration failed");
+	}
+}

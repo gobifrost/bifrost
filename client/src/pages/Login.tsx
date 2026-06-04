@@ -30,6 +30,7 @@ import {
 import { motion } from "framer-motion";
 import type { OAuthProvider } from "@/services/auth";
 import { Logo } from "@/components/branding/Logo";
+import { AuthTransition } from "@/components/auth/AuthTransition";
 
 type LoginStep = "credentials" | "mfa" | "mfa-setup";
 
@@ -62,6 +63,7 @@ export function Login() {
 	// UI state
 	const [isLoading, setIsLoading] = useState(false);
 	const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
+	const [finalizing, setFinalizing] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [oauthProviders, setOAuthProviders] = useState<OAuthProvider[]>([]);
 	// Derived synchronously — `supportsPasskeys()` is a pure feature check on
@@ -112,6 +114,7 @@ export function Login() {
 		try {
 			// Pass email if user has entered one (helps target specific credentials)
 			await loginWithPasskey(email || undefined);
+			setFinalizing("Signing you in…");
 			redirectToFrom();
 		} catch (err) {
 			// Don't show error for user cancellation
@@ -196,6 +199,7 @@ export function Login() {
 			const result = await login(email, password);
 
 			if (result.success) {
+				setFinalizing("Signing you in…");
 				redirectToFrom();
 				return;
 			}
@@ -233,6 +237,7 @@ export function Login() {
 
 		try {
 			await loginWithMfa(mfaState.mfaToken, mfaCode, trustDevice);
+			setFinalizing("Signing you in…");
 			redirectToFrom();
 		} catch (err) {
 			setError(
@@ -266,6 +271,7 @@ export function Login() {
 			sessionStorage.setItem("oauth_state", state);
 
 			// Redirect to OAuth provider
+			setFinalizing("Redirecting to sign-in…");
 			window.location.assign(authorization_url);
 		} catch (err) {
 			setError(
@@ -273,6 +279,7 @@ export function Login() {
 					? err.message
 					: "OAuth initialization failed",
 			);
+			setFinalizing(null);
 			setIsLoading(false);
 		}
 	};
@@ -331,6 +338,10 @@ export function Login() {
 				return <KeyRound className="w-5 h-5" />;
 		}
 	};
+
+	if (finalizing) {
+		return <AuthTransition message={finalizing} />;
+	}
 
 	if (authLoading) {
 		return (

@@ -52,6 +52,7 @@ import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { CreateUserDialog } from "@/components/users/CreateUserDialog";
 import { EditUserDialog } from "@/components/users/EditUserDialog";
 import { UserActionsMenu } from "@/components/users/UserActionsMenu";
+import { RegistrationLinkDialog } from "@/components/users/RegistrationLinkDialog";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import { BulkActionBar } from "@/components/users/BulkActionBar";
 import { UserEmailCell } from "@/components/users/UserEmailCell";
@@ -65,16 +66,31 @@ import {
 	useRegenerateInvite,
 	useResendInvite,
 	useRevokeInvite,
+	useSendInvite,
 } from "@/hooks/useUserInvites";
+import { useEventSources } from "@/services/events";
 import { toast } from "sonner";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
+type RegistrationLinkDialogState = {
+	userId: string;
+	email: string;
+	url: string;
+} | null;
 
 type SortColumn = "name" | "email" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
 
-function SortIcon({ column, sortColumn, sortDirection }: { column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }) {
+function SortIcon({
+	column,
+	sortColumn,
+	sortDirection,
+}: {
+	column: SortColumn;
+	sortColumn: SortColumn;
+	sortDirection: SortDirection;
+}) {
 	if (sortColumn !== column) return null;
 	return sortDirection === "asc" ? (
 		<ArrowUp className="inline ml-1 h-3 w-3" />
@@ -96,6 +112,8 @@ export function Users() {
 	);
 	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+	const [registrationLinkDialog, setRegistrationLinkDialog] =
+		useState<RegistrationLinkDialogState>(null);
 
 	const { scope } = useOrgScope();
 	const { user: currentUser, isPlatformAdmin } = useAuth();
@@ -113,6 +131,18 @@ export function Users() {
 	const resendMutation = useResendInvite();
 	const regenerateMutation = useRegenerateInvite();
 	const revokeMutation = useRevokeInvite();
+	const sendInviteMutation = useSendInvite();
+	const { data: eventSources } = useEventSources({
+		sourceType: "topic",
+		limit: 100,
+	});
+	const inviteAutomationConfigured =
+		eventSources?.items?.some(
+			(source) =>
+				source.is_active &&
+				source.event_type === "user.invited" &&
+				source.subscription_count > 0,
+		) ?? false;
 
 	const { data: organizations } = useOrganizations({
 		enabled: isPlatformAdmin,
@@ -123,7 +153,10 @@ export function Users() {
 	): { name: string; isProvider: boolean } => {
 		if (!orgId) return { name: "Platform", isProvider: false };
 		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return { name: org?.name || orgId, isProvider: org?.is_provider ?? false };
+		return {
+			name: org?.name || orgId,
+			isProvider: org?.is_provider ?? false,
+		};
 	};
 
 	const filteredUsers = useSearch(users || [], searchTerm, ["email", "name"]);
@@ -134,7 +167,12 @@ export function Users() {
 			const dir = sortDirection === "asc" ? 1 : -1;
 			switch (sortColumn) {
 				case "name":
-					return dir * (a.name || a.email || "").localeCompare(b.name || b.email || "");
+					return (
+						dir *
+						(a.name || a.email || "").localeCompare(
+							b.name || b.email || "",
+						)
+					);
 				case "email":
 					return dir * (a.email || "").localeCompare(b.email || "");
 				case "status": {
@@ -143,13 +181,21 @@ export function Users() {
 					return dir * aVal.localeCompare(bVal);
 				}
 				case "created": {
-					const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
-					const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+					const aDate = a.created_at
+						? new Date(a.created_at).getTime()
+						: 0;
+					const bDate = b.created_at
+						? new Date(b.created_at).getTime()
+						: 0;
 					return dir * (aDate - bDate);
 				}
 				case "last_login": {
-					const aDate = a.last_login ? new Date(a.last_login).getTime() : 0;
-					const bDate = b.last_login ? new Date(b.last_login).getTime() : 0;
+					const aDate = a.last_login
+						? new Date(a.last_login).getTime()
+						: 0;
+					const bDate = b.last_login
+						? new Date(b.last_login).getTime()
+						: 0;
 					return dir * (aDate - bDate);
 				}
 				default:
@@ -303,6 +349,14 @@ export function Users() {
 	const isSelf = (user: User) =>
 		!!(currentUser && user.id === currentUser.id);
 
+	const showRegistrationLink = (user: User, url: string) => {
+		setRegistrationLinkDialog({
+			userId: user.id,
+			email: user.email,
+			url,
+		});
+	};
+
 	return (
 		<div className="h-full flex flex-col space-y-6 max-w-7xl mx-auto">
 			<div className="flex items-center justify-between">
@@ -392,7 +446,9 @@ export function Users() {
 													? "indeterminate"
 													: false
 										}
-										onCheckedChange={() => selection.toggleAllVisible()}
+										onCheckedChange={() =>
+											selection.toggleAllVisible()
+										}
 									/>
 								</DataTableHead>
 								<DataTableHead className="w-0 whitespace-nowrap">
@@ -403,42 +459,64 @@ export function Users() {
 									onClick={() => handleSort("name")}
 								>
 									Name
-									<SortIcon column="name" sortColumn={sortColumn} sortDirection={sortDirection} />
+									<SortIcon
+										column="name"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
 								</DataTableHead>
 								<DataTableHead
 									className="cursor-pointer select-none"
 									onClick={() => handleSort("email")}
 								>
 									Email
-									<SortIcon column="email" sortColumn={sortColumn} sortDirection={sortDirection} />
+									<SortIcon
+										column="email"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
 								</DataTableHead>
 								<DataTableHead
 									className="w-0 whitespace-nowrap cursor-pointer select-none"
 									onClick={() => handleSort("status")}
 								>
 									Status
-									<SortIcon column="status" sortColumn={sortColumn} sortDirection={sortDirection} />
+									<SortIcon
+										column="status"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
 								</DataTableHead>
 								<DataTableHead
 									className="w-0 whitespace-nowrap cursor-pointer select-none"
 									onClick={() => handleSort("created")}
 								>
 									Created
-									<SortIcon column="created" sortColumn={sortColumn} sortDirection={sortDirection} />
+									<SortIcon
+										column="created"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
 								</DataTableHead>
 								<DataTableHead
 									className="w-0 whitespace-nowrap cursor-pointer select-none"
 									onClick={() => handleSort("last_login")}
 								>
 									Last Login
-									<SortIcon column="last_login" sortColumn={sortColumn} sortDirection={sortDirection} />
+									<SortIcon
+										column="last_login"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
 								</DataTableHead>
 								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>
 							{sortedUsers.map((user) => {
-								const orgInfo = getOrgInfo(user.organization_id);
+								const orgInfo = getOrgInfo(
+									user.organization_id,
+								);
 								return (
 									<DataTableRow
 										key={user.id}
@@ -446,7 +524,9 @@ export function Users() {
 										onClick={() => handleEditUser(user)}
 										className={
 											"group/row" +
-											(!user.is_active ? " opacity-60" : "")
+											(!user.is_active
+												? " opacity-60"
+												: "")
 										}
 									>
 										<DataTableCell
@@ -465,17 +545,25 @@ export function Users() {
 														</span>
 													</TooltipTrigger>
 													<TooltipContent>
-														You can't include yourself in a bulk action
+														You can't include
+														yourself in a bulk
+														action
 													</TooltipContent>
 												</Tooltip>
 											) : (
 												<Checkbox
 													aria-label={`Select ${user.name || user.email}`}
-													checked={selection.isSelected(user.id)}
+													checked={selection.isSelected(
+														user.id,
+													)}
 													onClick={(e) => {
-														selection.toggle(user.id, {
-															shiftKey: e.shiftKey,
-														});
+														selection.toggle(
+															user.id,
+															{
+																shiftKey:
+																	e.shiftKey,
+															},
+														);
 														e.preventDefault();
 													}}
 												/>
@@ -483,7 +571,9 @@ export function Users() {
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap text-sm">
 											{user.is_superuser ? (
-												<span className="text-muted-foreground">—</span>
+												<span className="text-muted-foreground">
+													—
+												</span>
 											) : (
 												<span className="inline-flex items-center gap-1">
 													{orgInfo.isProvider ? (
@@ -505,7 +595,9 @@ export function Users() {
 														<TooltipTrigger asChild>
 															<Crown className="h-4 w-4 shrink-0 text-amber-500 fill-amber-500" />
 														</TooltipTrigger>
-														<TooltipContent>Platform Admin</TooltipContent>
+														<TooltipContent>
+															Platform Admin
+														</TooltipContent>
 													</Tooltip>
 												)}
 											</div>
@@ -518,7 +610,10 @@ export function Users() {
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap">
 											<UserStatusBadge
-												status={user.invite_status ?? "active"}
+												status={
+													user.invite_status ??
+													"active"
+												}
 											/>
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
@@ -540,59 +635,111 @@ export function Users() {
 											onClick={(e) => e.stopPropagation()}
 										>
 											<UserActionsMenu
-												status={user.invite_status ?? "active"}
+												status={
+													user.invite_status ??
+													"active"
+												}
 												isActive={user.is_active}
 												isSelf={isSelf(user)}
 												onResend={() =>
-													resendMutation.mutate(user.id, {
-														onSuccess: (res) => {
-															toast.success(
-																res.event_emitted
-																	? `Invite automation triggered for ${user.email}`
-																	: "Invite regenerated (no automations — copy link from regenerate)",
-															);
+													resendMutation.mutate(
+														user.id,
+														{
+															onSuccess: (
+																res,
+															) => {
+																toast.success(
+																	res.event_emitted
+																		? `Invite automation triggered for ${user.email}`
+																		: "Invite regenerated (no automations — copy link from regenerate)",
+																);
+															},
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to resend invite",
+																),
 														},
-														onError: (e: unknown) =>
-															toast.error(
-																e instanceof Error ? e.message : "Failed to resend invite",
-															),
-													})
+													)
 												}
 												onRegenerate={() =>
-													regenerateMutation.mutate(user.id, {
-														onSuccess: (res) => {
-															void navigator.clipboard.writeText(res.registration_url);
-															toast.success("New invite link generated and copied");
+													regenerateMutation.mutate(
+														user.id,
+														{
+															onSuccess: (
+																res,
+															) => {
+																showRegistrationLink(
+																	user,
+																	res.registration_url,
+																);
+															},
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to regenerate link",
+																),
 														},
-														onError: (e: unknown) =>
-															toast.error(
-																e instanceof Error ? e.message : "Failed to regenerate link",
-															),
-													})
+													)
 												}
 												onCopyLink={() =>
-													regenerateMutation.mutate(user.id, {
-														onSuccess: (res) => {
-															void navigator.clipboard.writeText(res.registration_url);
-															toast.success("Registration link copied");
+													regenerateMutation.mutate(
+														user.id,
+														{
+															onSuccess: (
+																res,
+															) => {
+																showRegistrationLink(
+																	user,
+																	res.registration_url,
+																);
+															},
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to copy link",
+																),
 														},
-														onError: (e: unknown) =>
-															toast.error(
-																e instanceof Error ? e.message : "Failed to copy link",
-															),
-													})
+													)
 												}
 												onRevoke={() =>
-													revokeMutation.mutate(user.id, {
-														onSuccess: () => toast.success("Invite revoked"),
-														onError: (e: unknown) =>
-															toast.error(
-																e instanceof Error ? e.message : "Failed to revoke invite",
-															),
-													})
+													revokeMutation.mutate(
+														user.id,
+														{
+															onSuccess: () =>
+																toast.success(
+																	"Invite revoked",
+																),
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to revoke invite",
+																),
+														},
+													)
 												}
-												onToggleActive={() => handleToggleActive(user)}
-												onDelete={() => handleDeleteUser(user)}
+												onToggleActive={() =>
+													handleToggleActive(user)
+												}
+												onDelete={() =>
+													handleDeleteUser(user)
+												}
 											/>
 										</DataTableCell>
 									</DataTableRow>
@@ -673,6 +820,35 @@ export function Users() {
 				user={selectedUser}
 				open={isEditOpen}
 				onOpenChange={handleEditClose}
+			/>
+
+			<RegistrationLinkDialog
+				open={registrationLinkDialog !== null}
+				email={registrationLinkDialog?.email}
+				url={registrationLinkDialog?.url}
+				canSendEmail={inviteAutomationConfigured}
+				isSendingEmail={sendInviteMutation.isPending}
+				onSendEmail={async () => {
+					if (!registrationLinkDialog) return;
+					try {
+						await sendInviteMutation.mutateAsync({
+							userId: registrationLinkDialog.userId,
+							registrationUrl: registrationLinkDialog.url,
+						});
+						toast.success("Registration email sent");
+						setRegistrationLinkDialog(null);
+					} catch (error) {
+						toast.error("Failed to send registration email", {
+							description:
+								error instanceof Error
+									? error.message
+									: "Unknown error occurred",
+						});
+					}
+				}}
+				onOpenChange={(open) => {
+					if (!open) setRegistrationLinkDialog(null);
+				}}
 			/>
 
 			{/* Disable confirmation dialog */}

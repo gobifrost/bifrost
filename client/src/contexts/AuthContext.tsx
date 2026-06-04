@@ -67,6 +67,7 @@ interface AuthContextValue {
 		state: string,
 	) => Promise<void>;
 	loginWithPasskey: (email?: string) => Promise<void>;
+	completeLoginWithToken: (accessToken: string) => void;
 	logout: () => void;
 	refreshToken: () => Promise<boolean>;
 	checkAuthStatus: () => Promise<void>;
@@ -143,6 +144,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	const [needsSetup, setNeedsSetup] = useState(false);
 	const navigate = useNavigate();
 	const location = useLocation();
+
+	const completeLoginWithToken = useCallback((accessToken: string): void => {
+		clearEmbedToken();
+		localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+
+		const payload = parseJwt(accessToken);
+		if (payload) {
+			const extractedUser = extractUser(payload);
+			setUser(extractedUser);
+			localStorage.setItem(USER_KEY, JSON.stringify(extractedUser));
+			sessionStorage.setItem("userId", extractedUser.id);
+		}
+	}, []);
 
 	// Internal refresh function (no hooks)
 	// Uses HttpOnly cookie for refresh token (browser sends it automatically)
@@ -284,26 +298,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 			// Success - store access token (refresh token is in HttpOnly cookie)
 			if (data.access_token) {
-				clearEmbedToken();
-				localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-
-				const payload = parseJwt(data.access_token);
-				if (payload) {
-					const extractedUser = extractUser(payload);
-					setUser(extractedUser);
-					localStorage.setItem(
-						USER_KEY,
-						JSON.stringify(extractedUser),
-					);
-					sessionStorage.setItem("userId", extractedUser.id);
-				}
-
+				completeLoginWithToken(data.access_token);
 				return { success: true };
 			}
 
 			throw new Error("No access token received");
 		},
-		[],
+		[completeLoginWithToken],
 	);
 
 	// Complete MFA verification during login (for users with MFA already set up)
@@ -331,22 +332,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			const data = await res.json();
 
 			if (data.access_token) {
-				clearEmbedToken();
-				localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-
-				const payload = parseJwt(data.access_token);
-				if (payload) {
-					const extractedUser = extractUser(payload);
-					setUser(extractedUser);
-					localStorage.setItem(
-						USER_KEY,
-						JSON.stringify(extractedUser),
-					);
-					sessionStorage.setItem("userId", extractedUser.id);
-				}
+				completeLoginWithToken(data.access_token);
 			}
 		},
-		[],
+		[completeLoginWithToken],
 	);
 
 	// Complete OAuth login
@@ -376,22 +365,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			const data = await res.json();
 
 			if (data.access_token) {
-				clearEmbedToken();
-				localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-
-				const payload = parseJwt(data.access_token);
-				if (payload) {
-					const extractedUser = extractUser(payload);
-					setUser(extractedUser);
-					localStorage.setItem(
-						USER_KEY,
-						JSON.stringify(extractedUser),
-					);
-					sessionStorage.setItem("userId", extractedUser.id);
-				}
+				completeLoginWithToken(data.access_token);
 			}
 		},
-		[],
+		[completeLoginWithToken],
 	);
 
 	// Login with passkey (passwordless authentication)
@@ -404,22 +381,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			const tokens = await authenticateWithPasskey(email);
 
 			if (tokens.access_token) {
-				clearEmbedToken();
-				localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
-
-				const payload = parseJwt(tokens.access_token);
-				if (payload) {
-					const extractedUser = extractUser(payload);
-					setUser(extractedUser);
-					localStorage.setItem(
-						USER_KEY,
-						JSON.stringify(extractedUser),
-					);
-					sessionStorage.setItem("userId", extractedUser.id);
-				}
+				completeLoginWithToken(tokens.access_token);
 			}
 		},
-		[],
+		[completeLoginWithToken],
 	);
 
 	// Logout
@@ -484,11 +449,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			loginWithMfa,
 			loginWithOAuth,
 			loginWithPasskey,
+			completeLoginWithToken,
 			logout,
 			refreshToken,
 			checkAuthStatus,
 		}),
-		[user, isLoading, needsSetup, login, loginWithMfa, loginWithOAuth, loginWithPasskey, logout, refreshToken, checkAuthStatus],
+		[
+			user,
+			isLoading,
+			needsSetup,
+			login,
+			loginWithMfa,
+			loginWithOAuth,
+			loginWithPasskey,
+			completeLoginWithToken,
+			logout,
+			refreshToken,
+			checkAuthStatus,
+		],
 	);
 
 	return (

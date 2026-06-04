@@ -31,9 +31,40 @@ describe("AuthSetupSteps", () => {
 			/>,
 		);
 		await userEvent.click(screen.getByRole("button", { name: /use password instead/i }));
-		await userEvent.type(screen.getByLabelText(/password/i), "secret123");
+		await userEvent.type(screen.getByLabelText("Password"), "secret123");
+		await userEvent.type(
+			screen.getByLabelText(/confirm password/i),
+			"secret123",
+		);
 		await userEvent.click(screen.getByRole("button", { name: /create account/i }));
 		expect(onPwd).toHaveBeenCalledWith("secret123");
+	});
+
+	it("blocks submission until the passwords match", async () => {
+		const onPwd = vi.fn().mockResolvedValue(undefined);
+		render(
+			<AuthSetupSteps
+				email="x@y.com"
+				onPasskeyRegister={vi.fn()}
+				onPasswordRegister={onPwd}
+				isPending={false}
+				error={null}
+			/>,
+		);
+		await userEvent.click(
+			screen.getByRole("button", { name: /use password instead/i }),
+		);
+		await userEvent.type(screen.getByLabelText("Password"), "secret123");
+		await userEvent.type(
+			screen.getByLabelText(/confirm password/i),
+			"secret124",
+		);
+
+		expect(screen.getByText(/passwords do not match/i)).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: /create account/i }),
+		).toBeDisabled();
+		expect(onPwd).not.toHaveBeenCalled();
 	});
 
 	it("displays error when provided", () => {

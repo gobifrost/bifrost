@@ -356,6 +356,8 @@ async def oauth_callback(
         # Existing OAuth user - update last login
         user = existing_user
         user.last_login = datetime.now(timezone.utc)
+        user.is_registered = True
+        user.is_verified = True
 
         # Update OAuth account
         await oauth_service.link_oauth_account(user, user_info, tokens)
@@ -375,6 +377,8 @@ async def oauth_callback(
             await oauth_service.link_oauth_account(user, user_info, tokens)
 
             user.last_login = datetime.now(timezone.utc)
+            user.is_registered = True
+            user.is_verified = True
             await db.commit()
 
         except ValueError as e:

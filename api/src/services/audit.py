@@ -19,6 +19,7 @@ import logging
 from typing import Any, Literal
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.audit_logs import AuditLogRepository
@@ -63,20 +64,44 @@ async def emit_audit(
     if actor is None:
         return
 
+    async def _insert(user_id: UUID | None) -> None:
+        # Wrap the insert in a SAVEPOINT so a failed audit row (e.g. a dangling
+        # actor FK from a stale token) rolls back only itself — never the
+        # caller's primary transaction. Without this, the failed INSERT poisons
+        # the shared session and the outer commit blows up, taking the real
+        # operation down with it.
+        async with db.begin_nested():
+            repo = AuditLogRepository(db)
+            await repo.create(
+                action=action,
+                user_id=user_id,
+                organization_id=actor.organization_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                outcome=outcome,
+                source=actor.source,
+                ip_address=actor.ip_address,
+                user_agent=actor.user_agent,
+                details=details,
+            )
+
     try:
-        repo = AuditLogRepository(db)
-        await repo.create(
-            action=action,
-            user_id=actor.user_id,
-            organization_id=actor.organization_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            outcome=outcome,
-            source=actor.source,
-            ip_address=actor.ip_address,
-            user_agent=actor.user_agent,
-            details=details,
+        await _insert(actor.user_id)
+    except IntegrityError:
+        # The actor's user_id points at a user that no longer exists (a stale
+        # token after the user was deleted). Record the event without an actor
+        # rather than dropping it.
+        logger.warning(
+            "Audit actor %s for %s no longer exists; recording without actor",
+            actor.user_id,
+            action,
         )
+        try:
+            await _insert(None)
+        except Exception as exc:
+            logger.warning(
+                "Failed to emit audit event %s: %s", action, exc, exc_info=True
+            )
     except Exception as exc:
         # Audit failures must never break the primary operation.
         logger.warning(

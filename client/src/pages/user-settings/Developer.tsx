@@ -14,15 +14,21 @@ import {
 	Copy,
 	Check,
 } from "lucide-react";
+import { toast } from "sonner";
+
+import { copyToClipboard } from "@/lib/clipboard";
 import { sdkService } from "@/services/sdk";
 
 function CopyButton({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
 
-	const handleCopy = useCallback(() => {
-		navigator.clipboard.writeText(text);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
+	const handleCopy = useCallback(async () => {
+		if (await copyToClipboard(text)) {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		} else {
+			toast.error("Failed to copy to clipboard");
+		}
 	}, [text]);
 
 	return (

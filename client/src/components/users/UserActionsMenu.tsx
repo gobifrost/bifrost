@@ -62,7 +62,7 @@ export function UserActionsMenu({
 						</DropdownMenuItem>
 						<DropdownMenuItem onClick={onRegenerate}>
 							<RefreshCw className="mr-2 h-4 w-4" />
-							Regenerate link
+							Generate registration link
 						</DropdownMenuItem>
 						<DropdownMenuItem onClick={onCopyLink}>
 							<LinkIcon className="mr-2 h-4 w-4" />

@@ -4,6 +4,7 @@ import {
 	regenerateInvite,
 	resendInvite,
 	revokeInvite,
+	sendInviteEmail,
 } from "@/services/user-invites";
 
 const USERS_QUERY_KEYS: ReadonlyArray<string> = ["users", "/api/users"];
@@ -26,6 +27,20 @@ export function useRegenerateInvite() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (userId: string) => regenerateInvite(userId),
+		onSuccess: () => invalidateUsers(qc),
+	});
+}
+
+export function useSendInvite() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: ({
+			userId,
+			registrationUrl,
+		}: {
+			userId: string;
+			registrationUrl: string;
+		}) => sendInviteEmail(userId, registrationUrl),
 		onSuccess: () => invalidateUsers(qc),
 	});
 }
