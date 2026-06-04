@@ -5,7 +5,7 @@ Tests the database operations for integration management and mapping.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from src.models.contracts.integrations import (
@@ -16,6 +16,7 @@ from src.models.contracts.integrations import (
     IntegrationMappingUpdate,
 )
 from src.repositories.integrations import IntegrationsRepository
+from src.models.enums import ConfigType
 
 
 class TestIntegrationsRepository:
@@ -200,6 +201,75 @@ class TestIntegrationsRepository:
 
         assert len(result) == 2
         assert any(i.is_deleted for i in result)
+
+    async def test_get_config_for_mapping_excludes_default_secrets_by_default(
+        self, repository, mock_session
+    ):
+        """Mapping responses should not leak integration-level secret defaults."""
+        integration_id = uuid4()
+        org_id = uuid4()
+
+        default_secret = MagicMock()
+        default_secret.organization_id = None
+        default_secret.config_type = ConfigType.SECRET
+        default_secret.key = "api_key"
+        default_secret.value = "encrypted-api-key"
+
+        org_override = MagicMock()
+        org_override.organization_id = org_id
+        org_override.config_type = ConfigType.STRING
+        org_override.key = "base_url"
+        org_override.value = "https://example.test"
+
+        mock_result = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [default_secret, org_override]
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        config = await repository.get_config_for_mapping(integration_id, org_id)
+
+        assert config == {"base_url": "https://example.test"}
+
+    async def test_get_config_for_mapping_can_include_default_secrets_for_sdk_execution(
+        self, repository, mock_session
+    ):
+        """SDK execution reads need global secret defaults merged under org mappings."""
+        integration_id = uuid4()
+        org_id = uuid4()
+
+        default_secret = MagicMock()
+        default_secret.organization_id = None
+        default_secret.config_type = ConfigType.SECRET
+        default_secret.key = "api_key"
+        default_secret.value = "encrypted-api-key"
+
+        org_override = MagicMock()
+        org_override.organization_id = org_id
+        org_override.config_type = ConfigType.STRING
+        org_override.key = "base_url"
+        org_override.value = "https://example.test"
+
+        mock_result = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [default_secret, org_override]
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
+
+        with patch(
+            "src.repositories.integrations.decrypt_secret",
+            return_value="decrypted-api-key",
+        ):
+            config = await repository.get_config_for_mapping(
+                integration_id,
+                org_id,
+                include_default_secrets=True,
+            )
+
+        assert config == {
+            "api_key": "decrypted-api-key",
+            "base_url": "https://example.test",
+        }
 
     async def test_update_integration(self, repository, mock_session, mock_integration):
         """Test updating an integration with partial data."""

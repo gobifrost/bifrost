@@ -389,3 +389,59 @@ class TestBuildOAuthDataAutoRefresh:
             )
 
             assert result.access_token == "exchange-customer-token"
+
+
+class TestSDKIntegrationsGetConfig:
+    """Tests for integration config resolution through the SDK endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_org_mapping_includes_default_secrets_for_execution_reads(self):
+        """Mapped SDK reads must include default secrets needed by workflow clients."""
+        from src.models.contracts.cli import SDKIntegrationsGetRequest
+        from src.routers import cli
+
+        org_id = "00000000-0000-0000-0000-000000000002"
+        integration_id = "11111111-1111-1111-1111-111111111111"
+
+        mapping = MagicMock()
+        mapping.integration_id = integration_id
+        mapping.entity_id = "0"
+        mapping.entity_name = "Provider"
+        mapping.oauth_token = None
+
+        integration = MagicMock()
+        integration.id = integration_id
+        integration.default_entity_id = None
+        integration.config_schema = []
+        integration.oauth_provider = None
+        mapping.integration = integration
+
+        repo = MagicMock()
+        repo.get_integration_for_org = AsyncMock(return_value=mapping)
+        repo.get_config_for_mapping = AsyncMock(
+            return_value={
+                "base_url": "https://example.test",
+                "api_integration_code": "decrypted-code",
+                "secret": "decrypted-secret",
+            }
+        )
+
+        user = MagicMock()
+        user.email = "engine@example.test"
+
+        with (
+            patch.object(cli, "_resolve_sdk_org_id", AsyncMock(return_value=org_id)),
+            patch("src.repositories.integrations.IntegrationsRepository", return_value=repo),
+        ):
+            response = await cli.sdk_integrations_get(
+                SDKIntegrationsGetRequest(name="Autotask", scope=org_id),
+                user,
+                MagicMock(),
+            )
+
+        repo.get_config_for_mapping.assert_awaited_once()
+        assert repo.get_config_for_mapping.await_args.kwargs == {
+            "include_default_secrets": True
+        }
+        assert response is not None
+        assert response.config["secret"] == "decrypted-secret"
