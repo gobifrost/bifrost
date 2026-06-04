@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -165,6 +165,13 @@ class Settings(BaseSettings):
         default="s3",
         description="Object storage backend provider: s3 or azure_blob",
     )
+
+    @field_validator("object_storage_provider", mode="before")
+    @classmethod
+    def normalize_object_storage_provider(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.lower()
+        return value
 
     s3_bucket: str | None = Field(
         default=None,
