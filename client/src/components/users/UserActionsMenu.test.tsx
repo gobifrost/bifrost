@@ -44,7 +44,7 @@ describe("UserActionsMenu", () => {
 		render(<UserActionsMenu {...makeProps({ status: "pending" })} />);
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		expect(screen.getByText(/resend invite/i)).toBeInTheDocument();
-		expect(screen.getByText(/regenerate link/i)).toBeInTheDocument();
+		expect(screen.getByText(/generate registration link/i)).toBeInTheDocument();
 		expect(screen.getByText(/copy registration link/i)).toBeInTheDocument();
 		expect(screen.getByText(/revoke invite/i)).toBeInTheDocument();
 	});

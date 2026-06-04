@@ -138,12 +138,46 @@ test.describe("User Invitation", () => {
 		const orgs = await orgsResp.json();
 		const organizationId = orgs[0]?.id as string | undefined;
 
-		// Create user without invite flag (avoid triggering automations)
+		// Create the user directly; registration links are created automatically,
+		// but sending the registration email remains an explicit admin action.
 		const createResp = await api.post("/api/users", {
-			data: { email, name: "Playwright Invitee", invite: false, organization_id: organizationId },
+			data: {
+				email,
+				name: "Playwright Invitee",
+				invite: false,
+				organization_id: organizationId,
+			},
 		});
-		expect(createResp.ok(), `Create user failed: ${await createResp.text()}`).toBe(true);
+		expect(
+			createResp.ok(),
+			`Create user failed: ${await createResp.text()}`,
+		).toBe(true);
 		const { id: userId } = await createResp.json();
+
+		await page.goto("/users");
+		await expect(
+			page.getByRole("heading", { name: /users/i }).first(),
+		).toBeVisible({ timeout: 10000 });
+		const invitedRow = page.locator("tbody tr", { hasText: email }).first();
+		await expect(invitedRow).toBeVisible({ timeout: 10000 });
+		await invitedRow.getByRole("button", { name: /user actions/i }).click();
+		await page
+			.getByRole("menuitem", { name: /generate registration link/i })
+			.click();
+		const registrationDialog = page.getByRole("dialog", {
+			name: /user created/i,
+		});
+		await expect(registrationDialog).toBeVisible();
+		await expect(
+			registrationDialog.getByRole("button", {
+				name: /copy registration link/i,
+			}),
+		).toBeVisible();
+		await expect(registrationDialog.getByRole("textbox")).toHaveCount(0);
+		await expect(registrationDialog.getByRole("link")).toHaveCount(0);
+		await registrationDialog
+			.getByRole("button", { name: /close/i })
+			.click();
 
 		// Regenerate invite to get a registration URL (does not send email)
 		const genResp = await api.post(
@@ -159,28 +193,38 @@ test.describe("User Invitation", () => {
 
 		// Complete registration in a fresh (unauthenticated) browser context
 		const baseURL = process.env.TEST_BASE_URL || "http://localhost:3000";
-		const guestCtx = await browser.newContext({ baseURL });
+		const guestCtx = await browser.newContext({
+			baseURL,
+			storageState: { cookies: [], origins: [] },
+		});
 		const guestPage = await guestCtx.newPage();
 		// Navigate to login first to warm up the Vite module graph, then go to the invite page.
 		// The Vite dev server transforms modules on-demand; the first cold load of a new browser
 		// context takes 5-15 seconds. Waiting for the login heading ensures modules are cached.
 		await guestPage.goto("/login");
 		await expect(
-			guestPage.getByRole("heading", { name: /sign in/i }).or(
-				guestPage.getByRole("heading", { name: /bifrost/i }),
-			),
+			guestPage
+				.getByRole("heading", { name: /sign in/i })
+				.or(guestPage.getByRole("heading", { name: /bifrost/i })),
 		).toBeVisible({ timeout: 30000 });
 		await guestPage.goto(registerPath);
 
 		await expect(
-			guestPage.getByRole("heading", { name: /complete your registration/i }),
+			guestPage.getByRole("heading", {
+				name: /complete your registration/i,
+			}),
 		).toBeVisible({ timeout: 15000 });
 
+		await guestPage
+			.getByRole("button", { name: /use password instead/i })
+			.click();
 		await guestPage.getByLabel(/password/i).fill("InviteePass123!");
-		await guestPage.getByRole("button", { name: /create account/i }).click();
+		await guestPage
+			.getByRole("button", { name: /create account/i })
+			.click();
 
 		// Should redirect to login after successful registration
-		await guestPage.waitForURL("**/login", { timeout: 10000 });
+		await guestPage.waitForURL(/\/login(?:\?|$)/, { timeout: 10000 });
 
 		await guestCtx.close();
 

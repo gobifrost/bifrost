@@ -8,6 +8,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { hashOAuthState } from "@/services/auth";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -45,7 +46,7 @@ export function AuthCallback() {
 				return;
 			}
 
-			// Get stored state
+			// Get stored state digest
 			// Note: code_verifier is now handled server-side (stored in Redis when init is called)
 			const storedState = sessionStorage.getItem("oauth_state");
 			const redirectFrom =
@@ -54,10 +55,11 @@ export function AuthCallback() {
 			// Clear stored OAuth data
 			sessionStorage.removeItem("oauth_state");
 			sessionStorage.removeItem("oauth_redirect_from");
-			sessionStorage.removeItem("oauth_provider");
 
-			// Verify state matches
-			if (state !== storedState) {
+			// Verify state matches. We stored only a digest of the state on init,
+			// so compare digests (browser-binding CSRF check; the server also
+			// validates the raw state against Redis).
+			if (!storedState || (await hashOAuthState(state)) !== storedState) {
 				setError("Invalid OAuth state - possible CSRF attack");
 				return;
 			}

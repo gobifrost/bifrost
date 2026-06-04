@@ -57,6 +57,23 @@ export async function initOAuth(
 // Note: getOAuthVerifier() has been removed - PKCE is now handled server-side
 // The backend stores the code_verifier when init is called and uses it during callback
 
+/**
+ * Hash the OAuth `state` (a CSRF nonce) before persisting it for the callback
+ * round-trip. We store only the SHA-256 digest, never the raw token: the
+ * browser-binding CSRF check still works by comparing digests, but an XSS
+ * reader of sessionStorage can't lift a usable state value. SubtleCrypto is
+ * available in the secure (HTTPS/localhost) contexts where OAuth runs.
+ */
+export async function hashOAuthState(state: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(state),
+	);
+	return Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+}
+
 // =============================================================================
 // MFA Operations
 // =============================================================================
@@ -138,6 +155,28 @@ export async function registerUser(
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ email, password, name }),
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({}));
+		throw new Error(error.detail || "Registration failed");
+	}
+}
+
+/**
+ * Complete an invite by setting a password. Uses a raw fetch (not apiClient)
+ * because the invitee is unauthenticated — the invite token IS the credential.
+ * Routing this through apiClient would trip its token-refresh middleware, which
+ * redirects unauthenticated callers to /login before the request is ever sent.
+ */
+export async function registerFromInvite(
+	token: string,
+	password: string,
+): Promise<void> {
+	const res = await fetch("/auth/register-from-invite", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ token, password }),
 	});
 
 	if (!res.ok) {

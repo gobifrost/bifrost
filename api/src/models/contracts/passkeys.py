@@ -184,3 +184,23 @@ class SetupPasskeyVerifyResponse(BaseModel):
     access_token: str = Field(description="JWT access token")
     refresh_token: str = Field(description="JWT refresh token")
     token_type: str = "bearer"
+
+
+class InvitePasskeyOptionsRequest(BaseModel):
+    """Request to start passkey registration from an invite token."""
+
+    token: str = Field(description="Invite token from the registration URL")
+
+
+class InvitePasskeyVerifyRequest(BaseModel):
+    """Request to complete invite registration with a passkey."""
+
+    token: str = Field(description="Invite token from the registration URL")
+    credential: dict[str, Any] = Field(
+        description="WebAuthn credential from navigator.credentials.create()"
+    )
+    device_name: str | None = Field(
+        default=None,
+        description="Friendly name for the passkey",
+        max_length=255,
+    )

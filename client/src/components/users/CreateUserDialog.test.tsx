@@ -19,8 +19,10 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockCreateMutate = vi.fn();
 const mockAssignMutate = vi.fn();
+const mockSendInviteMutate = vi.fn();
 const mockOrganizations = vi.fn();
 const mockRoles = vi.fn();
+const mockEventSources = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
 	useCreateUser: () => ({
@@ -39,6 +41,17 @@ vi.mock("@/hooks/useRoles", () => ({
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => mockOrganizations(),
+}));
+
+vi.mock("@/services/events", () => ({
+	useEventSources: () => mockEventSources(),
+}));
+
+vi.mock("@/hooks/useUserInvites", () => ({
+	useSendInvite: () => ({
+		mutateAsync: mockSendInviteMutate,
+		isPending: false,
+	}),
 }));
 
 // Stub the Combobox to a native select so userEvent can drive it.
@@ -74,9 +87,14 @@ import { CreateUserDialog } from "./CreateUserDialog";
 
 beforeEach(() => {
 	mockCreateMutate.mockReset();
-	mockCreateMutate.mockResolvedValue({ id: "new-user-1" });
+	mockCreateMutate.mockResolvedValue({
+		id: "new-user-1",
+		registration_url: "https://example.test/accept-invite?token=abc",
+	});
 	mockAssignMutate.mockReset();
 	mockAssignMutate.mockResolvedValue({});
+	mockSendInviteMutate.mockReset();
+	mockSendInviteMutate.mockResolvedValue({});
 	mockOrganizations.mockReturnValue({
 		data: [
 			{
@@ -95,6 +113,19 @@ beforeEach(() => {
 		isLoading: false,
 	});
 	mockRoles.mockReturnValue({ data: [] });
+	mockEventSources.mockReturnValue({
+		data: {
+			items: [
+				{
+					id: "source-1",
+					source_type: "topic",
+					event_type: "user.invited",
+					is_active: true,
+					subscription_count: 1,
+				},
+			],
+		},
+	});
 });
 
 describe("CreateUserDialog — validation", () => {
@@ -124,7 +155,7 @@ describe("CreateUserDialog — validation", () => {
 });
 
 describe("CreateUserDialog — happy path", () => {
-	it("submits createUser with trimmed email + name and org id", async () => {
+	it("always creates a registration link without triggering invite automation", async () => {
 		const onOpenChange = vi.fn();
 		const { user } = renderWithProviders(
 			<CreateUserDialog open={true} onOpenChange={onOpenChange} />,
@@ -153,9 +184,82 @@ describe("CreateUserDialog — happy path", () => {
 				is_superuser: false,
 				organization_id: "org-1",
 				invite: true,
-				trigger_automation: true,
+				trigger_automation: false,
 			},
 		});
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+		expect(
+			await screen.findByRole("heading", { name: /user created/i }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("https://example.test/accept-invite?token=abc"),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: /send registration email/i }),
+		).toBeEnabled();
+		expect(
+			screen.getByRole("button", { name: /copy registration link/i }),
+		).toBeInTheDocument();
+	});
+
+	it("disables sending registration email when no user.invited automation is configured", async () => {
+		mockEventSources.mockReturnValue({ data: { items: [] } });
+		const { user } = renderWithProviders(
+			<CreateUserDialog open={true} onOpenChange={vi.fn()} />,
+		);
+
+		await user.type(
+			screen.getByLabelText(/email address/i),
+			"alice@example.com",
+		);
+		await user.type(screen.getByLabelText(/display name/i), "Alice");
+		await user.selectOptions(
+			screen.getByLabelText(/organization/i),
+			"org-1",
+		);
+		await user.click(screen.getByRole("button", { name: /create user/i }));
+
+		await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+		expect(
+			await screen.findByRole("button", {
+				name: /send registration email/i,
+			}),
+		).toBeDisabled();
+		expect(
+			screen.queryByLabelText(/create invite link/i),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByLabelText(/trigger invite automation/i),
+		).not.toBeInTheDocument();
+	});
+
+	it("sends the registration email from the success dialog", async () => {
+		const { user } = renderWithProviders(
+			<CreateUserDialog open={true} onOpenChange={vi.fn()} />,
+		);
+
+		await user.type(
+			screen.getByLabelText(/email address/i),
+			"alice@example.com",
+		);
+		await user.type(screen.getByLabelText(/display name/i), "Alice");
+		await user.selectOptions(
+			screen.getByLabelText(/organization/i),
+			"org-1",
+		);
+		await user.click(screen.getByRole("button", { name: /create user/i }));
+
+		await user.click(
+			await screen.findByRole("button", {
+				name: /send registration email/i,
+			}),
+		);
+
+		await waitFor(() => {
+			expect(mockSendInviteMutate).toHaveBeenCalledWith({
+				userId: "new-user-1",
+				registrationUrl: "https://example.test/accept-invite?token=abc",
+			});
+		});
 	});
 });
