@@ -22,9 +22,32 @@ issues is saved at `/tmp/codex_spec_review_prompt.txt` (+ `/tmp/codex_review3.tx
 fixed" context). Re-create it if /tmp is cleared — it's a "full adversarial spec review, file:line +
 severity, hunt for issues the fixes introduced."
 
-## IN-FLIGHT right now
-- **Codex review #3 is running in the background** → output at `/tmp/codex_review3_out.txt`.
-  Read its final `^codex$` block first thing. It re-reviews all batch-2 fixes + hunts new issues.
+## IN-FLIGHT right now (updated 2026-06-05, later session)
+- **Codex review #3 returned 4 P1 + 2 P2 — ALL fixed + committed + pushed.** See "DONE — review-3 fixes" below.
+- **Codex review #4 is running** → output at `/tmp/codex_review4_out.txt` (prompt at `/tmp/codex_review4.txt`).
+  Read its final `^codex$` block first thing. It re-verifies the review-3 fixes + hunts new issues.
+- Tree is CLEAN, branch pushed (HEAD past 5bef15b9). Full solution suite green:
+  98 unit + 12 e2e + 107 client tests; ruff/pyright/tsc/eslint clean (only the known
+  aiobotocore host-pyright false positive remains).
+
+## DONE — review-3 fixes (each committed with tests)
+- **P2-e** CLI `_collect_workflows` passes the full workflow body (endpoint/timeout/category/tags).
+- **P1-c** S3 deferred until after DB commit: `deploy()` returns `DeployResult.finalize_s3`; router
+  commits THEN finalizes; git-sync commits+finalizes inside its lock. A failed commit changes no code.
+- **P1-d** deploy syncs manifest roles → Form/Agent/App/WorkflowRole junctions (`_resolve_roles` +
+  `_sync_entity_roles`); role_names resolve to install org; redeploy full-replaces. CLI `_collect_apps`
+  now carries roles. (The indexers do NOT handle roles — the false docstring was corrected.)
+- **P2-f** deploy refuses an app slug colliding with another visible app at the install's org scope
+  (cross-org same-slug still allowed). Stops the slug resolver raising MultipleResultsFound.
+- **P1-a** `bifrost` SDK served from the instance: new `/api/sdk/download` (esbuild tarball, React-only
+  external peer dep, version-stamped) + `api/src/services/sdk_package/`. Added `useWorkflow`. `_materialize`
+  vendors the tarball as a `file:` dep. SDK source COPYied into the api image; `sdk_src/` gitignored.
+  Dropped unused react-query/react-router from the SDK. See `project_solutions_v2_sdk_shape` memory.
+- **P1-b/G7** v2 apps mount SAME-DOCUMENT at /apps/{slug} (`StandaloneV2App.tsx`), not iframe — injects
+  `window.__BIFROST_APP__` (token/baseUrl/orgScope/basename) + dynamic-imports the entry; real URL tracks
+  app routes so deep-links work. bundle-manifest surfaces the v2 entry+css.
+
+## (historical) IN-FLIGHT — review #3 (superseded)
 - Tree is CLEAN (an incomplete P2-j edit was reverted — see below).
 
 ## DONE this session (all committed, each with a test)
