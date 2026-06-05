@@ -156,3 +156,97 @@ def {function_name}(message: str) -> dict:
                 headers=admin_h,
                 params={"path": path},
             )
+
+    def test_updated_workflow_name_replaces_mcp_tool_name_immediately(self):
+        suffix = uuid.uuid4().hex[:8]
+        path = f"workflows/test_mcp_rename_{suffix}.py"
+        function_name = f"test_mcp_rename_{suffix}"
+        renamed_tool_name = f"renamed_tool_{suffix}"
+
+        admin_token = create_test_jwt(is_superuser=True)
+        admin_h = _admin_headers(admin_token)
+        mcp_h = _mcp_headers(admin_token)
+
+        agent_id: str | None = None
+        workflow_id: str | None = None
+        try:
+            file_content = f'''
+from bifrost import tool
+
+@tool
+def {function_name}(message: str) -> dict:
+    """Echoes the message for MCP rename refresh regression coverage."""
+    return {{"message": message}}
+'''
+            write_resp = requests.put(
+                f"{TEST_API_URL}/api/files/editor/content",
+                headers=admin_h,
+                json={"path": path, "content": file_content, "encoding": "utf-8"},
+            )
+            assert write_resp.status_code in (200, 201), write_resp.text
+
+            reg_resp = requests.post(
+                f"{TEST_API_URL}/api/workflows/register",
+                headers=admin_h,
+                json={"path": path, "function_name": function_name},
+            )
+            assert reg_resp.status_code == 201, reg_resp.text
+            reg = reg_resp.json()
+            workflow_id = reg["id"]
+            assert reg["name"] == function_name
+            assert reg["type"] == "tool", reg
+
+            agent_resp = requests.post(
+                f"{TEST_API_URL}/api/agents",
+                headers=admin_h,
+                json={
+                    "name": f"MCP Rename Test Agent {suffix}",
+                    "system_prompt": "Test agent for MCP rename regression",
+                    "channels": ["chat"],
+                    "tool_ids": [workflow_id],
+                },
+            )
+            assert agent_resp.status_code == 201, agent_resp.text
+            agent_id = agent_resp.json()["id"]
+
+            patch_resp = requests.patch(
+                f"{TEST_API_URL}/api/workflows/{workflow_id}",
+                headers=admin_h,
+                json={"name": renamed_tool_name},
+            )
+            assert patch_resp.status_code == 200, patch_resp.text
+            assert patch_resp.json()["name"] == renamed_tool_name
+
+            list_resp = requests.post(
+                f"{TEST_API_URL}/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/list",
+                    "params": {},
+                },
+                headers=mcp_h,
+            )
+            assert list_resp.status_code == 200, list_resp.text
+            payload = list_resp.json()
+            assert "result" in payload, payload
+            tool_names = [t["name"] for t in payload["result"]["tools"]]
+
+            assert renamed_tool_name in tool_names
+            assert function_name not in tool_names
+        finally:
+            if agent_id:
+                requests.delete(
+                    f"{TEST_API_URL}/api/agents/{agent_id}",
+                    headers=admin_h,
+                )
+            if workflow_id:
+                requests.delete(
+                    f"{TEST_API_URL}/api/workflows/{workflow_id}",
+                    headers=admin_h,
+                )
+            requests.delete(
+                f"{TEST_API_URL}/api/files/editor",
+                headers=admin_h,
+                params={"path": path},
+            )

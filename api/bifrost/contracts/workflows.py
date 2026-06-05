@@ -18,6 +18,12 @@ class WorkflowUpdateRequest(BaseModel):
     access_level: str | None = Field(default=None)
     clear_roles: bool = Field(default=False)
     role_ids: list[str] | None = Field(default=None)
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="MCP tool name for this workflow. Defaults to the Python function name on registration.",
+    )
     display_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
     category: str | None = Field(default=None, max_length=100)

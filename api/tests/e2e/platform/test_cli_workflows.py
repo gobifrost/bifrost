@@ -185,6 +185,33 @@ class TestCliWorkflows:
         finally:
             _invoke(["--json", "delete", wf_id, "--force"])
 
+    def test_update_name_changes_tool_name_surface(
+        self, cli_client, _invoke, e2e_client, platform_admin
+    ) -> None:
+        """``workflows update <ref> --name ...`` patches the MCP tool name."""
+        fn = f"cli_wf_tool_name_{uuid4().hex[:8]}"
+        wf = _register_workflow(e2e_client, platform_admin, function_name=fn)
+        wf_id = wf["id"]
+        new_name = f"renamed_cli_tool_{uuid4().hex[:8]}"
+
+        try:
+            result = _invoke(
+                [
+                    "--json",
+                    "update",
+                    wf_id,
+                    "--name",
+                    new_name,
+                ]
+            )
+            assert result.exit_code == 0, result.output
+            payload = json.loads(result.output)
+            assert str(payload["id"]) == wf_id
+            assert payload["name"] == new_name
+            assert payload["function_name"] == fn
+        finally:
+            _invoke(["--json", "delete", wf_id, "--force"])
+
     def test_update_by_path_func_ref(
         self, cli_client, _invoke, e2e_client, platform_admin
     ) -> None:

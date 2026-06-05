@@ -1327,7 +1327,8 @@ async def update_workflow(
     - organization_id: Set to null for global scope, or an org UUID for org-scoped
     - access_level: 'authenticated' or 'role_based'
     - clear_roles: If true, clear all role assignments
-    - display_name: User-facing display name (can be set to null to use code name)
+    - name: MCP tool name (defaults to the Python function name on registration)
+    - display_name: User-facing display name (can be set to null to fall back to name)
     - timeout_seconds: Max execution time (0-86400 seconds, where 0 disables the timeout)
     - execution_mode: 'sync' or 'async'
     - time_saved: Minutes saved per execution (for ROI reporting)
@@ -1430,6 +1431,22 @@ async def update_workflow(
             # Also set to role_based access level (effectively no access)
             workflow.access_level = "role_based"
             logger.info(f"Cleared all role assignments for workflow '{log_safe(workflow.name)}'")
+
+        # Update MCP tool name if provided. ``function_name`` remains the
+        # source-code identity used for path::function references.
+        if "name" in request.model_fields_set:
+            if request.name is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="name cannot be null",
+                )
+            new_name = request.name.strip()
+            if not new_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="name cannot be empty",
+                )
+            workflow.name = new_name
 
         # Update display_name if provided
         if "display_name" in request.model_fields_set:

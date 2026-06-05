@@ -66,7 +66,7 @@ class ManifestRole(BaseModel):
 class ManifestWorkflow(BaseModel):
     """Workflow entry in manifest."""
     id: str = Field(description="Workflow UUID")
-    name: str = Field(default="", description="Workflow display name")
+    name: str = Field(default="", description="MCP tool name; defaults to function_name on registration")
     path: str = Field(description="Relative path to Python file (e.g. 'workflows/onboard.py')")
     function_name: str = Field(description="Python function name decorated with @workflow/@tool/@data_provider")
     type: str = Field(default="workflow", description="workflow | tool | data_provider")
