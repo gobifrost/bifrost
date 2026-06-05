@@ -51,7 +51,9 @@ class TestSolutionFormAgentDeploy:
             forms=[{
                 "id": fid, "name": "intake",
                 "form_schema": {
-                    "fields": [{"name": "email", "type": "text", "required": True}],
+                    "fields": [
+                        {"name": "email", "label": "Email", "type": "text", "required": True},
+                    ],
                 },
             }],
         ))
@@ -109,3 +111,49 @@ class TestSolutionFormAgentDeploy:
             await SolutionDeployer(db).deploy(SolutionBundle(
                 solution=sol, forms=[{"id": str(fid), "name": "repo-form", "fields": []}],
             ))
+
+
+@pytest.mark.e2e
+class TestAgentBindingsDeploy:
+    """Deployed agents must carry their tool/knowledge bindings (Codex P2-h),
+    not just the bare row — proves the indexer-delegation handles content."""
+
+    async def test_agent_tools_and_knowledge_deploy(self, db_session):
+        from src.models.orm.agents import AgentTool
+        from src.models.orm.workflows import Workflow
+        from sqlalchemy import select as _select
+
+        db = db_session
+        sol = Solution(id=uuid.uuid4(), slug=f"ab-{uuid.uuid4().hex[:8]}", name="AB", organization_id=None)
+        db.add(sol)
+        # A workflow the agent will bind as a tool.
+        wf_id = uuid.uuid4()
+        db.add(Workflow(
+            id=wf_id, name="tool_wf", function_name="run", path="workflows/t.py",
+            type="workflow", organization_id=None, solution_id=None, is_active=True,
+        ))
+        await db.flush()
+
+        aid = str(uuid.uuid4())
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            agents=[{
+                "id": aid, "name": "bound", "system_prompt": "hi",
+                "tool_ids": [str(wf_id)],
+                "knowledge_sources": ["kb-1"],
+                "system_tools": ["web_search"],
+            }],
+        ))
+        await db.flush()
+
+        agent = await db.get(Agent, uuid.UUID(aid))
+        assert agent is not None
+        assert agent.solution_id == sol.id
+        # Portable manifest content (knowledge/system_tools) deployed.
+        assert agent.knowledge_sources == ["kb-1"]
+        assert agent.system_tools == ["web_search"]
+        # Tool junction row created (the key P2-h binding).
+        tool_wf_ids = (await db.execute(
+            _select(AgentTool.workflow_id).where(AgentTool.agent_id == uuid.UUID(aid))
+        )).scalars().all()
+        assert wf_id in tool_wf_ids, "agent tool binding dropped on deploy"

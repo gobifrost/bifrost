@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.agents import Agent
 from src.models.orm.applications import Application
-from src.models.orm.forms import Form, FormField
+from src.models.orm.forms import Form
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
@@ -42,19 +42,6 @@ from src.services.sync_ops import Upsert
 
 logger = logging.getLogger(__name__)
 
-
-def _form_fields_from_manifest(mform: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract a form's fields from a manifest body.
-
-    The canonical manifest serializes fields under ``form_schema.fields`` (see
-    ``manifest_generator.serialize_form``); a top-level ``fields`` key is also
-    accepted for the ad-hoc/test shape. Reading the wrong key silently deploys a
-    form with NO fields.
-    """
-    schema = mform.get("form_schema")
-    if isinstance(schema, dict) and schema.get("fields"):
-        return list(schema["fields"])
-    return list(mform.get("fields") or [])
 
 
 class SolutionDeployConflict(Exception):
@@ -360,91 +347,67 @@ class SolutionDeployer:
     async def _upsert_forms(
         self, solution: Solution, forms: list[dict[str, Any]]
     ) -> None:
-        """Upsert form rows stamped with solution_id + inherited scope.
+        """Deploy forms by delegating ALL content to the canonical FormIndexer.
 
-        Forms become solution-managed (read-only on the platform). The portable
-        ``content`` (title/fields/prompts) lives in the ``content`` text column;
-        env-specific fields (access_level/roles/created_by) stay instance-owned.
-        Ownership guard mirrors workflows/apps/tables.
+        The indexer (the same code git-sync/file-sync use) parses the form YAML
+        and full-replaces the form row + ALL its FormField rows — so every
+        portable form field flows through one place and a new field can't create
+        a deploy gap. Deploy then stamps the install's scope (``solution_id`` +
+        ``organization_id``) on the row, which the indexer intentionally leaves
+        untouched. Ownership guard mirrors workflows/apps/tables.
         """
+        from sqlalchemy import update
+
+        from bifrost.manifest import ManifestForm
+        from src.services.file_storage.indexers.form import FormIndexer
+        from src.services.manifest_import import _form_content_from_manifest
+
         sid = solution.id
+        indexer = FormIndexer(self.db)
         for mform in forms:
             form_id = UUID(mform["id"])
             await self._guard_owner(Form, form_id, sid)
-            values: dict[str, Any] = {
-                "name": mform["name"],
-                "description": mform.get("description"),
-                "workflow_id": mform.get("workflow_id"),
-                "launch_workflow_id": mform.get("launch_workflow_id"),
-                "is_active": True,
-                "organization_id": solution.organization_id,
-                "solution_id": sid,
-                # created_by is NOT NULL; deploy is the writer.
-                "created_by": mform.get("created_by") or "solution-deploy",
-            }
-            await Upsert(model=Form, id=form_id, values=values, match_on="id").execute(self.db)
-            await self._upsert_form_fields(form_id, _form_fields_from_manifest(mform))
-
-    async def _upsert_form_fields(
-        self, form_id: UUID, fields: list[dict[str, Any]]
-    ) -> None:
-        """Full-replace a form's fields from the bundle (portable content).
-
-        Maps the full FormField column set the manifest carries (see
-        ``manifest_generator._form_field_to_schema_dict``) so deployed forms are
-        complete, not stripped.
-        """
-        from uuid import UUID as _UUID
-
-        await self.db.execute(delete(FormField).where(FormField.form_id == form_id))
-        for pos, fld in enumerate(fields):
-            dp = fld.get("data_provider_id")
-            self.db.add(FormField(
-                form_id=form_id,
-                name=fld["name"],
-                label=fld.get("label"),
-                type=fld.get("type", "text"),
-                required=bool(fld.get("required", False)),
-                position=fld.get("position", pos),
-                placeholder=fld.get("placeholder"),
-                help_text=fld.get("help_text"),
-                default_value=fld.get("default_value"),
-                options=fld.get("options"),
-                data_provider_id=_UUID(dp) if dp else None,
-                data_provider_inputs=fld.get("data_provider_inputs"),
-                visibility_expression=fld.get("visibility_expression"),
-                validation=fld.get("validation"),
-                allowed_types=fld.get("allowed_types"),
-                multiple=fld.get("multiple"),
-                max_size_mb=fld.get("max_size_mb"),
-                content=fld.get("content"),
-                allow_as_query_param=fld.get("allow_as_query_param"),
-            ))
+            # Build the canonical YAML the indexer expects from the manifest body.
+            mf = ManifestForm.model_validate({**mform, "id": str(form_id)})
+            content = _form_content_from_manifest(mf)
+            await indexer.index_form(f"forms/{form_id}.form.yaml", content)
+            # Stamp the install scope (the indexer preserves org/access on purpose).
+            await self.db.execute(
+                update(Form).where(Form.id == form_id).values(
+                    organization_id=solution.organization_id,
+                    solution_id=sid,
+                )
+            )
 
     async def _upsert_agents(
         self, solution: Solution, agents: list[dict[str, Any]]
     ) -> None:
-        """Upsert agent rows stamped with solution_id + inherited scope."""
+        """Deploy agents by delegating ALL content to the canonical AgentIndexer.
+
+        Mirrors :meth:`_upsert_forms`: the indexer full-replaces the agent row +
+        its tool/delegation/role/MCP junctions + knowledge/system-tools/limits
+        (gap-resistant — same code as git-sync); deploy stamps the install scope.
+        """
+        from sqlalchemy import update
+
+        from bifrost.manifest import ManifestAgent
+        from src.services.file_storage.indexers.agent import AgentIndexer
+        from src.services.manifest_import import _agent_content_from_manifest
+
         sid = solution.id
+        indexer = AgentIndexer(self.db)
         for magent in agents:
             agent_id = UUID(magent["id"])
             await self._guard_owner(Agent, agent_id, sid)
-            values: dict[str, Any] = {
-                "name": magent["name"],
-                "system_prompt": magent.get("system_prompt") or "",
-                "is_active": True,
-                "organization_id": solution.organization_id,
-                "solution_id": sid,
-                # created_by is NOT NULL; deploy is the writer.
-                "created_by": magent.get("created_by") or "solution-deploy",
-            }
-            if magent.get("description") is not None:
-                values["description"] = magent["description"]
-            if magent.get("channels") is not None:
-                values["channels"] = magent["channels"]
-            if magent.get("llm_model") is not None:
-                values["llm_model"] = magent["llm_model"]
-            await Upsert(model=Agent, id=agent_id, values=values, match_on="id").execute(self.db)
+            ma = ManifestAgent.model_validate({**magent, "id": str(agent_id)})
+            content = _agent_content_from_manifest(ma)
+            await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+            await self.db.execute(
+                update(Agent).where(Agent.id == agent_id).values(
+                    organization_id=solution.organization_id,
+                    solution_id=sid,
+                )
+            )
 
     async def _guard_owner(self, model: type, entity_id: UUID, sid: UUID) -> None:
         """Raise SolutionDeployConflict if ``entity_id`` exists and is owned by
