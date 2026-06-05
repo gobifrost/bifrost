@@ -23,13 +23,26 @@ class ErrorResponse(BaseModel):
 # ==================== BRANDING MODELS ====================
 
 
+class BrandingTerm(BaseModel):
+    """Singular and plural labels for a fixed product noun."""
+    singular: str | None = Field(default=None, min_length=1, max_length=40)
+    plural: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class BrandingTerminology(BaseModel):
+    """Fixed platform nouns that can be renamed by branding."""
+    app: BrandingTerm = Field(default_factory=BrandingTerm)
+    agent: BrandingTerm = Field(default_factory=BrandingTerm)
+    form: BrandingTerm = Field(default_factory=BrandingTerm)
+
+
 class BrandingSettings(BaseModel):
     """Global platform branding configuration"""
     square_logo_url: str | None = Field(default=None, description="Square logo URL (for icons, 1:1 ratio)")
     rectangle_logo_url: str | None = Field(default=None, description="Rectangle logo URL (for headers, 16:9 ratio)")
     primary_color: str | None = Field(default=None, description="Primary brand color (hex format, e.g., #FF5733)")
-    terminology: "BrandingTerminology" = Field(
-        default_factory=lambda: BrandingTerminology(),
+    terminology: BrandingTerminology = Field(
+        default_factory=BrandingTerminology,
         description="Fixed product terminology overrides for the platform UI",
     )
 
@@ -46,19 +59,6 @@ class BrandingSettings(BaseModel):
         except ValueError:
             raise ValueError("Primary color must be a valid hex color")
         return v
-
-
-class BrandingTerm(BaseModel):
-    """Singular and plural labels for a fixed product noun."""
-    singular: str | None = Field(default=None, min_length=1, max_length=40)
-    plural: str | None = Field(default=None, min_length=1, max_length=40)
-
-
-class BrandingTerminology(BaseModel):
-    """Fixed platform nouns that can be renamed by branding."""
-    app: BrandingTerm = Field(default_factory=BrandingTerm)
-    agent: BrandingTerm = Field(default_factory=BrandingTerm)
-    form: BrandingTerm = Field(default_factory=BrandingTerm)
 
 
 class BrandingUpdateRequest(BaseModel):
