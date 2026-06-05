@@ -548,6 +548,20 @@ export function Applications() {
 												>
 													<PlayCircle className="h-4 w-4" />
 												</Button>
+												{/* Preview is a READ action — available for managed apps too
+												    (managed apps serve their dist as a draft). */}
+												{canManageApps && app.has_unpublished_changes && (
+													<Button
+														variant="ghost"
+														size="sm"
+														onClick={() =>
+															handlePreview(app.slug)
+														}
+														title="Preview draft"
+													>
+														<Eye className="h-4 w-4" />
+													</Button>
+												)}
 												{canManageApps && app.is_solution_managed && (
 													<span
 														className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
@@ -560,20 +574,6 @@ export function Applications() {
 												)}
 												{canManageApps && !app.is_solution_managed && (
 													<>
-														{app.has_unpublished_changes && (
-															<Button
-																variant="ghost"
-																size="sm"
-																onClick={() =>
-																	handlePreview(
-																		app.slug,
-																	)
-																}
-																title="Preview draft"
-															>
-																<Eye className="h-4 w-4" />
-															</Button>
-														)}
 														<Button
 															variant="ghost"
 															size="sm"
