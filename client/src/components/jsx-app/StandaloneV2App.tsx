@@ -41,6 +41,14 @@ export interface BifrostAppBootstrap {
 	orgScope: string | null;
 	/** Ask the platform to log out (the app may expose a logout affordance). */
 	onLogout: () => void;
+	/**
+	 * The app MUST call this right after `createRoot(...)` with a teardown fn
+	 * (`() => root.unmount()`). The shell invokes it when the user navigates
+	 * away, so the app's React root, effects, timers, and websocket
+	 * subscriptions are actually torn down — replacing DOM nodes alone leaks
+	 * them (Codex R4). A well-behaved scaffold always registers this.
+	 */
+	registerUnmount: (teardown: () => void) => void;
 }
 
 declare global {
@@ -95,6 +103,21 @@ export function StandaloneV2App({
 		const orgScope =
 			appOrgId ?? (scope.type === "organization" ? scope.orgId : null);
 
+		const mode = isPreview ? "draft" : "live";
+		const entryUrl = `${baseUrl}/${entry}?mode=${mode}`;
+		let cssEl: HTMLLinkElement | null = null;
+		if (css) {
+			cssEl = document.createElement("link");
+			cssEl.rel = "stylesheet";
+			cssEl.href = `${baseUrl}/${css}?mode=${mode}`;
+			document.head.appendChild(cssEl);
+		}
+
+		// The app calls registerUnmount(() => root.unmount()) after createRoot; we
+		// invoke it on cleanup so the app's React root (effects/timers/sockets) is
+		// actually torn down, not just detached from the DOM.
+		let appTeardown: (() => void) | null = null;
+
 		window.__BIFROST_APP__ = {
 			mountEl,
 			basename,
@@ -105,17 +128,10 @@ export function StandaloneV2App({
 				clearAuthTokens();
 				window.location.assign("/login");
 			},
+			registerUnmount: (teardown: () => void) => {
+				appTeardown = teardown;
+			},
 		};
-
-		const mode = isPreview ? "draft" : "live";
-		const entryUrl = `${baseUrl}/${entry}?mode=${mode}`;
-		let cssEl: HTMLLinkElement | null = null;
-		if (css) {
-			cssEl = document.createElement("link");
-			cssEl.rel = "stylesheet";
-			cssEl.href = `${baseUrl}/${css}?mode=${mode}`;
-			document.head.appendChild(cssEl);
-		}
 
 		let cancelled = false;
 		// Side-effecting import: the app's entry runs its own createRoot(mountEl).
@@ -130,11 +146,17 @@ export function StandaloneV2App({
 		return () => {
 			cancelled = true;
 			cssEl?.remove();
+			// Unmount the app's own React root (best-effort — a well-behaved app
+			// registers it; falls back to detaching the DOM).
+			try {
+				appTeardown?.();
+			} catch {
+				// app teardown threw — still detach below; nothing else to do.
+			}
 			// Clear the bootstrap so a later mount can't read a stale element.
 			if (window.__BIFROST_APP__?.mountEl === mountEl) {
 				delete window.__BIFROST_APP__;
 			}
-			// The app owns its root; replacing the node drops its React tree.
 			if (mountEl) mountEl.replaceChildren();
 		};
 		// appId is stable per mount; re-run only if the served entry changes.

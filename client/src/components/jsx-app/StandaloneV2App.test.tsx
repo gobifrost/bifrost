@@ -72,4 +72,17 @@ describe("StandaloneV2App", () => {
 		unmount();
 		expect(window.__BIFROST_APP__).toBeUndefined();
 	});
+
+	it("calls the app-registered unmount teardown on cleanup (no leak)", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		const { unmount } = render(<StandaloneV2App {...baseProps} />);
+		await waitFor(() => expect(window.__BIFROST_APP__).toBeDefined());
+
+		// Simulate the app registering its root teardown after createRoot.
+		const teardown = vi.fn();
+		window.__BIFROST_APP__!.registerUnmount(teardown);
+
+		unmount();
+		expect(teardown).toHaveBeenCalledTimes(1);
+	});
 });

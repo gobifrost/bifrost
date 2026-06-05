@@ -168,6 +168,14 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 		return <div className="h-screen overflow-auto">{shell}</div>;
 	}
 
+	// standalone_v2 apps are full-page: the app owns its whole document and
+	// composes the platform header itself via the optional SDK <BifrostHeader>.
+	// Wrapping it in AppLayout would impose platform chrome and double up with
+	// the app's own header (v2 spec §2/§4; Codex R4).
+	if (application.app_model === "standalone_v2") {
+		return <div className="h-screen w-screen overflow-hidden">{shell}</div>;
+	}
+
 	return (
 		<AppLayout appName={application.name} isPreview={preview}>
 			{shell}

@@ -28,10 +28,12 @@ _BUILDER = _HERE / "build_sdk.js"
 _NODE_MODULES = _HERE.parent / "app_bundler" / "node_modules"
 
 # The peer deps a v2 app must already have for the SDK to resolve at runtime.
-# React only — the SDK uses plain fetch + useState, no data-fetching library.
+# React (hooks) + lucide-react (BifrostHeader icons). The SDK uses plain fetch +
+# useState for data — no data-fetching library.
 _PEER_DEPS = {
     "react": ">=18",
     "react-dom": ">=18",
+    "lucide-react": ">=0.400",
 }
 
 

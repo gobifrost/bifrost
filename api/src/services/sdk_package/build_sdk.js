@@ -33,10 +33,15 @@ esbuild
     target: "es2020",
     outfile: outFile,
     jsx: "automatic",
-    // React is the only peer dep (hooks need it). Keep it external so the app
-    // and SDK share ONE React instance — bundling a second copy is the classic
-    // "Invalid hook call" crash. Everything else the SDK uses is plain `fetch`.
-    external: ["react", "react-dom", "react/jsx-runtime"],
+    // Peer deps kept external: react (hooks need it — and a second copy is the
+    // classic "Invalid hook call" crash) and lucide-react (icons in
+    // BifrostHeader; the app already has it). Everything else is plain `fetch`.
+    external: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "lucide-react",
+    ],
     logLevel: "warning",
   })
   .catch((e) => {

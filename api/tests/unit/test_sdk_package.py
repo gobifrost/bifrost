@@ -28,6 +28,7 @@ _SRC_FILES = [
     "use-infinite-table.ts",
     "ws-client.ts",
     "use-workflow.ts",
+    "bifrost-header.tsx",
 ]
 
 
@@ -76,14 +77,16 @@ def test_build_sdk_tarball_shape_and_exports():
         assert pkg["name"] == "bifrost"
         # git-describe "v1.2-3-gabc1234" has no patch component → coerced to 1.2.0.
         assert pkg["version"] == "1.2.0"
-        assert "react" in pkg["peerDependencies"]
-        # No runtime deps — the SDK is fetch + React only.
+        # No runtime deps — the SDK is fetch + React + lucide (all peers) only.
         assert "dependencies" not in pkg or not pkg["dependencies"]
+        assert "react" in pkg["peerDependencies"]
+        assert "lucide-react" in pkg["peerDependencies"]
 
         bundle_file = tar.extractfile("package/dist/index.mjs")
         assert bundle_file is not None
         bundle = bundle_file.read().decode()
-        for sym in ("BifrostProvider", "useWorkflow", "useTable", "tables"):
+        for sym in ("BifrostProvider", "useWorkflow", "useTable", "tables", "BifrostHeader"):
             assert sym in bundle, f"{sym} missing from bundle"
-        # React stays external (imported, not inlined).
+        # React + lucide stay external (imported, not inlined).
         assert 'from "react"' in bundle
+        assert 'from "lucide-react"' in bundle
