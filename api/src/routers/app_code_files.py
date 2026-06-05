@@ -623,6 +623,7 @@ async def get_bundle_manifest(
                             "dependencies": m.get("dependencies") or (app.dependencies or {}),
                             "migrated": False,
                             "organization_id": str(app.organization_id) if app.organization_id else None,
+                            "app_model": app.app_model,
                         }
                 except FileNotFoundError:
                     continue
@@ -655,6 +656,7 @@ async def get_bundle_manifest(
             # so the developer knows to pull.
             "migrated": migrated,
             "organization_id": str(app.organization_id) if app.organization_id else None,
+            "app_model": app.app_model,
         }
 
     assert manifest_bytes is not None
@@ -671,6 +673,7 @@ async def get_bundle_manifest(
         # always run as their org. Global apps return null and fall back to
         # caller's-org behavior.
         "organization_id": str(app.organization_id) if app.organization_id else None,
+        "app_model": app.app_model,
     }
 
 
@@ -718,6 +721,52 @@ async def get_bundle_asset(
         media_type=media_type,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@render_router.get(
+    "/dist/{path:path}",
+    summary="Serve a standalone_v2 app's built dist/ file from _apps/{id}/dist/",
+)
+async def get_v2_dist_asset(
+    app_id: UUID = Path(..., description="Application UUID"),
+    path: str = Path(..., description="Path within the app's dist/ (e.g. index.html)"),
+    *,
+    ctx: Context,
+    _user: CurrentUser,
+):
+    """Stream a built dist/ file for a standalone_v2 app.
+
+    BundledAppShell mounts a v2 app via an iframe pointed at
+    ``/api/applications/{id}/dist/index.html``; the app's own bundle then loads
+    its hashed assets from the same dist/ prefix.
+    """
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    app = await get_application_or_404(ctx, app_id)
+    rel = path or "index.html"
+    try:
+        data = await SolutionAppBuilder().read_dist(str(app.id), rel)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"dist asset not found: {rel}") from exc
+
+    if rel.endswith(".html"):
+        media_type = "text/html"
+    elif rel.endswith(".js"):
+        media_type = "application/javascript"
+    elif rel.endswith(".css"):
+        media_type = "text/css"
+    elif rel.endswith(".map") or rel.endswith(".json"):
+        media_type = "application/json"
+    else:
+        media_type = "application/octet-stream"
+
+    # index.html must not be cached (it references hashed assets); assets are
+    # immutable.
+    cache = "no-cache" if rel.endswith(".html") else "public, max-age=31536000, immutable"
+    return Response(content=data, media_type=media_type, headers={"Cache-Control": cache})
 
 
 # =============================================================================

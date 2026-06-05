@@ -119,6 +119,10 @@ interface BundleManifest {
 	// Mirrors how org-scoped workflows always run as their org regardless
 	// of who triggered them.
 	organization_id?: string | null;
+	// Render model: 'inline_v1' (legacy — this component fetches + renders the
+	// bundle inline) | 'standalone_v2' (the app is a normal React project served
+	// as its own dist/index.html and mounted standalone). Absent => inline_v1.
+	app_model?: "inline_v1" | "standalone_v2";
 }
 
 interface BundledAppShellProps {
@@ -140,6 +144,9 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	const [BundledApp, setBundledApp] = useState<BundledAppComponent | null>(null);
 	const [loadedEntry, setLoadedEntry] = useState<string | null>(null);
 	const [cssHref, setCssHref] = useState<string | null>(null);
+	// Render model from the manifest. 'standalone_v2' apps are NOT loaded inline
+	// here — they are served as their own dist/index.html and mounted standalone.
+	const [appModel, setAppModel] = useState<"inline_v1" | "standalone_v2">("inline_v1");
 	// Org-scoped app: tells the table SDK to default `scope` to the app's
 	// org for `tables.*` and `useTable` calls inside the bundle. Captured
 	// from the first successful manifest fetch.
@@ -193,7 +200,10 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	useEffect(() => {
 		const controller = new AbortController();
 
-		async function loadBundle(entryOverride?: string, cssOverride?: string | null) {
+		async function loadBundle(
+			entryOverride?: string,
+			cssOverride?: string | null,
+		): Promise<"inline_v1" | "standalone_v2" | undefined> {
 			try {
 				const mode = isPreview ? "draft" : "live";
 				let entry: string;
@@ -235,6 +245,15 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					// default `scope` to this value; global apps leave it null
 					// and fall back to the caller's-org behavior.
 					setAppOrgId(manifest.organization_id ?? null);
+
+					// standalone_v2 apps are served as their own dist/index.html
+					// and mounted standalone (own createRoot + router + real SDK).
+					// Do NOT proceed to the inline dynamic-import path; the render
+					// branch below hosts the standalone app instead.
+					if (manifest.app_model === "standalone_v2") {
+						setAppModel("standalone_v2");
+						return "standalone_v2";
+					}
 				}
 
 				if (controller.signal.aborted) return;
@@ -309,14 +328,18 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 			}
 		}
 
-		loadBundle();
-
 		// Preview-only: subscribe to draft bundle updates for this app.
 		// Success → reload entry. Failure → show banner over last-good render.
+		// standalone_v2 apps are deploy-driven (no hot-reload bundle), so they
+		// never subscribe — we gate on the model the first load resolved.
 		let unsub: (() => void) | null = null;
+		const initialLoad = loadBundle();
 		if (isPreview) {
 			(async () => {
 				try {
+					const model = await initialLoad;
+					if (model === "standalone_v2") return;
+					if (controller.signal.aborted) return;
 					await webSocketService.connectToAppDraft(appId);
 					unsub = webSocketService.onAppCodeFileUpdate(
 						appId,
@@ -362,6 +385,23 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	const showBanner =
 		buildErrors && buildErrors.length > 0 && !buildErrorDismissed;
 	const showMigrateNotice = migrateNotice && !migrateNoticeDismissed;
+
+	// standalone_v2: the app is a normal React project served as its own
+	// dist/index.html. Mount it standalone (own document, own createRoot + router
+	// + real SDK) via an iframe — full isolation, no inline context inheritance.
+	if (appModel === "standalone_v2") {
+		const v2Mode = isPreview ? "draft" : "live";
+		const v2Src = `/api/applications/${appId}/dist/index.html?mode=${v2Mode}`;
+		return (
+			<div className="relative h-full w-full" data-testid="solution-v2-app-root">
+				<iframe
+					title="application"
+					src={v2Src}
+					className="h-full w-full border-0"
+				/>
+			</div>
+		);
+	}
 
 	return (
 		<div className="relative h-full w-full">

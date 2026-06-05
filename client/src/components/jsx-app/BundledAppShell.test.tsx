@@ -70,6 +70,7 @@ function mockManifestOk(
 		mode: "preview" | "live";
 		dependencies: Record<string, string>;
 		migrated: boolean;
+		app_model: string;
 	}> = {},
 ) {
 	mockAuthFetch.mockResolvedValueOnce({
@@ -82,6 +83,7 @@ function mockManifestOk(
 			mode: "preview",
 			dependencies: {},
 			migrated: false,
+			app_model: "inline_v1",
 			...overrides,
 		}),
 	});
@@ -190,5 +192,39 @@ describe("BundledAppShell — websocket subscription", () => {
 		);
 		expect(mockConnectToAppDraft).not.toHaveBeenCalled();
 		expect(mockOnAppCodeFileUpdate).not.toHaveBeenCalled();
+	});
+});
+
+describe("BundledAppShell — app_model render branch", () => {
+	it("mounts the standalone v2 container (not the inline path) for standalone_v2", async () => {
+		mockManifestOk({ app_model: "standalone_v2" });
+
+		await renderShell();
+
+		// v2 → standalone container hosting the app's own dist/ (its own
+		// createRoot/router/SDK); the inline esbuild path is NOT used.
+		const root = await screen.findByTestId("solution-v2-app-root");
+		expect(root).toBeInTheDocument();
+		const frame = root.querySelector("iframe");
+		expect(frame).not.toBeNull();
+		expect(frame!.getAttribute("src")).toContain(
+			"/api/applications/app-1/dist/index.html",
+		);
+		// v2 is deploy-driven, not hot-reload — no draft subscription.
+		expect(mockConnectToAppDraft).not.toHaveBeenCalled();
+	});
+
+	it("uses the inline path for inline_v1 (regression) and subscribes to drafts", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		mockManifestOk({ app_model: "inline_v1" });
+
+		await renderShell();
+
+		// No standalone container for v1.
+		expect(screen.queryByTestId("solution-v2-app-root")).toBeNull();
+		// v1 inline path still subscribes to draft rebuilds (unchanged).
+		await waitFor(() =>
+			expect(mockConnectToAppDraft).toHaveBeenCalledWith("app-1"),
+		);
 	});
 });
