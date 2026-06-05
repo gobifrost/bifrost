@@ -82,6 +82,8 @@ def init_cmd(path: str, slug: str, name: str | None, scope: str, global_repo_acc
               help="Instance URL the app resolves `bifrost` from (default: $BIFROST_API_URL).")
 def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     """Write a working v2 app skeleton wired for the CLI-login dev loop."""
+    import uuid as _uuid
+
     url = api_url or os.getenv("BIFROST_API_URL") or "http://localhost:8000"
     app_dir = pathlib.Path(path) if path else pathlib.Path("apps") / slug
     if app_dir.exists() and any(app_dir.iterdir()):
@@ -90,8 +92,30 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
         dest = app_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content)
+
+    # Register the app in .bifrost/apps.yaml so `bifrost deploy` finds it (the
+    # deployer reads this manifest). Without this the scaffold would be source
+    # with no way to deploy — a papercut. Keyed by a fresh UUID (app identity).
+    bifrost_dir = app_dir.parent.parent if path else pathlib.Path(".")
+    manifest = bifrost_dir / ".bifrost" / "apps.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    data = yaml.safe_load(manifest.read_text()) if manifest.is_file() else None
+    data = data or {"apps": {}}
+    app_id = str(_uuid.uuid4())
+    rel_path = app_dir.relative_to(bifrost_dir).as_posix() if not path else str(app_dir)
+    data.setdefault("apps", {})[app_id] = {
+        "id": app_id,
+        "slug": slug,
+        "name": slug,
+        "path": rel_path,
+        "app_model": "standalone_v2",
+    }
+    manifest.write_text(yaml.safe_dump(data, sort_keys=False))
+
     click.echo(f"Scaffolded standalone_v2 app at {app_dir}")
+    click.echo(f"Registered it in {manifest} (id {app_id}).")
     click.echo("Next: cd into it, `cp .env.example .env`, `npm install`, `npm run dev`.")
+    click.echo("Deploy with `bifrost deploy` from the solution root.")
 
 
 def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
