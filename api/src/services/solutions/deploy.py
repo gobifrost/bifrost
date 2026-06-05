@@ -201,9 +201,14 @@ class SolutionDeployer:
                 "path": mwf["path"],
                 "type": mwf.get("type", "workflow"),
                 "is_active": True,
-                # Full-replace: description is always set from the bundle so a
-                # removed description clears the DB value rather than going stale.
+                # Full-replace deploy-owned metadata so a redeploy that changes
+                # (or clears) these is reflected, not left stale (criteria 10/14).
                 "description": mwf.get("description"),
+                "endpoint_enabled": mwf.get("endpoint_enabled", False),
+                "public_endpoint": mwf.get("public_endpoint", False),
+                "timeout_seconds": mwf.get("timeout_seconds", 1800),
+                "category": mwf.get("category", "General"),
+                "tags": mwf.get("tags") or [],
                 # Scope is inherited from the install — no per-entity binding.
                 "organization_id": solution.organization_id,
                 "solution_id": sid,

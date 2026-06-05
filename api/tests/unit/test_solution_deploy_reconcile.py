@@ -8,6 +8,7 @@ NOT IN bundle_ids``, so _repo/ rows (solution_id IS NULL) and other installs
 """
 from __future__ import annotations
 
+import uuid as uuid_module
 from uuid import uuid4
 
 import pytest
@@ -280,3 +281,39 @@ class TestSolutionDeployReconcile:
         by_name = await repo.get_by_name_and_type("dupname", "workflow")
         assert by_name is not None
         assert by_name.solution_id is None
+
+
+    async def test_workflow_metadata_full_replace(self, db_session) -> None:
+        """Deploy carries deploy-owned workflow metadata (endpoint/timeout/
+        category/tags) and full-replaces it on redeploy (Codex P2-i)."""
+        from src.models.orm.workflows import Workflow
+
+        db = db_session
+        sol = await self._make_install(db, f"meta-{uuid4().hex[:8]}")
+        wf_id = str(uuid4())
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            workflows=[{
+                "id": wf_id, "name": "m", "function_name": "run", "path": "workflows/m.py",
+                "endpoint_enabled": True, "timeout_seconds": 42,
+                "category": "Billing", "tags": ["a", "b"],
+            }],
+        ))
+        await db.flush()
+        wf = await db.get(Workflow, uuid_module.UUID(wf_id))
+        assert wf.endpoint_enabled is True
+        assert wf.timeout_seconds == 42
+        assert wf.category == "Billing"
+        assert wf.tags == ["a", "b"]
+
+        # Redeploy with the metadata removed → full-replaced to defaults.
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            workflows=[{"id": wf_id, "name": "m", "function_name": "run", "path": "workflows/m.py"}],
+        ))
+        await db.flush()
+        await db.refresh(wf)
+        assert wf.endpoint_enabled is False
+        assert wf.timeout_seconds == 1800
+        assert wf.category == "General"
+        assert wf.tags == []
