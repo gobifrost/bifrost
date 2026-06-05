@@ -81,6 +81,43 @@ async def _resolve_ref_list(
     return resolved
 
 
+def _normalize_id_set(values: list[Any] | None) -> set[str]:
+    """Normalize ID values from request/response bodies for set comparison."""
+    return {str(value) for value in values or []}
+
+
+async def _verify_tool_ids_persisted(
+    *,
+    client: BifrostClient,
+    agent_uuid: str,
+    requested_tool_ids: list[str],
+) -> dict[str, Any]:
+    """Read back agent tools after an update and fail loudly on drift."""
+    response = await client.get(f"/api/agents/{agent_uuid}")
+    response.raise_for_status()
+    agent = response.json()
+    persisted_tool_ids = agent.get("tool_ids")
+    if not isinstance(persisted_tool_ids, list):
+        click.echo(
+            "Agent update response did not include a tool_ids list after read-back.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    requested = _normalize_id_set(requested_tool_ids)
+    persisted = _normalize_id_set(persisted_tool_ids)
+    if requested != persisted:
+        click.echo(
+            "Agent tool_ids did not persist after update.\n"
+            f"requested: {sorted(requested)}\n"
+            f"persisted: {sorted(persisted)}",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    return agent
+
+
 _CREATE_FLAGS = build_cli_flags(
     AgentCreate,
     exclude=DTO_EXCLUDES.get("AgentCreate", set()),
@@ -207,7 +244,14 @@ async def update_agent(
 
     response = await client.put(f"/api/agents/{agent_uuid}", json=body)
     response.raise_for_status()
-    output_result(response.json(), ctx=ctx)
+    result = response.json()
+    if isinstance(body.get("tool_ids"), list):
+        result = await _verify_tool_ids_persisted(
+            client=client,
+            agent_uuid=agent_uuid,
+            requested_tool_ids=body["tool_ids"],
+        )
+    output_result(result, ctx=ctx)
 
 
 @agents_group.command("delete")

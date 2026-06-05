@@ -592,6 +592,32 @@ class ReplaceWorkflowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RemapWorkflowRequest(BaseModel):
+    """Request to move references from one workflow row to another."""
+
+    target_workflow_id: str = Field(
+        ...,
+        min_length=1,
+        description="Active workflow UUID that should receive the references",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RemapWorkflowResponse(BaseModel):
+    """Response after remapping workflow references."""
+
+    success: bool = Field(..., description="Whether remap succeeded")
+    source_workflow_id: str = Field(..., description="UUID references were moved from")
+    target_workflow_id: str = Field(..., description="UUID references were moved to")
+    updated: dict[str, int] = Field(
+        default_factory=dict,
+        description="Counts of references updated by category",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RecreateFileResponse(BaseModel):
     """Response after recreating file from orphaned workflow's code."""
 

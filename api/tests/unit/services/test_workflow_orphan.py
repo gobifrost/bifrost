@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
+from src.models.enums import AgentAccessLevel
+from src.models.orm.agents import Agent, AgentTool
+from src.models.orm.workflows import Workflow
 from src.services.workflow_orphan import (
     WorkflowOrphanService,
     OrphanedWorkflow,
@@ -295,6 +299,61 @@ class TestReplaceWorkflowASTSemantics:
         assert result.function_name == "my_func"
         assert result.is_orphaned is False
         db.commit.assert_awaited_once()
+
+
+class TestRemapWorkflowReferences:
+    """Tests for moving references from one workflow row to another."""
+
+    @pytest.mark.asyncio
+    async def test_remaps_agent_tool_reference_to_active_target(self, db_session):
+        old_workflow = Workflow(
+            id=uuid4(),
+            name="Old Tool",
+            function_name="old_tool",
+            type="tool",
+            path="workflows/old_tool.py",
+            is_active=False,
+            is_orphaned=True,
+        )
+        target_workflow = Workflow(
+            id=uuid4(),
+            name="Active Tool",
+            function_name="active_tool",
+            type="tool",
+            path="workflows/active_tool.py",
+            is_active=True,
+            is_orphaned=False,
+        )
+        agent = Agent(
+            id=uuid4(),
+            name="Work",
+            system_prompt="You are a test agent.",
+            access_level=AgentAccessLevel.AUTHENTICATED,
+            created_by="test@example.com",
+        )
+        db_session.add_all([old_workflow, target_workflow, agent])
+        await db_session.flush()
+        db_session.add(AgentTool(agent_id=agent.id, workflow_id=old_workflow.id))
+        await db_session.flush()
+
+        service = WorkflowOrphanService(db_session)
+        result = await service.remap_workflow_references(
+            source_workflow_id=old_workflow.id,
+            target_workflow_id=target_workflow.id,
+        )
+
+        assert result.source_workflow_id == str(old_workflow.id)
+        assert result.target_workflow_id == str(target_workflow.id)
+        assert result.updated["agents"] == 1
+        assert old_workflow.is_active is False
+        assert old_workflow.is_orphaned is True
+
+        rows = (
+            await db_session.execute(
+                select(AgentTool).where(AgentTool.agent_id == agent.id)
+            )
+        ).scalars().all()
+        assert [row.workflow_id for row in rows] == [target_workflow.id]
 
     @pytest.mark.asyncio
     async def test_rejects_when_workflow_not_found(self):

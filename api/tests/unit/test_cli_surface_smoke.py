@@ -79,7 +79,7 @@ EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
     "configs": {"list", "get", "create", "update", "delete"},
     "tables": {"list", "get", "create", "update", "delete"},
     "integrations": {"list", "get", "create", "update"},
-    "workflows": {"list", "get", "update", "delete"},
+    "workflows": {"list", "get", "update", "remap", "delete"},
     "events": {
         "list-sources",
         "get-source",
