@@ -116,3 +116,31 @@ async def deploy_solution(
         tables_upserted=result.tables_upserted,
         tables_deleted=result.tables_deleted,
     )
+
+
+@router.post(
+    "/{solution_id}/sync",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Auto-pull a git-connected install from its repo (admin only)",
+)
+async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> dict:
+    """Pull the connected install's repo ``main`` and deploy it (criterion 13).
+
+    This is the auto-pull entry point (webhook/poll/manual). It is the ONLY
+    writer for a connected install — the deploy endpoint is refused for it. For a
+    disconnected install there is nothing to pull, so this is refused in turn.
+    """
+    solution = await ctx.db.get(SolutionORM, solution_id)
+    if solution is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    if not solution.git_connected:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This install is not git-connected; use deploy instead.",
+        )
+
+    from src.services.solutions.git_sync import sync as git_sync
+
+    await git_sync(ctx.db, solution)
+    await ctx.db.commit()
+    return {"solution_id": str(solution_id), "status": "synced"}
