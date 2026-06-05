@@ -72,3 +72,11 @@ test("v1 (non-solution) app is editable — backwards compat", async ({ page }) 
   // Both apps present side-by-side: v1 editable, v2 managed (visual diff in shot).
   await expect(page.getByText("Live Dash")).toBeVisible();
 });
+
+test("managed app code editor is read-only (banner + disabled save)", async ({ page }) => {
+  await login(page);
+  await page.goto("/apps/live-dash/edit");
+  await page.waitForLoadState("networkidle");
+  await page.screenshot({ path: `${SHOTS}/14-managed-editor.png`, fullPage: true });
+  await expect(page.getByTestId("solution-managed-banner")).toBeVisible({ timeout: 15000 });
+});
