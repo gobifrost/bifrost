@@ -30,8 +30,13 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
     sid = _create_solution(e2e_client, headers, slug)
     app_id = str(uuid.uuid4())
     app_slug = f"dash-{slug}"
-    index_html = "<!doctype html><html><body><div id=root></div>" \
-        "<script type=module src=/assets/main-abc.js></script></body></html>"
+    # Realistic Vite output: quoted attrs, asset URLs under the --base dist route.
+    index_html = (
+        '<!doctype html><html><head>'
+        f'<script type="module" crossorigin src="/api/applications/{app_id}/dist/assets/main-abc.js"></script>'
+        '<link rel="stylesheet" href="/api/applications/{aid}/dist/assets/main-abc.css">'
+        '</head><body><div id="root"></div></body></html>'
+    ).replace("{aid}", app_id)
 
     dep = e2e_client.post(
         f"/api/solutions/{sid}/deploy",
@@ -49,6 +54,7 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
                     "dist_files": {
                         "index.html": index_html,
                         "assets/main-abc.js": "console.log('v2')",
+                        "assets/main-abc.css": ".x{color:red}",
                     },
                 }
             ]
@@ -69,7 +75,7 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
     # The dist/ is served from _apps/{id}/ — index.html (criterion 12).
     idx = e2e_client.get(f"/api/applications/{app_id}/dist/index.html", headers=headers)
     assert idx.status_code == 200, idx.text
-    assert "id=root" in idx.text
+    assert 'id="root"' in idx.text
     assert idx.headers["content-type"].startswith("text/html")
 
     # A hashed asset referenced by index.html is fetchable from the same prefix.
@@ -79,14 +85,20 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
     assert asset.status_code == 200, asset.text
     assert "v2" in asset.text
 
-    # The bundle-manifest surfaces app_model for the render branch.
+    # The bundle-manifest surfaces app_model AND the hashed entry parsed from the
+    # built index.html, so the client mounts the app same-document (P1-b/G7) —
+    # it loads `entry` from the dist base, NOT an iframe to index.html.
     man = e2e_client.get(
         f"/api/applications/{app_id}/bundle-manifest?mode=live", headers=headers
     )
-    # standalone_v2 apps don't go through the esbuild bundler, but the manifest
-    # endpoint still reports the model (the shell branches on it before loading).
-    if man.status_code == 200:
-        assert man.json().get("app_model") == "standalone_v2"
+    assert man.status_code == 200, man.text
+    mbody = man.json()
+    assert mbody["app_model"] == "standalone_v2"
+    assert mbody["base_url"] == f"/api/applications/{app_id}/dist"
+    # index.html referenced the entry + css under /dist/ → manifest reports them
+    # relative to the dist base (the shell re-joins base + entry/css).
+    assert mbody["entry"] == "assets/main-abc.js"
+    assert mbody["css"] == "assets/main-abc.css"
 
 
 def test_redeploy_without_app_removes_it_for_this_install(e2e_client, platform_admin):

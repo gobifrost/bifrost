@@ -196,37 +196,53 @@ describe("BundledAppShell — websocket subscription", () => {
 });
 
 describe("BundledAppShell — app_model render branch", () => {
-	it("mounts the standalone v2 container (not the inline path) for standalone_v2", async () => {
-		mockManifestOk({ app_model: "standalone_v2" });
+	it("mounts the standalone v2 app same-document (no iframe) and injects auth", async () => {
+		mockManifestOk({
+			app_model: "standalone_v2",
+			entry: "assets/main-abc.js",
+			base_url: "/api/applications/app-1/dist",
+		});
+		// The host token the shell injects for the app.
+		localStorage.setItem("bifrost_access_token", "tok-xyz");
 
 		await renderShell();
 
-		// v2 → standalone container hosting the app's own dist/ (its own
-		// createRoot/router/SDK); the inline esbuild path is NOT used.
+		// v2 → same-document container (its own createRoot/router/SDK); NO iframe
+		// (the iframe never updated the URL, breaking deep-links — P1-b/G7).
 		const root = await screen.findByTestId("solution-v2-app-root");
 		expect(root).toBeInTheDocument();
-		const frame = root.querySelector("iframe");
-		expect(frame).not.toBeNull();
-		expect(frame!.getAttribute("src")).toContain(
-			"/api/applications/app-1/dist/index.html",
-		);
+		expect(root.querySelector("iframe")).toBeNull();
+
+		// The bootstrap the app's main.tsx reads was injected with the viewer's
+		// token + the /apps/{slug} basename so deep-links resolve.
+		await waitFor(() => expect(window.__BIFROST_APP__).toBeDefined());
+		expect(window.__BIFROST_APP__!.token).toBe("tok-xyz");
+		// basename is built from the app slug (renderShell uses "my-app").
+		expect(window.__BIFROST_APP__!.basename).toBe("/apps/my-app/preview");
+		expect(window.__BIFROST_APP__!.mountEl).toBe(root);
+
 		// v2 is deploy-driven, not hot-reload — no draft subscription.
 		expect(mockConnectToAppDraft).not.toHaveBeenCalled();
 	});
 
-	it("drops the v2 iframe when navigating to an inline_v1 app in the same shell", async () => {
+	it("drops the v2 mount when navigating to an inline_v1 app in the same shell", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
+		localStorage.setItem("bifrost_access_token", "tok-xyz");
 		const { BundledAppShell } = await import("./BundledAppShell");
 
-		// First app: standalone_v2 → iframe container.
-		mockManifestOk({ app_model: "standalone_v2" });
+		// First app: standalone_v2 → same-document container.
+		mockManifestOk({
+			app_model: "standalone_v2",
+			entry: "assets/main-abc.js",
+			base_url: "/api/applications/app-v2/dist",
+		});
 		const { rerender } = renderWithProviders(
 			<BundledAppShell appId="app-v2" appSlug="v2" isPreview />,
 		);
 		expect(await screen.findByTestId("solution-v2-app-root")).toBeInTheDocument();
 
-		// Navigate to a different, inline_v1 app: the iframe must go away (the
-		// shell re-fetches and resets the model). The inline dynamic import
+		// Navigate to a different, inline_v1 app: the v2 container must go away
+		// (the shell re-fetches and resets the model). The inline dynamic import
 		// rejects in happy-dom, but the model reset happens before that.
 		mockManifestOk({ app_model: "inline_v1" });
 		rerender(<BundledAppShell appId="app-v1" appSlug="v1" isPreview />);

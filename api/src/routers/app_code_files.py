@@ -564,13 +564,34 @@ async def get_bundle_manifest(
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
 
-    # standalone_v2 apps have NO esbuild bundle/manifest — their source is not
-    # under _repo/, so the legacy build_with_migrate path would fail. The shell
-    # only needs app_model to switch to the dist iframe; return that directly.
+    # standalone_v2 apps have NO esbuild bundle/manifest — they're a Vite build
+    # served from _apps/{id}/dist/. Surface the hashed entry JS + CSS from the
+    # built dist so the shell loads them into a same-document mount (NOT an
+    # iframe — the iframe never updated the address bar, breaking deep-links /
+    # refresh; Codex P1-b/G7). The client reads these instead of scraping
+    # index.html.
     if app.app_model == "standalone_v2":
+        import re as _re
+
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        # The entry chunk + CSS are whatever index.html references — Vite may emit
+        # several .js chunks (vendor splits), so the <script type=module src> and
+        # <link rel=stylesheet href> in index.html are the source of truth, not a
+        # "first .js" guess.
+        entry: str | None = None
+        css: str | None = None
+        try:
+            html = (await SolutionAppBuilder().read_dist(app_id_str, "index.html")).decode()
+            if m := _re.search(r'<script[^>]+type="module"[^>]+src="([^"]+)"', html):
+                entry = m.group(1).split("/dist/")[-1].lstrip("/")
+            if m := _re.search(r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', html):
+                css = m.group(1).split("/dist/")[-1].lstrip("/")
+        except Exception:  # noqa: BLE001 - missing/unbuilt dist → entry stays None, shell shows a clear error
+            pass
         return {
-            "entry": None,
-            "css": None,
+            "entry": entry,
+            "css": css,
             "base_url": f"/api/applications/{app_id}/dist",
             "mode": storage_mode,
             "dependencies": app.dependencies or {},
@@ -758,9 +779,9 @@ async def get_v2_dist_asset(
 ):
     """Stream a built dist/ file for a standalone_v2 app.
 
-    BundledAppShell mounts a v2 app via an iframe pointed at
-    ``/api/applications/{id}/dist/index.html``; the app's own bundle then loads
-    its hashed assets from the same dist/ prefix.
+    BundledAppShell mounts a v2 app SAME-DOCUMENT (not an iframe): it reads the
+    hashed entry/css from the bundle-manifest and loads them from this dist/
+    prefix; the app's own bundle pulls any further chunks from here too.
     """
     from fastapi import HTTPException
     from fastapi.responses import Response
