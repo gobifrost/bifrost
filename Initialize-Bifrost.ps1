@@ -64,6 +64,48 @@ function Get-BifrostOrigin {
     return [pscustomobject]@{ Origin = "https://${Domain}"; Environment = 'production' }
 }
 
+function Set-BifrostEnvLine {
+    <#
+        Replace the value of KEY=... on the single matching line. Matches an
+        optional leading "# " so a commented key can be activated. Anchored to
+        line start so it never touches comments that merely mention the key.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string[]]$Lines,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$Value
+    )
+    $pattern = '^(#\s*)?' + [regex]::Escape($Key) + '=.*$'
+    $replacement = "$Key=$Value"
+    $done = $false
+    $out = foreach ($line in $Lines) {
+        if (-not $done -and $line -match $pattern) {
+            $done = $true
+            $replacement
+        } else {
+            $line
+        }
+    }
+    return ,$out
+}
+
+function Write-BifrostEnvFile {
+    <#
+        Write .env as UTF-8 WITHOUT BOM and LF line endings. A BOM breaks
+        Docker Compose env_file parsing (the first key gets a BOM prefix), and
+        Out-File/Set-Content add one by default — hence the explicit writer.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string[]]$Lines,
+        [Parameter(Mandatory)][string]$Path
+    )
+    $text = ($Lines -join "`n") + "`n"
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $text, $utf8NoBom)
+}
+
 function Initialize-Bifrost {
     [CmdletBinding()]
     param(
