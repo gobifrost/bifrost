@@ -132,6 +132,10 @@ def get_session_factory(settings: Settings | None = None) -> async_sessionmaker[
             expire_on_commit=False,
             autoflush=False,
         )
+        # Defense-in-depth: reject any flush that would mutate/delete a
+        # solution-managed entity outside the deploy path (criterion 6).
+        from src.services.solutions.guard import install_solution_write_guard
+        install_solution_write_guard()
 
     return _async_session_factory
 

@@ -44,6 +44,48 @@ def assert_not_solution_managed(entity: Any) -> None:
         )
 
 
+class SolutionManagedWriteError(Exception):
+    """A flush would mutate or delete a solution-managed entity outside deploy.
+
+    Raised by the before_flush backstop (install_solution_write_guard). Deploy
+    writes via Core update()/insert() statements, which do NOT go through the
+    ORM unit-of-work, so this never fires for deployment — only for ORM-object
+    mutations (routers, MCP tools, anything that loads a row and edits it).
+    """
+
+
+# Models whose instances are solution-managed when solution_id is set. Other
+# ORM classes never carry solution_id and are skipped cheaply.
+def _instance_is_managed(obj: Any) -> bool:
+    return getattr(obj, "solution_id", None) is not None
+
+
+def install_solution_write_guard() -> None:
+    """Install a session-wide before_flush backstop enforcing read-only.
+
+    Defense in depth for criterion 6: even if a mutation surface forgets the
+    explicit guard (e.g. an old direct-ORM MCP tool, or a secondary endpoint),
+    a flush that has a solution-managed entity in ``session.dirty`` or
+    ``session.deleted`` is rejected. Idempotent.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session as _SyncSession
+
+    if getattr(install_solution_write_guard, "_installed", False):
+        return
+
+    @event.listens_for(_SyncSession, "before_flush")
+    def _before_flush(session, _flush_context, _instances):  # noqa: ANN001
+        for obj in list(session.dirty):
+            if session.is_modified(obj, include_collections=False) and _instance_is_managed(obj):
+                raise SolutionManagedWriteError(SOLUTION_MANAGED_MESSAGE)
+        for obj in list(session.deleted):
+            if _instance_is_managed(obj):
+                raise SolutionManagedWriteError(SOLUTION_MANAGED_MESSAGE)
+
+    install_solution_write_guard._installed = True  # type: ignore[attr-defined]
+
+
 async def assert_entity_id_not_solution_managed(
     db: AsyncSession, model: type, entity_id: UUID
 ) -> None:
