@@ -15,6 +15,38 @@ function getCsrfToken(): string {
 }
 
 /**
+ * Transport the table SDK uses for HTTP. Two modes:
+ *
+ * - **Default (v1 inline apps):** `baseUrl` empty + `fetchImpl` undefined →
+ *   same-origin requests with cookie/CSRF auth (the platform serves the app,
+ *   so the session cookie is present). Unchanged behavior.
+ * - **v2 standalone apps:** `<BifrostProvider>` installs a transport pointing
+ *   at the configured `baseUrl` with a bearer token (and optional org header),
+ *   so `tables.*`/`useTable` reach the real Bifrost API even when the app is
+ *   served by its own dev server (`npm run dev`) on a different origin.
+ */
+interface BifrostTransport {
+  baseUrl: string;
+  fetchImpl?: typeof fetch;
+  headers?: Record<string, string>;
+}
+
+let transport: BifrostTransport = { baseUrl: "" };
+
+/**
+ * Install the transport the table SDK uses. Called by `<BifrostProvider>` on
+ * mount; the returned cleanup restores the prior transport on unmount. v1
+ * inline apps never call this and keep the same-origin cookie default.
+ */
+export function setBifrostTransport(next: BifrostTransport): () => void {
+  const prev = transport;
+  transport = next;
+  return () => {
+    transport = prev;
+  };
+}
+
+/**
  * Append `?scope=<encoded>` (or `&scope=<encoded>` if a query string already
  * exists) to a path when scope is provided. Mirrors the Python SDK's
  * `scope: str | None` parameter — provider admins can target a specific org;
@@ -92,16 +124,25 @@ async function http<T>(
   options: { throwOnNotFound?: boolean } = {},
 ): Promise<T | null> {
   const method = (init.method ?? "GET").toUpperCase();
+  const usingProvider = Boolean(transport.baseUrl || transport.headers);
+  // Same-origin (v1) uses cookie + CSRF. A provider transport (v2) carries its
+  // own auth headers (bearer) and targets a possibly cross-origin baseUrl, so
+  // CSRF/cookies don't apply.
   const csrfHeaders: Record<string, string> =
-    method === "GET" || method === "HEAD"
+    usingProvider || method === "GET" || method === "HEAD"
       ? {}
       : { "X-CSRF-Token": getCsrfToken() };
-  const r = await fetch(path, {
+  const url = transport.baseUrl
+    ? `${transport.baseUrl.replace(/\/$/, "")}${path}`
+    : path;
+  const doFetch = transport.fetchImpl ?? fetch;
+  const r = await doFetch(url, {
     ...init,
-    credentials: "include",
+    credentials: usingProvider ? "omit" : "include",
     headers: {
       "content-type": "application/json",
       ...csrfHeaders,
+      ...(transport.headers ?? {}),
       ...(init.headers ?? {}),
     },
   });

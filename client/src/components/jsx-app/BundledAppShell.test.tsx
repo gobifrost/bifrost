@@ -214,6 +214,27 @@ describe("BundledAppShell — app_model render branch", () => {
 		expect(mockConnectToAppDraft).not.toHaveBeenCalled();
 	});
 
+	it("drops the v2 iframe when navigating to an inline_v1 app in the same shell", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { BundledAppShell } = await import("./BundledAppShell");
+
+		// First app: standalone_v2 → iframe container.
+		mockManifestOk({ app_model: "standalone_v2" });
+		const { rerender } = renderWithProviders(
+			<BundledAppShell appId="app-v2" appSlug="v2" isPreview />,
+		);
+		expect(await screen.findByTestId("solution-v2-app-root")).toBeInTheDocument();
+
+		// Navigate to a different, inline_v1 app: the iframe must go away (the
+		// shell re-fetches and resets the model). The inline dynamic import
+		// rejects in happy-dom, but the model reset happens before that.
+		mockManifestOk({ app_model: "inline_v1" });
+		rerender(<BundledAppShell appId="app-v1" appSlug="v1" isPreview />);
+		await waitFor(() =>
+			expect(screen.queryByTestId("solution-v2-app-root")).toBeNull(),
+		);
+	});
+
 	it("uses the inline path for inline_v1 (regression) and subscribes to drafts", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		mockManifestOk({ app_model: "inline_v1" });

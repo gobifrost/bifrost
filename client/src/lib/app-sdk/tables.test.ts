@@ -2,13 +2,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TableAccessDeniedError,
   TableNotFoundError,
+  setBifrostTransport,
   setDefaultAppScope,
   tables,
 } from "./tables";
 
+let restoreTransport: (() => void) | null = null;
+
 afterEach(() => {
   // Always reset module-level state so tests don't bleed defaultScope.
   setDefaultAppScope(null);
+  if (restoreTransport) {
+    restoreTransport();
+    restoreTransport = null;
+  }
 });
 
 describe("tables web SDK", () => {
@@ -492,6 +499,48 @@ describe("tables web SDK", () => {
 
       const url = fetchMock.mock.calls[0][0] as string;
       expect(url).not.toContain("scope=");
+    });
+  });
+
+  describe("provider transport (v2 standalone apps)", () => {
+    function okJson(body: unknown) {
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    it("prefixes the configured baseUrl and attaches the bearer token", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(okJson({ id: "row-1", data: {} }));
+      // default global fetch should NOT be used when a custom fetchImpl is set
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("should not be called")));
+
+      restoreTransport = setBifrostTransport({
+        baseUrl: "https://dev.example",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        headers: { Authorization: "Bearer tok-xyz" },
+      });
+
+      await tables.get("notes", "row-1");
+
+      const url = fetchMock.mock.calls[0][0] as string;
+      const opts = fetchMock.mock.calls[0][1] as RequestInit;
+      expect(url).toBe("https://dev.example/api/tables/notes/documents/row-1");
+      expect(new Headers(opts.headers).get("Authorization")).toBe("Bearer tok-xyz");
+      // provider transport doesn't send cookies (cross-origin, bearer auth)
+      expect(opts.credentials).toBe("omit");
+    });
+
+    it("falls back to same-origin cookie auth when no transport is set", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(okJson({ id: "row-1", data: {} }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await tables.get("notes", "row-1");
+
+      const url = fetchMock.mock.calls[0][0] as string;
+      const opts = fetchMock.mock.calls[0][1] as RequestInit;
+      expect(url).toBe("/api/tables/notes/documents/row-1");
+      expect(opts.credentials).toBe("include");
     });
   });
 });

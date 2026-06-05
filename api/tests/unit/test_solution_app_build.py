@@ -48,8 +48,9 @@ async def test_build_runs_vite_when_no_prebuilt_dist(monkeypatch):
 
     captured = {}
 
-    def _fake_vite(workdir):
+    def _fake_vite(workdir, base="/"):
         captured["workdir"] = workdir
+        captured["base"] = base
         return {"index.html": b"<html>built</html>"}
 
     monkeypatch.setattr(b, "_run_vite_build", _fake_vite)
@@ -62,3 +63,29 @@ async def test_build_runs_vite_when_no_prebuilt_dist(monkeypatch):
     )
     assert out == {"index.html": b"<html>built</html>"}
     assert "workdir" in captured
+    # base is the serving route so emitted asset URLs resolve there, not root.
+    assert captured["base"] == f"/api/applications/{app_id}/dist/"
+
+
+@pytest.mark.e2e
+async def test_redeploy_clears_stale_dist_files(monkeypatch):
+    """A second build with a different file set must not leave the old files
+    fetchable (full replace of the dist/ artifact)."""
+    app_id = uuid.uuid4()
+    b = SolutionAppBuilder()
+    monkeypatch.setattr(b, "_run_vite_build", lambda *a, **k: {})
+
+    # First deploy ships index.html + an old hashed asset.
+    await b.build(
+        app_id=app_id, src_files={}, dependencies={},
+        prebuilt_dist={"index.html": b"<html>v1</html>", "assets/old-aaa.js": b"//old"},
+    )
+    assert await b.read_dist(app_id, "assets/old-aaa.js") == b"//old"
+
+    # Redeploy with a renamed asset — the old one must be gone.
+    await b.build(
+        app_id=app_id, src_files={}, dependencies={},
+        prebuilt_dist={"index.html": b"<html>v2</html>", "assets/new-bbb.js": b"//new"},
+    )
+    assert await b.read_dist(app_id, "assets/new-bbb.js") == b"//new"
+    assert "assets/old-aaa.js" not in await b.list_dist(app_id)

@@ -71,10 +71,18 @@ class SolutionAppBuilder:
             with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
                 workdir = Path(tmp)
                 self._materialize(workdir, src_files, dependencies)
-                dist = self._run_vite_build(workdir)
+                # base must match the serving route so the emitted index.html
+                # references assets as /api/applications/{id}/dist/assets/...
+                # rather than the site root (otherwise they 404 in the iframe).
+                dist = self._run_vite_build(workdir, base=self._dist_base(app_id))
 
         await self._upload_dist(app_id, dist)
         return dist
+
+    @staticmethod
+    def _dist_base(app_id: UUID | str) -> str:
+        """The public URL prefix the built assets are served from."""
+        return f"/api/applications/{app_id}/dist/"
 
     def _materialize(
         self, workdir: Path, src_files: dict[str, bytes], dependencies: dict[str, str]
@@ -90,14 +98,25 @@ class SolutionAppBuilder:
             pkg.write_text(json.dumps({"name": "bifrost-app", "private": True,
                                        "dependencies": dependencies or {}}))
 
-    def _run_vite_build(self, workdir: Path) -> dict[str, bytes]:
-        """Run ``vite build`` in ``workdir`` and return the produced dist/ files.
+    def _run_vite_build(self, workdir: Path, base: str = "/") -> dict[str, bytes]:
+        """Install declared deps, run ``vite build`` in ``workdir``, and return
+        the produced dist/ files.
 
         Isolated as a seam so tests can stub it (the Node toolchain is an
-        environmental dependency, not under unit test).
+        environmental dependency, not under unit test). ``base`` is passed to
+        Vite so emitted asset URLs in index.html resolve under the serving
+        route, not the site root. ``npm install`` runs first so a real app's
+        declared dependencies (react, the bifrost SDK, etc.) resolve during the
+        build — Vite cannot resolve bare imports from a bare package.json alone.
         """
         subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
-            ["npx", "vite", "build"],
+            ["npm", "install", "--no-audit", "--no-fund"],
+            cwd=str(workdir),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
+            ["npx", "vite", "build", "--base", base],
             cwd=str(workdir),
             check=True,
             capture_output=True,
@@ -110,6 +129,9 @@ class SolutionAppBuilder:
         return out
 
     async def _upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
+        # Full replace: a redeploy must not leave a removed/renamed asset
+        # fetchable from the new dist/. Clear the prefix, then upload.
+        await self.delete_dist(app_id)
         async with self._client() as c:
             for rel, data in dist.items():
                 await c.put_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel), Body=data)

@@ -62,6 +62,46 @@ describe("BifrostProvider", () => {
     expect(captured!.auth).toBe("Bearer tok-abc");
   });
 
+  it("routes the table SDK through baseUrl + bearer while mounted", async () => {
+    const { tables } = await import("./tables");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: "r", data: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const { unmount } = render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-1"
+        fetchImpl={fetchMock as unknown as typeof fetch}
+      >
+        <span>ok</span>
+      </BifrostProvider>,
+    );
+
+    await tables.get("notes", "r");
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toBe("https://dev.example/api/tables/notes/documents/r");
+
+    // After unmount the transport is restored (same-origin default).
+    unmount();
+    const globalFetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: "r", data: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", globalFetch);
+    await tables.get("notes", "r");
+    expect(globalFetch.mock.calls[0][0]).toBe("/api/tables/notes/documents/r");
+  });
+
   it("throws a clear error when used outside a provider", () => {
     function Orphan() {
       useBifrostContext();

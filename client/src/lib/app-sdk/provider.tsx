@@ -22,9 +22,12 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   type ReactNode,
 } from "react";
+
+import { setBifrostTransport, setDefaultAppScope } from "./tables";
 
 export interface BifrostContextValue {
   /** Absolute base URL of the Bifrost API (no trailing slash). */
@@ -99,6 +102,23 @@ export function BifrostProvider({
     () => queryClient ?? new QueryClient(),
     [queryClient],
   );
+
+  // Route the data SDK (tables.*/useTable) through this provider so a v2 app
+  // in `npm run dev` (different origin) reaches the configured Bifrost API with
+  // the bearer token + org scope, instead of its own dev server unauthed. v1
+  // inline apps never mount a provider and keep the same-origin cookie default.
+  useEffect(() => {
+    const restore = setBifrostTransport({
+      baseUrl: baseUrl.replace(/\/$/, ""),
+      fetchImpl,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const restoreScope = setDefaultAppScope(orgScope);
+    return () => {
+      restore();
+      restoreScope();
+    };
+  }, [baseUrl, token, orgScope, fetchImpl]);
 
   return (
     <BifrostContext.Provider value={value}>

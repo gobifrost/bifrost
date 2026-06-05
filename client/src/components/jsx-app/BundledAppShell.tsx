@@ -302,6 +302,10 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				setCssHref(nextCssHref);
 				setBundledApp(() => module.default as BundledAppComponent);
 				setLoadedEntry(entry);
+				// Reset the render model on the inline path so navigating from a
+				// standalone_v2 app to an inline_v1 app in the same shell instance
+				// drops the iframe and renders the inline bundle.
+				setAppModel("inline_v1");
 
 				// Successful reload — clear any prior build-error banner.
 				setBuildErrors(null);
