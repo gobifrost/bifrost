@@ -30,6 +30,40 @@ param(
     [switch]$NoStart
 )
 
+function New-BifrostSecret {
+    <#
+        Cryptographically-random alphanumeric secret of the requested length.
+        Mirrors setup.sh: base64 of random bytes, stripped to [A-Za-z0-9],
+        truncated to $Length. Over-generates bytes so stripping never starves.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Length)
+
+    $result = ''
+    while ($result.Length -lt $Length) {
+        $bytes = [byte[]]::new($Length * 2)
+        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $b64 = [Convert]::ToBase64String($bytes)
+        $result += ($b64 -replace '[^A-Za-z0-9]', '')
+    }
+    return $result.Substring(0, $Length)
+}
+
+function Get-BifrostOrigin {
+    <#
+        Derive (Origin, Environment) from a domain, matching setup.sh:
+        localhost / 127.0.0.1 -> http://<domain>:3000 + development
+        otherwise             -> https://<domain>      + production
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Domain)
+
+    if ($Domain -eq 'localhost' -or $Domain -eq '127.0.0.1') {
+        return [pscustomobject]@{ Origin = "http://${Domain}:3000"; Environment = 'development' }
+    }
+    return [pscustomobject]@{ Origin = "https://${Domain}"; Environment = 'production' }
+}
+
 function Initialize-Bifrost {
     [CmdletBinding()]
     param(
