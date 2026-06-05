@@ -219,11 +219,35 @@ def _clear_workspace_modules() -> None:
         )
     ]
 
+    # Cross-solution isolation: a module rooted under a DIFFERENT solution's
+    # _solutions/{id}/ prefix must NOT be reused by the current execution — its
+    # bare name (modules.foo) would otherwise shadow this solution's own file
+    # (criterion 3, self-contained worlds). The module records its origin in
+    # __file__; the active solution is the per-execution context. The module
+    # index is _repo/-keyed and can't map solution-rooted names, so the hash
+    # check below can't catch this — force-evict here.
+    from src.core.module_cache_sync import SOLUTIONS_ROOT, get_solution_context
+
+    active = get_solution_context()
+    active_prefix = (
+        f"{SOLUTIONS_ROOT}/{active.solution_id}/" if active is not None else None
+    )
+    foreign_solution_modules: list[str] = []
+    for name, module in workspace_modules:
+        origin = getattr(module, "__file__", None) or ""
+        if not origin.startswith(f"{SOLUTIONS_ROOT}/"):
+            continue
+        # Rooted under some solution. Keep only if it's THIS solution's module.
+        if active_prefix is None or not origin.startswith(active_prefix):
+            foreign_solution_modules.append(name)
+
     # Check each module's hash — only clear if content changed
-    modules_to_clear: list[str] = []
+    modules_to_clear: list[str] = list(foreign_solution_modules)
     modules_kept = 0
 
     for name, module in workspace_modules:
+        if name in modules_to_clear:
+            continue
         cached_hash = getattr(module, '__content_hash__', None)
 
         if not cached_hash:
