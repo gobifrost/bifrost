@@ -31,6 +31,16 @@ logger = logging.getLogger(__name__)
 # Top-level dirs whose .py files install as solution source (mirror the CLI).
 _PY_SOURCE_DIRS = ("workflows", "modules", "shared")
 
+# Root descriptor that marks a Solution workspace (must match
+# bifrost.solution_descriptor.DESCRIPTOR_FILENAME).
+_DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
+
+_SYNC_LOCK_TTL = 300  # seconds
+
+
+class NotASolutionWorkspace(Exception):
+    """The checkout has no bifrost.solution.yaml — refuse the full-replace sync."""
+
 
 def _collect_python_files(workspace: Path) -> dict[str, str]:
     files: dict[str, str] = {}
@@ -77,7 +87,16 @@ async def deploy_from_workspace(
 
     This is the testable core of auto-pull (no git): read the workspace, run the
     full-replace deploy. ``sync`` wraps this with the clone.
+
+    REFUSES if the checkout is not a Solution workspace (no bifrost.solution.yaml)
+    — otherwise an empty/ wrong checkout would full-replace the install down to
+    nothing. The descriptor is the workspace marker (§3.8).
     """
+    if not (workspace / _DESCRIPTOR_FILENAME).is_file():
+        raise NotASolutionWorkspace(
+            f"checkout at {workspace} has no {_DESCRIPTOR_FILENAME}; "
+            f"refusing to full-replace install {solution.id} from a non-Solution repo"
+        )
     bundle = read_workspace_bundle(solution, workspace)
     await SolutionDeployer(db).deploy(bundle)
 
@@ -86,14 +105,31 @@ async def sync(db: AsyncSession, solution: Solution) -> None:
     """Clone the connected install's repo main and deploy the workspace.
 
     Called by the auto-pull trigger (webhook/poll) on a new commit to main.
+
+    Serialized per-install with a Redis lock so overlapping triggers can't race —
+    an older clone finishing last would otherwise full-replace the newer commit's
+    deploy back to a stale state. If the lock is held, this sync is skipped (the
+    in-flight one will pick up main's latest, and a follow-up trigger can re-run).
     """
     if not solution.git_connected or not solution.git_repo_url:
         raise ValueError("sync() requires a git-connected solution with a repo url")
 
     from git import Repo as GitRepo  # GitPython (already a dep)
 
-    with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
-        work_dir = Path(tmp)
-        GitRepo.clone_from(solution.git_repo_url, str(work_dir), branch="main", depth=1)
-        logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
-        await deploy_from_workspace(db, solution, work_dir)
+    from src.core.redis_client import get_redis_client
+
+    # Use the raw redis.Redis (the wrapper doesn't expose SET NX EX).
+    redis = await get_redis_client()._get_redis()
+    lock_key = f"bifrost:solution:sync:{solution.id}"
+    acquired = await redis.set(lock_key, "1", nx=True, ex=_SYNC_LOCK_TTL)
+    if not acquired:
+        logger.info("Sync already in progress for solution %s; skipping", solution.id)
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
+            work_dir = Path(tmp)
+            GitRepo.clone_from(solution.git_repo_url, str(work_dir), branch="main", depth=1)
+            logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
+            await deploy_from_workspace(db, solution, work_dir)
+    finally:
+        await redis.delete(lock_key)

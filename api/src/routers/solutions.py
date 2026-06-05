@@ -138,9 +138,20 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
             status_code=status.HTTP_409_CONFLICT,
             detail="This install is not git-connected; use deploy instead.",
         )
+    if not solution.git_repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This git-connected install has no git_repo_url to pull from.",
+        )
 
+    from src.services.solutions.git_sync import NotASolutionWorkspace
     from src.services.solutions.git_sync import sync as git_sync
 
-    await git_sync(ctx.db, solution)
+    try:
+        await git_sync(ctx.db, solution)
+    except NotASolutionWorkspace as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     await ctx.db.commit()
     return {"solution_id": str(solution_id), "status": "synced"}

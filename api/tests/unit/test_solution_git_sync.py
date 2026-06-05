@@ -14,7 +14,10 @@ import pytest
 
 from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
-from src.services.solutions.git_sync import deploy_from_workspace
+from src.services.solutions.git_sync import (
+    NotASolutionWorkspace,
+    deploy_from_workspace,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +45,10 @@ class TestDeployFromWorkspace:
         db.add(sol)
         await db.flush()
 
-        # Lay out a checked-out Solution workspace.
+        # Lay out a checked-out Solution workspace (must have the descriptor).
+        (tmp_path / "bifrost.solution.yaml").write_text(
+            f"slug: {sol.slug}\nname: G\nscope: global\n"
+        )
         wf_id = str(uuid.uuid4())
         (tmp_path / "workflows").mkdir()
         (tmp_path / "workflows" / "w.py").write_text(
@@ -61,3 +67,32 @@ class TestDeployFromWorkspace:
             await db.execute(select(Workflow.name).where(Workflow.solution_id == sol.id))
         ).scalars().all()
         assert names == ["gitwf"]
+
+    async def test_refuses_non_solution_checkout(self, db_session, tmp_path) -> None:
+        """A checkout with no bifrost.solution.yaml must NOT full-replace the
+        install down to empty (Codex Sub-plan 5 P1)."""
+        from sqlalchemy import select
+
+        db = db_session
+        sol = Solution(
+            id=uuid.uuid4(), slug=f"git-{uuid.uuid4().hex[:8]}", name="G",
+            organization_id=None, git_connected=True, git_repo_url="https://example.com/x.git",
+        )
+        db.add(sol)
+        # Pre-existing deployed workflow that must survive a bad sync.
+        keep_id = uuid.uuid4()
+        db.add(Workflow(
+            id=keep_id, name="keepme", function_name="run", path="workflows/keepme.py",
+            type="workflow", organization_id=None, solution_id=sol.id,
+        ))
+        await db.flush()
+
+        # tmp_path has NO bifrost.solution.yaml.
+        with pytest.raises(NotASolutionWorkspace):
+            await deploy_from_workspace(db, sol, tmp_path)
+
+        # The existing install is untouched.
+        survivors = (
+            await db.execute(select(Workflow.name).where(Workflow.solution_id == sol.id))
+        ).scalars().all()
+        assert survivors == ["keepme"]
