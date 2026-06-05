@@ -452,6 +452,9 @@ class SolutionDeployer:
                 builds.append({
                     "app_id": app_id,
                     "src": mapp.get("src_files") or {},
+                    # Non-text assets (png/fonts/public/) carried as base64 by the
+                    # CLI/git collectors — decoded into the build input (P2-j/R4).
+                    "bin": mapp.get("bin_files") or {},
                     "dist": mapp.get("dist_files"),
                     "dependencies": mapp.get("dependencies") or {},
                 })
@@ -476,6 +479,11 @@ class SolutionDeployer:
                 k: v.encode("utf-8") if isinstance(v, str) else v
                 for k, v in b["src"].items()
             }
+            # Merge decoded binary assets (base64 → bytes) into the build input.
+            import base64 as _b64
+
+            for rel, b64 in (b.get("bin") or {}).items():
+                src_bytes[rel] = _b64.b64decode(b64)
             await builder.build(
                 app_id=b["app_id"],
                 src_files=src_bytes,

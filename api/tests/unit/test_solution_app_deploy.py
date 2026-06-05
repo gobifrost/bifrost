@@ -280,6 +280,44 @@ class TestAppSlugRouteCollision:
                 solution=sol, apps=[_app_entry(str(uuid.uuid4()), slug)],
             ))
 
+    async def test_binary_assets_reach_the_builder_decoded(self, db_session, monkeypatch):
+        """bin_files (base64) in the bundle are decoded to bytes and merged into
+        the builder's src_files, so a v2 app's PNG/fonts actually build (P2-j/R4)."""
+        import base64
+
+        from src.services.solutions import app_build
+
+        captured: dict = {}
+
+        async def _capture_build(self, app_id, src_files, dependencies, prebuilt_dist=None):
+            captured["src_files"] = src_files
+            return {"index.html": b"<html></html>"}
+
+        async def _noop_delete(self, app_id):
+            return None
+
+        monkeypatch.setattr(app_build.SolutionAppBuilder, "build", _capture_build)
+        monkeypatch.setattr(app_build.SolutionAppBuilder, "delete_dist", _noop_delete, raising=False)
+
+        db = db_session
+        sol = await self._install(db)
+        png = b"\x89PNG\x00data"
+        result = await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            apps=[{
+                "id": str(uuid.uuid4()), "slug": f"dash-{uuid.uuid4().hex[:6]}",
+                "name": "Dash", "app_model": "standalone_v2", "dependencies": {},
+                "src_files": {"src/main.tsx": "import './logo.png'"},
+                "bin_files": {"logo.png": base64.b64encode(png).decode()},
+                # no dist_files → goes through the real build path (stubbed)
+            }],
+        ))
+        await db.flush()
+        await result.finalize_s3()
+        # The decoded PNG bytes reached the builder alongside the text source.
+        assert captured["src_files"]["logo.png"] == png
+        assert captured["src_files"]["src/main.tsx"] == b"import './logo.png'"
+
     async def test_global_install_refused_against_visible_org_app(self, db_session, _stub_app_build):
         """A GLOBAL install must not take a slug already used by an ORG app —
         that org would then see two apps at /apps/{slug}. Codex R4."""

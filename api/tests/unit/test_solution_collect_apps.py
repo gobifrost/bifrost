@@ -63,5 +63,37 @@ def test_collect_apps_carries_role_bindings(tmp_path) -> None:
     assert apps[0]["role_names"] == ["Support"]
 
 
+def test_collect_apps_carries_binary_assets_as_base64(tmp_path) -> None:
+    """Non-text assets (png/fonts/public/) must be carried as base64 in
+    bin_files, not silently dropped (Codex P2-j/R4)."""
+    import base64
+
+    (tmp_path / ".bifrost").mkdir()
+    app = tmp_path / "apps" / "dash"
+    (app / "public").mkdir(parents=True)
+    (app / "src").mkdir()
+    (app / "src" / "main.tsx").write_text("import './logo.png'\n")
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00BINARY"
+    (app / "logo.png").write_bytes(png_bytes)
+    (app / "public" / "font.woff2").write_bytes(b"WOFF2DATA")
+    (app / ".DS_Store").write_bytes(b"junk")  # must be skipped
+    (tmp_path / ".bifrost" / "apps.yaml").write_text(
+        "apps:\n"
+        "  33333333-3333-3333-3333-333333333333:\n"
+        "    id: 33333333-3333-3333-3333-333333333333\n"
+        "    slug: dash\n    name: Dashboard\n    path: apps/dash\n"
+        "    app_model: standalone_v2\n"
+    )
+    apps = _collect_apps(tmp_path)
+    a = apps[0]
+    # text stays in src_files
+    assert a["src_files"]["src/main.tsx"] == "import './logo.png'\n"
+    # binary assets carried as base64 in bin_files, round-trippable
+    assert base64.b64decode(a["bin_files"]["logo.png"]) == png_bytes
+    assert base64.b64decode(a["bin_files"]["public/font.woff2"]) == b"WOFF2DATA"
+    # OS cruft skipped
+    assert ".DS_Store" not in a["bin_files"]
+
+
 def test_collect_apps_empty_when_no_manifest(tmp_path) -> None:
     assert _collect_apps(tmp_path) == []

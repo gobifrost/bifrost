@@ -162,18 +162,25 @@ def _collect_agents(workspace: pathlib.Path) -> list[dict]:
     return _collect_manifest_entities(workspace, "agents.yaml", "agents")
 
 
-# App source files we send as build input (text). Binary assets in an app source
-# dir are rare; the build produces the real binary dist server-side.
-_APP_SRC_SUFFIXES = (".tsx", ".ts", ".jsx", ".js", ".css", ".html", ".json", ".svg", ".md")
+# Text source files sent inline as UTF-8 in ``src_files``. Everything else in
+# the app dir (PNG/JPG/fonts, files under public/, etc.) is a real build input
+# too — a Vite app commonly `import logo from './logo.png'` — so it's carried as
+# base64 in ``bin_files`` rather than silently dropped (Codex P2-j/R4).
+_APP_TEXT_SUFFIXES = (".tsx", ".ts", ".jsx", ".js", ".css", ".html", ".json", ".svg", ".md")
+# Editor/OS cruft that must never reach the build.
+_APP_SKIP_NAMES = {".DS_Store", "Thumbs.db"}
 
 
 def _collect_apps(workspace: pathlib.Path) -> list[dict]:
     """Read app entries from .bifrost/apps.yaml (keyed by UUID) + their source.
 
     Each app's source dir (``path``, e.g. ``apps/dash``) is read into
-    ``src_files`` (build input). A v2 app is built server-side from this; the
+    ``src_files`` (text) + ``bin_files`` (base64 of non-text assets) so a v2 app
+    that imports PNG/fonts or ships ``public/`` builds correctly server-side. The
     optional client-side prebuild fast-path is handled by the deploy command.
     """
+    import base64
+
     apps_file = workspace / ".bifrost" / "apps.yaml"
     if not apps_file.is_file():
         return []
@@ -185,10 +192,16 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             continue
         app_dir = workspace / body["path"]
         src_files: dict[str, str] = {}
+        bin_files: dict[str, str] = {}
         if app_dir.is_dir():
             for f in app_dir.rglob("*"):
-                if f.is_file() and f.suffix in _APP_SRC_SUFFIXES:
-                    src_files[f.relative_to(app_dir).as_posix()] = f.read_text(encoding="utf-8")
+                if not f.is_file() or f.name in _APP_SKIP_NAMES:
+                    continue
+                rel = f.relative_to(app_dir).as_posix()
+                if f.suffix in _APP_TEXT_SUFFIXES:
+                    src_files[rel] = f.read_text(encoding="utf-8")
+                else:
+                    bin_files[rel] = base64.b64encode(f.read_bytes()).decode("ascii")
         entries.append({
             "id": body.get("id", key),
             "slug": body.get("slug") or key,
@@ -201,6 +214,7 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             "roles": body.get("roles") or [],
             "role_names": body.get("role_names"),
             "src_files": src_files,
+            "bin_files": bin_files,
         })
     return entries
 
