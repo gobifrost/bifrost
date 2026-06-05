@@ -22,6 +22,35 @@ issues is saved at `/tmp/codex_spec_review_prompt.txt` (+ `/tmp/codex_review3.tx
 fixed" context). Re-create it if /tmp is cleared — it's a "full adversarial spec review, file:line +
 severity, hunt for issues the fixes introduced."
 
+## SESSION 2 END — START HERE (2026-06-05)
+
+**State: clean, all pushed.** HEAD = 5d678cb0+ on `worktree-solutions-success-criteria` (PR #347).
+ALL findings from Codex reviews #3 (6), #4 (8), #5 (6) are FIXED + committed + pushed + green.
+
+**Codex review #6 is RUNNING in the background.** Output → `/tmp/codex_review6_out.txt`
+(prompt `/tmp/codex_review6.txt`). FIRST THING NEXT SESSION:
+1. Check it's done: `pgrep -f 'codex review -'` (empty = done). Read the final `^codex$` block
+   in `/tmp/codex_review6_out.txt` (`grep -n '^codex$' …` → read from there).
+2. Triage with `superpowers:receiving-code-review` — VERIFY each finding against the code before
+   fixing (history: most findings real, ~2 of 14 were holes in a prior fix, a few I over-asserted).
+3. Fix loop: TDD each → `./test.sh <suite>` → commit → re-run Codex until **2 CONSECUTIVE clean**.
+   If #6 is clean, that's review 1 of 2 — run one more clean pass to clear the bar.
+
+**If #6 is again non-trivial**, the open question to put to the user: keep reviewing the WHOLE
+surface each pass, or narrow to the two high-risk areas only (deploy atomicity/concurrency +
+v2 mount lifecycle)? The user leans toward a second pass being valuable; "2 clean" may take 2-3 more.
+
+**Test command for the full solution suite** (paste verbatim — all green as of session end):
+`./test.sh tests/unit/test_solution_*.py tests/unit/test_sdk_package.py tests/unit/test_solution_scaffold_app.py tests/unit/repositories/test_org_scoped_solution_visibility.py` (unit)
++ `tests/e2e/platform/test_solution_*.py` (e2e) + `cd client && npx vitest run src/lib/app-sdk/ src/components/jsx-app/`.
+Quality: `cd api && ruff check . && pyright` (pyright shows ~1 known false positive: aiobotocore + a
+few host-only `src.services.sdk_package` import errors — both resolve in-container). `cd client && npx tsc --noEmit && npx eslint …`.
+
+**Live debug stack** was UP port-mode at `http://localhost:37791` (login dev@gobifrost.com/password).
+Scratch CLI at `/tmp/bifrost-cli-sol/.venv/bin/bifrost` (re-`bifrost login --url http://localhost:37791
+--email dev@gobifrost.com --password password` if token stale). `/api/sdk/download` serves a working
+`bifrost` npm tarball LIVE — verified. `bifrost solution scaffold-app <slug>` generates a deployable v2 app.
+
 ## PAUSE DEBRIEF (2026-06-05, session 2) — read this first
 
 **What's solid:** all of Codex review #3 (6) and #4 (8) are fixed, committed, pushed, green
