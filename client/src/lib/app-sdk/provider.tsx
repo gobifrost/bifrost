@@ -8,17 +8,15 @@
  * establishes:
  *
  *   - an authed `fetch` (bearer token + base-url join),
- *   - a React Query client,
  *   - the active org scope,
  *
- * all delivered via React context. The same provider is used identically in
- * `npm run dev` (resolved from node_modules, pointed at a live dev instance via
- * the dev token) and when deployed. The v1 globalThis path is untouched.
+ * all delivered via React context. The SDK deliberately depends on NOTHING but
+ * `react` itself (a peer dep — hooks need it): data hooks (`useTable`,
+ * `useWorkflow`) use plain `fetch` + `useState`, not a data-fetching library.
+ * The same provider is used identically in `npm run dev` (resolved from
+ * node_modules, pointed at a live dev instance via the dev token) and when
+ * deployed. The v1 globalThis path is untouched.
  */
-import {
-  QueryClient,
-  QueryClientProvider,
-} from "@tanstack/react-query";
 import {
   createContext,
   useContext,
@@ -50,10 +48,8 @@ export interface BifrostProviderProps {
   orgScope?: string | null;
   /** Override `fetch` (tests / non-browser). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
-  /** Called when the app requests logout (e.g. via `<BifrostHeader>`). */
+  /** Called when the app requests logout (e.g. a platform "log out" action). */
   onLogout?: () => void;
-  /** Provide a shared QueryClient; one is created if omitted. */
-  queryClient?: QueryClient;
   children: ReactNode;
 }
 
@@ -73,7 +69,6 @@ export function BifrostProvider({
   orgScope = null,
   fetchImpl,
   onLogout,
-  queryClient,
   children,
 }: BifrostProviderProps) {
   const value = useMemo<BifrostContextValue>(() => {
@@ -98,11 +93,6 @@ export function BifrostProvider({
     };
   }, [baseUrl, token, orgScope, fetchImpl, onLogout]);
 
-  const client = useMemo(
-    () => queryClient ?? new QueryClient(),
-    [queryClient],
-  );
-
   // Route the data SDK (tables.*/useTable) through this provider so a v2 app
   // in `npm run dev` (different origin) reaches the configured Bifrost API with
   // the bearer token + org scope, instead of its own dev server unauthed. v1
@@ -121,9 +111,7 @@ export function BifrostProvider({
   }, [baseUrl, token, orgScope, fetchImpl]);
 
   return (
-    <BifrostContext.Provider value={value}>
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
-    </BifrostContext.Provider>
+    <BifrostContext.Provider value={value}>{children}</BifrostContext.Provider>
   );
 }
 

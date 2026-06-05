@@ -2574,6 +2574,37 @@ async def download_cli() -> Response:
     )
 
 
+@router.get(
+    "/download",
+    summary="Download the bifrost web SDK package",
+    description=(
+        "Serve the `bifrost` web SDK as an npm-installable tarball. A "
+        "standalone_v2 app declares `\"bifrost\": \"<instance>/api/sdk/download\"` "
+        "and resolves it identically on a dev laptop (`npm run dev`) and in the "
+        "platform's server-side build."
+    ),
+)
+async def download_sdk() -> Response:
+    """Build + serve the installable ``bifrost`` SDK package (npm tarball).
+
+    Mirrors ``/api/cli/download`` (the Python CLI tarball): the package is built
+    on the fly from the SDK source shipped in the api image and version-stamped
+    to the running instance, so dev and deploy use one resolution mechanism.
+    """
+    from shared.version import get_version
+    from src.services.sdk_package import build_sdk_tarball
+
+    version = get_version()
+    tarball = await asyncio.to_thread(build_sdk_tarball, version)
+    return Response(
+        content=tarball,
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": f"attachment; filename=bifrost-sdk-{version}.tgz",
+        },
+    )
+
+
 # =============================================================================
 # Tables SDK Endpoints
 # =============================================================================

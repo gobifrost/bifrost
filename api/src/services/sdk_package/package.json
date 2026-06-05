@@ -1,0 +1,8 @@
+{
+  "name": "bifrost-sdk-builder",
+  "private": true,
+  "description": "Builds the installable `bifrost` web SDK served by /api/sdk/download.",
+  "dependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

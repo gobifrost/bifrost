@@ -84,19 +84,45 @@ class SolutionAppBuilder:
         """The public URL prefix the built assets are served from."""
         return f"/api/applications/{app_id}/dist/"
 
+    # The app resolves `import ... from "bifrost"` against this local tarball,
+    # the SAME `bifrost` package /api/sdk/download serves to a dev laptop. We
+    # drop it into the workspace and reference it as a file: dependency so the
+    # build needs no registry/network (and stays deterministic). One mechanism,
+    # laptop == server (Codex P1-a).
+    _SDK_TARBALL = "bifrost-sdk.tgz"
+
     def _materialize(
         self, workdir: Path, src_files: dict[str, bytes], dependencies: dict[str, str]
     ) -> None:
-        """Lay out the app sources + a package.json carrying its npm deps."""
+        """Lay out the app sources + a package.json carrying its npm deps, and
+        vendor the local ``bifrost`` SDK tarball so ``import from "bifrost"``
+        resolves during the build."""
+        from shared.version import get_version
+        from src.services.sdk_package import build_sdk_tarball
+
         for rel, content in src_files.items():
             dest = workdir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(content)
-        # Ensure a package.json with the declared deps exists for the build.
+
+        # Drop the instance's bifrost SDK tarball next to the app.
+        (workdir / self._SDK_TARBALL).write_bytes(build_sdk_tarball(get_version()))
+
+        # Build package.json: app deps + a file: ref to the SDK tarball. If the
+        # app already shipped a package.json (its own deps/scripts), merge the
+        # SDK ref into its dependencies rather than clobbering it.
+        deps = {**(dependencies or {}), "bifrost": f"file:./{self._SDK_TARBALL}"}
         pkg = workdir / "package.json"
-        if not pkg.exists():
-            pkg.write_text(json.dumps({"name": "bifrost-app", "private": True,
-                                       "dependencies": dependencies or {}}))
+        if pkg.exists():
+            existing = json.loads(pkg.read_text())
+            existing.setdefault("dependencies", {})
+            existing["dependencies"] = {**existing["dependencies"], **deps}
+            pkg.write_text(json.dumps(existing, indent=2))
+        else:
+            pkg.write_text(json.dumps(
+                {"name": "bifrost-app", "private": True, "dependencies": deps},
+                indent=2,
+            ))
 
     def _run_vite_build(self, workdir: Path, base: str = "/") -> dict[str, bytes]:
         """Install declared deps, run ``vite build`` in ``workdir``, and return

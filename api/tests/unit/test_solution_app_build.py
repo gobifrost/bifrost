@@ -68,6 +68,53 @@ async def test_build_runs_vite_when_no_prebuilt_dist(monkeypatch):
 
 
 @pytest.mark.e2e
+def test_materialize_vendors_bifrost_sdk(monkeypatch, tmp_path):
+    """`_materialize` drops the bifrost SDK tarball into the workspace and adds a
+    file: dependency so `import from "bifrost"` resolves during the build (P1-a).
+    The SDK build is stubbed (no esbuild needed for this assertion)."""
+    import json
+
+    from src.services.solutions import app_build as ab
+
+    monkeypatch.setattr(ab, "build_sdk_tarball", lambda v: b"FAKE_TGZ", raising=False)
+    # patch the symbol the method imports locally
+    import src.services.sdk_package as sdkpkg
+    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
+
+    b = SolutionAppBuilder()
+    b._materialize(tmp_path, {"src/main.tsx": b"export {}"}, {"react": "^18"})
+
+    # tarball vendored
+    assert (tmp_path / "bifrost-sdk.tgz").read_bytes() == b"FAKE_TGZ"
+    # package.json carries app deps + the file: ref to the SDK
+    pkg = json.loads((tmp_path / "package.json").read_text())
+    assert pkg["dependencies"]["react"] == "^18"
+    assert pkg["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
+
+
+@pytest.mark.e2e
+def test_materialize_merges_into_app_package_json(monkeypatch, tmp_path):
+    """If the app shipped its own package.json, the SDK ref is merged in, not
+    clobbered (the app keeps its scripts/deps)."""
+    import json
+
+    import src.services.sdk_package as sdkpkg
+    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
+
+    app_pkg = {"name": "my-app", "scripts": {"dev": "vite"},
+               "dependencies": {"lodash": "^4"}}
+    (tmp_path / "package.json").write_text(json.dumps(app_pkg))
+
+    b = SolutionAppBuilder()
+    b._materialize(tmp_path, {}, {})
+
+    pkg = json.loads((tmp_path / "package.json").read_text())
+    assert pkg["scripts"] == {"dev": "vite"}          # preserved
+    assert pkg["dependencies"]["lodash"] == "^4"       # preserved
+    assert pkg["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
+
+
+@pytest.mark.e2e
 async def test_redeploy_clears_stale_dist_files(monkeypatch):
     """A second build with a different file set must not leave the old files
     fetchable (full replace of the dist/ artifact)."""
