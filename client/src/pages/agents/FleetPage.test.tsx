@@ -116,6 +116,19 @@ describe("FleetPage — header + fleet stats", () => {
 		expect(screen.getByText("92%")).toBeInTheDocument();
 	});
 
+	it("uses compact fleet metrics on mobile while reserving full stat cards for larger screens", async () => {
+		mockUseAgents.mockReturnValue({
+			data: [makeAgent()],
+			isLoading: false,
+		});
+		await renderPage();
+		expect(screen.getByTestId("mobile-fleet-metrics")).toHaveClass("md:hidden");
+		expect(screen.getByTestId("desktop-fleet-stats")).toHaveClass(
+			"hidden",
+			"md:grid",
+		);
+	});
+
 	it("shows total/active subtitle from agents list", async () => {
 		mockUseAgents.mockReturnValue({
 			data: [

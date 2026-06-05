@@ -30,6 +30,7 @@ import { VersionUpdateBanner } from "@/components/layout/VersionUpdateBanner";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
 import { FileActivityIndicator } from "@/components/layout/FileActivityIndicator";
+import { PasskeySetupBadge } from "@/components/PasskeySetupBadge";
 
 interface HeaderProps {
 	onMobileMenuToggle?: () => void;
@@ -156,6 +157,8 @@ export function Header({
 				<div className="mr-1 sm:mr-2">
 					<ThemeToggle />
 				</div>
+
+				<PasskeySetupBadge />
 
 				{/* User Menu */}
 				<DropdownMenu>

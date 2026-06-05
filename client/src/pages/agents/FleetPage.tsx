@@ -123,7 +123,7 @@ export function FleetPage() {
 	);
 
 	return (
-		<div className="mx-auto flex h-full max-w-[1400px] flex-col gap-5">
+		<div className="mx-auto flex h-full max-w-[1400px] flex-col gap-4 md:gap-5">
 			{/* Header */}
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
 				<div>
@@ -159,72 +159,114 @@ export function FleetPage() {
 				/>
 			) : null}
 
-			{/* Fleet stats — 4 stats + red "Needs review" */}
+			{/* Fleet stats — compact on mobile, full card row on wider screens */}
 			{fleetLoading || !fleetStats ? (
-				<div
-					className={cn(
-						"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5",
-						GAP_CARD,
-					)}
-				>
-					{[...Array(5)].map((_, i) => (
-						<Skeleton key={i} className="h-24 w-full" />
-					))}
-				</div>
+				<>
+					<div
+						data-testid="mobile-fleet-metrics"
+						className={cn(
+							CARD_SURFACE,
+							"grid grid-cols-3 gap-2 px-3 py-2 md:hidden",
+						)}
+					>
+						{[...Array(3)].map((_, i) => (
+							<Skeleton key={i} className="h-9 w-full" />
+						))}
+					</div>
+					<div
+						data-testid="desktop-fleet-stats"
+						className={cn(
+							"hidden grid-cols-1 sm:grid-cols-2 md:grid lg:grid-cols-4 xl:grid-cols-5",
+							GAP_CARD,
+						)}
+					>
+						{[...Array(5)].map((_, i) => (
+							<Skeleton key={i} className="h-24 w-full" />
+						))}
+					</div>
+				</>
 			) : (
-				<div
-					className={cn(
-						"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5",
-						GAP_CARD,
-					)}
-				>
-					<StatCard
-						label="Runs (7d)"
-						value={formatNumber(fleetStats.total_runs)}
-						delta={
-							fleetStats.total_runs > 0
-								? `Across active ${term(terminology, "agent", "pluralLower")}`
-								: "No runs yet"
-						}
-					/>
-					<StatCard
-						label="Success rate"
-						value={`${Math.round((fleetStats.avg_success_rate ?? 0) * 100)}%`}
-						delta={`Across active ${term(terminology, "agent", "pluralLower")}`}
-					/>
-					<StatCard
-						label="Spend (7d)"
-						value={formatCost(fleetStats.total_cost_7d)}
-						delta={
-							fleetStats.total_runs > 0
-								? `${formatCost(
-										Number(fleetStats.total_cost_7d) / 7,
-									)}/day avg`
-								: "—"
-						}
-					/>
-					<StatCard
-						label={`Active ${term(terminology, "agent", "pluralLower")}`}
-						value={formatNumber(fleetStats.active_agents)}
-						delta={`of ${totalAgents} total`}
-					/>
-					<StatCard
-						label="Needs review"
-						value={formatNumber(fleetStats.needs_review)}
-						alert={fleetStats.needs_review > 0}
-						icon={
-							fleetStats.needs_review > 0 ? (
-								<AlertTriangle className="h-[11px] w-[11px]" />
-							) : undefined
-						}
-						delta={
-							fleetStats.needs_review > 0
-								? "runs marked — click to open"
-								: "All runs reviewed"
-						}
-						deltaTone={fleetStats.needs_review > 0 ? "down" : "up"}
-					/>
-				</div>
+				<>
+					<div
+						data-testid="mobile-fleet-metrics"
+						className={cn(
+							CARD_SURFACE,
+							"grid grid-cols-3 gap-2 px-3 py-2 md:hidden",
+						)}
+					>
+						<CompactMetric
+							label="Runs"
+							value={`${formatNumber(fleetStats.total_runs)} runs`}
+						/>
+						<CompactMetric
+							label="Success"
+							value={`${Math.round((fleetStats.avg_success_rate ?? 0) * 100)}% success`}
+						/>
+						<CompactMetric
+							label="Review"
+							value={
+								fleetStats.needs_review > 0
+									? `${formatNumber(fleetStats.needs_review)} flagged`
+									: "Clear"
+							}
+							alert={fleetStats.needs_review > 0}
+						/>
+					</div>
+					<div
+						data-testid="desktop-fleet-stats"
+						className={cn(
+							"hidden grid-cols-1 sm:grid-cols-2 md:grid lg:grid-cols-4 xl:grid-cols-5",
+							GAP_CARD,
+						)}
+					>
+						<StatCard
+							label="Runs (7d)"
+							value={formatNumber(fleetStats.total_runs)}
+							delta={
+								fleetStats.total_runs > 0
+									? `Across active ${term(terminology, "agent", "pluralLower")}`
+									: "No runs yet"
+							}
+						/>
+						<StatCard
+							label="Success rate"
+							value={`${Math.round((fleetStats.avg_success_rate ?? 0) * 100)}%`}
+							delta={`Across active ${term(terminology, "agent", "pluralLower")}`}
+						/>
+						<StatCard
+							label="Spend (7d)"
+							value={formatCost(fleetStats.total_cost_7d)}
+							delta={
+								fleetStats.total_runs > 0
+									? `${formatCost(
+											Number(fleetStats.total_cost_7d) / 7,
+										)}/day avg`
+									: "—"
+							}
+						/>
+						<StatCard
+							label={`Active ${term(terminology, "agent", "pluralLower")}`}
+							value={formatNumber(fleetStats.active_agents)}
+							delta={`of ${totalAgents} total`}
+						/>
+						<StatCard
+							label="Needs review"
+							value={formatNumber(fleetStats.needs_review)}
+							alert={fleetStats.needs_review > 0}
+							icon={
+								fleetStats.needs_review > 0 ? (
+									<AlertTriangle className="h-[11px] w-[11px]" />
+								) : undefined
+							}
+							delta={
+								fleetStats.needs_review > 0
+									? "runs marked — click to open"
+									: "All runs reviewed"
+							}
+							deltaTone={fleetStats.needs_review > 0 ? "down" : "up"}
+						/>
+					</div>
+				</>
 			)}
 
 			{/* Search + view toggle */}
@@ -349,6 +391,32 @@ function EmptyState({ hasQuery }: { hasQuery: boolean }) {
 					</Link>
 				</Button>
 			) : null}
+		</div>
+	);
+}
+
+function CompactMetric({
+	label,
+	value,
+	alert,
+}: {
+	label: string;
+	value: string;
+	alert?: boolean;
+}) {
+	return (
+		<div className="min-w-0">
+			<div className="truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+				{label}
+			</div>
+			<div
+				className={cn(
+					"mt-0.5 truncate text-[13px] font-semibold leading-tight tabular-nums",
+					alert && "text-rose-500",
+				)}
+			>
+				{value}
+			</div>
 		</div>
 	);
 }

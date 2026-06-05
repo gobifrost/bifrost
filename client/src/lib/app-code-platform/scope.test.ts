@@ -9,7 +9,10 @@ vi.mock("react-router-dom", () => ({
 	useResolvedPath: vi.fn(),
 }));
 
-import { useLocation as useRouterLocation } from "react-router-dom";
+import {
+	useLocation as useRouterLocation,
+	type Location,
+} from "react-router-dom";
 import { useAppBuilderStore } from "@/stores/app-builder.store";
 import { createPlatformScope } from "./scope";
 
@@ -22,7 +25,8 @@ function setRouterPath(pathname: string) {
 		hash: "#details",
 		state: { from: "test" },
 		key: "abc123",
-	});
+		unstable_mask: undefined,
+	} as Location);
 }
 
 function renderScopedLocation() {
