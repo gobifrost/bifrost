@@ -93,22 +93,35 @@ class SolutionDeployer:
     async def deploy(self, bundle: SolutionBundle) -> DeployResult:
         """Full-replace this install from ``bundle``.
 
-        1. Write Python source to SolutionStorage (_solutions/{id}/).
-        2. Upsert bundle entities, stamping solution_id + inherited scope.
-        3. Delete entities under THIS solution_id that are absent from the bundle.
+        **DB work first, S3 writes last.** All DB upserts + the scoped reconcile
+        run before any S3 mutation, so the common failure modes (ownership
+        conflict, FK/unique constraint, content validation) roll back the DB
+        with ZERO S3 side effects — a failed deploy must not change running code
+        (Codex P1-e). Only after the DB ops succeed do we write Python source to
+        ``_solutions/{id}/`` and build/upload app ``dist/`` + sweep stale
+        artifacts. The caller commits after this returns; the residual
+        DB-ok-but-S3-write-fails window is small and retryable, vs the prior
+        order which wrote S3 before validating anything.
         """
         solution = bundle.solution
         sid = solution.id
 
-        await self._write_python(sid, bundle.python_files)
+        # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, bundle.workflows)
         await self._upsert_tables(solution, bundle.tables)
-        await self._upsert_apps(solution, bundle.apps)
+        builds = await self._upsert_apps(solution, bundle.apps)
         await self._upsert_forms(solution, bundle.forms)
         await self._upsert_agents(solution, bundle.agents)
         (
-            wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted
+            wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
+            stale_app_dist,
         ) = await self._reconcile_deletions(sid, bundle)
+
+        # ── S3 phase (only after all DB work succeeded) ──────────────────────
+        await self._write_python(sid, bundle.python_files)
+        await self._run_app_builds(builds)
+        await self._delete_stale_app_dist(stale_app_dist)
+
         return DeployResult(
             workflows_upserted=len(bundle.workflows),
             workflows_deleted=wf_deleted,
@@ -273,23 +286,21 @@ class SolutionDeployer:
 
     async def _upsert_apps(
         self, solution: Solution, apps: list[dict[str, Any]]
-    ) -> None:
-        """Upsert app metadata + build/ship its ``dist/`` to ``_apps/{id}/``.
+    ) -> list[dict[str, Any]]:
+        """DB-only: upsert app metadata, return the deferred build specs.
 
         The Application row is stamped with ``solution_id`` + inherited scope +
-        ``app_model``. App ``src/`` is NEVER persisted under ``_solutions/`` — it
-        is transient build input; only the built ``dist/`` lands in ``_apps/``
-        (§3.6). For ``standalone_v2`` apps the server-side vite build runs unless
-        the bundle ships a prebuilt ``dist_files`` (disconnected fast-path).
+        ``app_model`` and marked published (deploy IS the publish). The actual
+        ``dist/`` build/upload to ``_apps/{id}/`` is DEFERRED — returned here as
+        build specs and run by :meth:`_run_app_builds` only after all DB work
+        succeeds (Codex P1-e: no S3 mutation before the DB is known-good). App
+        ``src/`` is never persisted under ``_solutions/`` (§3.6).
 
         Ownership guard mirrors workflows/tables: a bundle UUID must not collide
-        with a row owned by ``_repo/`` (NULL) or another install — upserting it
-        would silently re-stamp ``solution_id`` and hijack an unrelated app.
+        with a row owned by ``_repo/`` (NULL) or another install.
         """
-        from src.services.solutions.app_build import SolutionAppBuilder
-
         sid = solution.id
-        builder = SolutionAppBuilder()
+        builds: list[dict[str, Any]] = []
         for mapp in apps:
             app_id = UUID(mapp["id"])
 
@@ -310,10 +321,6 @@ class SolutionDeployer:
 
             slug = mapp["slug"]
             app_model = mapp.get("app_model", "inline_v1")
-            # Deploy IS the publish: the dist (v2) / source (v1) the bundle
-            # carries is the live version. Mark it published so /apps/{slug}
-            # serves it rather than showing "Not Published" (is_published is
-            # published_snapshot is not None).
             now = datetime.now(timezone.utc)
             values: dict[str, Any] = {
                 "name": mapp.get("name") or slug,
@@ -334,31 +341,52 @@ class SolutionDeployer:
                 model=Application, id=app_id, values=values, match_on="id"
             ).execute(self.db)
 
-            # Only standalone_v2 apps are built to dist/ and served from
-            # _apps/{id}/dist/. inline_v1 apps render through the existing
-            # esbuild bundle path from their source — running a Vite build on
-            # them would fail (they're not standalone Vite projects).
-            if app_model != "standalone_v2":
-                continue
+            # Only standalone_v2 apps are built to dist/. inline_v1 render via
+            # the esbuild path; a Vite build on them would fail.
+            if app_model == "standalone_v2":
+                builds.append({
+                    "app_id": app_id,
+                    "src": mapp.get("src_files") or {},
+                    "dist": mapp.get("dist_files"),
+                    "dependencies": mapp.get("dependencies") or {},
+                })
+        return builds
 
-            # Build (or accept prebuilt) dist → _apps/{id}/dist/. dist_files is a
-            # str→str map in the bundle (JSON-friendly); the builder takes bytes.
-            prebuilt = mapp.get("dist_files")
+    async def _run_app_builds(self, builds: list[dict[str, Any]]) -> None:
+        """S3 phase: build/upload each deferred app dist. Runs only after all DB
+        work succeeded (Codex P1-e)."""
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        if not builds:
+            return
+        builder = SolutionAppBuilder()
+        for b in builds:
+            prebuilt = b["dist"]
             prebuilt_bytes = (
                 {k: v.encode("utf-8") if isinstance(v, str) else v for k, v in prebuilt.items()}
                 if prebuilt
                 else None
             )
-            src = mapp.get("src_files") or {}
             src_bytes = {
-                k: v.encode("utf-8") if isinstance(v, str) else v for k, v in src.items()
+                k: v.encode("utf-8") if isinstance(v, str) else v
+                for k, v in b["src"].items()
             }
             await builder.build(
-                app_id=app_id,
+                app_id=b["app_id"],
                 src_files=src_bytes,
-                dependencies=mapp.get("dependencies") or {},
+                dependencies=b["dependencies"],
                 prebuilt_dist=prebuilt_bytes,
             )
+
+    async def _delete_stale_app_dist(self, app_ids: set[UUID]) -> None:
+        """S3 phase: delete the dist artifacts of apps reconciled away."""
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        if not app_ids:
+            return
+        builder = SolutionAppBuilder()
+        for app_id in app_ids:
+            await builder.delete_dist(app_id)
 
     async def _upsert_forms(
         self, solution: Solution, forms: list[dict[str, Any]]
@@ -444,7 +472,7 @@ class SolutionDeployer:
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────
     async def _reconcile_deletions(
         self, sid: UUID, bundle: SolutionBundle
-    ) -> tuple[int, int, int, int, int]:
+    ) -> tuple[int, int, int, int, int, set[UUID]]:
         """Delete this install's entities that are absent from the bundle.
 
         Strictly scoped: ``solution_id == sid AND id NOT IN bundle_ids``. Never
@@ -461,7 +489,7 @@ class SolutionDeployer:
         tbl_deleted = await self._reconcile_one(
             Table, sid, {UUID(t["id"]) for t in bundle.tables}
         )
-        app_deleted = await self._reconcile_apps(
+        app_deleted, stale_app_dist = await self._reconcile_apps(
             sid, {UUID(a["id"]) for a in bundle.apps}
         )
         form_deleted = await self._reconcile_one(
@@ -470,22 +498,23 @@ class SolutionDeployer:
         agent_deleted = await self._reconcile_one(
             Agent, sid, {UUID(a["id"]) for a in bundle.agents}
         )
-        return wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted
+        return (
+            wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
+            stale_app_dist,
+        )
 
-    async def _reconcile_apps(self, sid: UUID, present_ids: set[UUID]) -> int:
-        """Sweep this install's Application rows absent from the bundle, and
-        delete their ``_apps/{id}/dist/`` artifacts (the built output is owned by
-        the install, unlike Table row data which is runtime state)."""
-        from src.services.solutions.app_build import SolutionAppBuilder
-
+    async def _reconcile_apps(
+        self, sid: UUID, present_ids: set[UUID]
+    ) -> tuple[int, set[UUID]]:
+        """Delete this install's stale Application ROWS (DB-only). Returns the
+        count + the stale ids whose ``_apps/{id}/dist/`` artifacts must be swept
+        in the S3 phase (deferred via :meth:`_delete_stale_app_dist` so a DB
+        rollback leaves no dangling S3 deletions — Codex P1-e)."""
         stmt = select(Application.id).where(Application.solution_id == sid)
         existing = set((await self.db.execute(stmt)).scalars().all())
         stale = existing - present_ids
         if not stale:
-            return 0
-        builder = SolutionAppBuilder()
-        for app_id in stale:
-            await builder.delete_dist(app_id)
+            return 0, set()
         await self.db.execute(
             delete(Application).where(
                 Application.solution_id == sid,
@@ -493,7 +522,7 @@ class SolutionDeployer:
             )
         )
         logger.info("Solution %s: deleted %d stale application row(s)", sid, len(stale))
-        return len(stale)
+        return len(stale), stale
 
     async def _reconcile_one(
         self, model: type, sid: UUID, present_ids: set[UUID]

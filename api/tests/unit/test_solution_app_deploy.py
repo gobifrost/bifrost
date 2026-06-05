@@ -222,3 +222,56 @@ class TestAppPublishAndBuildModel:
         assert result.apps_upserted == 1
         # And it's still published (renders via the inline path).
         assert app.is_published is True
+
+
+@pytest.mark.e2e
+class TestDeployTransactionalS3:
+    """A deploy that fails DB validation must NOT have mutated S3 (Codex P1-e):
+    DB work runs before any S3 write, so an ownership conflict rolls back with
+    zero S3 side effects."""
+
+    async def test_failed_deploy_writes_no_s3(self, db_session, monkeypatch):
+        db = db_session
+        sol = Solution(id=uuid.uuid4(), slug=f"tx-{uuid.uuid4().hex[:8]}", name="TX", organization_id=None)
+        db.add(sol)
+        # A _repo/ workflow whose id the bundle will (illegally) reuse → conflict.
+        conflict_wf = uuid.uuid4()
+        from src.models.orm.workflows import Workflow
+        db.add(Workflow(
+            id=conflict_wf, name="repo_wf", function_name="run", path="workflows/r.py",
+            type="workflow", organization_id=None, solution_id=None, is_active=True,
+        ))
+        await db.flush()
+
+        # Spy on S3-writing methods — none should be called when the deploy fails.
+        from src.services.solutions import app_build
+        calls = {"build": 0}
+
+        async def _count_build(self, *a, **k):
+            calls["build"] += 1
+            return {"index.html": b""}
+        monkeypatch.setattr(app_build.SolutionAppBuilder, "build", _count_build)
+
+        wrote_python = {"n": 0}
+        orig = SolutionDeployer._write_python
+
+        async def _count_python(self, sid, files):
+            wrote_python["n"] += 1
+            return await orig(self, sid, files)
+        monkeypatch.setattr(SolutionDeployer, "_write_python", _count_python)
+
+        app_id = str(uuid.uuid4())
+        with pytest.raises(SolutionDeployConflict):
+            await SolutionDeployer(db).deploy(SolutionBundle(
+                solution=sol,
+                python_files={"workflows/x.py": "x=1"},
+                # The conflicting workflow makes _upsert_workflows raise BEFORE
+                # the S3 phase runs.
+                workflows=[{"id": str(conflict_wf), "name": "hijack",
+                            "function_name": "run", "path": "workflows/r.py"}],
+                apps=[_app_entry(app_id, "dash")],
+            ))
+
+        # No S3 writes happened (conflict raised during the DB phase).
+        assert calls["build"] == 0, "app dist was built despite a failed deploy"
+        assert wrote_python["n"] == 0, "python source was written despite a failed deploy"
