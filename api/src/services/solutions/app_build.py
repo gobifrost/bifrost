@@ -119,3 +119,28 @@ class SolutionAppBuilder:
         async with self._client() as c:
             resp = await c.get_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel))
             return await resp["Body"].read()
+
+    async def list_dist(self, app_id: UUID | str) -> list[str]:
+        """List the relative paths of an app's uploaded ``dist/``."""
+        prefix = self._dist_key(app_id)
+        strip = len(prefix)
+        paths: list[str] = []
+        token = None
+        async with self._client() as c:
+            while True:
+                kwargs: dict = {"Bucket": self._bucket, "Prefix": prefix}
+                if token:
+                    kwargs["ContinuationToken"] = token
+                resp = await c.list_objects_v2(**kwargs)
+                for obj in resp.get("Contents", []):
+                    paths.append(obj["Key"][strip:])
+                if not resp.get("IsTruncated"):
+                    break
+                token = resp.get("NextContinuationToken")
+        return paths
+
+    async def delete_dist(self, app_id: UUID | str) -> None:
+        """Delete an app's entire ``_apps/{app_id}/dist/`` artifact (reconcile)."""
+        async with self._client() as c:
+            for rel in await self.list_dist(app_id):
+                await c.delete_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel))

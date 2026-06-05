@@ -31,6 +31,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.orm.applications import Application
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
@@ -52,6 +53,8 @@ class DeployResult:
     workflows_deleted: int = 0
     tables_upserted: int = 0
     tables_deleted: int = 0
+    apps_upserted: int = 0
+    apps_deleted: int = 0
 
 
 @dataclass
@@ -68,6 +71,7 @@ class SolutionBundle:
     python_files: dict[str, str] = field(default_factory=dict)
     workflows: list[dict[str, Any]] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
+    apps: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SolutionDeployer:
@@ -89,12 +93,15 @@ class SolutionDeployer:
         await self._write_python(sid, bundle.python_files)
         await self._upsert_workflows(solution, bundle.workflows)
         await self._upsert_tables(solution, bundle.tables)
-        wf_deleted, tbl_deleted = await self._reconcile_deletions(sid, bundle)
+        await self._upsert_apps(solution, bundle.apps)
+        wf_deleted, tbl_deleted, app_deleted = await self._reconcile_deletions(sid, bundle)
         return DeployResult(
             workflows_upserted=len(bundle.workflows),
             workflows_deleted=wf_deleted,
             tables_upserted=len(bundle.tables),
             tables_deleted=tbl_deleted,
+            apps_upserted=len(bundle.apps),
+            apps_deleted=app_deleted,
         )
 
     # ── 1. Python source → SolutionStorage (full replace + cache sync) ───────
@@ -246,18 +253,93 @@ class SolutionDeployer:
             if existed and prev_access != access:
                 await publish_policy_changed(str(tbl_id))
 
+    async def _upsert_apps(
+        self, solution: Solution, apps: list[dict[str, Any]]
+    ) -> None:
+        """Upsert app metadata + build/ship its ``dist/`` to ``_apps/{id}/``.
+
+        The Application row is stamped with ``solution_id`` + inherited scope +
+        ``app_model``. App ``src/`` is NEVER persisted under ``_solutions/`` — it
+        is transient build input; only the built ``dist/`` lands in ``_apps/``
+        (§3.6). For ``standalone_v2`` apps the server-side vite build runs unless
+        the bundle ships a prebuilt ``dist_files`` (disconnected fast-path).
+
+        Ownership guard mirrors workflows/tables: a bundle UUID must not collide
+        with a row owned by ``_repo/`` (NULL) or another install — upserting it
+        would silently re-stamp ``solution_id`` and hijack an unrelated app.
+        """
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        sid = solution.id
+        builder = SolutionAppBuilder()
+        for mapp in apps:
+            app_id = UUID(mapp["id"])
+
+            row = (
+                await self.db.execute(
+                    select(Application.id, Application.solution_id).where(
+                        Application.id == app_id
+                    )
+                )
+            ).first()
+            if row is not None and row[1] != sid:
+                owner = row[1]
+                raise SolutionDeployConflict(
+                    f"app {app_id} is already owned by "
+                    f"{'_repo/' if owner is None else f'solution {owner}'}; "
+                    f"a bundle may not reuse another owner's entity id"
+                )
+
+            slug = mapp["slug"]
+            values: dict[str, Any] = {
+                "name": mapp.get("name") or slug,
+                "slug": slug,
+                "repo_path": mapp.get("repo_path") or f"apps/{slug}",
+                "description": mapp.get("description"),
+                "dependencies": mapp.get("dependencies") or None,
+                "app_model": mapp.get("app_model", "inline_v1"),
+                "organization_id": solution.organization_id,
+                "solution_id": sid,
+            }
+            if mapp.get("access_level") is not None:
+                values["access_level"] = mapp["access_level"]
+
+            await Upsert(
+                model=Application, id=app_id, values=values, match_on="id"
+            ).execute(self.db)
+
+            # Build (or accept prebuilt) dist → _apps/{id}/dist/. dist_files is a
+            # str→str map in the bundle (JSON-friendly); the builder takes bytes.
+            prebuilt = mapp.get("dist_files")
+            prebuilt_bytes = (
+                {k: v.encode("utf-8") if isinstance(v, str) else v for k, v in prebuilt.items()}
+                if prebuilt
+                else None
+            )
+            src = mapp.get("src_files") or {}
+            src_bytes = {
+                k: v.encode("utf-8") if isinstance(v, str) else v for k, v in src.items()
+            }
+            await builder.build(
+                app_id=app_id,
+                src_files=src_bytes,
+                dependencies=mapp.get("dependencies") or {},
+                prebuilt_dist=prebuilt_bytes,
+            )
+
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────
     async def _reconcile_deletions(
         self, sid: UUID, bundle: SolutionBundle
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         """Delete this install's entities that are absent from the bundle.
 
         Strictly scoped: ``solution_id == sid AND id NOT IN bundle_ids``. Never
         touches _repo/ (solution_id IS NULL) or another install. For tables,
         only the Table row is swept — Document (row) data is never deleted here;
         a removed table's rows go via the Table FK cascade, which only fires when
-        the table itself is genuinely absent from the bundle. Returns
-        (workflows_deleted, tables_deleted).
+        the table itself is genuinely absent from the bundle. For apps, the
+        ``_apps/{id}/dist/`` artifact is deleted alongside the row. Returns
+        (workflows_deleted, tables_deleted, apps_deleted).
         """
         wf_deleted = await self._reconcile_one(
             Workflow, sid, {UUID(w["id"]) for w in bundle.workflows}
@@ -265,7 +347,33 @@ class SolutionDeployer:
         tbl_deleted = await self._reconcile_one(
             Table, sid, {UUID(t["id"]) for t in bundle.tables}
         )
-        return wf_deleted, tbl_deleted
+        app_deleted = await self._reconcile_apps(
+            sid, {UUID(a["id"]) for a in bundle.apps}
+        )
+        return wf_deleted, tbl_deleted, app_deleted
+
+    async def _reconcile_apps(self, sid: UUID, present_ids: set[UUID]) -> int:
+        """Sweep this install's Application rows absent from the bundle, and
+        delete their ``_apps/{id}/dist/`` artifacts (the built output is owned by
+        the install, unlike Table row data which is runtime state)."""
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        stmt = select(Application.id).where(Application.solution_id == sid)
+        existing = set((await self.db.execute(stmt)).scalars().all())
+        stale = existing - present_ids
+        if not stale:
+            return 0
+        builder = SolutionAppBuilder()
+        for app_id in stale:
+            await builder.delete_dist(app_id)
+        await self.db.execute(
+            delete(Application).where(
+                Application.solution_id == sid,
+                Application.id.in_(stale),
+            )
+        )
+        logger.info("Solution %s: deleted %d stale application row(s)", sid, len(stale))
+        return len(stale)
 
     async def _reconcile_one(
         self, model: type, sid: UUID, present_ids: set[UUID]
