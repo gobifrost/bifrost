@@ -79,6 +79,10 @@ class SolutionDeployRequest(BaseModel):
     python_files: dict[str, str] = Field(default_factory=dict)
     workflows: list[dict[str, Any]] = Field(default_factory=list)
     tables: list[dict[str, Any]] = Field(default_factory=list)
+    # Each app: {id, slug, name, app_model, dependencies, access_level,
+    # src_files: {rel: text} | dist_files: {rel: text}}. dist_files is the
+    # disconnected fast-path (skip the server build).
+    apps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SolutionDeployResponse(BaseModel):
@@ -87,3 +91,5 @@ class SolutionDeployResponse(BaseModel):
     workflows_deleted: int = 0
     tables_upserted: int = 0
     tables_deleted: int = 0
+    apps_upserted: int = 0
+    apps_deleted: int = 0

@@ -134,6 +134,45 @@ def _collect_tables(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+# App source files we send as build input (text). Binary assets in an app source
+# dir are rare; the build produces the real binary dist server-side.
+_APP_SRC_SUFFIXES = (".tsx", ".ts", ".jsx", ".js", ".css", ".html", ".json", ".svg", ".md")
+
+
+def _collect_apps(workspace: pathlib.Path) -> list[dict]:
+    """Read app entries from .bifrost/apps.yaml (keyed by UUID) + their source.
+
+    Each app's source dir (``path``, e.g. ``apps/dash``) is read into
+    ``src_files`` (build input). A v2 app is built server-side from this; the
+    optional client-side prebuild fast-path is handled by the deploy command.
+    """
+    apps_file = workspace / ".bifrost" / "apps.yaml"
+    if not apps_file.is_file():
+        return []
+    data = yaml.safe_load(apps_file.read_text()) or {}
+    raw = data.get("apps", {})
+    entries: list[dict] = []
+    for key, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        app_dir = workspace / body["path"]
+        src_files: dict[str, str] = {}
+        if app_dir.is_dir():
+            for f in app_dir.rglob("*"):
+                if f.is_file() and f.suffix in _APP_SRC_SUFFIXES:
+                    src_files[f.relative_to(app_dir).as_posix()] = f.read_text(encoding="utf-8")
+        entries.append({
+            "id": body.get("id", key),
+            "slug": body.get("slug") or key,
+            "name": body.get("name") or key,
+            "app_model": body.get("app_model", "inline_v1"),
+            "dependencies": body.get("dependencies") or {},
+            "access_level": body.get("access_level"),
+            "src_files": src_files,
+        })
+    return entries
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
@@ -151,6 +190,7 @@ def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
     python_files = _collect_python_files(workspace)
     workflows = _collect_workflows(workspace)
     tables = _collect_tables(workspace)
+    apps = _collect_apps(workspace)
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -206,6 +246,7 @@ def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
             "python_files": bundle_python,
             "workflows": workflows,
             "tables": tables,
+            "apps": apps,
         })
         if deploy.status_code not in (200, 201):
             click.echo(f"Deploy failed: {deploy.status_code} {deploy.text}", err=True)
