@@ -355,6 +355,8 @@ from src.models.contracts.github import (
     PreflightIssue,
     PreflightResult,
     RecreateFileResponse,
+    RemapWorkflowRequest,
+    RemapWorkflowResponse,
     ReplaceWorkflowRequest,
     ReplaceWorkflowResponse,
     ValidateTokenRequest,
@@ -824,6 +826,8 @@ __all__ = [
     "CompatibleReplacementsResponse",
     "ReplaceWorkflowRequest",
     "ReplaceWorkflowResponse",
+    "RemapWorkflowRequest",
+    "RemapWorkflowResponse",
     "RecreateFileResponse",
     "DeactivateWorkflowResponse",
     # Desktop-style git sync models

@@ -18,6 +18,7 @@ from bifrost.commands.workflows import workflows_group
 
 
 _WORKFLOW_UUID = "11111111-2222-3333-4444-555555555555"
+_TARGET_WORKFLOW_UUID = "66666666-7777-8888-9999-000000000000"
 
 
 class _FakeClient:
@@ -105,7 +106,7 @@ def stub_resolver(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
     Defaults to mapping {"my-workflow": _WORKFLOW_UUID}.
     """
-    mapping = {"my-workflow": _WORKFLOW_UUID}
+    mapping = {"my-workflow": _WORKFLOW_UUID, "new-workflow": _TARGET_WORKFLOW_UUID}
 
     async def _resolve(self, kind: str, value: str) -> str:
         if value in mapping:
@@ -299,3 +300,35 @@ class TestWorkflowsExecute:
         )
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output
+
+
+class TestWorkflowsRemap:
+    def test_posts_source_and_target_workflow_ids(
+        self,
+        fake_client: _FakeClient,
+        stub_resolver: dict[str, str],
+    ) -> None:
+        fake_client.queue(
+            "POST",
+            f"/api/workflows/{_WORKFLOW_UUID}/remap",
+            200,
+            {
+                "success": True,
+                "source_workflow_id": _WORKFLOW_UUID,
+                "target_workflow_id": _TARGET_WORKFLOW_UUID,
+                "updated": {"agents": 1, "forms": 0, "form_fields": 0, "apps": 0},
+            },
+        )
+
+        result = _invoke(["--json", "remap", "my-workflow", "--to", "new-workflow"])
+
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls == [
+            (
+                "POST",
+                f"/api/workflows/{_WORKFLOW_UUID}/remap",
+                {"target_workflow_id": _TARGET_WORKFLOW_UUID},
+            )
+        ]
+        payload = json.loads(result.output)
+        assert payload["updated"]["agents"] == 1

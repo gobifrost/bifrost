@@ -409,6 +409,37 @@ async def update_workflow(
     output_result(response.json(), ctx=ctx)
 
 
+@workflows_group.command("remap")
+@click.argument("source_ref")
+@click.option(
+    "--to",
+    "target_ref",
+    required=True,
+    type=str,
+    help="Active workflow ref (UUID, name, or path::func) to receive references.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def remap_workflow(
+    ctx: click.Context,
+    source_ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+    target_ref: str,
+) -> None:
+    """Move references from one workflow ID to another active workflow ID."""
+    source_uuid = await resolver.resolve("workflow", source_ref)
+    target_uuid = await resolver.resolve("workflow", target_ref)
+    response = await client.post(
+        f"/api/workflows/{source_uuid}/remap",
+        json={"target_workflow_id": target_uuid},
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
 @workflows_group.command("delete")
 @click.argument("ref")
 @click.option(

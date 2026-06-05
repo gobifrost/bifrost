@@ -40,6 +40,8 @@ from src.models import (
     RecreateFileResponse,
     RegisterWorkflowRequest,
     RegisterWorkflowResponse,
+    RemapWorkflowRequest,
+    RemapWorkflowResponse,
     ReplaceWorkflowRequest,
     ReplaceWorkflowResponse,
     WorkflowExecutionRequest,
@@ -1744,6 +1746,50 @@ async def replace_workflow(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to replace workflow",
+        )
+
+
+@router.post(
+    "/{workflow_id}/remap",
+    response_model=RemapWorkflowResponse,
+    summary="Remap workflow references",
+    description="Move references from one workflow ID to another active workflow ID",
+)
+async def remap_workflow_references(
+    workflow_id: UUID,
+    request: RemapWorkflowRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> RemapWorkflowResponse:
+    """Move references from ``workflow_id`` to ``target_workflow_id``."""
+    from src.services.workflow_orphan import WorkflowOrphanService
+
+    try:
+        target_workflow_id = UUID(request.target_workflow_id)
+        orphan_service = WorkflowOrphanService(db)
+        result = await orphan_service.remap_workflow_references(
+            source_workflow_id=workflow_id,
+            target_workflow_id=target_workflow_id,
+        )
+
+        return RemapWorkflowResponse(
+            success=True,
+            source_workflow_id=result.source_workflow_id,
+            target_workflow_id=result.target_workflow_id,
+            updated=result.updated,
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error remapping workflow references: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to remap workflow references",
         )
 
 

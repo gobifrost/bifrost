@@ -151,3 +151,47 @@ class TestCliAgents:
         assert created_id not in active_ids, (
             f"Agent {created_id} should be absent from active list after delete"
         )
+
+    def test_update_tool_ids_persists_exact_set(
+        self,
+        cli_client,
+        _invoke,
+        e2e_client,
+        platform_admin,
+        test_tool_workflow,
+    ) -> None:
+        """``agents update --tool-ids`` persists the requested workflow tool IDs."""
+        name = f"cli-agent-tools-{uuid4().hex[:8]}"
+        create_resp = e2e_client.post(
+            "/api/agents",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "system_prompt": "You are a test agent.",
+                "access_level": "authenticated",
+            },
+        )
+        assert create_resp.status_code in (200, 201), create_resp.text
+        created_id = str(create_resp.json()["id"])
+        tool_id = str(test_tool_workflow["id"])
+
+        try:
+            update_result = _invoke(
+                ["--json", "update", created_id, "--tool-ids", tool_id]
+            )
+            assert update_result.exit_code == 0, update_result.output
+            updated = json.loads(update_result.output)
+            assert str(updated["id"]) == created_id
+            assert set(updated["tool_ids"]) == {tool_id}
+
+            get_resp = e2e_client.get(
+                f"/api/agents/{created_id}",
+                headers=platform_admin.headers,
+            )
+            assert get_resp.status_code == 200, get_resp.text
+            assert set(get_resp.json()["tool_ids"]) == {tool_id}
+        finally:
+            e2e_client.delete(
+                f"/api/agents/{created_id}",
+                headers=platform_admin.headers,
+            )
