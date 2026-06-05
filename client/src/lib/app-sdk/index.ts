@@ -10,6 +10,9 @@
 export { BifrostProvider, useBifrostContext } from "./provider";
 export type { BifrostContextValue, BifrostProviderProps } from "./provider";
 
+export { BifrostHeader } from "@/components/solutions/BifrostHeader";
+export type { BifrostHeaderProps } from "@/components/solutions/BifrostHeader";
+
 export { useTable } from "./use-table";
 export type {
   DocumentFilter,

@@ -35,6 +35,8 @@ export interface BifrostContextValue {
   orgScope: string | null;
   /** `fetch` that joins `baseUrl` and attaches the bearer token. */
   authedFetch: typeof fetch;
+  /** Log the user out. No-op if the app did not supply `onLogout`. */
+  logout: () => void;
 }
 
 const BifrostContext = createContext<BifrostContextValue | null>(null);
@@ -45,6 +47,8 @@ export interface BifrostProviderProps {
   orgScope?: string | null;
   /** Override `fetch` (tests / non-browser). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Called when the app requests logout (e.g. via `<BifrostHeader>`). */
+  onLogout?: () => void;
   /** Provide a shared QueryClient; one is created if omitted. */
   queryClient?: QueryClient;
   children: ReactNode;
@@ -65,6 +69,7 @@ export function BifrostProvider({
   token,
   orgScope = null,
   fetchImpl,
+  onLogout,
   queryClient,
   children,
 }: BifrostProviderProps) {
@@ -80,8 +85,15 @@ export function BifrostProvider({
       }
       return baseFetch(joinUrl(baseUrl, input), { ...init, headers });
     };
-    return { baseUrl: baseUrl.replace(/\/$/, ""), token, orgScope, authedFetch };
-  }, [baseUrl, token, orgScope, fetchImpl]);
+    const logout = () => onLogout?.();
+    return {
+      baseUrl: baseUrl.replace(/\/$/, ""),
+      token,
+      orgScope,
+      authedFetch,
+      logout,
+    };
+  }, [baseUrl, token, orgScope, fetchImpl, onLogout]);
 
   const client = useMemo(
     () => queryClient ?? new QueryClient(),
