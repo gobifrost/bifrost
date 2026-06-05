@@ -1149,6 +1149,21 @@ def handle_run(args: list[str]) -> int:
     if cwd not in sys.path:
         sys.path.insert(0, cwd)
 
+    # If the workflow lives inside a Solution workspace (a bifrost.solution.yaml
+    # somewhere above it), put the solution ROOT on sys.path so solution-local
+    # imports (`from modules.x import y`) resolve against the solution root even
+    # when `bifrost run` is invoked from a subdirectory — local execution with a
+    # live data-plane is criterion 15 (offline dev loop).
+    from bifrost.solution_descriptor import find_solution_root
+
+    solution_root = find_solution_root(abs_file_path)
+    if solution_root is not None:
+        root_str = str(solution_root)
+        if root_str not in sys.path:
+            sys.path.insert(0, root_str)
+        if verbose:
+            print(f"Detected Solution workspace root: {root_str}")
+
     # In non-verbose direct mode, suppress decorator warnings before loading the module
     if not interactive and not verbose:
         logging.getLogger("bifrost.decorators").setLevel(logging.ERROR)

@@ -56,6 +56,23 @@ def is_solution_workspace(path: Path | str) -> bool:
     return _descriptor_path(path).is_file()
 
 
+def find_solution_root(start: Path | str) -> Path | None:
+    """Walk up from ``start`` (a file or dir) to the nearest Solution root.
+
+    Returns the directory containing ``bifrost.solution.yaml``, or ``None`` if
+    none is found before the filesystem root. This is what ``bifrost run`` uses
+    to make solution-local imports (``from modules.x import y``) resolve against
+    the solution root even when invoked from a subdirectory (criterion 15).
+    """
+    p = Path(start).resolve()
+    if p.is_file():
+        p = p.parent
+    for candidate in (p, *p.parents):
+        if (candidate / DESCRIPTOR_FILENAME).is_file():
+            return candidate
+    return None
+
+
 def load_descriptor(path: Path | str) -> SolutionDescriptor:
     """Load + validate the descriptor at ``path`` (a workspace dir or the file).
 

@@ -75,6 +75,7 @@ def _mock_app(name="test_app", slug=None, org_id=None, access_level="authenticat
     app.slug = slug or name.lower().replace(" ", "-")
     app.organization_id = org_id
     app.access_level = access_level
+    app.app_model = "inline_v1"
     app.description = None
     app.dependencies = None
     app.repo_path = f"apps/{app.slug}"

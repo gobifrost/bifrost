@@ -14,6 +14,7 @@ import pytest
 from bifrost.solution_descriptor import (
     DESCRIPTOR_FILENAME,
     SolutionDescriptor,
+    find_solution_root,
     is_solution_workspace,
     load_descriptor,
 )
@@ -82,3 +83,24 @@ def test_accepts_file_path_or_dir(tmp_path: pathlib.Path) -> None:
     by_dir = load_descriptor(p)
     by_file = load_descriptor(p / DESCRIPTOR_FILENAME)
     assert by_dir.slug == by_file.slug == "x"
+
+
+def test_find_solution_root_from_subdir(tmp_path: pathlib.Path) -> None:
+    """find_solution_root walks up to the nearest bifrost.solution.yaml."""
+    root = _write(tmp_path, "slug: mna\nname: MNA\n")
+    nested = root / "workflows" / "sub"
+    nested.mkdir(parents=True)
+    wf = nested / "w.py"
+    wf.write_text("# workflow\n")
+    # From a file deep in the tree → the root containing the descriptor.
+    assert find_solution_root(wf) == root
+    # From a subdirectory → same root.
+    assert find_solution_root(nested) == root
+    # From the root itself → the root.
+    assert find_solution_root(root) == root
+
+
+def test_find_solution_root_none_when_absent(tmp_path: pathlib.Path) -> None:
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+    assert find_solution_root(sub) is None
