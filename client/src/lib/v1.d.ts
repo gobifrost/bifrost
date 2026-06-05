@@ -3705,22 +3705,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7123,6 +7123,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/{solution_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auto-pull a git-connected install from its repo (admin only)
+         * @description Pull the connected install's repo ``main`` and deploy it (criterion 13).
+         *
+         *     This is the auto-pull entry point (webhook/poll/manual). It is the ONLY
+         *     writer for a connected install — the deploy endpoint is refused for it. For a
+         *     disconnected install there is nothing to pull, so this is refused in turn.
+         */
+        post: operations["sync_solution_api_solutions__solution_id__sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/knowledge-sources": {
         parameters: {
             query?: never;
@@ -7705,6 +7729,30 @@ export interface paths {
          *     correct MIME types matter.
          */
         get: operations["get_bundle_asset_api_applications__app_id__bundle_asset__filename__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{app_id}/dist/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve a standalone_v2 app's built dist/ file from _apps/{id}/dist/
+         * @description Stream a built dist/ file for a standalone_v2 app.
+         *
+         *     BundledAppShell mounts a v2 app via an iframe pointed at
+         *     ``/api/applications/{id}/dist/index.html``; the app's own bundle then loads
+         *     its hashed assets from the same dist/ prefix.
+         */
+        get: operations["get_v2_dist_asset_api_applications__app_id__dist__path__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9510,6 +9558,12 @@ export interface components {
              */
             access_level: string;
             /**
+             * App Model
+             * @description Render model: 'inline_v1' (legacy inline render) or 'standalone_v2' (own createRoot + router + real SDK)
+             * @default inline_v1
+             */
+            app_model: string;
+            /**
              * Role Ids
              * @description Role IDs for role_based access (ignored if access_level is 'authenticated')
              */
@@ -9614,6 +9668,12 @@ export interface components {
              * @default authenticated
              */
             access_level: string;
+            /**
+             * App Model
+             * @description Render model: inline_v1 (legacy inline) | standalone_v2
+             * @default inline_v1
+             */
+            app_model: string;
             /**
              * Is Solution Managed
              * @description True if managed by a deployed Solution (read-only on platform)
@@ -19885,6 +19945,14 @@ export interface components {
             workflows?: {
                 [key: string]: unknown;
             }[];
+            /** Tables */
+            tables?: {
+                [key: string]: unknown;
+            }[];
+            /** Apps */
+            apps?: {
+                [key: string]: unknown;
+            }[];
         };
         /** SolutionDeployResponse */
         SolutionDeployResponse: {
@@ -19903,6 +19971,26 @@ export interface components {
              * @default 0
              */
             workflows_deleted: number;
+            /**
+             * Tables Upserted
+             * @default 0
+             */
+            tables_upserted: number;
+            /**
+             * Tables Deleted
+             * @default 0
+             */
+            tables_deleted: number;
+            /**
+             * Apps Upserted
+             * @default 0
+             */
+            apps_upserted: number;
+            /**
+             * Apps Deleted
+             * @default 0
+             */
+            apps_deleted: number;
         };
         /** SolutionsList */
         SolutionsList: {
@@ -28096,7 +28184,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28129,7 +28217,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28162,7 +28250,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28195,7 +28283,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -34381,6 +34469,39 @@ export interface operations {
             };
         };
     };
+    sync_solution_api_solutions__solution_id__sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_namespaces_api_knowledge_sources_get: {
         parameters: {
             query?: {
@@ -35625,6 +35746,40 @@ export interface operations {
                 app_id: string;
                 /** @description Bundle asset filename */
                 filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_dist_asset_api_applications__app_id__dist__path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Application UUID */
+                app_id: string;
+                /** @description Path within the app's dist/ (e.g. index.html) */
+                path: string;
             };
             cookie?: never;
         };
