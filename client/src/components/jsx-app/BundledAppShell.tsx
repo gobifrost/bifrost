@@ -306,6 +306,7 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				// Successful reload — clear any prior build-error banner.
 				setBuildErrors(null);
 				setBuildErrorDismissed(false);
+				return "inline_v1";
 			} catch (err) {
 				if (controller.signal.aborted) return;
 				// LOAD error vs BUILD error: if we've never loaded a bundle,
@@ -326,6 +327,8 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					setBuildErrorDismissed(false);
 				}
 			}
+			// A load failure leaves the model unresolved.
+			return undefined;
 		}
 
 		// Preview-only: subscribe to draft bundle updates for this app.
