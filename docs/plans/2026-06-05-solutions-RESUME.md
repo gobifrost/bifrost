@@ -22,6 +22,32 @@ issues is saved at `/tmp/codex_spec_review_prompt.txt` (+ `/tmp/codex_review3.tx
 fixed" context). Re-create it if /tmp is cleared — it's a "full adversarial spec review, file:line +
 severity, hunt for issues the fixes introduced."
 
+## RAISED DONE-BAR (user, 2026-06-05)
+"Done" requires the FULL E2E dev experience validated (a dev builds+runs a v2 app with no
+papercuts — no pasting tokens, no dropped assets), manual + automated testing, nothing left
+crappy, AND two consecutive clean Codex reviews. Green unit tests alone ≠ done.
+
+## Codex review #4 → ALL 8 fixed + committed + pushed (1 P1 + 7 P2)
+- R4-P1 atomic deploy: compile dists to memory INSIDE deploy() (pre-commit); only cheap
+  uploads/python-write deferred to finalize_s3. Build failure now rolls back, no DB-ahead-of-S3.
+- R4 slug guard: covers full visible set (org install vs global app; global install vs org app).
+- R4 admin slug: get_by_slug_global disambiguates by active org (no MultipleResultsFound 500).
+- R4 role DELETE: refuse deleting a role bound to any solution-managed entity (cascade bypass).
+- R4 BifrostHeader: shipped in the SDK (self-contained ./bifrost-header, lucide external peer).
+- R4 unmount: window.__BIFROST_APP__.registerUnmount(teardown); shell calls it on cleanup.
+- R4 binary assets: _collect_apps carries non-text as base64 bin_files → decoded into builder.
+- R4 full-page: AppRouter renders standalone_v2 without AppLayout chrome.
+Verify after these: 104 unit + 13 e2e + 110 client green; ruff/pyright/tsc/eslint clean. Pushed.
+
+## REMAINING (the real "done")
+- **Codex review #5** — confirm the 8 R4 fixes are clean (need 2 consecutive zero-P1/P2).
+- **E2E validation (task #16)**: build a real v2 app scaffold (`bifrost solution init` /
+  `apps create --model standalone_v2`) — package.json (bifrost from instance), vite.config,
+  index.html, src/main.tsx reading window.__BIFROST_APP__ + registerUnmount, src/App.tsx. Local
+  dev token from the CLI login `.env` (VITE_BIFROST_* from BIFROST_ACCESS_TOKEN) — NO pasting.
+  Drive on a port-mode debug stack: deploy → open /apps/{slug} → navigate sub-route (URL updates)
+  → refresh works → useWorkflow round-trips → logout. Document the loop. Manual + Playwright.
+
 ## IN-FLIGHT right now (updated 2026-06-05, later session)
 - **Codex review #3 returned 4 P1 + 2 P2 — ALL fixed + committed + pushed.** See "DONE — review-3 fixes" below.
 - **Codex review #4 is running** → output at `/tmp/codex_review4_out.txt` (prompt at `/tmp/codex_review4.txt`).
