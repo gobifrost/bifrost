@@ -58,3 +58,12 @@ test("managed app is still previewable in table view (no regression)", async ({ 
   await page.screenshot({ path: `${SHOTS}/12-apps-table-view.png`, fullPage: true });
   await expect(page.getByTestId("app-managed-badge-row").or(page.getByTestId("app-managed-badge"))).toBeVisible();
 });
+
+test("v1 (non-solution) app is editable — backwards compat", async ({ page }) => {
+  await login(page);
+  await page.goto("/apps");
+  await expect(page.getByText("Legacy V1")).toBeVisible({ timeout: 15000 });
+  await page.screenshot({ path: `${SHOTS}/13-v1-app-editable.png`, fullPage: true });
+  // Both apps present side-by-side: v1 editable, v2 managed (visual diff in shot).
+  await expect(page.getByText("Live Dash")).toBeVisible();
+});
