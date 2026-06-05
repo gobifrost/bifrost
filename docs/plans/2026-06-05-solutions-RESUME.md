@@ -22,6 +22,34 @@ issues is saved at `/tmp/codex_spec_review_prompt.txt` (+ `/tmp/codex_review3.tx
 fixed" context). Re-create it if /tmp is cleared — it's a "full adversarial spec review, file:line +
 severity, hunt for issues the fixes introduced."
 
+## PAUSE DEBRIEF (2026-06-05, session 2) — read this first
+
+**What's solid:** all of Codex review #3 (6) and #4 (8) are fixed, committed, pushed, green
+(104 unit + 13 e2e + 110 client). The v2 dev experience is **validated live** on the port-mode
+debug stack at `http://localhost:37791`: scaffolded a v2 app → `npm install` resolved `bifrost`
+from `/api/sdk/download` → `vite build` succeeded → `bifrost deploy` server-built the dist → it
+serves at `/apps/{slug}` with the entry in the manifest. Tokenless dev loop proven (vite walks up
+to the solution-root `.env` `bifrost login` wrote). That's the core "done" substance.
+
+**Codex review #5 came back with 1 P1 + 5 P2.** Fixed + committed: R5-P1 (v2 remount cache-bust),
+R5-P2 node_modules-skip, R5-P2 tokenless-dev, R5-P2 slug-advisory-lock. **In progress (do FIRST
+next session):**
+- **#21 finalize partial-failure** — router-deploy now maps `SolutionFinalizeIncomplete` → 502, but
+  **`git_sync.py:162` still propagates it raw** — give it the same handling, and add a test for the
+  finalize-incomplete path (force `upload_dist` to raise → assert the error type + that re-run heals).
+  Also decide if 502 is the right contract or whether to mark the install "needs-refinalize" for
+  auto-heal on next sync (cleaner, more machinery — worth a quick decision with the user).
+
+**The real struggle (the meta-problem):** each Codex pass finds NEW real depth — #3→6, #4→8, #5→6.
+This is NOT whack-a-mole on my fixes (only ~2 of 14 R4/R5 findings were holes in a prior fix); the
+rest are genuinely new surfaces (concurrency/TOCTOU, ES-module caching, dev-loop papercuts, partial-
+failure). The bar is "two CONSECUTIVE clean reviews" and we have not had ONE clean review yet. The
+honest read: the v2-app-model + deploy surface is broad enough that a single reviewer keeps finding
+a fresh corner. **Recommendation for next session:** after fixing #21, run review #6; if it's again
+non-trivial, consider (a) a focused adversarial sweep on JUST the two riskiest areas (deploy
+atomicity/concurrency, and the v2 mount lifecycle) rather than the whole surface each time, or (b)
+accept that "2 clean" may take 2-3 more passes and budget for it. Don't claim done until 2 clean.
+
 ## RAISED DONE-BAR (user, 2026-06-05)
 "Done" requires the FULL E2E dev experience validated (a dev builds+runs a v2 app with no
 papercuts — no pasting tokens, no dropped assets), manual + automated testing, nothing left
