@@ -140,23 +140,31 @@ class TestSolutionAppDeploy:
 
 @pytest.mark.e2e
 class TestMultiInstallAppIdentity:
-    """Two installs of the same app-bearing solution must NOT collide on the
-    app slug/repo_path global unique index (criterion 9, Codex G3)."""
+    """Two installs of the same app-bearing solution to DIFFERENT orgs must NOT
+    collide on the app slug/repo_path global unique index (criterion 9, Codex
+    G3). Each install is org-scoped, so the same slug under different orgs is
+    legitimate — the per-install index allows it AND the route resolver
+    disambiguates by org (see TestAppSlugRouteCollision for the same-org case)."""
 
-    async def _install(self, db, slug):
-        # Two distinct installs (distinct solution_id) — org=None keeps the test
-        # free of Organization FK setup; the per-install uniqueness is keyed on
-        # solution_id, which differs between the two.
-        sol = Solution(id=uuid.uuid4(), slug=slug, name=slug.upper(), organization_id=None)
+    async def _install(self, db, slug, org_id):
+        # Distinct installs keyed on solution_id, each scoped to its own org —
+        # the real multi-install shape (two clients), not two global installs.
+        sol = Solution(id=uuid.uuid4(), slug=slug, name=slug.upper(), organization_id=org_id)
         db.add(sol)
         await db.flush()
         return sol
 
     async def test_same_app_slug_two_installs(self, db_session, _stub_app_build):
+        from src.models.orm.organizations import Organization
+
         db = db_session
-        # Two independent installs (different solution_id + org).
-        sol_a = await self._install(db, f"mi-a-{uuid.uuid4().hex[:8]}")
-        sol_b = await self._install(db, f"mi-b-{uuid.uuid4().hex[:8]}")
+        org_a = Organization(id=uuid.uuid4(), name=f"A-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+        org_b = Organization(id=uuid.uuid4(), name=f"B-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+        db.add_all([org_a, org_b])
+        await db.flush()
+        # Two independent installs (different solution_id, different org).
+        sol_a = await self._install(db, f"mi-a-{uuid.uuid4().hex[:8]}", org_a.id)
+        sol_b = await self._install(db, f"mi-b-{uuid.uuid4().hex[:8]}", org_b.id)
         shared_slug = f"dash-{uuid.uuid4().hex[:8]}"
         app_a, app_b = str(uuid.uuid4()), str(uuid.uuid4())
 
@@ -174,6 +182,81 @@ class TestMultiInstallAppIdentity:
         b = await db.get(Application, uuid.UUID(app_b))
         assert a.solution_id == sol_a.id and b.solution_id == sol_b.id
         assert a.slug == b.slug == shared_slug  # same slug, different installs
+
+
+@pytest.mark.e2e
+class TestAppSlugRouteCollision:
+    """The per-install unique index keeps (solution_id, slug) unique but does
+    NOT stop a solution app from colliding with another VISIBLE app on the same
+    /apps/{slug} route within an org. Two such rows make the slug resolver
+    (scalar_one_or_none) raise MultipleResultsFound — the deployed app becomes
+    unopenable. Deploy must refuse the collision up front (Codex P2-f).
+    """
+
+    async def _install(self, db, org_id=None):
+        sol = Solution(
+            id=uuid.uuid4(), slug=f"sc-{uuid.uuid4().hex[:8]}", name="SC",
+            organization_id=org_id,
+        )
+        db.add(sol)
+        await db.flush()
+        return sol
+
+    async def test_solution_app_slug_collides_with_repo_app(self, db_session, _stub_app_build):
+        db = db_session
+        sol = await self._install(db)  # global install (org=None)
+        slug = f"dash-{uuid.uuid4().hex[:8]}"
+        # A visible _repo/ app already owns this slug at the same (global) scope.
+        db.add(Application(
+            id=uuid.uuid4(), name="Repo", slug=slug, repo_path=f"apps/{slug}",
+            organization_id=None, solution_id=None,
+        ))
+        await db.flush()
+
+        with pytest.raises(SolutionDeployConflict):
+            await SolutionDeployer(db).deploy(SolutionBundle(
+                solution=sol, apps=[_app_entry(str(uuid.uuid4()), slug)],
+            ))
+
+    async def test_two_global_solution_apps_same_slug_refused(self, db_session, _stub_app_build):
+        db = db_session
+        sol_a = await self._install(db)
+        sol_b = await self._install(db)
+        slug = f"dash-{uuid.uuid4().hex[:8]}"
+
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol_a, apps=[_app_entry(str(uuid.uuid4()), slug)],
+        ))
+        await db.flush()
+        # Different install, but both global (org=None) → same /apps/{slug} route.
+        with pytest.raises(SolutionDeployConflict):
+            await SolutionDeployer(db).deploy(SolutionBundle(
+                solution=sol_b, apps=[_app_entry(str(uuid.uuid4()), slug)],
+            ))
+
+    async def test_same_slug_different_orgs_allowed(self, db_session, _stub_app_build):
+        """Cross-org installs sharing a slug is legitimate (criterion 9): the
+        resolver disambiguates by org, so deploy must NOT refuse this."""
+        from src.models.orm.organizations import Organization
+
+        db = db_session
+        org_a = Organization(id=uuid.uuid4(), name=f"A-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+        org_b = Organization(id=uuid.uuid4(), name=f"B-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+        db.add_all([org_a, org_b])
+        await db.flush()
+        sol_a = await self._install(db, org_id=org_a.id)
+        sol_b = await self._install(db, org_id=org_b.id)
+        slug = f"dash-{uuid.uuid4().hex[:8]}"
+
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol_a, apps=[_app_entry(str(uuid.uuid4()), slug)],
+        ))
+        await db.flush()
+        # Different org → no route collision → allowed.
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol_b, apps=[_app_entry(str(uuid.uuid4()), slug)],
+        ))
+        await db.flush()
 
 
 @pytest.mark.e2e

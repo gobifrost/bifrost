@@ -154,7 +154,9 @@ async def get_application_or_404(
     )
     try:
         if ctx.user.is_platform_admin:
-            # Slugs are globally unique — super admins can resolve across orgs
+            # _repo/ slugs are globally unique; solution-app slugs are unique per
+            # visible org scope (deploy refuses a same-scope slug collision, P2-f),
+            # so this stays single-result. Super admins resolve across orgs.
             app = await repo.get_by_slug_global(slug)
             if not app:
                 raise AccessDeniedError(f"Application '{slug}' not found")

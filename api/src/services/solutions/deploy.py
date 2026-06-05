@@ -387,6 +387,32 @@ class SolutionDeployer:
                 )
 
             slug = mapp["slug"]
+            # Route-collision guard (Codex P2-f): the per-install unique index
+            # keeps (solution_id, slug) unique, but the /apps/{slug} resolver
+            # (scalar_one_or_none) raises MultipleResultsFound if two VISIBLE apps
+            # share a slug in one org scope. So refuse a slug already owned by a
+            # different app (a _repo/ app, or another solution's app) at this
+            # install's visible scope (same org, or both global). A different org
+            # is fine — the resolver disambiguates by org (criterion 9).
+            org_id = solution.organization_id
+            collision = (
+                await self.db.execute(
+                    select(Application.id, Application.solution_id).where(
+                        Application.slug == slug,
+                        Application.id != app_id,
+                        Application.organization_id == org_id
+                        if org_id is not None
+                        else Application.organization_id.is_(None),
+                    )
+                )
+            ).first()
+            if collision is not None:
+                other = collision[1]
+                raise SolutionDeployConflict(
+                    f"app slug '{slug}' is already in use at this scope by "
+                    f"{'a _repo/ app' if other is None else f'solution {other}'}; "
+                    f"two apps cannot share /apps/{slug} in one org — rename one."
+                )
             app_model = mapp.get("app_model", "inline_v1")
             now = datetime.now(timezone.utc)
             values: dict[str, Any] = {
