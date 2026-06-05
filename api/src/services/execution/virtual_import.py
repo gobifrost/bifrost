@@ -34,6 +34,7 @@ from src.core.module_cache_sync import (
     candidate_index_prefixes,
     get_module_index_sync,
     get_module_sync,
+    solution_has_submodules,
 )
 
 logger = logging.getLogger(__name__)
@@ -358,6 +359,11 @@ class VirtualModuleFinder(MetaPathFinder):
         has_submodules = any(
             entry.startswith(p) for entry in module_index for p in prefixes
         )
+        # The index only knows a solution module once it has been loaded, but a
+        # parent package must resolve as a namespace BEFORE its first submodule
+        # can load. Fall back to a direct S3 check under the solution prefix.
+        if not has_submodules:
+            has_submodules = solution_has_submodules(base_path)
 
         if has_submodules:
             # Create a namespace package spec (empty module with __path__)

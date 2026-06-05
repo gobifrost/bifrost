@@ -341,6 +341,36 @@ def get_module_index_sync() -> set[str]:
         return set()
 
 
+def solution_has_submodules(base_path: str) -> bool:
+    """True if the active solution has any object under ``{base_path}/`` in S3.
+
+    Namespace-package (PEP 420) detection for solution code can't rely on the
+    Redis module index alone: a freshly-deployed module is only indexed once
+    it's first loaded, but it can't load until its parent package resolves as a
+    namespace — a chicken-and-egg. So when a solution is active we check S3
+    directly under ``_solutions/{id}/{base_path}/`` (one key is enough).
+
+    Returns False when no solution is active (the _repo/ index path already
+    handles that case) or S3 is unavailable.
+    """
+    ctx = get_solution_context()
+    if ctx is None:
+        return False
+    bucket = os.environ.get("BIFROST_S3_BUCKET")
+    if not bucket:
+        return False
+    client = _get_s3_client()
+    if client is None:
+        return False
+    prefix = f"{SOLUTIONS_ROOT}/{ctx.solution_id}/{base_path.rstrip('/')}/"
+    try:
+        resp = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+        return resp.get("KeyCount", 0) > 0 or bool(resp.get("Contents"))
+    except Exception as e:
+        logger.debug(f"S3 submodule check failed for {prefix}: {e}")
+        return False
+
+
 def reset_sync_redis() -> None:
     """Reset the sync Redis client."""
     _get_sync_redis.cache_clear()
