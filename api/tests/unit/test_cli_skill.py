@@ -252,6 +252,37 @@ class TestSkillUpdate:
         out = capsys.readouterr().out
         assert "Installed bifrost-build" in out
 
+    def test_public_skill_pointer_file_installs_real_skill_folder(
+        self,
+        workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Windows checkouts may turn a symlink into a file containing its target."""
+
+        tarball = _make_tarball(
+            "jackmusick/bifrost",
+            "main",
+            {
+                ".claude/skills/bifrost-setup/SKILL.md": b"setup\n",
+                ".claude/skills/bifrost-debug/SKILL.md": b"internal\n",
+                "skills/setup": b"../.claude/skills/bifrost-setup",
+            },
+            public_skills=[],
+        )
+
+        def _get(url: str, **_kwargs):
+            request = httpx.Request("GET", url)
+            return httpx.Response(200, content=tarball, request=request)
+
+        monkeypatch.setattr(skill_module.httpx, "get", _get)
+
+        rc = skill_module.handle_skill(["update"])
+        assert rc == 0
+        assert (workspace / ".claude/skills/bifrost-setup/SKILL.md").is_file()
+        assert (workspace / ".agents/skills/bifrost-setup/SKILL.md").is_file()
+        assert not (workspace / ".claude/skills/bifrost-debug").exists()
+        assert not (workspace / ".agents/skills/bifrost-debug").exists()
+
     def test_repo_with_no_public_skills_errors(
         self,
         workspace: Path,

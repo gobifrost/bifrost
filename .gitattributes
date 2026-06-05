@@ -1,0 +1,8 @@
+# Shell scripts and container entrypoints must always check out with LF.
+# Git for Windows defaults to core.autocrlf=true, which rewrites these to
+# CRLF on clone. CRLF in a script that runs inside a Linux container breaks
+# the entrypoint with "exec: no such file or directory" / "/bin/sh^M".
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+debug.sh text eol=lf
+test.sh text eol=lf

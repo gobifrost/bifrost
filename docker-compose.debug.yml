@@ -52,6 +52,15 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
+    # Run as the rabbitmq user (uid 100) from the start. Docker >= 24 creates
+    # the named volume mount point as 0755 root:root, so the root entrypoint
+    # writes .erlang.cookie root-owned 0400 and the server (uid 100) then
+    # fails to read it: "Error when reading /var/lib/rabbitmq/.erlang.cookie:
+    # eacces". Starting as uid 100 means the cookie is created owned by
+    # rabbitmq, readable by both the server and the diagnostics healthcheck.
+    # This is the one fix that holds on Linux AND Docker Desktop/WSL2, where
+    # tmpfs uid/gid/mode options are NOT honoured under `docker compose`.
+    user: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: bifrost
       RABBITMQ_DEFAULT_PASS: bifrost_debug
@@ -62,6 +71,9 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+      # RabbitMQ can take 90s+ to boot on a resource-constrained Windows VM;
+      # without a start_period, dependent services give up before it is ready.
+      start_period: 120s
 
   redis:
     image: redis:7-alpine

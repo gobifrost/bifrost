@@ -144,7 +144,7 @@ def workflow(
             ...
 
     Args:
-        name: Workflow name (defaults to function name)
+        name: Initial MCP tool name (defaults to function name)
         description: Description (defaults to first line of docstring)
         category: Category for organization (default: "General")
         tags: Optional list of tags for filtering

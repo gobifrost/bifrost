@@ -43,9 +43,9 @@ class Workflow(Base):
     __tablename__ = "workflows"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    name: Mapped[str] = mapped_column(String(255), index=True)  # Code-defined name (from decorator)
+    name: Mapped[str] = mapped_column(String(255), index=True)  # MCP tool name, defaulted from function_name
     function_name: Mapped[str] = mapped_column(String(255))  # Actual Python function name
-    display_name: Mapped[str | None] = mapped_column(String(255), default=None)  # User-editable display name (defaults to name if NULL)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)  # UI display name; falls back to name
     description: Mapped[str | None] = mapped_column(Text, default=None)
     category: Mapped[str] = mapped_column(String(100), default="General")
 
@@ -146,5 +146,4 @@ class Workflow(Base):
         # Unique constraint on (path, function_name) for ON CONFLICT upserts
         UniqueConstraint("path", "function_name", name="workflows_path_function_key"),
     )
-
 

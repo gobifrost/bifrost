@@ -80,6 +80,61 @@ _DEFAULT_IGNORE_PATTERNS = [
 ]
 
 
+def _ensure_utf8_stdio() -> None:
+    """Make stdout/stderr tolerate non-ASCII output on Windows.
+
+    Windows consoles default to cp1252, so printing the status glyphs and
+    em-dashes the CLI uses (✓, ✗, ⚠, ←, —) raises UnicodeEncodeError and
+    aborts the command mid-run. Reconfiguring the streams to UTF-8 fixes the
+    whole class at once; on a terminal that is already UTF-8 (Linux/macOS,
+    Windows Terminal) this is a no-op. ``errors="backslashreplace"`` keeps a
+    legacy console from crashing even if a glyph can't be rendered.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (ValueError, OSError):
+            # Stream doesn't support reconfigure (e.g. already-wrapped or a
+            # non-text buffer in tests). Output safety still holds for the
+            # tested summary path via _check_glyph(); nothing to do here.
+            pass
+
+
+def _stdout_can_encode(text: str) -> bool:
+    """True if the current stdout encoding can represent ``text``.
+
+    Windows consoles default to cp1252, which cannot encode the glyphs we
+    like to use on UTF-8 terminals (✓, ✗, —). Printing them there raises
+    UnicodeEncodeError mid-command. Callers use this to pick an ASCII
+    fallback instead of crashing.
+    """
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(enc)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+def _check_glyph() -> str:
+    """Status glyph for plain-stdout (non-TUI) output.
+
+    On UTF-8 terminals it renders as ✓; on cp1252 Windows consoles it
+    degrades to "OK" so the CLI never crashes printing a result. Evaluated
+    per call (not cached) so it honours the actual stdout at print time.
+    The Textual TUI renders to its own buffer and is unaffected, so it keeps
+    using the Unicode glyphs directly.
+    """
+    return "✓" if _stdout_can_encode("✓") else "OK"
+
+
+def _print_sync_summary(summary: str) -> None:
+    print(f"  {_check_glyph()} {summary}")
+
+
 # ---------------------------------------------------------------------------
 # Shared CLI utilities
 # ---------------------------------------------------------------------------
@@ -522,6 +577,8 @@ def main(args: list[str] | None = None) -> int:
     """
     if args is None:
         args = sys.argv[1:]
+
+    _ensure_utf8_stdio()
 
     # No args - show help
     if not args:
@@ -1904,7 +1961,10 @@ def _detect_repo_prefix(path: pathlib.Path) -> str:
         relative = path.resolve().relative_to(cwd)
     except (OSError, ValueError):
         return ""
-    prefix = str(relative)
+    # Repo keys are always POSIX ("/"). On Windows str(WindowsPath) uses "\",
+    # which would produce backslash repo prefixes and break path matching and
+    # the known-hash cache (causing the same file to re-upload every tick).
+    prefix = relative.as_posix()
     return "" if prefix == "." else prefix
 
 async def _push_with_precheck(
@@ -2026,11 +2086,13 @@ class _WatchChangeHandler:
 
     def _should_skip(self, file_path: str) -> bool:
         p = pathlib.Path(file_path)
-        rel = str(p.relative_to(self.state.base_path))
+        # POSIX separators: these strings feed pathspec globs and repo keys,
+        # which are always "/"-based. str(WindowsPath) would use "\".
+        rel = p.relative_to(self.state.base_path).as_posix()
         repo_rel: str | None = None
         workspace_root = _workspace_root_for(self.state.base_path)
         if p.is_relative_to(workspace_root):
-            repo_rel = str(p.relative_to(workspace_root))
+            repo_rel = p.relative_to(workspace_root).as_posix()
         return _should_skip_path(rel, self._spec, repo_rel)
 
     def dispatch(self, event: Any) -> None:
@@ -2092,21 +2154,23 @@ async def _process_watch_deletes(
     for abs_path_str in deletes:
         abs_p = pathlib.Path(abs_path_str)
         if not abs_p.exists():
-            rel = abs_p.relative_to(base_path)
-            repo_path = f"{repo_prefix}/{rel}" if repo_prefix else str(rel)
+            # POSIX separators: repo keys are always "/". str(WindowsPath)
+            # would use "\", desyncing the key from the server's path.
+            rel = abs_p.relative_to(base_path).as_posix()
+            repo_path = f"{repo_prefix}/{rel}" if repo_prefix else rel
             try:
                 resp = await client.post("/api/files/delete", json={
                     "path": repo_path, "location": "workspace", "mode": "cloud",
                 }, headers=extra_headers)
                 if resp.status_code == 204:
                     deleted_count += 1
-                    deleted_rels.append(str(rel))
+                    deleted_rels.append(rel)
                     state.forget_known_hash(repo_path)
             except Exception as del_err:
                 status_code = getattr(getattr(del_err, "response", None), "status_code", None)
                 if status_code == 404:
                     deleted_count += 1
-                    deleted_rels.append(str(rel))
+                    deleted_rels.append(rel)
                     state.forget_known_hash(repo_path)
                 else:
                     ts = datetime.now().strftime('%H:%M:%S')
@@ -2140,8 +2204,12 @@ async def _process_watch_batch(
             try:
                 raw_bytes = abs_p.read_bytes()
                 raw = _normalize_line_endings(raw_bytes)
-                rel = abs_p.relative_to(base_path)
-                repo_path = f"{repo_prefix}/{rel}" if repo_prefix else str(rel)
+                # POSIX separators so the repo_path (and thus the known-hash
+                # cache key) matches the server. With str(WindowsPath) the "\"
+                # key never matches the server's "/" key, so the no-op-push
+                # guard below never fires and every file re-uploads each tick.
+                rel = abs_p.relative_to(base_path).as_posix()
+                repo_path = f"{repo_prefix}/{rel}" if repo_prefix else rel
                 file_hash = hashlib.md5(raw).hexdigest()
                 if state.get_known_hash(repo_path) == file_hash:
                     # No-op push: the server already has this content (common
@@ -2229,7 +2297,7 @@ async def _process_watch_batch(
                 parts.append(f"{watch_created} written")
             if deleted_count:
                 parts.append(f"{deleted_count} deleted")
-            print(f"  [{ts}] \u2713 Pushed {', '.join(parts) if parts else 'no changes'}", flush=True)
+            print(f"  [{ts}] ✓ Pushed {', '.join(parts) if parts else 'no changes'}", flush=True)
 
         # Log errors as separate rows (with detail sub-rows in TUI)
         if watch_errors:
@@ -2294,7 +2362,7 @@ async def _auto_validate_app(
                     watch_app.log_success(msg)
                 else:
                     ts = datetime.now().strftime('%H:%M:%S')
-                    print(f"  [{ts}] \u2713 {msg}", flush=True)
+                    print(f"  [{ts}] ✓ {msg}", flush=True)
             else:
                 if errors:
                     msg = f"App '{slug}' validation: {len(errors)} error(s)"
@@ -2532,7 +2600,7 @@ async def _watch_loop(
                     if watch_app:
                         watch_app.log_success("File watcher restarted")
                     else:
-                        print("  \u2713 File watcher restarted", flush=True)
+                        print("  ✓ File watcher restarted", flush=True)
                 except Exception as e:
                     if watch_app:
                         watch_app.log_error(f"Could not restart file watcher: {e}")
@@ -2742,7 +2810,8 @@ def _collect_push_files(
         if file_path.is_dir():
             continue
         rel = file_path.relative_to(path)
-        rel_str = str(rel)
+        # POSIX separators: repo keys and pathspec globs are always "/"-based.
+        rel_str = rel.as_posix()
         repo_path = f"{repo_prefix}/{rel_str}" if repo_prefix else rel_str
         if _should_skip_path(rel_str, spec, repo_path):
             continue
@@ -3047,7 +3116,7 @@ async def _sync_files(
                 errors.append(f"{name}: {e}")
                 print(f"  Error: {name}: {e}", file=sys.stderr)
         summary = await _post_sync(errors)
-        print(f"  \u2713 {summary}")
+        _print_sync_summary(summary)
 
     _cols = shutil.get_terminal_size((80, 24)).columns
     if errors:

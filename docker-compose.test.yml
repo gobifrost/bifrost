@@ -61,17 +61,21 @@ services:
   # RabbitMQ Message Broker (Test)
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
+    # Run as uid 100 so .erlang.cookie is created owned by rabbitmq, not root.
+    # Docker >= 24 creates the mount point 0755 root:root; the root entrypoint
+    # then writes the cookie root-owned 0400 and the uid-100 server can't read
+    # it ("Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces").
+    # Setting the user fixes the root cause without depending on tmpfs mode
+    # bits — important because Docker Desktop/WSL2 does not honour tmpfs
+    # uid/gid/mode under `docker compose` (only under `docker run`).
+    user: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: bifrost
       RABBITMQ_DEFAULT_PASS: bifrost_test
-    # No ports exposed - all access via Docker network
+    # No ports exposed - all access via Docker network.
+    # Ephemeral storage so test runs never inherit broker state.
     tmpfs:
-      # Ephemeral storage - prevents Erlang cookie permission issues.
-      # mode=1777 (sticky world-writable) matches the image's own dir perms
-      # so the rabbitmq user can create .erlang.cookie; Docker >= 24 stopped
-      # defaulting tmpfs to 1777 and now creates it 0755 root:root, which
-      # breaks the boot with "Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces".
-      - /var/lib/rabbitmq:mode=1777
+      - /var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s
