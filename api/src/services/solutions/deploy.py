@@ -163,12 +163,13 @@ class SolutionDeployer:
                 "path": mwf["path"],
                 "type": mwf.get("type", "workflow"),
                 "is_active": True,
+                # Full-replace: description is always set from the bundle so a
+                # removed description clears the DB value rather than going stale.
+                "description": mwf.get("description"),
                 # Scope is inherited from the install — no per-entity binding.
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
-            if mwf.get("description") is not None:
-                values["description"] = mwf["description"]
             if mwf.get("access_level") is not None:
                 values["access_level"] = mwf["access_level"]
             # Safe now: the id is either absent or already this install's.
@@ -187,50 +188,63 @@ class SolutionDeployer:
         ``schema`` JSONB in place; the table row (and its Documents via the
         FK) survives untouched.
         """
+        from shared.policies.probe import make_seed_admin_bypass
+        from src.core.pubsub import publish_policy_changed
+        from src.models.contracts.policies import TablePolicies
+
         sid = solution.id
         for mtbl in tables:
             tbl_id = UUID(mtbl["id"])
 
-            # Same ownership guard as workflows: never re-stamp a _repo/ or
-            # other-install row.
+            # Fetch existing (owner + current access) in one shot — used for the
+            # ownership guard AND to decide whether to emit policy_changed.
             row = (
                 await self.db.execute(
-                    select(Table.id, Table.solution_id).where(Table.id == tbl_id)
+                    select(Table.solution_id, Table.access).where(Table.id == tbl_id)
                 )
             ).first()
-            if row is not None and row[1] != sid:
-                owner = row[1]
+            existed = row is not None
+            if existed and row[0] != sid:
+                owner = row[0]
                 raise SolutionDeployConflict(
                     f"table {tbl_id} is already owned by "
                     f"{'_repo/' if owner is None else f'solution {owner}'}; "
                     f"a bundle may not reuse another owner's entity id"
                 )
+            prev_access = row[1] if existed else None
 
+            # Resolve + VALIDATE policies before persisting (mirrors REST/manifest
+            # paths) so a malformed AST is rejected at deploy, not at read time.
+            policies = mtbl.get("policies")
+            if policies is not None:
+                access = {"policies": policies}
+                TablePolicies.model_validate(access)  # raises on a bad AST
+            else:
+                # None / absent -> seed admin_bypass, matching API-created tables
+                # and manifest import; without it RLS denies all table I/O.
+                access = make_seed_admin_bypass()
+
+            # Full-replace: description and schema are always set from the bundle
+            # (solution-owned metadata), so removing them in the bundle clears
+            # the DB value rather than leaving it stale.
             values: dict[str, Any] = {
                 "name": mtbl["name"],
+                "description": mtbl.get("description"),
+                "schema": mtbl.get("schema"),
+                "access": access,
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
-            if mtbl.get("description") is not None:
-                values["description"] = mtbl["description"]
-            # schema is intentionally always set from the bundle (structure is
-            # solution-owned); None clears it, matching a bundle with no schema.
-            values["schema"] = mtbl.get("schema")
-            # policies (flat list) -> access JSONB. None / absent gets the seed
-            # admin_bypass policy, matching API-created tables and manifest import
-            # ("When null on import, the seed admin_bypass policy is written") —
-            # without it the table has no access policy and RLS denies all I/O.
-            policies = mtbl.get("policies")
-            if policies is not None:
-                values["access"] = {"policies": policies}
-            else:
-                from shared.policies.probe import make_seed_admin_bypass
-
-                values["access"] = make_seed_admin_bypass()
 
             await Upsert(
                 model=Table, id=tbl_id, values=values, match_on="id"
             ).execute(self.db)
+
+            # Invalidate active websocket subscribers' policy cache when the
+            # access policy actually changed (the REST PATCH path does this too;
+            # without it subscribers keep the old authorization until reconnect).
+            if existed and prev_access != access:
+                await publish_policy_changed(str(tbl_id))
 
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────
     async def _reconcile_deletions(

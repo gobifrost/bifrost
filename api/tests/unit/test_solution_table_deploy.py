@@ -91,6 +91,67 @@ class TestSolutionTableDeploy:
         ).scalars().all()
         assert set(rows) == {"row-1", "row-2"}
 
+    async def test_malformed_policy_is_rejected_at_deploy(self, db_session) -> None:
+        """A bad policy AST is rejected at deploy, not stored to fail at read
+        time (Codex Sub-plan 3 P2)."""
+        db = db_session
+        sol = await self._install(db)
+        tid = str(uuid.uuid4())
+        bad = {"id": tid, "name": "bad", "schema": {}, "policies": [{"not_a_real_op": 123}]}
+        with pytest.raises(Exception):
+            await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[bad]))
+        await db.rollback()
+
+    async def test_full_replace_clears_removed_description(self, db_session) -> None:
+        """Removing description from the bundle clears the DB value (full
+        replace), not leaves it stale (Codex Sub-plan 3 P2)."""
+        db = db_session
+        sol = await self._install(db)
+        tid = str(uuid.uuid4())
+        e = _table_entry(tid, "t", {})
+        e["description"] = "v1 desc"
+        await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[e]))
+        await db.flush()
+        assert (await db.get(Table, uuid.UUID(tid))).description == "v1 desc"
+
+        # Redeploy without description -> cleared.
+        await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[_table_entry(tid, "t", {})]))
+        await db.flush()
+        assert (await db.get(Table, uuid.UUID(tid))).description is None
+
+    async def test_policy_change_emits_policy_changed(self, db_session, monkeypatch) -> None:
+        """Redeploying with changed policies invalidates subscribers' policy
+        cache via publish_policy_changed; a first deploy (insert) does not
+        (Codex Sub-plan 3 P1)."""
+        import src.core.pubsub as pubsub
+
+        calls: list[str] = []
+
+        async def _spy(table_id: str) -> None:
+            calls.append(table_id)
+
+        monkeypatch.setattr(pubsub, "publish_policy_changed", _spy)
+
+        db = db_session
+        sol = await self._install(db)
+        tid = str(uuid.uuid4())
+        admin_policy = [{"name": "p1", "actions": ["read", "create", "update", "delete"]}]
+
+        # Insert with explicit policies — no emission on create.
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol, tables=[{"id": tid, "name": "t", "schema": {}, "policies": admin_policy}],
+        ))
+        await db.flush()
+        assert calls == []
+
+        # Redeploy with DIFFERENT policies — emission fires once.
+        other_policy = [{"name": "p1", "actions": ["read"]}]
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol, tables=[{"id": tid, "name": "t", "schema": {}, "policies": other_policy}],
+        ))
+        await db.flush()
+        assert calls == [tid]
+
     async def test_redeploy_removing_table_deletes_it_for_this_install_only(self, db_session) -> None:
         db = db_session
         sol = await self._install(db)
