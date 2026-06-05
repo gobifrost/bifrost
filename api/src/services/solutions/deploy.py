@@ -43,6 +43,20 @@ from src.services.sync_ops import Upsert
 logger = logging.getLogger(__name__)
 
 
+def _form_fields_from_manifest(mform: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract a form's fields from a manifest body.
+
+    The canonical manifest serializes fields under ``form_schema.fields`` (see
+    ``manifest_generator.serialize_form``); a top-level ``fields`` key is also
+    accepted for the ad-hoc/test shape. Reading the wrong key silently deploys a
+    form with NO fields.
+    """
+    schema = mform.get("form_schema")
+    if isinstance(schema, dict) and schema.get("fields"):
+        return list(schema["fields"])
+    return list(mform.get("fields") or [])
+
+
 class SolutionDeployConflict(Exception):
     """A bundle references an entity id owned by _repo/ or another install."""
 
@@ -369,14 +383,22 @@ class SolutionDeployer:
                 "created_by": mform.get("created_by") or "solution-deploy",
             }
             await Upsert(model=Form, id=form_id, values=values, match_on="id").execute(self.db)
-            await self._upsert_form_fields(form_id, mform.get("fields") or [])
+            await self._upsert_form_fields(form_id, _form_fields_from_manifest(mform))
 
     async def _upsert_form_fields(
         self, form_id: UUID, fields: list[dict[str, Any]]
     ) -> None:
-        """Full-replace a form's fields from the bundle (portable content)."""
+        """Full-replace a form's fields from the bundle (portable content).
+
+        Maps the full FormField column set the manifest carries (see
+        ``manifest_generator._form_field_to_schema_dict``) so deployed forms are
+        complete, not stripped.
+        """
+        from uuid import UUID as _UUID
+
         await self.db.execute(delete(FormField).where(FormField.form_id == form_id))
         for pos, fld in enumerate(fields):
+            dp = fld.get("data_provider_id")
             self.db.add(FormField(
                 form_id=form_id,
                 name=fld["name"],
@@ -388,6 +410,15 @@ class SolutionDeployer:
                 help_text=fld.get("help_text"),
                 default_value=fld.get("default_value"),
                 options=fld.get("options"),
+                data_provider_id=_UUID(dp) if dp else None,
+                data_provider_inputs=fld.get("data_provider_inputs"),
+                visibility_expression=fld.get("visibility_expression"),
+                validation=fld.get("validation"),
+                allowed_types=fld.get("allowed_types"),
+                multiple=fld.get("multiple"),
+                max_size_mb=fld.get("max_size_mb"),
+                content=fld.get("content"),
+                allow_as_query_param=fld.get("allow_as_query_param"),
             ))
 
     async def _upsert_agents(

@@ -43,11 +43,16 @@ class TestSolutionFormAgentDeploy:
         db = db_session
         sol = await self._install(db)
         fid = str(uuid.uuid4())
+        # Use the REAL manifest shape: fields live under form_schema.fields
+        # (NOT a top-level `fields` key — reading the wrong key silently drops
+        # all fields, which an earlier version of this test masked).
         result = await SolutionDeployer(db).deploy(SolutionBundle(
             solution=sol,
             forms=[{
                 "id": fid, "name": "intake",
-                "fields": [{"name": "email", "type": "text", "required": True}],
+                "form_schema": {
+                    "fields": [{"name": "email", "type": "text", "required": True}],
+                },
             }],
         ))
         await db.flush()
@@ -56,14 +61,14 @@ class TestSolutionFormAgentDeploy:
         assert form.solution_id == sol.id
         assert form.organization_id == sol.organization_id
         assert result.forms_upserted == 1
-        # The portable fields were created too.
+        # The portable fields (from form_schema.fields) were created.
         from sqlalchemy import select as _select
 
         from src.models.orm.forms import FormField
         names = (await db.execute(
             _select(FormField.name).where(FormField.form_id == uuid.UUID(fid))
         )).scalars().all()
-        assert "email" in names
+        assert "email" in names, "form fields not deployed from form_schema.fields"
 
     async def test_deploy_agent_stamps_solution_and_scope(self, db_session):
         db = db_session
