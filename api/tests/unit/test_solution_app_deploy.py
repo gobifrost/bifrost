@@ -134,3 +134,41 @@ class TestSolutionAppDeploy:
             await SolutionDeployer(db).deploy(
                 SolutionBundle(solution=sol, apps=[_app_entry(str(app_id), "dash")])
             )
+
+
+@pytest.mark.e2e
+class TestMultiInstallAppIdentity:
+    """Two installs of the same app-bearing solution must NOT collide on the
+    app slug/repo_path global unique index (criterion 9, Codex G3)."""
+
+    async def _install(self, db, slug):
+        # Two distinct installs (distinct solution_id) — org=None keeps the test
+        # free of Organization FK setup; the per-install uniqueness is keyed on
+        # solution_id, which differs between the two.
+        sol = Solution(id=uuid.uuid4(), slug=slug, name=slug.upper(), organization_id=None)
+        db.add(sol)
+        await db.flush()
+        return sol
+
+    async def test_same_app_slug_two_installs(self, db_session, _stub_app_build):
+        db = db_session
+        # Two independent installs (different solution_id + org).
+        sol_a = await self._install(db, f"mi-a-{uuid.uuid4().hex[:8]}")
+        sol_b = await self._install(db, f"mi-b-{uuid.uuid4().hex[:8]}")
+        shared_slug = f"dash-{uuid.uuid4().hex[:8]}"
+        app_a, app_b = str(uuid.uuid4()), str(uuid.uuid4())
+
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol_a, apps=[{**_app_entry(app_a, shared_slug), "repo_path": f"apps/{shared_slug}"}],
+        ))
+        await db.flush()
+        # Second install, SAME slug + repo_path — must not raise unique violation.
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol_b, apps=[{**_app_entry(app_b, shared_slug), "repo_path": f"apps/{shared_slug}"}],
+        ))
+        await db.flush()
+
+        a = await db.get(Application, uuid.UUID(app_a))
+        b = await db.get(Application, uuid.UUID(app_b))
+        assert a.solution_id == sol_a.id and b.solution_id == sol_b.id
+        assert a.slug == b.slug == shared_slug  # same slug, different installs
