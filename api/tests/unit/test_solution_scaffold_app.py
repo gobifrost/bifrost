@@ -34,6 +34,11 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "VITE_BIFROST_TOKEN" in vc
     assert "process.env.BIFROST_ACCESS_TOKEN" in vc  # env first
     assert "dirname" in vc  # walks up to find the .env
+    # SECURITY (Codex R6-P1-c): the token is injected ONLY for `vite` serve
+    # (dev), never for `vite build` — baking it into the production bundle would
+    # leak a usable credential to every app user. The config must gate `define`
+    # on the build command.
+    assert 'command === "serve"' in vc
 
     # The README must NOT tell the developer to paste a token.
     assert "paste" not in files["README.md"].lower()

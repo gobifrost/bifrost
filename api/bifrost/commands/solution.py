@@ -186,14 +186,23 @@ function readBifrostEnv() {
   return out;
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   const env = readBifrostEnv();
+  // SECURITY: the dev token is injected ONLY for `vite` (serve / `npm run dev`),
+  // never for `vite build`. Baking BIFROST_ACCESS_TOKEN into the production
+  // bundle via `define` would ship a usable credential to every app user
+  // (Codex R6-P1-c). In a deployed build the token comes from
+  // window.__BIFROST_APP__ at runtime (per viewer); the bundle stays tokenless.
+  const define =
+    command === "serve"
+      ? {
+          "import.meta.env.VITE_BIFROST_API_URL": JSON.stringify(env.url),
+          "import.meta.env.VITE_BIFROST_TOKEN": JSON.stringify(env.token),
+        }
+      : {};
   return {
     plugins: [react()],
-    define: {
-      "import.meta.env.VITE_BIFROST_API_URL": JSON.stringify(env.url),
-      "import.meta.env.VITE_BIFROST_TOKEN": JSON.stringify(env.token),
-    },
+    define,
   };
 });
 """
@@ -243,8 +252,10 @@ import { Routes, Route, Link } from "react-router-dom";
 import { BifrostHeader, useWorkflow } from "bifrost";
 
 function Home() {
-  // Replace "your-workflow" with a real workflow name/id in your solution.
-  const wf = useWorkflow<{ message: string }>("your-workflow");
+  // Pass a workflow UUID or a portable `path::function` ref (e.g.
+  // "workflows/hello.py::main"). Bare names are NOT resolvable — workflow
+  // names aren't unique, so the execute endpoint 404s on them.
+  const wf = useWorkflow<{ message: string }>("workflows/your_workflow.py::main");
   return (
     <main style={{ padding: 24 }}>
       <h1>Hello from your Bifrost app</h1>
@@ -456,6 +467,14 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             for f in app_dir.rglob("*"):
                 if not f.is_file() or f.name in _APP_SKIP_NAMES:
                     continue
+                # Never bundle local env files. A developer's `.env` /
+                # `.env.local` holds BIFROST_ACCESS_TOKEN (the documented local
+                # dev override) — shipping it lets the server-side Vite build
+                # bake the token into the public JS, leaking it to every app
+                # user (Codex R6-P1-c). The token reaches the runtime via
+                # window.__BIFROST_APP__, never the bundle.
+                if f.name == ".env" or f.name.startswith(".env."):
+                    continue
                 rel_parts = f.relative_to(app_dir).parts
                 # Skip anything inside a generated/dependency dir (node_modules,
                 # dist, …) — never bundle build output or deps.
@@ -488,24 +507,30 @@ class _AmbiguousInstall(Exception):
 
 
 def _resolve_target_install(
-    installs: list[dict], slug: str, scope: str
+    installs: list[dict], slug: str, scope: str, deployer_org_id: str | None
 ) -> str | None:
     """Resolve which existing install a disconnected deploy targets.
 
     Matches by (slug, scope). For ``global`` scope an install is one with
-    ``organization_id is None``; for ``org`` scope, ``organization_id`` is set.
+    ``organization_id is None``; for ``org`` scope, the install's
+    ``organization_id`` must equal the deployer's own org (``deployer_org_id``) —
+    NOT merely "any org-scoped install with this slug". Without that filter a
+    developer in org-B running ``bifrost deploy`` of a slug that org-A already
+    installed would full-replace org-A's install (Codex R6-P1-b). Each org's
+    install of a slug is independent (success-criteria §3.4 / criterion 9), so
+    the caller only ever resolves to (or creates) an install in their own org.
 
     Returns the install id if exactly one matches, ``None`` if none match (the
     caller creates a fresh install). Raises :class:`_AmbiguousInstall` if MORE
-    THAN ONE org-scoped install shares the slug — silently full-replacing the
-    first would clobber the wrong client's install (success-criteria §3.4). The
-    user must disambiguate with ``--solution <id>``.
+    THAN ONE install matches within the resolved scope — silently full-replacing
+    the first would clobber the wrong install. The user must disambiguate with
+    ``--solution <id>``.
     """
     matches = [
         s for s in installs
         if s.get("slug") == slug and (
             (scope == "global" and s.get("organization_id") is None)
-            or (scope == "org" and s.get("organization_id") is not None)
+            or (scope == "org" and s.get("organization_id") == deployer_org_id)
         )
     ]
     if not matches:
@@ -551,8 +576,12 @@ def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
             # Resolve or create the install by (slug, scope).
             resp = await client.get("/api/solutions")
             installs = resp.json().get("solutions", []) if resp.status_code == 200 else []
+            org = client.organization or {}
+            deployer_org_id = org.get("id")
             try:
-                target_id = _resolve_target_install(installs, descriptor.slug, descriptor.scope)
+                target_id = _resolve_target_install(
+                    installs, descriptor.slug, descriptor.scope, deployer_org_id
+                )
             except _AmbiguousInstall as e:
                 click.echo(str(e), err=True)
                 return 1

@@ -122,5 +122,28 @@ def test_collect_apps_skips_node_modules_and_dist(tmp_path) -> None:
     assert not any(k.startswith("dist/") for k in all_keys)
 
 
+def test_collect_apps_excludes_env_files(tmp_path) -> None:
+    """Local env files (.env / .env.local) must NEVER be bundled — they hold the
+    dev's BIFROST_ACCESS_TOKEN, and shipping one lets the server-side Vite build
+    bake the token into public JS, leaking it to every app user (Codex R6-P1-c).
+    The token reaches a deployed app via window.__BIFROST_APP__, not the bundle."""
+    (tmp_path / ".bifrost").mkdir()
+    app = tmp_path / "apps" / "dash"
+    (app / "src").mkdir(parents=True)
+    (app / "src" / "main.tsx").write_text("export {}\n")
+    (app / ".env").write_text("BIFROST_ACCESS_TOKEN=secret-token\n")
+    (app / ".env.local").write_text("BIFROST_ACCESS_TOKEN=secret-too\n")
+    (app / ".env.production").write_text("BIFROST_API_URL=https://x\n")
+    (tmp_path / ".bifrost" / "apps.yaml").write_text(
+        "apps:\n  55555555-5555-5555-5555-555555555555:\n"
+        "    id: 55555555-5555-5555-5555-555555555555\n"
+        "    slug: dash\n    name: D\n    path: apps/dash\n    app_model: standalone_v2\n"
+    )
+    a = _collect_apps(tmp_path)[0]
+    assert a["src_files"]["src/main.tsx"] == "export {}\n"
+    all_keys = list(a["src_files"]) + list(a["bin_files"])
+    assert not any(k == ".env" or k.startswith(".env.") for k in all_keys), all_keys
+
+
 def test_collect_apps_empty_when_no_manifest(tmp_path) -> None:
     assert _collect_apps(tmp_path) == []

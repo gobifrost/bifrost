@@ -9,7 +9,7 @@
  * same code runs in `npm run dev` (cross-origin, bearer token) and deployed.
  *
  * Two shapes, matching the v1 surface:
- *   - `useWorkflow(idOrName)` → a query-style result you trigger with `run()`.
+ *   - `useWorkflow(workflowRef)` → a query-style result you trigger with `run()`.
  *   - `run(input)` POSTs `/api/workflows/execute` with `sync: true` and returns
  *     the workflow `result`.
  */
@@ -35,10 +35,13 @@ interface ExecuteResponse {
 }
 
 /**
- * Run a Bifrost workflow by UUID or name from a v2 app. Must be called within a
+ * Run a Bifrost workflow by UUID or `path::function` ref from a v2 app. Bare
+ * workflow names are NOT supported — names aren't unique, so the server's
+ * `/api/workflows/execute` resolver only accepts a UUID or a portable
+ * `path::function` ref (anything else 404s). Must be called within a
  * `<BifrostProvider>` (throws otherwise — same contract as `useBifrostContext`).
  */
-export function useWorkflow<T = unknown>(workflowIdOrName: string): UseWorkflowState<T> {
+export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<T> {
   const { authedFetch } = useBifrostContext();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,7 +56,7 @@ export function useWorkflow<T = unknown>(workflowIdOrName: string): UseWorkflowS
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            workflow_id: workflowIdOrName,
+            workflow_id: workflowRef,
             input_data: input,
             sync: true,
           }),
@@ -76,7 +79,7 @@ export function useWorkflow<T = unknown>(workflowIdOrName: string): UseWorkflowS
         setLoading(false);
       }
     },
-    [authedFetch, workflowIdOrName],
+    [authedFetch, workflowRef],
   );
 
   return { data, loading, error, run };

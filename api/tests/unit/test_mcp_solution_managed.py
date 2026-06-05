@@ -67,3 +67,129 @@ async def test_mcp_update_table_refuses_managed(db_session, monkeypatch):
     payload = result.model_dump() if hasattr(result, "model_dump") else result
     text = str(payload)
     assert SOLUTION_MANAGED_MESSAGE in text, text
+
+
+async def _managed_app(db, repo_path: str) -> uuid.UUID:
+    from src.models.orm.applications import Application
+    from src.models.orm.solutions import Solution
+
+    sol = Solution(id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP", organization_id=None)
+    db.add(sol)
+    await db.flush()
+    aid = uuid.uuid4()
+    db.add(Application(
+        id=aid,
+        name=f"app_{uuid.uuid4().hex[:8]}",
+        slug=f"app-{uuid.uuid4().hex[:8]}",
+        organization_id=None,
+        solution_id=sol.id,
+        repo_path=repo_path,
+        created_by="system",
+    ))
+    await db.flush()
+    return aid
+
+
+def _fake_db_cm(db_session):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _cm(_context):
+        yield db_session
+
+    return _cm
+
+
+async def test_mcp_publish_app_refuses_managed_without_s3_write(db_session, monkeypatch):
+    """publish_app must reject a solution-managed app BEFORE copying preview→live."""
+    from src.services.app_storage import AppStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    aid = await _managed_app(db_session, repo_path="apps/managed-pub")
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    # Sentinel: publish() (the preview→live S3 copy) must never be invoked.
+    published = {"called": False}
+
+    async def _boom_publish(self, app_id):  # noqa: ANN001
+        published["called"] = True
+        raise AssertionError("S3 publish must not run for a solution-managed app")
+
+    monkeypatch.setattr(AppStorageService, "publish", _boom_publish)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.publish_app(context, app_id=str(aid))
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    text = str(payload)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    assert published["called"] is False
+
+
+async def test_mcp_push_files_refuses_managed_without_s3_write(db_session, monkeypatch):
+    """push_files must reject files under a managed app's repo_path BEFORE any S3 write."""
+    from src.services.app_storage import AppStorageService
+    from src.services.file_storage import FileStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    await _managed_app(db_session, repo_path="apps/managed-push")
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    # Sentinels: neither the _repo write nor the preview write may run.
+    writes = {"repo": False, "preview": False}
+
+    async def _boom_write_file(self, *args, **kwargs):  # noqa: ANN001
+        writes["repo"] = True
+        raise AssertionError("_repo write must not run for a solution-managed app")
+
+    async def _boom_write_preview(self, *args, **kwargs):  # noqa: ANN001
+        writes["preview"] = True
+        raise AssertionError("preview write must not run for a solution-managed app")
+
+    monkeypatch.setattr(FileStorageService, "write_file", _boom_write_file)
+    monkeypatch.setattr(AppStorageService, "write_preview_file", _boom_write_preview)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.push_files(
+        context,
+        files={"apps/managed-push/pages/index.tsx": "export default () => null;"},
+    )
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    text = str(payload)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    assert writes["repo"] is False
+    assert writes["preview"] is False
+
+
+async def test_mcp_push_files_allows_unmanaged(db_session, monkeypatch):
+    """An ad-hoc (non-managed) app's files still push — the guard is a no-op for them."""
+    from src.services.app_storage import AppStorageService
+    from src.services.file_storage import FileStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    wrote = {"repo": False}
+
+    async def _ok_write_file(self, path, content, updated_by):  # noqa: ANN001
+        wrote["repo"] = True
+
+    async def _noop_write_preview(self, *args, **kwargs):  # noqa: ANN001
+        pass
+
+    monkeypatch.setattr(FileStorageService, "write_file", _ok_write_file)
+    monkeypatch.setattr(AppStorageService, "write_preview_file", _noop_write_preview)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.push_files(
+        context,
+        files={"apps/adhoc-app/pages/index.tsx": "export default () => null;"},
+    )
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    text = str(payload)
+    assert SOLUTION_MANAGED_MESSAGE not in text, text
+    assert wrote["repo"] is True

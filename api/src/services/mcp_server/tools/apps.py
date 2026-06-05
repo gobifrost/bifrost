@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import HTTPException
 from fastmcp.tools import ToolResult
 
 from src.core.pubsub import publish_app_draft_update, publish_app_published
@@ -21,6 +22,17 @@ from src.services.mcp_server.tools._http_bridge import call_rest
 from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
+
+
+def _guard_message(err: Exception) -> str:
+    """Extract the read-only message from a solution-guard rejection.
+
+    ``assert_not_solution_managed`` raises ``HTTPException`` (whose ``detail``
+    holds the locked wording); the before_flush backstop raises
+    ``SolutionManagedWriteError`` (whose ``str()`` is the same wording).
+    """
+    detail = getattr(err, "detail", None)
+    return str(detail) if detail is not None else str(err)
 
 
 async def list_apps(context: Any) -> ToolResult:
@@ -375,6 +387,10 @@ async def publish_app(context: Any, app_id: str) -> ToolResult:
 
     from src.models.orm.applications import Application
     from src.services.app_storage import AppStorageService
+    from src.services.solutions.guard import (
+        SolutionManagedWriteError,
+        assert_not_solution_managed,
+    )
 
     logger.info(f"MCP publish_app called with id={app_id}")
 
@@ -395,6 +411,15 @@ async def publish_app(context: Any, app_id: str) -> ToolResult:
 
             if not app:
                 return error_result(f"Application not found: {app_id}")
+
+            # Refuse before any S3 write: app_storage.publish() copies
+            # preview → live in S3, which the before_flush backstop cannot
+            # see (criterion 6). The guard raises HTTP 409 with the locked
+            # message; surface it as an error_result, not a 500.
+            try:
+                assert_not_solution_managed(app)
+            except (HTTPException, SolutionManagedWriteError) as guard_err:
+                return error_result(_guard_message(guard_err))
 
             # Publish via AppStorageService: copy preview → live in S3
             app_storage = AppStorageService()
@@ -782,14 +807,41 @@ async def push_files(
 
     from sqlalchemy import select
 
+    from src.models.orm.applications import Application
     from src.models.orm.file_index import FileIndex
     from src.services.app_storage import AppStorageService
     from src.services.file_storage import FileStorageService
+    from src.services.solutions.guard import (
+        SOLUTION_MANAGED_MESSAGE,
+        is_solution_managed,
+    )
 
     logger.info(f"MCP push_files called with {len(files)} file(s)")
 
     try:
         async with get_tool_db(context) as db:
+            # Refuse before any S3 write: file_storage.write_file (_repo) and
+            # app_storage.write_preview_file (preview) both write S3 without
+            # dirtying the Application row, so the before_flush backstop never
+            # fires for them (criterion 6). Reject the whole batch if ANY pushed
+            # file lands under a solution-managed app's repo_path.
+            all_apps = (await db.execute(select(Application))).scalars().all()
+            managed_prefixes = [
+                app_obj.repo_path.rstrip("/") + "/"
+                for app_obj in all_apps
+                if is_solution_managed(app_obj)
+            ]
+            blocked = sorted(
+                repo_path
+                for repo_path in files
+                if any(repo_path.startswith(p) for p in managed_prefixes)
+            )
+            if blocked:
+                return error_result(
+                    SOLUTION_MANAGED_MESSAGE,
+                    {"blocked_paths": blocked},
+                )
+
             file_storage = FileStorageService(db)
             created = 0
             updated = 0
@@ -846,11 +898,6 @@ async def push_files(
             # Compile app files that were pushed
             compile_warnings = []
             app_file_groups: dict[str, list[dict[str, str]]] = {}  # app_id -> files
-
-            # Load all apps to match pushed files against their repo_path
-            from src.models.orm.applications import Application
-            all_apps_result = await db.execute(select(Application))
-            all_apps = all_apps_result.scalars().all()
 
             # Build prefix -> app mapping
             app_by_prefix: dict[str, Application] = {}

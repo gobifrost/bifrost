@@ -78,6 +78,23 @@ RUN cd /app/src/services/app_compiler && npm install --production
 COPY api/src/services/app_bundler/package.json api/src/services/app_bundler/package-lock.json* /app/src/services/app_bundler/
 RUN cd /app/src/services/app_bundler && npm install --production
 
+# SDK package builder (esbuild) + the v2 `bifrost` SDK source it bundles. The
+# SDK source of truth lives in client/src/lib/app-sdk; it is copied here so
+# /api/sdk/download can bundle + serve the installable `bifrost` package without
+# the client/ tree at runtime. A unit test enforces this file list stays in sync.
+COPY api/src/services/sdk_package/package.json /app/src/services/sdk_package/
+COPY api/src/services/sdk_package/build_sdk.js /app/src/services/sdk_package/
+RUN cd /app/src/services/sdk_package && npm install --production
+COPY client/src/lib/app-sdk/provider.tsx \
+     client/src/lib/app-sdk/tables.ts \
+     client/src/lib/app-sdk/use-table.ts \
+     client/src/lib/app-sdk/use-infinite-table.ts \
+     client/src/lib/app-sdk/ws-client.ts \
+     client/src/lib/app-sdk/use-workflow.ts \
+     client/src/lib/app-sdk/bifrost-header.tsx \
+     /app/src/services/sdk_package/sdk_src/
+COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.ts
+
 # Create non-root user
 RUN useradd -m -u 1000 bifrost && \
     chown -R bifrost:bifrost /app
