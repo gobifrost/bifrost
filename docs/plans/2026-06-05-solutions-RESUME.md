@@ -31,14 +31,13 @@ from `/api/sdk/download` → `vite build` succeeded → `bifrost deploy` server-
 serves at `/apps/{slug}` with the entry in the manifest. Tokenless dev loop proven (vite walks up
 to the solution-root `.env` `bifrost login` wrote). That's the core "done" substance.
 
-**Codex review #5 came back with 1 P1 + 5 P2.** Fixed + committed: R5-P1 (v2 remount cache-bust),
-R5-P2 node_modules-skip, R5-P2 tokenless-dev, R5-P2 slug-advisory-lock. **In progress (do FIRST
-next session):**
-- **#21 finalize partial-failure** — router-deploy now maps `SolutionFinalizeIncomplete` → 502, but
-  **`git_sync.py:162` still propagates it raw** — give it the same handling, and add a test for the
-  finalize-incomplete path (force `upload_dist` to raise → assert the error type + that re-run heals).
-  Also decide if 502 is the right contract or whether to mark the install "needs-refinalize" for
-  auto-heal on next sync (cleaner, more machinery — worth a quick decision with the user).
+**Codex review #5 (1 P1 + 5 P2) — ALL FIXED + COMMITTED.** R5-P1 (v2 remount cache-bust),
+R5-P2 node_modules-skip, R5-P2 tokenless-dev, R5-P2 slug-advisory-lock (pg_advisory_xact_lock),
+R5-P2 finalize-retry. The finalize fix is what Codex actually asked for ("no queued retry"):
+each idempotent finalize step retries with backoff (3x); a blip is absorbed and the deploy
+completes normally; only a sustained outage raises `SolutionFinalizeIncomplete` → router 502 /
+git-sync logs-and-heals-next-sync. (Earlier 502-on-any-failure was backed out per user — it made
+good deploys look failed.) git_sync.py:162 now handles it. Tests cover transient-retry + sustained-raise.
 
 **The real struggle (the meta-problem):** each Codex pass finds NEW real depth — #3→6, #4→8, #5→6.
 This is NOT whack-a-mole on my fixes (only ~2 of 14 R4/R5 findings were holes in a prior fix); the
