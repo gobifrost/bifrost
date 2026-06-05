@@ -78,9 +78,12 @@ class SolutionDeployRequest(BaseModel):
 
     python_files: dict[str, str] = Field(default_factory=dict)
     workflows: list[dict[str, Any]] = Field(default_factory=list)
+    tables: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SolutionDeployResponse(BaseModel):
     solution_id: UUID
     workflows_upserted: int = 0
     workflows_deleted: int = 0
+    tables_upserted: int = 0
+    tables_deleted: int = 0

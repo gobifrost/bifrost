@@ -32,6 +32,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.solutions import Solution
+from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
@@ -49,6 +50,8 @@ class DeployResult:
 
     workflows_upserted: int = 0
     workflows_deleted: int = 0
+    tables_upserted: int = 0
+    tables_deleted: int = 0
 
 
 @dataclass
@@ -64,6 +67,7 @@ class SolutionBundle:
     solution: Solution
     python_files: dict[str, str] = field(default_factory=dict)
     workflows: list[dict[str, Any]] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SolutionDeployer:
@@ -84,10 +88,13 @@ class SolutionDeployer:
 
         await self._write_python(sid, bundle.python_files)
         await self._upsert_workflows(solution, bundle.workflows)
-        deleted = await self._reconcile_deletions(sid, bundle)
+        await self._upsert_tables(solution, bundle.tables)
+        wf_deleted, tbl_deleted = await self._reconcile_deletions(sid, bundle)
         return DeployResult(
             workflows_upserted=len(bundle.workflows),
-            workflows_deleted=deleted,
+            workflows_deleted=wf_deleted,
+            tables_upserted=len(bundle.tables),
+            tables_deleted=tbl_deleted,
         )
 
     # ── 1. Python source → SolutionStorage (full replace + cache sync) ───────
@@ -169,17 +176,82 @@ class SolutionDeployer:
                 model=Workflow, id=wf_id, values=values, match_on="id"
             ).execute(self.db)
 
+    async def _upsert_tables(
+        self, solution: Solution, tables: list[dict[str, Any]]
+    ) -> None:
+        """Upsert table SCHEMA + POLICIES only. Row data (Document records) is
+        runtime state and is never written or wiped by deploy (criterion 11).
+
+        ``policies`` in the manifest is a flat list stored under the Table
+        ``access`` JSONB column. A redeploy with a changed schema updates the
+        ``schema`` JSONB in place; the table row (and its Documents via the
+        FK) survives untouched.
+        """
+        sid = solution.id
+        for mtbl in tables:
+            tbl_id = UUID(mtbl["id"])
+
+            # Same ownership guard as workflows: never re-stamp a _repo/ or
+            # other-install row.
+            row = (
+                await self.db.execute(
+                    select(Table.id, Table.solution_id).where(Table.id == tbl_id)
+                )
+            ).first()
+            if row is not None and row[1] != sid:
+                owner = row[1]
+                raise SolutionDeployConflict(
+                    f"table {tbl_id} is already owned by "
+                    f"{'_repo/' if owner is None else f'solution {owner}'}; "
+                    f"a bundle may not reuse another owner's entity id"
+                )
+
+            values: dict[str, Any] = {
+                "name": mtbl["name"],
+                "organization_id": solution.organization_id,
+                "solution_id": sid,
+            }
+            if mtbl.get("description") is not None:
+                values["description"] = mtbl["description"]
+            # schema is intentionally always set from the bundle (structure is
+            # solution-owned); None clears it, matching a bundle with no schema.
+            values["schema"] = mtbl.get("schema")
+            # policies (flat list) -> access JSONB. None / absent gets the seed
+            # admin_bypass policy, matching API-created tables and manifest import
+            # ("When null on import, the seed admin_bypass policy is written") —
+            # without it the table has no access policy and RLS denies all I/O.
+            policies = mtbl.get("policies")
+            if policies is not None:
+                values["access"] = {"policies": policies}
+            else:
+                from shared.policies.probe import make_seed_admin_bypass
+
+                values["access"] = make_seed_admin_bypass()
+
+            await Upsert(
+                model=Table, id=tbl_id, values=values, match_on="id"
+            ).execute(self.db)
+
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────
-    async def _reconcile_deletions(self, sid: UUID, bundle: SolutionBundle) -> int:
+    async def _reconcile_deletions(
+        self, sid: UUID, bundle: SolutionBundle
+    ) -> tuple[int, int]:
         """Delete this install's entities that are absent from the bundle.
 
         Strictly scoped: ``solution_id == sid AND id NOT IN bundle_ids``. Never
-        touches _repo/ (solution_id IS NULL) or another install. Returns the
-        number of rows deleted.
+        touches _repo/ (solution_id IS NULL) or another install. For tables,
+        only the Table row is swept — Document (row) data is never deleted here;
+        a removed table's rows go via the Table FK cascade, which only fires when
+        the table itself is genuinely absent from the bundle. Returns
+        (workflows_deleted, tables_deleted).
         """
-        return await self._reconcile_one(
+        wf_deleted = await self._reconcile_one(
             Workflow, sid, {UUID(w["id"]) for w in bundle.workflows}
         )
+        tbl_deleted = await self._reconcile_one(
+            Table, sid, {UUID(t["id"]) for t in bundle.tables}
+        )
+        return wf_deleted, tbl_deleted
 
     async def _reconcile_one(
         self, model: type, sid: UUID, present_ids: set[UUID]

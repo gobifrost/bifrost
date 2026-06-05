@@ -107,6 +107,33 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+def _collect_tables(workspace: pathlib.Path) -> list[dict]:
+    """Read table SCHEMA/POLICIES from .bifrost/tables.yaml (keyed by UUID).
+
+    Only structure is deployed — row data is runtime state and never carried in
+    a bundle (criterion 11).
+    """
+    tbl_file = workspace / ".bifrost" / "tables.yaml"
+    if not tbl_file.is_file():
+        return []
+    data = yaml.safe_load(tbl_file.read_text()) or {}
+    raw = data.get("tables", {})
+    entries: list[dict] = []
+    for key, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        entry = {
+            "id": body.get("id", key),
+            "name": body.get("name") or key,
+            "description": body.get("description"),
+            "schema": body.get("schema"),
+        }
+        if "policies" in body:
+            entry["policies"] = body["policies"]
+        entries.append(entry)
+    return entries
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
@@ -123,6 +150,7 @@ def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
 
     python_files = _collect_python_files(workspace)
     workflows = _collect_workflows(workspace)
+    tables = _collect_tables(workspace)
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -157,6 +185,7 @@ def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
         deploy = await client.post(f"/api/solutions/{target_id}/deploy", json={
             "python_files": python_files,
             "workflows": workflows,
+            "tables": tables,
         })
         if deploy.status_code not in (200, 201):
             click.echo(f"Deploy failed: {deploy.status_code} {deploy.text}", err=True)
