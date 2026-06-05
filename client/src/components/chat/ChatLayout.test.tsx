@@ -11,7 +11,17 @@ import { renderWithProviders, screen } from "@/test-utils";
 
 // Stub the children — their own tests cover their behavior.
 vi.mock("./ChatSidebar", () => ({
-	ChatSidebar: () => <div data-marker="sidebar" />,
+	ChatSidebar: ({
+		onConversationSelected,
+	}: {
+		onConversationSelected?: () => void;
+	}) => (
+		<div data-marker="sidebar">
+			<button type="button" onClick={onConversationSelected}>
+				Mock select conversation
+			</button>
+		</div>
+	),
 }));
 vi.mock("./ChatWindow", () => ({
 	ChatWindow: ({
@@ -51,9 +61,24 @@ vi.mock("@/hooks/useUserPermissions", () => ({
 	useUserPermissions: () => ({ isPlatformAdmin: false }),
 }));
 
+const mediaQueryState = {
+	matches: true,
+};
+
+vi.mock("@/hooks/useMediaQuery", () => ({
+	useMediaQuery: () => mediaQueryState.matches,
+}));
+
 import { ChatLayout } from "./ChatLayout";
 
+function getSidebarShell(container: HTMLElement) {
+	return container
+		.querySelector('[data-marker="sidebar"]')
+		?.parentElement?.parentElement;
+}
+
 beforeEach(() => {
+	mediaQueryState.matches = true;
 	storeState.activeConversationId = null;
 	storeState.setActiveConversation.mockReset();
 	conversationRef.data = undefined;
@@ -122,5 +147,54 @@ describe("ChatLayout — composition", () => {
 				b.querySelector("svg"),
 		);
 		expect(reopen).toBeTruthy();
+	});
+
+	it("keeps the sidebar out of the layout by default on mobile", () => {
+		mediaQueryState.matches = false;
+
+		const { container } = renderWithProviders(<ChatLayout />);
+
+		expect(
+			screen.getByRole("button", { name: /open chat sidebar/i }),
+		).toBeInTheDocument();
+		const sidebarShell = getSidebarShell(container);
+		expect(sidebarShell?.className).toContain("w-0");
+		expect(screen.getByText("no-convo|no-agent")).toBeInTheDocument();
+	});
+
+	it("closes the mobile sidebar after a conversation is selected", async () => {
+		mediaQueryState.matches = false;
+		const { user, container } = renderWithProviders(<ChatLayout />);
+
+		await user.click(
+			screen.getByRole("button", { name: /open chat sidebar/i }),
+		);
+		expect(
+			getSidebarShell(container)?.className,
+		).not.toContain("w-0");
+
+		await user.click(
+			screen.getByRole("button", { name: /mock select conversation/i }),
+		);
+
+		expect(
+			getSidebarShell(container)?.className,
+		).toContain("w-0");
+	});
+
+	it("opens the mobile sidebar above the app header as an opaque drawer", async () => {
+		mediaQueryState.matches = false;
+		const { user, container } = renderWithProviders(<ChatLayout />);
+
+		await user.click(
+			screen.getByRole("button", { name: /open chat sidebar/i }),
+		);
+
+		const sidebarShell = getSidebarShell(container);
+		expect(sidebarShell?.className).toContain("z-50");
+		expect(sidebarShell?.className).toContain("fixed");
+		expect(sidebarShell?.className).toContain("bg-background");
+		expect(sidebarShell?.style.width).toBe("20rem");
+		expect(sidebarShell?.style.maxWidth).toBe("calc(100vw - 2rem)");
 	});
 });

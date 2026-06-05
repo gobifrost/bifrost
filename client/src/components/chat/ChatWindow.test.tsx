@@ -31,11 +31,17 @@ const streamRef = {
 	stopStreaming: vi.fn(),
 };
 
+const createConversationRef = {
+	mutate: vi.fn(),
+	isPending: false,
+};
+
 vi.mock("@/hooks/useChat", () => ({
 	useMessages: () => ({
 		data: messagesRef.data,
 		isLoading: messagesRef.isLoading,
 	}),
+	useCreateConversation: () => createConversationRef,
 }));
 
 vi.mock("@/hooks/useChatStream", () => ({
@@ -44,6 +50,8 @@ vi.mock("@/hooks/useChatStream", () => ({
 
 // chatStore: ChatWindow uses a few selectors. Return stable defaults.
 const storeSelectors = {
+	setActiveConversation: vi.fn(),
+	setActiveAgent: vi.fn(),
 	messagesByConversation: {} as Record<string, unknown[]>,
 	systemEventsByConversation: {} as Record<string, unknown[]>,
 	streamingMessageIds: {} as Record<string, string | null>,
@@ -56,6 +64,14 @@ vi.mock("@/stores/chatStore", () => ({
 		selector(storeSelectors),
 	useTodos: () => storeSelectors.todos,
 }));
+
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+	const actual = await vi.importActual<typeof import("react-router-dom")>(
+		"react-router-dom",
+	);
+	return { ...actual, useNavigate: () => mockNavigate };
+});
 
 // Child components we don't need to exercise — stub to simple markers.
 vi.mock("./ChatMessage", () => ({
@@ -128,10 +144,15 @@ beforeEach(() => {
 	streamRef.isStreaming = false;
 	streamRef.pendingQuestion = null;
 	streamRef.stopStreaming = vi.fn();
+	createConversationRef.mutate = vi.fn();
+	createConversationRef.isPending = false;
+	storeSelectors.setActiveConversation.mockReset();
+	storeSelectors.setActiveAgent.mockReset();
 	storeSelectors.messagesByConversation = {};
 	storeSelectors.systemEventsByConversation = {};
 	storeSelectors.streamingMessageIds = {};
 	storeSelectors.todos = [];
+	mockNavigate.mockReset();
 });
 
 // --- tests --------------------------------------------------------------
@@ -142,6 +163,7 @@ describe("ChatWindow — empty states", () => {
 		expect(
 			screen.getByRole("heading", { name: /start a conversation/i }),
 		).toBeInTheDocument();
+		expect(screen.getByLabelText(/chat input/i)).toBeInTheDocument();
 	});
 
 	it("shows the agent-specific greeting when an agent name is provided", () => {
@@ -209,5 +231,33 @@ describe("ChatWindow — messages render & send", () => {
 		fireEvent.keyDown(input, { key: "Enter" });
 
 		expect(streamRef.sendMessage).toHaveBeenCalledWith("hello");
+	});
+
+	it("creates a conversation from the blank draft and sends the first message", () => {
+		createConversationRef.mutate.mockImplementation((_variables, options) => {
+			options?.onSuccess?.({ id: "new-conversation-id" });
+		});
+
+		renderWithProviders(<ChatWindow conversationId={undefined} />);
+
+		const input = screen.getByLabelText(
+			/chat input/i,
+		) as HTMLInputElement;
+		fireEvent.change(input, { target: { value: "hello from draft" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		expect(createConversationRef.mutate).toHaveBeenCalledWith(
+			{ body: { channel: "chat" } },
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		);
+		expect(storeSelectors.setActiveConversation).toHaveBeenCalledWith(
+			"new-conversation-id",
+		);
+		expect(storeSelectors.setActiveAgent).toHaveBeenCalledWith(null);
+		expect(mockNavigate).toHaveBeenCalledWith("/chat/new-conversation-id");
+		expect(streamRef.sendMessage).toHaveBeenCalledWith(
+			"hello from draft",
+			"new-conversation-id",
+		);
 	});
 });

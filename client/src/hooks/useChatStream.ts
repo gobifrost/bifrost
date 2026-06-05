@@ -29,7 +29,7 @@ export interface UseChatStreamOptions {
 }
 
 export interface UseChatStreamReturn {
-	sendMessage: (message: string) => void;
+	sendMessage: (message: string, conversationIdOverride?: string) => void;
 	isConnected: boolean;
 	isStreaming: boolean;
 	// AskUserQuestion support
@@ -410,15 +410,16 @@ export function useChatStream({
 
 	// Send message via WebSocket
 	const sendMessage = useCallback(
-		async (message: string) => {
-			if (!conversationId) {
+		async (message: string, conversationIdOverride?: string) => {
+			const targetConversationId = conversationIdOverride ?? conversationId;
+			if (!targetConversationId) {
 				toast.error("No conversation selected");
 				return;
 			}
 
 			// Ensure connected
 			if (!webSocketService.isConnected()) {
-				await webSocketService.connectToChat(conversationId);
+				await webSocketService.connectToChat(targetConversationId);
 			}
 
 			// Generate stable ID for user message
@@ -428,7 +429,7 @@ export function useChatStream({
 			// Add optimistic user message with stable ID
 			const userMessage: UnifiedMessage = {
 				id: userMessageId,
-				conversation_id: conversationId,
+				conversation_id: targetConversationId,
 				role: "user",
 				content: message,
 				sequence: Date.now(),
@@ -436,21 +437,25 @@ export function useChatStream({
 				isOptimistic: true,
 				localId: userMessageId, // Use same ID as localId for dedup
 			};
-			addMessage(conversationId, userMessage);
+			addMessage(targetConversationId, userMessage);
 
 			// Start streaming state (no assistant placeholder yet - created on message_start)
 			startStreaming();
 
 			// Send the chat message with localId for deduplication
 			const sent = webSocketService.sendChatMessage(
-				conversationId,
+				targetConversationId,
 				message,
 				userMessageId,
 			);
 			if (!sent) {
 				try {
-					await webSocketService.connectToChat(conversationId);
-					webSocketService.sendChatMessage(conversationId, message, userMessageId);
+					await webSocketService.connectToChat(targetConversationId);
+					webSocketService.sendChatMessage(
+						targetConversationId,
+						message,
+						userMessageId,
+					);
 				} catch (error) {
 					console.error(
 						"[useChatStream] Failed to send message:",

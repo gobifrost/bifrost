@@ -152,6 +152,41 @@ describe("MentionPicker — selection & keyboard", () => {
 		expect(onSelect.mock.calls[0][0]).toMatchObject({ id: "a-1" });
 	});
 
+	it("Tab selects the highlighted item (starts at index 0)", () => {
+		const onSelect = vi.fn();
+		renderWithProviders(
+			<MentionPicker
+				open
+				onOpenChange={vi.fn()}
+				onSelect={onSelect}
+				searchTerm=""
+			/>,
+		);
+
+		fireEvent.keyDown(window, { key: "Tab" });
+
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect.mock.calls[0][0]).toMatchObject({ id: "a-1" });
+	});
+
+	it("ArrowDown moves the highlight, then Tab selects the new row", () => {
+		const onSelect = vi.fn();
+		renderWithProviders(
+			<MentionPicker
+				open
+				onOpenChange={vi.fn()}
+				onSelect={onSelect}
+				searchTerm=""
+			/>,
+		);
+
+		fireEvent.keyDown(window, { key: "ArrowDown" });
+		fireEvent.keyDown(window, { key: "Tab" });
+
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect.mock.calls[0][0]).toMatchObject({ id: "a-2" });
+	});
+
 	it("ArrowDown moves the highlight, then Enter selects the new row", () => {
 		const onSelect = vi.fn();
 		renderWithProviders(

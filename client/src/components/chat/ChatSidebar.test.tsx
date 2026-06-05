@@ -5,7 +5,7 @@
  *   - Loading state renders skeletons
  *   - Empty state renders the "No conversations yet" copy
  *   - Conversation list render + search filters by title/agent/preview
- *   - New Chat button triggers createConversation and navigates on success
+ *   - New Chat clears selection and navigates to a blank draft route
  *   - Active conversation gets the bg-accent highlight class
  *   - Delete flow opens confirm dialog and triggers mutation on confirm
  *
@@ -145,33 +145,66 @@ describe("ChatSidebar — conversation list", () => {
 		expect(storeState.setActiveConversation).toHaveBeenCalledWith("c-1");
 		expect(mockNavigate).toHaveBeenCalledWith("/chat/c-1");
 	});
+
+	it("notifies the parent after selecting a conversation", async () => {
+		conversationsRef.data = [conv({ id: "c-1", title: "Alpha" })];
+		const onConversationSelected = vi.fn();
+		const { user } = renderWithProviders(
+			<ChatSidebar onConversationSelected={onConversationSelected} />,
+		);
+
+		await user.click(screen.getByText("Alpha"));
+
+		expect(onConversationSelected).toHaveBeenCalledOnce();
+	});
 });
 
 describe("ChatSidebar — new chat", () => {
-	it("calls createConversation.mutate and navigates on success", async () => {
-		mockCreateMutate.mockImplementation((_body, opts) => {
-			opts?.onSuccess?.({ id: "new-id" });
-		});
+	it("clears selection and navigates to a blank draft route", async () => {
+		storeState.activeConversationId = "c-1";
 		const { user } = renderWithProviders(<ChatSidebar />);
 
 		await user.click(screen.getByRole("button", { name: /new chat/i }));
 
-		expect(mockCreateMutate).toHaveBeenCalledTimes(1);
-		expect(mockNavigate).toHaveBeenCalledWith("/chat/new-id");
+		expect(mockCreateMutate).not.toHaveBeenCalled();
+		expect(storeState.setActiveConversation).toHaveBeenCalledWith(null);
+		expect(storeState.setActiveAgent).toHaveBeenCalledWith(null);
+		expect(mockNavigate).toHaveBeenCalledWith("/chat");
+	});
+
+	it("notifies the parent after opening a blank draft route", async () => {
+		const onConversationSelected = vi.fn();
+		const { user } = renderWithProviders(
+			<ChatSidebar onConversationSelected={onConversationSelected} />,
+		);
+
+		await user.click(screen.getByRole("button", { name: /new chat/i }));
+
+		expect(onConversationSelected).toHaveBeenCalledOnce();
 	});
 });
 
 describe("ChatSidebar — delete flow", () => {
+	it("labels the delete action and keeps it visible on touch layouts", () => {
+		conversationsRef.data = [conv({ id: "c-1", title: "Alpha" })];
+		renderWithProviders(<ChatSidebar />);
+
+		const deleteButton = screen.getByRole("button", {
+			name: /delete alpha/i,
+		});
+
+		expect(deleteButton.className).toContain("opacity-100");
+		expect(deleteButton.className).toContain("sm:opacity-0");
+	});
+
 	it("opens the confirm dialog and triggers delete on confirm", async () => {
 		conversationsRef.data = [conv({ id: "c-1", title: "Alpha" })];
 		const { user, container } = renderWithProviders(<ChatSidebar />);
 
-		// The trash icon button sits inside the row and is only visible on hover
-		// (opacity-0 group-hover:opacity-100). It's still in the DOM and clickable.
-		const row = screen.getByText("Alpha").closest("div.group")!;
-		const deleteButton = row.querySelector("button");
-		expect(deleteButton).not.toBeNull();
-		await user.click(deleteButton!);
+		const deleteButton = screen.getByRole("button", {
+			name: /delete alpha/i,
+		});
+		await user.click(deleteButton);
 
 		// Confirm dialog surfaces the conversation title.
 		expect(

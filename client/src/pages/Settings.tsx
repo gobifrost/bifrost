@@ -30,9 +30,9 @@ export function Settings() {
 	}, [location.pathname, navigate]);
 
 	return (
-		<div className="h-full flex flex-col max-w-3xl mx-auto space-y-6">
+		<div className="flex h-full min-h-0 flex-col space-y-6 mx-auto max-w-3xl">
 			<div>
-				<h1 className="text-4xl font-extrabold tracking-tight">
+				<h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
 					Settings
 				</h1>
 				<p className="mt-2 text-muted-foreground">
@@ -40,38 +40,42 @@ export function Settings() {
 				</p>
 			</div>
 
-			<Tabs value={currentTab} onValueChange={handleTabChange} className="flex-1 min-h-0 flex flex-col">
+			<Tabs
+				value={currentTab}
+				onValueChange={handleTabChange}
+				className="flex min-h-0 flex-1 flex-col"
+			>
 				<div className="overflow-x-auto">
-				<TabsList>
-					<TabsTrigger value="ai">
-						<Bot className="h-4 w-4 mr-1" />
-						AI
-					</TabsTrigger>
-					<TabsTrigger value="mcp">
-						<Plug className="h-4 w-4 mr-1" />
-						MCP
-					</TabsTrigger>
-					<TabsTrigger value="branding">
-						<Palette className="h-4 w-4 mr-1" />
-						Branding
-					</TabsTrigger>
-					<TabsTrigger value="sso">
-						<Shield className="h-4 w-4 mr-1" />
-						SSO
-					</TabsTrigger>
-					<TabsTrigger value="github">
-						<Github className="h-4 w-4 mr-1" />
-						GitHub
-					</TabsTrigger>
-					<TabsTrigger value="workflow-keys">
-						<Key className="h-4 w-4 mr-1" />
-						Workflow Keys
-					</TabsTrigger>
-					<TabsTrigger value="maintenance">
-						<Wrench className="h-4 w-4 mr-1" />
-						Maintenance
-					</TabsTrigger>
-				</TabsList>
+					<TabsList className="w-max">
+						<TabsTrigger value="ai">
+							<Bot className="h-4 w-4 mr-1" />
+							AI
+						</TabsTrigger>
+						<TabsTrigger value="mcp">
+							<Plug className="h-4 w-4 mr-1" />
+							MCP
+						</TabsTrigger>
+						<TabsTrigger value="branding">
+							<Palette className="h-4 w-4 mr-1" />
+							Branding
+						</TabsTrigger>
+						<TabsTrigger value="sso">
+							<Shield className="h-4 w-4 mr-1" />
+							SSO
+						</TabsTrigger>
+						<TabsTrigger value="github">
+							<Github className="h-4 w-4 mr-1" />
+							GitHub
+						</TabsTrigger>
+						<TabsTrigger value="workflow-keys">
+							<Key className="h-4 w-4 mr-1" />
+							Workflow Keys
+						</TabsTrigger>
+						<TabsTrigger value="maintenance">
+							<Wrench className="h-4 w-4 mr-1" />
+							Maintenance
+						</TabsTrigger>
+					</TabsList>
 				</div>
 
 				<TabsContent value="ai" className="mt-6 flex-1 min-h-0 overflow-auto">

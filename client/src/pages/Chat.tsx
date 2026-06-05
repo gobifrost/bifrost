@@ -25,9 +25,7 @@ export function Chat() {
 
 	// Set active conversation from URL param
 	useEffect(() => {
-		if (conversationId) {
-			setActiveConversation(conversationId);
-		}
+		setActiveConversation(conversationId ?? null);
 	}, [conversationId, setActiveConversation]);
 
 	// Reset store on unmount

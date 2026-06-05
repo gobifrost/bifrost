@@ -183,14 +183,6 @@ export interface LocalRunnerStateUpdate {
 	execution_id: string | null;
 }
 
-// CLI Session state from backend - uses generated CLISessionResponse type
-import type { CLISessionResponse } from "@/services/cli";
-
-export interface CLISessionUpdate {
-	session_id: string;
-	state: CLISessionResponse | null;
-}
-
 // Event source update types for real-time event streaming
 export interface EventSourceEvent {
 	id: string;
@@ -478,11 +470,6 @@ type WebSocketMessage =
 			state: LocalRunnerStateUpdate | null;
 	  }
 	| {
-			type: "cli_session_update";
-			session_id: string;
-			state: CLISessionUpdate["state"];
-	  }
-	| {
 			type: "event_created" | "event_updated";
 			event: EventSourceEvent;
 	  }
@@ -537,7 +524,6 @@ type GitLogCallback = (log: PackageLog) => void;
 type GitProgressCallback = (progress: GitProgress) => void;
 type GitCompleteCallback = (complete: PackageComplete & Record<string, unknown>) => void;
 type LocalRunnerStateCallback = (state: LocalRunnerStateUpdate | null) => void;
-type CLISessionUpdateCallback = (update: CLISessionUpdate) => void;
 type EventSourceUpdateCallback = (update: EventSourceUpdate) => void;
 type ChatStreamCallback = (chunk: ChatStreamChunk) => void;
 type AppDraftUpdateCallback = (update: AppDraftUpdate) => void;
@@ -590,10 +576,6 @@ class WebSocketService {
 	private gitCompleteCallbacks = new Map<string, Set<GitCompleteCallback>>();
 	private gitOpCompleteCallbacks = new Map<string, Set<(complete: GitOpComplete) => void>>();
 	private localRunnerStateCallbacks = new Set<LocalRunnerStateCallback>();
-	private cliSessionUpdateCallbacks = new Map<
-		string,
-		Set<CLISessionUpdateCallback>
-	>();
 	private eventSourceUpdateCallbacks = new Map<
 		string,
 		Set<EventSourceUpdateCallback>
@@ -930,11 +912,6 @@ class WebSocketService {
 				);
 				break;
 
-			case "cli_session_update":
-				// CLI session state update from backend
-				this.dispatchCLISessionUpdate(message);
-				break;
-
 			case "event_created":
 			case "event_updated":
 				// Event source updates (real-time events)
@@ -1018,23 +995,6 @@ class WebSocketService {
 
 	private dispatchPoolMessage(message: PoolMessage) {
 		this.poolMessageCallbacks.forEach((cb) => cb(message));
-	}
-
-	private dispatchCLISessionUpdate(message: {
-		type: "cli_session_update";
-		session_id: string;
-		state: CLISessionUpdate["state"];
-	}) {
-		const update: CLISessionUpdate = {
-			session_id: message.session_id,
-			state: message.state,
-		};
-
-		// Dispatch to session-specific callbacks
-		const callbacks = this.cliSessionUpdateCallbacks.get(
-			message.session_id,
-		);
-		callbacks?.forEach((cb) => cb(update));
 	}
 
 	private dispatchEventSourceUpdate(message: {
@@ -1439,27 +1399,6 @@ class WebSocketService {
 		this.localRunnerStateCallbacks.add(callback);
 		return () => {
 			this.localRunnerStateCallbacks.delete(callback);
-		};
-	}
-
-	/**
-	 * Subscribe to CLI session updates for a specific session
-	 */
-	onCLISessionUpdate(
-		sessionId: string,
-		callback: CLISessionUpdateCallback,
-	): () => void {
-		if (!this.cliSessionUpdateCallbacks.has(sessionId)) {
-			this.cliSessionUpdateCallbacks.set(sessionId, new Set());
-		}
-		this.cliSessionUpdateCallbacks.get(sessionId)!.add(callback);
-
-		// Return unsubscribe function
-		return () => {
-			this.cliSessionUpdateCallbacks.get(sessionId)?.delete(callback);
-			if (this.cliSessionUpdateCallbacks.get(sessionId)?.size === 0) {
-				this.cliSessionUpdateCallbacks.delete(sessionId);
-			}
 		};
 	}
 

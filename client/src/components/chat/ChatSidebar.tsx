@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, MessageSquare, Trash2, Search } from "lucide-react";
+import { Plus, MessageSquare, Trash2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,18 +25,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/stores/chatStore";
-import {
-	useConversations,
-	useCreateConversation,
-	useDeleteConversation,
-} from "@/hooks/useChat";
+import { useConversations, useDeleteConversation } from "@/hooks/useChat";
 import type { ConversationSummary } from "@/hooks/useChat";
 
 interface ChatSidebarProps {
 	className?: string;
+	onClose?: () => void;
+	onConversationSelected?: () => void;
 }
 
-export function ChatSidebar({ className }: ChatSidebarProps) {
+export function ChatSidebar({
+	className,
+	onClose,
+	onConversationSelected,
+}: ChatSidebarProps) {
 	const navigate = useNavigate();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [deleteTarget, setDeleteTarget] =
@@ -49,7 +51,6 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
 	// API hooks
 	const { data: conversations, isLoading: isLoadingConversations } =
 		useConversations();
-	const createConversation = useCreateConversation();
 	const deleteConversation = useDeleteConversation();
 
 	// Filter conversations by search term
@@ -65,21 +66,10 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
 
 	// Handle starting new conversation
 	const handleNewChat = () => {
+		setActiveConversation(null);
 		setActiveAgent(null);
-		// Note: agent_id is optional for agentless chat
-		// The types will be updated after regenerating from API
-		createConversation.mutate(
-			{
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				body: { channel: "chat" } as any,
-			},
-			{
-				onSuccess: (data) => {
-					// Navigate to the new conversation URL
-					navigate(`/chat/${data.id}`);
-				},
-			},
-		);
+		navigate("/chat");
+		onConversationSelected?.();
 	};
 
 	// Handle selecting existing conversation
@@ -88,6 +78,7 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
 		setActiveAgent(conv.agent_id ?? null);
 		// Update URL to enable bookmarking/sharing
 		navigate(`/chat/${conv.id}`);
+		onConversationSelected?.();
 	};
 
 	// Handle delete confirmation
@@ -124,7 +115,7 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
 	return (
 		<div
 			className={cn(
-				"flex flex-col h-full bg-muted/30 border-r",
+				"flex flex-col h-full bg-background border-r",
 				className,
 			)}
 		>
@@ -132,11 +123,21 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
 			<div className="p-4 border-b space-y-3">
 				<div className="flex items-center justify-between">
 					<h2 className="font-semibold text-lg">Chat</h2>
+					{onClose && (
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							className="lg:hidden"
+							onClick={onClose}
+							aria-label="Close chat sidebar"
+						>
+							<X className="h-4 w-4" />
+						</Button>
+					)}
 				</div>
 				<Button
 					className="w-full gap-2"
 					onClick={handleNewChat}
-					disabled={createConversation.isPending}
 				>
 					<Plus className="h-4 w-4" />
 					New Chat
@@ -200,7 +201,8 @@ export function ChatSidebar({ className }: ChatSidebarProps) {
 									<Button
 										variant="ghost"
 										size="icon-sm"
-										className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+										className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0"
+										aria-label={`Delete ${conv.title || conv.agent_name || "Untitled"}`}
 										onClick={(e) => {
 											e.stopPropagation();
 											setDeleteTarget(conv);

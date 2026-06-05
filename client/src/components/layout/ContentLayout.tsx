@@ -45,7 +45,7 @@ export function ContentLayout() {
 	}
 
 	return (
-		<div className="h-screen flex bg-background overflow-hidden">
+		<div className="h-dvh flex bg-background overflow-hidden">
 			{/* Sidebar - full height with logo */}
 			<Sidebar
 				isMobileMenuOpen={isMobileMenuOpen}
@@ -54,13 +54,13 @@ export function ContentLayout() {
 			/>
 
 			{/* Main content area with header */}
-			<div className="flex-1 flex flex-col overflow-hidden">
+			<div className="flex-1 min-w-0 flex flex-col overflow-hidden">
 				<Header
 					onMobileMenuToggle={() => setIsMobileMenuOpen(true)}
 					onSidebarToggle={toggleSidebar}
 					isSidebarCollapsed={isSidebarCollapsed}
 				/>
-				<main className="flex-1 overflow-auto">
+				<main className="flex-1 min-h-0 overflow-auto">
 					<RouteErrorBoundary>
 						<Outlet />
 					</RouteErrorBoundary>

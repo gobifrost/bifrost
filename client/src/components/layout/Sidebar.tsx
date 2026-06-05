@@ -246,7 +246,7 @@ export function Sidebar({
 			{/* Desktop Sidebar */}
 			<aside
 				className={cn(
-					"hidden md:flex flex-col h-screen border-r bg-background transition-all duration-300",
+					"hidden md:flex flex-col h-dvh border-r bg-background transition-all duration-300",
 					isCollapsed ? "w-16" : "w-64",
 				)}
 			>
@@ -337,7 +337,7 @@ export function Sidebar({
 					onClick={() => setIsMobileMenuOpen(false)}
 				>
 					<aside
-						className="fixed left-0 top-0 h-screen w-64 border-r bg-background flex flex-col"
+						className="fixed left-0 top-0 h-dvh w-64 border-r bg-background flex flex-col"
 						onClick={(e) => e.stopPropagation()}
 					>
 						{/* Logo Section with Close Button */}

@@ -125,7 +125,7 @@ export function FleetPage() {
 	return (
 		<div className="mx-auto flex h-full max-w-[1400px] flex-col gap-5">
 			{/* Header */}
-			<div className="flex items-start justify-between gap-4">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
 				<div>
 					<h1 className={TYPE_PAGE_TITLE}>
 						{term(terminology, "agent", "plural")}
@@ -134,7 +134,7 @@ export function FleetPage() {
 						{totalAgents} total · {activeCount} active · last 7 days
 					</p>
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex flex-wrap items-center gap-2">
 					<Button asChild variant="outline" size="sm">
 						<Link to="/history?type=agents">
 							<History className="h-3.5 w-3.5" /> All runs
@@ -163,7 +163,7 @@ export function FleetPage() {
 			{fleetLoading || !fleetStats ? (
 				<div
 					className={cn(
-						"grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5",
+						"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5",
 						GAP_CARD,
 					)}
 				>
@@ -174,7 +174,7 @@ export function FleetPage() {
 			) : (
 				<div
 					className={cn(
-						"grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5",
+						"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5",
 						GAP_CARD,
 					)}
 				>
@@ -228,9 +228,9 @@ export function FleetPage() {
 			)}
 
 			{/* Search + view toggle */}
-			<div className="flex items-center justify-between gap-3">
-				<div className="flex flex-1 items-center gap-3">
-					<div className="relative max-w-md flex-1">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+					<div className="relative w-full sm:max-w-md sm:flex-1">
 						<Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
 						<Input
 							aria-label={`Search ${term(terminology, "agent", "pluralLower")}`}
@@ -241,7 +241,7 @@ export function FleetPage() {
 						/>
 					</div>
 					{isPlatformAdmin && (
-						<div className="w-64">
+						<div className="w-full sm:w-64">
 							<OrganizationSelect
 								value={filterOrgId}
 								onChange={setFilterOrgId}

@@ -9,6 +9,7 @@ import { EditorOverlay } from "@/components/editor/EditorOverlay";
 import { UnifiedDock } from "@/components/layout/UnifiedDock";
 import { QuickAccess } from "@/components/quick-access/QuickAccess";
 import { PageLoader } from "@/components/PageLoader";
+import { RouteTransitionProgress } from "@/components/layout/RouteTransitionProgress";
 import { useEditorStore } from "@/stores/editorStore";
 import { useQuickAccessStore } from "@/stores/quickAccessStore";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -135,12 +136,6 @@ const AuthCallback = lazyWithReload(() =>
 );
 const MCPCallback = lazyWithReload(() =>
 	import("@/pages/MCPCallback").then((m) => ({ default: m.MCPCallback })),
-);
-const CLI = lazyWithReload(() =>
-	import("@/pages/CLI").then((m) => ({ default: m.CLI })),
-);
-const Workbench = lazyWithReload(() =>
-	import("@/pages/Workbench").then((m) => ({ default: m.Workbench })),
 );
 const Chat = lazyWithReload(() =>
 	import("@/pages/Chat").then((m) => ({ default: m.Chat })),
@@ -674,15 +669,6 @@ function AppRoutes() {
 							}
 						/>
 
-						{/* CLI Sessions - PlatformAdmin only */}
-						<Route
-							path="cli"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<CLI />
-								</ProtectedRoute>
-							}
-						/>
 					</Route>
 
 					{/* ContentLayout - Pages without default padding */}
@@ -701,15 +687,6 @@ function AppRoutes() {
 							element={
 								<ProtectedRoute>
 									<Chat />
-								</ProtectedRoute>
-							}
-						/>
-						{/* Workbench (CLI Session Detail) - PlatformAdmin only */}
-						<Route
-							path="cli/:sessionId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Workbench />
 								</ProtectedRoute>
 							}
 						/>
@@ -733,6 +710,7 @@ function App() {
 	return (
 		<ErrorBoundary>
 			<BrowserRouter>
+				<RouteTransitionProgress />
 				<AuthProvider>
 					<OrgScopeProvider>
 						<KeyboardProvider>

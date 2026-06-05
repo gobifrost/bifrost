@@ -47,7 +47,6 @@ import {
 	DataTableRow,
 } from "@/components/ui/data-table";
 import { useApplications, useDeleteApplication } from "@/hooks/useApplications";
-import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { SearchBox } from "@/components/search/SearchBox";
@@ -61,7 +60,6 @@ type Organization = components["schemas"]["OrganizationPublic"];
 export function Applications() {
 	const navigate = useNavigate();
 	const terminology = useTerminology();
-	const { scope, isGlobalScope } = useOrgScope();
 	const { isPlatformAdmin } = useAuth();
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
@@ -150,38 +148,18 @@ export function Applications() {
 
 	return (
 		<div className="h-full flex flex-col space-y-6 max-w-7xl mx-auto">
-			<div className="flex items-center justify-between">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<div className="flex items-center gap-3">
-						<h1 className="text-4xl font-extrabold tracking-tight">
-							{term(terminology, "app", "formalPlural")}
-						</h1>
-						{isPlatformAdmin && (
-							<Badge
-								variant={isGlobalScope ? "default" : "outline"}
-								className="text-sm"
-							>
-								{isGlobalScope ? (
-									<>
-										<Globe className="mr-1 h-3 w-3" />
-										Global
-									</>
-								) : (
-									<>
-										<Building2 className="mr-1 h-3 w-3" />
-										{scope.orgName}
-									</>
-								)}
-							</Badge>
-						)}
-					</div>
+					<h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+						{term(terminology, "app", "formalPlural")}
+					</h1>
 					<p className="mt-2 text-muted-foreground">
 						{canManageApps
 							? `Build and manage custom ${term(terminology, "app", "formalPluralLower")}`
 							: `Access your custom ${term(terminology, "app", "formalPluralLower")}`}
 					</p>
 				</div>
-				<div className="flex gap-2">
+				<div className="flex flex-wrap gap-2">
 					{canManageApps && (
 						<ToggleGroup
 							type="single"
@@ -228,7 +206,7 @@ export function Applications() {
 			</div>
 
 			{/* Search and Filters */}
-			<div className="flex items-center gap-4">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
 				<SearchBox
 					value={searchTerm}
 					onChange={setSearchTerm}
@@ -236,7 +214,7 @@ export function Applications() {
 					className="flex-1"
 				/>
 				{isPlatformAdmin && (
-					<div className="w-64">
+					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
@@ -251,7 +229,7 @@ export function Applications() {
 			<div className="flex-1 min-h-0 overflow-auto">
 			{isLoading ? (
 				viewMode === "grid" || !canManageApps ? (
-					<div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
+					<div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
 						{[...Array(6)].map((_, i) => (
 							<Skeleton key={i} className="h-48 w-full" />
 						))}
@@ -265,7 +243,7 @@ export function Applications() {
 				)
 			) : filteredApps && filteredApps.length > 0 ? (
 				viewMode === "grid" || !canManageApps ? (
-					<div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+					<div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
 						{filteredApps.map((app) => {
 							const defaultTarget = app.is_published
 								? () => handleLaunch(app.slug)

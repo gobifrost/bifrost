@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Bot, MessageSquare } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
@@ -17,7 +18,7 @@ import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { NeedsReauthCard, extractNeedsReauth } from "./NeedsReauthCard";
 import { TodoList } from "./TodoList";
 import { useChatStore, useTodos } from "@/stores/chatStore";
-import { useMessages } from "@/hooks/useChat";
+import { useCreateConversation, useMessages } from "@/hooks/useChat";
 import { useChatStream } from "@/hooks/useChatStream";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/v1";
@@ -170,6 +171,7 @@ export function ChatWindow({
 	conversationId,
 	agentName,
 }: ChatWindowProps) {
+	const navigate = useNavigate();
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -207,6 +209,11 @@ export function ChatWindow({
 		conversationId ? state.streamingMessageIds[conversationId] : null,
 	);
 	const todos = useTodos();
+	const setActiveConversation = useChatStore(
+		(state) => state.setActiveConversation,
+	);
+	const setActiveAgent = useChatStore((state) => state.setActiveAgent);
+	const createConversation = useCreateConversation();
 
 	// Use WebSocket streaming
 	const {
@@ -310,22 +317,45 @@ export function ChatWindow({
 
 	// Handle send message
 	const handleSendMessage = (message: string) => {
+		if (!conversationId) {
+			createConversation.mutate(
+				{
+					body: { channel: "chat" },
+				},
+				{
+					onSuccess: (data) => {
+						setActiveConversation(data.id);
+						setActiveAgent(data.agent_id ?? null);
+						navigate(`/chat/${data.id}`);
+						sendMessage(message, data.id);
+					},
+				},
+			);
+			return;
+		}
+
 		sendMessage(message);
 	};
 
 	// Empty state
 	if (!conversationId) {
 		return (
-			<div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
-				<MessageSquare className="h-12 w-12 mb-4 opacity-20" />
-				<h3 className="text-lg font-medium mb-2">
-					Start a conversation
-				</h3>
-				<p className="text-sm text-center max-w-sm">
-					Click "New Chat" to start a conversation. I can help with
-					questions, tasks, and more. If you need specialized
-					capabilities, I'll find the right tools to help.
-				</p>
+			<div className="flex-1 min-h-0 flex flex-col">
+				<div className="flex-1 min-h-0 flex flex-col items-center justify-center text-muted-foreground p-8">
+					<MessageSquare className="h-12 w-12 mb-4 opacity-20" />
+					<h3 className="text-lg font-medium mb-2">
+						Start a conversation
+					</h3>
+					<p className="text-sm text-center max-w-sm">
+						Send a message to start a new conversation. If you need
+						specialized capabilities, I'll find the right tools to help.
+					</p>
+				</div>
+				<ChatInput
+					onSend={handleSendMessage}
+					disabled={createConversation.isPending}
+					placeholder="Send a message..."
+				/>
 			</div>
 		);
 	}
@@ -333,7 +363,7 @@ export function ChatWindow({
 	// Loading state
 	if (isLoadingMessages) {
 		return (
-			<div className="flex-1 flex flex-col">
+			<div className="flex-1 min-h-0 flex flex-col">
 				<div className="flex-1 p-4 space-y-4">
 					{[1, 2, 3].map((i) => (
 						<div key={i} className="flex gap-3">
@@ -354,8 +384,8 @@ export function ChatWindow({
 	const hasDisplayableMessages = messages.some((msg) => !msg.tool_call_id);
 	if (!hasDisplayableMessages && systemEvents.length === 0) {
 		return (
-			<div className="flex-1 flex flex-col">
-				<div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
+			<div className="flex-1 min-h-0 flex flex-col">
+				<div className="flex-1 min-h-0 flex flex-col items-center justify-center text-muted-foreground p-8">
 					<Bot className="h-12 w-12 mb-4 opacity-20" />
 					<h3 className="text-lg font-medium mb-2">
 						{agentName
@@ -377,7 +407,7 @@ export function ChatWindow({
 	}
 
 	return (
-		<div className="flex-1 flex flex-col h-full overflow-hidden">
+		<div className="flex-1 min-h-0 flex flex-col h-full overflow-hidden">
 			{/* Messages Area */}
 			<div
 				ref={containerRef}

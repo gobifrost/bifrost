@@ -181,6 +181,36 @@
 		}
 	}
 
+	@keyframes routeTransitionIndeterminate {
+		0% {
+			transform: translateX(-110%) scaleX(0.35);
+		}
+		45% {
+			transform: translateX(10%) scaleX(0.65);
+		}
+		100% {
+			transform: translateX(115%) scaleX(0.35);
+		}
+	}
+
+	.route-transition-progress-track {
+		background: oklch(from var(--primary) l c h / 0.12);
+	}
+
+	.route-transition-progress-fill {
+		background: var(--primary);
+		box-shadow: 0 0 6px oklch(from var(--primary) l c h / 0.24);
+	}
+
+	.route-transition-progress-fill[data-state="loading"] {
+		animation: routeTransitionIndeterminate 1.35s ease-in-out infinite;
+		transform-origin: left center;
+	}
+
+	.route-transition-progress-fill[data-state="finishing"] {
+		transform: translateX(0) scaleX(1);
+	}
+
 	/* Apply fade-in animation to main content */
 	main > * {
 		animation: fadeIn 0.3s ease-out;

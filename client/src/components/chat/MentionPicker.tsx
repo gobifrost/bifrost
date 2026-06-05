@@ -92,7 +92,10 @@ export function MentionPicker({
 			} else if (e.key === "ArrowUp") {
 				e.preventDefault();
 				setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-			} else if (e.key === "Enter" && filteredAgents.length > 0) {
+			} else if (
+				(e.key === "Enter" || e.key === "Tab") &&
+				filteredAgents.length > 0
+			) {
 				e.preventDefault();
 				onSelect(filteredAgents[clampedIndex]);
 			} else if (e.key === "Escape") {

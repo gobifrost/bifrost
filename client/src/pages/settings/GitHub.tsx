@@ -389,7 +389,7 @@ export function GitHub() {
 								<Label htmlFor="github-token">
 									GitHub Personal Access Token
 								</Label>
-								<div className="flex gap-2">
+								<div className="flex flex-col gap-2 sm:flex-row">
 									<Input
 										id="github-token"
 										type="password"
@@ -459,7 +459,7 @@ export function GitHub() {
 							{/* Repository Selection - always show if token is valid or saved */}
 							{(tokenValid || config?.token_saved) && (
 								<div className="space-y-2">
-									<div className="flex items-center justify-between">
+									<div className="flex items-center justify-between gap-3">
 										<Label htmlFor="repository">
 											Repository
 										</Label>

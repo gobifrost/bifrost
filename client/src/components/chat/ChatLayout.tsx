@@ -13,6 +13,7 @@ import { ChatWindow } from "./ChatWindow";
 import { useChatStore } from "@/stores/chatStore";
 import { useConversation, useConversationStats } from "@/hooks/useChat";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
 interface ChatLayoutProps {
@@ -22,7 +23,12 @@ interface ChatLayoutProps {
 export function ChatLayout({
 	initialConversationId,
 }: ChatLayoutProps) {
-	const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+	const isDesktop = useMediaQuery("(min-width: 1024px)");
+	const [sidebarState, setSidebarState] = useState<"auto" | "open" | "closed">(
+		"auto",
+	);
+	const isSidebarOpen =
+		sidebarState === "auto" ? isDesktop : sidebarState === "open";
 
 	// Get active conversation from store
 	const activeConversationId = useChatStore(
@@ -70,40 +76,41 @@ export function ChatLayout({
 	};
 
 	return (
-		<div className="flex h-full overflow-hidden bg-background">
-			{/* Sidebar Toggle (Mobile) */}
-			<Button
-				variant="ghost"
-				size="icon-sm"
-				className={cn(
-					"absolute top-4 left-4 z-10 lg:hidden",
-					isSidebarOpen && "hidden",
-				)}
-				onClick={() => setIsSidebarOpen(true)}
-			>
-				<PanelLeft className="h-4 w-4" />
-			</Button>
-
+		<div className="flex h-full min-h-0 overflow-hidden bg-background">
 			{/* Sidebar */}
 			<div
 				className={cn(
-					"w-80 shrink-0 transition-all duration-200 ease-in-out",
-					"lg:relative lg:translate-x-0",
+					"shrink-0 bg-background border-r shadow-xl transition-all duration-200 ease-in-out",
 					isSidebarOpen
-						? "translate-x-0"
-						: "-translate-x-full lg:w-0 lg:opacity-0",
-					// Mobile overlay
-					isSidebarOpen && "fixed inset-y-0 left-0 z-20 lg:relative",
+						? "fixed inset-y-0 left-0 z-50 translate-x-0 lg:relative lg:inset-auto lg:z-auto"
+						: "w-0 -translate-x-full overflow-hidden lg:opacity-0",
 				)}
+				style={
+					isSidebarOpen
+						? {
+								width: "20rem",
+								maxWidth: "calc(100vw - 2rem)",
+							}
+						: undefined
+				}
 			>
 				<div className="relative h-full">
-					<ChatSidebar className="w-80" />
+					<ChatSidebar
+						className="w-full"
+						onClose={() => setSidebarState("closed")}
+						onConversationSelected={() => {
+							if (!isDesktop) {
+								setSidebarState("closed");
+							}
+						}}
+					/>
 					{/* Close button (Desktop) */}
 					<Button
 						variant="ghost"
 						size="icon-sm"
+						aria-label="Close chat sidebar"
 						className="absolute top-4 right-2 hidden lg:flex"
-						onClick={() => setIsSidebarOpen(false)}
+						onClick={() => setSidebarState("closed")}
 					>
 						<PanelLeftClose className="h-4 w-4" />
 					</Button>
@@ -113,13 +120,13 @@ export function ChatLayout({
 			{/* Mobile Overlay */}
 			{isSidebarOpen && (
 				<div
-					className="fixed inset-0 bg-black/50 z-10 lg:hidden"
-					onClick={() => setIsSidebarOpen(false)}
+					className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+					onClick={() => setSidebarState("closed")}
 				/>
 			)}
 
 			{/* Main Content */}
-			<div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+			<div className="flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden">
 				{/* Header - always show when sidebar is closed or conversation is active */}
 				{(!isSidebarOpen || activeConversationId) && (
 					<header className="h-14 border-b flex items-center px-4 gap-4 relative z-10">
@@ -127,8 +134,8 @@ export function ChatLayout({
 							<Button
 								variant="ghost"
 								size="icon-sm"
-								className="hidden lg:flex"
-								onClick={() => setIsSidebarOpen(true)}
+								aria-label="Open chat sidebar"
+								onClick={() => setSidebarState("open")}
 							>
 								<PanelLeft className="h-4 w-4" />
 							</Button>

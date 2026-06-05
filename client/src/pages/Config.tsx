@@ -202,36 +202,18 @@ export function Config() {
 
 	return (
 		<div className="h-full flex flex-col space-y-6">
-			<div className="flex items-center justify-between">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<div className="flex items-center gap-3">
-						<h1 className="text-4xl font-extrabold tracking-tight">
-							Configuration
-						</h1>
-						<Badge
-							variant={isGlobalScope ? "default" : "outline"}
-							className="text-sm"
-						>
-							{isGlobalScope ? (
-								<>
-									<Globe className="mr-1 h-3 w-3" />
-									Global
-								</>
-							) : (
-								<>
-									<Building2 className="mr-1 h-3 w-3" />
-									{scope.orgName}
-								</>
-							)}
-						</Badge>
-					</div>
+					<h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+						Configuration
+					</h1>
 					<p className="mt-2 text-muted-foreground">
 						{isGlobalScope
 							? "Platform-wide configuration values"
 							: `Configuration for ${scope.orgName || "this organization"}`}
 					</p>
 				</div>
-				<div className="flex gap-2">
+				<div className="flex flex-wrap gap-2">
 					<Button
 						variant="outline"
 						size="icon"
@@ -256,7 +238,7 @@ export function Config() {
 			</div>
 
 			{/* Search and Filters */}
-			<div className="flex items-center gap-4">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
 				<SearchBox
 					value={searchTerm}
 					onChange={setSearchTerm}
@@ -264,7 +246,7 @@ export function Config() {
 					className="flex-1"
 				/>
 				{isPlatformAdmin && (
-					<div className="w-64">
+					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
@@ -275,7 +257,7 @@ export function Config() {
 					</div>
 				)}
 				{isPlatformAdmin && (
-					<div className="flex items-center gap-2 ml-auto">
+					<div className="flex flex-wrap items-center gap-2 sm:ml-auto">
 						{selectedIds.size > 0 && (
 							<span className="text-sm text-muted-foreground">
 								{selectedIds.size} selected

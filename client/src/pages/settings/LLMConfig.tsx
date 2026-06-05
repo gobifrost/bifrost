@@ -459,7 +459,7 @@ export function LLMConfig() {
 					{/* API Key */}
 					<div className="space-y-2">
 						<Label htmlFor="api-key">API Key</Label>
-						<div className="flex gap-2">
+						<div className="flex flex-col gap-2 sm:flex-row">
 							<Input
 								id="api-key"
 								type="password"
@@ -591,7 +591,7 @@ export function LLMConfig() {
 
 						{/* Max Tokens */}
 						<div className="space-y-3">
-							<div className="flex items-center justify-between">
+							<div className="flex items-center justify-between gap-3">
 								<Label htmlFor="max-tokens">
 									Max Output Tokens
 								</Label>
@@ -1142,17 +1142,18 @@ function EmbeddingConfigCard({
 				{/* Status Banner */}
 				{config?.is_configured ? (
 					<div className="rounded-lg border bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900 p-4">
-						<div className="flex items-center justify-between">
+						<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 							<div className="flex items-center gap-2">
 								<CheckCircle2 className="h-4 w-4 text-green-600" />
 								<span className="text-sm font-medium text-green-800 dark:text-green-200">
 									Embeddings Configured
 								</span>
 							</div>
-							<div className="flex items-center gap-2">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 								<Button
 									variant="outline"
 									size="sm"
+									className="w-full justify-center sm:w-auto"
 									onClick={() =>
 										navigate("/settings/maintenance")
 									}
@@ -1164,6 +1165,7 @@ function EmbeddingConfigCard({
 									<Button
 										variant="outline"
 										size="sm"
+										className="w-full justify-center sm:w-auto"
 										onClick={() => {
 											setOverride(true);
 											setEndpoint(config?.endpoint ?? "");
@@ -1180,7 +1182,7 @@ function EmbeddingConfigCard({
 									onClick={() =>
 										setShowDeleteConfirm(true)
 									}
-									className="text-destructive hover:text-destructive"
+									className="w-full justify-center text-destructive hover:text-destructive sm:w-auto"
 								>
 									<Trash2 className="h-4 w-4 mr-1" />
 									Remove
@@ -1212,7 +1214,7 @@ function EmbeddingConfigCard({
 
 				{/* Inherit-mode informational row with Override action */}
 				{inheritActive && (
-					<div className="flex items-start justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+					<div className="flex flex-col gap-3 rounded-md border bg-muted/30 px-3 py-2 sm:flex-row sm:items-start sm:justify-between">
 						<p className="text-sm text-muted-foreground">
 							Inheriting endpoint and key from your LLM
 							provider. Pick an embedding model below — Save
@@ -1221,6 +1223,7 @@ function EmbeddingConfigCard({
 						<Button
 							variant="outline"
 							size="sm"
+							className="w-full justify-center sm:w-auto"
 							onClick={() => {
 								setOverride(true);
 								// Prefill endpoint with what we'd otherwise inherit
@@ -1349,12 +1352,13 @@ function EmbeddingConfigCard({
 				</div>
 
 				{/* Save / Reindex / Cancel */}
-				<div className="flex items-center justify-between gap-2 pt-2">
-					<div className="flex items-center gap-2">
+				<div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+					<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 						{override && hasSavedConfig && (
 							<Button
 								variant="ghost"
 								size="sm"
+								className="w-full justify-center sm:w-auto"
 								onClick={() => {
 									setOverride(false);
 									setApiKey("");
@@ -1371,6 +1375,7 @@ function EmbeddingConfigCard({
 							<Button
 								variant="outline"
 								size="sm"
+								className="w-full justify-center whitespace-normal sm:w-auto sm:whitespace-nowrap"
 								onClick={handleReindex}
 								disabled={reindexInFlight}
 								title="Re-embed every knowledge store row against the saved embedding config."
@@ -1389,7 +1394,11 @@ function EmbeddingConfigCard({
 							</Button>
 						)}
 					</div>
-					<Button onClick={handleSave} disabled={!canSave}>
+					<Button
+						onClick={handleSave}
+						disabled={!canSave}
+						className="w-full whitespace-normal sm:w-auto sm:whitespace-nowrap"
+					>
 						{saving ? (
 							<>
 								<Loader2 className="h-4 w-4 mr-2 animate-spin" />

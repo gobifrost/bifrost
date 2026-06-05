@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
 	ChevronDown,
 	LogOut,
@@ -9,7 +9,6 @@ import {
 	PanelLeft,
 	Terminal,
 	Search,
-	Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,9 +29,7 @@ import { NotificationCenter } from "@/components/layout/NotificationCenter";
 import { VersionUpdateBanner } from "@/components/layout/VersionUpdateBanner";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
-import { webSocketService } from "@/services/websocket";
 import { FileActivityIndicator } from "@/components/layout/FileActivityIndicator";
-import { cn } from "@/lib/utils";
 
 interface HeaderProps {
 	onMobileMenuToggle?: () => void;
@@ -46,7 +43,6 @@ export function Header({
 	isSidebarCollapsed = false,
 }: HeaderProps = {}) {
 	const navigate = useNavigate();
-	const location = useLocation();
 	const { user, logout, isPlatformAdmin } = useAuth();
 	const openEditor = useEditorStore((state) => state.openEditor);
 	const openQuickAccess = useQuickAccessStore(
@@ -55,10 +51,6 @@ export function Header({
 
 	const userEmail = user?.email || "Loading...";
 	const userName = user?.name || user?.email?.split("@")[0] || "User";
-
-	// Track if there's an active CLI session
-	const [hasActiveCLISession, setHasActiveCLISession] = useState(false);
-	const isOnCLIPage = location.pathname.startsWith("/cli");
 
 	// Profile data via React Query (cached)
 	// dataUpdatedAt provides a stable timestamp for cache-busting avatar URLs
@@ -70,35 +62,6 @@ export function Header({
 		profile?.has_avatar && dataUpdatedAt
 			? `${profileService.getAvatarUrl()}?t=${dataUpdatedAt}`
 			: null;
-
-	// Subscribe to CLI session updates via websocket (platform admins only)
-	useEffect(() => {
-		if (!isPlatformAdmin || !user?.id) return;
-
-		// Subscribe to cli-sessions channel for this user
-		const channel = `cli-sessions:${user.id}`;
-		webSocketService.connect([channel]);
-
-		// Listen for session updates
-		const handleMessage = (event: MessageEvent) => {
-			try {
-				const data = JSON.parse(event.data);
-				if (data.type === "cli_session_update") {
-					setHasActiveCLISession(data.state !== null);
-				}
-			} catch {
-				// ignore
-			}
-		};
-
-		const ws = (webSocketService as unknown as { ws: WebSocket | null }).ws;
-		ws?.addEventListener("message", handleMessage);
-
-		return () => {
-			ws?.removeEventListener("message", handleMessage);
-			webSocketService.unsubscribe(channel);
-		};
-	}, [isPlatformAdmin, user?.id]);
 
 	// Get initials for avatar fallback
 	const getInitials = () => {
@@ -118,12 +81,12 @@ export function Header({
 
 	return (
 		<header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-			<div className="flex h-16 items-center px-4 lg:px-6">
+			<div className="flex h-16 items-center px-3 sm:px-4 lg:px-6">
 				{/* Mobile Menu Button */}
 				<Button
 					variant="ghost"
 					size="icon"
-					className="md:hidden mr-2"
+					className="md:hidden mr-1 sm:mr-2"
 					onClick={onMobileMenuToggle}
 				>
 					<Menu className="h-5 w-5" />
@@ -153,7 +116,7 @@ export function Header({
 
 				{/* Version Update Banner — only renders when /api/version
 				    differs from the baked-in client version. */}
-				<div className="mr-4">
+				<div className="mr-2 hidden sm:block lg:mr-4">
 					<VersionUpdateBanner />
 				</div>
 
@@ -164,7 +127,7 @@ export function Header({
 				<Button
 					variant="ghost"
 					size="icon"
-					className="mr-4"
+					className="mr-1 sm:mr-2 lg:mr-4"
 					onClick={() => openQuickAccess()}
 					title="Search (Cmd+K)"
 				>
@@ -176,7 +139,7 @@ export function Header({
 					<Button
 						variant="ghost"
 						size="icon"
-						className="mr-2"
+						className="mr-1 sm:mr-2"
 						onClick={() => openEditor()}
 						title="Shell (Cmd+/)"
 					>
@@ -184,38 +147,13 @@ export function Header({
 					</Button>
 				)}
 
-				{/* CLI Sessions Button (Platform Admin only) */}
-				{isPlatformAdmin && (
-					<Button
-						variant={isOnCLIPage ? "secondary" : "ghost"}
-						size="icon"
-						className={cn(
-							"mr-4 relative",
-							hasActiveCLISession &&
-								!isOnCLIPage &&
-								"animate-pulse",
-						)}
-						onClick={() => navigate("/cli")}
-						title={
-							hasActiveCLISession
-								? "CLI Sessions (Active)"
-								: "CLI Sessions"
-						}
-					>
-						<Play className="h-4 w-4" />
-						{hasActiveCLISession && !isOnCLIPage && (
-							<span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-background" />
-						)}
-					</Button>
-				)}
-
-					{/* Notification Center */}
-				<div className="mr-2">
+				{/* Notification Center */}
+				<div className="mr-1 sm:mr-2">
 					<NotificationCenter />
 				</div>
 
 				{/* Theme Toggle */}
-				<div className="mr-2">
+				<div className="mr-1 sm:mr-2">
 					<ThemeToggle />
 				</div>
 

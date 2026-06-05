@@ -49,7 +49,6 @@ import {
 } from "@/components/ui/tooltip";
 import { useWorkflowsFiltered, useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { useWorkflowKeys } from "@/hooks/useWorkflowKeys";
-import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { OrphanedWorkflowDialog } from "@/components/workflows/OrphanedWorkflowDialog";
@@ -73,7 +72,6 @@ type Organization = components["schemas"]["OrganizationPublic"];
 
 export function Workflows() {
 	const navigate = useNavigate();
-	const { scope, isGlobalScope } = useOrgScope();
 	const { isPlatformAdmin } = useAuth();
 	const { data: apiKeys } = useWorkflowKeys({ includeRevoked: false });
 	const isDesktop = useIsDesktop();
@@ -263,36 +261,16 @@ export function Workflows() {
 
 	return (
 		<div className="h-full flex flex-col space-y-6 max-w-7xl mx-auto">
-			<div className="flex items-center justify-between">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<div className="flex items-center gap-3">
-						<h1 className="text-4xl font-extrabold tracking-tight">
-							Workflows
-						</h1>
-						{isPlatformAdmin && (
-							<Badge
-								variant={isGlobalScope ? "default" : "outline"}
-								className="text-sm"
-							>
-								{isGlobalScope ? (
-									<>
-										<Globe className="mr-1 h-3 w-3" />
-										Global
-									</>
-								) : (
-									<>
-										<Building2 className="mr-1 h-3 w-3" />
-										{scope.orgName}
-									</>
-								)}
-							</Badge>
-						)}
-					</div>
+					<h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+						Workflows
+					</h1>
 					<p className="mt-2 text-muted-foreground">
 						Execute workflows directly with custom parameters
 					</p>
 				</div>
-				<div className="flex gap-2">
+				<div className="flex flex-wrap gap-2">
 					<ToggleGroup
 						type="single"
 						value={viewMode}
@@ -335,7 +313,7 @@ export function Workflows() {
 					className="flex-1"
 				/>
 				{isPlatformAdmin && (
-					<div className="w-64">
+					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
