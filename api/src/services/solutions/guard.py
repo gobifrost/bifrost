@@ -104,3 +104,50 @@ async def assert_entity_id_not_solution_managed(
             status_code=status.HTTP_409_CONFLICT,
             detail=SOLUTION_MANAGED_MESSAGE,
         )
+
+
+async def assert_role_not_bound_to_solution_managed(
+    db: AsyncSession, role_id: UUID
+) -> None:
+    """Refuse deleting a role still assigned to ANY solution-managed entity.
+
+    Role bindings are deploy-owned for managed entities (criterion 6) — the
+    assignment endpoints are read-only for them. But ``DELETE /api/roles/{id}``
+    cascades through the ``*_roles`` junctions via FK ON DELETE CASCADE, which
+    would silently strip a managed entity's deploy-owned bindings OUTSIDE the
+    deploy path (Codex R4). Block the delete while any such binding exists; the
+    operator must redeploy the solution without the role first.
+    """
+    from src.models.orm.agents import Agent, AgentRole
+    from src.models.orm.app_roles import AppRole
+    from src.models.orm.applications import Application
+    from src.models.orm.forms import Form, FormRole
+    from src.models.orm.workflow_roles import WorkflowRole
+    from src.models.orm.workflows import Workflow
+
+    junctions = [
+        (FormRole, FormRole.form_id, Form),
+        (AgentRole, AgentRole.agent_id, Agent),
+        (AppRole, AppRole.app_id, Application),
+        (WorkflowRole, WorkflowRole.workflow_id, Workflow),
+    ]
+    for junction, fk_col, entity in junctions:
+        bound = (
+            await db.execute(
+                select(entity.id)
+                .join(junction, fk_col == entity.id)
+                .where(
+                    junction.role_id == role_id,
+                    entity.solution_id.is_not(None),  # type: ignore[attr-defined]
+                )
+                .limit(1)
+            )
+        ).first()
+        if bound is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This role is assigned to one or more solution-managed "
+                    "entities; redeploy the solution without it before deleting."
+                ),
+            )

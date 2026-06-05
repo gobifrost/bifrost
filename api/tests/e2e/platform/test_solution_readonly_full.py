@@ -103,3 +103,35 @@ def test_role_endpoints_locked_for_managed_workflow(e2e_client, platform_admin):
                            json={"workflow_ids": [wf_id]})
     assert resp.status_code == 409, f"{resp.status_code} {resp.text}"
     assert resp.json()["detail"] == _MSG
+
+
+def test_delete_role_bound_to_managed_entity_is_refused(e2e_client, platform_admin):
+    """DELETE /api/roles/{id} cascades through the *_roles junctions; deleting a
+    role assigned to a solution-managed entity would strip deploy-owned bindings
+    outside deploy. It must be refused (Codex R4)."""
+    headers = platform_admin.headers
+    sid = _solution(e2e_client, headers, f"roledel-{uuid.uuid4().hex[:8]}")
+
+    # Create a role, then DEPLOY a role_based workflow bound to it (deploy is the
+    # only writer of managed role bindings).
+    role_name = f"r-{uuid.uuid4().hex[:6]}"
+    r = e2e_client.post("/api/roles", headers=headers, json={"name": role_name})
+    assert r.status_code in (200, 201), r.text
+    role_id = r.json()["id"]
+
+    wf_id = str(uuid.uuid4())
+    slug = uuid.uuid4().hex[:8]
+    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+        "python_files": {"workflows/w.py": "from bifrost import workflow\n@workflow\nasync def w():\n    return {}\n"},
+        "workflows": [{
+            "id": wf_id, "name": f"w_{slug}", "function_name": "w",
+            "path": "workflows/w.py", "type": "workflow",
+            "access_level": "role_based", "role_names": [role_name],
+        }],
+    })
+    assert dep.status_code in (200, 201), dep.text
+
+    # Deleting the role now would cascade-remove the managed binding → refuse.
+    resp = e2e_client.delete(f"/api/roles/{role_id}", headers=headers)
+    assert resp.status_code == 409, f"{resp.status_code} {resp.text}"
+    assert "solution-managed" in resp.json()["detail"].lower()

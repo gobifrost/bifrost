@@ -16,7 +16,10 @@ from sqlalchemy import func, select, delete
 from src.core.auth import CurrentSuperuser
 from src.core.database import DbSession
 from src.core.log_safety import log_safe
-from src.services.solutions.guard import assert_entity_id_not_solution_managed
+from src.services.solutions.guard import (
+    assert_entity_id_not_solution_managed,
+    assert_role_not_bound_to_solution_managed,
+)
 from src.services.audit import emit_audit
 from src.models import (
     Role as RoleORM,
@@ -306,6 +309,10 @@ async def delete_role(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Role not found",
         )
+
+    # A role assigned to a solution-managed entity has deploy-owned bindings;
+    # deleting it would cascade-strip them outside deploy (Codex R4). Refuse.
+    await assert_role_not_bound_to_solution_managed(db, role_id)
 
     deleted_name = role.name
     await db.delete(role)
