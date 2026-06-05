@@ -95,11 +95,14 @@ Confirmed present in `.env.example` (line numbers as of this spec):
 
 - **No `debug.sh` port** — development stays on Linux/macOS.
 - **No `test.sh` port** — CI/dev tooling, used by `.github/workflows/ci.yml`.
-- **Delete `build.sh`** and remove manual-release references from the
-  `bifrost:release` skill — the team no longer does manual releases (CI builds
-  images via `docker/build-push` in `ci.yml`). This is a parallel change on the
-  same branch, tracked here so it isn't lost, but it is independent of the
-  `.ps1` work.
+- **Delete `build.sh`** — the team no longer does manual releases (CI builds
+  images via `docker/build-push` in `ci.yml`). Verified during planning:
+  `build.sh` has **zero references** outside one historical `docs/` plan, and
+  the `bifrost:release` skill is **already** fully CI-based (it never mentions
+  `build.sh`). So the cleanup is just the file deletion — there is nothing to
+  strip from the release skill. The historical `docs/` reference stays as a
+  completed-plan record. This is a parallel change on the same branch,
+  independent of the `.ps1` work.
 
 ## Verification
 
