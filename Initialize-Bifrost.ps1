@@ -12,7 +12,9 @@
     Domain / WebAuthn RP ID. Defaults to "localhost" (prompted if omitted).
 
 .PARAMETER Force
-    Overwrite an existing .env without prompting.
+    Overwrite an existing .env without prompting. Note: this regenerates all
+    secrets (POSTGRES_PASSWORD, RABBITMQ_PASSWORD, SEAWEEDFS_SECRET_KEY,
+    BIFROST_SECRET_KEY), so an existing deployment's credentials will rotate.
 
 .PARAMETER NoStart
     Generate .env but do not run `docker compose up -d`.
@@ -40,11 +42,16 @@ function New-BifrostSecret {
     param([Parameter(Mandatory)][int]$Length)
 
     $result = ''
-    while ($result.Length -lt $Length) {
-        $bytes = [byte[]]::new($Length * 2)
-        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-        $b64 = [Convert]::ToBase64String($bytes)
-        $result += ($b64 -replace '[^A-Za-z0-9]', '')
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        while ($result.Length -lt $Length) {
+            $bytes = [byte[]]::new($Length * 2)
+            $rng.GetBytes($bytes)
+            $b64 = [Convert]::ToBase64String($bytes)
+            $result += ($b64 -replace '[^A-Za-z0-9]', '')
+        }
+    } finally {
+        $rng.Dispose()
     }
     return $result.Substring(0, $Length)
 }
@@ -87,6 +94,7 @@ function Set-BifrostEnvLine {
             $line
         }
     }
+    # Unary comma: return as an array so a single-element result isn't unwrapped to a scalar.
     return ,$out
 }
 
