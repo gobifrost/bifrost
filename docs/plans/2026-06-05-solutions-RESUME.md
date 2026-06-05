@@ -3,24 +3,87 @@
 Date: 2026-06-05
 Worktree: `/home/jack/GitHub/bifrost/.claude/worktrees/solutions-success-criteria`
 Branch: `worktree-solutions-success-criteria`  •  Draft PR: **#347** (experimental — do NOT merge)
-Spec: `docs/plans/2026-06-04-solutions-success-criteria.md` (see §8 "REAL STATUS")
+Spec: `docs/plans/2026-06-04-solutions-success-criteria.md` (18 criteria) + v2 app design doc.
+
+---
+
+# ▶ STATUS DASHBOARD — "how close are we?" (read this first)
+
+**Short answer: feature-complete on the happy path, NOT through the correctness gate.**
+The whole feature surface is built and the v2 dev loop is validated live. But the done-bar is
+**two CONSECUTIVE Codex reviews with ZERO P1/P2** — and we have had **zero clean reviews in five
+rounds**. Each round still finds real P1s, including holes opened by the previous round's fixes.
+
+### The gate, round by round
+| Review | Findings | Clean? |
+|--------|----------|--------|
+| #3 | 6 | ✗ |
+| #4 | 8 | ✗ |
+| #5 | 6 | ✗ |
+| #6 | 4 P1 + 2 P2 | ✗ (5 fixed, 1 rejected) |
+| #7 | **3 P1 + 3 P2** | ✗ ← **current; OPEN, not yet fixed** |
+| #8 | — | needed: 1st of 2 clean |
+| #9 | — | needed: 2nd of 2 clean |
+
+**Realistic distance to done: ≥ 2 more fix-loops, possibly 3.** Burn-down is not converging to
+zero yet (6→8→6→6→6). It will only converge once the *identity model* (per-install entity IDs +
+scope-aware workflow-ref resolution) is solid — that cluster is what keeps regenerating findings.
+
+### What is DONE (built + tested + validated live)
+- v2 React app model end-to-end: scaffold → `npm install` (`bifrost` from `/api/sdk/download`) →
+  `vite build` → `bifrost deploy` (server build) → same-document mount at `/apps/{slug}`. Proven live.
+- Instance-served SDK (`BifrostProvider`/`useWorkflow`/`useTable`/`BifrostHeader`).
+- Deploy: DB-first-then-S3 ordering, per-slug advisory lock, finalize-retry, full-replace reconcile.
+- Read-only enforcement across UI/REST/MCP/role-junctions (+ S3 ORM-flush backstop).
+- Portable export/import, vendored shared deps, offline `bifrost run`, headless operability.
+- Git-connected one-writer install (auto-deploy on push, manual deploy refused).
+- All of Codex #3/#4/#5 + the 5 verified #6 findings: fixed, committed, green.
+
+### What is LEFT (open work blocking the gate)
+**Review #7 — 3 P1 + 3 P2, ALL OPEN (not yet started). See "REVIEW #7 — OPEN FINDINGS" below.**
+The dominant theme is the **entity-identity model**, which #6→#7 proved is not finished:
+- **P1 — per-install ID remap is MISSING.** A byte-identical scaffold/export/git repo sends the
+  same manifest UUIDs to a 2nd scope; the resolver makes a 2nd install, then the ownership guard
+  aborts it. Criterion 9 (multi-install) cannot be met from a real repo without hand-editing UUIDs.
+  *(This reopens #6's "P1-a" — my rejection was half-right: installs ARE independent, but the path
+  to create the 2nd one has no ID-translation step. The remap is the missing piece.)*
+- **P1 — v2 `useWorkflow("path::fn")` 404s** because the resolver excludes solution-managed rows;
+  a deployed Solution's own workflow is unreachable from its own app. Tied to the ID model: app
+  source can't hard-code per-install UUIDs, so path-refs MUST resolve within the app's solution scope.
+- **P1 — org-deploy regression** (opened by this session's R6-P1-b fix): a `None` deployer org
+  (provider/admin context) makes an org-scoped deploy match the GLOBAL install → can clobber it.
+- **P2 ×3:** `delete_missing_prefix` bypasses the managed guard; v2 late-import-after-unmount mounts
+  a stale app; dev token isn't read from the CLI credential store (device-code login → empty token).
+
+After #7 is fully fixed + green → run review #8 (narrowed prompt `/tmp/codex_review7.txt` is a good
+base). If #8 clean → that's clean #1; run #9 for clean #2.
+
+### Recommended sequencing for the next session
+1. **Fix the identity cluster as ONE coherent change** (R7-P1-b remap + R7-P1-c scope-aware
+   path-ref resolution) — they share root cause; fixing them piecemeal will just generate review #8
+   findings. Decide the remap scheme with the user (deterministic `uuid5(install_id, manifest_id)`
+   is the leading candidate — keeps redeploys stable, makes installs independent).
+2. Fix the org-deploy regression (R7-P1-a) — small, isolated, add the `None`-deployer test.
+3. Fix the 3 P2s (R7-P2-d/e/f).
+4. Full verify → review #8.
+
+---
 
 ## The loop (the bar to clear)
-Fix findings → TDD each → local verify → **full Codex spec review** → repeat until
-**two CONSECUTIVE full Codex reviews come back with ZERO P1/P2 spec findings**. Only then is
-it worth human QA. (User directive: 2 clean reviews; reuse `ManifestResolver`/indexers so future
-fields can't create deploy gaps — done for forms/agents.)
+Fix findings → TDD each → local verify → **Codex spec review** → repeat until **two CONSECUTIVE
+Codex reviews come back with ZERO P1/P2**. Only then is it worth human QA. (User directive: 2 clean
+reviews; reuse `ManifestResolver`/indexers so future fields can't create deploy gaps.)
 
 ## How to run Codex review (the gate)
 ```bash
 cd <worktree>
-codex review - < /tmp/codex_review3.txt   # prompt file already written; or rebuild from the one below
+codex review - < /tmp/codex_review7.txt   # latest prompt (narrowed to the 2 high-risk areas)
 ```
 Triage with `superpowers:receiving-code-review` — VERIFY each finding against the code before fixing
-(several past findings were right; some I over-asserted in tests). The prompt that found the deep
-issues is saved at `/tmp/codex_spec_review_prompt.txt` (+ `/tmp/codex_review3.txt` with the "what's
-fixed" context). Re-create it if /tmp is cleared — it's a "full adversarial spec review, file:line +
-severity, hunt for issues the fixes introduced."
+(use Explore subagents, one per finding — worked well in session 3). History: most findings real;
+~2 of 14 in R4/R5 were holes in a prior fix; in #7, 2 of 6 were holes opened by #6's own fixes.
+After codex exits, find the verdict: `grep -nE '^- \[P[123]\]' /tmp/codex_review7_out.txt` (the list
+prints twice — dedupe). Kill any stale `until ! pgrep…` watcher bash procs; they are NOT the review.
 
 ## SESSION 3 END — START HERE (2026-06-05)
 
@@ -38,22 +101,57 @@ ownership guard correctly forbids cross-install UUID reuse (criterion 10). The f
 - R6-P2-e: scaffold/JSDoc use UUID or `path::function` ref, not bare names (param→`workflowRef`).
 - R6-P2-f: `assert_not_solution_managed` guard in MCP `publish_app`/`push_files` before S3 writes.
 
-**Codex review #7 is RUNNING in the background.** Output → `/tmp/codex_review7_out.txt`
-(prompt `/tmp/codex_review7.txt`). It NARROWS to the two high-risk areas (deploy
-atomicity/concurrency/multi-install + v2 mount/dev lifecycle) per user directive ("fix all, then
-narrow"), re-verifies the 5 fixes, and challenges the P1-a rejection. FIRST THING NEXT SESSION:
-1. Check it's done: `pgrep -f 'codex review -'` (empty = done; ignore stale `until`-loop watchers —
-   kill any leftover bash `until ! pgrep…` procs, they are NOT the review). Read the final `^codex$`
-   block: `grep -n '^codex$' /tmp/codex_review7_out.txt | tail -1` → read from there.
-2. Triage with `superpowers:receiving-code-review` — VERIFY each finding (use Explore subagents,
-   one per finding, to keep context lean — that worked well this session).
-3. Fix loop: TDD each → `./test.sh <suite>` → commit → re-run Codex until **2 CONSECUTIVE clean**.
-   If #7 is clean, that's review 1 of 2 — run one more (narrowed) clean pass to clear the bar.
+**Codex review #7 is DONE — 3 P1 + 3 P2, all OPEN (none fixed yet).** Output →
+`/tmp/codex_review7_out.txt` (prompt `/tmp/codex_review7.txt`, narrowed to deploy
+identity/concurrency + v2 mount/dev lifecycle). Full findings in the next section. NEXT SESSION:
+1. Don't re-run #7 — it's done. Start fixing per the dashboard's "Recommended sequencing."
+2. Triage each with `superpowers:receiving-code-review` + an Explore subagent before fixing.
+3. Fix loop: TDD each → `./test.sh <suite>` → commit → re-run Codex (#8) until **2 CONSECUTIVE clean**.
 
-Tests green at session end: 115 solution unit + 111 client app-sdk/jsx-app; ruff + pyright clean.
+Tests green at session 3 end: 115 solution unit + 111 client app-sdk/jsx-app; ruff + pyright clean.
 NOTE: 2 pre-existing `npm run tsc` errors (AppInfoDialog.tsx, AppReplacePathDialog.test.tsx — both
 `app_model` on the generated app type) are `v1.d.ts` DRIFT, NOT from this work (confirmed by
 stashing the one client change — they persist). Regen types against a running API to clear them.
+
+## REVIEW #7 — OPEN FINDINGS (3 P1 + 3 P2) — verbatim, all unfixed
+
+Triage status: read against the code with `superpowers:receiving-code-review` before fixing. The
+two P1s in **bold** share a root cause (the per-install entity-identity model) and should be fixed
+together. Task IDs below refer to the session TaskList.
+
+- **[P1] (task R7-P1-b) Allocate install-local entity IDs before deploying another scope** —
+  `api/bifrost/commands/solution.py:624-628`. Deploying the same workspace to a 2nd scope still
+  sends the `.bifrost/*.yaml` UUIDs unchanged; after install #1 owns them, install #2 (created by
+  the resolver) hits the ownership guard and aborts. No remap/translation in the CLI or git-sync
+  collectors → a byte-identical scaffold/export/git repo can't satisfy multi-install (criterion 9)
+  without manually regenerating all manifest IDs. *(Reopens #6 P1-a — see dashboard.)*
+- **[P1] (task R7-P1-c) Resolve solution workflow path refs for v2 apps** —
+  `api/src/repositories/workflows.py:110-113`. A v2 app's scaffolded `useWorkflow("workflows/foo.py::main")`
+  posts that ref to `/api/workflows/execute`, but `resolve()` excludes solution-managed rows, so it
+  only finds `_repo/` workflows and the deployed Solution workflow 404s. Path refs must resolve
+  within the app/workflow's solution scope, not be filtered out.
+- [P1] (task R7-P1-a) **Regression from this session's R6-P1-b fix** — Prevent org deploys without
+  an org from matching global installs — `api/bifrost/commands/solution.py:532-533`. When
+  `client.organization` is `None`/no `id`, `deployer_org_id` is `None`, and the org-scope predicate
+  matches any same-slug GLOBAL install (its `organization_id` is also `None`). A provider/admin
+  org-scoped `bifrost deploy` can full-replace the global install. Org-scope matching must require a
+  non-null deployer org before comparing.
+- [P2] (task R7-P2-d) Block `delete_missing_prefix` for managed app paths —
+  `api/src/services/mcp_server/tools/apps.py:834-838`. The new guard only checks explicit `files`
+  keys; `push_files(files={}, delete_missing_prefix="apps/managed")` still reaches the delete sweep
+  and removes `_repo/` files under a managed app's `repo_path`. Needs the managed-prefix check before
+  any S3 deletion.
+- [P2] (task R7-P2-e) Guard late v2 imports after unmount —
+  `client/src/components/jsx-app/StandaloneV2App.tsx:150-151`. Navigating away while the entry chunk
+  is still downloading: cleanup deletes `window.__BIFROST_APP__`, but the dynamic import still
+  executes later, sees no bootstrap, and falls back to `document.getElementById("root")` — mounting a
+  stale app into the platform root after the shell unmounted.
+- [P2] (task R7-P2-f) Read tokens from the CLI credential store for dev —
+  `api/bifrost/commands/solution.py:166-168`. Scaffold promises `bifrost login` makes `npm run dev`
+  authenticated, but default device-code login only writes `BIFROST_API_URL` to `.env` and stores
+  tokens in keyring/`~/.bifrost/credentials.json`. The vite config reads `BIFROST_ACCESS_TOKEN` only
+  from process env or a nearby `.env`, so the normal login path starts the app tokenless unless the
+  dev used password-grant or manually exported the token.
 
 **If #6 is again non-trivial**, the open question to put to the user: keep reviewing the WHOLE
 surface each pass, or narrow to the two high-risk areas only (deploy atomicity/concurrency +
