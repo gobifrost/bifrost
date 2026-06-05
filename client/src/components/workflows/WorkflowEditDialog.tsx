@@ -127,6 +127,7 @@ export function WorkflowEditDialog({
 	const [rolesOpen, setRolesOpen] = useState(false);
 
 	// General tab state
+	const [workflowName, setWorkflowName] = useState("");
 	const [displayName, setDisplayName] = useState("");
 	const [description, setDescription] = useState("");
 	const [category, setCategory] = useState("");
@@ -186,6 +187,7 @@ export function WorkflowEditDialog({
 			setAccessLevel((workflow.access_level as WorkflowAccessLevel) || "role_based");
 
 			// General
+			setWorkflowName(workflow.name ?? "");
 			setDisplayName(workflow.display_name ?? "");
 			setDescription(workflow.description ?? "");
 			setCategory(workflow.category ?? "General");
@@ -240,10 +242,14 @@ export function WorkflowEditDialog({
 
 		setIsSaving(true);
 		try {
+			const resolvedWorkflowName =
+				workflowName.trim() || workflow.function_name || workflow.name;
+
 			// Build update payload with all changed fields
 			await updateWorkflow.mutateAsync(workflow.id, {
 				organization_id: organizationId,
 				access_level: accessLevel,
+				name: resolvedWorkflowName,
 				display_name: displayName || null,
 				description: description || null,
 				category: category || "General",
@@ -423,6 +429,19 @@ export function WorkflowEditDialog({
 						{/* General Tab */}
 						<TabsContent value="general" className="mt-0 space-y-4">
 							<div className="space-y-2">
+								<Label htmlFor="workflow-name">Tool Name</Label>
+								<Input
+									id="workflow-name"
+									value={workflowName}
+									onChange={(e) => setWorkflowName(e.target.value)}
+									placeholder={workflow?.function_name ?? "workflow_name"}
+								/>
+								<p className="text-xs text-muted-foreground">
+									Used when this workflow is exposed as an MCP tool. Leave empty to reset to the Python function name.
+								</p>
+							</div>
+
+							<div className="space-y-2">
 								<Label htmlFor="display-name">Display Name</Label>
 								<Input
 									id="display-name"
@@ -431,7 +450,7 @@ export function WorkflowEditDialog({
 									placeholder={workflow?.name ?? "Workflow name"}
 								/>
 								<p className="text-xs text-muted-foreground">
-									User-facing name. Leave empty to use the code name.
+									Optional UI label. Leave empty to use the tool name.
 								</p>
 							</div>
 

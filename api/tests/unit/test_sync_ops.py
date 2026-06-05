@@ -872,3 +872,36 @@ class TestManifestFieldCoverage:
         assert isinstance(result, list), (
             "_ops_to_issues([]) should return a list"
         )
+
+
+class TestManifestWorkflowImport:
+    """Workflow manifest import preserves the editable tool-name field."""
+
+    def test_resolve_workflow_uses_manifest_name_not_manifest_key(self) -> None:
+        from uuid import UUID
+
+        from bifrost.manifest import ManifestWorkflow
+        from src.models.orm.workflows import Workflow
+        from src.services.manifest_import import ManifestResolver
+        from src.services.sync_ops import Upsert
+
+        wf_id = UUID("11111111-1111-1111-1111-111111111111")
+        mwf = ManifestWorkflow(
+            id=str(wf_id),
+            name="custom_tool_name",
+            path="workflows/custom.py",
+            function_name="python_function_name",
+        )
+        resolver = ManifestResolver(AsyncMock())
+
+        ops = resolver._resolve_workflow(
+            "custom_tool_name",
+            mwf,
+            {"wf_by_natural": {}, "wf_ids": set()},
+        )
+
+        assert len(ops) == 1
+        assert isinstance(ops[0], Upsert)
+        assert ops[0].model is Workflow
+        assert ops[0].values["name"] == "custom_tool_name"
+        assert ops[0].values["function_name"] == "python_function_name"

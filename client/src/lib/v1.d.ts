@@ -3705,22 +3705,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -18577,7 +18577,7 @@ export interface components {
             id: string;
             /**
              * Name
-             * @description Workflow name (from decorator or function name)
+             * @description MCP tool name, defaulted from function_name on registration
              */
             name: string;
             /**
@@ -21302,7 +21302,7 @@ export interface components {
             id: string;
             /**
              * Name
-             * @description Human-readable workflow name
+             * @description MCP tool name for this workflow. Defaults to the Python function name on registration.
              */
             name: string;
             /**
@@ -21312,7 +21312,7 @@ export interface components {
             function_name?: string | null;
             /**
              * Display Name
-             * @description Optional display name for UI (falls back to name if not set)
+             * @description Optional UI display name (falls back to the tool name if not set)
              */
             display_name?: string | null;
             /**
@@ -21591,8 +21591,13 @@ export interface components {
              */
             role_ids?: string[] | null;
             /**
+             * Name
+             * @description MCP tool name for this workflow. Defaults to the Python function name on registration.
+             */
+            name?: string | null;
+            /**
              * Display Name
-             * @description User-facing display name (defaults to code name if not set)
+             * @description Optional UI display name (falls back to the tool name if not set)
              */
             display_name?: string | null;
             /**
@@ -27917,7 +27922,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -27950,7 +27955,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -27983,7 +27988,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -28016,7 +28021,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {

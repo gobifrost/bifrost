@@ -54,9 +54,14 @@ class WorkflowMetadata(BaseModel):
     id: str = Field(..., description="Workflow UUID")
 
     # Required fields
-    name: str = Field(..., min_length=1, max_length=200, description="Human-readable workflow name")
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="MCP tool name for this workflow. Defaults to the Python function name on registration.",
+    )
     function_name: str | None = Field(default=None, description="Python function name (for CodeLens registration status)")
-    display_name: str | None = Field(default=None, description="Optional display name for UI (falls back to name if not set)")
+    display_name: str | None = Field(default=None, description="Optional UI display name (falls back to the tool name if not set)")
     description: str | None = Field(default=None, description="Human-readable description")
 
     # Type discriminator - distinguishes workflow/tool/data_provider
@@ -175,7 +180,7 @@ class RegisterWorkflowRequest(BaseModel):
 class RegisterWorkflowResponse(BaseModel):
     """Response model for workflow registration."""
     id: str = Field(..., description="Workflow UUID")
-    name: str = Field(..., description="Workflow name (from decorator or function name)")
+    name: str = Field(..., description="MCP tool name, defaulted from function_name on registration")
     function_name: str = Field(..., description="Python function name")
     path: str = Field(..., description="File path")
     type: str = Field(..., description="Executable type: workflow, tool, or data_provider")
@@ -297,10 +302,16 @@ class WorkflowUpdateRequest(BaseModel):
     )
 
     # New fields for UI management
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="MCP tool name for this workflow. Defaults to the Python function name on registration."
+    )
     display_name: str | None = Field(
         default=None,
         max_length=200,
-        description="User-facing display name (defaults to code name if not set)"
+        description="Optional UI display name (falls back to the tool name if not set)"
     )
     description: str | None = Field(
         default=None,

@@ -32,7 +32,7 @@ class workflows:
         Returns:
             list[WorkflowMetadata]: List of workflow metadata with attributes:
                 - id: str - Workflow UUID
-                - name: str - Workflow name (snake_case)
+                - name: str - MCP tool name (defaults to function name)
                 - description: str | None - Human-readable description
                 - category: str - Category for organization
                 - tags: list[str] - Tags for categorization
