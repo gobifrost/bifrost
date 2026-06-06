@@ -97,6 +97,7 @@ class TablePublic(TableBase):
     updated_at: datetime
     created_by: str | None
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
+    solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 
     @model_validator(mode="before")
     @classmethod

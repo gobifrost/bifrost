@@ -5,6 +5,7 @@ Workflow metadata and validation contract models for Bifrost.
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -74,6 +75,7 @@ class WorkflowMetadata(BaseModel):
     # read-only on the platform). The UI uses this to render it read-only with a
     # "managed by Solution" affordance. The install id itself is not exposed.
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
+    solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 
     # Access control
     access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required)")

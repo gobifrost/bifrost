@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8988,6 +8988,11 @@ export interface components {
              * @default false
              */
             is_solution_managed: boolean;
+            /**
+             * Solution Id
+             * @description UUID of the owning Solution install (null if not solution-managed)
+             */
+            solution_id?: string | null;
             /** Is Active */
             is_active: boolean;
             /** Created By */
@@ -9720,6 +9725,11 @@ export interface components {
              * @default false
              */
             is_solution_managed: boolean;
+            /**
+             * Solution Id
+             * @description UUID of the owning Solution install (null if not solution-managed)
+             */
+            solution_id?: string | null;
             /** Role Ids */
             role_ids?: string[];
             /**
@@ -14306,6 +14316,11 @@ export interface components {
              * @default false
              */
             is_solution_managed: boolean;
+            /**
+             * Solution Id
+             * @description UUID of the owning Solution install (null if not solution-managed)
+             */
+            solution_id?: string | null;
         };
         /**
          * FormSchema
@@ -20063,6 +20078,10 @@ export interface components {
             agents?: {
                 [key: string]: unknown;
             }[];
+            /** Config Schemas */
+            config_schemas?: {
+                [key: string]: unknown;
+            }[];
         };
         /** SolutionDeployResponse */
         SolutionDeployResponse: {
@@ -20316,6 +20335,11 @@ export interface components {
              * @default false
              */
             is_solution_managed: boolean;
+            /**
+             * Solution Id
+             * @description UUID of the owning Solution install (null if not solution-managed)
+             */
+            solution_id?: string | null;
         };
         /**
          * TableUpdate
@@ -21732,6 +21756,11 @@ export interface components {
              * @default false
              */
             is_solution_managed: boolean;
+            /**
+             * Solution Id
+             * @description UUID of the owning Solution install (null if not solution-managed)
+             */
+            solution_id?: string | null;
             /**
              * Access Level
              * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required)
@@ -28359,7 +28388,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -28392,7 +28421,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -28425,7 +28454,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -28458,7 +28487,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {

@@ -150,6 +150,7 @@ class AgentPublic(BaseModel):
     access_level: AgentAccessLevel | None = None
     organization_id: UUID | None = None
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
+    solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
     is_active: bool
     created_by: str | None = None
     owner_user_id: UUID | None = None

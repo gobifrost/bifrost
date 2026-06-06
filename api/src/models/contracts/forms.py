@@ -319,6 +319,7 @@ class FormPublic(BaseModel):
     updated_at: datetime | None = None
     dependency_count: int = Field(default=0, description="Number of workflow dependencies this form uses")
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
+    solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 
     @model_validator(mode="before")
     @classmethod

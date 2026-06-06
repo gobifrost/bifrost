@@ -149,6 +149,7 @@ class ApplicationPublic(ApplicationBase):
     access_level: str = Field(default="authenticated")
     app_model: str = Field(default="inline_v1", description="Render model: inline_v1 (legacy inline) | standalone_v2")
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
+    solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
     role_ids: list[UUID] = Field(default_factory=list)
     repo_path: str = Field(
         description="Workspace-relative path to the app's source directory. Mutated via POST /api/applications/{id}/replace."
