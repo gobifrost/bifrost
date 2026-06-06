@@ -137,54 +137,84 @@ async def sync(db: AsyncSession, solution: Solution) -> None:
     if not solution.git_connected or not solution.git_repo_url:
         raise ValueError("sync() requires a git-connected solution with a repo url")
 
-    from git import Repo as GitRepo  # GitPython (already a dep)
-
+    from src.core.redis_client import get_redis_client
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
         solution_write_lock,
     )
 
+    redis = await get_redis_client()._get_redis()
+    pending_key = f"bifrost:solution:sync-pending:{solution.id}"
+
     # Per-install write lock, SHARED with manual deploy (same key namespace) so a
     # sync and a manual deploy can't race either. The lock's TTL is RENEWED while
     # held, so a long clone + npm install + vite build + finalize never loses it
-    # mid-deploy (the old fixed 300s TTL could expire under a slow build, letting
-    # a second sync interleave — Codex #12). If held, an in-flight writer already
-    # covers main's latest, so skip (a follow-up trigger re-runs).
-    try:
-        async with solution_write_lock(solution.id):
-            with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
-                work_dir = Path(tmp)
-                # clone_from is synchronous/network-bound; run it OFF the event
-                # loop so the write-lock's renewal watchdog (and everything else)
-                # keeps running during a slow clone — otherwise a long clone would
-                # block the loop, starve the watchdog, and let the lock TTL expire
-                # mid-deploy, reintroducing the interleave the lock prevents.
-                await asyncio.to_thread(
-                    GitRepo.clone_from,
-                    solution.git_repo_url,
-                    str(work_dir),
-                    branch="main",
-                    depth=1,
-                )
-                logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
-                result = await deploy_from_workspace(db, solution, work_dir)
-            # Commit the DB phase, THEN run S3 — a failed commit changes no running
-            # code (Codex P1-c). Both happen while the per-install lock is held so a
-            # racing sync can't interleave. The bundle is in-memory, so finalizing
-            # after the checkout temp dir is gone is fine.
-            await db.commit()
-            try:
-                await result.finalize_s3()
-            except SolutionFinalizeIncomplete:
-                # finalize_s3 already retried; storage is down. Auto-pull runs in a
-                # background job with no caller to surface a 502 to, and the deploy is
-                # full-replace + idempotent — the next sync trigger re-runs and heals
-                # it. Log and don't crash the job (Codex R5).
-                logger.error(
-                    "Solution %s synced (DB committed) but storage finalize failed "
-                    "after retries; the next sync will re-run and heal it.",
-                    solution.id,
-                )
-    except SolutionWriteLockHeld:
-        logger.info("Sync already in progress for solution %s; skipping", solution.id)
+    # mid-deploy (Codex #12).
+    #
+    # If the lock is held, the in-flight sync ALREADY CLONED its commit, so it
+    # won't pick up a newer commit that triggered THIS call. Rather than drop that
+    # newer commit (which would leave the install stale until a future trigger —
+    # Codex #13), set a "pending rerun" flag; the in-flight holder re-checks it
+    # after finalizing and re-syncs, so main's latest is always deployed.
+    while True:
+        try:
+            async with solution_write_lock(solution.id):
+                # We hold the lock now: clear any pending marker — we're about to
+                # clone the CURRENT main, which subsumes earlier skipped triggers.
+                await redis.delete(pending_key)
+                await _run_sync_once(db, solution)
+        except SolutionWriteLockHeld:
+            # Another writer holds it; record that a rerun is owed so the holder
+            # picks up this (newer) commit after it finishes.
+            await redis.set(pending_key, "1", ex=3600)
+            logger.info(
+                "Sync already in progress for solution %s; queued a rerun", solution.id
+            )
+            return
+
+        # Released the lock. If a trigger arrived while we held it, run again so
+        # the newest commit lands (bounded: each pass clears the flag under lock,
+        # so it only loops while NEW triggers keep arriving).
+        if await redis.delete(pending_key):
+            logger.info("Rerunning sync for solution %s (newer commit queued)", solution.id)
+            continue
         return
+
+
+async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
+    """One clone + deploy + commit + finalize, under the caller's held lock."""
+    from git import Repo as GitRepo  # GitPython (already a dep)
+
+    repo_url = solution.git_repo_url
+    assert repo_url is not None  # sync() validated git_connected + git_repo_url
+    with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
+        work_dir = Path(tmp)
+        # clone_from is synchronous/network-bound; run it OFF the event loop so the
+        # write-lock's renewal watchdog (and everything else) keeps running during
+        # a slow clone — otherwise a long clone would block the loop, starve the
+        # watchdog, and let the lock TTL expire mid-deploy.
+        await asyncio.to_thread(
+            GitRepo.clone_from,
+            repo_url,
+            str(work_dir),
+            branch="main",
+            depth=1,
+        )
+        logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
+        result = await deploy_from_workspace(db, solution, work_dir)
+    # Commit the DB phase, THEN run S3 — a failed commit changes no running code
+    # (Codex P1-c). Both happen while the per-install lock is held so a racing sync
+    # can't interleave. The bundle is in-memory, so finalizing after the checkout
+    # temp dir is gone is fine.
+    await db.commit()
+    try:
+        await result.finalize_s3()
+    except SolutionFinalizeIncomplete:
+        # finalize_s3 already retried; storage is down. Auto-pull runs in a
+        # background job with no caller to surface a 502 to, and the deploy is
+        # full-replace + idempotent — the next sync trigger re-runs and heals it.
+        logger.error(
+            "Solution %s synced (DB committed) but storage finalize failed "
+            "after retries; the next sync will re-run and heal it.",
+            solution.id,
+        )

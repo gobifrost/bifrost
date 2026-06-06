@@ -29,6 +29,7 @@ from src.models.orm.solutions import Solution as SolutionORM
 from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployer,
+    SolutionDeployConflict,
     SolutionFinalizeIncomplete,
 )
 
@@ -137,6 +138,11 @@ async def deploy_solution(
             status_code=status.HTTP_409_CONFLICT,
             detail="A deploy is already in progress for this install; retry shortly.",
         ) from exc
+    except SolutionDeployConflict as exc:
+        # The bundle is invalid for this install: a foreign/owned entity id, an
+        # app-slug collision with a visible app, or a non-standalone_v2 app. These
+        # are caller errors → 409 with the reason, not an unhandled 500 (Codex #13).
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SolutionFinalizeIncomplete as exc:
         # Reached only when storage failed every retry (a real outage), not a
         # transient blip. The DB is committed and the deploy is full-replace +

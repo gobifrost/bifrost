@@ -316,3 +316,109 @@ async def test_mcp_push_files_allows_unmanaged(db_session, monkeypatch):
     text = str(payload)
     assert SOLUTION_MANAGED_MESSAGE not in text, text
     assert wrote["repo"] is True
+
+
+async def _managed_agent_with_tool(db) -> tuple[uuid.UUID, uuid.UUID]:
+    """A solution-managed agent with one AgentTool binding. Returns (agent_id,
+    workflow_id of the tool)."""
+    from src.models.orm.agents import Agent, AgentTool
+    from src.models.orm.solutions import Solution
+    from src.models.orm.workflows import Workflow
+
+    sol = Solution(id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP", organization_id=None)
+    db.add(sol)
+    await db.flush()
+    wf = Workflow(
+        id=uuid.uuid4(), name="tool_wf", function_name="run", path="workflows/t.py",
+        type="tool", organization_id=None, is_active=True,
+    )
+    db.add(wf)
+    aid = uuid.uuid4()
+    db.add(Agent(
+        id=aid, name=f"a_{uuid.uuid4().hex[:8]}", system_prompt="hi",
+        organization_id=None, solution_id=sol.id, created_by="test",
+    ))
+    await db.flush()
+    db.add(AgentTool(agent_id=aid, workflow_id=wf.id))
+    await db.flush()
+    return aid, wf.id
+
+
+async def test_mcp_update_agent_refuses_managed_without_deleting_tools(db_session, monkeypatch):
+    """Codex #13: update_agent on a solution-managed agent returns the read-only
+    error AND does NOT bulk-delete its AgentTool bindings (the Core delete must
+    not run / persist)."""
+    from contextlib import asynccontextmanager
+
+    from sqlalchemy import func, select
+
+    from src.models.orm.agents import AgentTool
+    from src.services.mcp_server.tools import agents as mcp_agents
+
+    aid, _wf = await _managed_agent_with_tool(db_session)
+
+    @asynccontextmanager
+    async def _fake_tool_db(_context):
+        yield db_session
+
+    monkeypatch.setattr(mcp_agents, "get_tool_db", _fake_tool_db)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_agents.update_agent(context, agent_id=str(aid), tool_ids=[])
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    # The binding SURVIVED — the bulk delete never persisted.
+    count = (await db_session.execute(
+        select(func.count()).select_from(AgentTool).where(AgentTool.agent_id == aid)
+    )).scalar()
+    assert count == 1
+
+
+async def _managed_form_with_field(db) -> uuid.UUID:
+    from src.models.orm.forms import Form, FormField
+    from src.models.orm.solutions import Solution
+
+    sol = Solution(id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP", organization_id=None)
+    db.add(sol)
+    await db.flush()
+    fid = uuid.uuid4()
+    db.add(Form(
+        id=fid, name=f"f_{uuid.uuid4().hex[:8]}", organization_id=None, solution_id=sol.id,
+        created_by="test",
+    ))
+    await db.flush()
+    db.add(FormField(id=uuid.uuid4(), form_id=fid, name="field1", type="text", label="F1", position=0))
+    await db.flush()
+    return fid
+
+
+async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_session, monkeypatch):
+    """Codex #13: update_form on a solution-managed form returns the read-only
+    error AND does NOT bulk-delete its FormField rows."""
+    from contextlib import asynccontextmanager
+
+    from sqlalchemy import func, select
+
+    from src.models.orm.forms import FormField
+    from src.services.mcp_server.tools import forms as mcp_forms
+
+    fid = await _managed_form_with_field(db_session)
+
+    @asynccontextmanager
+    async def _fake_tool_db(_context):
+        yield db_session
+
+    monkeypatch.setattr(mcp_forms, "get_tool_db", _fake_tool_db)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_forms.update_form(
+        context, form_id=str(fid), fields=[{"name": "new", "field_type": "text", "label": "New"}]
+    )
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    count = (await db_session.execute(
+        select(func.count()).select_from(FormField).where(FormField.form_id == fid)
+    )).scalar()
+    assert count == 1

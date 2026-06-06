@@ -132,3 +132,64 @@ class TestConnectedBundleCompleteness:
         assert [a["id"] for a in bundle.apps] == [app_id]
         assert [f["id"] for f in bundle.forms] == [form_id]
         assert [a["id"] for a in bundle.agents] == [agent_id]
+
+
+@pytest.mark.e2e
+class TestGitSyncRerun:
+    async def test_rerun_when_trigger_arrives_mid_sync(self, db_session, monkeypatch):
+        """Codex #13: a sync trigger arriving while a sync holds the lock must not
+        be dropped. The holder re-checks a pending flag after finishing and
+        re-syncs, so the newest commit is always deployed."""
+        from src.core.redis_client import get_redis_client
+        from src.services.solutions import git_sync as gs
+
+        sol = Solution(
+            id=uuid.uuid4(), slug=f"rr-{uuid.uuid4().hex[:8]}", name="RR",
+            organization_id=None, git_connected=True, git_repo_url="file:///tmp/x",
+        )
+        db_session.add(sol)
+        await db_session.flush()
+
+        redis = await get_redis_client()._get_redis()
+        pending_key = f"bifrost:solution:sync-pending:{sol.id}"
+        await redis.delete(pending_key)
+
+        calls = {"n": 0}
+
+        async def _fake_run_once(db, solution):
+            calls["n"] += 1
+            # On the FIRST run, simulate a newer commit's trigger arriving while
+            # the lock is held: it would set the pending flag.
+            if calls["n"] == 1:
+                await redis.set(pending_key, "1", ex=3600)
+
+        monkeypatch.setattr(gs, "_run_sync_once", _fake_run_once)
+
+        await gs.sync(db_session, sol)
+
+        # Ran twice: once for the original, once for the queued newer commit.
+        assert calls["n"] == 2
+        # Flag cleared at the end (no infinite loop).
+        assert await redis.get(pending_key) is None
+
+    async def test_no_rerun_without_pending_trigger(self, db_session, monkeypatch):
+        from src.core.redis_client import get_redis_client
+        from src.services.solutions import git_sync as gs
+
+        sol = Solution(
+            id=uuid.uuid4(), slug=f"rr-{uuid.uuid4().hex[:8]}", name="RR",
+            organization_id=None, git_connected=True, git_repo_url="file:///tmp/x",
+        )
+        db_session.add(sol)
+        await db_session.flush()
+        redis = await get_redis_client()._get_redis()
+        await redis.delete(f"bifrost:solution:sync-pending:{sol.id}")
+
+        calls = {"n": 0}
+
+        async def _fake_run_once(db, solution):
+            calls["n"] += 1
+
+        monkeypatch.setattr(gs, "_run_sync_once", _fake_run_once)
+        await gs.sync(db_session, sol)
+        assert calls["n"] == 1  # no pending flag → single run

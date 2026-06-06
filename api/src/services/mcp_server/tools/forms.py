@@ -551,6 +551,19 @@ async def update_form(
             if not form:
                 return error_result(f"Form '{form_id}' not found. Use list_forms to see available forms.")
 
+            # Solution-managed forms are read-only (criterion 6). Refuse BEFORE
+            # any mutation: this tool issues a Core bulk delete of FormField rows
+            # that bypasses the ORM-flush backstop, and the agent executor commits
+            # even after an error_result — so a late guard would leave the field
+            # delete persisted (Codex #13).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(form):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
+
             # Check access for non-admins
             if not context.is_platform_admin:
                 if form.organization_id:

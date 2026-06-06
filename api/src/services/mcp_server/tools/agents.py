@@ -485,6 +485,19 @@ async def update_agent(
             if not agent:
                 return error_result(f"Agent '{agent_id}' not found. Use list_agents to see available agents.")
 
+            # Solution-managed agents are read-only (criterion 6). Refuse BEFORE
+            # any mutation: this tool issues Core bulk deletes (AgentTool /
+            # AgentDelegation) that bypass the ORM-flush backstop, and the agent
+            # executor commits even after an error_result — so a late guard would
+            # leave the bulk delete persisted (Codex #13).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(agent):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
+
             # Check access for non-admins
             if not context.is_platform_admin:
                 if agent.organization_id:
