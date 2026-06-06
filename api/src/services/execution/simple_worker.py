@@ -219,30 +219,18 @@ def _clear_workspace_modules() -> None:
         )
     ]
 
-    # Cross-solution isolation: a module rooted under a DIFFERENT solution's
-    # _solutions/{id}/ prefix must NOT be reused by the current execution — its
-    # bare name (modules.foo) would otherwise shadow this solution's own file
-    # (criterion 3, self-contained worlds). The module records its origin in
-    # __file__; the active solution is the per-execution context. The module
-    # index is _repo/-keyed and can't map solution-rooted names, so the hash
-    # check below can't catch this — force-evict here.
-    from src.core.module_cache_sync import SOLUTIONS_ROOT, get_solution_context
-
-    active = get_solution_context()
-    active_prefix = (
-        f"{SOLUTIONS_ROOT}/{active.solution_id}/" if active is not None else None
-    )
-    foreign_solution_modules: list[str] = []
-    for name, module in workspace_modules:
-        origin = getattr(module, "__file__", None) or ""
-        if not origin.startswith(f"{SOLUTIONS_ROOT}/"):
-            continue
-        # Rooted under some solution. Keep only if it's THIS solution's module.
-        if active_prefix is None or not origin.startswith(active_prefix):
-            foreign_solution_modules.append(name)
+    # Cross-solution isolation note: a VirtualModuleLoader module records its
+    # __file__ as the BARE relative path (modules/foo.py), NOT a _solutions/{id}/-
+    # rooted path — so two installs' same-named modules both cache under the bare
+    # name. The eviction below handles this via the hash check: a solution
+    # module's name maps (through the _repo/-keyed index) to either no path or a
+    # DIFFERENT (_repo/) content hash than the one it loaded with, so it is
+    # cleared and the next import re-resolves within the now-active solution
+    # context. (An earlier _solutions/-prefix force-evict block was dead code —
+    # the prefix never matched — and was removed; this is the real mechanism.)
 
     # Check each module's hash — only clear if content changed
-    modules_to_clear: list[str] = list(foreign_solution_modules)
+    modules_to_clear: list[str] = []
     modules_kept = 0
 
     for name, module in workspace_modules:

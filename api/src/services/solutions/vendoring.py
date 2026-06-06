@@ -9,12 +9,10 @@ from __future__ import annotations
 
 from bifrost.solution_vendoring import (
     scan_imported_modules,
-    scan_imported_top_modules,
     vendor_shared_deps,
 )
 
 __all__ = [
     "scan_imported_modules",
-    "scan_imported_top_modules",
     "vendor_shared_deps",
 ]

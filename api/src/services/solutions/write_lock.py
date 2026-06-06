@@ -65,16 +65,12 @@ class SolutionWriteLockHeld(Exception):
 
 
 @contextlib.asynccontextmanager
-async def solution_write_lock(
-    solution_id: UUID, *, wait: bool = False
-) -> AsyncIterator[None]:
+async def solution_write_lock(solution_id: UUID) -> AsyncIterator[None]:
     """Hold the per-install write lock across a deploy's DB + S3 phases.
 
-    ``wait=False`` (manual deploy / git-sync): raise
-    :class:`SolutionWriteLockHeld` immediately if another writer holds it — the
-    manual router surfaces a 409; git-sync treats it as "skip" (an in-flight
+    Raise :class:`SolutionWriteLockHeld` immediately if another writer holds it —
+    the manual router surfaces a 409; git-sync treats it as "skip" (an in-flight
     sync already covers main's latest, and it queues a pending re-run).
-    ``wait=True`` polls until free.
 
     While held, a background task renews the TTL (compare-by-token) so a long
     deploy never loses the lock; the ``finally`` cancels the watchdog and deletes
@@ -90,11 +86,7 @@ async def solution_write_lock(
 
     acquired = await redis.set(key, token, nx=True, ex=_LOCK_TTL_S)
     if not acquired:
-        if not wait:
-            raise SolutionWriteLockHeld(str(solution_id))
-        while not acquired:
-            await asyncio.sleep(1.0)
-            acquired = await redis.set(key, token, nx=True, ex=_LOCK_TTL_S)
+        raise SolutionWriteLockHeld(str(solution_id))
 
     async def _renew() -> None:
         # Keep renewing for the lifetime of the context. A transient redis error

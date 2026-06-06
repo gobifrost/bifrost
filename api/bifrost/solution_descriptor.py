@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
 
@@ -38,9 +38,6 @@ class SolutionDescriptor(BaseModel):
     global_repo_access: bool = False
     git_connected: bool = False
     git_repo_url: str | None = None
-    # Declared shared deps to vendor on export (filled in Sub-plan 4). Kept here
-    # so the descriptor schema is stable across sub-plans.
-    deps: list[str] = Field(default_factory=list)
 
 
 def _descriptor_path(path: Path | str) -> Path:

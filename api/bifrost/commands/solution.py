@@ -35,11 +35,6 @@ from bifrost.solution_descriptor import (
 _PY_SOURCE_DIRS = ("workflows", "modules", "shared")
 
 
-def _noninteractive(yes: bool) -> bool:
-    """deploy never prompts; this is here for parity with the sync path."""
-    return yes or os.environ.get("BIFROST_NONINTERACTIVE") == "1"
-
-
 @click.group(name="solution", help="Manage Solution installs (installable surfaces).")
 def solution_group() -> None:
     pass
@@ -593,8 +588,7 @@ def _resolve_target_install(
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
-@click.option("--yes", "-y", is_flag=True, default=False, help="Non-interactive: apply the full bundle without prompting.")
-def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
+def deploy_cmd(path: str, solution_id: str | None) -> None:
     workspace = pathlib.Path(path).resolve()
     if not is_solution_workspace(workspace):
         raise click.ClickException(
@@ -602,7 +596,6 @@ def deploy_cmd(path: str, solution_id: str | None, yes: bool) -> None:
             f"Run `bifrost solution init` first."
         )
     descriptor = load_descriptor(workspace)
-    _noninteractive(yes)  # deploy is always full-replace; flag kept for contract parity
 
     python_files = _collect_python_files(workspace)
     workflows = _collect_workflows(workspace)

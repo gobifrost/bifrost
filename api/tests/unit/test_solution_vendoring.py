@@ -13,45 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.services.solutions.vendoring import (
-    scan_imported_top_modules,
-    vendor_shared_deps,
-)
-
-
-def test_finds_from_import() -> None:
-    src = "from shared.halopsa import client\n"
-    assert "shared" in scan_imported_top_modules(src)
-
-
-def test_finds_plain_import_and_dotted() -> None:
-    src = "import shared.util\nimport modules.helpers as h\n"
-    mods = scan_imported_top_modules(src)
-    assert "shared" in mods
-    assert "modules" in mods
-
-
-def test_ignores_stdlib_and_thirdparty() -> None:
-    src = "import os\nimport httpx\nfrom datetime import datetime\nfrom shared.x import y\n"
-    mods = scan_imported_top_modules(src)
-    assert "shared" in mods
-    # stdlib / third-party tops are still returned by the raw scan; filtering to
-    # workspace roots is the caller's job — but the scan must at least capture
-    # the real first segment, not a submodule.
-    assert "datetime" in mods or "shared" in mods
-
-
-def test_relative_imports_have_no_top_module() -> None:
-    # `from . import x` / `from .sib import y` are intra-package, no top module.
-    src = "from . import sibling\nfrom .sub import thing\n"
-    mods = scan_imported_top_modules(src)
-    assert "." not in mods
-    assert "" not in mods
-
-
-def test_syntax_error_returns_empty_not_raises() -> None:
-    # A bundle file that doesn't parse must not crash the export scan.
-    assert scan_imported_top_modules("def (:\n  pass") == set()
+from src.services.solutions.vendoring import vendor_shared_deps
 
 
 # --- vendor_shared_deps (transitive) ---------------------------------------

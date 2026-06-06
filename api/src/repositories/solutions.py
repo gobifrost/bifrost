@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Solution
@@ -27,20 +26,3 @@ class SolutionRepository(BaseRepository[Solution]):  # type: ignore[type-var]
 
     def __init__(self, session: AsyncSession):
         super().__init__(session)
-
-    async def get_by_slug_and_scope(
-        self, slug: str, organization_id: str | None
-    ) -> Solution | None:
-        """Find the single install of ``slug`` at the given scope.
-
-        ``organization_id`` is the org UUID for an org-scoped install, or None
-        for the global-scoped install. Install identity is unique per
-        (slug, scope) — success-criteria §3.4.
-        """
-        stmt = select(Solution).where(Solution.slug == slug)
-        if organization_id is None:
-            stmt = stmt.where(Solution.organization_id.is_(None))
-        else:
-            stmt = stmt.where(Solution.organization_id == organization_id)
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()

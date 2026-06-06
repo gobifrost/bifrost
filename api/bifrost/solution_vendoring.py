@@ -10,8 +10,8 @@ installs on a *fresh* instance with no ``_repo/`` present and its imports resolv
 to the vendored copies (not a silent dependency on the origin's ``_repo/``).
 
 This module provides:
-- ``scan_imported_top_modules``: the static (AST) scan of what a source file
-  imports — the first segment of each absolute import.
+- ``scan_imported_modules``: the static (AST) scan of the full dotted module
+  names a source file imports.
 - ``vendor_shared_deps``: given the solution's bundle files + a reader over the
   origin ``_repo/``, transitively pull every referenced shared module's source
   into the bundle, keyed by its relative path.
@@ -24,17 +24,6 @@ import logging
 from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
-
-
-def scan_imported_top_modules(source: str) -> set[str]:
-    """Return the set of top-level module names imported by ``source``.
-
-    ``import a.b.c`` and ``from a.b import c`` both contribute ``a``. Relative
-    imports (``from . import x``) contribute nothing. A file that does not parse
-    contributes nothing (export must not crash on a bad file). Used for the
-    coarse "does this bundle touch root R" check.
-    """
-    return {m.split(".")[0] for m in scan_imported_modules(source)}
 
 
 def scan_imported_modules(source: str) -> set[str]:
@@ -81,7 +70,6 @@ async def vendor_shared_deps(
     repo_read: Callable[[str], Awaitable[str | None]],
     *,
     solution_local_roots: frozenset[str] = frozenset({"modules", "workflows"}),
-    skip_roots: frozenset[str] = frozenset(),
 ) -> dict[str, str]:
     """Vendor referenced ``_repo/`` shared modules into the bundle.
 
@@ -91,8 +79,6 @@ async def vendor_shared_deps(
             path is absent in the origin repo (stdlib/third-party/typo).
         solution_local_roots: import roots that live inside the solution itself
             (already in the bundle) — never vendored.
-        skip_roots: extra roots to never vendor (e.g. when global-repo-access is
-            intentionally relied on — out of scope for a portable export).
 
     Returns:
         A mapping of newly-vendored ``path -> source`` to merge into the bundle.
@@ -116,7 +102,7 @@ async def vendor_shared_deps(
                 continue
             seen_modules.add(module)
             root = module.split(".")[0]
-            if root in solution_local_roots or root in skip_roots:
+            if root in solution_local_roots:
                 continue
             # Resolve the module's source from the origin _repo/ at its full
             # dotted path (shared.calc -> shared/calc.py). If absent, it's

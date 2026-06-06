@@ -19,15 +19,18 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
-def _fake_solution_module(name: str, solution_id: str, content_hash: str):
-    """A module object as the virtual loader would create it for a solution —
-    carries a VirtualModuleLoader so _clear_workspace_modules sees it as a
-    workspace module."""
+def _fake_solution_module(name: str, rel_path: str, content_hash: str):
+    """A module object as VirtualModuleLoader ACTUALLY creates it: __file__ is the
+    BARE relative path (e.g. 'modules/foo.py'), NOT a _solutions/{id}/-rooted one.
+    (An earlier version of this fixture used a fictional _solutions/-rooted
+    __file__, which only ever exercised a dead force-evict block — see the removed
+    block in simple_worker. This matches reality so the test verifies the REAL
+    hash-check eviction.)"""
     from src.services.execution.virtual_import import VirtualModuleLoader
 
     m = types.ModuleType(name)
-    m.__file__ = f"_solutions/{solution_id}/modules/foo.py"
-    m.__content_hash__ = content_hash
+    m.__file__ = rel_path
+    m.__content_hash__ = content_hash  # type: ignore[attr-defined]  # dynamic attr the loader sets
     # A minimal loader instance of the right type (only isinstance is checked).
     m.__loader__ = VirtualModuleLoader.__new__(VirtualModuleLoader)
     return m
@@ -45,14 +48,15 @@ def test_switching_solution_evicts_other_solutions_module(_clean_sys_modules, mo
     import src.core.module_cache_sync as mcs
     from src.services.execution.simple_worker import _clear_workspace_modules
 
-    sid_a = str(uuid.uuid4())
     sid_b = str(uuid.uuid4())
 
-    # Solution A imported modules.foo from its own root.
-    sys.modules["modules.foo"] = _fake_solution_module("modules.foo", sid_a, "hashA")
+    # Solution A imported modules.foo (bare __file__, as the loader produces).
+    sys.modules["modules.foo"] = _fake_solution_module("modules.foo", "modules/foo.py", "hashA")
 
-    # The module index doesn't know about solution roots (it's _repo/-keyed),
-    # so name_to_path can't map modules.foo to A's path — stub an empty index.
+    # The module index is _repo/-keyed and doesn't know solution module paths, so
+    # name_to_path can't map modules.foo → the eviction's "can't map a name to a
+    # file path → clear to be safe" branch fires. THIS is the real isolation
+    # mechanism (not the removed _solutions/-prefix block). Stub an empty index.
     monkeypatch.setattr(mcs, "get_module_index_sync", lambda: [])
 
     # Now Solution B is the active execution.
@@ -73,10 +77,11 @@ def test_same_solution_keeps_its_module(_clean_sys_modules, monkeypatch):
     from src.services.execution.simple_worker import _clear_workspace_modules
 
     sid = str(uuid.uuid4())
-    sys.modules["modules.foo"] = _fake_solution_module("modules.foo", sid, "hashA")
-    # Index maps the name to its path; the cached hash MATCHES so the
-    # content-change sweep keeps it. (We're isolating the cross-solution rule:
-    # the same solution's module must NOT be force-evicted as "foreign".)
+    sys.modules["modules.foo"] = _fake_solution_module("modules.foo", "modules/foo.py", "hashA")
+    # Index maps the name to its path AND the cached hash MATCHES → the
+    # content-change sweep KEEPS it (unchanged content isn't re-exec'd). This is
+    # the perf path: a module the index knows and whose content is unchanged
+    # survives, so the next import is a no-op.
     monkeypatch.setattr(mcs, "get_module_index_sync", lambda: ["modules/foo.py"])
     monkeypatch.setattr(mcs, "get_module_sync", lambda _p: {"hash": "hashA"})
 
@@ -86,7 +91,7 @@ def test_same_solution_keeps_its_module(_clean_sys_modules, monkeypatch):
     finally:
         mcs._solution_ctx.value = None
 
-    # Same solution + unchanged content → its own module stays.
+    # Known module + unchanged content → kept.
     assert "modules.foo" in sys.modules
 
 
