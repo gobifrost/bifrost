@@ -29,9 +29,32 @@ of reviews #7–#13 are triaged + fixed + green.
 | #12 | 2 P2 | ✗ → BOTH FIXED (session 4) |
 | #13 | 4 P2 + 1 P3 | ✗ → ALL FIXED (session 4) |
 | #14 | 2 P2 (NORMAL-USE) | ✗ → BOTH FIXED (session 4) |
-| #15 | 3 P2 + 1 P3 (all NORMAL-USE) | ✗ → **ALL FIXED (session 4)** |
-| #16 | running | needed: 1st of 2 clean ← **current** |
-| #17 | — | needed: 2nd of 2 clean (if #16 clean) |
+| #15 | 3 P2 + 1 P3 (all NORMAL-USE) | ✗ → ALL FIXED (session 4) |
+| #16 | 1 P1 + 1 P2 + 1 P3 | ✗ → **ALL FIXED (session 4)** |
+| #17 | running | verification-only; reassess stopping rule after ← **current** |
+
+### ⚠️ STOPPING-RULE REASSESSMENT (session 4, user-aware) — IMPORTANT
+**The finding source has shifted from "pre-existing gaps" to "defects in the fixes I
+just wrote."** #13: 3/4 were edges in the #12 concurrency code. #15: 2/4 were my
+incomplete prior fixes (workflow-fixed-but-not-table). **#16 P1 was a CROSS-TENANT
+SECURITY HOLE I introduced in the #15 table fix** (the X-Bifrost-App lookup had no
+org gate — fixed). When fixes themselves spawn P1/P2, "two consecutive clean" may
+not converge. **User decision: run #17 as VERIFICATION-ONLY (add NO new mechanisms),
+then reassess.** If #17 again finds only my-own-new-code issues → switch the bar to
+"core correctness verified (zero design-level P1 across 16 rounds) + a HUMAN
+security/concurrency review of the NEW code (X-Bifrost-App gate, write-lock,
+install-scoped resolution, uuid5 remap)" rather than chasing Codex to two-clean.
+
+### SESSION 4 cont. — review #16 closed (1 P1 + 1 P2 + 1 P3)
+Commit 4509891d:
+- **[P1 SECURITY] cross-tenant table access**: my #15 X-Bifrost-App table lookup
+  trusted the client header and resolved a table by the app's solution_id with NO
+  org gate — a foreign app UUID could reach another tenant's install table by name.
+  Now gated to the caller's org scope (own-or-global for non-superusers).
+- **[P2] manifest generator not _repo/-scoped**: `generate_manifest(db)` (workspace
+  regen) serialized solution-managed entities into `.bifrost/`. Now solution_id
+  IS NULL for the no-solution_id (workspace) case.
+- **[P3] app description dropped** by the collector → cleared on deploy. Now carried.
 
 ### SESSION 4 cont. — review #15 closed (4 NORMAL-USE findings; 1 was a regression I introduced)
 Commit 6650adfb. The broad sweep again found NORMAL-USE issues, incl a real regression:
