@@ -115,7 +115,7 @@ async def get_solution_entities(
                 select(model.id, model.name).where(model.solution_id == solution_id)
             )
         ).all()
-        return [SolutionEntitySummary(id=r[0], name=r[1]) for r in rows]
+        return [SolutionEntitySummary(id=id_, name=name) for id_, name in rows]
 
     workflows = await _summaries(Workflow)
     apps = await _summaries(Application)

@@ -18,7 +18,7 @@ def _create_solution(e2e_client, headers, slug: str) -> str:
     return r.json()["id"]
 
 
-async def test_get_solution_entities_reports_config_status(e2e_client, platform_admin, db_session):
+async def test_get_solution_entities_reports_config_status(e2e_client, platform_admin):
     headers = platform_admin.headers
     slug = f"ent-e2e-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug)
