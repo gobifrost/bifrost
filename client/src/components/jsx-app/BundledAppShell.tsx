@@ -156,6 +156,19 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 		css: string | null;
 		baseUrl: string;
 	} | null>(null);
+	// Reset the v2 mount DURING RENDER when the app changes (React's "adjust
+	// state on prop change" pattern). This shell instance is reused across app
+	// routes; without this, the render below would pair the NEW appId with the
+	// PREVIOUS app's entry/baseUrl during the next manifest fetch, mounting app
+	// A's bundle under app B's identity (Codex #10). Resetting here (not in an
+	// effect) means there's never a frame with mixed identity. The AppRouter
+	// also keys the shell by appId; this is the in-component backstop for any
+	// caller that reuses the instance.
+	const [prevAppId, setPrevAppId] = useState(appId);
+	if (appId !== prevAppId) {
+		setPrevAppId(appId);
+		if (v2Mount !== null) setV2Mount(null);
+	}
 	// Org-scoped app: tells the table SDK to default `scope` to the app's
 	// org for `tables.*` and `useTable` calls inside the bundle. Captured
 	// from the first successful manifest fetch.

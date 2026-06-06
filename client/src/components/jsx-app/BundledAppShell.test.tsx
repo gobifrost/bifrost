@@ -251,6 +251,34 @@ describe("BundledAppShell — app_model render branch", () => {
 		);
 	});
 
+	it("does not render a v2 app with the new appId while the new manifest is still pending (Codex #10)", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		localStorage.setItem("bifrost_access_token", "tok-xyz");
+		const { BundledAppShell } = await import("./BundledAppShell");
+
+		// App A: standalone_v2, resolves immediately.
+		mockManifestOk({
+			app_model: "standalone_v2",
+			entry: "assets/A-entry.js",
+			base_url: "/api/applications/app-A/dist",
+		});
+		const { rerender } = renderWithProviders(
+			<BundledAppShell appId="app-A" appSlug="aaa" isPreview />,
+		);
+		const rootA = await screen.findByTestId("solution-v2-app-root");
+		expect(rootA.dataset.bifrostEntry).toContain("A-entry.js");
+
+		// Navigate to app B; B's manifest fetch is PENDING (never resolves here).
+		mockAuthFetch.mockImplementationOnce(() => new Promise<Response>(() => {}));
+		rerender(<BundledAppShell appId="app-B" appSlug="bbb" isPreview />);
+
+		// During the pending window the stale A v2 mount must be cleared — NOT
+		// rendered with B's appId + A's entry. (No mixed-identity mount.)
+		await waitFor(() =>
+			expect(screen.queryByTestId("solution-v2-app-root")).toBeNull(),
+		);
+	});
+
 	it("uses the inline path for inline_v1 (regression) and subscribes to drafts", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		mockManifestOk({ app_model: "inline_v1" });

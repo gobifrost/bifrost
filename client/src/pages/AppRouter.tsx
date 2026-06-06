@@ -158,6 +158,9 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 
 	const shell = (
 		<BundledAppShell
+			// Fresh instance per app so navigating between apps never carries the
+			// previous app's v2 mount state into the next (Codex #10).
+			key={application.id}
 			appId={application.id}
 			appSlug={application.slug}
 			isPreview={preview}
