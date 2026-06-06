@@ -27,9 +27,23 @@ of reviews #7–#13 are triaged + fixed + green.
 | #10 | 1 P2 | ✗ → FIXED (session 4) |
 | #11 | 2 P2 | ✗ → BOTH FIXED (session 4) |
 | #12 | 2 P2 | ✗ → BOTH FIXED (session 4) |
-| #13 | 4 P2 + 1 P3 | ✗ → **ALL FIXED (session 4)** |
-| #14 | — | needed: 1st of 2 clean ← **NEXT** |
-| #15 | — | needed: 2nd of 2 clean (if #14 clean) |
+| #13 | 4 P2 + 1 P3 | ✗ → ALL FIXED (session 4) |
+| #14 | 2 P2 (both NORMAL-USE) | ✗ → **BOTH FIXED (session 4)** |
+| #15 | running | needed: 1st of 2 clean ← **current** |
+| #16 | — | needed: 2nd of 2 clean (if #15 clean) |
+
+### SESSION 4 cont. — review #14 closed (2 NORMAL-USE P2s; severity tagging added)
+The #14 prompt asked Codex to tag findings NORMAL-USE vs HOSTILE-LOAD; both were
+NORMAL-USE (worth fixing), and both in areas the concurrency rounds didn't touch.
+Commit a5289658:
+- **Workspace indexer not _repo/-scoped**: the uniqueness migration lets a _repo/
+  and a solution workflow share (path, function_name), but WorkflowIndexer queried
+  by path alone → MultipleResultsFound on save, or a _repo/ file delete deactivating
+  the solution workflow. Scoped index_python_file / data_provider / deactivate /
+  github_sync prefetch to solution_id IS NULL.
+- **Form/agent access_level dropped**: deploy stamped only org+solution; the indexer
+  preserves access_level, so the manifest's value was ignored + unchangeable on a
+  read-only entity. Deploy now applies it from the manifest.
 
 ### ⚠️ HONEST READ ON THE TREND (session 4, 2026-06-06) — read before more rounds
 **Zero P1 for SIX rounds (#8 was the last).** The core design (identity remap, install-scoped
