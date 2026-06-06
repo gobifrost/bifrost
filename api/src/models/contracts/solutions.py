@@ -99,6 +99,21 @@ class SolutionEntities(BaseModel):
     required_configs_unset: list[str] = Field(default_factory=list)
 
 
+class SolutionInstallPreview(BaseModel):
+    """Parse-only preview of a Solution install zip — what it would create + its
+    declared configs. Nothing is persisted by the preview endpoint."""
+
+    slug: str | None = None
+    name: str | None = None
+    scope: SolutionScope | None = None
+    workflows: list[dict[str, Any]] = Field(default_factory=list)
+    tables: list[dict[str, Any]] = Field(default_factory=list)
+    apps: list[dict[str, Any]] = Field(default_factory=list)
+    forms: list[dict[str, Any]] = Field(default_factory=list)
+    agents: list[dict[str, Any]] = Field(default_factory=list)
+    config_schemas: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class SolutionDeployRequest(BaseModel):
     """Full-replace deploy bundle for one install.
 

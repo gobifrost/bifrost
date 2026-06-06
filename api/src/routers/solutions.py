@@ -10,10 +10,14 @@ what end users see (the Solution is invisible to them — criterion 16).
 
 from __future__ import annotations
 
+import json
 import logging
+import zipfile
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import Form as FastapiForm
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -26,6 +30,7 @@ from src.models.contracts.solutions import (
     SolutionDeployResponse,
     SolutionEntities,
     SolutionEntitySummary,
+    SolutionInstallPreview,
     SolutionsList,
 )
 from src.models.orm.agents import Agent
@@ -288,3 +293,123 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     return {"solution_id": str(solution_id), "status": "synced"}
+
+
+@router.post(
+    "/install/preview",
+    response_model=SolutionInstallPreview,
+    summary="Preview a Solution install zip (parse-only, admin only)",
+)
+async def install_preview(
+    file: Annotated[UploadFile, File(description="Solution workspace zip")],
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> SolutionInstallPreview:
+    """Unzip + parse a Solution workspace zip and report what it would create.
+
+    Parse-only: no DB write, no S3, no build. The drag-and-drop UI calls this to
+    show the install plan + declared configs before committing.
+    """
+    from src.services.solutions.zip_install import preview_zip
+
+    data = await file.read()
+    try:
+        result = preview_zip(data)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid solution zip: {exc}",
+        ) from exc
+    return SolutionInstallPreview(
+        slug=result.slug,
+        name=result.name,
+        scope=result.scope,  # type: ignore[arg-type]
+        workflows=result.workflows,
+        tables=result.tables,
+        apps=result.apps,
+        forms=result.forms,
+        agents=result.agents,
+        config_schemas=result.config_schemas,
+    )
+
+
+@router.post(
+    "/install",
+    response_model=SolutionDTO,
+    summary="Install a Solution zip (atomic deploy + config values, admin only)",
+)
+async def install_solution(
+    file: Annotated[UploadFile, File(description="Solution workspace zip")],
+    ctx: Context,
+    user: CurrentSuperuser,
+    organization_id: Annotated[str | None, FastapiForm()] = None,
+    config_values: Annotated[str, FastapiForm()] = "{}",
+) -> SolutionDTO:
+    """Atomically install a Solution from a workspace zip.
+
+    Resolves-or-creates the install at the chosen scope (empty/absent
+    ``organization_id`` → global NULL), runs the proven deploy under the
+    per-install write lock, and — in the same locked section after the S3 finalize
+    — applies the provided ``config_values`` (a JSON object of key→value). A
+    missing required config does NOT block the install (warn-not-block).
+    """
+    from src.services.solutions.deploy import (
+        SolutionDeployConflict,
+        SolutionFinalizeIncomplete,
+    )
+    from src.services.solutions.write_lock import SolutionWriteLockHeld
+    from src.services.solutions.zip_install import install_zip
+
+    org_id: UUID | None = None
+    if organization_id:
+        try:
+            org_id = UUID(organization_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid organization_id: {organization_id}",
+            ) from exc
+
+    try:
+        values = json.loads(config_values) if config_values else {}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"config_values must be a JSON object: {exc}",
+        ) from exc
+    if not isinstance(values, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="config_values must be a JSON object mapping key → value",
+        )
+
+    data = await file.read()
+    try:
+        solution = await install_zip(
+            ctx.db,
+            data,
+            organization_id=org_id,
+            config_values=values,
+            deployer_email=user.email,
+        )
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid solution zip: {exc}",
+        ) from exc
+    except SolutionWriteLockHeld as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A deploy is already in progress for this install; retry shortly.",
+        ) from exc
+    except SolutionDeployConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SolutionFinalizeIncomplete as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Install committed but storage was unavailable after retries. "
+                "Re-run the install to complete it (it is idempotent)."
+            ),
+        ) from exc
+    return SolutionDTO.model_validate(solution)

@@ -708,6 +708,55 @@ def deploy_cmd(path: str, solution_id: str | None) -> None:
         raise SystemExit(rc)
 
 
+@solution_group.command(
+    name="install",
+    help="Install a Solution from a workspace zip (drag-and-drop equivalent).",
+)
+@click.argument("zipfile", type=click.Path(exists=True, dir_okay=False))
+@click.option("--org", "org_id", default=None, help="Target org id (omit for a global install).")
+@click.option(
+    "--set",
+    "set_values",
+    multiple=True,
+    help="Config value KEY=VALUE (repeatable). Applied atomically with the deploy.",
+)
+def install_cmd(zipfile: str, org_id: str | None, set_values: tuple[str, ...]) -> None:
+    """POST a Solution workspace zip to ``/api/solutions/install``.
+
+    The server unzips it, resolves-or-creates the install, deploys the bundle,
+    and applies any ``--set`` config values atomically under the install lock.
+    """
+    config_values: dict[str, str] = {}
+    for pair in set_values:
+        if "=" not in pair:
+            raise click.ClickException(f"--set expects KEY=VALUE, got: {pair}")
+        key, _, value = pair.partition("=")
+        config_values[key] = value
+
+    zip_bytes = pathlib.Path(zipfile).read_bytes()
+
+    async def _run() -> int:
+        client = BifrostClient.get_instance(require_auth=True)
+        form: dict[str, str] = {"config_values": json.dumps(config_values)}
+        if org_id:
+            form["organization_id"] = org_id
+        resp = await client.post(
+            "/api/solutions/install",
+            files={"file": (pathlib.Path(zipfile).name, zip_bytes, "application/zip")},
+            data=form,
+        )
+        if resp.status_code not in (200, 201):
+            click.echo(f"Install failed: {resp.status_code} {resp.text}", err=True)
+            return 1
+        body = resp.json()
+        click.echo(f"Installed solution {body['id']} (slug={body.get('slug')}).")
+        return 0
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
+
+
 def handle_solution(args: list[str]) -> int:
     """Dispatch ``bifrost solution ...`` from :func:`bifrost.cli.main`."""
     try:
