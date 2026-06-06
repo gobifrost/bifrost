@@ -34,6 +34,11 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "VITE_BIFROST_TOKEN" in vc
     assert "process.env.BIFROST_ACCESS_TOKEN" in vc  # env first
     assert "dirname" in vc  # walks up to find the .env
+    # R7-P2-f: device-code login stores the token in the keyring / credentials.json
+    # (not a .env), so the config must fall back to the CLI credential store via
+    # `bifrost auth token` — otherwise the normal login path starts dev tokenless.
+    assert "auth" in vc and "token" in vc
+    assert "execFileSync" in vc
     # SECURITY (Codex R6-P1-c): the token is injected ONLY for `vite` serve
     # (dev), never for `vite build` — baking it into the production bundle would
     # leak a usable credential to every app user. The config must gate `define`

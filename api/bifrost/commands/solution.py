@@ -149,18 +149,22 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
         },
     }
     vite_config = """\
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// Tokenless local dev: `bifrost login` already wrote BIFROST_API_URL +
-// BIFROST_ACCESS_TOKEN to a .env (in the solution/CLI dir where you logged in).
-// We read it from the environment if the CLI exported it, else walk UP from this
-// app dir to the nearest .env carrying those keys — so `npm run dev`
-// authenticates with NO token pasting. Deployed, window.__BIFROST_APP__ supplies
-// these instead and main.tsx prefers it.
+// Tokenless local dev — three sources, in order:
+//   1. process env (the CLI exported BIFROST_API_URL/BIFROST_ACCESS_TOKEN), then
+//   2. the nearest .env walking UP from this app dir (password-grant `login`
+//      writes one), then
+//   3. the CLI credential store via `bifrost auth token` — device-code login
+//      stores the token in the OS keyring / ~/.bifrost/credentials.json (NOT a
+//      .env), so without this the normal login path leaves `npm run dev`
+//      tokenless (R7-P2-f).
+// Deployed, window.__BIFROST_APP__ supplies these instead and main.tsx prefers it.
 function readBifrostEnv() {
   const out = {
     url: process.env.BIFROST_API_URL || "",
@@ -182,6 +186,23 @@ function readBifrostEnv() {
     const parent = dirname(dir);
     if (parent === dir || dir === parse(dir).root) break;
     dir = parent;
+  }
+  // Fall back to the CLI credential store (keyring / credentials.json).
+  if (!out.token) {
+    try {
+      const args = ["auth", "token"];
+      if (out.url) args.push("--url", out.url);
+      const raw = execFileSync("bifrost", args, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const creds = JSON.parse(raw);
+      if (creds.access_token) out.token = creds.access_token;
+      if (creds.api_url && !out.url) out.url = creds.api_url;
+    } catch {
+      // CLI absent / not logged in — leave tokenless; main.tsx surfaces the
+      // unauthenticated state rather than crashing the dev server.
+    }
   }
   return out;
 }

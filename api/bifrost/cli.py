@@ -902,13 +902,36 @@ Usage: bifrost auth <subcommand>
 
 Subcommands:
   list, ls    List all Bifrost URLs with stored credentials
+  token       Print resolved {api_url, access_token} as JSON (for dev tooling)
 
 Examples:
   bifrost auth list
+  bifrost auth token
+  bifrost auth token --url http://localhost:38421
 """.strip())
         return 0 if args else 1
 
     sub = args[0].lower()
+    if sub == "token":
+        # Emit the resolved url + access token as JSON so a scaffolded Solution
+        # vite dev config can read the credential store — device-code login
+        # stores the token in keyring/JSON, not a nearby .env, so env/.env alone
+        # leave `npm run dev` tokenless (R7-P2-f). Only url + access token are
+        # printed (never the refresh token); the vite config injects it for
+        # `serve` only, so the production bundle stays tokenless (R6-P1-c).
+        url_override = None
+        rest = args[1:]
+        if rest and rest[0] == "--url" and len(rest) > 1:
+            url_override = rest[1]
+        creds = credentials.get_credentials(url_override)
+        if not creds or not creds.get("access_token"):
+            print("Not authenticated. Run `bifrost login` first.", file=sys.stderr)
+            return 1
+        print(json.dumps({
+            "api_url": creds.get("api_url"),
+            "access_token": creds["access_token"],
+        }))
+        return 0
     if sub in ("list", "ls"):
         urls = credentials.list_credentials()
         if not urls:
