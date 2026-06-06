@@ -23,9 +23,23 @@ first chance at clean #1.
 | #5 | 6 | ✗ |
 | #6 | 4 P1 + 2 P2 | ✗ (5 fixed, 1 rejected) |
 | #7 | 3 P1 + 3 P2 | ✗ → ALL 6 FIXED (session 4) |
-| #8 | 1 P1 + 1 P2 | ✗ → **BOTH FIXED (session 4)** |
-| #9 | running | needed: 1st of 2 clean ← **current** |
-| #10 | — | needed: 2nd of 2 clean (if #9 clean) |
+| #8 | 1 P1 + 1 P2 | ✗ → BOTH FIXED (session 4) |
+| #9 | 2 P2 | ✗ → **BOTH FIXED (session 4)** |
+| #10 | running | needed: 1st of 2 clean ← **current** |
+| #11 | — | needed: 2nd of 2 clean (if #10 clean) |
+
+### SESSION 4 cont. — review #9 closed (lifecycle P2s, both verified real via subagents)
+- **#9 P2 worker ordering** (commit b72ed6a7): the persistent fork path cleared
+  workspace modules BEFORE the Solution context was set, so cross-install
+  sys.modules eviction ran blind (a prior install's same-name module could
+  survive). Moved eviction into `_execute_async` AFTER `set_solution_context`;
+  removed the premature clear from `template_process`.
+- **#9 P2 v2 A→B race** (same commit): fast app→app nav could mount app A into
+  app B's node via the shared global bootstrap. Added per-mount registry
+  `window.__BIFROST_APPS__` keyed by the entry URL's `m` nonce; scaffold reads
+  its own nonce from `import.meta.url`. Legacy `__BIFROST_APP__` kept for older
+  hosts.
+Green: 141 solution unit + 14 e2e + 115 client vitest; ruff/pyright/tsc/eslint clean.
 
 ### SESSION 4 cont. — review #8 closed (install-scope cluster)
 Codex #8 reset the counter with two real findings on the session's own identity work
