@@ -375,6 +375,7 @@ class FormPublic(BaseModel):
                 "created_at": data.created_at,
                 "updated_at": data.updated_at,
                 "is_solution_managed": getattr(data, "solution_id", None) is not None,
+                "solution_id": getattr(data, "solution_id", None),
             }
             # Forward an attached role_ids list when callers populate it
             # (via a separate FormRole query). Falls back to default_factory
@@ -402,6 +403,7 @@ class FormPublic(BaseModel):
                 "created_at": data.created_at,
                 "updated_at": data.updated_at,
                 "is_solution_managed": getattr(data, "solution_id", None) is not None,
+                "solution_id": getattr(data, "solution_id", None),
                 **({"role_ids": list(data.role_ids)} if getattr(data, "role_ids", None) is not None else {}),
             }
 

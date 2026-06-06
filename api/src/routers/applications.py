@@ -127,6 +127,7 @@ async def application_to_public(
         repo_path=application.repo_path,
         logo=_logo_data_url(application.logo_data, application.logo_content_type),
         is_solution_managed=application.solution_id is not None,
+        solution_id=application.solution_id,
     )
 
 

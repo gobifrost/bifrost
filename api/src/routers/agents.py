@@ -233,6 +233,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         max_token_budget=agent.max_token_budget,
         logo=_logo_data_url(agent.logo_data, agent.logo_content_type),
         is_solution_managed=agent.solution_id is not None,
+        solution_id=agent.solution_id,
     )
 
 
