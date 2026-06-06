@@ -1196,8 +1196,13 @@ class GitHubSyncService:
             if (work_dir / mwf.path).exists() and mwf.id in changed_ids
         }
         if wf_paths:
+            # _repo/-scoped (solution_id IS NULL): the workspace indexer manages
+            # _repo/ workflows only, and a solution-managed workflow sharing a path
+            # must not enter this prefetch cache (Codex #14).
             wf_result = await self.db.execute(
-                select(WfORM).where(WfORM.path.in_(wf_paths))
+                select(WfORM).where(
+                    WfORM.path.in_(wf_paths), WfORM.solution_id.is_(None)
+                )
             )
             wf_cache: dict[tuple[str, str], WfORM] = {}
             for wf in wf_result.scalars().all():

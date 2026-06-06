@@ -74,6 +74,41 @@ class TestSolutionFormAgentDeploy:
         )).scalars().all()
         assert "email" in names, "form fields not deployed from form_schema.fields"
 
+    async def test_deploy_stamps_form_agent_access_level_from_manifest(self, db_session):
+        """Codex #14: access_level is deploy-owned for solution forms/agents — the
+        manifest's value must be applied on deploy AND changeable on redeploy (the
+        entity is read-only outside deploy, so deploy is the only writer)."""
+        db = db_session
+        sol = await self._install(db)
+        fid, aid = str(uuid.uuid4()), str(uuid.uuid4())
+
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            forms=[{"id": fid, "name": "intake", "access_level": "authenticated",
+                    "form_schema": {"fields": []}}],
+            agents=[{"id": aid, "name": "a", "system_prompt": "hi",
+                     "access_level": "authenticated"}],
+        ))
+        await db.flush()
+        form = await db.get(Form, solution_entity_id(sol.id, uuid.UUID(fid)))
+        agent = await db.get(Agent, solution_entity_id(sol.id, uuid.UUID(aid)))
+        assert form.access_level.value == "authenticated"
+        assert agent.access_level.value == "authenticated"
+
+        # Redeploy with a CHANGED access_level → applied (not stuck at first value).
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            forms=[{"id": fid, "name": "intake", "access_level": "role_based",
+                    "form_schema": {"fields": []}}],
+            agents=[{"id": aid, "name": "a", "system_prompt": "hi",
+                     "access_level": "role_based"}],
+        ))
+        await db.flush()
+        await db.refresh(form)
+        await db.refresh(agent)
+        assert form.access_level.value == "role_based"
+        assert agent.access_level.value == "role_based"
+
     async def test_deploy_agent_stamps_solution_and_scope(self, db_session):
         db = db_session
         sol = await self._install(db)

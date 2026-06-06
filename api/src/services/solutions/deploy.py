@@ -776,12 +776,18 @@ class SolutionDeployer:
             mf = ManifestForm.model_validate({**mform, "id": str(form_id)})
             content = _form_content_from_manifest(mf)
             await indexer.index_form(f"forms/{form_id}.form.yaml", content)
-            # Stamp the install scope (the indexer preserves org/access on purpose).
+            # Stamp the install scope. The indexer preserves org/access (they are
+            # env-specific), but access_level IS deploy-owned for a Solution: the
+            # manifest declares it, so apply it here (the entity is read-only
+            # outside deploy, so this is the only place it can be set — Codex #14).
+            form_values: dict[str, Any] = {
+                "organization_id": solution.organization_id,
+                "solution_id": sid,
+            }
+            if mform.get("access_level") is not None:
+                form_values["access_level"] = mform["access_level"]
             await self.db.execute(
-                update(Form).where(Form.id == form_id).values(
-                    organization_id=solution.organization_id,
-                    solution_id=sid,
-                )
+                update(Form).where(Form.id == form_id).values(**form_values)
             )
             # Sync role bindings — the indexer does NOT handle role rows, and the
             # REST role endpoints are read-only for managed entities, so deploy is
@@ -815,11 +821,17 @@ class SolutionDeployer:
             ma = ManifestAgent.model_validate({**magent, "id": str(agent_id)})
             content = _agent_content_from_manifest(ma)
             await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+            # access_level is deploy-owned (manifest-declared); apply it here —
+            # the indexer preserves it and the entity is read-only outside deploy
+            # (Codex #14). org/solution scope is stamped alongside.
+            agent_values: dict[str, Any] = {
+                "organization_id": solution.organization_id,
+                "solution_id": sid,
+            }
+            if magent.get("access_level") is not None:
+                agent_values["access_level"] = magent["access_level"]
             await self.db.execute(
-                update(Agent).where(Agent.id == agent_id).values(
-                    organization_id=solution.organization_id,
-                    solution_id=sid,
-                )
+                update(Agent).where(Agent.id == agent_id).values(**agent_values)
             )
             # Sync role bindings (indexer doesn't touch role rows) — Codex P1-d.
             await self._sync_entity_roles(
