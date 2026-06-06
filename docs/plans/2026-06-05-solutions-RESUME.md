@@ -24,9 +24,20 @@ first chance at clean #1.
 | #6 | 4 P1 + 2 P2 | ✗ (5 fixed, 1 rejected) |
 | #7 | 3 P1 + 3 P2 | ✗ → ALL 6 FIXED (session 4) |
 | #8 | 1 P1 + 1 P2 | ✗ → BOTH FIXED (session 4) |
-| #9 | 2 P2 | ✗ → **BOTH FIXED (session 4)** |
-| #10 | running | needed: 1st of 2 clean ← **current** |
-| #11 | — | needed: 2nd of 2 clean (if #10 clean) |
+| #9 | 2 P2 | ✗ → BOTH FIXED (session 4) |
+| #10 | 1 P2 | ✗ → **FIXED (session 4)** |
+| #11 | running | needed: 1st of 2 clean ← **current** |
+| #12 | — | needed: 2nd of 2 clean (if #11 clean) |
+
+### SESSION 4 cont. — review #10 closed (1 P2, verified real)
+- **#10 P2 stale v2 mount across navigation** (commit 82fee1b8): BundledAppShell
+  reused across app routes rendered StandaloneV2App with the NEW appId + the
+  PREVIOUS app's entry/baseUrl during the next manifest fetch (the nonce registry
+  couldn't catch it — self-consistent but wrong identity). Fix: reset v2Mount
+  DURING RENDER on appId change (prevAppId pattern, no effect → no cascading
+  render) + `key={appId}` on BundledAppShell at AppRouter.
+**Convergence is clear: 3P1+3P2 → 1P1+1P2 → 2P2 → 1P2, all in the v2-lifecycle
+corner; no P1 for 3 rounds.** Client 116 vitest + tsc + eslint clean.
 
 ### SESSION 4 cont. — review #9 closed (lifecycle P2s, both verified real via subagents)
 - **#9 P2 worker ordering** (commit b72ed6a7): the persistent fork path cleared
