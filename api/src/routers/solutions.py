@@ -103,22 +103,40 @@ async def deploy_solution(
             detail="This install is git-connected; deploy is disabled (auto-pull is the only writer).",
         )
 
-    deployer = SolutionDeployer(ctx.db)
-    result = await deployer.deploy(
-        SolutionBundle(
-            solution=solution,
-            python_files=body.python_files,
-            workflows=body.workflows,
-            tables=body.tables,
-            apps=body.apps,
-            forms=body.forms,
-            agents=body.agents,
-        )
+    # One writer per install (criterion 6): hold a per-install lock ACROSS the DB
+    # commit AND the post-commit S3 finalize, so two concurrent deploys can't
+    # interleave (A commits, B commits, then A's finalize uploads last → DB from
+    # B but artifacts from A). The app-slug advisory lock inside deploy() is
+    # transaction-scoped and releases at commit, before finalize — so it does NOT
+    # cover this (Codex #12). The git-connected sync holds the same lock.
+    from src.services.solutions.write_lock import (
+        SolutionWriteLockHeld,
+        solution_write_lock,
     )
-    await ctx.db.commit()
-    # S3 only after the DB is durable — a failed commit changes no running code (P1-c).
+
     try:
-        await result.finalize_s3()
+        async with solution_write_lock(solution_id):
+            deployer = SolutionDeployer(ctx.db)
+            result = await deployer.deploy(
+                SolutionBundle(
+                    solution=solution,
+                    python_files=body.python_files,
+                    workflows=body.workflows,
+                    tables=body.tables,
+                    apps=body.apps,
+                    forms=body.forms,
+                    agents=body.agents,
+                )
+            )
+            await ctx.db.commit()
+            # S3 only after the DB is durable — a failed commit changes no running
+            # code (P1-c). Still inside the lock so finalize can't race another deploy.
+            await result.finalize_s3()
+    except SolutionWriteLockHeld as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A deploy is already in progress for this install; retry shortly.",
+        ) from exc
     except SolutionFinalizeIncomplete as exc:
         # Reached only when storage failed every retry (a real outage), not a
         # transient blip. The DB is committed and the deploy is full-replace +

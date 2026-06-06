@@ -41,3 +41,35 @@ def test_disconnected_install_allows_deploy(e2e_client, platform_admin):
         "python_files": {}, "workflows": [],
     })
     assert dep.status_code in (200, 201), dep.text
+
+
+async def test_concurrent_deploy_to_same_install_is_refused(e2e_client, platform_admin):
+    """Codex #12: the deploy endpoint holds a per-install write lock across the
+    DB commit AND the S3 finalize, so a second concurrent deploy to the SAME
+    install is refused (409) rather than interleaving its finalize. Deterministic
+    repro: hold the lock out-of-band, then POST deploy → 409."""
+    from uuid import UUID
+
+    from src.services.solutions.write_lock import solution_write_lock
+
+    headers = platform_admin.headers
+    slug = f"conc-{uuid.uuid4().hex[:8]}"
+    r = e2e_client.post("/api/solutions", headers=headers, json={
+        "slug": slug, "name": slug.upper(), "scope": "global",
+    })
+    assert r.status_code in (200, 201), r.text
+    sid = r.json()["id"]
+
+    # Simulate an in-flight deploy by holding the install's write lock.
+    async with solution_write_lock(UUID(sid)):
+        dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+            "python_files": {}, "workflows": [],
+        })
+    assert dep.status_code == 409, dep.text
+    assert "in progress" in dep.text.lower()
+
+    # Lock released → a subsequent deploy succeeds (not wedged).
+    dep2 = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+        "python_files": {}, "workflows": [],
+    })
+    assert dep2.status_code in (200, 201), dep2.text
