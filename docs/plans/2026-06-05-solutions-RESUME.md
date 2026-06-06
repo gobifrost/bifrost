@@ -33,6 +33,22 @@ of reviews #7–#13 are triaged + fixed + green.
 | #16 | 1 P1 + 1 P2 + 1 P3 | ✗ → **ALL FIXED (session 4)** |
 | #17 | running | verification-only; reassess stopping rule after ← **current** |
 
+### ▶▶ DECISION (session 4, end): TWO-CLEAN BAR ABANDONED → WHOLE-BRANCH AUDIT
+The Codex two-clean loop was stopped after #16. Rationale the user and I agreed on:
+the loop was grinding on **production-fine edges** (sub-second nav races, same-install
+concurrent-deploy, lock fencing) and — worse — my OWN fixes kept spawning the next
+round's findings (#13 from #12's lock code; #15's incomplete-tier fixes; **#16's P1 was
+a cross-tenant hole I introduced in #15's table fix**). A capable adversarial reviewer
+always finds *one more* defensible P2 on a surface this broad, so "two consecutive
+clean" may never converge. Of ~20 findings across the loop, **~5 would bite a real user**
+(#8 workflow-collision, #11 inline_v1, #13 MCP read-only bypass, #15 table-404, #16
+cross-tenant table) — ALL FIXED. The rest was hardening.
+**NEW done-bar: (a) a whole-branch quality audit (in progress, workflow
+`solutions-branch-audit`) with the real BUG/SLOP findings fixed, then (b) HUMAN review of
+the branch — especially the new auth/concurrency code (X-Bifrost-App gate, write_lock,
+install-scoped resolution, uuid5 remap).** Working tree CLEAN, all tests green, nothing
+half-done. Session footprint: ~700 lines net logic across ~35 files (12 code commits).
+
 ### ⚠️ STOPPING-RULE REASSESSMENT (session 4, user-aware) — IMPORTANT
 **The finding source has shifted from "pre-existing gaps" to "defects in the fixes I
 just wrote."** #13: 3/4 were edges in the #12 concurrency code. #15: 2/4 were my
