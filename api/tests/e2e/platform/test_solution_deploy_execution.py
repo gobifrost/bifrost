@@ -75,7 +75,12 @@ def test_deploy_and_run_solution_local_import(e2e_client, platform_admin):
         }],
     )
 
-    result = execute_workflow_sync(e2e_client, headers, wf_id, request_sync=True)
+    # Execute by PORTABLE path::fn ref (what a v2 app / form uses) — the deployed
+    # row id is remapped per-install (uuid5), so the manifest UUID is not a valid
+    # execution handle; the path ref resolves within the install's scope (R7-P1-c).
+    result = execute_workflow_sync(
+        e2e_client, headers, "workflows/answer.py::answer", request_sync=True
+    )
     assert result["status"] == "Success", f"unexpected: {result}"
     assert result["result"] == {"value": 42}
 
@@ -112,7 +117,9 @@ def test_global_repo_import_blocked_when_flag_off(e2e_client, platform_admin):
         }],
     )
 
-    result = execute_workflow_sync(e2e_client, headers, wf_id, request_sync=True)
+    result = execute_workflow_sync(
+        e2e_client, headers, "workflows/needs_shared.py::go", request_sync=True
+    )
     assert result["status"] == "Failed", f"expected import failure, got: {result}"
     blob = f"{result.get('error')} {result.get('error_type')}".lower()
     assert "module" in blob or "import" in blob, f"unexpected error: {result}"

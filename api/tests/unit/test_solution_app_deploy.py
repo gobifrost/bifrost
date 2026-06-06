@@ -19,6 +19,7 @@ from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployConflict,
     SolutionDeployer,
+    solution_entity_id,
 )
 
 
@@ -97,14 +98,15 @@ class TestSolutionAppDeploy:
         # S3 phase is deferred until after commit (P1-c); run it explicitly.
         await result.finalize_s3()
 
-        app = await db.get(Application, uuid.UUID(app_id))
+        expected_id = solution_entity_id(sol.id, uuid.UUID(app_id))
+        app = await db.get(Application, expected_id)
         assert app is not None
         assert app.solution_id == sol.id
         assert app.organization_id == sol.organization_id
         assert app.app_model == "standalone_v2"
         assert result.apps_upserted == 1
-        # dist was uploaded for this app
-        assert app_id in _stub_app_build
+        # dist was uploaded for this app (under the per-install remapped id)
+        assert str(expected_id) in _stub_app_build
 
     async def test_redeploy_without_app_removes_for_this_install(
         self, db_session, _stub_app_build
@@ -117,21 +119,25 @@ class TestSolutionAppDeploy:
             SolutionBundle(solution=sol, apps=[_app_entry(app_id, "dash")])
         )
         await db.flush()
-        assert await db.get(Application, uuid.UUID(app_id)) is not None
+        expected_id = solution_entity_id(sol.id, uuid.UUID(app_id))
+        assert await db.get(Application, expected_id) is not None
 
         result = await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, apps=[]))
         await db.flush()
 
-        assert await db.get(Application, uuid.UUID(app_id)) is None
+        assert await db.get(Application, expected_id) is None
         assert result.apps_deleted == 1
 
     async def test_repo_app_id_collision_raises_conflict(self, db_session, _stub_app_build):
         db = db_session
         sol = await self._install(db)
-        # A _repo/ app (solution_id IS NULL) with this id already exists.
-        app_id = uuid.uuid4()
+        # A _repo/ app (solution_id IS NULL) already owns the REMAPPED id this
+        # bundle's manifest id deploys into. The bundle may not hijack a
+        # _repo/-owned id — the conflict fires at the per-install remapped id.
+        manifest_id = uuid.uuid4()
         repo_app = Application(
-            id=app_id, name="Repo", slug=f"repo-{uuid.uuid4().hex[:8]}",
+            id=solution_entity_id(sol.id, manifest_id), name="Repo",
+            slug=f"repo-{uuid.uuid4().hex[:8]}",
             repo_path="apps/repo", organization_id=None, solution_id=None,
         )
         db.add(repo_app)
@@ -139,7 +145,7 @@ class TestSolutionAppDeploy:
 
         with pytest.raises(SolutionDeployConflict):
             await SolutionDeployer(db).deploy(
-                SolutionBundle(solution=sol, apps=[_app_entry(str(app_id), "dash")])
+                SolutionBundle(solution=sol, apps=[_app_entry(str(manifest_id), "dash")])
             )
 
 
@@ -183,8 +189,8 @@ class TestMultiInstallAppIdentity:
         ))
         await db.flush()
 
-        a = await db.get(Application, uuid.UUID(app_a))
-        b = await db.get(Application, uuid.UUID(app_b))
+        a = await db.get(Application, solution_entity_id(sol_a.id, uuid.UUID(app_a)))
+        b = await db.get(Application, solution_entity_id(sol_b.id, uuid.UUID(app_b)))
         assert a.solution_id == sol_a.id and b.solution_id == sol_b.id
         assert a.slug == b.slug == shared_slug  # same slug, different installs
 
@@ -393,7 +399,7 @@ class TestAppPublishAndBuildModel:
             solution=sol, apps=[_app_entry(app_id, "dash")],
         ))
         await db.flush()
-        app = await db.get(Application, uuid.UUID(app_id))
+        app = await db.get(Application, solution_entity_id(sol.id, uuid.UUID(app_id)))
         assert app.is_published is True, "deployed app must be live (published)"
         assert app.published_at is not None
 
@@ -420,7 +426,7 @@ class TestAppPublishAndBuildModel:
         # Run the deferred S3 phase too: if a v1 app leaked into the build set,
         # the stubbed build() would fire here (P1-c defers builds to finalize).
         await result.finalize_s3()
-        app = await db.get(Application, uuid.UUID(app_id))
+        app = await db.get(Application, solution_entity_id(sol.id, uuid.UUID(app_id)))
         assert app.app_model == "inline_v1"
         assert result.apps_upserted == 1
         # And it's still published (renders via the inline path).
@@ -437,8 +443,11 @@ class TestDeployTransactionalS3:
         db = db_session
         sol = Solution(id=uuid.uuid4(), slug=f"tx-{uuid.uuid4().hex[:8]}", name="TX", organization_id=None)
         db.add(sol)
-        # A _repo/ workflow whose id the bundle will (illegally) reuse → conflict.
-        conflict_wf = uuid.uuid4()
+        # A _repo/ workflow whose REMAPPED id the bundle will (illegally) reuse →
+        # conflict. The manifest id is remapped before the ownership guard, so the
+        # pre-seeded _repo/ row must carry the per-install remapped id to collide.
+        conflict_manifest_id = uuid.uuid4()
+        conflict_wf = solution_entity_id(sol.id, conflict_manifest_id)
         from src.models.orm.workflows import Workflow
         db.add(Workflow(
             id=conflict_wf, name="repo_wf", function_name="run", path="workflows/r.py",
@@ -474,8 +483,8 @@ class TestDeployTransactionalS3:
                 solution=sol,
                 python_files={"workflows/x.py": "x=1"},
                 # The conflicting workflow makes _upsert_workflows raise BEFORE
-                # the S3 phase runs.
-                workflows=[{"id": str(conflict_wf), "name": "hijack",
+                # the S3 phase runs (its manifest id remaps onto conflict_wf).
+                workflows=[{"id": str(conflict_manifest_id), "name": "hijack",
                             "function_name": "run", "path": "workflows/r.py"}],
                 apps=[_app_entry(app_id, "dash")],
             ))

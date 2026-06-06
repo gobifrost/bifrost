@@ -15,7 +15,11 @@ from sqlalchemy import select
 
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Document, Table
-from src.services.solutions.deploy import SolutionBundle, SolutionDeployer
+from src.services.solutions.deploy import (
+    SolutionBundle,
+    SolutionDeployer,
+    solution_entity_id,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +55,7 @@ class TestSolutionTableDeploy:
         ))
         await db.flush()
 
-        tbl = await db.get(Table, uuid.UUID(tid))
+        tbl = await db.get(Table, solution_entity_id(sol.id, uuid.UUID(tid)))
         assert tbl is not None
         assert tbl.solution_id == sol.id
         assert tbl.organization_id == sol.organization_id
@@ -61,6 +65,7 @@ class TestSolutionTableDeploy:
         db = db_session
         sol = await self._install(db)
         tid = str(uuid.uuid4())
+        row_table_id = solution_entity_id(sol.id, uuid.UUID(tid))
 
         # Deploy v1 schema.
         await SolutionDeployer(db).deploy(SolutionBundle(
@@ -70,8 +75,8 @@ class TestSolutionTableDeploy:
         await db.flush()
 
         # Seed runtime rows (these are NOT part of the bundle).
-        db.add(Document(id="row-1", table_id=uuid.UUID(tid), data={"email": "a@x.com"}))
-        db.add(Document(id="row-2", table_id=uuid.UUID(tid), data={"email": "b@x.com"}))
+        db.add(Document(id="row-1", table_id=row_table_id, data={"email": "a@x.com"}))
+        db.add(Document(id="row-2", table_id=row_table_id, data={"email": "b@x.com"}))
         await db.flush()
 
         # Redeploy with a CHANGED schema (added column).
@@ -81,13 +86,13 @@ class TestSolutionTableDeploy:
         ))
         await db.flush()
 
-        tbl = await db.get(Table, uuid.UUID(tid))
+        tbl = await db.get(Table, row_table_id)
         assert tbl is not None
         # Structure migrated.
         assert {"name": "phone"} in tbl.schema["columns"]
         # Rows preserved.
         rows = (
-            await db.execute(select(Document.id).where(Document.table_id == uuid.UUID(tid)))
+            await db.execute(select(Document.id).where(Document.table_id == row_table_id))
         ).scalars().all()
         assert set(rows) == {"row-1", "row-2"}
 
@@ -112,12 +117,13 @@ class TestSolutionTableDeploy:
         e["description"] = "v1 desc"
         await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[e]))
         await db.flush()
-        assert (await db.get(Table, uuid.UUID(tid))).description == "v1 desc"
+        expected_id = solution_entity_id(sol.id, uuid.UUID(tid))
+        assert (await db.get(Table, expected_id)).description == "v1 desc"
 
         # Redeploy without description -> cleared.
         await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[_table_entry(tid, "t", {})]))
         await db.flush()
-        assert (await db.get(Table, uuid.UUID(tid))).description is None
+        assert (await db.get(Table, expected_id)).description is None
 
     async def test_policy_change_emits_policy_changed(self, db_session, monkeypatch) -> None:
         """Redeploying with changed policies invalidates subscribers' policy
@@ -144,13 +150,15 @@ class TestSolutionTableDeploy:
         await db.flush()
         assert calls == []
 
-        # Redeploy with DIFFERENT policies — emission fires once.
+        # Redeploy with DIFFERENT policies — emission fires once. The emitted id
+        # is the per-install remapped row id, not the raw manifest id.
+        expected_id = solution_entity_id(sol.id, uuid.UUID(tid))
         other_policy = [{"name": "p1", "actions": ["read"]}]
         await SolutionDeployer(db).deploy(SolutionBundle(
             solution=sol, tables=[{"id": tid, "name": "t", "schema": {}, "policies": other_policy}],
         ))
         await db.flush()
-        assert calls == [tid]
+        assert calls == [str(expected_id)]
 
     async def test_redeploy_removing_table_deletes_it_for_this_install_only(self, db_session) -> None:
         db = db_session
@@ -169,4 +177,4 @@ class TestSolutionTableDeploy:
         active = (
             await db.execute(select(Table.id).where(Table.solution_id == sol.id))
         ).scalars().all()
-        assert set(active) == {uuid.UUID(t1)}
+        assert set(active) == {solution_entity_id(sol.id, uuid.UUID(t1))}

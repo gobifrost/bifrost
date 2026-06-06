@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,47 @@ from src.services.sync_ops import Upsert
 
 logger = logging.getLogger(__name__)
 
+
+
+def solution_entity_id(install_id: UUID, manifest_id: UUID) -> UUID:
+    """Per-install entity id: ``uuid5(install_id, original_manifest_id)``.
+
+    The "fresh phone numbers per customer" primitive. A byte-identical bundle
+    (same manifest UUIDs) deploys into two installs as two INDEPENDENT entity
+    rows, because the namespace (the install id) differs (criterion 9). And a
+    redeploy of the same install reproduces the SAME id, so an update never
+    scrambles a customer's internal wiring (criterion 10).
+
+    Install-time only: the source repo / manifest keeps the original author-time
+    ids; only an install's DB rows carry the remapped id.
+    """
+    return uuid5(install_id, str(manifest_id))
+
+
+# Cross-reference fields that may carry an IN-BUNDLE entity id (workflow/agent).
+# When the referenced entity is itself in this bundle, its id is remapped, so the
+# reference must follow. Refs that are portable ``path::fn``/name strings, or that
+# point outside the bundle, are left untouched — they resolve by path/name at
+# runtime within the install's solution scope (see WorkflowRepository.resolve).
+_FORM_WORKFLOW_REF_FIELDS = ("workflow_id", "launch_workflow_id")
+_AGENT_WORKFLOW_LIST_FIELDS = ("tool_ids",)
+_AGENT_AGENT_LIST_FIELDS = ("delegated_agent_ids",)
+
+
+def _remap_ref(value: Any, id_map: dict[UUID, UUID]) -> Any:
+    """Translate a single scalar cross-ref through the remap map.
+
+    Only a raw UUID that names an in-bundle entity is translated. A ``path::fn``
+    or name string, or a UUID outside the bundle, passes through unchanged.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        as_uuid = UUID(value)
+    except ValueError:
+        return value  # portable path::fn / name ref — resolved by scope at runtime
+    mapped = id_map.get(as_uuid)
+    return str(mapped) if mapped is not None else value
 
 
 class SolutionDeployConflict(Exception):
@@ -169,6 +210,14 @@ class SolutionDeployer:
         solution = bundle.solution
         sid = solution.id
 
+        # ── Per-install identity remap (criteria 9/10) ───────────────────────
+        # Rewrite every entity id to uuid5(install, manifest_id) and translate
+        # in-bundle cross-refs through the same map, BEFORE any upsert/reconcile.
+        # Both phases then operate uniformly on remapped ids — the manifest ids
+        # never touch the DB, so a byte-identical bundle installs independently
+        # into N scopes (and a redeploy is stable).
+        self._remap_bundle_ids(bundle)
+
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, bundle.workflows)
         await self._upsert_tables(solution, bundle.tables)
@@ -218,6 +267,81 @@ class SolutionDeployer:
             agents_deleted=agent_deleted,
             finalize_s3=_finalize_s3,
         )
+
+    # ── Per-install identity remap ───────────────────────────────────────────
+    def _remap_bundle_ids(self, bundle: "SolutionBundle") -> None:
+        """Rewrite every bundle entity id to ``uuid5(install, manifest_id)`` and
+        translate in-bundle cross-references through the same map.
+
+        Works on DEEP COPIES of each entity dict and REPLACES the bundle's lists
+        — the caller's dicts are never mutated. This keeps the transform pure and
+        idempotent: the same bundle structure can be deployed to two installs (or
+        the same install twice) without a prior pass corrupting the input by
+        double-remapping (an already-remapped id has no entry in this install's
+        map, so it would otherwise be re-remapped into a third, wrong id).
+
+        Two-pass so a cross-ref can point at any entity regardless of order:
+          1. Build ``id_map`` (manifest id → remapped id) across ALL entity
+             types, stamping each copy's own ``id``.
+          2. Rewrite cross-ref fields (form→workflow, agent→workflow/agent)
+             through ``id_map``. Portable ``path::fn``/name refs and refs that
+             point outside the bundle are left untouched — they resolve by path
+             within the install's solution scope at runtime.
+
+        Apps reference workflows/tables only by string (``useWorkflow("p::f")`` /
+        ``useTable("name")``) in their SOURCE, never by id in metadata, so app
+        entries need no cross-ref rewrite (only their own id is remapped).
+        """
+        import copy
+
+        sid = bundle.solution.id
+        id_map: dict[UUID, UUID] = {}
+
+        bundle.workflows = [copy.deepcopy(e) for e in bundle.workflows]
+        bundle.tables = [copy.deepcopy(e) for e in bundle.tables]
+        bundle.apps = [copy.deepcopy(e) for e in bundle.apps]
+        bundle.forms = [copy.deepcopy(e) for e in bundle.forms]
+        bundle.agents = [copy.deepcopy(e) for e in bundle.agents]
+
+        # Pass 1: remap each entity's own id.
+        for entry in (
+            bundle.workflows
+            + bundle.tables
+            + bundle.apps
+            + bundle.forms
+            + bundle.agents
+        ):
+            original = UUID(str(entry["id"]))
+            remapped = solution_entity_id(sid, original)
+            id_map[original] = remapped
+            entry["id"] = str(remapped)
+
+        # Pass 2: translate cross-refs that name an in-bundle entity.
+        for mform in bundle.forms:
+            for fld in _FORM_WORKFLOW_REF_FIELDS:
+                if mform.get(fld) is not None:
+                    mform[fld] = _remap_ref(mform[fld], id_map)
+            self._remap_form_field_providers(mform, id_map)
+        for magent in bundle.agents:
+            for fld in _AGENT_WORKFLOW_LIST_FIELDS + _AGENT_AGENT_LIST_FIELDS:
+                vals = magent.get(fld)
+                if isinstance(vals, list):
+                    magent[fld] = [_remap_ref(v, id_map) for v in vals]
+
+    @staticmethod
+    def _remap_form_field_providers(
+        mform: dict[str, Any], id_map: dict[UUID, UUID]
+    ) -> None:
+        """Translate the nested ``form_schema.fields[].data_provider_id`` ref
+        (a workflow id) through the remap map."""
+        schema = mform.get("form_schema")
+        if not isinstance(schema, dict):
+            return
+        for field_def in schema.get("fields") or []:
+            if isinstance(field_def, dict) and field_def.get("data_provider_id") is not None:
+                field_def["data_provider_id"] = _remap_ref(
+                    field_def["data_provider_id"], id_map
+                )
 
     # ── Role bindings (full-replace into the entity↔role junction) ───────────
     async def _resolve_roles(self, entry: dict[str, Any]) -> list[UUID]:

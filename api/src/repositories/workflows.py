@@ -107,12 +107,36 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                 Workflow.is_active.is_(True),
             )
         )
-        # Single-result path lookup: exclude solution-managed rows so a _repo/
-        # path and a solution path sharing the same path don't collide into
-        # MultipleResultsFound (solution workflows resolve by id at execution).
-        stmt = self._apply_cascade_scope(stmt, exclude_solution_managed=True)
+        # Include solution-managed rows: a v2 Solution app (and forms) reference
+        # their own workflow by ``path::fn`` — it cannot hard-code the per-install
+        # uuid5 id it won't know until install — so the deployed Solution workflow
+        # MUST be reachable by path within the caller's scope (R7-P1-c). Cascade
+        # scope already limits to (caller org OR global), so an org-scoped install
+        # resolves its OWN copy and other installs are invisible.
+        stmt = self._apply_cascade_scope(stmt)
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        rows = list(result.scalars().all())
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]
+        # A _repo/ row and a solution row can share a path. Disambiguate
+        # deterministically (never raise MultipleResultsFound):
+        #   - An ORG-SCOPED caller (an app inside an org install) prefers the
+        #     solution row in ITS OWN org — that's the app resolving its own
+        #     deployed workflow by path (R7-P1-c).
+        #   - A GLOBAL/system caller (``org_id is None``) prefers the _repo/ row:
+        #     a shared-library path-ref must NOT be hijacked by a global
+        #     Solution that happens to reuse the path.
+        if self.org_id is not None:
+            own = [
+                w for w in rows
+                if w.solution_id is not None and w.organization_id == self.org_id
+            ]
+            if own:
+                return own[0]
+        repo_rows = [w for w in rows if w.solution_id is None]
+        return repo_rows[0] if repo_rows else rows[0]
 
     # ==========================================================================
     # Type-Based Queries

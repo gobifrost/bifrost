@@ -9,7 +9,7 @@ NOT IN bundle_ids``, so _repo/ rows (solution_id IS NULL) and other installs
 from __future__ import annotations
 
 import uuid as uuid_module
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -22,6 +22,7 @@ from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployConflict,
     SolutionDeployer,
+    solution_entity_id,
 )
 
 
@@ -175,7 +176,7 @@ class TestSolutionDeployReconcile:
         ))
         await db.flush()
 
-        wf = await db.get(Workflow, w1)
+        wf = await db.get(Workflow, solution_entity_id(org_install.id, UUID(w1)))
         assert wf is not None
         assert wf.solution_id == org_install.id
         assert wf.organization_id == org_install.organization_id
@@ -302,7 +303,7 @@ class TestSolutionDeployReconcile:
             }],
         ))
         await db.flush()
-        wf = await db.get(Workflow, uuid_module.UUID(wf_id))
+        wf = await db.get(Workflow, solution_entity_id(sol.id, uuid_module.UUID(wf_id)))
         assert wf.endpoint_enabled is True
         assert wf.timeout_seconds == 42
         assert wf.category == "Billing"

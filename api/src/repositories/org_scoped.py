@@ -321,8 +321,6 @@ class OrgScopedRepository(Generic[ModelT]):
     def _apply_cascade_scope(
         self,
         query: Select[tuple[ModelT]],
-        *,
-        exclude_solution_managed: bool = False,
     ) -> Select[tuple[ModelT]]:
         """
         Apply cascade scoping to a query.
@@ -330,16 +328,14 @@ class OrgScopedRepository(Generic[ModelT]):
         - org_id set: WHERE (organization_id = org_id OR organization_id IS NULL)
         - org_id None: WHERE organization_id IS NULL
 
-        ``list()`` calls this with ``exclude_solution_managed=False`` (the
-        default): criterion 16 says the Solution *object* is invisible, but the
-        entities it deploys must appear in normal listings so users can see/use
-        them.
-
-        SINGLE-RESULT name/path resolvers (``scalar_one_or_none``) pass
-        ``exclude_solution_managed=True``: name/path cascade is a ``_repo/``-tier
-        concept (solution entities resolve by id), and the restriction also
-        prevents a _repo/ name and a solution name from colliding into
-        MultipleResultsFound.
+        This is org-scope ONLY; it does NOT filter solution-managed rows. Both
+        ``list()`` (criterion 16: deployed entities must appear in listings) and
+        the workflow ``path::fn`` resolver (R7-P1-c: a Solution app must reach
+        its OWN deployed workflow by path) want solution-managed rows included.
+        Solution-vs-_repo/ name collisions are handled where they arise: the
+        name resolver in :meth:`get` restricts to ``solution_id IS NULL`` (unless
+        ``include_solution_managed``), and the path-ref resolver prefers the
+        solution row over a shared _repo/ row.
         """
         if self.org_id is not None:
             query = query.where(
@@ -350,8 +346,6 @@ class OrgScopedRepository(Generic[ModelT]):
             )
         else:
             query = query.where(_org_is_null(self.model))
-        if exclude_solution_managed and _model_has_solution_id(self.model):
-            query = query.where(self.model.solution_id.is_(None))  # type: ignore[attr-defined]
         return query
 
     def _has_role_table(self) -> bool:

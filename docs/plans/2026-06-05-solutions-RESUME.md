@@ -58,6 +58,15 @@ The dominant theme is the **entity-identity model**, which #6→#7 proved is not
 After #7 is fully fixed + green → run review #8 (narrowed prompt `/tmp/codex_review7.txt` is a good
 base). If #8 clean → that's clean #1; run #9 for clean #2.
 
+### FOLLOW-UP (deferred, user-approved 2026-06-05 session 4) — DX, not blocking
+- **manifest_generator should emit `path::fn` for form/agent→workflow cross-refs.** Today it writes
+  the raw target UUID into `form.workflow_id`/`launch_workflow_id`/`data_provider_id` and agent
+  `tool_ids`. The deploy-time remap (`_remap_bundle_ids`) translates those UUIDs correctly, so it
+  WORKS — but a developer authoring/reading the manifest sees UUIDs for cross-links instead of
+  readable `workflows/foo.py::main` refs. Making the generator emit path::fn (+ round-trip tests)
+  would make authored manifests UUID-free for cross-links. User chose "follow-up, stay focused" to
+  avoid widening the diff mid-gate. The runtime resolver already handles path::fn (R7-P1-c fix).
+
 ### USER DECISIONS (2026-06-05, session 3) — do NOT re-ask
 - **Keep going autonomously.** The user wants the fix-loop continued without per-step approval;
   only surface a question if something genuinely needs their call. Update THIS doc each session so a

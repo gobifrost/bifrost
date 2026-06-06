@@ -148,7 +148,11 @@ class TestBeforeFlushBackstop:
         backstop — it does not go through the ORM unit of work."""
         from src.models.orm.solutions import Solution
         from src.models.orm.workflows import Workflow
-        from src.services.solutions.deploy import SolutionBundle, SolutionDeployer
+        from src.services.solutions.deploy import (
+            SolutionBundle,
+            SolutionDeployer,
+            solution_entity_id,
+        )
 
         db = db_session
         sol = Solution(id=uuid.uuid4(), slug=f"bfd-{uuid.uuid4().hex[:8]}", name="BFD", organization_id=None)
@@ -162,5 +166,5 @@ class TestBeforeFlushBackstop:
             workflows=[{"id": wf_id, "name": "bfd_w", "function_name": "run", "path": "workflows/w.py", "type": "workflow"}],
         ))
         await db.flush()  # must not raise
-        row = await db.get(Workflow, uuid.UUID(wf_id))
+        row = await db.get(Workflow, solution_entity_id(sol.id, uuid.UUID(wf_id)))
         assert row is not None and row.solution_id == sol.id

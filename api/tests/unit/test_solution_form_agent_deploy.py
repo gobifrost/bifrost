@@ -17,6 +17,7 @@ from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployConflict,
     SolutionDeployer,
+    solution_entity_id,
 )
 
 
@@ -58,7 +59,8 @@ class TestSolutionFormAgentDeploy:
             }],
         ))
         await db.flush()
-        form = await db.get(Form, uuid.UUID(fid))
+        expected_id = solution_entity_id(sol.id, uuid.UUID(fid))
+        form = await db.get(Form, expected_id)
         assert form is not None
         assert form.solution_id == sol.id
         assert form.organization_id == sol.organization_id
@@ -68,7 +70,7 @@ class TestSolutionFormAgentDeploy:
 
         from src.models.orm.forms import FormField
         names = (await db.execute(
-            _select(FormField.name).where(FormField.form_id == uuid.UUID(fid))
+            _select(FormField.name).where(FormField.form_id == expected_id)
         )).scalars().all()
         assert "email" in names, "form fields not deployed from form_schema.fields"
 
@@ -81,7 +83,7 @@ class TestSolutionFormAgentDeploy:
             agents=[{"id": aid, "name": "helper", "system_prompt": "You help."}],
         ))
         await db.flush()
-        agent = await db.get(Agent, uuid.UUID(aid))
+        agent = await db.get(Agent, solution_entity_id(sol.id, uuid.UUID(aid)))
         assert agent is not None
         assert agent.solution_id == sol.id
         assert agent.organization_id == sol.organization_id
@@ -95,21 +97,27 @@ class TestSolutionFormAgentDeploy:
             solution=sol, forms=[{"id": fid, "name": "gone", "fields": []}],
         ))
         await db.flush()
-        assert await db.get(Form, uuid.UUID(fid)) is not None
+        expected_id = solution_entity_id(sol.id, uuid.UUID(fid))
+        assert await db.get(Form, expected_id) is not None
         result = await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, forms=[]))
         await db.flush()
-        assert await db.get(Form, uuid.UUID(fid)) is None
+        assert await db.get(Form, expected_id) is None
         assert result.forms_deleted == 1
 
     async def test_repo_form_id_collision_raises_conflict(self, db_session):
         db = db_session
         sol = await self._install(db)
-        fid = uuid.uuid4()
-        db.add(Form(id=fid, name="repo-form", organization_id=None, solution_id=None, created_by="dev@x"))
+        # A _repo/ form already owns the REMAPPED id this bundle's manifest id
+        # deploys into. The manifest id is remapped before the ownership guard,
+        # so the pre-seeded _repo/ row must carry the per-install remapped id to
+        # collide — a bundle may not hijack a _repo/-owned remapped id.
+        manifest_id = uuid.uuid4()
+        repo_id = solution_entity_id(sol.id, manifest_id)
+        db.add(Form(id=repo_id, name="repo-form", organization_id=None, solution_id=None, created_by="dev@x"))
         await db.flush()
         with pytest.raises(SolutionDeployConflict):
             await SolutionDeployer(db).deploy(SolutionBundle(
-                solution=sol, forms=[{"id": str(fid), "name": "repo-form", "fields": []}],
+                solution=sol, forms=[{"id": str(manifest_id), "name": "repo-form", "fields": []}],
             ))
 
 
@@ -146,7 +154,8 @@ class TestAgentBindingsDeploy:
         ))
         await db.flush()
 
-        agent = await db.get(Agent, uuid.UUID(aid))
+        agent_id = solution_entity_id(sol.id, uuid.UUID(aid))
+        agent = await db.get(Agent, agent_id)
         assert agent is not None
         assert agent.solution_id == sol.id
         # Portable manifest content (knowledge/system_tools) deployed.
@@ -154,7 +163,7 @@ class TestAgentBindingsDeploy:
         assert agent.system_tools == ["web_search"]
         # Tool junction row created (the key P2-h binding).
         tool_wf_ids = (await db.execute(
-            _select(AgentTool.workflow_id).where(AgentTool.agent_id == uuid.UUID(aid))
+            _select(AgentTool.workflow_id).where(AgentTool.agent_id == agent_id)
         )).scalars().all()
         assert wf_id in tool_wf_ids, "agent tool binding dropped on deploy"
 
@@ -205,7 +214,9 @@ class TestSolutionRoleBindingsDeploy:
         ))
         await db.flush()
         role_ids = (await db.execute(
-            _select(FormRole.role_id).where(FormRole.form_id == uuid.UUID(fid))
+            _select(FormRole.role_id).where(
+                FormRole.form_id == solution_entity_id(sol.id, uuid.UUID(fid))
+            )
         )).scalars().all()
         assert role.id in role_ids, "form role binding not synced on deploy"
 
@@ -241,13 +252,19 @@ class TestSolutionRoleBindingsDeploy:
         await db.flush()
 
         agent_roles = (await db.execute(
-            _select(AgentRole.role_id).where(AgentRole.agent_id == uuid.UUID(aid))
+            _select(AgentRole.role_id).where(
+                AgentRole.agent_id == solution_entity_id(sol.id, uuid.UUID(aid))
+            )
         )).scalars().all()
         app_roles = (await db.execute(
-            _select(AppRole.role_id).where(AppRole.app_id == uuid.UUID(app_id))
+            _select(AppRole.role_id).where(
+                AppRole.app_id == solution_entity_id(sol.id, uuid.UUID(app_id))
+            )
         )).scalars().all()
         wf_roles = (await db.execute(
-            _select(WorkflowRole.role_id).where(WorkflowRole.workflow_id == uuid.UUID(wf_id))
+            _select(WorkflowRole.role_id).where(
+                WorkflowRole.workflow_id == solution_entity_id(sol.id, uuid.UUID(wf_id))
+            )
         )).scalars().all()
         assert role.id in agent_roles, "agent role binding not synced"
         assert role.id in app_roles, "app role binding not synced"
@@ -277,6 +294,8 @@ class TestSolutionRoleBindingsDeploy:
         await _deploy_with(r1.name)
         await _deploy_with(r2.name)  # full-replace: r1 binding must be gone
         role_ids = set((await db.execute(
-            _select(FormRole.role_id).where(FormRole.form_id == uuid.UUID(fid))
+            _select(FormRole.role_id).where(
+                FormRole.form_id == solution_entity_id(sol.id, uuid.UUID(fid))
+            )
         )).scalars().all())
         assert role_ids == {r2.id}, "redeploy did not full-replace role bindings"
