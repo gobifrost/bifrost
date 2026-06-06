@@ -25,9 +25,23 @@ first chance at clean #1.
 | #7 | 3 P1 + 3 P2 | ✗ → ALL 6 FIXED (session 4) |
 | #8 | 1 P1 + 1 P2 | ✗ → BOTH FIXED (session 4) |
 | #9 | 2 P2 | ✗ → BOTH FIXED (session 4) |
-| #10 | 1 P2 | ✗ → **FIXED (session 4)** |
-| #11 | running | needed: 1st of 2 clean ← **current** |
-| #12 | — | needed: 2nd of 2 clean (if #11 clean) |
+| #10 | 1 P2 | ✗ → FIXED (session 4) |
+| #11 | 2 P2 | ✗ → **BOTH FIXED (session 4)** |
+| #12 | running | needed: 1st of 2 clean ← **current** |
+| #13 | — | needed: 2nd of 2 clean (if #12 clean) |
+
+### SESSION 4 cont. — review #11 closed (BROAD sweep, 2 backend P2s, both real)
+The #11 prompt was widened to a full-surface sweep (not just v2 lifecycle); it
+found two BACKEND P2s (commit fe797366):
+- **#11 P2 sibling-install resolution**: a scoped path-ref caller fell back to a
+  SIBLING install's workflow when its own install lacked the path (and the
+  `len(rows)==1` shortcut bypassed scope). Restructured: scoped caller →
+  own-install → _repo/ → None, NEVER a sibling.
+- **#11 P2 inline_v1 apps**: deploy created a published-but-sourceless Application
+  for an inline_v1 app (the omitted-app_model default). Now REJECTED at deploy
+  (Solution apps are standalone_v2 by design). User chose reject-over-persist.
+Note: the broad sweep finding backend issues (after v2-lifecycle rounds) is why
+widening the prompt mattered. Solution unit + e2e green; ruff/pyright clean.
 
 ### SESSION 4 cont. — review #10 closed (1 P2, verified real)
 - **#10 P2 stale v2 mount across navigation** (commit 82fee1b8): BundledAppShell
