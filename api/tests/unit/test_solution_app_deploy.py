@@ -108,6 +108,42 @@ class TestSolutionAppDeploy:
         # dist was uploaded for this app (under the per-install remapped id)
         assert str(expected_id) in _stub_app_build
 
+    async def test_inline_v1_solution_app_is_rejected(self, db_session, _stub_app_build):
+        """Codex #11: a Solution app must be standalone_v2. An inline_v1 app
+        (the legacy default when app_model is omitted) has no working deploy path
+        — its source is never persisted — so deploy must REJECT it loudly rather
+        than create a published-but-sourceless app. No Application row is written."""
+        db = db_session
+        sol = await self._install(db)
+        app_id = str(uuid.uuid4())
+        inline = {
+            "id": app_id,
+            "slug": "legacy",
+            "name": "Legacy",
+            "app_model": "inline_v1",
+            "src_files": {"App.tsx": "export default () => null;"},
+        }
+
+        with pytest.raises(SolutionDeployConflict, match="standalone_v2"):
+            await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, apps=[inline]))
+
+        # Nothing was persisted for the rejected app.
+        expected_id = solution_entity_id(sol.id, uuid.UUID(app_id))
+        assert await db.get(Application, expected_id) is None
+
+    async def test_inline_v1_default_when_app_model_omitted_is_rejected(
+        self, db_session, _stub_app_build
+    ):
+        """A manifest entry with NO app_model defaults to inline_v1 — also rejected
+        (a bare/legacy manifest can't silently produce a broken app)."""
+        db = db_session
+        sol = await self._install(db)
+        app_id = str(uuid.uuid4())
+        bare = {"id": app_id, "slug": "bare", "name": "Bare"}  # no app_model
+
+        with pytest.raises(SolutionDeployConflict, match="standalone_v2"):
+            await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, apps=[bare]))
+
     async def test_redeploy_without_app_removes_for_this_install(
         self, db_session, _stub_app_build
     ):
@@ -403,34 +439,32 @@ class TestAppPublishAndBuildModel:
         assert app.is_published is True, "deployed app must be live (published)"
         assert app.published_at is not None
 
-    async def test_inline_v1_app_is_not_vite_built(self, db_session, monkeypatch):
+    async def test_inline_v1_app_is_rejected_not_built(self, db_session, monkeypatch):
+        """An inline_v1 Solution app is REJECTED at deploy (Codex #11): it has no
+        working deploy path here (source dropped, no _apps build), so rather than
+        persist a published-but-broken app, deploy raises before any row write —
+        and certainly never attempts a build."""
         db = db_session
         sol = await self._install(db)
         app_id = str(uuid.uuid4())
-        # If build() is called for an inline_v1 app, fail loudly.
+        # If build() is even attempted for an inline_v1 app, fail loudly.
         from src.services.solutions import app_build
 
         def _boom(self, *a, **k):
             raise AssertionError("inline_v1 app must not be vite-built")
         monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _boom)
 
-        result = await SolutionDeployer(db).deploy(SolutionBundle(
-            solution=sol,
-            apps=[{
-                "id": app_id, "slug": "legacy", "name": "Legacy",
-                "app_model": "inline_v1", "dependencies": {},
-                "src_files": {"pages/index.tsx": "export default 1"},
-            }],
-        ))
-        await db.flush()
-        # Run the deferred S3 phase too: if a v1 app leaked into the build set,
-        # the stubbed build() would fire here (P1-c defers builds to finalize).
-        await result.finalize_s3()
-        app = await db.get(Application, solution_entity_id(sol.id, uuid.UUID(app_id)))
-        assert app.app_model == "inline_v1"
-        assert result.apps_upserted == 1
-        # And it's still published (renders via the inline path).
-        assert app.is_published is True
+        with pytest.raises(SolutionDeployConflict, match="standalone_v2"):
+            await SolutionDeployer(db).deploy(SolutionBundle(
+                solution=sol,
+                apps=[{
+                    "id": app_id, "slug": "legacy", "name": "Legacy",
+                    "app_model": "inline_v1", "dependencies": {},
+                    "src_files": {"pages/index.tsx": "export default 1"},
+                }],
+            ))
+        # No row was written for the rejected app.
+        assert await db.get(Application, solution_entity_id(sol.id, uuid.UUID(app_id))) is None
 
 
 @pytest.mark.e2e

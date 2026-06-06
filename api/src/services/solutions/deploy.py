@@ -634,6 +634,18 @@ class SolutionDeployer:
                     f"two apps cannot share /apps/{slug} for any org — rename one."
                 )
             app_model = mapp.get("app_model", "inline_v1")
+            # Solution apps must be standalone_v2: only those are built to dist/
+            # and served from _apps/{id}/. An inline_v1 app (the legacy default
+            # when app_model is omitted) has NO working deploy path here — its
+            # source would be dropped, leaving a published-but-sourceless app that
+            # 404s or serves unrelated _repo/ source (Codex #11). Reject it loudly
+            # BEFORE writing any row, rather than persist a broken app.
+            if app_model != "standalone_v2":
+                raise SolutionDeployConflict(
+                    f"app '{slug}' has app_model='{app_model}'; Solution apps must "
+                    f"be standalone_v2 (scaffold with `bifrost solution scaffold-app`). "
+                    f"inline_v1 apps are not supported in a Solution bundle."
+                )
             now = datetime.now(timezone.utc)
             values: dict[str, Any] = {
                 "name": mapp.get("name") or slug,
@@ -657,18 +669,17 @@ class SolutionDeployer:
                 AppRole, "app_id", app_id, await self._resolve_roles(mapp)
             )
 
-            # Only standalone_v2 apps are built to dist/. inline_v1 render via
-            # the esbuild path; a Vite build on them would fail.
-            if app_model == "standalone_v2":
-                builds.append({
-                    "app_id": app_id,
-                    "src": mapp.get("src_files") or {},
-                    # Non-text assets (png/fonts/public/) carried as base64 by the
-                    # CLI/git collectors — decoded into the build input (P2-j/R4).
-                    "bin": mapp.get("bin_files") or {},
-                    "dist": mapp.get("dist_files"),
-                    "dependencies": mapp.get("dependencies") or {},
-                })
+            # Every Solution app is standalone_v2 (guarded above) and is built to
+            # dist/, served from _apps/{id}/.
+            builds.append({
+                "app_id": app_id,
+                "src": mapp.get("src_files") or {},
+                # Non-text assets (png/fonts/public/) carried as base64 by the
+                # CLI/git collectors — decoded into the build input (P2-j/R4).
+                "bin": mapp.get("bin_files") or {},
+                "dist": mapp.get("dist_files"),
+                "dependencies": mapp.get("dependencies") or {},
+            })
         return builds
 
     async def _compile_app_dists(

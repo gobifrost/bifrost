@@ -240,7 +240,9 @@ class TestSolutionRoleBindingsDeploy:
             }],
             apps=[{
                 "id": app_id, "slug": "dash", "name": "Dash",
-                "app_model": "inline_v1", "access_level": "role_based",
+                # Solution apps are standalone_v2; prebuilt dist skips the vite build.
+                "app_model": "standalone_v2", "access_level": "role_based",
+                "dist_files": {"index.html": "<html></html>"},
                 "role_names": [role.name],
             }],
             workflows=[{

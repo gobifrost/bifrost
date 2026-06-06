@@ -128,22 +128,25 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         rows = list(result.scalars().all())
         if not rows:
             return None
-        if len(rows) == 1:
-            return rows[0]
-        # Multiple rows can share a path (a _repo/ row and one or more solution
-        # rows; two different solution slugs in one org both shipping
-        # workflows/main.py). Disambiguate DETERMINISTICALLY (Codex #8 P1):
+        # A path can match a _repo/ row and/or one-or-more solution rows (two
+        # different solution slugs in one org both shipping workflows/main.py).
+        # Disambiguate DETERMINISTICALLY by the CALLER'S scope (Codex #8/#11).
+        # This MUST run even for a single row, so a scoped caller never resolves
+        # a lone SIBLING-install row by the count==1 shortcut.
         if solution_scope is not None:
             # A Solution app/form caller: resolve THIS install's own workflow
-            # first (no guesswork), then fall back to the global _repo/ row (the
-            # app referenced a shared-library path), then to any solution row.
+            # first (no guesswork), else the global _repo/ row (the app
+            # referenced a shared-library path). NEVER a SIBLING install's row —
+            # a stale/typo'd ref in app A must not execute app B's workflow just
+            # because they share a path. Absent both → None (the caller 404s).
             own = [w for w in rows if w.solution_id == solution_scope]
             if own:
                 return own[0]
             repo_rows = [w for w in rows if w.solution_id is None]
-            return repo_rows[0] if repo_rows else rows[0]
+            return repo_rows[0] if repo_rows else None
         # No install scope — a _repo/ or system caller. Prefer the _repo/ row so a
-        # shared-library path-ref is never hijacked by a Solution reusing the path.
+        # shared-library path-ref is never hijacked by a Solution reusing the
+        # path; only fall back to a solution row when there is no _repo/ row.
         repo_rows = [w for w in rows if w.solution_id is None]
         return repo_rows[0] if repo_rows else rows[0]
 

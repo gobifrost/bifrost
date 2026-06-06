@@ -173,6 +173,23 @@ class TestPathRefSolutionScope:
         got = await repo.resolve("workflows/foo.py::main", solution_scope=sol.id)
         assert got is not None and got.id == own.id
 
+    async def test_scoped_caller_never_resolves_a_sibling_install(self, db_session) -> None:
+        """Codex #11: a scoped caller whose path is absent from ITS OWN install
+        must NOT fall back to a SIBLING install's workflow at the same path — it
+        resolves to None (404), preserving the self-contained boundary. (A typo
+        or stale ref in app A must never execute app B's workflow.)"""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol_a = await _add_solution(db, org)
+        sol_b = await _add_solution(db, org)
+        # Only install B ships workflows/main.py; install A does not.
+        await _add_workflow(db, org_id=org, solution_id=sol_b.id, path="workflows/main.py")
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        # Caller scoped to install A: no own match, no _repo/ row → None, NOT B's.
+        got = await repo.resolve("workflows/main.py::main", solution_scope=sol_a.id)
+        assert got is None
+
     async def test_other_orgs_solution_row_not_resolved(self, db_session) -> None:
         """A solution workflow in a DIFFERENT org is not reachable — scope still
         applies (each install resolves its own copy)."""
