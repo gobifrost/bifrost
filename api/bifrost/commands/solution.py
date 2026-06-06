@@ -424,6 +424,33 @@ def _collect_tables(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+def _collect_config_schemas(workspace: pathlib.Path) -> list[dict]:
+    """Read config DECLARATIONS from .bifrost/configs.yaml (keyed by key/UUID).
+
+    Declarations ONLY — there is no ``value`` field by design. Config values are
+    instance-owned and supplied at install time; local dev reads them from .env.
+    """
+    cfg_file = workspace / ".bifrost" / "configs.yaml"
+    if not cfg_file.is_file():
+        return []
+    data = yaml.safe_load(cfg_file.read_text()) or {}
+    raw = data.get("configs", {})
+    entries: list[dict] = []
+    for key, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        entries.append({
+            "id": body.get("id", key),
+            "key": body.get("key") or key,
+            "type": body.get("type", "string"),
+            "required": bool(body.get("required", False)),
+            "description": body.get("description"),
+            "default": body.get("default"),
+            "position": int(body.get("position", 0)),
+        })
+    return entries
+
+
 def _collect_manifest_entities(workspace: pathlib.Path, filename: str, key: str) -> list[dict]:
     """Pass through inline manifest entries (forms/agents) keyed by UUID.
 
@@ -603,6 +630,7 @@ def deploy_cmd(path: str, solution_id: str | None) -> None:
     apps = _collect_apps(workspace)
     forms = _collect_forms(workspace)
     agents = _collect_agents(workspace)
+    config_schemas = _collect_config_schemas(workspace)
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -662,6 +690,7 @@ def deploy_cmd(path: str, solution_id: str | None) -> None:
             "apps": apps,
             "forms": forms,
             "agents": agents,
+            "config_schemas": config_schemas,
         })
         if deploy.status_code not in (200, 201):
             click.echo(f"Deploy failed: {deploy.status_code} {deploy.text}", err=True)

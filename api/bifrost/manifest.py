@@ -242,6 +242,17 @@ class ManifestConfig(BaseModel):
     value: object | None = Field(default=None, description="Config value (null for secret type)")
 
 
+class ManifestSolutionConfigSchema(BaseModel):
+    """A solution-owned config DECLARATION (portable; never a value)."""
+    id: str = Field(description="Config schema UUID")
+    key: str = Field(description="Config key name")
+    type: str = Field(default="string", description="string | int | bool | json | secret")
+    required: bool = Field(default=False, description="Whether a value must be supplied at install time")
+    description: str | None = Field(default=None, description="Human-readable description")
+    default: str | None = Field(default=None, description="Default value used when none is supplied")
+    position: int = Field(default=0, description="Display ordering within the solution")
+
+
 class ManifestCustomClaim(BaseModel):
     """Custom Claim entry in manifest."""
     id: str = Field(description="Custom Claim UUID")
