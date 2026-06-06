@@ -9,10 +9,11 @@ Spec: `docs/plans/2026-06-04-solutions-success-criteria.md` (18 criteria) + v2 a
 
 # ▶ STATUS DASHBOARD — "how close are we?" (read this first)
 
-**Short answer: feature-complete on the happy path, NOT through the correctness gate.**
-The whole feature surface is built and the v2 dev loop is validated live. But the done-bar is
-**two CONSECUTIVE Codex reviews with ZERO P1/P2** — and we have had **zero clean reviews in five
-rounds**. Each round still finds real P1s, including holes opened by the previous round's fixes.
+**Short answer: feature-complete; the identity cluster is now BUILT; awaiting Codex #8 verdict.**
+The done-bar is **two CONSECUTIVE Codex reviews with ZERO P1/P2**. As of session 4 (2026-06-05),
+ALL of review #7 (3 P1 + 3 P2) is fixed + committed + green, INCLUDING the per-install identity
+model (uuid5 remap + scope-aware path-ref) that kept regenerating findings. Codex review #8 is the
+first chance at clean #1.
 
 ### The gate, round by round
 | Review | Findings | Clean? |
@@ -21,13 +22,27 @@ rounds**. Each round still finds real P1s, including holes opened by the previou
 | #4 | 8 | ✗ |
 | #5 | 6 | ✗ |
 | #6 | 4 P1 + 2 P2 | ✗ (5 fixed, 1 rejected) |
-| #7 | **3 P1 + 3 P2** | ✗ ← **current; OPEN, not yet fixed** |
-| #8 | — | needed: 1st of 2 clean |
+| #7 | 3 P1 + 3 P2 | ✗ → **ALL 6 FIXED (session 4)** |
+| #8 | running | needed: 1st of 2 clean ← **current** |
 | #9 | — | needed: 2nd of 2 clean |
 
-**Realistic distance to done: ≥ 2 more fix-loops, possibly 3.** Burn-down is not converging to
-zero yet (6→8→6→6→6). It will only converge once the *identity model* (per-install entity IDs +
-scope-aware workflow-ref resolution) is solid — that cluster is what keeps regenerating findings.
+### SESSION 4 (2026-06-05) — review #7 fully closed
+The user stress-tested the identity design (composite-key vs uuid5; cross-refs; events calling
+solution workflows) and confirmed: **uuid5 remap at install-time only** (source repo keeps
+author-time ids), **cross-refs resolve by path/name** within solution scope, **events calling a
+solution workflow/agent already work** (direct FK join, no resolver, no exclusion — unaffected).
+Commits on `worktree-solutions-success-criteria` (HEAD 65753cf6):
+- `dfd6800f` R7-P1-bc: `solution_entity_id` uuid5 remap + `_remap_bundle_ids` (deep-copy, idempotent,
+  cross-ref translation: form/agent→workflow, agent→agent, form_schema data_provider_id) +
+  `WorkflowRepository._resolve_by_path_ref` includes solution rows & prefers the caller's own-org
+  solution row (global caller prefers _repo/). Removed dead `exclude_solution_managed`.
+- `141fc83d` R7-P2-d (delete_missing_prefix managed guard) + R7-P2-e (StandaloneV2App tombstone).
+- `70eaa160` R7-P1-a (None deployer org ≠ global install match).
+- `c42bfcef` R7-P2-f (`bifrost auth token` + vite execFileSync fallback to credential store).
+- `65753cf6` e2e tests updated for the remap (look up by `solution_entity_id`, assertions unchanged).
+Green: 166 solution unit + 13 e2e + 17 jsx-app vitest; ruff + pyright + tsc + eslint clean.
+**NEXT: read `/tmp/codex_review8_out.txt` (prompt `/tmp/codex_review8.txt`). If clean → clean #1,
+run #9 for #2. If findings → triage with `superpowers:receiving-code-review` + Explore subagents.**
 
 ### What is DONE (built + tested + validated live)
 - v2 React app model end-to-end: scaffold → `npm install` (`bifrost` from `/api/sdk/download`) →
