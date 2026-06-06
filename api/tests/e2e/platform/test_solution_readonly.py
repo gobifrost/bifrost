@@ -8,8 +8,11 @@ tests + the table router only guarding schema/delete, not document/* mutations.
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 import pytest
+
+from src.services.solutions.deploy import solution_entity_id
 
 pytestmark = pytest.mark.e2e
 
@@ -39,19 +42,22 @@ def test_solution_workflow_is_read_only(e2e_client, platform_admin):
     })
     assert dep.status_code in (200, 201), dep.text
 
+    # Deploy remaps the manifest id to uuid5(install_id, manifest_id); address by that.
+    real_id = str(solution_entity_id(UUID(sid), UUID(wf_id)))
+
     # PATCH must be refused with the exact locked message.
-    patch = e2e_client.patch(f"/api/workflows/{wf_id}", headers=headers, json={"display_name": "hijack"})
+    patch = e2e_client.patch(f"/api/workflows/{real_id}", headers=headers, json={"display_name": "hijack"})
     assert patch.status_code == 409, patch.text
     assert patch.json()["detail"] == _MSG
 
     # DELETE must be refused likewise (so the entity is NOT removed).
-    dele = e2e_client.delete(f"/api/workflows/{wf_id}", headers=headers)
+    dele = e2e_client.delete(f"/api/workflows/{real_id}", headers=headers)
     assert dele.status_code == 409, dele.text
     assert dele.json()["detail"] == _MSG
 
     # Re-running the workflow still succeeds — it was neither mutated nor deleted.
     from tests.e2e.conftest import execute_workflow_sync
-    result = execute_workflow_sync(e2e_client, headers, wf_id, request_sync=True)
+    result = execute_workflow_sync(e2e_client, headers, real_id, request_sync=True)
     assert result["status"] == "Success", result
 
 

@@ -3,8 +3,11 @@ changed schema, and confirm rows are preserved (criterion 11)."""
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 import pytest
+
+from src.services.solutions.deploy import solution_entity_id
 
 pytestmark = pytest.mark.e2e
 
@@ -30,8 +33,12 @@ def test_table_deploy_preserves_rows_across_schema_change(e2e_client, platform_a
     assert dep.status_code in (200, 201), dep.text
     assert dep.json()["tables_upserted"] == 1
 
+    # Deploy remaps the manifest id to uuid5(install_id, manifest_id); the table is
+    # addressable only by the remapped id.
+    real_id = str(solution_entity_id(UUID(sid), UUID(tid)))
+
     # Seed a runtime row via the documents API (this is NOT part of the bundle).
-    doc = e2e_client.post(f"/api/tables/{tid}/documents", headers=headers, json={
+    doc = e2e_client.post(f"/api/tables/{real_id}/documents", headers=headers, json={
         "id": "row-1", "data": {"email": "a@x.com"},
     })
     assert doc.status_code in (200, 201), doc.text
@@ -43,6 +50,6 @@ def test_table_deploy_preserves_rows_across_schema_change(e2e_client, platform_a
     assert dep2.status_code in (200, 201), dep2.text
 
     # Row survives the schema migration.
-    got = e2e_client.get(f"/api/tables/{tid}/documents/row-1", headers=headers)
+    got = e2e_client.get(f"/api/tables/{real_id}/documents/row-1", headers=headers)
     assert got.status_code == 200, got.text
     assert got.json()["data"]["email"] == "a@x.com"

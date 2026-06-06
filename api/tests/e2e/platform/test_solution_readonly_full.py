@@ -9,8 +9,11 @@ workflow orphan ops + role assign/remove; app publish/replace/logo/dependencies
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 import pytest
+
+from src.services.solutions.deploy import solution_entity_id
 
 pytestmark = pytest.mark.e2e
 
@@ -42,7 +45,11 @@ def _deploy_workflow_and_app(e2e_client, headers, sid: str):
         }],
     })
     assert dep.status_code in (200, 201), dep.text
-    return wf_id, app_id
+    # Deploy remaps each manifest id to uuid5(install_id, manifest_id); the entity
+    # is addressable only by the remapped id.
+    real_wf = str(solution_entity_id(UUID(sid), UUID(wf_id)))
+    real_app = str(solution_entity_id(UUID(sid), UUID(app_id)))
+    return real_wf, real_app
 
 
 def test_workflow_secondary_mutations_are_locked(e2e_client, platform_admin):
