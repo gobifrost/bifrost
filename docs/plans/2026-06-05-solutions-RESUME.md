@@ -58,14 +58,33 @@ The dominant theme is the **entity-identity model**, which #6→#7 proved is not
 After #7 is fully fixed + green → run review #8 (narrowed prompt `/tmp/codex_review7.txt` is a good
 base). If #8 clean → that's clean #1; run #9 for clean #2.
 
+### USER DECISIONS (2026-06-05, session 3) — do NOT re-ask
+- **Keep going autonomously.** The user wants the fix-loop continued without per-step approval;
+  only surface a question if something genuinely needs their call. Update THIS doc each session so a
+  fresh session can start cold.
+- **Remap scheme is DECIDED: deterministic `uuid5(install_id, original_manifest_id)`.** This is the
+  agreed approach for per-install entity identity (the "fresh phone numbers per customer" fix). It
+  makes installs independent (criterion 9) AND keeps redeploys stable (same input → same ID, so an
+  update doesn't scramble a customer's internal wiring). Do not re-litigate vs the `(solution_id,id)`
+  keying alternative unless implementation reveals it can't work.
+
+### Plain-English framing (for context, not jargon)
+The remaining bugs are mostly ONE problem: when the same Solution installs into two customers, each
+needs its OWN copy of every entity, but entity IDs (think: phone numbers) are baked into the bundle,
+so two installs collide and the 2nd is refused. Fix = give each install fresh-but-deterministic IDs
+at deploy time, and make the app→workflow reference resolve by name-path within the app's own install
+(it can't hard-code an ID it won't know until install). R7-P1-b + R7-P1-c are two faces of this.
+
 ### Recommended sequencing for the next session
 1. **Fix the identity cluster as ONE coherent change** (R7-P1-b remap + R7-P1-c scope-aware
-   path-ref resolution) — they share root cause; fixing them piecemeal will just generate review #8
-   findings. Decide the remap scheme with the user (deterministic `uuid5(install_id, manifest_id)`
-   is the leading candidate — keeps redeploys stable, makes installs independent).
-2. Fix the org-deploy regression (R7-P1-a) — small, isolated, add the `None`-deployer test.
+   path-ref resolution) using the decided `uuid5(install_id, manifest_id)` scheme. They share a root
+   cause; fixing piecemeal just regenerates review #8 findings. Touch points: the CLI/git-sync
+   `_collect_*` collectors (where manifest IDs are read) + `deploy.py` upserts + the ownership guard
+   + `WorkflowRepository.resolve` (must resolve `path::fn` within the caller's solution scope) +
+   how `/api/workflows/execute` learns the caller's install scope.
+2. Fix the org-deploy regression (R7-P1-a) — small, isolated; add the `None`-deployer test.
 3. Fix the 3 P2s (R7-P2-d/e/f).
-4. Full verify → review #8.
+4. Full verify → review #8. (If clean → clean #1 of 2; run #9 for #2.)
 
 ---
 
