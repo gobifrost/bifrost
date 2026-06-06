@@ -530,7 +530,16 @@ def _resolve_target_install(
         s for s in installs
         if s.get("slug") == slug and (
             (scope == "global" and s.get("organization_id") is None)
-            or (scope == "org" and s.get("organization_id") == deployer_org_id)
+            or (
+                scope == "org"
+                # Require a real deployer org BEFORE the equality: a None
+                # deployer org must not match a GLOBAL install (organization_id
+                # is also None), which `None == None` would otherwise allow — an
+                # org-scoped deploy could then full-replace the global install
+                # (R7-P1-a). No deployer org → no org-scope match → fresh install.
+                and deployer_org_id is not None
+                and s.get("organization_id") == deployer_org_id
+            )
         )
     ]
     if not matches:

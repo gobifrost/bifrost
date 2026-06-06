@@ -55,6 +55,21 @@ def test_duplicate_org_installs_in_same_org_is_ambiguous():
     assert "--solution" in str(e.value)
 
 
+def test_org_scope_with_none_deployer_org_does_not_match_global():
+    """R7-P1-a regression: a `None` deployer org (provider/admin context with no
+    active org) running an ORG-scoped deploy must NOT match the GLOBAL install.
+
+    A global install has organization_id None; the org-scope equality
+    `organization_id == deployer_org_id` would be `None == None` → True, so an
+    org-scoped deploy could full-replace the global install. An org-scoped deploy
+    with no deployer org matches nothing → the caller creates a fresh install,
+    never clobbering global."""
+    installs = [{"id": "g1", "slug": "mysol", "organization_id": None}]  # global
+    assert (
+        _resolve_target_install(installs, "mysol", "org", deployer_org_id=None) is None
+    )
+
+
 def test_scope_filters_out_wrong_scope():
     installs = [
         {"id": "g1", "slug": "mysol", "organization_id": None},   # global
