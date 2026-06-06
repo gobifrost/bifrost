@@ -66,6 +66,39 @@ class SolutionsList(BaseModel):
     solutions: list[Solution] = Field(default_factory=list)
 
 
+class SolutionConfigStatus(BaseModel):
+    """A config DECLARATION on an install, paired with whether a value is set in
+    the install's org scope (values are instance-owned Config rows, never part of
+    the declaration)."""
+
+    id: UUID
+    key: str
+    type: str
+    required: bool
+    description: str | None = None
+    value_set: bool
+
+
+class SolutionEntitySummary(BaseModel):
+    """Lightweight (id, name) entry for an owned entity — the detail UI links by id."""
+
+    id: UUID
+    name: str
+
+
+class SolutionEntities(BaseModel):
+    """Everything one install owns + its config declaration/value status."""
+
+    solution: Solution
+    workflows: list[SolutionEntitySummary] = Field(default_factory=list)
+    apps: list[SolutionEntitySummary] = Field(default_factory=list)
+    forms: list[SolutionEntitySummary] = Field(default_factory=list)
+    agents: list[SolutionEntitySummary] = Field(default_factory=list)
+    tables: list[SolutionEntitySummary] = Field(default_factory=list)
+    configs: list[SolutionConfigStatus] = Field(default_factory=list)
+    required_configs_unset: list[str] = Field(default_factory=list)
+
+
 class SolutionDeployRequest(BaseModel):
     """Full-replace deploy bundle for one install.
 

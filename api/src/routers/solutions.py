@@ -20,12 +20,22 @@ from sqlalchemy.exc import IntegrityError
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
     Solution as SolutionDTO,
+    SolutionConfigStatus,
     SolutionCreate,
     SolutionDeployRequest,
     SolutionDeployResponse,
+    SolutionEntities,
+    SolutionEntitySummary,
     SolutionsList,
 )
+from src.models.orm.agents import Agent
+from src.models.orm.applications import Application
+from src.models.orm.config import Config
+from src.models.orm.forms import Form
+from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution as SolutionORM
+from src.models.orm.tables import Table
+from src.models.orm.workflows import Workflow
 from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployer,
@@ -82,6 +92,76 @@ async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) 
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
     return SolutionDTO.model_validate(row)
+
+
+@router.get(
+    "/{solution_id}/entities",
+    response_model=SolutionEntities,
+    summary="Get an install + everything it owns (admin only)",
+)
+async def get_solution_entities(
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionEntities:
+    """One call for the detail UI: the install, all owned entities, and each
+    config declaration paired with whether a value is set in the install's scope
+    (plus the derived required-but-unset key list)."""
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    async def _summaries(model: type) -> list[SolutionEntitySummary]:
+        rows = (
+            await ctx.db.execute(
+                select(model.id, model.name).where(model.solution_id == solution_id)
+            )
+        ).all()
+        return [SolutionEntitySummary(id=r[0], name=r[1]) for r in rows]
+
+    workflows = await _summaries(Workflow)
+    apps = await _summaries(Application)
+    forms = await _summaries(Form)
+    agents = await _summaries(Agent)
+    tables = await _summaries(Table)
+
+    decls = (
+        await ctx.db.execute(
+            select(SolutionConfigSchema)
+            .where(SolutionConfigSchema.solution_id == solution_id)
+            .order_by(SolutionConfigSchema.position)
+        )
+    ).scalars().all()
+
+    # A declaration is "satisfied" when an instance Config row exists for the
+    # install's org scope (NULL org for a global install) with the same key.
+    if sol.organization_id is not None:
+        set_keys_q = select(Config.key).where(Config.organization_id == sol.organization_id)
+    else:
+        set_keys_q = select(Config.key).where(Config.organization_id.is_(None))
+    set_keys = set((await ctx.db.execute(set_keys_q)).scalars().all())
+
+    configs = [
+        SolutionConfigStatus(
+            id=d.id,
+            key=d.key,
+            type=d.type,
+            required=d.required,
+            description=d.description,
+            value_set=d.key in set_keys,
+        )
+        for d in decls
+    ]
+    required_unset = [d.key for d in decls if d.required and d.key not in set_keys]
+
+    return SolutionEntities(
+        solution=SolutionDTO.model_validate(sol),
+        workflows=workflows,
+        apps=apps,
+        forms=forms,
+        agents=agents,
+        tables=tables,
+        configs=configs,
+        required_configs_unset=required_unset,
+    )
 
 
 @router.post(
