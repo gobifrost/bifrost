@@ -22,9 +22,32 @@ first chance at clean #1.
 | #4 | 8 | ✗ |
 | #5 | 6 | ✗ |
 | #6 | 4 P1 + 2 P2 | ✗ (5 fixed, 1 rejected) |
-| #7 | 3 P1 + 3 P2 | ✗ → **ALL 6 FIXED (session 4)** |
-| #8 | running | needed: 1st of 2 clean ← **current** |
-| #9 | — | needed: 2nd of 2 clean |
+| #7 | 3 P1 + 3 P2 | ✗ → ALL 6 FIXED (session 4) |
+| #8 | 1 P1 + 1 P2 | ✗ → **BOTH FIXED (session 4)** |
+| #9 | running | needed: 1st of 2 clean ← **current** |
+| #10 | — | needed: 2nd of 2 clean (if #9 clean) |
+
+### SESSION 4 cont. — review #8 closed (install-scope cluster)
+Codex #8 reset the counter with two real findings on the session's own identity work
+(verified with Explore subagents before fixing — both real):
+- **#8 P1** (commit 579d57a3): a v2 app's `path::fn` ref could resolve a SIBLING
+  install's workflow (two installs in one org both shipping workflows/main.py::main;
+  resolver had only org_id → non-deterministic first row). Fixed per the user's
+  intended install-namespaced model: (1) DB uniqueness — ONE install per (slug,
+  scope) [migration 20260605_solution_unique_scope + Solution.__table_args__]; (2)
+  `WorkflowRepository.resolve(..., solution_scope=)` resolves the caller's OWN
+  install first, then global _repo/; (3) threaded `app_id` on the execute request →
+  `Application.solution_id` → solution_scope; client injects appId into the bootstrap
+  → BifrostProvider → useWorkflow sends app_id. Regenerated v1.d.ts. Proven by an
+  e2e: two installs sharing the path each run THEIR OWN workflow via app_id.
+- **#8 P2** (same commit): same-bundle-object redeploy double-remapped. `_remap_bundle_ids`
+  → `_remapped_bundle` returns a NEW bundle; caller's bundle never mutated.
+Green: 171 solution unit + 14 e2e + 114 client vitest; ruff/pyright/tsc/eslint clean.
+**NEXT: read `/tmp/codex_review9_out.txt` (prompt `/tmp/codex_review9.txt`). Clean → clean
+#1; run #10 for #2. Findings → triage w/ `superpowers:receiving-code-review` + Explore subagents.**
+USER DESIGN NOTE (session 4): a Solution is NOT meant to install twice on one scope;
+solution code is namespaced `_solutions/{install_id}/` and resolves own-namespace-first
+then global _repo/ (if global_repo_access). The #8 P1 fix codifies this.
 
 ### SESSION 4 (2026-06-05) — review #7 fully closed
 The user stress-tested the identity design (composite-key vs uuid5; cross-refs; events calling
