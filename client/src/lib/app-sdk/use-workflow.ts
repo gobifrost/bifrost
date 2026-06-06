@@ -42,7 +42,7 @@ interface ExecuteResponse {
  * `<BifrostProvider>` (throws otherwise — same contract as `useBifrostContext`).
  */
 export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<T> {
-  const { authedFetch } = useBifrostContext();
+  const { authedFetch, appId } = useBifrostContext();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -59,6 +59,9 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
             workflow_id: workflowRef,
             input_data: input,
             sync: true,
+            // Scope a path::function ref to THIS install's own workflow (so it
+            // can't resolve a sibling install's workflow sharing the path).
+            ...(appId ? { app_id: appId } : {}),
           }),
         });
         if (!resp.ok) {
@@ -79,7 +82,7 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
         setLoading(false);
       }
     },
-    [authedFetch, workflowRef],
+    [authedFetch, workflowRef, appId],
   );
 
   return { data, loading, error, run };

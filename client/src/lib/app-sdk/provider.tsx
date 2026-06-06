@@ -34,6 +34,13 @@ export interface BifrostContextValue {
   token: string;
   /** Active organization scope (UUID), or null for the caller's default. */
   orgScope: string | null;
+  /**
+   * This app's id, when mounted as a Solution app. `useWorkflow` sends it on
+   * execute so a `path::function` ref resolves to THIS install's own workflow,
+   * not a sibling install's that shares the path (Codex #8 P1). null in dev /
+   * when the host doesn't supply it.
+   */
+  appId: string | null;
   /** `fetch` that joins `baseUrl` and attaches the bearer token. */
   authedFetch: typeof fetch;
   /** Log the user out. No-op if the app did not supply `onLogout`. */
@@ -46,6 +53,8 @@ export interface BifrostProviderProps {
   baseUrl: string;
   token: string;
   orgScope?: string | null;
+  /** This app's id (forwarded to execute so path refs resolve to this install). */
+  appId?: string | null;
   /** Override `fetch` (tests / non-browser). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
   /** Called when the app requests logout (e.g. a platform "log out" action). */
@@ -67,6 +76,7 @@ export function BifrostProvider({
   baseUrl,
   token,
   orgScope = null,
+  appId = null,
   fetchImpl,
   onLogout,
   children,
@@ -88,10 +98,11 @@ export function BifrostProvider({
       baseUrl: baseUrl.replace(/\/$/, ""),
       token,
       orgScope,
+      appId,
       authedFetch,
       logout,
     };
-  }, [baseUrl, token, orgScope, fetchImpl, onLogout]);
+  }, [baseUrl, token, orgScope, appId, fetchImpl, onLogout]);
 
   // Route the data SDK (tables.*/useTable) through this provider so a v2 app
   // in `npm run dev` (different origin) reaches the configured Bifrost API with

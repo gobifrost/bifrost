@@ -253,6 +253,8 @@ const basename = boot?.basename ?? "/";
 const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
 const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
 const orgScope = boot?.orgScope ?? null;
+// This app's id, so useWorkflow scopes path refs to THIS install's workflow.
+const appId = boot?.appId ?? null;
 
 const root = createRoot(mountEl);
 // Let the platform tear this root down on navigation (no leak).
@@ -260,7 +262,7 @@ boot?.registerUnmount?.(() => root.unmount());
 
 root.render(
   <StrictMode>
-    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} onLogout={boot?.onLogout}>
+    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} appId={appId} onLogout={boot?.onLogout}>
       <BrowserRouter basename={basename}>
         <App />
       </BrowserRouter>

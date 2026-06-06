@@ -44,6 +44,51 @@ describe("useWorkflow", () => {
     expect(calls[0].body).toEqual({ workflow_id: "my-wf", input_data: { a: 1 }, sync: true });
   });
 
+  it("sends app_id so a path ref resolves to this install's workflow (Codex #8 P1)", async () => {
+    const calls: { body: Record<string, unknown> }[] = [];
+    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ body: init?.body ? JSON.parse(String(init.body)) : {} });
+      return new Response(JSON.stringify({ status: "completed", result: { ok: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-x"
+        appId="app-123"
+        fetchImpl={fakeFetch}
+      >
+        <Runner onResult={() => {}} />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0].body.app_id).toBe("app-123");
+  });
+
+  it("omits app_id when the host supplies none (dev / non-solution app)", async () => {
+    const calls: { body: Record<string, unknown> }[] = [];
+    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ body: init?.body ? JSON.parse(String(init.body)) : {} });
+      return new Response(JSON.stringify({ status: "completed", result: { ok: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="tok-x" fetchImpl={fakeFetch}>
+        <Runner onResult={() => {}} />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect("app_id" in calls[0].body).toBe(false);
+  });
+
   it("surfaces a workflow-level error", async () => {
     const fakeFetch = (async () =>
       new Response(JSON.stringify({ status: "failed", error: "boom" }), {

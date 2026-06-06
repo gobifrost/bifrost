@@ -744,10 +744,32 @@ async def execute_workflow(
         is_superuser=ctx.user.is_superuser,
     )
 
+    # A Solution app's path::fn ref carries no install id (it can't know the
+    # per-install uuid5). When the caller identifies its app, resolve the app's
+    # install (Application.solution_id) so a path ref resolves to THIS install's
+    # own workflow, not a sibling install's that happens to share the path
+    # (Codex #8 P1). A bad/foreign app_id just yields no scope → no narrowing.
+    solution_scope: UUID | None = None
+    if request.app_id:
+        from src.models.orm.applications import Application
+
+        try:
+            app_uuid = UUID(request.app_id)
+        except ValueError:
+            app_uuid = None
+        if app_uuid is not None:
+            solution_scope = (
+                await db.execute(
+                    select(Application.solution_id).where(Application.id == app_uuid)
+                )
+            ).scalar_one_or_none()
+
     # Look up workflow metadata for type checking (needed for data provider handling)
     workflow = None
     if request.workflow_id:
-        workflow = await workflow_repo.resolve(request.workflow_id)
+        workflow = await workflow_repo.resolve(
+            request.workflow_id, solution_scope=solution_scope
+        )
         if not workflow:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

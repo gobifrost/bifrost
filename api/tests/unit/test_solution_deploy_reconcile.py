@@ -196,6 +196,32 @@ class TestSolutionDeployReconcile:
             await db.flush()
         await db.rollback()
 
+    async def test_unique_install_per_org_scope(self, db_session) -> None:
+        """A Solution installs AT MOST ONCE per org (Codex #8 P1 root cause):
+        two installs of one slug in the SAME org collide; the SAME slug in a
+        DIFFERENT org is fine (independent installs)."""
+        from sqlalchemy.exc import IntegrityError
+
+        from src.models.orm.organizations import Organization
+
+        db = db_session
+        org_a = Organization(id=uuid4(), name=f"A-{uuid4().hex[:6]}", created_by="t")
+        org_b = Organization(id=uuid4(), name=f"B-{uuid4().hex[:6]}", created_by="t")
+        db.add_all([org_a, org_b])
+        await db.flush()
+        slug = f"dup-{uuid4().hex[:8]}"
+
+        # Same slug in two DIFFERENT orgs — independent installs, allowed.
+        db.add(Solution(id=uuid4(), slug=slug, name="A", organization_id=org_a.id))
+        db.add(Solution(id=uuid4(), slug=slug, name="B", organization_id=org_b.id))
+        await db.flush()  # must not raise
+
+        # A SECOND install of the same slug in org-a — must collide.
+        db.add(Solution(id=uuid4(), slug=slug, name="A2", organization_id=org_a.id))
+        with _pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
     async def test_deploy_rejects_foreign_entity_id(self, db_session) -> None:
         """A bundle may not reuse a UUID owned by _repo/ or another install —
         that would re-stamp solution_id and hijack the row (Codex P1)."""

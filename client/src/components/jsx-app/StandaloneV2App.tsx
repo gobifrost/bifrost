@@ -39,6 +39,12 @@ export interface BifrostAppBootstrap {
 	token: string;
 	/** Active org scope (UUID) or null for the caller's default. */
 	orgScope: string | null;
+	/**
+	 * This app's id. The SDK sends it on /api/workflows/execute so a
+	 * `path::function` workflow ref resolves to THIS install's own workflow,
+	 * not a sibling install's that happens to share the path (Codex #8 P1).
+	 */
+	appId: string;
 	/** Ask the platform to log out (the app may expose a logout affordance). */
 	onLogout: () => void;
 	/**
@@ -135,6 +141,7 @@ export function StandaloneV2App({
 			baseUrl: window.location.origin,
 			token,
 			orgScope,
+			appId,
 			onLogout: () => {
 				clearAuthTokens();
 				window.location.assign("/login");

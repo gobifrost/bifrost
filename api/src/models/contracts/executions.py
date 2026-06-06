@@ -112,6 +112,7 @@ class WorkflowExecutionRequest(BaseModel):
     workflow_id: str | None = Field(default=None, description="Workflow UUID or name. Names resolve using org-scoped lookup (org-specific > global). Required if code not provided.")
     input_data: dict[str, Any] = Field(default_factory=dict, description="Workflow input parameters")
     form_id: str | None = Field(default=None, description="Optional form ID that triggered this execution")
+    app_id: str | None = Field(default=None, description="Optional app ID of the calling Solution app. Used to scope a path::function workflow ref to the app's own install (so it resolves the install's own workflow, not a sibling install's that shares the path).")
     transient: bool = Field(default=False, description="If true, skip database persistence (for code editor debugging)")
     sync: bool | None = Field(default=None, description="If true, block until execution completes and return result inline. Overrides workflow's execution_mode setting.")
     code: str | None = Field(default=None, description="Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.")

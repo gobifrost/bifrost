@@ -70,25 +70,27 @@ class TestPathRefSolutionScope:
         assert got is not None
         assert got.id == wf.id
 
-    async def test_prefers_solution_row_when_repo_shares_path(self, db_session) -> None:
-        """A _repo/ row and a solution row share a path: resolve to the
-        solution row (the caller's install), NOT MultipleResultsFound."""
+    async def test_no_scope_caller_prefers_repo_on_shared_path(self, db_session) -> None:
+        """A _repo/ row and a solution row share a path, and the caller passes NO
+        install scope: prefer the _repo/ row (deterministic). Reaching the
+        solution row requires an explicit solution_scope — see the install-scope
+        tests below. (Earlier this preferred the solution row by org alone, which
+        Codex #8 P1 proved non-deterministic with two same-org installs.)"""
         db = db_session
         org = (await _add_org(db)).id
         sol = await _add_solution(db, org)
-        # _repo/ row (global, solution_id NULL) sharing the path.
-        await _add_workflow(
+        repo_wf = await _add_workflow(
             db, org_id=None, solution_id=None, path="workflows/foo.py", name="repo-foo"
         )
-        sol_wf = await _add_workflow(
+        await _add_workflow(
             db, org_id=org, solution_id=sol.id, path="workflows/foo.py", name="sol-foo"
         )
 
         repo = WorkflowRepository(db, org_id=org, is_superuser=True)
-        # Must NOT raise MultipleResultsFound, and must pick the solution row.
+        # No solution_scope → deterministic _repo/ row (never MultipleResultsFound).
         got = await repo.resolve("workflows/foo.py::main")
         assert got is not None
-        assert got.id == sol_wf.id
+        assert got.id == repo_wf.id
 
     async def test_repo_only_path_still_resolves(self, db_session) -> None:
         """A lone _repo/ workflow (no solution row) resolves unchanged."""
@@ -122,6 +124,54 @@ class TestPathRefSolutionScope:
         assert got is not None
         assert got.id == repo_wf.id
         assert got.solution_id is None
+
+    async def test_install_scope_disambiguates_two_solutions_same_org(self, db_session) -> None:
+        """Codex #8 P1: two DIFFERENT solution installs in the SAME org both ship
+        workflows/main.py::main. With the caller's install scope, the resolver
+        returns THAT install's workflow — deterministically, not 'whichever row
+        the DB returned first'."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol_a = await _add_solution(db, org)
+        sol_b = await _add_solution(db, org)
+        wf_a = await _add_workflow(db, org_id=org, solution_id=sol_a.id, path="workflows/main.py")
+        wf_b = await _add_workflow(db, org_id=org, solution_id=sol_b.id, path="workflows/main.py")
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got_a = await repo.resolve("workflows/main.py::main", solution_scope=sol_a.id)
+        got_b = await repo.resolve("workflows/main.py::main", solution_scope=sol_b.id)
+        assert got_a is not None and got_a.id == wf_a.id
+        assert got_b is not None and got_b.id == wf_b.id
+
+    async def test_install_scope_falls_back_to_repo_when_own_absent(self, db_session) -> None:
+        """An install whose bundle does NOT ship a given path resolves the global
+        _repo/ workflow at that path (the app referenced a shared-library path)."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        # No solution workflow at this path; only a _repo/ one.
+        repo_wf = await _add_workflow(
+            db, org_id=None, solution_id=None, path="workflows/shared.py", name="repo"
+        )
+        # An unrelated solution workflow at a DIFFERENT path (same install).
+        await _add_workflow(db, org_id=org, solution_id=sol.id, path="workflows/own.py")
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("workflows/shared.py::main", solution_scope=sol.id)
+        assert got is not None and got.id == repo_wf.id
+
+    async def test_install_scope_prefers_own_over_repo_on_shared_path(self, db_session) -> None:
+        """When a _repo/ row and the caller's OWN solution row share a path, the
+        install-scoped resolve returns the install's own workflow."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        await _add_workflow(db, org_id=None, solution_id=None, path="workflows/foo.py", name="repo")
+        own = await _add_workflow(db, org_id=org, solution_id=sol.id, path="workflows/foo.py", name="own")
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("workflows/foo.py::main", solution_scope=sol.id)
+        assert got is not None and got.id == own.id
 
     async def test_other_orgs_solution_row_not_resolved(self, db_session) -> None:
         """A solution workflow in a DIFFERENT org is not reachable — scope still

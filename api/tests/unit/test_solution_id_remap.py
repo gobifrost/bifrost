@@ -127,6 +127,35 @@ class TestSolutionIdRemap:
             await db.execute(select(Workflow.id).where(Workflow.solution_id == sol_b.id))
         ).scalars().all() == [id_b]
 
+    async def test_same_bundle_object_redeployed_is_stable(self, db_session) -> None:
+        """Codex #8 P2: deploying the SAME SolutionBundle instance twice must not
+        double-remap. The deployer must not mutate the caller's bundle, so the
+        2nd deploy remaps the ORIGINAL manifest id again (same result), not the
+        1st deploy's already-remapped id (which would scramble + delete-recreate)."""
+        db = db_session
+        sol = await _make_install(db, f"remap-{uuid4().hex[:8]}")
+        manifest_id = str(uuid4())
+        bundle = SolutionBundle(
+            solution=sol,
+            python_files={"workflows/w1.py": "def run():\n    return 1\n"},
+            workflows=[_wf_entry(manifest_id, "w1")],
+        )
+
+        deployer = SolutionDeployer(db)
+        await deployer.deploy(bundle)
+        await db.flush()
+        # The caller's bundle is UNCHANGED — its entity id is still the manifest id.
+        assert bundle.workflows[0]["id"] == manifest_id
+
+        # Deploy the SAME object again — stable id, no double-remap, no orphan.
+        await deployer.deploy(bundle)
+        await db.flush()
+        assert bundle.workflows[0]["id"] == manifest_id
+        rows = (
+            await db.execute(select(Workflow.id).where(Workflow.solution_id == sol.id))
+        ).scalars().all()
+        assert rows == [solution_entity_id(sol.id, UUID(manifest_id))]
+
     async def test_redeploy_keeps_stable_id(self, db_session) -> None:
         """Criterion 10: redeploying the same install reuses the same row id
         (deterministic), so internal wiring survives an update."""

@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
@@ -37,6 +37,28 @@ class Solution(Base):
     """One installed Solution (an *install*), keyed by ``id`` == solution_id."""
 
     __tablename__ = "solutions"
+
+    # A Solution installs AT MOST ONCE per scope (one org, or global). Two
+    # installs of the same slug in one org would let a v2 app's path::fn workflow
+    # ref resolve a sibling install's workflow (Codex #8 P1); the constraint makes
+    # that state unreachable. organization_id is nullable and NULLs don't compare
+    # equal in a plain unique index, so global installs need a slug-only partial
+    # index of their own. Mirrors migration 20260605_solution_unique_scope.
+    __table_args__ = (
+        Index(
+            "ix_solutions_slug_org_unique",
+            "slug",
+            "organization_id",
+            unique=True,
+            postgresql_where=text("organization_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_solutions_slug_global_unique",
+            "slug",
+            unique=True,
+            postgresql_where=text("organization_id IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
 

@@ -123,3 +123,74 @@ def test_global_repo_import_blocked_when_flag_off(e2e_client, platform_admin):
     assert result["status"] == "Failed", f"expected import failure, got: {result}"
     blob = f"{result.get('error')} {result.get('error_type')}".lower()
     assert "module" in blob or "import" in blob, f"unexpected error: {result}"
+
+
+def _execute_with_app(e2e_client, headers, workflow_ref: str, app_id: str) -> dict:
+    """POST /api/workflows/execute with an app_id scope, sync, return the result."""
+    resp = e2e_client.post(
+        "/api/workflows/execute",
+        headers=headers,
+        json={"workflow_id": workflow_ref, "app_id": app_id, "sync": True},
+    )
+    assert resp.status_code == 200, f"execute failed: {resp.status_code} {resp.text}"
+    return resp.json()
+
+
+def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, platform_admin):
+    """Codex #8 P1 end-to-end: two Solution installs each ship
+    workflows/main.py::main (different return values) AND an app. Executing each
+    app's workflow ref with that app's app_id resolves THAT install's own
+    workflow — deterministically, not a sibling install's that shares the path."""
+    headers = platform_admin.headers
+
+    def _deploy_install(marker: str) -> str:
+        slug = f"twin-{marker}-{uuid.uuid4().hex[:8]}"
+        sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
+        app_id = str(uuid.uuid4())
+        e2e_client.post(
+            f"/api/solutions/{sid}/deploy",
+            headers=headers,
+            json={
+                "python_files": {
+                    "workflows/main.py": (
+                        "from bifrost import workflow\n\n"
+                        "@workflow\n"
+                        "async def main():\n"
+                        f"    return {{'marker': '{marker}'}}\n"
+                    ),
+                },
+                "workflows": [{
+                    "id": str(uuid.uuid4()),
+                    "name": f"main_{slug}",
+                    "function_name": "main",
+                    "path": "workflows/main.py",
+                    "type": "workflow",
+                }],
+                "apps": [{
+                    "id": app_id,
+                    "slug": f"app-{slug}",
+                    "name": "App",
+                    "app_model": "standalone_v2",
+                    "dependencies": {},
+                    "access_level": "authenticated",
+                    "dist_files": {
+                        "index.html": '<!doctype html><div id="root"></div>',
+                    },
+                }],
+            },
+        )
+        # The app's DB id is the remapped uuid5(install, manifest_id).
+        from src.services.solutions.deploy import solution_entity_id
+
+        return str(solution_entity_id(uuid.UUID(sid), uuid.UUID(app_id)))
+
+    app_a = _deploy_install("aaa")
+    app_b = _deploy_install("bbb")
+
+    # Each app's path-ref resolves to ITS OWN install's workflow.
+    res_a = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_a)
+    res_b = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_b)
+    assert res_a["status"] == "Success", res_a
+    assert res_b["status"] == "Success", res_b
+    assert res_a["result"] == {"marker": "aaa"}, res_a
+    assert res_b["result"] == {"marker": "bbb"}, res_b

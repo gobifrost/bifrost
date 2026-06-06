@@ -3705,22 +3705,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4316,6 +4316,26 @@ export interface paths {
          * @description Get a document by key from the knowledge store.
          */
         get: operations["cli_knowledge_get_api_sdk_knowledge_get_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the bifrost web SDK package
+         * @description Serve the `bifrost` web SDK as an npm-installable tarball. A standalone_v2 app declares `"bifrost": "<instance>/api/sdk/download"` and resolves it identically on a dev laptop (`npm run dev`) and in the platform's server-side build.
+         */
+        get: operations["download_sdk_api_sdk_download_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7748,9 +7768,9 @@ export interface paths {
          * Serve a standalone_v2 app's built dist/ file from _apps/{id}/dist/
          * @description Stream a built dist/ file for a standalone_v2 app.
          *
-         *     BundledAppShell mounts a v2 app via an iframe pointed at
-         *     ``/api/applications/{id}/dist/index.html``; the app's own bundle then loads
-         *     its hashed assets from the same dist/ prefix.
+         *     BundledAppShell mounts a v2 app SAME-DOCUMENT (not an iframe): it reads the
+         *     hashed entry/css from the bundle-manifest and loads them from this dist/
+         *     prefix; the app's own bundle pulls any further chunks from here too.
          */
         get: operations["get_v2_dist_asset_api_applications__app_id__dist__path__get"];
         put?: never;
@@ -19953,6 +19973,14 @@ export interface components {
             apps?: {
                 [key: string]: unknown;
             }[];
+            /** Forms */
+            forms?: {
+                [key: string]: unknown;
+            }[];
+            /** Agents */
+            agents?: {
+                [key: string]: unknown;
+            }[];
         };
         /** SolutionDeployResponse */
         SolutionDeployResponse: {
@@ -19991,6 +20019,26 @@ export interface components {
              * @default 0
              */
             apps_deleted: number;
+            /**
+             * Forms Upserted
+             * @default 0
+             */
+            forms_upserted: number;
+            /**
+             * Forms Deleted
+             * @default 0
+             */
+            forms_deleted: number;
+            /**
+             * Agents Upserted
+             * @default 0
+             */
+            agents_upserted: number;
+            /**
+             * Agents Deleted
+             * @default 0
+             */
+            agents_deleted: number;
         };
         /** SolutionsList */
         SolutionsList: {
@@ -21317,6 +21365,11 @@ export interface components {
              * @description Optional form ID that triggered this execution
              */
             form_id?: string | null;
+            /**
+             * App Id
+             * @description Optional app ID of the calling Solution app. Used to scope a path::function workflow ref to the app's own install (so it resolves the install's own workflow, not a sibling install's that shares the path).
+             */
+            app_id?: string | null;
             /**
              * Transient
              * @description If true, skip database persistence (for code editor debugging)
@@ -28184,7 +28237,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28217,7 +28270,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28250,7 +28303,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28283,7 +28336,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -29286,6 +29339,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_sdk_api_sdk_download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

@@ -82,7 +82,9 @@ class TestWorkflowRepository:
             result = await repository.resolve("workflows/customers.py::list_customers")
 
         assert result == mock_workflow
-        mock_resolve.assert_called_once_with("workflows/customers.py::list_customers")
+        mock_resolve.assert_called_once_with(
+            "workflows/customers.py::list_customers", solution_scope=None
+        )
 
     async def test_resolve_by_path_ref_with_feature_prefix(self, repository, mock_workflow):
         """Test resolve() with feature-prefixed path::function_name format."""
@@ -91,7 +93,7 @@ class TestWorkflowRepository:
             result = await repository.resolve(ref)
 
         assert result == mock_workflow
-        mock_resolve.assert_called_once_with(ref)
+        mock_resolve.assert_called_once_with(ref, solution_scope=None)
 
     async def test_resolve_by_path_ref_not_found(self, repository, mock_session):
         """Test resolve() returns None when path::function_name not found."""

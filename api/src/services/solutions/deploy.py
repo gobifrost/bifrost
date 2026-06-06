@@ -213,21 +213,25 @@ class SolutionDeployer:
         # ── Per-install identity remap (criteria 9/10) ───────────────────────
         # Rewrite every entity id to uuid5(install, manifest_id) and translate
         # in-bundle cross-refs through the same map, BEFORE any upsert/reconcile.
-        # Both phases then operate uniformly on remapped ids — the manifest ids
-        # never touch the DB, so a byte-identical bundle installs independently
-        # into N scopes (and a redeploy is stable).
-        self._remap_bundle_ids(bundle)
+        # Returns a NEW bundle (the caller's `bundle` is never mutated), so
+        # deploying the same SolutionBundle object twice cannot double-remap (the
+        # 2nd pass would otherwise treat the 1st pass's uuid5 ids as fresh
+        # manifest ids and remap them again — Codex #8 P2). Both phases below
+        # operate on the remapped bundle; the manifest ids never touch the DB, so
+        # a byte-identical bundle installs independently into N scopes (and a
+        # redeploy is stable).
+        rb = self._remapped_bundle(bundle)
 
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
-        await self._upsert_workflows(solution, bundle.workflows)
-        await self._upsert_tables(solution, bundle.tables)
-        builds = await self._upsert_apps(solution, bundle.apps)
-        await self._upsert_forms(solution, bundle.forms)
-        await self._upsert_agents(solution, bundle.agents)
+        await self._upsert_workflows(solution, rb.workflows)
+        await self._upsert_tables(solution, rb.tables)
+        builds = await self._upsert_apps(solution, rb.apps)
+        await self._upsert_forms(solution, rb.forms)
+        await self._upsert_agents(solution, rb.agents)
         (
             wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
             stale_app_dist,
-        ) = await self._reconcile_deletions(sid, bundle)
+        ) = await self._reconcile_deletions(sid, rb)
 
         # ── COMPILE app dists to memory NOW (pre-commit) — a vite/npm failure
         #    raises here and rolls back the whole deploy, no S3 touched. ───────
@@ -243,7 +247,7 @@ class SolutionDeployer:
         async def _finalize_s3() -> None:
             await _retry_idempotent(
                 "write python source", sid,
-                lambda: self._write_python(sid, bundle.python_files),
+                lambda: self._write_python(sid, rb.python_files),
             )
             await _retry_idempotent(
                 "upload app dists", sid,
@@ -255,30 +259,32 @@ class SolutionDeployer:
             )
 
         return DeployResult(
-            workflows_upserted=len(bundle.workflows),
+            workflows_upserted=len(rb.workflows),
             workflows_deleted=wf_deleted,
-            tables_upserted=len(bundle.tables),
+            tables_upserted=len(rb.tables),
             tables_deleted=tbl_deleted,
-            apps_upserted=len(bundle.apps),
+            apps_upserted=len(rb.apps),
             apps_deleted=app_deleted,
-            forms_upserted=len(bundle.forms),
+            forms_upserted=len(rb.forms),
             forms_deleted=form_deleted,
-            agents_upserted=len(bundle.agents),
+            agents_upserted=len(rb.agents),
             agents_deleted=agent_deleted,
             finalize_s3=_finalize_s3,
         )
 
     # ── Per-install identity remap ───────────────────────────────────────────
-    def _remap_bundle_ids(self, bundle: "SolutionBundle") -> None:
-        """Rewrite every bundle entity id to ``uuid5(install, manifest_id)`` and
-        translate in-bundle cross-references through the same map.
+    def _remapped_bundle(self, bundle: "SolutionBundle") -> "SolutionBundle":
+        """Return a NEW bundle whose every entity id is ``uuid5(install,
+        manifest_id)`` and whose in-bundle cross-refs are translated through the
+        same map. The caller's ``bundle`` is NEVER mutated.
 
-        Works on DEEP COPIES of each entity dict and REPLACES the bundle's lists
-        — the caller's dicts are never mutated. This keeps the transform pure and
-        idempotent: the same bundle structure can be deployed to two installs (or
-        the same install twice) without a prior pass corrupting the input by
-        double-remapping (an already-remapped id has no entry in this install's
-        map, so it would otherwise be re-remapped into a third, wrong id).
+        Returning a fresh bundle (rather than mutating in place) makes deploy
+        idempotent for the caller's object: deploying the SAME SolutionBundle
+        instance twice in one process must not double-remap (the 2nd pass would
+        otherwise treat the 1st pass's uuid5 ids as fresh manifest ids and remap
+        them AGAIN, scrambling the wiring and making reconcile delete the rows it
+        just created — Codex #8 P2). Entity dicts are deep-copied so the input's
+        nested structures are untouched too.
 
         Two-pass so a cross-ref can point at any entity regardless of order:
           1. Build ``id_map`` (manifest id → remapped id) across ALL entity
@@ -297,36 +303,40 @@ class SolutionDeployer:
         sid = bundle.solution.id
         id_map: dict[UUID, UUID] = {}
 
-        bundle.workflows = [copy.deepcopy(e) for e in bundle.workflows]
-        bundle.tables = [copy.deepcopy(e) for e in bundle.tables]
-        bundle.apps = [copy.deepcopy(e) for e in bundle.apps]
-        bundle.forms = [copy.deepcopy(e) for e in bundle.forms]
-        bundle.agents = [copy.deepcopy(e) for e in bundle.agents]
+        workflows = [copy.deepcopy(e) for e in bundle.workflows]
+        tables = [copy.deepcopy(e) for e in bundle.tables]
+        apps = [copy.deepcopy(e) for e in bundle.apps]
+        forms = [copy.deepcopy(e) for e in bundle.forms]
+        agents = [copy.deepcopy(e) for e in bundle.agents]
 
         # Pass 1: remap each entity's own id.
-        for entry in (
-            bundle.workflows
-            + bundle.tables
-            + bundle.apps
-            + bundle.forms
-            + bundle.agents
-        ):
+        for entry in workflows + tables + apps + forms + agents:
             original = UUID(str(entry["id"]))
             remapped = solution_entity_id(sid, original)
             id_map[original] = remapped
             entry["id"] = str(remapped)
 
         # Pass 2: translate cross-refs that name an in-bundle entity.
-        for mform in bundle.forms:
+        for mform in forms:
             for fld in _FORM_WORKFLOW_REF_FIELDS:
                 if mform.get(fld) is not None:
                     mform[fld] = _remap_ref(mform[fld], id_map)
             self._remap_form_field_providers(mform, id_map)
-        for magent in bundle.agents:
+        for magent in agents:
             for fld in _AGENT_WORKFLOW_LIST_FIELDS + _AGENT_AGENT_LIST_FIELDS:
                 vals = magent.get(fld)
                 if isinstance(vals, list):
                     magent[fld] = [_remap_ref(v, id_map) for v in vals]
+
+        return SolutionBundle(
+            solution=bundle.solution,
+            python_files=bundle.python_files,
+            workflows=workflows,
+            tables=tables,
+            apps=apps,
+            forms=forms,
+            agents=agents,
+        )
 
     @staticmethod
     def _remap_form_field_providers(
