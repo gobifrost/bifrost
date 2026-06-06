@@ -881,6 +881,21 @@ async def push_files(
                 prefix = delete_missing_prefix
                 if not prefix.endswith("/"):
                     prefix += "/"
+                # The delete-sweep is a separate write path from the files-key
+                # guard above: an empty/partial `files` dict slips past the key
+                # check, but the sweep would still delete _repo files under
+                # `prefix`. Refuse if the sweep would touch ANY solution-managed
+                # app's files — in either direction: the delete prefix is under a
+                # managed prefix (delete "apps/managed/sub"), OR contains/equals
+                # one (delete "apps/" which would sweep "apps/managed/...").
+                if any(
+                    prefix.startswith(managed) or managed.startswith(prefix)
+                    for managed in managed_prefixes
+                ):
+                    return error_result(
+                        SOLUTION_MANAGED_MESSAGE,
+                        {"blocked_delete_prefix": delete_missing_prefix},
+                    )
                 existing_files = await db.execute(
                     select(FileIndex.path).where(FileIndex.path.startswith(prefix))
                 )

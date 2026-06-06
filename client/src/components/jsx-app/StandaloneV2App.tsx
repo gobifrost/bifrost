@@ -166,9 +166,28 @@ export function StandaloneV2App({
 			} catch {
 				// app teardown threw — still detach below; nothing else to do.
 			}
-			// Clear the bootstrap so a later mount can't read a stale element.
+			// Don't `delete` the bootstrap: an entry chunk whose dynamic import
+			// was still in flight when we tore down will run its top-level code
+			// *after* this cleanup, read `window.__BIFROST_APP__`, find it gone,
+			// and fall back to `document.getElementById("root")` — mounting a
+			// stale app into the PLATFORM root after the shell unmounted
+			// (Codex R7-P2-e). We can't change every scaffolded entry, so we
+			// leave a disabled tombstone instead: `mountEl` is a throwaway
+			// detached node (so a late mount goes nowhere visible) and
+			// `registerUnmount` invokes the teardown immediately (so the late
+			// root is torn down the instant it registers). Only replace OUR
+			// bootstrap — a newer mount may have already installed its own.
 			if (window.__BIFROST_APP__?.mountEl === mountEl) {
-				delete window.__BIFROST_APP__;
+				const tombstone = window.__BIFROST_APP__;
+				tombstone.mountEl = document.createElement("div");
+				tombstone.registerUnmount = (teardown: () => void) => {
+					try {
+						teardown();
+					} catch {
+						// teardown threw — the late root is already orphaned in a
+						// detached node; nothing else to do.
+					}
+				};
 			}
 			if (mountEl) mountEl.replaceChildren();
 		};

@@ -65,12 +65,19 @@ describe("StandaloneV2App", () => {
 		expect(window.__BIFROST_APP__).toBeUndefined();
 	});
 
-	it("clears the bootstrap on unmount", async () => {
+	it("disables (does not delete) the bootstrap on unmount so a late import can't reach the live mount node", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
 		const { unmount } = render(<StandaloneV2App {...baseProps} />);
 		await waitFor(() => expect(window.__BIFROST_APP__).toBeDefined());
+		const liveMount = window.__BIFROST_APP__!.mountEl;
 		unmount();
-		expect(window.__BIFROST_APP__).toBeUndefined();
+		// The bootstrap is intentionally LEFT in place (a tombstone) so the
+		// scaffold's `boot?.mountEl ?? getElementById("root")` never falls back
+		// to the platform root for a late-resolving entry. But it no longer
+		// points at the (now-detached) live mount node.
+		expect(window.__BIFROST_APP__).toBeDefined();
+		expect(window.__BIFROST_APP__!.mountEl).not.toBe(liveMount);
+		expect(document.body.contains(window.__BIFROST_APP__!.mountEl)).toBe(false);
 	});
 
 	it("busts the ES module cache so a remount re-runs the entry", async () => {
@@ -103,5 +110,39 @@ describe("StandaloneV2App", () => {
 
 		unmount();
 		expect(teardown).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not let a late-resolving entry mount into the platform root after unmount (R7-P2-e)", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		// The platform root the scaffold falls back to via getElementById("root").
+		const platformRoot = document.createElement("div");
+		platformRoot.id = "root";
+		document.body.appendChild(platformRoot);
+		try {
+			const { unmount } = render(<StandaloneV2App {...baseProps} />);
+			await waitFor(() => expect(window.__BIFROST_APP__).toBeDefined());
+
+			// User navigates away BEFORE the dynamic import resolves.
+			unmount();
+
+			// Now the in-flight entry chunk finally executes its top-level code,
+			// exactly as the scaffold's main.tsx does:
+			//   const boot = window.__BIFROST_APP__;
+			//   const mountEl = boot?.mountEl ?? document.getElementById("root")!;
+			//   boot?.registerUnmount?.(() => root.unmount());
+			const boot = window.__BIFROST_APP__;
+			const mountEl = boot?.mountEl ?? document.getElementById("root")!;
+			const rootUnmount = vi.fn();
+			boot?.registerUnmount?.(rootUnmount);
+
+			// The late entry must NOT have resolved its mount node to the
+			// platform root — otherwise it mounts a stale app over the shell.
+			expect(mountEl).not.toBe(platformRoot);
+			// And if it did mount, the tombstone's registerUnmount tore it down
+			// immediately so nothing stays alive.
+			expect(rootUnmount).toHaveBeenCalledTimes(1);
+		} finally {
+			platformRoot.remove();
+		}
 	});
 });

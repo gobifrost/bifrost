@@ -164,6 +164,129 @@ async def test_mcp_push_files_refuses_managed_without_s3_write(db_session, monke
     assert writes["preview"] is False
 
 
+async def test_mcp_push_files_delete_sweep_refuses_managed(db_session, monkeypatch):
+    """push_files(files={}, delete_missing_prefix=<managed repo_path>) must NOT
+    delete the managed app's _repo files and must return the read-only message.
+
+    The delete-sweep is a separate code path from the files-key guard: an empty
+    ``files`` dict slips past the key check, but ``delete_missing_prefix`` pointed
+    at a managed app's repo_path would still sweep its files.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_index import FileIndex
+    from src.services.file_storage import FileStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    await _managed_app(db_session, repo_path="apps/managed-sweep")
+
+    # Seed a FileIndex row under the managed prefix so the sweep would find it.
+    managed_file = "apps/managed-sweep/pages/index.tsx"
+    db_session.add(FileIndex(
+        path=managed_file,
+        content_hash="deadbeef",
+    ))
+    await db_session.flush()
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    deleted = {"paths": []}
+
+    async def _track_delete(self, path):  # noqa: ANN001
+        deleted["paths"].append(path)
+        raise AssertionError(f"delete must not run for managed file {path}")
+
+    monkeypatch.setattr(FileStorageService, "delete_file", _track_delete)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.push_files(
+        context,
+        files={},
+        delete_missing_prefix="apps/managed-sweep",
+    )
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    text = str(payload)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    assert deleted["paths"] == [], deleted["paths"]
+
+    # The managed FileIndex row is still present (nothing was swept).
+    still = await db_session.execute(
+        select(FileIndex.path).where(FileIndex.path == managed_file)
+    )
+    assert still.scalar_one_or_none() == managed_file
+
+
+async def test_mcp_push_files_delete_sweep_refuses_parent_of_managed(db_session, monkeypatch):
+    """A delete prefix that CONTAINS a managed prefix (e.g. 'apps/' sweeping
+    'apps/managed-...') must also be refused — the sweep would touch managed files."""
+    from src.services.file_storage import FileStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    await _managed_app(db_session, repo_path="apps/managed-parent")
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    deleted = {"paths": []}
+
+    async def _track_delete(self, path):  # noqa: ANN001
+        deleted["paths"].append(path)
+        raise AssertionError(f"delete must not run, would touch managed: {path}")
+
+    monkeypatch.setattr(FileStorageService, "delete_file", _track_delete)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.push_files(
+        context,
+        files={},
+        delete_missing_prefix="apps",
+    )
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    text = str(payload)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    assert deleted["paths"] == [], deleted["paths"]
+
+
+async def test_mcp_push_files_delete_sweep_allows_unmanaged(db_session, monkeypatch):
+    """A delete-sweep under a NON-managed prefix still deletes normally — the
+    guard must not over-block."""
+    from src.models.orm.file_index import FileIndex
+    from src.services.file_storage import FileStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    # A managed app exists elsewhere, but the sweep targets an unrelated prefix.
+    await _managed_app(db_session, repo_path="apps/managed-other")
+
+    stale_file = "apps/adhoc-sweep/pages/old.tsx"
+    db_session.add(FileIndex(
+        path=stale_file,
+        content_hash="cafef00d",
+    ))
+    await db_session.flush()
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    deleted = {"paths": []}
+
+    async def _ok_delete(self, path):  # noqa: ANN001
+        deleted["paths"].append(path)
+
+    monkeypatch.setattr(FileStorageService, "delete_file", _ok_delete)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.push_files(
+        context,
+        files={},
+        delete_missing_prefix="apps/adhoc-sweep",
+    )
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    text = str(payload)
+    assert SOLUTION_MANAGED_MESSAGE not in text, text
+    assert stale_file in deleted["paths"], deleted["paths"]
+
+
 async def test_mcp_push_files_allows_unmanaged(db_session, monkeypatch):
     """An ad-hoc (non-managed) app's files still push — the guard is a no-op for them."""
     from src.services.app_storage import AppStorageService
