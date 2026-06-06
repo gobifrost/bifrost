@@ -16,6 +16,7 @@ own world, cloned to a throwaway checkout and deployed straight to
 from __future__ import annotations
 
 import logging
+import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -153,7 +154,18 @@ async def sync(db: AsyncSession, solution: Solution) -> None:
         async with solution_write_lock(solution.id):
             with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
                 work_dir = Path(tmp)
-                GitRepo.clone_from(solution.git_repo_url, str(work_dir), branch="main", depth=1)
+                # clone_from is synchronous/network-bound; run it OFF the event
+                # loop so the write-lock's renewal watchdog (and everything else)
+                # keeps running during a slow clone — otherwise a long clone would
+                # block the loop, starve the watchdog, and let the lock TTL expire
+                # mid-deploy, reintroducing the interleave the lock prevents.
+                await asyncio.to_thread(
+                    GitRepo.clone_from,
+                    solution.git_repo_url,
+                    str(work_dir),
+                    branch="main",
+                    depth=1,
+                )
                 logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
                 result = await deploy_from_workspace(db, solution, work_dir)
             # Commit the DB phase, THEN run S3 — a failed commit changes no running
