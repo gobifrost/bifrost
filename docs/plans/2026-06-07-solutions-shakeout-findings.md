@@ -150,3 +150,25 @@ resolution locally. [Q] Is local-dev-resolves-global acceptable, or do we want a
 way to simulate install scope locally (e.g. a dev flag / VITE_BIFROST_APP_ID)?
 Relates to F2 (resolution not centralized) — the fallback-if-enabled path
 (`global_repo_access`) lives in the deployed resolver only.
+
+---
+
+## USER DECISIONS (2026-06-07) — these reshape the remaining work
+
+- **D1 (re F4 watch):** Do NOT make `watch` solution-aware. Instead `watch` should
+  **refuse/warn when run in a Solution workspace** (a `bifrost.solution.yaml` is
+  present) with a clear message: *"Solutions are local-development-first — run
+  `npm run dev` (or the local dev command); `watch` is for `_repo/` development."*
+- **D2 (the bigger goal):** a first-class **local dev experience like
+  `firebase emulators:start` / `swa start`** — ONE command that spins up the dev
+  environment so the builder launches their web client and it can IMMEDIATELY call
+  local workflows + the API. This is the headline DX gap; the scaffold works but
+  there's no "just run this and everything's wired" command.
+- **D3 (re F9):** the unstyled standalone `BifrostHeader` is a **HIGH-PRIORITY**
+  fix — "a huge miss." Standalone/local dev must look intentional.
+- **D4 (re F10):** the local dev command must take an **`--org`/`--organization-id`
+  flag exactly like `bifrost run` does** (superuser), and local dev must resolve
+  **install-scoped-first then fall back per the org it's running under** — i.e.
+  the same own-first-then-(org→global, if global_repo_access) cascade the deployed
+  resolver uses, exercisable locally under a chosen org. (Ties directly to F2: the
+  centralized resolver should be what both deployed AND local-dev paths call.)
