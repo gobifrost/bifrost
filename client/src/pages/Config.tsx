@@ -69,6 +69,7 @@ export function Config() {
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 	const [isImportOpen, setIsImportOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
+	const [showOrphaned, setShowOrphaned] = useState(false);
 
 	// Pass filterOrgId to backend for filtering (undefined = all, null = global only)
 	// For platform admins, undefined means show all. For non-admins, backend handles filtering.
@@ -76,7 +77,7 @@ export function Config() {
 		data: configs,
 		isFetching,
 		refetch,
-	} = useConfigs(isPlatformAdmin ? filterOrgId : undefined);
+	} = useConfigs(isPlatformAdmin ? filterOrgId : undefined, showOrphaned);
 	const deleteConfig = useDeleteConfig();
 
 	// Fetch organizations for the org name lookup (platform admins only)
@@ -256,6 +257,16 @@ export function Config() {
 						/>
 					</div>
 				)}
+				<label className="flex items-center gap-2 whitespace-nowrap text-sm text-muted-foreground">
+					<Checkbox
+						checked={showOrphaned}
+						onCheckedChange={(checked) =>
+							setShowOrphaned(checked === true)
+						}
+						aria-label="Show orphaned"
+					/>
+					Show orphaned
+				</label>
 				{isPlatformAdmin && (
 					<div className="flex flex-wrap items-center gap-2 sm:ml-auto">
 						{selectedIds.size > 0 && (
@@ -369,7 +380,20 @@ export function Config() {
 										)}
 									</DataTableCell>
 									<DataTableCell className="font-mono">
-										{config.key}
+										<span className="flex items-center gap-2">
+											{config.key}
+											{config.orphaned_at && (
+												<Badge
+													variant="outline"
+													className="font-sans text-xs font-normal text-muted-foreground"
+												>
+													Orphaned
+													{config.origin_solution_slug
+														? ` · from ${config.origin_solution_slug}`
+														: ""}
+												</Badge>
+											)}
+										</span>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap max-w-xs truncate">
 										{maskValue(config.value, config.type)}

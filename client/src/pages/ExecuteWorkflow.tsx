@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { parseSolutionFrom } from "@/lib/solution-back-nav";
 import { ArrowLeft, Loader2, Play, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -27,6 +28,9 @@ type WorkflowExecutionRequest =
 export function ExecuteWorkflow() {
 	const { workflowName } = useParams();
 	const navigate = useNavigate();
+	const { search } = useLocation();
+	const fromSolution = parseSolutionFrom(search);
+	const backTo = fromSolution ? `/solutions/${fromSolution}` : "/workflows";
 	const { data, isLoading } = useWorkflowsMetadata();
 	const executeWorkflow = useExecuteWorkflow();
 
@@ -118,9 +122,9 @@ export function ExecuteWorkflow() {
 					<AlertTitle>Error</AlertTitle>
 					<AlertDescription>Workflow not found</AlertDescription>
 				</Alert>
-				<Button onClick={() => navigate("/workflows")}>
+				<Button onClick={() => navigate(backTo)}>
 					<ArrowLeft className="mr-2 h-4 w-4" />
-					Back to Workflows
+					{fromSolution ? "Back to Solution" : "Back to Workflows"}
 				</Button>
 			</div>
 		);
@@ -134,7 +138,12 @@ export function ExecuteWorkflow() {
 						<Button
 							variant="ghost"
 							size="icon"
-							onClick={() => navigate("/workflows")}
+							onClick={() => navigate(backTo)}
+							aria-label={
+								fromSolution
+									? "Back to Solution"
+									: "Back to Workflows"
+							}
 						>
 							<ArrowLeft className="h-4 w-4" />
 						</Button>

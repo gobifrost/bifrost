@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { parseSolutionFrom } from "@/lib/solution-back-nav";
 import { ArrowLeft, Save, Eye, Pencil, Info, Play } from "lucide-react";
 import { SolutionManagedBanner } from "@/components/solutions/SolutionManagedBanner";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,9 @@ import { toast } from "sonner";
 export function FormBuilder() {
 	const navigate = useNavigate();
 	const { formId } = useParams();
+	const { search } = useLocation();
+	const fromSolution = parseSolutionFrom(search);
+	const backTo = fromSolution ? `/solutions/${fromSolution}` : "/forms";
 	const isEditing = !!formId;
 	const { scope } = useOrgScope();
 	const { user, isPlatformAdmin } = useAuth();
@@ -370,8 +374,8 @@ export function FormBuilder() {
 					<Button
 						variant="outline"
 						size="icon"
-						onClick={() => navigate("/forms")}
-						title="Back to Forms"
+						onClick={() => navigate(backTo)}
+						title={fromSolution ? "Back to Solution" : "Back to Forms"}
 					>
 						<ArrowLeft className="h-4 w-4" />
 					</Button>

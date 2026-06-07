@@ -202,6 +202,23 @@ describe("AgentDetailPage — create mode", () => {
 	});
 });
 
+describe("AgentDetailPage — solution back-nav", () => {
+	it("retargets the breadcrumb to the solution when ?from=solution:", async () => {
+		await renderAtRoute("/agents/agent-1?from=solution:sol-9");
+		const back = screen.getByRole("link", { name: /back to solution/i });
+		expect(back).toHaveAttribute("href", "/solutions/sol-9");
+	});
+
+	it("keeps the default agents breadcrumb without ?from", async () => {
+		await renderAtRoute("/agents/agent-1");
+		expect(
+			screen.queryByRole("link", { name: /back to solution/i }),
+		).not.toBeInTheDocument();
+		const back = screen.getByRole("link", { name: /agents/i });
+		expect(back).toHaveAttribute("href", "/agents");
+	});
+});
+
 describe("AgentDetailPage — loading state in edit mode", () => {
 	it("renders 'Loading…' while the agent is being fetched", async () => {
 		mockUseAgent.mockReturnValue({ data: undefined, isLoading: true });

@@ -6,7 +6,8 @@
  */
 
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { parseSolutionFrom } from "@/lib/solution-back-nav";
 import { ArrowLeft, Upload, Settings, Loader2, Link } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +38,9 @@ import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 export function AppCodeEditorPage() {
 	const navigate = useNavigate();
 	const { applicationId: slugParam } = useParams();
+	const { search } = useLocation();
+	const fromSolution = parseSolutionFrom(search);
+	const backTo = fromSolution ? `/solutions/${fromSolution}` : "/apps";
 	const isEditing = !!slugParam;
 	const { user, isPlatformAdmin } = useAuth();
 
@@ -260,7 +264,10 @@ export function AppCodeEditorPage() {
 					<Button
 						variant="ghost"
 						size="icon"
-						onClick={() => navigate("/apps")}
+						onClick={() => navigate(backTo)}
+						aria-label={
+							fromSolution ? "Back to Solution" : "Back to Apps"
+						}
 					>
 						<ArrowLeft className="h-5 w-5" />
 					</Button>

@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useLocation } from "react-router-dom";
 import {
 	ArrowLeft,
 	ChevronLeft,
@@ -53,11 +53,16 @@ import { TableFilterSidebar } from "@/components/tables/TableFilterSidebar";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import type { DocumentPublic } from "@/services/tables";
+import { parseSolutionFrom } from "@/lib/solution-back-nav";
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
 export function TableDetail() {
 	const { tableId } = useParams<{ tableId: string }>();
+	const { search } = useLocation();
+	const fromSolution = parseSolutionFrom(search);
+	const backTo = fromSolution ? `/solutions/${fromSolution}` : "/tables";
+	const backLabel = fromSolution ? "Back to Solution" : "Back to Tables";
 	const [selectedDocument, setSelectedDocument] = useState<
 		DocumentPublic | undefined
 	>();
@@ -213,9 +218,9 @@ export function TableDetail() {
 					access.
 				</p>
 				<Button variant="outline" asChild className="mt-4">
-					<Link to="/tables">
+					<Link to={backTo}>
 						<ArrowLeft className="h-4 w-4 mr-2" />
-						Back to Tables
+						{backLabel}
 					</Link>
 				</Button>
 			</div>
@@ -228,8 +233,8 @@ export function TableDetail() {
 			<div className="flex items-center justify-between">
 				<div>
 					<div className="flex items-center gap-3">
-						<Button variant="ghost" size="icon" asChild aria-label="Back to tables">
-							<Link to="/tables">
+						<Button variant="ghost" size="icon" asChild aria-label={backLabel}>
+							<Link to={backTo}>
 								<ArrowLeft className="h-4 w-4" />
 							</Link>
 						</Button>
