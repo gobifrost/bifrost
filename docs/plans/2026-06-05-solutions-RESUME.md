@@ -14,17 +14,31 @@ for HUMAN review. The Codex two-clean gate was ABANDONED (see "DECISION" below) 
 ignore the round-by-round table; it's history.**
 
 ## ▶▶ WHAT TO DO NEXT (read this, not the gate table)
+
+**UPDATE (2026-06-07): the configs feature + Solutions management UI + non-destructive
+uninstall are now BUILT, tested, and verified (incl. live browser).** Specs:
+`docs/superpowers/specs/2026-06-06-solutions-configs-and-management-ui-design.md` +
+`2026-06-06-solutions-orphan-and-reattach-design.md`; plan:
+`docs/superpowers/plans/2026-06-06-solutions-configs-and-management-ui.md`. What landed
+(162 ahead of main): configs as a solution-owned entity (declarations deploy/reconcile;
+values instance-owned, never in the bundle); `GET /solutions/{id}/entities`; drag-and-drop
+**zip install** (preview→scope→config-values→atomic deploy under the write-lock) + `bifrost
+solution install`; **PATCH** install-local fields (scope re-stamps owned entities); **DELETE**
+that ORPHANS tables (+documents) and config values instead of destroying them, with
+provenance, reattach-on-reinstall, an orphan-visibility fix (orphans excluded from the org
+name cascade), and a "Show orphaned" toggle on Tables/Config; admin-only Solutions list +
+RoleDetail-style detail view; `SolutionManagedBadge` (admin-only, links to owner) across
+Forms/Workflows/Fleet/Applications; app cards enlarged. Green: 104 solution unit + 26 e2e +
+69 client vitest + Playwright admin e2e; ruff/pyright/tsc/eslint clean.
+
+STILL worth doing:
 1. **Human review** the new auth/concurrency code (highest risk): the
-   `X-Bifrost-App` table gate (`api/src/routers/tables.py` `_resolve_solution_table_by_name`),
-   the per-install `write_lock.py`, install-scoped resolution
-   (`WorkflowRepository._resolve_by_path_ref`), the uuid5 remap (`deploy.py
-   solution_entity_id` / `_remapped_bundle`), and the v2 mount races
-   (`StandaloneV2App.tsx`, `BundledAppShell.tsx`).
-2. **Build the configs-ownership + per-install management view** — the one
-   owned-entity type NOT yet built. Full spec:
-   `docs/plans/2026-06-06-solutions-own-configs-and-install-view.md`.
-3. **Small non-blocker:** add the `is_solution_managed` read-only badge/affordance to
-   the Forms / Workflows / agents-Fleet LIST pages (only `Applications.tsx` has it).
+   `X-Bifrost-App` table gate, the per-install `write_lock.py`, install-scoped resolution,
+   the uuid5 remap, the v2 mount races — AND the new zip-install atomicity
+   (`api/src/services/solutions/zip_install.py`) + the orphan/reattach logic
+   (`deploy.py` reattach + reconcile-protection; `org_scoped.py` orphan exclusion).
+2. The original CLI-only "done" was correct against the 18 criteria but had no management
+   UI; this session added that layer (it was net-new scope, not in the original criteria).
 
 ## WHAT'S LEFT vs DONE
 - **DONE + verified green** (173 solution unit + 106 e2e + 116 client vitest;
