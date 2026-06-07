@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import zipfile
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -238,8 +239,21 @@ async def update_solution(
 async def delete_solution(
     solution_id: UUID, ctx: Context, user: CurrentSuperuser
 ) -> SolutionDeleteSummary:
-    """Delete an install: the Solution row + every owned entity (removed by the
-    ``solution_id`` FK ``ondelete=CASCADE``) + the install's S3 artifacts. The git
+    """Delete an install non-destructively for customer data.
+
+    Pure-code entities (workflows/apps/forms/agents) and the install's config
+    DECLARATIONS cascade away via the ``solution_id`` FK ``ondelete=CASCADE``.
+    Data-bearing entities are ORPHANED instead of cascaded:
+
+    - Owned tables are DETACHED before the Solution delete (``solution_id`` set
+      to NULL so the cascade can't reach them) and survive as ordinary org
+      tables. Their documents are untouched — they hang off the surviving table.
+    - The install's config VALUES (Config rows in the install's org scope whose
+      key matches a declaration) are stamped with orphan provenance and survive
+      (Config has no ``solution_id`` FK, so they were never cascade-tied).
+
+    Both carry ``origin_solution_slug``/``origin_solution_id``/``orphaned_at`` so
+    a reinstall can reattach them. The install's S3 artifacts are swept. The git
     repo is NEVER touched — a git-connected install is deletable; only the install
     and its local artifacts go, the upstream repo is left alone.
     """
@@ -278,17 +292,82 @@ async def delete_solution(
                     )
                 ).scalars().all()
             )
+
+            # Owned table ids (for the orphan count) — captured BEFORE we detach
+            # them, since the detach update clears ``solution_id``.
+            table_ids = set(
+                (
+                    await ctx.db.execute(
+                        select(Table.id).where(Table.solution_id == solution_id)
+                    )
+                ).scalars().all()
+            )
+
+            # The install's config DECLARATION keys — used both to count the
+            # cascaded declarations and to find the config VALUES to orphan.
+            decl_keys = set(
+                (
+                    await ctx.db.execute(
+                        select(SolutionConfigSchema.key).where(
+                            SolutionConfigSchema.solution_id == solution_id
+                        )
+                    )
+                ).scalars().all()
+            )
+
+            now = datetime.now(timezone.utc)
+
+            # DETACH TABLES (before the Solution delete so the FK cascade can't
+            # reach them). They survive as ordinary org tables; documents are
+            # untouched (they hang off the surviving table row).
+            await ctx.db.execute(
+                update(Table)
+                .where(Table.solution_id == solution_id)
+                .values(
+                    solution_id=None,
+                    organization_id=sol.organization_id,
+                    origin_solution_slug=sol.slug,
+                    origin_solution_id=sol.id,
+                    orphaned_at=now,
+                )
+            )
+
+            # STAMP CONFIG VALUES with orphan provenance (Config has no
+            # solution_id FK, so "detach" is just the tattoo — the row already
+            # survives the Solution delete). Match the install's declared keys in
+            # the install's org scope.
+            config_values_orphaned = 0
+            if decl_keys:
+                org_pred = (
+                    Config.organization_id == sol.organization_id
+                    if sol.organization_id is not None
+                    else Config.organization_id.is_(None)
+                )
+                result = await ctx.db.execute(
+                    update(Config)
+                    .where(org_pred, Config.key.in_(decl_keys))
+                    .values(
+                        origin_solution_slug=sol.slug,
+                        origin_solution_id=sol.id,
+                        orphaned_at=now,
+                    )
+                )
+                config_values_orphaned = result.rowcount or 0
+
             summary = SolutionDeleteSummary(
                 solution_id=solution_id,
                 workflows_deleted=await _count(Workflow),
                 apps_deleted=len(app_ids),
                 forms_deleted=await _count(Form),
                 agents_deleted=await _count(Agent),
-                tables_deleted=await _count(Table),
-                configs_deleted=await _count(SolutionConfigSchema),
+                config_declarations_deleted=len(decl_keys),
+                tables_orphaned=len(table_ids),
+                config_values_orphaned=config_values_orphaned,
             )
 
-            # DB delete first (FK ondelete=CASCADE removes owned rows).
+            # Solution delete: cascades workflows/apps/forms/agents + the config
+            # DECLARATIONS. Tables already have solution_id=NULL, so they are NOT
+            # cascaded; config values were never FK-tied to the Solution.
             await ctx.db.delete(sol)
             await ctx.db.commit()
 

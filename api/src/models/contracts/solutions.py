@@ -152,16 +152,21 @@ class SolutionDeployRequest(BaseModel):
 
 
 class SolutionDeleteSummary(BaseModel):
-    """Counts of what a DELETE removed — the install plus its owned entities
-    (removed by DB cascade). The UI echoes these back to the operator."""
+    """Counts of what a DELETE did. Pure-code entities (workflows/apps/forms/
+    agents) and the install's config DECLARATIONS are deleted via DB cascade.
+    Data-bearing entities are ORPHANED, not deleted: owned tables (and their
+    documents) are detached and survive as ordinary org tables, and the
+    install's config VALUES are stamped with orphan provenance and survive.
+    The UI echoes these back to the operator."""
 
     solution_id: UUID
     workflows_deleted: int = 0
     apps_deleted: int = 0
     forms_deleted: int = 0
     agents_deleted: int = 0
-    tables_deleted: int = 0
-    configs_deleted: int = 0
+    config_declarations_deleted: int = 0
+    tables_orphaned: int = 0
+    config_values_orphaned: int = 0
 
 
 class SolutionDeployResponse(BaseModel):
