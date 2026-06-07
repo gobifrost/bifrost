@@ -18,7 +18,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi import Form as FastapiForm
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from src.core.auth import Context, CurrentSuperuser
@@ -32,6 +32,7 @@ from src.models.contracts.solutions import (
     SolutionEntitySummary,
     SolutionInstallPreview,
     SolutionsList,
+    SolutionUpdate,
 )
 from src.models.orm.agents import Agent
 from src.models.orm.applications import Application
@@ -167,6 +168,65 @@ async def get_solution_entities(
         configs=configs,
         required_configs_unset=required_unset,
     )
+
+
+@router.patch(
+    "/{solution_id}",
+    response_model=SolutionDTO,
+    summary="Update an install's local fields (admin only)",
+)
+async def update_solution(
+    solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentSuperuser
+) -> SolutionDTO:
+    """Edit INSTALL-LOCAL fields only (name/scope/global_repo_access/git fields).
+
+    Portable content (workflows/apps/forms/agents/tables/config declarations) is
+    owned by the bundle/git and is never touched here. Changing the install's
+    ``organization_id`` (scope) re-stamps every owned entity's org to match —
+    owned entities inherit the install's org from the deployer — done under the
+    per-install write-lock so it can't race a concurrent deploy.
+    """
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    # PATCH semantics: only fields explicitly present in the request are applied.
+    # organization_id=None is a legitimate value (global scope), distinguished
+    # from "not provided" via model_fields_set (exclude_unset).
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        return SolutionDTO.model_validate(sol)  # nothing to do
+
+    from src.services.solutions.write_lock import (
+        SolutionWriteLockHeld,
+        solution_write_lock,
+    )
+
+    try:
+        async with solution_write_lock(solution_id):
+            scope_changing = (
+                "organization_id" in fields
+                and fields["organization_id"] != sol.organization_id
+            )
+            new_org = fields.get("organization_id", sol.organization_id)
+            for key, value in fields.items():
+                setattr(sol, key, value)
+            if scope_changing:
+                # Owned entities inherit the install's org → re-stamp them all.
+                for model in (Workflow, Application, Form, Agent, Table):
+                    await ctx.db.execute(
+                        update(model)
+                        .where(model.solution_id == solution_id)
+                        .values(organization_id=new_org)
+                    )
+            await ctx.db.commit()
+    except SolutionWriteLockHeld as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A write is already in progress for this install; retry shortly.",
+        ) from exc
+    await ctx.db.refresh(sol)
+    return SolutionDTO.model_validate(sol)
 
 
 @router.post(

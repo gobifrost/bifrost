@@ -31,9 +31,20 @@ class SolutionCreate(SolutionBase):
 
 
 class SolutionUpdate(BaseModel):
-    """Partial update; install identity (slug/scope) is immutable here."""
+    """Partial-update (PATCH) of an install's INSTALL-LOCAL fields only.
+
+    ``slug`` is identity and is NOT editable here. Portable content
+    (workflows/apps/forms/agents/tables/config declarations) is owned by the
+    bundle/git and is read-only on this surface.
+
+    PATCH semantics: ``organization_id=None`` is a legitimate value (global
+    scope), so it is distinguished from "not provided" via
+    ``model_fields_set`` — the endpoint applies only fields present in the
+    request (``model_dump(exclude_unset=True)``).
+    """
 
     name: str | None = None
+    organization_id: UUID | None = None
     global_repo_access: bool | None = None
     git_connected: bool | None = None
     git_repo_url: str | None = None
