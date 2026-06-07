@@ -56,6 +56,14 @@ class Table(Base):
         default=None,
         index=True,
     )
+    # Orphan provenance — set when a Solution install is deleted non-
+    # destructively. Records which Solution this row came from so a reinstall
+    # can reattach it. origin_solution_id is informational (NOT a FK — the
+    # Solution row is gone); origin_solution_slug is the stable reattach key.
+    # orphaned_at non-null ⇔ currently orphaned.
+    origin_solution_slug: Mapped[str | None] = mapped_column(String(255), default=None, nullable=True)
+    origin_solution_id: Mapped[UUID | None] = mapped_column(default=None, nullable=True)
+    orphaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
     schema: Mapped[dict | None] = mapped_column(JSONB, default=None)
     # Stores the policies block per
     # docs/superpowers/specs/2026-04-30-table-policies-design.md.
