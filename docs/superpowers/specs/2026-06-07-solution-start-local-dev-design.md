@@ -42,6 +42,47 @@ platform is only mutated by `deploy`, where everything adopts the solution's sco
 This is the central correction over an earlier draft: `start` must **not** push or register
 workflows to the shared instance. Local functions run locally; the platform stays untouched.
 
+## How an app knows its solution (the identity chain)
+
+An app never hard-codes its solution — it can't, because a `path::fn` ref is portable and the
+per-install workflow row's id is a deterministic `uuid5` the app never sees. Identity flows
+through **`appId` → `Application.solution_id`**, resolved server-side per request:
+
+1. The app carries only **which app it is**: `BifrostProvider` gets `appId`; `useWorkflow` /
+   `useWorkflowQuery` send it as the `app_id` body field (and `X-Bifrost-App` header for tables).
+2. The server maps it to a scope (`api/src/routers/workflows.py:756-768`):
+   `solution_scope = SELECT Application.solution_id WHERE Application.id == app_id`. So the **app
+   row** knows its solution (stamped at deploy); the browser doesn't.
+3. `WorkflowRepository._resolve_by_path_ref` (`api/src/repositories/workflows.py:136-151`) does
+   **own-first, then `_repo/` fallback**, never a sibling:
+   ```python
+   if solution_scope is not None:
+       own = [w for w in rows if w.solution_id == solution_scope]
+       if own: return own[0]                          # THIS install's own workflow
+       repo_rows = [w for w in rows if w.solution_id is None]
+       return repo_rows[0] if repo_rows else None     # else the global _repo/ row
+   ```
+   The candidate `rows` are first bounded to `caller-org OR global` by `_apply_cascade_scope`; the
+   `_repo/` fallback being *reachable at runtime* is what the install's `global_repo_access` flag
+   governs.
+
+**Local (`bifrost solution start`)** feeds this same chain: `start` injects `VITE_BIFROST_APP_ID`
+= the app's manifest UUID (`.bifrost/apps.yaml`), which is the **same** UUID deploy upserts as
+`Application.id`. Execution differs only in *where* it runs:
+
+- The app's **own** `path::fn` is served by `start`'s **local function host** — the workspace
+  files literally ARE the install's own source, so "own-first" holds locally with no DB row.
+- A `path::fn` **not** present locally is proxied to the dev API, which runs the identical
+  `solution_scope` cascade for that `app_id` under the chosen `--org`.
+
+> First-deploy caveat (made explicit): an app's `Application.solution_id` exists on the dev API
+> only **after** a `bifrost solution deploy`. Before that, a proxied (non-local) `path::fn`
+> resolves with `solution_scope = None` (a plain `_repo/` caller). This is harmless: the
+> own-first half is always served locally by `start` (it runs your files directly), so your own
+> workflow still wins; the full server-side own→`_repo/` fallback becomes faithfully previewable
+> once you've deployed at least once. `start` never deploys to make this true — it's just a note
+> on what the *proxied* half reflects pre- vs post-deploy.
+
 ## What already exists (verified, reused — not rebuilt)
 
 - **Local function host primitive.** `bifrost run <file>` (`api/bifrost/cli.py`) loads a
