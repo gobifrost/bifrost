@@ -60,7 +60,7 @@ test("managed app is still previewable in table view (no regression)", async ({ 
     await page.waitForTimeout(500);
   }
   await page.screenshot({ path: `${SHOTS}/12-apps-table-view.png`, fullPage: true });
-  await expect(page.getByTestId("app-managed-badge-row").or(page.getByTestId("app-managed-badge"))).toBeVisible();
+  await expect(page.getByTestId("solution-managed-badge").first()).toBeVisible();
 });
 
 test("v1 (non-solution) app is editable — backwards compat", async ({ page }) => {

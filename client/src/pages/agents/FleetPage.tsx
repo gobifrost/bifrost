@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 
 import { EntityLogo } from "@/components/EntityLogo";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -479,6 +480,9 @@ function AgentGridCard({
 								Paused
 							</Badge>
 						) : null}
+						{agent.is_solution_managed ? (
+							<SolutionManagedBadge solutionId={agent.solution_id} />
+						) : null}
 					</div>
 					<div className="flex shrink-0 flex-wrap gap-1">
 						{(agent.channels ?? []).slice(0, 3).map((c) => (
@@ -702,6 +706,9 @@ function AgentTableRow({
 				<div className="flex items-center gap-2">
 					<Bot className="h-3.5 w-3.5 text-muted-foreground" />
 					<span className="font-medium">{agent.name}</span>
+					{agent.is_solution_managed ? (
+						<SolutionManagedBadge solutionId={agent.solution_id} />
+					) : null}
 				</div>
 				{agent.description ? (
 					<div className="line-clamp-1 text-xs text-muted-foreground">

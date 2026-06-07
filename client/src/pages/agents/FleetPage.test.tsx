@@ -25,8 +25,9 @@ vi.mock("@/services/agents", () => ({
 	useFleetStats: () => mockUseFleetStats(),
 }));
 
+const mockUseAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: false }),
+	useAuth: () => mockUseAuth(),
 }));
 
 vi.mock("@/components/agents/SummaryBackfillButton", () => ({
@@ -85,6 +86,7 @@ beforeEach(() => {
 	mockUseAgents.mockReturnValue({ data: [], isLoading: false });
 	mockUseFleetStats.mockReturnValue({ data: fleetStats, isLoading: false });
 	mockUseAgentStats.mockReturnValue({ data: baseStats, isLoading: false });
+	mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
 });
 
 async function renderPage() {
@@ -188,6 +190,58 @@ describe("FleetPage — agent cards (grid)", () => {
 		await renderPage();
 		const link = screen.getByRole("link", { name: /alpha/i });
 		expect(link).toHaveAttribute("href", "/agents/alpha-id");
+	});
+});
+
+describe("FleetPage — solution-managed badge", () => {
+	it("shows the managed badge on a solution-managed agent for platform admins", async () => {
+		mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockUseAgents.mockReturnValue({
+			data: [
+				makeAgent({
+					id: "managed",
+					name: "Managed",
+					is_solution_managed: true,
+					solution_id: "s1",
+				}),
+			],
+			isLoading: false,
+		});
+		await renderPage();
+		const badge = screen.getByTestId("solution-managed-badge");
+		expect(badge).toBeInTheDocument();
+		expect(badge).toHaveAttribute("href", "/solutions/s1");
+	});
+
+	it("does not show the badge on a non-managed agent", async () => {
+		mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockUseAgents.mockReturnValue({
+			data: [makeAgent({ id: "plain", name: "Plain" })],
+			isLoading: false,
+		});
+		await renderPage();
+		expect(
+			screen.queryByTestId("solution-managed-badge"),
+		).not.toBeInTheDocument();
+	});
+
+	it("hides the badge from non-admins even when managed", async () => {
+		mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
+		mockUseAgents.mockReturnValue({
+			data: [
+				makeAgent({
+					id: "managed",
+					name: "Managed",
+					is_solution_managed: true,
+					solution_id: "s1",
+				}),
+			],
+			isLoading: false,
+		});
+		await renderPage();
+		expect(
+			screen.queryByTestId("solution-managed-badge"),
+		).not.toBeInTheDocument();
 	});
 });
 

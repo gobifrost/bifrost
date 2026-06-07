@@ -19,9 +19,9 @@ import {
 	Table as TableIcon,
 	Eye,
 	Code2,
-	Lock,
 } from "lucide-react";
 import { EntityLogo } from "@/components/EntityLogo";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { AppInfoDialog } from "@/components/app-builder/AppInfoDialog";
 import { CreateAppModal } from "@/components/app-builder/CreateAppModal";
 import { Button } from "@/components/ui/button";
@@ -230,7 +230,7 @@ export function Applications() {
 			<div className="flex-1 min-h-0 overflow-auto">
 			{isLoading ? (
 				viewMode === "grid" || !canManageApps ? (
-					<div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+					<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
 						{[...Array(6)].map((_, i) => (
 							<Skeleton key={i} className="h-48 w-full" />
 						))}
@@ -244,7 +244,7 @@ export function Applications() {
 				)
 			) : filteredApps && filteredApps.length > 0 ? (
 				viewMode === "grid" || !canManageApps ? (
-					<div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+					<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
 						{filteredApps.map((app) => {
 							const defaultTarget = app.is_published
 								? () => handleLaunch(app.slug)
@@ -287,14 +287,9 @@ export function Applications() {
 												</span>
 											</div>
 											{app.is_solution_managed ? (
-												<span
-													className="flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-													title="Managed by a Solution — read-only on the platform"
-													data-testid="app-managed-badge"
-												>
-													<Lock className="h-3 w-3" />
-													Managed
-												</span>
+												<SolutionManagedBadge
+													solutionId={app.solution_id}
+												/>
 											) : canManageApps ? (
 												<div className="flex shrink-0 gap-1">
 													<Button
@@ -542,15 +537,10 @@ export function Applications() {
 														<Eye className="h-4 w-4" />
 													</Button>
 												)}
-												{canManageApps && app.is_solution_managed && (
-													<span
-														className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-														title="Managed by a Solution — read-only on the platform"
-														data-testid="app-managed-badge-row"
-													>
-														<Lock className="h-3 w-3" />
-														Managed
-													</span>
+												{app.is_solution_managed && (
+													<SolutionManagedBadge
+														solutionId={app.solution_id}
+													/>
 												)}
 												{canManageApps && !app.is_solution_managed && (
 													<>

@@ -24,6 +24,7 @@ import {
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import type { CategoryCount } from "@/components/workflows/WorkflowSidebar";
 import { Button } from "@/components/ui/button";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import {
 	Card,
 	CardContent,
@@ -471,7 +472,12 @@ export function Workflows() {
 														</TooltipTrigger>
 														<TooltipContent>Open in editor</TooltipContent>
 													</Tooltip>
-													{isPlatformAdmin && (
+													{workflow.is_solution_managed && (
+														<SolutionManagedBadge
+															solutionId={workflow.solution_id}
+														/>
+													)}
+													{isPlatformAdmin && !workflow.is_solution_managed && (
 														<Button
 															variant="outline"
 															size="icon-sm"
@@ -734,7 +740,14 @@ export function Workflows() {
 																<Code2 className="h-4 w-4" />
 															)}
 														</Button>
-														{isPlatformAdmin && (
+														{workflow.is_solution_managed && (
+															<SolutionManagedBadge
+																solutionId={
+																	workflow.solution_id
+																}
+															/>
+														)}
+														{isPlatformAdmin && !workflow.is_solution_managed && (
 															<Button
 																variant="ghost"
 																size="icon-sm"

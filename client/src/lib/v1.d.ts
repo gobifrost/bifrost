@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7140,6 +7140,58 @@ export interface paths {
         get: operations["get_solution_api_solutions__solution_id__get"];
         put?: never;
         post?: never;
+        /**
+         * Delete an install and everything it owns (admin only)
+         * @description Delete an install non-destructively for customer data.
+         *
+         *     Pure-code entities (workflows/apps/forms/agents) and the install's config
+         *     DECLARATIONS cascade away via the ``solution_id`` FK ``ondelete=CASCADE``.
+         *     Data-bearing entities are ORPHANED instead of cascaded:
+         *
+         *     - Owned tables are DETACHED before the Solution delete (``solution_id`` set
+         *       to NULL so the cascade can't reach them) and survive as ordinary org
+         *       tables. Their documents are untouched — they hang off the surviving table.
+         *     - The install's config VALUES (Config rows in the install's org scope whose
+         *       key matches a declaration) are stamped with orphan provenance and survive
+         *       (Config has no ``solution_id`` FK, so they were never cascade-tied).
+         *
+         *     Both carry ``origin_solution_slug``/``origin_solution_id``/``orphaned_at`` so
+         *     a reinstall can reattach them. The install's S3 artifacts are swept. The git
+         *     repo is NEVER touched — a git-connected install is deletable; only the install
+         *     and its local artifacts go, the upstream repo is left alone.
+         */
+        delete: operations["delete_solution_api_solutions__solution_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update an install's local fields (admin only)
+         * @description Edit INSTALL-LOCAL fields only (name/scope/global_repo_access/git fields).
+         *
+         *     Portable content (workflows/apps/forms/agents/tables/config declarations) is
+         *     owned by the bundle/git and is never touched here. Changing the install's
+         *     ``organization_id`` (scope) re-stamps every owned entity's org to match —
+         *     owned entities inherit the install's org from the deployer — done under the
+         *     per-install write-lock so it can't race a concurrent deploy.
+         */
+        patch: operations["update_solution_api_solutions__solution_id__patch"];
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an install + everything it owns (admin only)
+         * @description One call for the detail UI: the install, all owned entities, and each
+         *     config declaration paired with whether a value is set in the install's scope
+         *     (plus the derived required-but-unset key list).
+         */
+        get: operations["get_solution_entities_api_solutions__solution_id__entities_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7181,6 +7233,55 @@ export interface paths {
          *     disconnected install there is nothing to pull, so this is refused in turn.
          */
         post: operations["sync_solution_api_solutions__solution_id__sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/install/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a Solution install zip (parse-only, admin only)
+         * @description Unzip + parse a Solution workspace zip and report what it would create.
+         *
+         *     Parse-only: no DB write, no S3, no build. The drag-and-drop UI calls this to
+         *     show the install plan + declared configs before committing.
+         */
+        post: operations["install_preview_api_solutions_install_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a Solution zip (atomic deploy + config values, admin only)
+         * @description Atomically install a Solution from a workspace zip.
+         *
+         *     Resolves-or-creates the install at the chosen scope (empty/absent
+         *     ``organization_id`` → global NULL), runs the proven deploy under the
+         *     per-install write lock, and — in the same locked section after the S3 finalize
+         *     — applies the provided ``config_values`` (a JSON object of key→value). A
+         *     missing required config does NOT block the install (warn-not-block).
+         */
+        post: operations["install_solution_api_solutions_install_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9365,6 +9466,17 @@ export interface components {
              * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
              */
             logo?: string | null;
+            /**
+             * Is Solution Managed
+             * @description True if managed by a deployed Solution (read-only on platform)
+             * @default false
+             */
+            is_solution_managed: boolean;
+            /**
+             * Solution Id
+             * @description UUID of the owning Solution install (null if not solution-managed)
+             */
+            solution_id?: string | null;
         };
         /**
          * AgentUpdate
@@ -10249,6 +10361,29 @@ export interface components {
             replace_existing: boolean;
             /** Target Organization Id */
             target_organization_id?: string | null;
+        };
+        /** Body_install_preview_api_solutions_install_preview_post */
+        Body_install_preview_api_solutions_install_preview_post: {
+            /**
+             * File
+             * @description Solution workspace zip
+             */
+            file: string;
+        };
+        /** Body_install_solution_api_solutions_install_post */
+        Body_install_solution_api_solutions_install_post: {
+            /**
+             * File
+             * @description Solution workspace zip
+             */
+            file: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * Config Values
+             * @default {}
+             */
+            config_values: string;
         };
         /** Body_login_auth_login_post */
         Body_login_auth_login_post: {
@@ -20017,6 +20152,29 @@ export interface components {
             readonly scope: "org" | "global";
         };
         /**
+         * SolutionConfigStatus
+         * @description A config DECLARATION on an install, paired with whether a value is set in
+         *     the install's org scope (values are instance-owned Config rows, never part of
+         *     the declaration).
+         */
+        SolutionConfigStatus: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key */
+            key: string;
+            /** Type */
+            type: string;
+            /** Required */
+            required: boolean;
+            /** Description */
+            description?: string | null;
+            /** Value Set */
+            value_set: boolean;
+        };
+        /**
          * SolutionCreate
          * @description Create-shape for an install.
          *
@@ -20052,6 +20210,57 @@ export interface components {
             git_repo_url?: string | null;
             /** Organization Id */
             organization_id?: string | null;
+        };
+        /**
+         * SolutionDeleteSummary
+         * @description Counts of what a DELETE did. Pure-code entities (workflows/apps/forms/
+         *     agents) and the install's config DECLARATIONS are deleted via DB cascade.
+         *     Data-bearing entities are ORPHANED, not deleted: owned tables (and their
+         *     documents) are detached and survive as ordinary org tables, and the
+         *     install's config VALUES are stamped with orphan provenance and survive.
+         *     The UI echoes these back to the operator.
+         */
+        SolutionDeleteSummary: {
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /**
+             * Workflows Deleted
+             * @default 0
+             */
+            workflows_deleted: number;
+            /**
+             * Apps Deleted
+             * @default 0
+             */
+            apps_deleted: number;
+            /**
+             * Forms Deleted
+             * @default 0
+             */
+            forms_deleted: number;
+            /**
+             * Agents Deleted
+             * @default 0
+             */
+            agents_deleted: number;
+            /**
+             * Config Declarations Deleted
+             * @default 0
+             */
+            config_declarations_deleted: number;
+            /**
+             * Tables Orphaned
+             * @default 0
+             */
+            tables_orphaned: number;
+            /**
+             * Config Values Orphaned
+             * @default 0
+             */
+            config_values_orphaned: number;
         };
         /**
          * SolutionDeployRequest
@@ -20150,6 +20359,102 @@ export interface components {
              * @default 0
              */
             agents_deleted: number;
+        };
+        /**
+         * SolutionEntities
+         * @description Everything one install owns + its config declaration/value status.
+         */
+        SolutionEntities: {
+            solution: components["schemas"]["Solution"];
+            /** Workflows */
+            workflows?: components["schemas"]["SolutionEntitySummary"][];
+            /** Apps */
+            apps?: components["schemas"]["SolutionEntitySummary"][];
+            /** Forms */
+            forms?: components["schemas"]["SolutionEntitySummary"][];
+            /** Agents */
+            agents?: components["schemas"]["SolutionEntitySummary"][];
+            /** Tables */
+            tables?: components["schemas"]["SolutionEntitySummary"][];
+            /** Configs */
+            configs?: components["schemas"]["SolutionConfigStatus"][];
+            /** Required Configs Unset */
+            required_configs_unset?: string[];
+        };
+        /**
+         * SolutionEntitySummary
+         * @description Lightweight (id, name) entry for an owned entity — the detail UI links by id.
+         */
+        SolutionEntitySummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * SolutionInstallPreview
+         * @description Parse-only preview of a Solution install zip — what it would create + its
+         *     declared configs. Nothing is persisted by the preview endpoint.
+         */
+        SolutionInstallPreview: {
+            /** Slug */
+            slug?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Scope */
+            scope?: ("org" | "global") | null;
+            /** Workflows */
+            workflows?: {
+                [key: string]: unknown;
+            }[];
+            /** Tables */
+            tables?: {
+                [key: string]: unknown;
+            }[];
+            /** Apps */
+            apps?: {
+                [key: string]: unknown;
+            }[];
+            /** Forms */
+            forms?: {
+                [key: string]: unknown;
+            }[];
+            /** Agents */
+            agents?: {
+                [key: string]: unknown;
+            }[];
+            /** Config Schemas */
+            config_schemas?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * SolutionUpdate
+         * @description Partial-update (PATCH) of an install's INSTALL-LOCAL fields only.
+         *
+         *     ``slug`` is identity and is NOT editable here. Portable content
+         *     (workflows/apps/forms/agents/tables/config declarations) is owned by the
+         *     bundle/git and is read-only on this surface.
+         *
+         *     PATCH semantics: ``organization_id=None`` is a legitimate value (global
+         *     scope), so it is distinguished from "not provided" via
+         *     ``model_fields_set`` — the endpoint applies only fields present in the
+         *     request (``model_dump(exclude_unset=True)``).
+         */
+        SolutionUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Global Repo Access */
+            global_repo_access?: boolean | null;
+            /** Git Connected */
+            git_connected?: boolean | null;
+            /** Git Repo Url */
+            git_repo_url?: string | null;
         };
         /** SolutionsList */
         SolutionsList: {
@@ -28410,7 +28715,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28443,7 +28748,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28476,7 +28781,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28509,7 +28814,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -34682,6 +34987,103 @@ export interface operations {
             };
         };
     };
+    delete_solution_api_solutions__solution_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDeleteSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_solution_api_solutions__solution_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Solution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_solution_entities_api_solutions__solution_id__entities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionEntities"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     deploy_solution_api_solutions__solution_id__deploy_post: {
         parameters: {
             query?: never;
@@ -34737,6 +35139,72 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_preview_api_solutions_install_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_install_preview_api_solutions_install_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionInstallPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_solution_api_solutions_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_install_solution_api_solutions_install_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Solution"];
                 };
             };
             /** @description Validation Error */

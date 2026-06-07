@@ -14,6 +14,7 @@ import {
 	AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { Switch } from "@/components/ui/switch";
 import {
 	Tooltip,
@@ -416,7 +417,12 @@ export function Forms() {
 											<PlayCircle className="mr-2 h-4 w-4" />
 											Launch
 										</Button>
-										{canManageForms && (
+										{form.is_solution_managed && (
+											<SolutionManagedBadge
+												solutionId={form.solution_id}
+											/>
+										)}
+										{canManageForms && !form.is_solution_managed && (
 											<>
 												<Button
 													variant="outline"
@@ -594,7 +600,14 @@ export function Forms() {
 													>
 														<PlayCircle className="h-4 w-4" />
 													</Button>
-													{canManageForms && (
+													{form.is_solution_managed && (
+														<SolutionManagedBadge
+															solutionId={
+																form.solution_id
+															}
+														/>
+													)}
+													{canManageForms && !form.is_solution_managed && (
 														<>
 															<Button
 																variant="ghost"
