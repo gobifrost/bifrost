@@ -46,6 +46,11 @@ def _model_has_solution_id(model: Any) -> bool:
     return "solution_id" in model.__table__.columns
 
 
+def _model_has_orphaned_at(model: Any) -> bool:
+    """True if the model carries an orphaned_at column (Table/Config — orphan-capable)."""
+    return "orphaned_at" in model.__table__.columns
+
+
 class OrgScopedRepository(Generic[ModelT]):
     """
     The single canonical repository for all org-scoped data access in Bifrost.
@@ -215,6 +220,12 @@ class OrgScopedRepository(Generic[ModelT]):
         # must show deployed entities so users can see/use them, criterion 16.)
         if _model_has_solution_id(self.model) and not include_solution_managed:
             query = query.where(self.model.solution_id.is_(None))  # type: ignore[attr-defined]
+            # Orphaned rows (a former install's data, solution_id NULL'd to
+            # survive uninstall) are NOT non-solution rows — they must not leak
+            # into the normal org name cascade. Exclude them too; they resolve
+            # only via the explicit show-orphaned path and reattach.
+            if _model_has_orphaned_at(self.model):
+                query = query.where(self.model.orphaned_at.is_(None))  # type: ignore[attr-defined]
 
         # Step 1: Try org-specific lookup (if we have an org)
         if self.org_id is not None:
