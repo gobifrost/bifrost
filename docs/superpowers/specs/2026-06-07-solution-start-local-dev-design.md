@@ -134,8 +134,15 @@ fallback) and prints the exact patch rather than silently failing to scope.
 ## Command surface
 
 ```
-bifrost solution start [--org <name|uuid>] [--app <slug>] [--port <n>]
+bifrost solution start [--org <name|uuid>] [--port <n>] [<app-slug>]
 ```
+
+The common case takes **no positional and no `--app`**: a scaffolded Solution has exactly one
+`standalone_v2` app, so `start` auto-selects it (matching `swa start` / `firebase`, which don't
+make you name the single app). The optional trailing `<app-slug>` exists **only** as the escape
+hatch for a workspace that holds more than one `standalone_v2` app — there, `start` refuses and
+lists the slugs rather than guessing. We add nothing more than that disambiguator (YAGNI: no
+multi-app workspace exists yet; the flag would be dead weight on every real invocation).
 
 Run from a Solution workspace root (a `bifrost.solution.yaml` present; reuse
 `is_solution_workspace`). Steps:
@@ -144,8 +151,9 @@ Run from a Solution workspace root (a `bifrost.solution.yaml` present; reuse
 2. **API reachable** — confirm the configured `BIFROST_API_URL` answers; if not, hint
    `./debug.sh up`. `start` does **not** boot Docker (that is `./debug.sh`'s job; SWA likewise
    assumes your backend/emulator is available).
-3. **Resolve the app** — read `.bifrost/apps.yaml`; pick the `standalone_v2` app, or `--app
-   <slug>`; error helpfully on zero/many. Capture its manifest UUID (`appId`).
+3. **Resolve the app** — read `.bifrost/apps.yaml`; if exactly one `standalone_v2` app, use it;
+   if several, refuse and list slugs (accept the trailing `<app-slug>` to pick); if none, error
+   with a `bifrost solution scaffold-app` hint. Capture the chosen app's manifest UUID (`appId`).
 4. **Resolve org** — `--org` via the existing `RefResolver` (name or UUID; superuser), default =
    caller's own org. → `orgScope`.
 5. **Discover local functions** — scan the workspace (any folder layout) for files containing
@@ -187,7 +195,8 @@ Run from a Solution workspace root (a `bifrost.solution.yaml` present; reuse
   - Proxy routing: `/api/workflows/execute` with a known local `path::fn` runs locally; a UUID
     ref and any other `/api/*` path proxy to the upstream (assert with a stub upstream).
   - `--org` resolution via `RefResolver` (name → UUID); default-org fallback.
-  - App resolution from `.bifrost/apps.yaml` (zero/one/many; `--app` selection).
+  - App resolution from `.bifrost/apps.yaml`: one → auto-select; none → error; many → refuse +
+    list, and the trailing `<app-slug>` picks one.
   - Stale-`main.tsx` detection + printed patch; fresh scaffold passes the check.
 - **Scaffold round-trip:** a freshly scaffolded app's `main.tsx` contains the `VITE_BIFROST_*`
   fallbacks; the shipped sample function's `path::fn` equals the `App.tsx` ref (F8).
