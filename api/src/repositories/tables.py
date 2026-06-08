@@ -55,12 +55,24 @@ class TableRepository(OrgScopedRepository[Table]):
         """Get by name with cascade scoping: org-specific > global."""
         return await self.get(name=name)
 
-    async def get_by_name_strict(self, name: str) -> Table | None:
-        """Get table by name strictly in current org scope."""
+    async def get_by_name_strict(
+        self, name: str, *, repo_namespace_only: bool = False
+    ) -> Table | None:
+        """Get table by name strictly in current org scope.
+
+        ``repo_namespace_only`` restricts the lookup to the _repo namespace
+        (``solution_id IS NULL``). The schema (see migration
+        20260606_table_name_solution_scope) intentionally lets a _repo table and
+        a solution-managed table coexist with the same name in the same org via
+        separate partial unique indexes, so the _repo create-time duplicate
+        check must only see the _repo namespace.
+        """
         query = select(self.model).where(
             self.model.name == name,
             self.model.organization_id == self.org_id,
         )
+        if repo_namespace_only:
+            query = query.where(self.model.solution_id.is_(None))
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
@@ -70,7 +82,10 @@ class TableRepository(OrgScopedRepository[Table]):
         created_by: str,
     ) -> Table:
         """Create a new table."""
-        existing = await self.get_by_name_strict(data.name)
+        # create_table only ever creates _repo tables (solution_id stays NULL),
+        # so the duplicate-name guard must only look at the _repo namespace —
+        # a solution-managed row of the same name is allowed to coexist.
+        existing = await self.get_by_name_strict(data.name, repo_namespace_only=True)
         if existing:
             raise ValueError(f"Table '{data.name}' already exists")
 

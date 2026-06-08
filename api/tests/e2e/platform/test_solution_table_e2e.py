@@ -55,6 +55,69 @@ def test_table_deploy_preserves_rows_across_schema_change(e2e_client, platform_a
     assert got.json()["data"]["email"] == "a@x.com"
 
 
+def test_repo_table_coexists_with_solution_table_same_name(e2e_client, platform_admin):
+    """Bug #5: a _repo table must be creatable even when a solution-managed table
+    of the SAME name already exists in the same scope. The schema (migration
+    20260606_table_name_solution_scope) uses separate partial unique indexes per
+    source so the two coexist; the _repo create-time duplicate check must only see
+    the _repo namespace (solution_id IS NULL)."""
+    headers = platform_admin.headers
+    slug = f"coexist-{uuid.uuid4().hex[:8]}"
+    name = f"coexist_{slug.replace('-', '_')}"
+    sid = _create_solution(e2e_client, headers, slug)
+    tid = str(uuid.uuid4())
+
+    # 1) Install a SOLUTION-managed table first (global scope).
+    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+        "tables": [{"id": tid, "name": name, "schema": {"columns": [{"name": "email"}]}, "policies": None}],
+    })
+    assert dep.status_code in (200, 201), dep.text
+    sol_table_id = str(solution_entity_id(UUID(sid), UUID(tid)))
+
+    # 2) Now create a normal _repo table of the SAME name in the same (global) scope.
+    #    This previously 409'd because the duplicate check saw the solution row.
+    create = e2e_client.post("/api/tables?scope=global", headers=headers, json={
+        "name": name, "schema": {"columns": [{"name": "phone"}]},
+    })
+    assert create.status_code in (200, 201), f"_repo create blocked by solution row: {create.text}"
+    repo_table_id = create.json()["id"]
+
+    # 3) Both rows exist independently.
+    assert repo_table_id != sol_table_id
+    sol = e2e_client.get(f"/api/tables/{sol_table_id}", headers=headers)
+    assert sol.status_code == 200, sol.text
+    assert sol.json()["solution_id"] == sid
+    rep = e2e_client.get(f"/api/tables/{repo_table_id}", headers=headers)
+    assert rep.status_code == 200, rep.text
+    assert rep.json().get("solution_id") is None
+
+
+def test_solution_table_coexists_with_existing_repo_table(e2e_client, platform_admin):
+    """Reverse order (already worked, regression guard): create a _repo table, then
+    install a solution shipping the same name → both coexist."""
+    headers = platform_admin.headers
+    slug = f"corev-{uuid.uuid4().hex[:8]}"
+    name = f"corev_{slug.replace('-', '_')}"
+
+    create = e2e_client.post("/api/tables?scope=global", headers=headers, json={
+        "name": name, "schema": {"columns": [{"name": "phone"}]},
+    })
+    assert create.status_code in (200, 201), create.text
+    repo_table_id = create.json()["id"]
+
+    sid = _create_solution(e2e_client, headers, slug)
+    tid = str(uuid.uuid4())
+    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+        "tables": [{"id": tid, "name": name, "schema": {"columns": [{"name": "email"}]}, "policies": None}],
+    })
+    assert dep.status_code in (200, 201), f"solution deploy blocked by _repo row: {dep.text}"
+    sol_table_id = str(solution_entity_id(UUID(sid), UUID(tid)))
+
+    assert repo_table_id != sol_table_id
+    assert e2e_client.get(f"/api/tables/{repo_table_id}", headers=headers).status_code == 200
+    assert e2e_client.get(f"/api/tables/{sol_table_id}", headers=headers).status_code == 200
+
+
 def test_solution_app_resolves_its_table_by_name(e2e_client, platform_admin):
     """Codex #15: a v2 app's useTable("name") (no per-install id) must resolve the
     app's OWN install table. The SDK sends X-Bifrost-App; the table router resolves
