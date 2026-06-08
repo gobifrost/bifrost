@@ -29,6 +29,7 @@ from webauthn.helpers import (
     parse_registration_credential_json,
 )
 from webauthn.helpers.structs import (
+    AuthenticatorTransport,
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
@@ -46,6 +47,26 @@ PASSKEY_REG_CHALLENGE_PREFIX = "passkey_reg_challenge:"
 PASSKEY_AUTH_CHALLENGE_PREFIX = "passkey_auth_challenge:"
 PASSKEY_SETUP_TOKEN_PREFIX = "passkey_setup:"
 CHALLENGE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _normalize_transports(transports: list | None) -> list[AuthenticatorTransport] | None:
+    """Convert stored JSONB transport strings into py_webauthn enum values."""
+    if not transports:
+        return None
+
+    normalized: list[AuthenticatorTransport] = []
+    for transport in transports:
+        if isinstance(transport, AuthenticatorTransport):
+            normalized.append(transport)
+            continue
+        if not isinstance(transport, str) or not transport:
+            continue
+        try:
+            normalized.append(AuthenticatorTransport(transport))
+        except ValueError:
+            continue
+
+    return normalized or None
 
 
 class PasskeyService:
@@ -93,7 +114,7 @@ class PasskeyService:
         exclude_credentials = [
             PublicKeyCredentialDescriptor(
                 id=passkey.credential_id,
-                transports=passkey.transports if passkey.transports else None,
+                transports=_normalize_transports(passkey.transports),
             )
             for passkey in existing_passkeys
         ]
@@ -223,7 +244,7 @@ class PasskeyService:
                     allow_credentials = [
                         PublicKeyCredentialDescriptor(
                             id=passkey.credential_id,
-                            transports=passkey.transports if passkey.transports else None,
+                            transports=_normalize_transports(passkey.transports),
                         )
                         for passkey in passkeys
                     ]
