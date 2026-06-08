@@ -13,6 +13,65 @@ bypassed.
 
 ---
 
+## End-to-end: the five gates a request descends through
+
+Access in Bifrost is not one check; it is a **descent through five gates**,
+and every one must pass. "Aligned all the way down" means the caller's org,
+the entity's scope, the caller's role, and the row's policy all agree. A
+mismatch at any level denies — there is no gate that re-grants what a
+higher gate refused.
+
+The chain starts at the **caller**, not at the repository. Work executes
+**on behalf of** the caller: the engine is the transport, the caller's
+`ExecutionContext` is the authority.
+
+```mermaid
+flowchart TD
+    A["Caller hits a surface<br/>(form submit · API trigger · agent · scheduled event)"]
+    A --> B["GATE 0a — On-behalf-of capture<br/>Handler captures caller identity + scope:<br/>user_id, email, org, is_platform_admin<br/>builds ExecutionContext (+ solution_id if solution-managed)<br/><i>service.py:564 · endpoints.py:201 · auth.py:362</i>"]
+
+    B --> C["GATE 0b — Sentinel transport<br/>Engine dispatches run, authenticates to API<br/>as the FIXED sentinel superuser (SYSTEM_USER_ID).<br/>API trusts the <b>envelope</b> — NOT the authority.<br/>Every SDK call re-derives scope from the<br/>ExecutionContext's caller fields, not the sentinel's.<br/><i>_execution_context.py:set_scope · resolve_scope</i>"]
+
+    C --> D{"GATE 1 — Scope resolution<br/>resolve_effective_scope<br/><i>scope_resolver.py</i>"}
+    D -->|"UNSET (field omitted)"| D1["effective_scope = caller_org_id<br/>(always allowed)"]
+    D -->|"explicit None / other UUID"| D2{"bypass?<br/>is_platform_admin OR is_provider_org"}
+    D2 -->|no| DENY1["ScopeNotAllowed (raise)"]
+    D2 -->|yes| D3["effective_scope = None (global) / that UUID"]
+    D -->|"caller_org_id"| D1
+
+    D1 --> E
+    D3 --> E
+    E{"GATE 2 — Entity resolution + cascade<br/>OrgScopedRepository.get / list<br/><i>org_scoped.py</i>"}
+
+    E --> F{"Solution context active?<br/><i>module_cache_sync.get_solution_context</i>"}
+    F -->|"yes — solution-managed run"| G["FIRST STOP: resolve under<br/>_solutions/{id}/ (modules) /<br/>solution_id-owned row (entities)<br/><i>own-first; ctx.solution_id / X-Bifrost-App</i>"]
+    G --> H{"global_repo_access?<br/><i>Solution.global_repo_access</i>"}
+    H -->|no| HFINAL["FINAL STOP<br/>(no _repo/ fallthrough —<br/>a bare _repo/ ref does NOT resolve)"]
+    H -->|yes| I
+    F -->|"no — plain _repo/ run"| I["Cascade: org-specific row<br/>then global (solution_id IS NULL world)"]
+
+    HFINAL --> J
+    I --> J
+    J{"GATE 3 — RBAC / access_level<br/>role-table match: FormRole, AppRole,<br/>AgentRole, WorkflowRole<br/><i>org_scoped.py role filter</i>"}
+    J -->|"no matching role<br/>(role_based entity)"| DENY2["403 / not visible"]
+    J -->|"authenticated / role matches / superuser"| K
+
+    K{"GATE 4 — Table access policies<br/>evaluate_action — OR of rules,<br/>DEFAULT DENY, per row<br/><i>shared/policies/probe.py · CustomClaim</i>"}
+    K -->|"no rule grants action"| DENY3["row denied"]
+    K -->|"a rule's when matches the row+user"| GRANT["✅ access granted"]
+```
+
+**Reading the diagram:** the sentinel (gate 0b) is *how the work travels*;
+the caller's `ExecutionContext` (gate 0a) is *whose authority it travels
+under*. They are deliberately separate. A leak of the sentinel collapses
+only the transport trust — the per-call C2 gate (gate 1) still runs against
+the caller's real flags. Solutions are a **first stop at gate 2 and the
+final stop unless `global_repo_access` is on**. Table policies (gate 4)
+gate individual *rows* after the *table* itself has been resolved and
+RBAC-checked.
+
+---
+
 ## The pattern in one paragraph
 
 Every execution-resolution entity (Config, Table, OAuth, etc.) goes through
@@ -320,6 +379,98 @@ For entities that have it:
   table.
 - `'private'` — Owner only (checks `owner_user_id`).
 - Entities without role tables don't have `access_level`.
+
+---
+
+## Solutions: first-stop resolution and the global-repo-access gate
+
+A **Solution** is an installable bundle of workflows, apps, tables, configs,
+forms, and agents. Its entities live in a parallel namespace keyed by
+`solution_id`, and its code lives under `_solutions/{solution_id}/` in S3.
+A Solution inserts itself at **gate 2 (entity resolution)** as a **first
+stop**, and is the **final stop unless the install's `global_repo_access`
+flag is on**.
+
+There are two parallel mechanisms — same rule, different layer:
+
+### 1. Module loads (the code side)
+
+`api/src/core/module_cache_sync.py` resolves a workflow's own code and its
+`from modules.x import y` imports. When a solution context is active:
+
+- Try `_solutions/{solution_id}/…` **FIRST**.
+- Fall through to the bare `_repo/` root **ONLY when `global_repo_access`
+  is on**. With it off, a bare `_repo/` import does **not** silently
+  resolve — the solution is sealed.
+
+The context is per-execution and thread-local: `set_solution_context` /
+`clear_solution_context` / `get_solution_context`. No active context ==
+unchanged plain `_repo/` behavior, so non-solution runs are unaffected.
+
+### 2. Entity reads (the data side)
+
+`OrgScopedRepository` (`org_scoped.py`) treats solution-managed rows
+(`solution_id IS NOT NULL`) as a **separate world resolved by id**, not by
+the name cascade:
+
+- The name/path cascade (gate 2's `get(name=...)`) restricts to
+  `solution_id IS NULL` — the `_repo/` tier — so a `_repo/` name and a
+  solution name **never collide** into `MultipleResultsFound`. This is
+  what lets a `_repo/` table and a solution-managed table share a name in
+  the same org (see migration `20260606_table_name_solution_scope`).
+- A solution's *own* entities are resolved **own-first** by `solution_id`.
+  The install id reaches the resolver from one of two client-supplied
+  sources, both **gated to the caller's org scope** so a foreign install
+  id can't reach another org's row:
+  - A solution **workflow** carries `ctx.solution_id`; the SDK appends
+    `?solution=` to name lookups (`ExecutionContext.solution_id`,
+    `_execution_context.py`).
+  - A solution **app** sends `X-Bifrost-App`; the router maps it to
+    `Application.solution_id` (`_resolve_solution_table_by_name` in
+    `routers/tables.py`).
+
+### How the context is plumbed
+
+The install's `global_repo_access` flag is read once at dispatch in
+`jobs/consumers/workflow_execution.py` (from `Solution.global_repo_access`),
+passed to the worker as `solution_global_repo_access`, and applied via
+`set_solution_context` in `services/execution/worker.py` /
+`simple_worker.py`. It is cleared after the run.
+
+### Uninstall and orphaning
+
+When a Solution is uninstalled non-destructively, its data rows survive
+with `solution_id` NULL'd and `orphaned_at` set. The cascade excludes
+orphaned rows from name resolution (independently of `solution_id`, since
+`Config` would otherwise miss the exclusion) — the former-install data
+stops resolving by name but is not deleted.
+
+---
+
+## Table access policies (gate 4)
+
+Beneath cascade and RBAC sits a **per-row** gate: table access policies.
+Gates 1–3 resolve *which table* you get and whether you may touch it at
+all; gate 4 decides *which rows* within it.
+
+- Evaluated by `shared/policies/probe.py::evaluate_action`: **OR across all
+  rules whose `actions` includes the attempted action; default DENY** if no
+  rule grants it. A rule with `when is None` grants unconditionally.
+- A rule's `when` is a claim expression evaluated against `(row, user)`.
+  `CustomClaim` entities (an admin-only, org-scoped execution-resolution
+  entity) supply named claims; the `has_role` evaluator reads the user's
+  resolved roles (populated on the auth principal, Redis-backed per-user
+  role cache — see `routers/roles.py`).
+- Reads compile to SQL (`compile_read_filter`) so row filtering happens in
+  the query, not in Python. Websocket subscribe uses `is_subscribe_authorized`
+  (conservatively allows row-data-dependent policies). Mutations evaluate
+  `evaluate_action` against the concrete row.
+
+Because gate 4 is default-deny, a table with **no** policies grants no row
+access through the policy path — callers reach rows only via paths that
+seed an admin bypass or an explicit grant. Policy claim references are
+validated against the org's known claims at write time
+(`_validate_table_policy_claim_refs`).
 
 ---
 
