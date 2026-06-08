@@ -1,5 +1,29 @@
 # Solutions scope/cascade/read-only/UI shakeout — findings (fan-out, 2026-06-08)
 
+## STATUS (2026-06-08): all 5 reproduced backend bugs FIXED + verified live; UI/UX deferred
+
+Fixed, each TDD + driven live, committed on `worktree-solutions-success-criteria`:
+- **#2 (CRIT)** export crash (`from src` in `bifrost/manifest.py`) → self-contained `ClaimQuery`
+  in the manifest; CLI-import guard broadened. Export produces a bundle live.
+- **#3 (HIGH)** deploy dropped `functions/` Python → `_collect_python_files` layout-agnostic
+  (git_sync reuses it); scaffold indexes its sample in `workflows.yaml`. Deploy→execute live.
+- **#5 (HIGH)** `_repo` table couldn't share a name with a solution table → `get_by_name_strict`
+  opt-in `repo_namespace_only` on the create check.
+- **#4 (HIGH)** `/remap` rewrote solution-managed forms/agents → guard excludes managed rows from
+  WHERE + count (form + agent-tool paths).
+- **#1 (CRIT)/F2** solution workflow couldn't read its own table → `solution_id` rides the
+  ExecutionContext (no new header); SDK appends `?solution=`; resolver own-first off
+  `ctx.solution_id` OR `ctx.app_id`. Verified live (own row resolves; `_repo` caller gets 0).
+
+**Still OPEN / deferred:** UI/UX findings (see UI section) + the **global-fallback gate
+follow-up** — tables/configs should honor `global_repo_access` like the virtual module loader
+(`module_cache_sync._candidate_storage_paths`); the flag is already in context
+(`solution_global_repo_access`), carry it like `solution_id`. Critic gaps (embed-token app_id
+path, forms/agents as resolution sources, org-scoped global_repo_access, a live-browser UI pass)
+also remain.
+
+---
+
 6 parallel agents drove the live stack across 6 risk axes + a completeness critic. **19 reproduced non-OK** of 46 total. Severity: {'critical': 2, 'high': 3, 'medium': 6, 'low': 8, 'info': 27}.
 
 **Scope leak (the #1 fear) verified CLEAN empirically** — cross-org isolation, same-slug independence, own-first determinism, S3 isolation, forged X-Bifrost-App org-gate, superuser-override org-pin all reproduced safe.
