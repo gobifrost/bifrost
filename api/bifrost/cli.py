@@ -684,6 +684,8 @@ Commands:
   pull        Pull files from Bifrost platform to local directory (alias for sync)
   export      Export a workspace bundle (optionally portable/scrubbed)
   import      Apply a bundle to the current environment
+  solution    Manage Solution installs (init, scaffold-app, start, deploy, install)
+  deploy      Deploy the current Solution workspace (alias for 'solution deploy')
   watch       Watch for file changes and auto-push
   api         Generic authenticated API request
   migrate-imports  Rewrite "bifrost" imports into user/lucide/router imports
@@ -727,6 +729,9 @@ Examples:
   bifrost pull apps/my-app
   bifrost watch
   bifrost watch apps/my-app
+  bifrost solution init --slug my-solution
+  bifrost solution scaffold-app dashboard
+  bifrost solution start                 # local dev: app + local workflows, one origin
   bifrost api GET /api/workflows
   bifrost api POST /api/applications/my-app/validate
   bifrost migrate-imports apps/my-app --dry-run

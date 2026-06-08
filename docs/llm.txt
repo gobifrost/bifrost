@@ -122,6 +122,25 @@ Workflow hooks in apps:
 
 Run `bifrost apps <verb> --help` for the complete flag list.
 
+## Solutions
+
+A Solution is an installable surface: a workspace (apps + workflows + tables + configs + forms + agents) that deploys as one unit into an org-scoped or global install. The workspace root holds a `bifrost.solution.yaml` descriptor.
+
+Commands: `solution init / scaffold-app / start / deploy / install`.
+
+- `solution init --slug <s> [--name] [--scope org|global] [--global-repo-access]` — write the `bifrost.solution.yaml` descriptor.
+- `solution scaffold-app <slug> [--api-url]` — generate a `standalone_v2` React app skeleton (Vite, wired for tokenless local dev) and a runnable sample workflow at `<solution-root>/functions/hello.py`. The app's `useWorkflow("functions/hello.py::main")` ref resolves it.
+- `solution start [<app-slug>] [--org <ref>] [--port N]` — **firebase/swa-style local dev**. Runs the app's Vite dev server AND the workspace's local `@workflow` functions in-process behind ONE origin (default port 3000), proxying everything else (tables, configs, ai) to the dev API. The app's own `path::fn` calls run locally (no deploy); edits to those `.py` files hot-reload. Deploys NOTHING — the platform is only mutated by `deploy`. Serves one app at a time; with multiple apps, name one. Injects the app's id + `--org` so local dev exercises the same install-scoped → org → global workflow resolution as deployed.
+- `solution deploy [path] [--solution <id>]` (alias: top-level `bifrost deploy`) — bundle the workspace and full-replace the install (resolve-or-create by slug+scope). Non-interactive.
+- `solution install <zip> [--org] [--set KEY=VALUE]` — install from a workspace zip (drag-and-drop equivalent); applies config values atomically.
+
+Non-obvious semantics:
+- Workflow refs are workspace-ROOT-relative: `functions/hello.py::main` means `<solution-root>/functions/hello.py`, regardless of where the calling app lives. `start` discovers `@workflow` functions anywhere under the root.
+- `start` requires a logged-in CLI and a reachable dev API (it does NOT boot Docker — that's `./debug.sh`). It needs `npm` on PATH; it runs `npm install` once if `node_modules` is absent.
+- An app knows its solution via `appId` → `Application.solution_id` (stamped at deploy), resolved server-side per request — the browser never hard-codes a solution. Resolution prefers the install's OWN workflow, then the global `_repo/` row, never a sibling install's.
+
+Run `bifrost solution <verb> --help` for the complete flag list.
+
 ## Integrations
 
 External service definitions (HaloPSA, Microsoft Graph, etc.) with config schemas and per-org mappings carrying OAuth credentials / API keys.
