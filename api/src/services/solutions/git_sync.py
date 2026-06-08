@@ -9,8 +9,9 @@ the one-writer invariant holds.
 
 This module deliberately does NOT touch ``_repo/``: a connected Solution is its
 own world, cloned to a throwaway checkout and deployed straight to
-``_solutions/{id}/``. It reuses the same workspace layout the CLI reads
-(``workflows/`` + ``modules/`` + ``shared/`` Python, ``.bifrost/*.yaml`` manifest).
+``_solutions/{id}/``. It reuses the CLI's own collectors (layout-agnostic Python
+source from any folder, ``.bifrost/*.yaml`` manifest) so a git-connected deploy
+bundles exactly what ``bifrost deploy`` would.
 """
 
 from __future__ import annotations
@@ -34,9 +35,6 @@ from src.services.solutions.deploy import (
 
 logger = logging.getLogger(__name__)
 
-# Top-level dirs whose .py files install as solution source (mirror the CLI).
-_PY_SOURCE_DIRS = ("workflows", "modules", "shared")
-
 # Root descriptor that marks a Solution workspace (must match
 # bifrost.solution_descriptor.DESCRIPTOR_FILENAME).
 _DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
@@ -47,14 +45,13 @@ class NotASolutionWorkspace(Exception):
 
 
 def _collect_python_files(workspace: Path) -> dict[str, str]:
-    files: dict[str, str] = {}
-    for d in _PY_SOURCE_DIRS:
-        root = workspace / d
-        if not root.is_dir():
-            continue
-        for py in root.rglob("*.py"):
-            files[py.relative_to(workspace).as_posix()] = py.read_text(encoding="utf-8")
-    return files
+    # Reuse the CLI's canonical, layout-agnostic collector so the git-connected
+    # deploy path bundles the SAME files as `bifrost deploy` — a divergent
+    # allow-list here is exactly what dropped functions/*.py from CLI deploys
+    # (shakeout HIGH). git_sync already imports _collect_apps from the same module.
+    from bifrost.commands.solution import _collect_python_files as _cli_collect
+
+    return _cli_collect(workspace)
 
 
 def _collect_entities(workspace: Path, manifest_file: str, key: str) -> list[dict[str, Any]]:

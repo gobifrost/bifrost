@@ -58,3 +58,15 @@ def test_scaffold_app_writes_sample_at_solution_root(tmp_path, monkeypatch):
     assert "def main" in root_sample.read_text()
     # It is NOT inside the app dir.
     assert not (tmp_path / "apps" / "dashboard" / "functions" / "hello.py").exists()
+    # The sample is INDEXED in workflows.yaml so `bifrost deploy` creates a row
+    # (else the deployed button 404s — source with no Workflow row to resolve).
+    import yaml as _yaml
+
+    wf_manifest = tmp_path / ".bifrost" / "workflows.yaml"
+    assert wf_manifest.is_file()
+    entries = list((_yaml.safe_load(wf_manifest.read_text()) or {}).get("workflows", {}).values())
+    assert len(entries) == 1
+    e = entries[0]
+    assert e["path"] == "functions/hello.py" and e["function_name"] == "main"
+    # Index path::fn must equal the App.tsx ref.
+    assert f"{e['path']}::{e['function_name']}" == _SAMPLE_WORKFLOW_REF

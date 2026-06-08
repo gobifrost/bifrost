@@ -32,9 +32,6 @@ from bifrost.solution_descriptor import (
     load_descriptor,
 )
 
-# Top-level source dirs whose .py files are installed as solution source.
-_PY_SOURCE_DIRS = ("workflows", "modules", "shared")
-
 # The scaffold's sample workflow. It lives at the SOLUTION ROOT (not under the
 # app dir) so its ``path::fn`` ref resolves the same way everywhere: workflow
 # refs are workspace-root-relative, so the app's ``functions/hello.py::main``
@@ -122,6 +119,22 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     if not sample_dest.exists():
         sample_dest.parent.mkdir(parents=True, exist_ok=True)
         sample_dest.write_text(_SAMPLE_WORKFLOW_SOURCE)
+        # Index the sample in .bifrost/workflows.yaml so `bifrost deploy` creates
+        # a Workflow ROW for it — without this, deploy bundles the source but the
+        # app's `functions/hello.py::main` ref 404s on a deployed install (the
+        # source has no row to resolve). Keyed by a fresh UUID (workflow identity).
+        wf_manifest = bifrost_dir / ".bifrost" / "workflows.yaml"
+        wf_manifest.parent.mkdir(parents=True, exist_ok=True)
+        wf_data = yaml.safe_load(wf_manifest.read_text()) if wf_manifest.is_file() else None
+        wf_data = wf_data or {"workflows": {}}
+        wf_id = str(_uuid.uuid4())
+        wf_data.setdefault("workflows", {})[wf_id] = {
+            "id": wf_id,
+            "name": "hello",
+            "path": _SAMPLE_WORKFLOW_PATH,
+            "function_name": "main",
+        }
+        wf_manifest.write_text(yaml.safe_dump(wf_data, sort_keys=False))
 
     manifest = bifrost_dir / ".bifrost" / "apps.yaml"
     manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -395,16 +408,48 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
     }
 
 
+# Dirs whose .py is never solution workflow source: generated/dep/manifest output
+# (mirrors the local function host's skip set) — kept layout-agnostic so a
+# developer can organize freely (functions/, lib/, …), matching how
+# `solution start` discovers and how the platform resolves path::fn (root-relative,
+# folder-indifferent). App source dirs are excluded separately (apps are bundled
+# by _collect_apps; their .py must not double-collect as workflow source).
+_PY_SKIP_DIRS = {"node_modules", "dist", ".venv", "venv", "__pycache__", ".git", ".bifrost"}
+
+
+def _app_source_dirs(workspace: pathlib.Path) -> set[str]:
+    """Relative (POSIX) app source dirs from .bifrost/apps.yaml, to exclude from
+    the Python-source sweep (apps are bundled by _collect_apps)."""
+    manifest = workspace / ".bifrost" / "apps.yaml"
+    if not manifest.is_file():
+        return set()
+    data = yaml.safe_load(manifest.read_text()) or {}
+    out: set[str] = set()
+    for body in (data.get("apps", {}) or {}).values():
+        if isinstance(body, dict) and body.get("path"):
+            out.add(str(body["path"]).strip("/"))
+    return out
+
+
 def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
-    """Collect installable Python source (relative path → text)."""
+    """Collect installable Python source (relative path → text), layout-agnostic.
+
+    Scans the whole solution root for ``.py``, excluding generated/dep/manifest
+    dirs and the separately-bundled app source dirs. A workflow under ANY folder
+    (``functions/``, ``lib/``, …) is collected — the deploy roots must agree with
+    where the scaffold writes / where ``solution start`` resolves, else a workflow
+    deploys with a row but no code (shakeout HIGH).
+    """
+    app_dirs = _app_source_dirs(workspace)
     files: dict[str, str] = {}
-    for d in _PY_SOURCE_DIRS:
-        root = workspace / d
-        if not root.is_dir():
+    for py in workspace.rglob("*.py"):
+        rel_parts = py.relative_to(workspace).parts
+        if any(part in _PY_SKIP_DIRS for part in rel_parts):
             continue
-        for py in root.rglob("*.py"):
-            rel = py.relative_to(workspace).as_posix()
-            files[rel] = py.read_text(encoding="utf-8")
+        rel = py.relative_to(workspace).as_posix()
+        if any(rel == d or rel.startswith(d + "/") for d in app_dirs):
+            continue
+        files[rel] = py.read_text(encoding="utf-8")
     return files
 
 
