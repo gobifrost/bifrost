@@ -126,16 +126,29 @@ derived via a join/lookup to `Solution.global_repo_access` when
 `workflow_record.solution_id` is set, else `False`. One DB session, one
 enrichment site.
 
-### Fix C — `can_access_global_repo` governs data fallback too (separate change, enabled by B)
+### Open question (NOT part of this change) — should data fallback be gated at all?
 
-Today the flag governs only **code** resolution (the virtual module loader). The
-same carried flag should govern **tables / configs / storage** fallback to the
-`_repo/` tier — so a sealed install (`global_repo_access=False`) cannot read a
-`_repo/` table or config any more than it can import `_repo/` code. Because Fix B
-makes the flag arrive at the engine as a first-class fact, this becomes "extend
-which read paths consult the already-carried flag," not new plumbing. **Scoped
-as a follow-up** in the implementation plan, not part of A/B, because it touches
-the data-resolution read paths and warrants its own tests.
+Today `global_repo_access` governs **only code** resolution (the virtual module
+loader's `_repo/` fallback). **Tables, configs, and storage have no fallback
+gate at all** — a solution reads `_repo/` data regardless of the flag. This is
+an asymmetry: a "sealed" install (`global_repo_access=False`) still cannot
+import `_repo/` code but *can* read a `_repo/` table or config.
+
+Whether to close that asymmetry is an **open design question**, deliberately
+out of scope for this spec. Three live options:
+
+1. **Reuse `global_repo_access`** to gate data fallback too — one flag, "can
+   this install touch `_repo/` at all" (code + data). Simplest mental model;
+   risks over-coupling code-sharing and data-sharing decisions that an author
+   may want to make independently.
+2. **Add a separate data-fallback flag** — e.g. `global_data_access` — so code
+   and data sharing are independently toggleable. More expressive, more surface.
+3. **Do nothing** — accept the asymmetry; data fallback stays ungated. Maybe
+   the current behavior is correct and code is the only thing worth sealing.
+
+Fix B makes whichever flag is chosen cheap to carry to the engine (it already
+becomes a first-class enriched fact), so this question does **not** block A/B.
+It needs its own brainstorm + decision before any implementation.
 
 ## Out of scope
 
@@ -157,8 +170,8 @@ the data-resolution read paths and warrants its own tests.
   `can_access_global_repo` matching the install for a solution workflow and
   `False` for a `_repo/` workflow; assert the consumer no longer opens a second
   DB session (no `SolutionRepository.get_by_id` call on the execution path).
-- **Fix C (follow-up):** e2e — a sealed install cannot read a `_repo/`
-  table/config; an open install can; a non-solution run is unaffected.
+(The data-fallback open question has no tests here — it isn't a planned change
+until its own brainstorm resolves which option, if any, to build.)
 
 ## Affected files
 
@@ -169,5 +182,7 @@ the data-resolution read paths and warrants its own tests.
 | `api/src/services/execution/service.py:126` | `get_workflow_for_execution` also returns `can_access_global_repo` |
 | `api/src/jobs/consumers/workflow_execution.py:574` | remove redundant `SolutionRepository` grab; read enriched field |
 | forms/agents invocation sites | set `solution_id` on the execute request when solution-managed |
-| (Fix C) table/config/storage read paths | consult `can_access_global_repo` for `_repo/` fallback |
-| `api/src/repositories/README.md` | update gate-2 prose: data fallback now honors the flag (after Fix C) |
+
+The data-fallback open question, if it resolves to a build, would additionally
+touch the table/config/storage read paths and the gate-2 README prose — but
+that is a separate spec, not this one.

@@ -45,8 +45,8 @@ flowchart TD
 
     E --> F{"Solution context active?<br/><i>module_cache_sync.get_solution_context</i>"}
     F -->|"yes — solution-managed run"| G["FIRST STOP: resolve under<br/>_solutions/{id}/ (modules) /<br/>solution_id-owned row (entities)<br/><i>own-first; ctx.solution_id / X-Bifrost-App</i>"]
-    G --> H{"global_repo_access?<br/><i>Solution.global_repo_access</i>"}
-    H -->|no| HFINAL["FINAL STOP<br/>(no _repo/ fallthrough —<br/>a bare _repo/ ref does NOT resolve)"]
+    G --> H{"global_repo_access?<br/>(CODE fallback only —<br/>data fallback is ungated today)<br/><i>Solution.global_repo_access</i>"}
+    H -->|"no (code)"| HFINAL["FINAL STOP for code<br/>(no _repo/ module fallthrough —<br/>a bare _repo/ import does NOT resolve)"]
     H -->|yes| I
     F -->|"no — plain _repo/ run"| I["Cascade: org-specific row<br/>then global (solution_id IS NULL world)"]
 
@@ -65,10 +65,13 @@ flowchart TD
 the caller's `ExecutionContext` (gate 0a) is *whose authority it travels
 under*. They are deliberately separate. A leak of the sentinel collapses
 only the transport trust — the per-call C2 gate (gate 1) still runs against
-the caller's real flags. Solutions are a **first stop at gate 2 and the
-final stop unless `global_repo_access` is on**. Table policies (gate 4)
-gate individual *rows* after the *table* itself has been resolved and
-RBAC-checked.
+the caller's real flags. Solutions are a **first stop at gate 2**. For
+**code** resolution they are the **final stop unless `global_repo_access`
+is on** (the diamond above). For **data** (tables/configs/storage) the
+flag does **not** apply today — data fallback to `_repo/` is currently
+ungated; whether it should be gated is an open question (see the Solutions
+section). Table policies (gate 4) gate individual *rows* after the *table*
+itself has been resolved and RBAC-checked.
 
 ---
 
@@ -401,7 +404,10 @@ There are two parallel mechanisms — same rule, different layer:
 - Try `_solutions/{solution_id}/…` **FIRST**.
 - Fall through to the bare `_repo/` root **ONLY when `global_repo_access`
   is on**. With it off, a bare `_repo/` import does **not** silently
-  resolve — the solution is sealed.
+  resolve — the solution is sealed **for code**.
+
+`global_repo_access` governs **code only**. See the open question at the end
+of this section for why data (gate 2's entity reads) is currently ungated.
 
 The context is per-execution and thread-local: `set_solution_context` /
 `clear_solution_context` / `get_solution_context`. No active context ==
@@ -444,6 +450,21 @@ with `solution_id` NULL'd and `orphaned_at` set. The cascade excludes
 orphaned rows from name resolution (independently of `solution_id`, since
 `Config` would otherwise miss the exclusion) — the former-install data
 stops resolving by name but is not deleted.
+
+### Open question: should data fallback be gated?
+
+`global_repo_access` gates **code** fallback (the module loader). **Data
+fallback is currently ungated**: a solution-managed run reads a `_repo/`
+table or config by name regardless of the flag. This is an asymmetry — a
+"sealed" install can't import `_repo/` code but *can* read `_repo/` data.
+
+Whether to close it is undecided. Options under consideration: reuse
+`global_repo_access` for data too (one "touch `_repo/` at all" flag), add a
+separate data-fallback flag (independent code/data sharing), or leave data
+ungated. See
+`docs/superpowers/specs/2026-06-08-solution-workflow-resolution-chokepoint-design.md`.
+Until that resolves, the current behavior — **code gated, data ungated** —
+is the truth.
 
 ---
 
