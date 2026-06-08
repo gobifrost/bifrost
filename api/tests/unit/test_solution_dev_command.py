@@ -16,10 +16,6 @@ def test_set_dev_execution_context_sets_org(monkeypatch):
     from bifrost.solution_dev import function_host
     captured = {}
 
-    def _fake_set(ctx):
-        captured["ctx"] = ctx
-
-    monkeypatch.setattr(function_host, "_set_execution_context_for_test", None, raising=False)
     # Patch the imported setter inside the function by patching the source module.
     import bifrost._context as _ctx_mod
     monkeypatch.setattr(_ctx_mod, "set_execution_context", lambda ctx: captured.__setitem__("ctx", ctx))
