@@ -214,6 +214,8 @@ export default defineConfig(({ command }) => {
       ? {
           "import.meta.env.VITE_BIFROST_API_URL": JSON.stringify(env.url),
           "import.meta.env.VITE_BIFROST_TOKEN": JSON.stringify(env.token),
+          "import.meta.env.VITE_BIFROST_APP_ID": JSON.stringify(process.env.VITE_BIFROST_APP_ID || ""),
+          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || ""),
         }
       : {};
   return {
@@ -254,9 +256,10 @@ const mountEl = boot?.mountEl ?? document.getElementById("root")!;
 const basename = boot?.basename ?? "/";
 const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
 const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
-const orgScope = boot?.orgScope ?? null;
+// Precedence (boot over VITE env) is locked by client/src/lib/app-sdk/__tests__/dev-bootstrap.test.ts
+const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
 // This app's id, so useWorkflow scopes path refs to THIS install's workflow.
-const appId = boot?.appId ?? null;
+const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;
 
 const root = createRoot(mountEl);
 // Let the platform tear this root down on navigation (no leak).
@@ -278,9 +281,10 @@ import { BifrostHeader, useWorkflow } from "bifrost";
 
 function Home() {
   // Pass a workflow UUID or a portable `path::function` ref (e.g.
-  // "workflows/hello.py::main"). Bare names are NOT resolvable — workflow
-  // names aren't unique, so the execute endpoint 404s on them.
-  const wf = useWorkflow<{ message: string }>("workflows/your_workflow.py::main");
+  // "functions/hello.py::main", the sample shipped with this scaffold). Bare
+  // names are NOT resolvable — workflow names aren't unique, so the execute
+  // endpoint 404s on them.
+  const wf = useWorkflow<{ message: string }>("functions/hello.py::main");
   return (
     <main style={{ padding: 24 }}>
       <h1>Hello from your Bifrost app</h1>
@@ -318,6 +322,16 @@ export default function App() {
   );
 }
 """
+    sample_fn = '''\
+from bifrost import workflow
+
+
+@workflow
+async def main():
+    """The scaffold's sample function — `bifrost solution start` runs this
+    locally so the app's first-run button works with no deploy."""
+    return {"message": "Hello from your Bifrost solution"}
+'''
     env_example = """\
 # OPTIONAL. You normally DON'T need this file: `npm run dev` auto-discovers the
 # token `bifrost login` wrote (env, or the nearest .env up the tree). Create a
@@ -352,6 +366,7 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
         "index.html": index_html,
         "src/main.tsx": main_tsx,
         "src/App.tsx": app_tsx,
+        "functions/hello.py": sample_fn,
         ".env.example": env_example,
         "README.md": readme,
     }
