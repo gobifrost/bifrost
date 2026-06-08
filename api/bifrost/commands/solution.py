@@ -20,6 +20,7 @@ import asyncio
 import json
 import os
 import pathlib
+import subprocess
 
 import click
 import yaml
@@ -800,7 +801,6 @@ def install_cmd(zip_path: str, org_id: str | None, set_values: tuple[str, ...]) 
 @click.option("--port", default=3000, show_default=True, type=int, help="Local origin port.")
 def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
     import shutil
-    import subprocess
 
     from bifrost.client import BifrostClient
     from bifrost.solution_dev.app_select import AppSelectionError, select_app
@@ -855,19 +855,46 @@ def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
     vite_env["BIFROST_ACCESS_TOKEN"] = client._access_token
 
     vite_port = port + 1
+    # Run `npm run dev` in its OWN process group (start_new_session) so teardown
+    # can signal the WHOLE group: `npm` spawns the real `vite` node process as a
+    # child, and a plain terminate() of `npm` orphans `vite` (it keeps the port
+    # bound). Killing the group reaps both. (POSIX; Windows falls back to a plain
+    # terminate of the npm process.)
     vite_proc = subprocess.Popen(
         ["npm", "run", "dev", "--", "--port", str(vite_port), "--strictPort"],
         cwd=chosen.app_dir, env=vite_env,
+        start_new_session=True,
     )
 
     try:
         asyncio.run(_serve(client, chosen, org_info, host, port, vite_port, workspace))
     finally:
-        vite_proc.terminate()
-        try:
-            vite_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            vite_proc.kill()
+        _terminate_process_group(vite_proc)
+
+
+def _terminate_process_group(proc: "subprocess.Popen") -> None:
+    """Stop a child and any grandchildren it spawned in its process group.
+
+    `npm run dev` forks `vite`; killing only `npm` leaves `vite` holding the
+    port. SIGTERM the group, wait briefly, then SIGKILL the group if needed.
+    """
+    import signal
+
+    def _signal_group(sig: int) -> None:
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(os.getpgid(proc.pid), sig)
+                return
+            except (ProcessLookupError, PermissionError):
+                return  # already gone / not our group — fall through to proc-level
+        # No process groups (Windows): signal the process itself.
+        proc.send_signal(sig)
+
+    _signal_group(signal.SIGTERM)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _signal_group(signal.SIGKILL)
 
 
 async def _serve(client, chosen, org_info, host, port, vite_port, workspace):
