@@ -256,7 +256,7 @@ const mountEl = boot?.mountEl ?? document.getElementById("root")!;
 const basename = boot?.basename ?? "/";
 const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
 const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
-// Precedence (boot over VITE env) is locked by client/src/lib/app-sdk/__tests__/dev-bootstrap.test.ts
+// Precedence (boot over VITE env) is locked by client/src/lib/app-sdk/dev-bootstrap.test.ts
 const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
 // This app's id, so useWorkflow scopes path refs to THIS install's workflow.
 const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;
