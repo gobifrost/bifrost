@@ -938,6 +938,13 @@ def handle_solution(args: list[str]) -> int:
     except click.exceptions.UsageError as exc:
         exc.show()
         return exc.exit_code
+    # ClickException covers UsageError's siblings too (e.g. the ClickException
+    # that start_cmd/deploy_cmd/install_cmd raise on a handled error). Without
+    # this, standalone_mode=False lets it escape as an uncaught traceback instead
+    # of the intended one-line "Error: ..." message.
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 1
 
@@ -950,6 +957,9 @@ def handle_deploy(args: list[str]) -> int:
     except click.exceptions.Exit as exc:
         return exc.exit_code
     except click.exceptions.UsageError as exc:
+        exc.show()
+        return exc.exit_code
+    except click.ClickException as exc:
         exc.show()
         return exc.exit_code
     except SystemExit as exc:
