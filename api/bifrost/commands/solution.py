@@ -34,6 +34,25 @@ from bifrost.solution_descriptor import (
 # Top-level source dirs whose .py files are installed as solution source.
 _PY_SOURCE_DIRS = ("workflows", "modules", "shared")
 
+# The scaffold's sample workflow. It lives at the SOLUTION ROOT (not under the
+# app dir) so its ``path::fn`` ref resolves the same way everywhere: workflow
+# refs are workspace-root-relative, so the app's ``functions/hello.py::main``
+# means ``<solution-root>/functions/hello.py``. ``bifrost solution start``
+# discovers it from the root and runs it locally, so the scaffold's button works
+# on first run with no deploy.
+_SAMPLE_WORKFLOW_PATH = "functions/hello.py"
+_SAMPLE_WORKFLOW_REF = f"{_SAMPLE_WORKFLOW_PATH}::main"
+_SAMPLE_WORKFLOW_SOURCE = '''\
+from bifrost import workflow
+
+
+@workflow
+async def main():
+    """The scaffold's sample function — `bifrost solution start` runs this
+    locally so the app's first-run button works with no deploy."""
+    return {"message": "Hello from your Bifrost solution"}
+'''
+
 
 @click.group(name="solution", help="Manage Solution installs (installable surfaces).")
 def solution_group() -> None:
@@ -92,6 +111,17 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     # deployer reads this manifest). Without this the scaffold would be source
     # with no way to deploy — a papercut. Keyed by a fresh UUID (app identity).
     bifrost_dir = app_dir.parent.parent if path else pathlib.Path(".")
+
+    # Write the sample workflow at the SOLUTION ROOT (not under the app dir), so
+    # its ``path::fn`` ref (``functions/hello.py::main``) resolves the same way
+    # everywhere — refs are workspace-root-relative. ``solution start`` discovers
+    # it from the root and runs the app's first-run button locally. Don't clobber
+    # an existing file (a re-scaffold of a second app must not overwrite edits).
+    sample_dest = bifrost_dir / _SAMPLE_WORKFLOW_PATH
+    if not sample_dest.exists():
+        sample_dest.parent.mkdir(parents=True, exist_ok=True)
+        sample_dest.write_text(_SAMPLE_WORKFLOW_SOURCE)
+
     manifest = bifrost_dir / ".bifrost" / "apps.yaml"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     data = yaml.safe_load(manifest.read_text()) if manifest.is_file() else None
@@ -109,7 +139,10 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
 
     click.echo(f"Scaffolded standalone_v2 app at {app_dir}")
     click.echo(f"Registered it in {manifest} (id {app_id}).")
-    click.echo("Next: cd into it, `cp .env.example .env`, `npm install`, `npm run dev`.")
+    if sample_dest.exists():
+        click.echo(f"Sample workflow at {sample_dest} (ref {_SAMPLE_WORKFLOW_REF}).")
+    click.echo("Next: run `bifrost solution start` from the solution root — it serves the")
+    click.echo("app and runs your local workflows behind one origin (no deploy needed).")
     click.echo("Deploy with `bifrost deploy` from the solution root.")
 
 
@@ -322,16 +355,6 @@ export default function App() {
   );
 }
 """
-    sample_fn = '''\
-from bifrost import workflow
-
-
-@workflow
-async def main():
-    """The scaffold's sample function — `bifrost solution start` runs this
-    locally so the app's first-run button works with no deploy."""
-    return {"message": "Hello from your Bifrost solution"}
-'''
     env_example = """\
 # OPTIONAL. You normally DON'T need this file: `npm run dev` auto-discovers the
 # token `bifrost login` wrote (env, or the nearest .env up the tree). Create a
@@ -366,7 +389,6 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
         "index.html": index_html,
         "src/main.tsx": main_tsx,
         "src/App.tsx": app_tsx,
-        "functions/hello.py": sample_fn,
         ".env.example": env_example,
         "README.md": readme,
     }
