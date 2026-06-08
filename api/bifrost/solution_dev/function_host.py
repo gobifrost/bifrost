@@ -7,6 +7,7 @@ mirroring `bifrost run`'s offline execution — nothing is registered to the API
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import logging
 import sys
 from pathlib import Path
@@ -66,3 +67,34 @@ def _load_module(py: Path, rel: str) -> ModuleType | None:
         # (the dev server stays useful; the user sees the error on first call).
         logger.warning("solution start: could not import %s: %s", rel, exc)
         return None
+
+
+class FunctionHost:
+    """Holds the discovered function map; runs one by ``path::fn`` ref.
+
+    ``reload()`` re-discovers (used on file change). ``run()`` executes the
+    callable. Sync functions are supported (run directly); async are awaited.
+    The execution context (org/user) is configured by the command before serving
+    via :func:`set_dev_execution_context`, so callables that read
+    ``context.org_id`` / use the data-plane behave as under ``bifrost run``.
+    """
+
+    def __init__(self, workspace: Path) -> None:
+        self._workspace = workspace
+        self._fns: dict[str, Callable[..., Any]] = {}
+
+    def reload(self) -> None:
+        self._fns = discover_functions(self._workspace)
+
+    def refs(self) -> list[str]:
+        return sorted(self._fns)
+
+    def has(self, ref: str) -> bool:
+        return ref in self._fns
+
+    async def run(self, ref: str, params: dict[str, Any]) -> Any:
+        fn = self._fns[ref]  # KeyError → caller maps to 404
+        result = fn(**params)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
