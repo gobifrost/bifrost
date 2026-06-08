@@ -84,6 +84,35 @@ async def test_local_path_ref_runs_in_function_host():
         await up_runner.cleanup()
 
 
+class _RaisingHost:
+    def has(self, ref):
+        return True
+
+    async def run(self, ref, params):
+        raise ValueError("boom in the workflow")
+
+
+async def test_local_error_returns_200_with_error_field():
+    # A local workflow exception must surface the real error to the SDK, which
+    # reads `body.error` on a 200 (deployed contract); a non-200 would only show
+    # statusText. So the proxy returns 200 + {"error": "...boom..."}.
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream({}), up_port)
+    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    dev_runner = await _serve(build_dev_app(cfg, _RaisingHost(), vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                             json={"workflow_id": "functions/boom.py::main", "input_data": {}})
+        assert r.status_code == 200
+        err = r.json()["error"]
+        assert "boom in the workflow" in err
+        assert "ValueError" in err  # includes the exception type + traceback
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
 async def test_unknown_ref_proxies_to_upstream():
     record = {}
     up_port, dev_port = _free_port(), _free_port()

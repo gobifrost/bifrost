@@ -146,7 +146,15 @@ async def _execute_handler(request: web.Request) -> web.Response:
         try:
             result = await host.run(ref, body.get("input_data") or {})
         except Exception as exc:
-            return web.json_response({"detail": f"Local workflow error: {exc}"}, status=500)
+            # Surface the real error in the app: useWorkflow reads `body.error`
+            # on a 200 (the deployed error contract) and shows it; on a non-200 it
+            # only shows `statusText` ("Internal Server Error"), hiding the cause.
+            # Returning {"error": ...} at 200 gives the dev the actual traceback —
+            # the whole point of a local debug loop.
+            import traceback
+
+            tb = traceback.format_exc()
+            return web.json_response({"error": f"{type(exc).__name__}: {exc}\n\n{tb}"})
         return web.json_response({"status": "completed", "result": result})
 
     # Otherwise proxy to the dev API (UUIDs, _repo/ refs, sibling installs).
