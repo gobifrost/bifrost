@@ -20,9 +20,24 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from src.models.contracts.claims import ClaimQuery
-
 logger = logging.getLogger(__name__)
+
+
+class ClaimQuery(BaseModel):
+    """Portable copy of the server's ``ClaimQuery`` (the lookup producing a
+    custom claim's value).
+
+    The CLI/manifest cannot import ``src.models.contracts.claims`` — the packaged
+    ``bifrost`` distribution has no ``src`` on its path, so a top-level import
+    crashed ``bifrost export`` the moment a bundle carried manifest files. The
+    portable manifest only needs to round-trip the data, so ``where`` is a loose
+    dict AST here (the server validates it on import) — mirroring the server
+    shape (``table``/``where``/``select``) without the server dependency.
+    """
+
+    table: str = Field(min_length=1, description="Source table name (org-scoped)")
+    where: dict | None = Field(default=None, description="Filter AST (same shape as policies)")
+    select: str = Field(min_length=1, description="Column or JSON path on the source table")
 
 # =============================================================================
 # Constants

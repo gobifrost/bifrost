@@ -20,6 +20,37 @@ def test_vendoring_importable_from_bifrost_package() -> None:
     assert callable(vendor_shared_deps)
 
 
+def test_manifest_importable_without_src() -> None:
+    """``bifrost.manifest`` must import with no ``src`` on the path.
+
+    ``bifrost export`` imports ``bifrost.manifest`` the moment a bundle carries
+    ``.bifrost/*.yaml`` files. A top-level ``from src.models.contracts.claims
+    import ClaimQuery`` crashed export in the installed CLI (ModuleNotFoundError:
+    'src'); the in-repo unit tests missed it because ``src`` resolves here. This
+    asserts the module has no MODULE-LEVEL ``src.*`` import (the kind that fires
+    at import time), by AST — so it catches the regression even though ``src``
+    happens to resolve in this test environment.
+    """
+    import bifrost.manifest  # noqa: F401  — must not raise
+
+    src_root = Path(bifrost.manifest.__file__)
+    tree = ast.parse(src_root.read_text())
+    module_level_src: list[str] = []
+    for node in tree.body:  # ONLY top-level statements (import-time)
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if mod == "src" or mod.startswith("src."):
+                module_level_src.append(f"line {node.lineno}: from {mod} import ...")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "src" or alias.name.startswith("src."):
+                    module_level_src.append(f"line {node.lineno}: import {alias.name}")
+    assert not module_level_src, (
+        "bifrost/manifest.py must not import src.* at module level (crashes the "
+        "packaged CLI's export):\n" + "\n".join(module_level_src)
+    )
+
+
 def test_cli_commands_do_not_import_src() -> None:
     """No module under ``bifrost/commands/`` may import ``src.*``.
 

@@ -36,6 +36,7 @@ from src.models.orm.users import Role
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from bifrost.manifest import (
+    ClaimQuery,
     Manifest,
     ManifestAgent,
     ManifestApp,
@@ -57,7 +58,6 @@ from bifrost.manifest import (
     ManifestTable,
     ManifestWorkflow,
 )
-from src.models.contracts.claims import ClaimQuery
 
 logger = logging.getLogger(__name__)
 

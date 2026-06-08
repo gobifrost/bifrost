@@ -2444,12 +2444,12 @@ class TestMCPServerManifest:
 
 def test_custom_claim_manifest_round_trip():
     from bifrost.manifest import (
+        ClaimQuery,
         Manifest,
         ManifestCustomClaim,
         parse_manifest,
         serialize_manifest,
     )
-    from src.models.contracts.claims import ClaimQuery
 
     entry = ManifestCustomClaim(
         id="11111111-1111-1111-1111-111111111111",
