@@ -86,3 +86,82 @@ RULES OF ENGAGEMENT:
 - Do NOT modify product source. This is a drive/audit pass. Throwaway fixtures via CLI/API/UI are fine.
 - If you could not boot a healthy stack, return blocked=true with an empty findings array — never fabricate.
 `
+
+const AXES = [
+  {
+    key: 'scope-isolation',
+    prompt: `${BOOTSTRAP}
+
+YOUR AXIS: SCOPE / CROSS-ORG ISOLATION (the #1 fear). Set AXIS=scope-isolation in the bootstrap.
+Drive empirically on your own stack:
+1. Create two orgs (CLI: \`bifrost orgs create\`). Install a solution (workflow + table + config) to OrgA only.
+2. As a principal in OrgB (use --org on execute, or impersonate as superuser), confirm OrgB CANNOT resolve/execute OrgA's install's workflow by path, CANNOT read its table, CANNOT see its config value.
+3. Forge an X-Bifrost-App header naming OrgA's app while authenticated as an OrgB user; confirm it does NOT reach OrgA's table (curl the API with the OrgB bearer token from your scratch .env).
+4. Superuser scope-override: confirm pinning scope to OrgA returns OrgA's entities and to OrgB returns OrgB's — never bleeding.
+5. S3 isolation: confirm OrgA's _solutions/{id}/ content is not readable as OrgB.
+Return structured findings, axis="scope-isolation".`,
+  },
+  {
+    key: 'lifecycle',
+    prompt: `${BOOTSTRAP}
+
+YOUR AXIS: INSTALL / UNINSTALL / REDEPLOY LIFECYCLE. Set AXIS=lifecycle in the bootstrap.
+Drive empirically:
+1. Full install round-trip (CLI \`bifrost solution install\` AND the Solutions UI page) — both must work.
+2. Seed rows into an installed solution table, UNINSTALL, confirm the table+rows are ORPHANED not destroyed (orphaned_at set, solution_id NULL'd; visible via "Show orphaned" in UI). RE-INSTALL the same slug; confirm orphaned data REATTACHES (origin_solution_slug/id provenance) and row data survived.
+3. Redeploy with a CHANGED table schema; rows must survive (deploy upserts the Table row, never deletes Documents).
+4. Same-slug independence: two different installs of solutions sharing a workflow path each resolve their OWN workflow.
+5. Install with config values (\`--set KEY=VALUE\` and via the UI install dialog); confirm values land on the install and are readable at runtime, instance-owned (not in the export bundle).
+Return structured findings, axis="lifecycle".`,
+  },
+  {
+    key: 'readonly-enforcement',
+    prompt: `${BOOTSTRAP}
+
+YOUR AXIS: READ-ONLY / MANAGED-ENTITY ENFORCEMENT. Set AXIS=readonly-enforcement in the bootstrap.
+Deploy is the SOLE writer of solution-managed entities. Try to MUTATE managed forms/agents/tables/configs through EVERY surface and confirm each is refused (409 / skipped), not silently applied:
+1. UI: open a solution-managed form/agent/app in the builder and try to edit/save.
+2. CLI: \`bifrost forms update\` / \`agents update\` / \`tables update\` / \`configs set\` against a managed entity.
+3. API: PATCH/PUT the managed entity directly with a superuser token.
+4. \`/api/workflows/{id}/remap\` pointed at a managed form/agent's workflow binding.
+5. MCP tools (if reachable) that mutate forms/agents/tables.
+For each: is it blocked with a clear error, or does it silently corrupt managed state? A silent mutation is a high/critical finding.
+Return structured findings, axis="readonly-enforcement".`,
+  },
+  {
+    key: 'global-repo-data-fallback',
+    prompt: `${BOOTSTRAP}
+
+YOUR AXIS: GLOBAL-REPO / DATA-FALLBACK. Set AXIS=global-repo-data-fallback in the bootstrap.
+CODE fallback is gated by global_repo_access; DATA fallback (tables/configs/storage) is currently UNGATED by design — your job is to produce EVIDENCE on whether that asymmetry bites.
+1. Install a solution with global_repo_access=FALSE that contains a workflow which \`from modules.x import y\` references a _repo/ module. Run it; confirm the _repo/ import does NOT resolve (sealed). Flip global_repo_access=TRUE, redeploy/re-run; confirm it now DOES resolve.
+2. With a SEALED install (global_repo_access=FALSE): from its workflow, read a _repo/ TABLE by name and a _repo/ CONFIG by key that the install does NOT own. Document whether the sealed install can currently reach _repo/ DATA (expected: yes, ungated). Capture whether this serves surprising/wrong data (e.g. a _repo/ table shadowing an install-intended name).
+3. Toggle global_repo_access OFF->ON and ON->OFF and re-run with a warm worker; confirm the per-execution import root reflects the current flag (no stale context bleed).
+Return structured findings, axis="global-repo-data-fallback". In coverage_note, state plainly whether the ungated data fallback caused any real wrong-data outcome.`,
+  },
+  {
+    key: 'ui-ux',
+    prompt: `${BOOTSTRAP}
+
+YOUR AXIS: UI/UX CORRECTNESS (drive the BROWSER with Playwright, screenshot everything). Set AXIS=ui-ux in the bootstrap.
+1. Forms: render and SUBMIT a form (incl. a solution-managed form — confirm it runs the install's OWN workflow, not a _repo/ one). Watch for 404s/empty results.
+2. Standalone v2 apps: open an installed solution's app; confirm it mounts and works.
+3. BifrostHeader STANDALONE: a v2 app using the SDK BifrostHeader must render STYLED outside the platform theme (this was just fixed to use inline styles). Screenshot it; confirm it is NOT unstyled (has borders/spacing/colors, hover works).
+4. Solutions install/manage page: install dialog, config-schema prompts (incl. secret-typed fields masked), "Show orphaned", uninstall confirm.
+5. The Solutions page itself: list/preview/entity-summary chips render correctly.
+Return structured findings, axis="ui-ux". Put screenshot paths in observed.`,
+  },
+  {
+    key: 'cli-docs-literalism',
+    prompt: `${BOOTSTRAP}
+
+YOUR AXIS: CLI / DOCS-LITERALISM. Set AXIS=cli-docs-literalism in the bootstrap.
+Be the user who copies the published docs VERBATIM and a user copying STALE patterns.
+1. Follow CLAUDE.md's "Spinning up / connecting" and docs/llm.txt solution recipes exactly; note any step that doesn't work as written.
+2. \`bifrost solution init\` -> \`scaffold-app\` -> \`deploy\` first-run path; confirm the scaffold's sample workflow actually deploys+runs (a prior bug dropped functions/).
+3. \`bifrost watch\` INSIDE a solution workspace must REFUSE with the message pointing at \`bifrost solution start\` (just landed). Confirm. Then \`bifrost solution start\` local dev: app + local workflows behind one origin.
+4. \`bifrost export --portable <dir>\` then \`bifrost import <dir> --org <uuid> --role-mode name\` into another org: clean round-trip? env-specific fields scrubbed? imported solution then INSTALLS and WORKS?
+5. Try a stale pattern a user might copy from old docs (e.g. an old import flag, a removed subcommand) — does it fail with a helpful error or a confusing traceback?
+Return structured findings, axis="cli-docs-literalism".`,
+  },
+]
