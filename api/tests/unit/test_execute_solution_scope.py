@@ -12,12 +12,16 @@ from src.routers.workflows import _derive_solution_scope
 
 async def _org(db):
     o = Organization(id=uuid4(), name=f"O-{uuid4().hex[:6]}", created_by="test")
-    db.add(o); await db.flush(); return o
+    db.add(o)
+    await db.flush()
+    return o
 
 
 async def _sol(db, org_id):
     s = Solution(id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S", organization_id=org_id)
-    db.add(s); await db.flush(); return s
+    db.add(s)
+    await db.flush()
+    return s
 
 
 @pytest.mark.e2e
@@ -33,7 +37,8 @@ class TestDeriveSolutionScope:
         org = (await _org(db)).id
         sol = await _sol(db, org)
         form = Form(id=uuid4(), name="f", organization_id=org, solution_id=sol.id, workflow_id="workflows/foo.py::main", created_by="test")
-        db.add(form); await db.flush()
+        db.add(form)
+        await db.flush()
         got = await _derive_solution_scope(db, solution_id=None, form_id=str(form.id), app_id=None)
         assert got == sol.id
 
@@ -42,7 +47,8 @@ class TestDeriveSolutionScope:
         org = (await _org(db)).id
         sol = await _sol(db, org)
         app = Application(id=uuid4(), name="a", slug=f"a-{uuid4().hex[:6]}", organization_id=org, solution_id=sol.id, repo_path="apps/a", created_by="test")
-        db.add(app); await db.flush()
+        db.add(app)
+        await db.flush()
         got = await _derive_solution_scope(db, solution_id=None, form_id=None, app_id=str(app.id))
         assert got == sol.id
 
@@ -58,7 +64,8 @@ class TestDeriveSolutionScope:
         db = db_session
         org = (await _org(db)).id
         form = Form(id=uuid4(), name="f", organization_id=org, solution_id=None, workflow_id="workflows/foo.py::main", created_by="test")
-        db.add(form); await db.flush()
+        db.add(form)
+        await db.flush()
         got = await _derive_solution_scope(db, solution_id=None, form_id=str(form.id), app_id=None)
         assert got is None
 
