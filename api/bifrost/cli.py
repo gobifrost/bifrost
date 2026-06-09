@@ -624,14 +624,6 @@ def main(args: list[str] | None = None) -> int:
         if command == "pull":
             return handle_pull(args[1:])
 
-        if command == "import":
-            from bifrost.commands.import_cmd import handle_import
-            return handle_import(args[1:])
-
-        if command == "export":
-            from bifrost.commands.export import handle_export
-            return handle_export(args[1:])
-
         if command == "watch":
             return handle_watch(args[1:])
 
@@ -682,8 +674,6 @@ Commands:
   git         Git source control operations (fetch, status, commit, push, resolve, diff, discard)
   push        Push local files to Bifrost platform (alias for sync)
   pull        Pull files from Bifrost platform to local directory (alias for sync)
-  export      Export a workspace bundle (optionally portable/scrubbed)
-  import      Apply a bundle to the current environment
   solution    Manage Solution installs (init, scaffold-app, start, deploy, install)
   deploy      Deploy the current Solution workspace (alias for 'solution deploy')
   watch       Watch for file changes and auto-push
@@ -2194,9 +2184,9 @@ class _WatchChangeHandler:
     """Watchdog event handler that tracks file changes for push.
 
     Watch is exclusion-based: it watches the workspace root and skips
-    .gitignore-derived paths plus .bifrost/. The `.bifrost/` directory is an
-    export artifact written by `bifrost export --portable` and consumed by
-    `bifrost import`; sync/watch/push/pull never read or mutate it.
+    .gitignore-derived paths plus .bifrost/. The `.bifrost/` directory is a
+    generated manifest artifact (produced by `bifrost sync`); sync/watch/push/
+    pull never read or mutate it.
     """
 
     def __init__(self, state: _WatchState):

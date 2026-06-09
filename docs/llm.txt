@@ -283,16 +283,9 @@ Non-obvious semantics:
 
 ---
 
-## Cross-environment bundles
+## Cross-environment distribution
 
-```
-bifrost export --portable <out-dir>      # scrubs org_ids, user_ids, timestamps, OAuth secrets, secret values; rewrites role_ids → role_names
-bifrost import <bundle-dir> --org <target-uuid> [--role-mode name|uuid] [--dry-run] [--delete-removed]
-```
-
-`export --portable` writes `<out-dir>/.bifrost/*.yaml`, `<out-dir>/workflows/`, `<out-dir>/apps/`, and `<out-dir>/bundle.meta.yaml` (source env, bifrost version, scrub rules applied).
-
-`import` uploads workflow/app code via `POST /api/files/write` first, then POSTs `.bifrost/` content to `/api/files/manifest/import` with the target org UUID. `--role-mode name` resolves roles by name in the target env; missing role names fail loud.
+To package and install a set of entities into an org, use **Solutions** (`bifrost solution deploy` / `solution install <zip>`) — install-scoped, lifecycle-aware. The old `bifrost export --portable` / `bifrost import` bundle commands were **removed** (they predated Solutions and their `--portable` scrub did not actually strip env-specific fields). For raw `_repo/` workspace movement, use git sync.
 
 ---
 
