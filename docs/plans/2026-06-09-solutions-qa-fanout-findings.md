@@ -7,12 +7,14 @@ Scope: adversarial QA across six axes (scope-isolation, lifecycle, readonly-enfo
 ## STATUS (CONFIRMED only)
 
 - critical: 0
-- high: 2
+- high: 1
 - medium: 1
 - low: 6
-- TOTAL CONFIRMED: 9
+- TOTAL CONFIRMED: 8
 
-REFUTED: 3 (do not re-investigate). BLOCKED axes: 0 (all six axes booted and were driven).
+REFUTED: 4 (do not re-investigate) — includes the original H1 (config/secret fallback), RETRACTED on review as intended org→global cascade behavior, not a bug. BLOCKED axes: 0 (all six axes booted and were driven).
+
+> **Post-run triage correction (2026-06-09):** the original **H1** ("sealed cross-org install reads decrypted global secrets") was downgraded from CONFIRMED/HIGH to REFUTED. The reported behavior is the **intended org→global config cascade**, not a cross-tenant leak. `merged_for_sdk()` (`api/src/repositories/config.py:148-186`) unions exactly two scopes — `organization_id IS NULL` (global) and `organization_id == caller's own org` — and has **no branch that reads any other org's configs**. A "global" (NULL-org) config is a deliberately operator-published value, not "another org's secret"; reading it from any org's cascade is the same resolver every config read uses. The consumer is the server-side **workflow** (engine sentinel), not a user, within the trust boundary of "whoever can deploy a workflow into this org." `global_repo_access` is a `_repo/` **code-import** seal, not a secret ACL — the code/data asymmetry is documented and deliberate. Org-*scoped* secrets remain non-reachable cross-org (scope-isolation axis confirmed: OrgB forcing OrgA scope → 403). See REFUTED #4.
 
 ---
 
@@ -20,15 +22,8 @@ REFUTED: 3 (do not re-investigate). BLOCKED axes: 0 (all six axes booted and wer
 
 ### HIGH
 
-#### H1 — Ungated config/secret fallback: a sealed cross-org solution install reads any GLOBAL `_repo/` config (including fully decrypted secrets) it never declared, regardless of `global_repo_access`
-- **surface:** cli (SDK config path)
-- **did:** Set a GLOBAL (NULL-org) config `fallback_probe_cfg='REPO_TIER_CONFIG_VALUE'` and a GLOBAL secret `global_api_secret='SUPER_SECRET_REPO_KEY'` (type=secret) via `POST /api/config {organization_id:null}`. Built a SEALED install (`global_repo_access:false`) in CustOrg (a different org than where the globals were authored) whose workflow calls `bifrost.config.get(...)` on both keys — neither declared in any config_schema. Reported `len()` + first 2 chars to prove decryption vs redaction placeholder.
-- **observed:** Sealed cross-org install received `config_read='REPO_TIER_CONFIG_VALUE'`, `secret_len=21`, `secret_prefix2='SU'` — the fully decrypted plaintext `SUPER_SECRET_REPO_KEY`. `global_repo_access=false` did NOT block it. The persisted `[REDACTED]` is cosmetic output-scrubbing only; the plaintext is in the workflow's hands at runtime.
-- **expected:** A sealed install that cannot import `_repo/` CODE should likewise not harvest arbitrary GLOBAL operator config/secrets it never declared. The seal currently gives false isolation: code sealed, data/secrets wide open by key name, cross-org.
-- **code_ref:** `api/src/routers/cli.py:407` (`cli_get_config` → `ConfigRepository.merged_for_sdk()`; org→global cascade, no solution_id, no global_repo_access check, runs `decrypt_secret()` before returning); `api/bifrost/config.py:62` (SDK `config.get` → `/api/sdk/config/get`); `api/src/repositories/config.py:121-203`.
-- **proposed fix shape:** Add a solution-scoping + `global_repo_access` gate on the SDK config read path — when the caller is a sealed solution install, restrict the cascade to the install's own/org-scoped configs (and declared schema keys), never the global NULL-org tier, mirroring the module-loader seal.
-
-#### H2 — `bifrost export --portable` does NOT scrub org IDs/names despite help text and the `scrubbed:[]` contract
+#### H1 — `bifrost export --portable` does NOT scrub org IDs/names despite help text and the `scrubbed:[]` contract
+> Renumbered from H2 after the original H1 (config/secret fallback) was RETRACTED — see REFUTED #4.
 - **surface:** export-import
 - **did:** From a solution workspace ran `bifrost export --portable <dir>` and `bifrost export <dir>` (non-portable) for comparison; inspected `.bifrost/organizations.yaml` and `bundle.meta.yaml`. Help text states: `--portable Strip env-specific fields (org IDs, timestamps, secrets) for sharing.`
 - **observed:** Portable `organizations.yaml` contains concrete source-env org UUIDs AND human names (e.g. `00000000-...-0002 / Provider`, `<uuid> / QA Target Org`). Portable and full bundles produce BYTE-IDENTICAL `organizations.yaml` (same md5). `bundle.meta.yaml` records `portable: true` but `scrubbed: []` (no rules applied) and `source_env: localhost:<port>`. A "shareable" bundle leaks the full source-env org roster + source host.
@@ -100,22 +95,24 @@ REFUTED: 3 (do not re-investigate). BLOCKED axes: 0 (all six axes booted and wer
 
 ## REFUTED (do not re-investigate)
 
-1. **DATA fallback (tables) is UNGATED by `global_repo_access` but own-first prevents wrong-data.** — The headline behavior reproduced (a sealed install with no own table reads a GLOBAL `_repo/` table by name), but this is **by-design shared-global-tier semantics**: own-first (`_resolve_solution_table_by_name`, `tables.py:625-673`) deterministically shadows the `_repo/` row when the install owns the name, so there is no wrong-data outcome. No bug to confirm. (Contrast: the config/secret path has NO own-first and NO gate → that IS the bite, filed as H1.)
+1. **DATA fallback (tables) is UNGATED by `global_repo_access` but own-first prevents wrong-data.** — The headline behavior reproduced (a sealed install with no own table reads a GLOBAL `_repo/` table by name), but this is **by-design shared-global-tier semantics**: own-first (`_resolve_solution_table_by_name`, `tables.py:625-673`) deterministically shadows the `_repo/` row when the install owns the name, so there is no wrong-data outcome. No bug to confirm. (The config/secret path has no own-first either, but it is also not a bug — it's the standard org→global cascade; see RETRACTED #4.)
 
-2. **Documented `export --portable` → `import --org` flow does NOT round-trip a Solution (silent no-op).** — BLOCKED, not reproduced. Verifier reproduced preconditions but `bifrost deploy` never completed due to a parallel-QA stack teardown collision on the shared debug project name / `/tmp`; never reached the export→import steps. Zero empirical observation; defaulted to confirmed=false. (Note: H2 confirms a *separate, real* portable-scrub defect; this round-trip claim is the unverified one.)
+2. **Documented `export --portable` → `import --org` flow does NOT round-trip a Solution (silent no-op).** — BLOCKED, not reproduced. Verifier reproduced preconditions but `bifrost deploy` never completed due to a parallel-QA stack teardown collision on the shared debug project name / `/tmp`; never reached the export→import steps. Zero empirical observation; defaulted to confirmed=false. (Note: H1 — the renumbered export-scrub finding — confirms a *separate, real* portable-scrub defect; this round-trip claim is the unverified one.)
 
 3. **`bifrost solution start` dumps a raw Python traceback on port-in-use.** — BLOCKED, not reproduced. Verifier could not boot a healthy port-mode stack (daemon contention from parallel QA stacks). Static read of `solution.py:961` (`await site.start()` with no surrounding `OSError` handler; `handle_solution()` :976-994 catches only Click exceptions) is *consistent* with the claim, but this is code-reading only — left unconfirmed.
+
+4. **(RETRACTED, originally H1) "Sealed cross-org solution install reads any GLOBAL `_repo/` config including decrypted secrets, regardless of `global_repo_access`."** — The behavior reproduces, but it is **intended, not a bug**. `merged_for_sdk()` (`api/src/repositories/config.py:148-186`) unions exactly the global tier (`organization_id IS NULL`) and the caller's OWN org (`organization_id == self.org_id`); there is **no branch reading any other org's configs**. `_resolve_sdk_org_id` (`cli.py:313`) resolves a non-bypass caller only to their own org (other-org scope → 403), so this is the standard org→global cascade every config read uses — not cross-tenant. A NULL-org config is a deliberately *global, operator-published* value, not "another org's secret." The consumer is the server-side **workflow** (engine sentinel `is_superuser=True`), not a user; a workflow author who can deploy into an org is already inside that org's runtime trust boundary, and the platform intentionally publishes global configs/secrets to all orgs' runtimes. `global_repo_access` is a `_repo/` **code-import** seal (module loader), NOT a secret/data ACL — the code-vs-data asymmetry is documented and deliberate (the data tier is ungated by design). Org-*scoped* secrets remain non-reachable cross-org (scope-isolation axis: OrgB forcing OrgA scope → 403). **No follow-up; the deferred "data-tier gate" is NOT needed for configs.** (If the surprising code/data asymmetry warrants anything, it's a one-line docs clarification, not a security fix.)
 
 ---
 
 ## DATA-FALLBACK VERDICT
 
-Did the ungated `_repo/` data fallback actually bite? **YES — for configs/secrets; NO — for tables.**
+Did the ungated `_repo/` data fallback actually bite? **NO — neither tables nor configs/secrets are a defect.** (This reverses the run's initial verdict after triage — see REFUTED #4.)
 
-- **Tables:** ungated but SAFE. Own-first shadowing means an install-owned table name always wins; the `_repo/` table is reachable by name only when the install does not own that name (the same shared-global-tier semantics used platform-wide). No wrong-data outcome. → No follow-up needed beyond documentation.
-- **Configs/secrets:** ungated AND it bites (filed as **H1**). There is no own-first and no `global_repo_access` gate on the SDK config read path. A sealed install — even cross-org from the operator — silently consumes GLOBAL `_repo/` config values by key name, including operator secrets fully DECRYPTED at runtime, that it never declared. The `[REDACTED]` in stored output is cosmetic only.
+- **Tables:** ungated but SAFE. Own-first shadowing means an install-owned table name always wins; the `_repo/` table is reachable by name only when the install does not own that name (the same shared-global-tier semantics used platform-wide). No wrong-data outcome.
+- **Configs/secrets:** ungated and **also intended**. The SDK config path returns the standard org→global cascade (own org + global NULL-org tier), never another org's data. A "global" config/secret is an operator-published, deliberately-global value; the server-side workflow (not a user) consuming it is within the org's runtime trust boundary. `global_repo_access` gates `_repo/` **code imports**, not data — a documented, deliberate asymmetry.
 
-**Decision:** The deferred "extend `global_repo_access` gating to data-tier" follow-up is now a **real, high-severity follow-up — but scoped to the config/secret path only**, not tables. Track it via H1. The asymmetry (seal blocks `_repo/` code, not `_repo/` secrets) is the concrete defect to close.
+**Decision:** The deferred "extend `global_repo_access` gating to the data tier" follow-up is **NOT needed**. The only optional action is a one-line docs note clarifying that `global_repo_access` seals code imports, not global config/secret reads, so the asymmetry isn't surprising. No security fix.
 
 ---
 
@@ -127,7 +124,7 @@ Did the ungated `_repo/` data fallback actually bite? **YES — for configs/secr
 
 **readonly-enforcement** — Tested CLI + direct REST PATCH/PUT/DELETE/promote/deactivate/replace/recreate on managed form/agent/table/workflow (all 409); `/remap` at managed bindings (200 but updated:0, bindings intact); role bulk-assign + role DELETE backstop (409, bindings preserved); colliding-UUID create (new UUID minted); `before_flush` ORM backstop fired in-container; runtime carve-outs allowed (doc insert 201, configs set OK). Zero DB corruption. **Not reached:** (1) UI builder read-only banner/disabled-save NOT driven visually (Chrome extension disconnected — verified via API flags + client source only); (2) MCP tools NOT exercised over the wire (FastMCP endpoint 404 in dev stack, `tools_count:0`) — enforcement confirmed by static read + in-container `before_flush` repro; (3) App managed-entity mutations not exercised empirically (no app in fixture); (4) MCP `update_table` has no explicit solution guard, relies solely on the global backstop — worth an explicit guard for defense-in-depth.
 
-**global-repo-data-fallback** — Drove all 3 criteria on two installs (Provider + CustOrg). CODE fallback VERIFIED GATED (sealed→ModuleNotFoundError; flip flag→resolves; flip back→re-seals). TABLE data fallback VERIFIED ungated-but-safe (own-first). CONFIG/SECRET fallback VERIFIED ungated AND biting cross-org (H1). Cross-org isolation of *org-specific* values is correct. **Not reached:** UI drive of the management page (runtime output was stronger evidence), export/import round-trip of `global_repo_access` (L5 covers redeploy), non-superuser-vs-superuser distinction on `/api/sdk/config/get` (SDK reader runs as engine sentinel `is_superuser=True`, so the cross-org global read is expected for any install).
+**global-repo-data-fallback** — Drove all 3 criteria on two installs (Provider + CustOrg). CODE fallback VERIFIED GATED (sealed→ModuleNotFoundError; flip flag→resolves; flip back→re-seals). TABLE data fallback VERIFIED ungated-but-safe (own-first). CONFIG/SECRET fallback initially flagged as a cross-org leak but RETRACTED on triage — it is the intended org→global cascade (own org + global tier only, never another org's data), not a defect (see RETRACTED #4). Cross-org isolation of *org-specific* values is correct. **Not reached:** UI drive of the management page (runtime output was stronger evidence), export/import round-trip of `global_repo_access` (L5 covers redeploy), non-superuser-vs-superuser distinction on `/api/sdk/config/get` (SDK reader runs as engine sentinel `is_superuser=True`, so the cross-org global read is expected for any install).
 
 **ui-ux** — Drove all 5 criteria with Playwright + screenshots. PASSED: solution-managed form rendered+submitted running its OWN workflow (own-scope config+table resolution); standalone_v2 app mounted at `/apps/<slug>` with working in-app `useWorkflow`; **BifrostHeader standalone via `solution start` rendered fully STYLED (D3 regression FIXED)**; install dialog (drag-drop, entity-count chips, scope selector, masked secret field, clear slug-conflict 409); uninstall type-to-confirm + non-destructive orphan toast + "Show orphaned" Config-page badge (value masked `[SECRET]`). One low finding (L6). **Not reached:** Tables-page "Show orphaned" (only Config-page tested), role_based form access, multi-org install scoping in UI (single Provider org in dev stack).
 
