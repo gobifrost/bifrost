@@ -20726,6 +20726,8 @@ export interface components {
         VersionResponse: {
             /** Version */
             version: string;
+            /** Contract Version */
+            contract_version: number;
         };
         /**
          * WatchSessionRequest

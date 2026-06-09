@@ -200,68 +200,123 @@ def _build_file_filter(local_root: pathlib.Path) -> "pathspec.PathSpec":
 WATCH_HEARTBEAT_SECONDS = 60
 
 
+def _warn(message: str) -> None:
+    """Emit a one-line yellow warning to stderr (never blocks)."""
+    print(f"\033[33m{message}\033[0m", file=sys.stderr)
+
+
 def _check_cli_version() -> None:
-    """Hard-block the command if the installed CLI doesn't match the deployed server.
+    """Gate the command against the deployed server. Two independent gates:
 
-    Mirrors the policy in ``client/src/hooks/useVersionCheck.ts``: compare the
-    baked-in build version against ``data.version`` from ``GET /api/version``
-    via string equality, treat ``"unknown"`` / ``"0.0.0+source"`` as dev installs
-    and skip. The CLI diverges from the SPA only by ``sys.exit(1)``-ing on
-    mismatch instead of showing a banner — the user must upgrade before any
-    command runs.
+    1. **Contract (HARD).** The server reports ``contract_version`` at
+       ``GET /api/version``. If it differs from the CLI's baked
+       ``CONTRACT_VERSION``, the CLI is contract-incompatible → ``sys.exit(1)``
+       with the upgrade message, for every command. ``CONTRACT_VERSION`` is
+       bumped only on breaking changes to the contract surface the CLI consumes
+       (enforced by ``tests/unit/test_contract_version.py``), so an unrelated
+       server release no longer force-reinstalls every CLI.
+
+    2. **Build drift (SOFT).** ``contract_version`` matches but the build
+       ``version`` differs → a one-line stderr notice, deduped per (url,
+       version). Never blocks.
+
+    **Old server** (response lacks ``contract_version``): we can't verify the
+    contract. Rather than hard-block on build-version equality — a rollout
+    footgun, since a fresh CLI almost always differs from a not-yet-upgraded
+    server — we emit a soft warning and continue.
+
+    **Un-reachable verdict** (network/parse error, missing ``version``): emit a
+    visible warning instead of silently skipping, so a stale CLI proceeding
+    against an incompatible server is never invisible. Never blocks.
     """
+    import httpx
+
+    from bifrost import __version__
+    from bifrost.contract_version import CONTRACT_VERSION
+
+    installed = __version__.lstrip("v")
+    if installed in ("unknown", "0.0.0+source"):
+        return  # dev/source install — nothing to compare against
+
+    # Re-load dotenv so a CWD-local .env's BIFROST_API_URL is honored even
+    # if bifrost.client's import-time load happened against a different cwd.
     try:
-        import httpx
+        from dotenv import find_dotenv, load_dotenv
+        load_dotenv(find_dotenv(usecwd=True), override=False)
+    except ImportError:
+        pass  # python-dotenv is optional; without it, only os.environ is consulted
 
-        from bifrost import __version__
-
-        installed = __version__.lstrip("v")
-        if installed in ("unknown", "0.0.0+source"):
-            return  # dev/source install — nothing to compare against
-
-        # Re-load dotenv so a CWD-local .env's BIFROST_API_URL is honored even
-        # if bifrost.client's import-time load happened against a different cwd.
-        try:
-            from dotenv import find_dotenv, load_dotenv
-            load_dotenv(find_dotenv(usecwd=True), override=False)
-        except ImportError:
-            pass  # python-dotenv is optional; without it, only os.environ is consulted
-
-        # Use credentials._resolve_url (not get_credentials) because the version
-        # check only needs the URL — get_credentials returns None unless full
-        # tokens are present too, which would skip the check on a logged-out CLI.
+    # Use credentials._resolve_url (not get_credentials) because the version
+    # check only needs the URL — get_credentials returns None unless full
+    # tokens are present too, which would skip the check on a logged-out CLI.
+    try:
         api_url = credentials._resolve_url(None)
-        if not api_url:
-            return
+    except Exception as e:
+        logger.debug(f"CLI version check skipped (no URL): {e}")
+        return
+    if not api_url:
+        return
 
-        # Use httpx (already a hard dep via BifrostClient), not urllib.
-        # CDNs/WAFs in front of prod Bifrost instances (Cloudflare on
-        # bifrost.gocovi.com being the live case) 403 the default
-        # `Python-urllib/X.Y` User-Agent. httpx's default UA gets through
-        # and matches what every other SDK request already sends.
+    # Fetch the server's version document. A failure here is an UN-REACHABLE
+    # verdict — warn (Q2), never block. Use httpx (already a hard dep), not
+    # urllib: CDNs/WAFs in front of prod Bifrost (Cloudflare on
+    # bifrost.gocovi.com) 403 the default `Python-urllib/X.Y` UA; httpx's UA
+    # gets through and matches every other SDK request.
+    try:
         resp = httpx.get(f"{api_url}/api/version", timeout=3)
         resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            # Valid JSON but not an object (e.g. a proxy returning an error
+            # array/string) — treat as an unreadable verdict, not a crash.
+            raise ValueError(f"unexpected response shape: {type(data).__name__}")
+    except Exception as e:
+        _warn(
+            f"Could not verify CLI compatibility with {api_url} ({e}). "
+            f"Continuing — run a command again once the server is reachable."
+        )
+        return
 
-        server_version = (data.get("version") or "").lstrip("v")
-        if not server_version:
-            return  # server didn't tell us its version — best-effort skip
+    server_version = (data.get("version") or "").lstrip("v")
+    server_contract = data.get("contract_version")
 
-        if server_version != installed:
-            print(
-                f"\033[33mYour CLI ({installed}) is out of date. "
-                f"Server is on {server_version}.\nRun:\n"
-                f"  pipx install --force {api_url}/api/cli/download\n\033[0m",
-                file=sys.stderr,
+    # Gate 1 — contract (HARD). Only when the server actually reports one.
+    if server_contract is not None:
+        if server_contract != CONTRACT_VERSION:
+            _warn(
+                f"Your CLI is incompatible with this server "
+                f"(CLI contract v{CONTRACT_VERSION}, server contract "
+                f"v{server_contract}). You must upgrade:\n"
+                f"  pipx install --force {api_url}/api/cli/download"
             )
             sys.exit(1)
-    except SystemExit:
-        raise
-    except Exception as e:
-        # Best-effort: network errors, malformed JSON, missing credentials store,
-        # etc. should never block the user. The exit-on-mismatch above is the
-        # only intentional bail-out.
-        logger.debug(f"CLI version check skipped: {e}")
+        # Gate 2 — build drift (SOFT, deduped). Contract is fine; just nudge.
+        if server_version and server_version != installed:
+            from bifrost import _version_notice
+
+            if _version_notice.should_notify(api_url, server_version):
+                _warn(
+                    f"A newer Bifrost CLI is available "
+                    f"({installed} → {server_version}); your current CLI is still "
+                    f"compatible. Update when convenient:\n"
+                    f"  pipx install --force {api_url}/api/cli/download"
+                )
+                _version_notice.mark_notified(api_url, server_version)
+        return
+
+    # Old server: no contract_version to compare against.
+    if not server_version:
+        _warn(
+            f"Could not verify CLI compatibility with {api_url} "
+            f"(server reported no version). Continuing."
+        )
+        return
+    if server_version != installed:
+        _warn(
+            f"Could not verify contract compatibility — {api_url} predates "
+            f"contract versioning (CLI {installed}, server {server_version}). "
+            f"Continuing; consider upgrading the server."
+        )
 
 
 async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool:
