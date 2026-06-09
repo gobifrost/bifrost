@@ -7,12 +7,15 @@ Scope: adversarial QA across six axes (scope-isolation, lifecycle, readonly-enfo
 ## STATUS (CONFIRMED only)
 
 - critical: 0
-- high: 1
+- high: 0
 - medium: 1
 - low: 6
-- TOTAL CONFIRMED: 8
+- TOTAL CONFIRMED (bugs to fix): 7
+- DEPRECATION (not a bug): 1 — export --portable / import (superseded by Solutions; see below)
 
 REFUTED: 4 (do not re-investigate) — includes the original H1 (config/secret fallback), RETRACTED on review as intended org→global cascade behavior, not a bug. BLOCKED axes: 0 (all six axes booted and were driven).
+
+**Post-run triage outcome:** of the run's 2 initial HIGHs, one (config/secret fallback) was RETRACTED as intended behavior and the other (export --portable scrub) was reclassified as a DEPRECATION of a pre-Solutions command — so **zero HIGH bugs remain**. The actionable backlog is 1 medium + 6 low + one deprecation chore.
 
 > **Post-run triage correction (2026-06-09):** the original **H1** ("sealed cross-org install reads decrypted global secrets") was downgraded from CONFIRMED/HIGH to REFUTED. The reported behavior is the **intended org→global config cascade**, not a cross-tenant leak. `merged_for_sdk()` (`api/src/repositories/config.py:148-186`) unions exactly two scopes — `organization_id IS NULL` (global) and `organization_id == caller's own org` — and has **no branch that reads any other org's configs**. A "global" (NULL-org) config is a deliberately operator-published value, not "another org's secret"; reading it from any org's cascade is the same resolver every config read uses. The consumer is the server-side **workflow** (engine sentinel), not a user, within the trust boundary of "whoever can deploy a workflow into this org." `global_repo_access` is a `_repo/` **code-import** seal, not a secret ACL — the code/data asymmetry is documented and deliberate. Org-*scoped* secrets remain non-reachable cross-org (scope-isolation axis confirmed: OrgB forcing OrgA scope → 403). See REFUTED #4.
 
@@ -20,16 +23,13 @@ REFUTED: 4 (do not re-investigate) — includes the original H1 (config/secret f
 
 ## CONFIRMED
 
-### HIGH
+> No CONFIRMED HIGH findings remain. The original H1 (config/secret fallback) was RETRACTED as intended behavior (REFUTED #4); the renumbered H1 (export --portable scrub) was reclassified as a DEPRECATION (below), not a bug to fix.
 
-#### H1 — `bifrost export --portable` does NOT scrub org IDs/names despite help text and the `scrubbed:[]` contract
-> Renumbered from H2 after the original H1 (config/secret fallback) was RETRACTED — see REFUTED #4.
+### DEPRECATION (was H1 / H2) — `bifrost export --portable` / `bifrost import` is legacy; do not fix its scrub, deprecate the commands
 - **surface:** export-import
-- **did:** From a solution workspace ran `bifrost export --portable <dir>` and `bifrost export <dir>` (non-portable) for comparison; inspected `.bifrost/organizations.yaml` and `bundle.meta.yaml`. Help text states: `--portable Strip env-specific fields (org IDs, timestamps, secrets) for sharing.`
-- **observed:** Portable `organizations.yaml` contains concrete source-env org UUIDs AND human names (e.g. `00000000-...-0002 / Provider`, `<uuid> / QA Target Org`). Portable and full bundles produce BYTE-IDENTICAL `organizations.yaml` (same md5). `bundle.meta.yaml` records `portable: true` but `scrubbed: []` (no rules applied) and `source_env: localhost:<port>`. A "shareable" bundle leaks the full source-env org roster + source host.
-- **expected:** With `--portable`, org IDs (and ideally names) scrubbed/omitted from `organizations.yaml`, and `scrubbed:` lists the applied rules. Sharing should not embed another environment's org identities.
-- **code_ref:** `api/bifrost/portable.py` (scrub rules) + export manifest emit of `.bifrost/organizations.yaml`.
-- **proposed fix shape:** Apply the portable scrub pass to the organizations manifest (strip/placeholder org UUIDs + names, drop `source_env`) and populate `bundle.meta.yaml: scrubbed:` with the concrete rule list; add a round-trip test asserting portable ≠ full for org-bearing manifests.
+- **finding (factually true, but NOT a bug to fix):** `bifrost export --portable <dir>` does not scrub org IDs/names — portable and non-portable `.bifrost/organizations.yaml` are byte-identical (same md5), and `bundle.meta.yaml` records `portable: true` but `scrubbed: []` + `source_env: localhost:<port>`. So a "shareable" bundle embeds the source-env org roster + host.
+- **disposition (decided 2026-06-09 with Jack):** `export --portable` / `import` predates Solutions (Apr 18; Solutions landed Jun 4) and was the generic pre-Solutions cross-environment workspace-sharing path. **Solutions supersedes it** for packaged distribution: `bifrost solution deploy` / `solution install <zip>` is the install-scoped, lifecycle-aware, provenance-tracking replacement (`export.py` doesn't even know solutions exist — that's why REFUTED #2's solution round-trip was a silent no-op). The only thing export/import still nominally covers is bare `_repo/` workspace migration across environments, which git sync + Solutions now handle. **Decision: do NOT fix the scrub bug — deprecate the `export` / `import` CLI commands instead** (and stop recommending them as the cross-env share path in CLAUDE.md / AGENTS.md). Until removed, the broken scrub is moot because the command shouldn't be used.
+- **follow-up:** (1) mark `bifrost export` / `bifrost import` deprecated (help text + a runtime warning, or remove); (2) update CLAUDE.md / AGENTS.md "share an env's state across environments" guidance to point at Solutions (and git sync for raw `_repo/`), not `export --portable`. Done in this branch: the CLAUDE.md/AGENTS.md guidance softened to a deprecation note.
 
 ### MEDIUM
 
