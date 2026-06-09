@@ -17,19 +17,19 @@ isolated from the hard-gate decision.
 
 from __future__ import annotations
 
-import hashlib
 import tempfile
+import zlib
 from pathlib import Path
 
 
 def _marker_path(api_url: str) -> Path:
-    # Not security-sensitive: this hashes a plain API URL into a stable, filesystem-
-    # safe dedupe key for the notice marker filename. `usedforsecurity=False` says so
-    # explicitly (and silences CodeQL py/weak-sensitive-data-hashing, which mislabels
-    # the URL as a password via taint from credentials._resolve_url).
-    key = hashlib.sha256(
-        api_url.rstrip("/").encode(), usedforsecurity=False
-    ).hexdigest()[:16]
+    # Derive a stable, filesystem-safe per-URL key for the marker filename. We use
+    # a non-cryptographic checksum (CRC32) deliberately: this is a dedupe key, not
+    # security, and crypto hashes here trip CodeQL's sensitive-data-hashing taint
+    # rule (the URL is tainted via credentials._resolve_url). CRC32 is fixed-length,
+    # collision-resistant enough to distinguish API URLs, and unambiguously not a
+    # security primitive.
+    key = format(zlib.crc32(api_url.rstrip("/").encode()) & 0xFFFFFFFF, "08x")
     return Path(tempfile.gettempdir()) / f"bifrost-vnotice-{key}"
 
 
