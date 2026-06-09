@@ -188,3 +188,81 @@ phase('Cleanup')
 log('Pre-flight: killing stray stacks + pruning merged agent worktrees...')
 const cleanupReport = await agent(CLEANUP_PROMPT, { label: 'cleanup', phase: 'Cleanup' })
 log('Cleanup done.')
+
+// PHASE 2 — FIND: 6 axes in parallel, each on its own port-mode stack.
+phase('Find')
+log(`Fanning out ${AXES.length} axis agents (each provisions its own port-mode stack)...`)
+const axisReports = (await parallel(
+  AXES.map((a) => () =>
+    agent(a.prompt, { label: `find:${a.key}`, phase: 'Find', schema: FINDING_SCHEMA })
+  )
+)).filter(Boolean)
+
+const blocked = axisReports.filter((r) => r.blocked)
+const allFindings = axisReports.flatMap((r) =>
+  (r.findings || []).map((f) => ({ ...f, axis: r.axis }))
+)
+const toVerify = allFindings.filter((f) => f.reproduced && f.severity !== 'info')
+log(`Collected ${allFindings.length} findings; ${toVerify.length} reproduced non-info to verify. ${blocked.length} axes blocked on stack boot.`)
+
+// PHASE 3 — VERIFY: independent refutation per finding (pipeline: each verifies
+// as soon as it exists; verifier provisions its own stack via the same bootstrap).
+phase('Verify')
+const verdicts = await pipeline(
+  toVerify,
+  (f) => agent(
+    `${BOOTSTRAP}
+
+You are an INDEPENDENT VERIFIER. Set AXIS=verify-${(f.axis || 'x').slice(0,12)} in the bootstrap. Provision your own port-mode stack.
+A prior agent reported this finding on the ${f.axis} axis. Your job is to REFUTE it: reproduce the EXACT steps and report whether it actually manifests. Default to confirmed=false if you cannot reproduce it.
+
+FINDING TITLE: ${f.title}
+SURFACE: ${f.surface}
+STEPS THEY TOOK (did): ${f.did}
+THEY OBSERVED: ${f.observed}
+THEY EXPECTED: ${f.expected}
+
+Run those steps on YOUR fresh stack. Set confirmed=true ONLY if you see the same wrong behavior; otherwise confirmed=false and explain what you saw instead. Tear your stack down.`,
+    { label: `verify:${(f.title || '').slice(0, 32)}`, phase: 'Verify', schema: VERDICT_SCHEMA }
+  ).then((v) => ({ finding: f, verdict: v })).catch(() => null)
+)
+const checked = verdicts.filter(Boolean)
+const confirmed = checked.filter((c) => c.verdict?.confirmed).map((c) => ({ ...c.finding, verify_note: c.verdict.note }))
+const refuted = checked.filter((c) => !c.verdict?.confirmed).map((c) => ({ title: c.finding.title, axis: c.finding.axis, why: c.verdict?.note }))
+log(`Verify: ${confirmed.length} confirmed, ${refuted.length} refuted.`)
+
+// PHASE 4 — SYNTHESIZE: dedup, rank, write the backlog doc.
+phase('Synthesize')
+const synthDoc = await agent(
+  `You are the SYNTHESIS agent for a Solutions adversarial QA fan-out. Produce the final findings backlog and WRITE it to ${BASE_WORKTREE}/docs/plans/2026-06-09-solutions-qa-fanout-findings.md (use your Write tool).
+
+CONFIRMED findings (already independently verified — these are REAL), JSON:
+${JSON.stringify(confirmed, null, 2)}
+
+REFUTED (a verifier could not reproduce — list these separately so they are not re-investigated), JSON:
+${JSON.stringify(refuted, null, 2)}
+
+BLOCKED axes (could not boot a stack — note for re-run), JSON:
+${JSON.stringify(blocked.map((b) => ({ axis: b.axis, note: b.coverage_note })), null, 2)}
+
+COVERAGE NOTES per axis, JSON:
+${JSON.stringify(axisReports.map((r) => ({ axis: r.axis, note: r.coverage_note })), null, 2)}
+
+The doc must have: a STATUS line (counts by severity of CONFIRMED only); a CONFIRMED section grouped by severity (critical first), each item with did/observed/expected/code_ref and a one-line proposed fix shape; a REFUTED section (title + why); a DATA-FALLBACK VERDICT section (pull from the global-repo-data-fallback axis coverage_note: did the ungated data fallback actually bite? this decides whether the deferred gate becomes a real follow-up); a COVERAGE/GAPS section; and a BLOCKED section if any. Return a 5-line summary as your text.`,
+  { label: 'synthesize', phase: 'Synthesize' }
+)
+
+return {
+  axes: axisReports.map((r) => r.axis),
+  blocked_axes: blocked.map((r) => r.axis),
+  total_findings: allFindings.length,
+  confirmed: confirmed.length,
+  refuted: refuted.length,
+  by_severity_confirmed: ['critical', 'high', 'medium', 'low'].reduce((acc, s) => {
+    acc[s] = confirmed.filter((f) => f.severity === s).length
+    return acc
+  }, {}),
+  cleanup: cleanupReport,
+  synthesis: synthDoc,
+  findings_doc: `${BASE_WORKTREE}/docs/plans/2026-06-09-solutions-qa-fanout-findings.md`,
+}
