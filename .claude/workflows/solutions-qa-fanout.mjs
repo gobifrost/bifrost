@@ -184,6 +184,17 @@ You are the PRE-FLIGHT CLEANUP for a QA fan-out. Do EXACTLY these, then report w
 3. REPORT: RAM freed (free -m before/after), worktrees removed, branches deleted, what you KEPT and why. Return this as your text.
 `
 
+// Cap concurrency at 6 stacks regardless of core count (each stack ~2.2GB).
+async function throttle(thunks, limit) {
+  const out = []; const running = new Set()
+  for (const t of thunks) {
+    const p = Promise.resolve().then(t); out.push(p)
+    running.add(p); p.finally(() => running.delete(p))
+    if (running.size >= limit) await Promise.race(running)
+  }
+  return Promise.all(out)
+}
+
 phase('Cleanup')
 log('Pre-flight: killing stray stacks + pruning merged agent worktrees...')
 const cleanupReport = await agent(CLEANUP_PROMPT, { label: 'cleanup', phase: 'Cleanup' })
@@ -192,10 +203,11 @@ log('Cleanup done.')
 // PHASE 2 — FIND: 6 axes in parallel, each on its own port-mode stack.
 phase('Find')
 log(`Fanning out ${AXES.length} axis agents (each provisions its own port-mode stack)...`)
-const axisReports = (await parallel(
+const axisReports = (await throttle(
   AXES.map((a) => () =>
     agent(a.prompt, { label: `find:${a.key}`, phase: 'Find', schema: FINDING_SCHEMA })
-  )
+  ),
+  6
 )).filter(Boolean)
 
 const blocked = axisReports.filter((r) => r.blocked)
@@ -205,12 +217,12 @@ const allFindings = axisReports.flatMap((r) =>
 const toVerify = allFindings.filter((f) => f.reproduced && f.severity !== 'info')
 log(`Collected ${allFindings.length} findings; ${toVerify.length} reproduced non-info to verify. ${blocked.length} axes blocked on stack boot.`)
 
-// PHASE 3 — VERIFY: independent refutation per finding (pipeline: each verifies
-// as soon as it exists; verifier provisions its own stack via the same bootstrap).
+// PHASE 3 — VERIFY: independent refutation per finding. Each verifier provisions
+// its own stack via the same bootstrap, so cap concurrency at 6 stacks (RAM ceiling)
+// rather than letting all reproduced findings boot stacks at once.
 phase('Verify')
-const verdicts = await pipeline(
-  toVerify,
-  (f) => agent(
+const verdicts = await throttle(
+  toVerify.map((f) => () => agent(
     `${BOOTSTRAP}
 
 You are an INDEPENDENT VERIFIER. Set AXIS=verify-${(f.axis || 'x').slice(0,12)} in the bootstrap. Provision your own port-mode stack.
@@ -224,7 +236,8 @@ THEY EXPECTED: ${f.expected}
 
 Run those steps on YOUR fresh stack. Set confirmed=true ONLY if you see the same wrong behavior; otherwise confirmed=false and explain what you saw instead. Tear your stack down.`,
     { label: `verify:${(f.title || '').slice(0, 32)}`, phase: 'Verify', schema: VERDICT_SCHEMA }
-  ).then((v) => ({ finding: f, verdict: v })).catch(() => null)
+  ).then((v) => ({ finding: f, verdict: v })).catch(() => null)),
+  6
 )
 const checked = verdicts.filter(Boolean)
 const confirmed = checked.filter((c) => c.verdict?.confirmed).map((c) => ({ ...c.finding, verify_note: c.verdict.note }))
