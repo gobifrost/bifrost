@@ -63,10 +63,15 @@ YOU PROVISION YOUR OWN STACK. Do this before any testing, and tear it down at th
    git -C ${BASE_WORKTREE} worktree add "$WT" HEAD
    cd "$WT"
 
-2. Boot a PORT-MODE stack (MANDATORY — netbird stacks can't be driven by a browser):
-   env -u NETBIRD_SETUP_KEY ./debug.sh up
-   ./debug.sh status        # capture the http://localhost:<port> URL — call it $URL
-   If the api container is not healthy within ~90s, retry \`env -u NETBIRD_SETUP_KEY ./debug.sh down && env -u NETBIRD_SETUP_KEY ./debug.sh up\` ONCE. If still unhealthy, set blocked=true in your output and STOP (do not invent findings).
+2. Boot a PORT-MODE stack (MANDATORY — netbird stacks can't be driven by a browser).
+   Export BIFROST_FORCE_PORT=1 for EVERY debug.sh call — this forces port mode even
+   when the global ~/.config/bifrost/debug.env carries NETBIRD_SETUP_KEY (plain
+   \`env -u NETBIRD_SETUP_KEY\` does NOT work — debug.sh re-sources that file). Do NOT
+   edit the global debug.env.
+   export BIFROST_FORCE_PORT=1
+   ./debug.sh up
+   ./debug.sh status        # the URL is the "Open: http://localhost:<port>" line — call it $URL; confirm Mode: port
+   If Mode is not "port", or the api container is not healthy within ~90s, retry \`./debug.sh down && ./debug.sh up\` ONCE (BIFROST_FORCE_PORT still exported). If still unhealthy or still netbird, set blocked=true in your output and STOP (do not invent findings).
 
 3. Install the API-matched CLI in a scratch dir OUTSIDE the repo:
    mkdir -p /tmp/qa-cli-$AXIS && cd /tmp/qa-cli-$AXIS
@@ -78,7 +83,7 @@ YOU PROVISION YOUR OWN STACK. Do this before any testing, and tear it down at th
 4. Drive the UI with Playwright against $URL (headless is fine). Capture screenshots
    to /tmp/qa-$AXIS/shots/ for any UI finding and put the path in observed.
 
-5. TEARDOWN (always, even on failure): cd "$WT" && env -u NETBIRD_SETUP_KEY ./debug.sh down ; git -C ${BASE_WORKTREE} worktree remove --force "$WT"
+5. TEARDOWN (always, even on failure): cd "$WT" && BIFROST_FORCE_PORT=1 ./debug.sh down ; git -C ${BASE_WORKTREE} worktree remove --force "$WT"
 
 RULES OF ENGAGEMENT:
 - VERIFY EMPIRICALLY. Reading code forms hypotheses; driving the running stack concludes. A finding is REAL only if you reproduced it on your stack — include exact commands/URLs/clicks and observed-vs-expected.

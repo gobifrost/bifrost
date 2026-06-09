@@ -79,6 +79,8 @@ Start the development stack (per-worktree isolated):
 
 The default mode allocates a free local port for the client (deterministic per worktree, in 30000-39999). If `NETBIRD_SETUP_KEY` is set in `~/.config/bifrost/debug.env`, the stack boots with a Netbird sidecar instead and is reachable at `http://<bifrost-debug-WORKTREE>` over the Netbird mesh — no host ports.
 
+**Forcing port mode for browser/Playwright work:** Chrome/Playwright cannot drive netbird stacks (Vite HMR websocket hangs). If your `~/.config/bifrost/debug.env` has `NETBIRD_SETUP_KEY`, run `BIFROST_FORCE_PORT=1 ./debug.sh up` to force port mode for that boot without editing the global config. `env -u NETBIRD_SETUP_KEY ./debug.sh up` does **not** work — `debug.sh` re-sources the global `debug.env` under `set -a`, re-introducing the key.
+
 Stack contains: API (port 8000 internal), Client (port 80 internal), Scheduler, Worker, Postgres, RabbitMQ, Redis, SeaweedFS. All Bifrost services build from `api/Dockerfile.dev` / `client/Dockerfile.dev` (source build, not public images).
 
 ### Hot Reload is Automatic
