@@ -29,7 +29,7 @@ class TestGetWorkflowForExecution:
 
         # Single execute: select(Workflow) -> returns workflow
         mock_wf_result = MagicMock()
-        mock_wf_result.scalar_one_or_none.return_value = mock_workflow
+        mock_wf_result.one_or_none.return_value = (mock_workflow, True)
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
 
         result = await get_workflow_for_execution(workflow_id, db=mock_session)
@@ -56,7 +56,7 @@ class TestGetWorkflowForExecution:
 
         # Single execute: select(Workflow) -> returns workflow
         mock_wf_result = MagicMock()
-        mock_wf_result.scalar_one_or_none.return_value = mock_workflow
+        mock_wf_result.one_or_none.return_value = (mock_workflow, True)
 
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
@@ -96,7 +96,7 @@ class TestGetWorkflowForExecution:
         mock_workflow.cache_ttl_seconds = 0
 
         mock_wf_result = MagicMock()
-        mock_wf_result.scalar_one_or_none.return_value = mock_workflow
+        mock_wf_result.one_or_none.return_value = (mock_workflow, True)
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
 
         result = await get_workflow_for_execution(workflow_id, db=mock_session)
@@ -104,7 +104,7 @@ class TestGetWorkflowForExecution:
         expected_keys = {
             "name", "function_name", "path", "timeout_seconds",
             "time_saved", "value", "execution_mode", "organization_id",
-            "solution_id", "type", "cache_ttl_seconds",
+            "solution_id", "can_access_global_repo", "type", "cache_ttl_seconds",
         }
         assert set(result.keys()) == expected_keys
         assert "code" not in result
@@ -129,7 +129,7 @@ class TestGetWorkflowForExecution:
 
         # Execute returns None (workflow not found)
         mock_wf_result = MagicMock()
-        mock_wf_result.scalar_one_or_none.return_value = None
+        mock_wf_result.one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
 
         with pytest.raises(WorkflowNotFoundError, match=workflow_id):

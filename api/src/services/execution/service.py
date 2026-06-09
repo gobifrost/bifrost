@@ -163,16 +163,23 @@ async def get_workflow_for_execution(
     from src.models import Workflow as WorkflowORM
 
     async def _fetch(session: AsyncSession) -> dict[str, Any]:
-        stmt = select(WorkflowORM).where(
-            WorkflowORM.id == workflow_id,
-            WorkflowORM.is_active == True,  # noqa: E712
+        from src.models.orm.solutions import Solution as SolutionORM
+
+        stmt = (
+            select(WorkflowORM, SolutionORM.global_repo_access)
+            .outerjoin(SolutionORM, WorkflowORM.solution_id == SolutionORM.id)
+            .where(
+                WorkflowORM.id == workflow_id,
+                WorkflowORM.is_active == True,  # noqa: E712
+            )
         )
         result = await session.execute(stmt)
-        workflow_record = result.scalar_one_or_none()
+        row = result.one_or_none()
 
-        if not workflow_record:
+        if row is None:
             raise WorkflowNotFoundError(f"Workflow with ID '{workflow_id}' not found")
 
+        workflow_record, global_repo_access = row
         logger.debug(f"Loaded workflow for execution: {workflow_id} -> {workflow_record.name}")
 
         return {
@@ -185,6 +192,7 @@ async def get_workflow_for_execution(
             "execution_mode": workflow_record.execution_mode or "async",
             "organization_id": str(workflow_record.organization_id) if workflow_record.organization_id else None,
             "solution_id": str(workflow_record.solution_id) if workflow_record.solution_id else None,
+            "can_access_global_repo": bool(global_repo_access),
             "type": workflow_record.type or "workflow",
             "cache_ttl_seconds": workflow_record.cache_ttl_seconds or 0,
         }
