@@ -148,6 +148,57 @@ async def test_delete_orphans_tables_with_data(e2e_client, platform_admin, db_se
     assert docs[0].data == {"email": "a@b.com"}
 
 
+async def test_uninstall_with_same_name_repo_table_succeeds(
+    e2e_client, platform_admin, db_session
+):
+    """Coexistence of a _repo/ table and a same-name solution table is legal
+    (table names are solution-scoped); uninstall must detach the solution table
+    without violating the _repo/ live-name unique index. Orphaned rows leave the
+    live name namespace, so the detach can never collide."""
+    headers = platform_admin.headers
+    slug = f"del-coex-{uuid.uuid4().hex[:8]}"
+    sid = _create_solution(e2e_client, headers, slug)
+    name = f"users_{slug}"
+
+    # 1. An ordinary live _repo/ table in the install's scope (global install →
+    #    organization_id IS NULL) with the SAME name the solution will ship.
+    ct = e2e_client.post("/api/tables", headers=headers, json={
+        "name": name, "organization_id": None, "description": "live repo table",
+    })
+    assert ct.status_code in (200, 201), ct.text
+
+    # 2. The solution ships a same-name table — legal coexistence (deploy
+    #    blesses it: uniqueness is solution-scoped).
+    bundle_tid = str(uuid.uuid4())
+    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+        "tables": [{
+            "id": bundle_tid,
+            "name": name,
+            "description": "solution-owned table",
+            "schema": {"columns": [{"name": "email"}]},
+            "policies": None,
+        }],
+    })
+    assert dep.status_code == 200, dep.text
+
+    # 3. Uninstall must succeed — the detach stamps orphaned_at, moving the row
+    #    OUT of the live name namespace instead of colliding with the live table.
+    r = e2e_client.delete(f"/api/solutions/{sid}", headers=headers)
+    assert r.status_code in (200, 204), r.text
+    assert r.json()["tables_orphaned"] == 1, r.text
+
+    # 4. Exactly two rows of that name survive: the live one and the orphan
+    #    (with provenance).
+    lst = e2e_client.get("/api/tables?include_orphaned=true", headers=headers)
+    assert lst.status_code == 200, lst.text
+    rows = [t for t in lst.json()["tables"] if t["name"] == name]
+    assert len(rows) == 2, rows
+    live = [t for t in rows if t["orphaned_at"] is None]
+    orphaned = [t for t in rows if t["orphaned_at"] is not None]
+    assert len(live) == 1 and len(orphaned) == 1, rows
+    assert orphaned[0]["origin_solution_slug"] == slug
+
+
 async def test_delete_orphans_config_values(e2e_client, platform_admin, db_session):
     """A config VALUE matching one of the install's declarations is stamped with
     orphan provenance and survives the delete."""

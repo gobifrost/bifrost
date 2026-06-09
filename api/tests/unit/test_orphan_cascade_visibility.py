@@ -49,9 +49,10 @@ def _table(name: str, *, org_id, solution_id=None, orphaned: bool = False) -> Ta
 class TestOrphanCascadeVisibility:
     async def test_orphaned_global_does_not_leak_into_org_cascade(self, db_session) -> None:
         """An org-scoped normal table and a GLOBAL orphaned table share a name.
-        (The partial unique index ix_tables_org_name_unique forbids a normal+orphan
-        pair in the SAME scope since both have solution_id NULL, so the real
-        cross-context collision is org-normal vs global-orphan.)
+        (Orphaned rows are excluded from the live-name unique indexes — a
+        normal+orphan pair may share a name even in the SAME scope — but the
+        cross-context case worth guarding is org-normal vs global-orphan, since
+        the global row also sits in the org's cascade fallback.)
 
         get(name=) for the org returns the NORMAL org table; the orphan must never
         win, and must not leak even if the org table were absent (see next test).
