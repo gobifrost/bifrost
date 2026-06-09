@@ -814,7 +814,14 @@ async def execute_form(
     # directly have a role on, so we must NOT apply the workflow's RBAC filter
     # here (that's what the old bare-id select did). is_superuser=True bypasses
     # the role filter; org_id scopes cascade resolution.
-    _wf_repo = WorkflowRepository(db, org_id=ctx.org_id, is_superuser=True)
+    #
+    # Resolution and execution are anchored to the FORM's world, not the
+    # caller's: a cross-org bypass caller (platform admin / provider) executing
+    # an org-scoped form must resolve the install's own workflow and run in the
+    # form's org. Caller identity was already used for AUTHORIZATION above.
+    anchor_org_id = form.organization_id if form.organization_id is not None else ctx.org_id
+
+    _wf_repo = WorkflowRepository(db, org_id=anchor_org_id, is_superuser=True)
     _resolved_wf = await _wf_repo.resolve(form.workflow_id, solution_scope=form.solution_id)
     if _resolved_wf is None:
         raise HTTPException(
@@ -845,7 +852,7 @@ async def execute_form(
             workflow_name=workflow.name,
             parameters=merged_params,
             scheduled_at=scheduled_at,
-            organization_id=ctx.org_id,
+            organization_id=anchor_org_id,
             executed_by=ctx.user.user_id,
             executed_by_name=ctx.user.name or ctx.user.email or "Unknown",
             form_id=form.id,
@@ -864,10 +871,10 @@ async def execute_form(
             scheduled_at=scheduled_at,
         )
 
-    # Create organization object if org_id is set
+    # Create organization object if the anchor org is set
     org = None
-    if ctx.org_id:
-        org = Organization(id=str(ctx.org_id), name="", is_active=True)
+    if anchor_org_id:
+        org = Organization(id=str(anchor_org_id), name="", is_active=True)
 
     # Create shared context for execution
     # startup_data from the request is passed to context.startup
@@ -875,7 +882,7 @@ async def execute_form(
         user_id=str(ctx.user.user_id),
         name=ctx.user.name,
         email=ctx.user.email,
-        scope=str(ctx.org_id) if ctx.org_id else "GLOBAL",
+        scope=str(anchor_org_id) if anchor_org_id else "GLOBAL",
         organization=org,
         is_platform_admin=ctx.user.is_superuser,
         is_function_key=False,

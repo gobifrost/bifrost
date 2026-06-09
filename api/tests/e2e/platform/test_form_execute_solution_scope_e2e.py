@@ -5,10 +5,12 @@ Also pins the RBAC contract: the handler resolves the workflow on the FORM's
 behalf (is_superuser=True), so a form user with no role on a ``role_based``
 workflow must still reach it — the form's own access gate is authoritative.
 """
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 
+from src.models.orm.executions import Execution
 from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.forms import Form
@@ -208,3 +210,85 @@ class TestFormExecuteEndpointRbac:
             e2e_client.delete(f"/api/forms/{form_id}", headers=platform_admin.headers)
             e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
             e2e_client.delete(f"/api/files/editor?path={path}", headers=platform_admin.headers)
+
+
+@pytest.mark.e2e
+class TestCrossOrgFormExecuteAnchor:
+    """Resolution scope and execution org come from the ANCHOR entity (the form).
+
+    A platform admin (home org != B) executing org B's solution-deployed form
+    must run the install's OWN workflow — not a global _repo/ decoy at the same
+    path::fn — and the execution row must be stamped with org B (the form's
+    data world), not the caller's org.
+
+    Pre-fix, the WorkflowRepository cascade was anchored to ctx.org_id (the
+    CALLER's org), so the install's org-B workflow row was filtered out of the
+    candidate set before the solution_scope disambiguation ran, silently
+    resolving the global decoy; the execution was also stamped with the
+    caller's org.
+    """
+
+    async def test_admin_cross_org_form_execute_resolves_install_workflow(
+        self, db_session, e2e_client, platform_admin
+    ):
+        db = db_session
+        org_b = (await _org(db)).id
+        sol = Solution(
+            id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S", organization_id=org_b
+        )
+        db.add(sol)
+        await db.flush()
+
+        path = f"workflows/xorg_anchor_{uuid4().hex[:8]}.py"
+        # The decoy: a global _repo/ workflow at the SAME path::fn. The buggy
+        # caller-anchored cascade (admin home org is not B) only sees
+        # (caller org OR global) rows, so it silently resolves this one.
+        decoy_wf = Workflow(
+            id=uuid4(), name="decoy", function_name="main", path=path,
+            type="workflow", is_active=True, organization_id=None, solution_id=None,
+        )
+        own_wf = Workflow(
+            id=uuid4(), name="own", function_name="main", path=path,
+            type="workflow", is_active=True, organization_id=org_b, solution_id=sol.id,
+        )
+        db.add_all([decoy_wf, own_wf])
+        await db.flush()
+        form = Form(
+            id=uuid4(), name="xorg-anchor-form", organization_id=org_b,
+            solution_id=sol.id, workflow_id=f"{path}::main", created_by="test",
+        )
+        db.add(form)
+        # The API process must see these rows. No cleanup: the entities are
+        # solution-managed (read-only — neither the API nor the ORM guard
+        # allows deleting them) and uniquely named, so leftovers are inert;
+        # the test stack resets state before each run.
+        await db.commit()
+
+        # Scheduled execute: the SCHEDULED row is inserted synchronously by the
+        # handler itself (no worker round-trip), so both the resolution anchor
+        # AND the execution's organization_id are observable deterministically.
+        r = e2e_client.post(
+            f"/api/forms/{form.id}/execute",
+            headers=platform_admin.headers,
+            json={"form_data": {}, "delay_seconds": 3600},
+        )
+        assert r.status_code == 200, (
+            f"cross-org form execute failed: {r.status_code} {r.text}"
+        )
+        body = r.json()
+        assert body["workflow_id"] == str(own_wf.id), (
+            "cross-org caller resolved the wrong workflow (the global _repo/ "
+            f"decoy, not the install's own): got {body['workflow_id']}, "
+            f"expected {own_wf.id}"
+        )
+
+        exec_row = (
+            await db.execute(
+                select(Execution).where(Execution.id == UUID(body["execution_id"]))
+            )
+        ).scalar_one()
+        assert exec_row.workflow_id == own_wf.id
+        assert exec_row.organization_id == org_b, (
+            f"execution stamped with caller org {exec_row.organization_id}, "
+            f"expected the form's org {org_b}"
+        )
