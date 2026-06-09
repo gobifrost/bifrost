@@ -83,7 +83,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
     # CLI helper keeps the connected-mode bundle identical to a disconnected
     # `bifrost deploy` — without apps, reconcile would delete a connected
     # install's app (criteria 12/13).
-    from bifrost.commands.solution import _collect_apps
+    from bifrost.commands.solution import _collect_apps, _collect_config_schemas
 
     apps = _collect_apps(workspace)
     return SolutionBundle(
@@ -94,6 +94,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         apps=apps,
         forms=forms,
         agents=agents,
+        config_schemas=_collect_config_schemas(workspace),
     )
 
 

@@ -134,6 +134,35 @@ class TestConnectedBundleCompleteness:
         assert [a["id"] for a in bundle.agents] == [agent_id]
 
 
+class TestReadWorkspaceBundleConfigSchemas:
+    """read_workspace_bundle must collect config_schemas from .bifrost/configs.yaml.
+
+    An empty list makes deploy's reconcile sweep DELETE every declaration the
+    install owns, on every auto-pull sync (criterion 13 correctness invariant).
+    """
+
+    def test_read_workspace_bundle_collects_config_schemas(self, tmp_path) -> None:
+        from src.models.orm.solutions import Solution
+        from src.services.solutions.git_sync import read_workspace_bundle
+
+        (tmp_path / "bifrost.solution.yaml").write_text("slug: cs\nname: CS\nscope: global\n")
+        (tmp_path / ".bifrost").mkdir()
+        (tmp_path / ".bifrost" / "configs.yaml").write_text(
+            "configs:\n"
+            "  API_KEY:\n"
+            "    id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n"
+            "    key: API_KEY\n"
+            "    type: secret\n"
+            "    required: true\n"
+            "    description: The API key\n"
+        )
+
+        sol = Solution(id=uuid.uuid4(), slug="cs", name="CS", organization_id=None)
+        bundle = read_workspace_bundle(sol, tmp_path)
+        assert len(bundle.config_schemas) == 1
+        assert bundle.config_schemas[0]["key"] == "API_KEY"
+
+
 @pytest.mark.e2e
 class TestGitSyncRerun:
     async def test_rerun_when_trigger_arrives_mid_sync(self, db_session, monkeypatch):
