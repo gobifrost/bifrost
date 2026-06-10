@@ -1,3 +1,4 @@
+import asyncio
 import socket
 
 import aiohttp
@@ -49,9 +50,28 @@ def _make_upstream(record):
         await ws.close()
         return ws
 
+    async def ws_proto(request):
+        ws = web.WebSocketResponse(protocols=("vite-hmr",))
+        await ws.prepare(request)
+        record["upstream_proto"] = ws.ws_protocol
+        async for _ in ws:
+            pass
+        return ws
+
+    async def ws_hold(request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        record["upstream_connected"].set()
+        async for _ in ws:
+            pass
+        record["upstream_closed"].set()
+        return ws
+
     app = web.Application()
     app.router.add_post("/api/workflows/execute", execute)
     app.router.add_get("/ws/echo", ws_echo)
+    app.router.add_get("/ws/proto", ws_proto)
+    app.router.add_get("/ws/hold", ws_hold)
     app.router.add_route("*", "/api/{tail:.*}", other)
     return app
 
@@ -169,6 +189,54 @@ async def test_ws_upgrade_bridges_to_upstream():
                 assert msg.data == "echo:ping"
         # rel_url (channels + token) is forwarded verbatim to the dev API.
         assert record["ws_query"] == "channels=x&token=tok"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_ws_proxy_echoes_subprotocol():
+    # Vite's HMR client connects with subprotocol "vite-hmr"; browsers MUST
+    # fail the connection if the server doesn't select the requested
+    # subprotocol, so the proxy has to echo it on the client handshake and
+    # forward it upstream.
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(set())
+    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                f"http://127.0.0.1:{dev_port}/ws/proto", protocols=("vite-hmr",)
+            ) as ws:
+                assert ws.protocol == "vite-hmr"
+        assert record["upstream_proto"] == "vite-hmr"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_ws_proxy_closes_upstream_when_client_disconnects():
+    # Half-close: when the browser side goes away (every page reload), the
+    # proxy must tear down the upstream socket instead of leaking the pump,
+    # the ClientSession, and the upstream connection forever.
+    record = {
+        "upstream_connected": asyncio.Event(),
+        "upstream_closed": asyncio.Event(),
+    }
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(set())
+    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with aiohttp.ClientSession() as session:
+            ws = await session.ws_connect(f"http://127.0.0.1:{dev_port}/ws/hold")
+            await asyncio.wait_for(record["upstream_connected"].wait(), timeout=5)
+            await ws.close()
+            # Upstream must observe the close — no leaked half-open pump.
+            await asyncio.wait_for(record["upstream_closed"].wait(), timeout=5)
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

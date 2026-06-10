@@ -13,8 +13,11 @@ The upstream proxy injects the CLI token (Authorization) and the resolved org
 
 WebSockets are NOT given the injected Authorization header: the browser
 authenticates the realtime socket via cookies or a `token` query param (see
-client/src/services/websocket.ts), both of which ride along in `rel_url` /
-forwarded headers. We just forward the connection verbatim.
+client/src/services/websocket.ts). The `token` query param rides along in
+`rel_url`; cookies are forwarded explicitly on the upstream handshake.
+Requested subprotocols (e.g. Vite's `vite-hmr`) are echoed back to the client
+and forwarded upstream — browsers fail the connection otherwise. When either
+side closes, the bridge tears down both sockets (no half-open pump leaks).
 """
 from __future__ import annotations
 
@@ -99,11 +102,20 @@ def _ws_scheme(http_url: str) -> str:
 
 
 async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketResponse:
-    ws_server = web.WebSocketResponse()
+    requested = [
+        p.strip()
+        for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
+        if p.strip()
+    ]
+    ws_server = web.WebSocketResponse(protocols=tuple(requested))
     await ws_server.prepare(request)
     session = aiohttp.ClientSession()
     try:
-        async with session.ws_connect(target_ws_url) as ws_client:
+        async with session.ws_connect(
+            target_ws_url,
+            protocols=tuple(requested),
+            headers={k: v for k, v in request.headers.items() if k.lower() == "cookie"},
+        ) as ws_client:
             async def c2s():
                 async for msg in ws_server:
                     if msg.type == aiohttp.WSMsgType.TEXT:
@@ -122,7 +134,19 @@ async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketRe
                     elif msg.type == aiohttp.WSMsgType.ERROR:
                         break
 
-            await asyncio.gather(c2s(), s2c())
+            # When either side closes, tear the other down too — gather()ing
+            # both would leave the surviving pump (and this handler, the
+            # ClientSession, and the upstream socket) alive forever on every
+            # browser reload.
+            _, pending = await asyncio.wait(
+                [asyncio.ensure_future(c2s()), asyncio.ensure_future(s2c())],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            await ws_client.close()
+            await ws_server.close()
     finally:
         await session.close()
     return ws_server
