@@ -73,6 +73,8 @@ def _get_engine_credentials() -> tuple[str, str] | None:
         if creds and creds.get("access_token") and creds.get("api_url"):
             return creds["api_url"].rstrip("/"), creds["access_token"]
     except Exception:
+        # Credentials file absent/unreadable in this child — caller falls back
+        # to BIFROST_API_URL or treats the cold-cache fetch as unavailable.
         pass
     return None
 
