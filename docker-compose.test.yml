@@ -212,6 +212,9 @@ services:
       # Worker needs minimal DB connections — Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
+      # C1.5: Parity with production hardening
+      PIP_NO_CACHE_DIR: "1"
+      HOME: /home/bifrost
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
@@ -227,8 +230,10 @@ services:
         condition: service_started
       api:
         condition: service_healthy
-    # Entrypoint handles permissions; run as root so it can fix volume ownership
-    user: root
+    # C1.5: Run as bifrost uid. user: "1000:1000" bypasses gosu so cap_drop: ALL works.
+    user: "1000:1000"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     command: ["python", "-m", "src.worker.main"]
     profiles:
       - e2e  # Only start in E2E mode
