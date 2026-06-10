@@ -321,6 +321,8 @@ services:
       # Embeddings E2E test configuration (optional - tests skip if not set)
       # Uses OpenAI text-embedding-3-small for vector embeddings
       EMBEDDINGS_AI_TEST_KEY: ${EMBEDDINGS_AI_TEST_KEY:-}
+      # Security posture test gate: set to "1" after Phase 1 hardening to activate posture assertions
+      BIFROST_POSTURE_HARDENED: ${BIFROST_POSTURE_HARDENED:-}
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
