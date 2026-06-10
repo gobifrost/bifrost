@@ -24,7 +24,7 @@ import os
 import pytest
 
 from src.sdk.context import Caller, Organization
-from src.services.execution.engine import ExecutionRequest, execute
+from src.services.execution.engine import ExecutionRequest, ExecutionResult, execute
 
 
 # ---------------------------------------------------------------------------
@@ -39,8 +39,8 @@ def _posture_hardened() -> bool:
     return os.environ.get("BIFROST_POSTURE_HARDENED", "") == "1"
 
 
-async def _run_introspect_script(script: str) -> dict:
-    """Run a script in the worker and return the result dict."""
+async def _run_introspect_script(script: str) -> ExecutionResult:
+    """Run a script in the worker and return its ExecutionResult."""
     request = ExecutionRequest(
         execution_id="test-posture-introspect",
         caller=Caller(
@@ -100,8 +100,8 @@ class TestWorkerPosture:
         assert result.status.value == "Success", f"Script failed: {result}"
         uid = result.result
         assert uid != 0, (
-            f"Worker process is running as root (UID=0). "
-            f"Apply Phase 1 (C1.4: user: '1000:1000' in docker-compose.yml)."
+            "Worker process is running as root (UID=0). "
+            "Apply Phase 1 (C1.4: user: '1000:1000' in docker-compose.yml)."
         )
         assert uid == 1000, (
             f"Worker UID={uid}, expected 1000 (bifrost user)."
