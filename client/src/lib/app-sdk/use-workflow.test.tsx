@@ -24,7 +24,7 @@ describe("useWorkflow", () => {
         body: init?.body ? JSON.parse(String(init.body)) : null,
         auth: headers.get("Authorization"),
       });
-      return new Response(JSON.stringify({ status: "completed", result: { ok: true } }), {
+      return new Response(JSON.stringify({ status: "Success", result: { ok: true } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -48,7 +48,7 @@ describe("useWorkflow", () => {
     const calls: { body: Record<string, unknown> }[] = [];
     const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ body: init?.body ? JSON.parse(String(init.body)) : {} });
-      return new Response(JSON.stringify({ status: "completed", result: { ok: true } }), {
+      return new Response(JSON.stringify({ status: "Success", result: { ok: true } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -73,7 +73,7 @@ describe("useWorkflow", () => {
     const calls: { body: Record<string, unknown> }[] = [];
     const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ body: init?.body ? JSON.parse(String(init.body)) : {} });
-      return new Response(JSON.stringify({ status: "completed", result: { ok: true } }), {
+      return new Response(JSON.stringify({ status: "Success", result: { ok: true } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -169,7 +169,7 @@ describe("useWorkflow", () => {
     await waitFor(() => expect(resolvers.size).toBe(2));
 
     const ok = (result: string) =>
-      new Response(JSON.stringify({ status: "completed", result }), {
+      new Response(JSON.stringify({ status: "Success", result }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
