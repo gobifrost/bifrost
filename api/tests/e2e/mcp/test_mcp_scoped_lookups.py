@@ -274,12 +274,14 @@ class MockMCPContext:
         user_id: UUID | str,
         org_id: UUID | str | None = None,
         is_platform_admin: bool = False,
+        is_external: bool = False,
         user_email: str = "test@example.com",
         user_name: str = "Test User",
     ):
         self.user_id = user_id
         self.org_id = org_id
         self.is_platform_admin = is_platform_admin
+        self.is_external = is_external
         self.user_email = user_email
         self.user_name = user_name
         self.enabled_system_tools: list[str] = []
