@@ -1,4 +1,5 @@
 import { apiClient, authFetch } from "@/lib/api-client";
+import { getErrorMessage } from "@/lib/api-error";
 import type { components } from "@/lib/v1";
 
 export type Solution = components["schemas"]["Solution"];
@@ -14,24 +15,12 @@ interface RequestOptions {
 	signal?: AbortSignal;
 }
 
-function errorMessage(error: unknown, fallback: string): string {
-	if (
-		error &&
-		typeof error === "object" &&
-		"detail" in error &&
-		typeof error.detail === "string"
-	) {
-		return error.detail;
-	}
-	return fallback;
-}
-
 export async function listSolutions(
 	options: RequestOptions = {},
 ): Promise<SolutionsList> {
 	const { signal } = options;
 	const { data, error } = await apiClient.GET("/api/solutions", { signal });
-	if (error) throw new Error(errorMessage(error, "Failed to list solutions"));
+	if (error) throw new Error(getErrorMessage(error, "Failed to list solutions"));
 	return data;
 }
 
@@ -44,7 +33,7 @@ export async function getSolution(
 		params: { path: { solution_id: solutionId } },
 		signal,
 	});
-	if (error) throw new Error(errorMessage(error, "Failed to get solution"));
+	if (error) throw new Error(getErrorMessage(error, "Failed to get solution"));
 	return data;
 }
 
@@ -58,7 +47,7 @@ export async function getSolutionEntities(
 		{ params: { path: { solution_id: solutionId } }, signal },
 	);
 	if (error) {
-		throw new Error(errorMessage(error, "Failed to get solution entities"));
+		throw new Error(getErrorMessage(error, "Failed to get solution entities"));
 	}
 	return data;
 }
@@ -73,7 +62,7 @@ export async function updateSolution(
 		"/api/solutions/{solution_id}",
 		{ params: { path: { solution_id: solutionId } }, body: update, signal },
 	);
-	if (error) throw new Error(errorMessage(error, "Failed to update solution"));
+	if (error) throw new Error(getErrorMessage(error, "Failed to update solution"));
 	return data;
 }
 
@@ -97,7 +86,7 @@ export async function setSolutionConfig(
 		body: { key, value, type, organization_id: organizationId },
 		signal: options.signal,
 	});
-	if (error) throw new Error(errorMessage(error, "Failed to save config value"));
+	if (error) throw new Error(getErrorMessage(error, "Failed to save config value"));
 }
 
 export async function deleteSolution(
@@ -109,7 +98,7 @@ export async function deleteSolution(
 		"/api/solutions/{solution_id}",
 		{ params: { path: { solution_id: solutionId } }, signal },
 	);
-	if (error) throw new Error(errorMessage(error, "Failed to delete solution"));
+	if (error) throw new Error(getErrorMessage(error, "Failed to delete solution"));
 	return data;
 }
 
