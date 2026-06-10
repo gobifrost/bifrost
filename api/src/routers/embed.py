@@ -65,6 +65,11 @@ async def embed_app(
             break
 
     if app is None:
+        # "No embed secrets configured" only when NO candidate has one: with
+        # multiple installs we can't know which install the caller meant, and
+        # reporting per-install secret state on a public endpoint would leak
+        # configuration info. Whenever any secret exists, the only safe answer
+        # is that the signature didn't verify.
         if not any(s.is_active for c in candidates for s in c.embed_secrets):
             raise HTTPException(status_code=403, detail="No embed secrets configured")
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
