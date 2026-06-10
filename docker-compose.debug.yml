@@ -262,13 +262,12 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    # C1.5: Capability parity with k8s (C1.4). No-new-privileges + cap_drop ALL.
-    # Note: user: is NOT set here — hot-reload (watchmedo) writes compiled .pyc files
-    # and the debug stack mounts source :ro. The host source tree is owned by the
-    # developer, so running as bifrost (uid 1000) only works when host UIDs match.
-    # read_only: is also NOT set — hot-reload needs to write to /tmp and __pycache__.
-    # Capability hardening (the meaningful posture improvement) is applied here;
-    # UID hardening is deferred to a future "production-only" debug-stack flag.
+    # C1.5: Capability parity with k8s (C1.4).
+    # user: "1000:1000" bypasses the entrypoint.sh gosu switch. The gosu switch
+    # requires CAP_SETUID/CAP_SETGID which are dropped by cap_drop: ALL, so we
+    # must set user: explicitly. Source mounts are :ro so bifrost uid reads them fine.
+    # read_only: is NOT set — hot-reload writes /tmp, __pycache__, coverage files.
+    user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     command: >
