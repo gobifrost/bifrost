@@ -167,6 +167,53 @@ def _template_main(
         pipe.close()
         return
 
+    # ----- Env scrub (Phase 2, M1) -----
+    # Scrub credentials that the template loaded during startup but that
+    # forked children must NOT inherit.  This point is chosen deliberately:
+    # - AFTER install_requirements() which needs BIFROST_S3_* for cold-cache
+    #   requirements fetch (legacy path) — safe to remove now.
+    # - BEFORE pipe.send({"status": "ready"}) — all forks inherit this scrubbed env.
+    #
+    # Assertion: get_settings() must NOT have been called by this point.
+    # If it were, the lru_cache would hold a Settings object with the secrets
+    # and the scrub would have no effect on in-process reads.  We log the cache
+    # state so any future regression is immediately visible.
+    try:
+        from src.config import get_settings as _get_settings
+        cache_info = _get_settings.cache_info()
+        if cache_info.currsize != 0:
+            logger.error(
+                "SECURITY: get_settings() cache is non-empty at env-scrub point "
+                f"(currsize={cache_info.currsize}). Secrets may be retained in "
+                "memory after scrub. Investigate immediately."
+            )
+        else:
+            logger.info("get_settings cache_info at scrub: currsize=0 (clean)")
+    except Exception as e:
+        logger.warning(f"Could not check get_settings cache state: {e}")
+
+    _SCRUB_KEYS = [
+        "BIFROST_SECRET_KEY",
+        "BIFROST_DATABASE_URL",
+        "BIFROST_DATABASE_URL_SYNC",
+        "BIFROST_RABBITMQ_URL",
+        # S3 credentials: child uses API endpoint fallback (Phase 2 step 2).
+        "BIFROST_S3_ACCESS_KEY",
+        "BIFROST_S3_SECRET_KEY",
+        "BIFROST_S3_ENDPOINT_URL",
+        "BIFROST_S3_BUCKET",
+        "BIFROST_S3_REGION",
+    ]
+    scrubbed = []
+    for key in _SCRUB_KEYS:
+        if key in os.environ:
+            del os.environ[key]
+            scrubbed.append(key)
+    if scrubbed:
+        logger.info(f"Scrubbed {len(scrubbed)} env var(s) from template before fork: {scrubbed}")
+    else:
+        logger.info("Env scrub: no forbidden vars found (already absent — expected in tests)")
+
     logger.info("Template process ready — all dependencies loaded")
     pipe.send({"status": "ready", "pid": os.getpid()})
 
