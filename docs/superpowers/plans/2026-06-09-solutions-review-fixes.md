@@ -896,12 +896,56 @@ def test_build_sdk_tarball_cached_per_version(monkeypatch):
 
 ---
 
-### Task 19: full verification + Codex review
+## Pass 5 — Solutions versioning + upgrade-in-place (scope change 2026-06-09)
+
+> Source: `docs/plans/2026-06-09-solutions-upgrade-scope-change.md` (Jack, via the
+> second-opinion session). Upgrade is an explicit verb, replace is the semantics.
+> No migration framework in v1. Codex review requirement DROPPED by Jack
+> (2026-06-09) — final gate is the in-session full-diff review instead.
+
+### Task 20: server — version on the install record, deploy records it, downgrades refused
+
+**Files:**
+- Create: `api/alembic/versions/20260610_solution_version.py` (revises the then-current head — check `alembic heads`)
+- Modify: `api/src/models/orm/solutions.py` (add `version: str | None`, `upgraded_from_version: str | None`), `api/src/models/contracts/solutions.py` (expose both on the response model; add `version` to the deploy/install request models and `force: bool = False` to deploy/zip-install requests), `api/src/services/solutions/deploy.py` (SolutionBundle carries `version: str | None`; `deploy()` compares bundle.version vs install.version — older → raise new `SolutionDowngradeBlocked` unless `force`; on success set `upgraded_from_version = old` when versions differ, then `version = new`), `api/src/services/solutions/zip_install.py` + `api/src/services/solutions/git_sync.py` (thread version from descriptor into the bundle), `api/src/routers/solutions.py` (map `SolutionDowngradeBlocked` → 409 with a detail naming both versions and the force override; accept `force` on deploy + zip-install)
+- Tests: `api/tests/unit/test_solution_deploy_version.py` (new), extend `api/tests/e2e/platform/test_solution_zip_install_e2e.py`
+
+- [ ] Failing tests first: (a) deploy with version "1.1.0" over install at "1.0.0" → succeeds, install.version == "1.1.0", upgraded_from_version == "1.0.0"; (b) deploy "0.9.0" over "1.0.0" → SolutionDowngradeBlocked (409 at the endpoint); (c) same with force=True → succeeds; (d) non-PEP440 versions (e.g. "abc") → comparison falls back to inequality-without-ordering: never blocked, recorded verbatim; (e) version absent (older bundles) → never blocked, version untouched.
+- [ ] Version comparison via `packaging.version.Version` with `InvalidVersion` → treat as unordered (allow, record). One helper, unit-tested.
+- [ ] Commit: `feat(solutions): version on install record; deploy-over-install records upgrade; downgrades 409 unless forced`
+
+### Task 21: CLI — descriptor version + deploy sends it + --force
+
+**Files:**
+- Modify: `api/bifrost/solution_descriptor.py` (descriptor gains optional `version`), `api/bifrost/commands/solution.py` (`init --version` default "0.1.0" written to the descriptor; `deploy_cmd` includes `version` in the deploy payload; new `--force` flag forwarded; a 409-downgrade response prints the server detail + hint to use `--force`)
+- Tests: extend `api/tests/unit/test_solution_descriptor.py`, `api/tests/unit/test_solution_resolve_install.py` (deploy payload includes version; --force forwarded; downgrade 409 → loud message with hint)
+
+- [ ] Commit: `feat(cli): solution version in descriptor; deploy --force for downgrades`
+
+### Task 22: preview diff — upgrades are previewed, never blind
+
+**Files:**
+- Modify: `api/src/services/solutions/zip_install.py` (preview path: when an install matching slug+scope exists, the preview response gains `existing_install` {id, version, name} and a `diff` — entities added/removed by type (compare manifest ids/names vs the install's current solution-owned rows) and config declarations added/removed/changed (key/type/required)), `api/src/models/contracts/solutions.py` (preview response models), `api/src/routers/solutions.py` (wire-through)
+- Tests: `api/tests/unit/test_solution_preview_diff.py` (new) + extend the zip e2e: preview of a v2 zip over a v1 install reports the diff and the existing install id
+
+- [ ] Commit: `feat(solutions): upgrade preview diff (entities + config declarations) against the existing install`
+
+### Task 23: UI — version surfaced; drag-drop routes to upgrade with preview
+
+**Files:**
+- Modify: `client/src/pages/Solutions.tsx` (upload flow: when preview returns existing_install, the dialog becomes "Upgrade <name> vOLD → vNEW" with the diff list; downgrade (server 409) → confirm dialog that retries with force; NEVER a second install), `client/src/pages/SolutionDetail.tsx` (version + upgraded-from shown), `client/src/services/solutions.ts` (preview/deploy params), regen `client/src/lib/v1.d.ts`
+- Tests: extend `Solutions.test.tsx` (upgrade dialog renders diff + versions; downgrade confirm path sends force) and `SolutionDetail.test.tsx` (version rendered)
+
+- [ ] Commit: `feat(ui): solutions upgrade flow — version display, preview diff, downgrade confirm`
+
+---
+
+### Task 19 (runs LAST, after Pass 5): full verification + findings-doc update
 
 - [ ] **Step 1:** `cd api && pyright && ruff check .` — 0 errors.
 - [ ] **Step 2:** debug stack up for this worktree; `cd client && npm run generate:types` (OPENAPI_URL per ./debug.sh status if non-default port); `npm run tsc && npm run lint` — clean.
 - [ ] **Step 3:** `./test.sh all` (workaround from the header if the api-container flake bites) and `./test.sh client unit` — green; parse `/tmp/bifrost-<project>/test-results.xml` for failures, don't grep stdout.
-- [ ] **Step 4:** Codex spec review per the done-bar rule (`feedback_codex_done_bar`): zero P1/P2 before calling this complete.
+- [ ] **Step 4:** Final full-diff review in-session (dispatch a fresh reviewer over the whole branch delta for this plan's commits). ~~Codex done-bar~~ — dropped by Jack 2026-06-09.
 - [ ] **Step 5:** Update `docs/plans/2026-06-09-solutions-qa-fanout-findings.md` STATUS block: the "0 high open" claim is superseded — link this plan and mark each finding fixed with its commit.
 
 ---
