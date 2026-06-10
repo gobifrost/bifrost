@@ -1,5 +1,34 @@
 # Solutions Review Fixes Implementation Plan
 
+> ## ✅ STATUS: COMPLETE (2026-06-10)
+>
+> All 23 tasks (18 review fixes + T19 verification + Pass 5 versioning/upgrade) are
+> implemented, each spec- and quality-reviewed, committed on this branch
+> (`a530f41b..` — checkboxes below may be stale; the commit trail is truth).
+>
+> **Final verification:** backend `pyright` 0 errors, `ruff` clean repo-wide; client
+> `tsc`/eslint clean, vitest 1218/1218; full single-session backend run
+> **5696 passed / 55 skipped / 1 failed** — the 1 failure is
+> `test_backfill_summaries::test_real_run_creates_job_and_flips_runs_to_pending`,
+> a pre-existing worker-timing flake in a subsystem this plan never touched
+> (file last changed PR #84; the live worker consumes the backfill queue between
+> enqueue and the all-pending assertion).
+>
+> **Verification also fixed four pre-existing branch breaks** the compose flake had
+> been hiding (no aggregate run had passed since ~06-05): the git-sync e2e teardown
+> FK cascade (81 phantom errors/run + a `FullTable` row that 422'd three table-list
+> tests), the vendoring e2e broken by the 06-05 uuid5 remap, `transport.ts` missing
+> from the Dockerfile SDK copy list (served SDK + every app build esbuild-failed),
+> and deploy's config reattach never invalidating the org config cache.
+>
+> **Full-suite recipe that works** (compose v5.1.4 recreate flake): see
+> `project_test_stack_api_exit_flake` memory — stop api/worker/scheduler **and
+> pgbouncer**, terminate backends, DROP/CREATE from template, FLUSHALL, restart,
+> then ONE `compose run --no-deps test-runner pytest tests/unit tests/e2e` session.
+>
+> Codex gate dropped by Jack 2026-06-09; final gate was the in-session full-delta
+> review (verdict READY, all notes resolved in follow-up commits).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix all confirmed findings from the 2026-06-09 full-branch code review of `worktree-solutions-success-criteria` (7 high, ~10 medium/low), in four passes ordered by harm.
