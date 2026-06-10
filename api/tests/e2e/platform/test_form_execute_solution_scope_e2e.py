@@ -282,12 +282,25 @@ class TestCrossOrgFormExecuteAnchor:
             f"expected {own_wf.id}"
         )
 
+        # Lock the cross-org premise the decoy relies on: the session admin's
+        # home org must differ from the freshly created org B.
+        from src.models.orm.users import User
+
+        admin_org = (
+            await db.execute(
+                select(User.organization_id).where(User.email == platform_admin.email)
+            )
+        ).scalar_one()
+        assert admin_org != org_b, "fixture admin unexpectedly homed in org B"
+
         exec_row = (
             await db.execute(
                 select(Execution).where(Execution.id == UUID(body["execution_id"]))
             )
         ).scalar_one()
-        assert exec_row.workflow_id == own_wf.id
+        # form_id propagation is the one thing the API response can't prove;
+        # workflow_id is already asserted via the response body above.
+        assert exec_row.form_id == form.id
         assert exec_row.organization_id == org_b, (
             f"execution stamped with caller org {exec_row.organization_id}, "
             f"expected the form's org {org_b}"
