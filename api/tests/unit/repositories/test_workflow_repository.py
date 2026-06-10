@@ -105,6 +105,38 @@ class TestWorkflowRepository:
 
         assert result is None
 
+    async def test_resolve_path_ref_unscoped_ambiguous_solution_rows_refused(
+        self, repository, mock_session
+    ):
+        """An UNSCOPED caller resolving a path that matches 2+ solution rows and
+        NO _repo/ row must get None — never an arbitrary install's workflow."""
+        row_a = MagicMock()
+        row_a.solution_id = uuid4()
+        row_b = MagicMock()
+        row_b.solution_id = uuid4()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [row_a, row_b]
+        mock_session.execute.return_value = mock_result
+
+        result = await repository.resolve("workflows/main.py::main")
+
+        assert result is None
+
+    async def test_resolve_path_ref_unscoped_single_solution_row_resolves(
+        self, repository, mock_session
+    ):
+        """Regression guard: exactly ONE visible solution row (no _repo/ row)
+        still resolves for an unscoped caller — nothing ambiguous about it."""
+        row = MagicMock()
+        row.solution_id = uuid4()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [row]
+        mock_session.execute.return_value = mock_result
+
+        result = await repository.resolve("workflows/main.py::main")
+
+        assert result == row
+
     async def test_resolve_path_ref_prefers_over_name_lookup(self, repository, mock_workflow):
         """Test that :: in identifier triggers path ref lookup, not name lookup."""
         with patch.object(repository, '_resolve_by_path_ref', return_value=mock_workflow) as mock_path_ref:

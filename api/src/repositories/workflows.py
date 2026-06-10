@@ -20,6 +20,7 @@ Access Control:
 - access_level field: 'authenticated' or 'role_based'
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Literal, Sequence
 from uuid import UUID
@@ -31,6 +32,8 @@ from src.core.org_filter import OrgFilterType
 from src.models import Workflow
 from src.models.orm.workflow_roles import WorkflowRole
 from src.repositories.org_scoped import OrgScopedRepository
+
+logger = logging.getLogger(__name__)
 
 # Type discriminator values
 WorkflowType = Literal["workflow", "tool", "data_provider"]
@@ -146,9 +149,22 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             return repo_rows[0] if repo_rows else None
         # No install scope — a _repo/ or system caller. Prefer the _repo/ row so a
         # shared-library path-ref is never hijacked by a Solution reusing the
-        # path; only fall back to a solution row when there is no _repo/ row.
+        # path; fall back to a solution row only when there is no _repo/ row AND
+        # exactly one solution row is visible (nothing to guess between).
         repo_rows = [w for w in rows if w.solution_id is None]
-        return repo_rows[0] if repo_rows else rows[0]
+        if repo_rows:
+            return repo_rows[0]
+        if len(rows) == 1:
+            return rows[0]
+        # 2+ solution rows, no _repo/ row, no caller scope: never guess which
+        # install executes — callers 404 with the ref in the detail.
+        logger.warning(
+            "Ambiguous unscoped path-ref %s::%s matches %d solution workflows; refusing",
+            path,
+            function_name,
+            len(rows),
+        )
+        return None
 
     # ==========================================================================
     # Type-Based Queries
