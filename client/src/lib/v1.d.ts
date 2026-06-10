@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7260,6 +7260,11 @@ export interface paths {
          *
          *     Parse-only: no DB write, no S3, no build. The drag-and-drop UI calls this to
          *     show the install plan + declared configs before committing.
+         *
+         *     When an install already exists for the zip's slug at the requested scope
+         *     (``organization_id`` resolved exactly as the install endpoint does:
+         *     empty/absent → global NULL), the response also carries ``existing_install``
+         *     + ``diff`` so the UI routes to UPGRADE instead of a second install (Task 22).
          */
         post: operations["install_preview_api_solutions_install_preview_post"];
         delete?: never;
@@ -7286,6 +7291,9 @@ export interface paths {
          *     per-install write lock, and — in the same locked section after the S3 finalize
          *     — applies the provided ``config_values`` (a JSON object of key→value). A
          *     missing required config does NOT block the install (warn-not-block).
+         *
+         *     A zip whose descriptor ``version`` is OLDER than the installed version is
+         *     refused with 409 (downgrade gate, Task 20) unless ``?force=true``.
          */
         post: operations["install_solution_api_solutions_install_post"];
         delete?: never;
@@ -10375,6 +10383,8 @@ export interface components {
              * @description Solution workspace zip
              */
             file: string;
+            /** Organization Id */
+            organization_id?: string | null;
         };
         /** Body_install_solution_api_solutions_install_post */
         Body_install_solution_api_solutions_install_post: {
@@ -20151,11 +20161,47 @@ export interface components {
             git_connected: boolean;
             /** Git Repo Url */
             git_repo_url?: string | null;
+            /** Version */
+            version?: string | null;
+            /** Upgraded From Version */
+            upgraded_from_version?: string | null;
             /**
              * Scope
              * @enum {string}
              */
             readonly scope: "org" | "global";
+        };
+        /**
+         * SolutionConfigSchemaChange
+         * @description One config declaration whose type/required changed between versions.
+         */
+        SolutionConfigSchemaChange: {
+            /** Key */
+            key: string;
+            from: components["schemas"]["SolutionConfigSchemaState"];
+            to: components["schemas"]["SolutionConfigSchemaState"];
+        };
+        /**
+         * SolutionConfigSchemaDiff
+         * @description Config DECLARATION diff (by key) for an upgrade preview.
+         */
+        SolutionConfigSchemaDiff: {
+            /** Added */
+            added?: string[];
+            /** Removed */
+            removed?: string[];
+            /** Changed */
+            changed?: components["schemas"]["SolutionConfigSchemaChange"][];
+        };
+        /**
+         * SolutionConfigSchemaState
+         * @description The compared portion of a config declaration (type + required).
+         */
+        SolutionConfigSchemaState: {
+            /** Type */
+            type: string;
+            /** Required */
+            required: boolean;
         };
         /**
          * SolutionConfigStatus
@@ -20307,6 +20353,13 @@ export interface components {
             config_schemas?: {
                 [key: string]: unknown;
             }[];
+            /** Version */
+            version?: string | null;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
         };
         /** SolutionDeployResponse */
         SolutionDeployResponse: {
@@ -20388,6 +20441,19 @@ export interface components {
             required_configs_unset?: string[];
         };
         /**
+         * SolutionEntityDiff
+         * @description Added/removed display names for ONE entity type in an upgrade preview.
+         *
+         *     Identity is the deployer's per-install uuid5 remap (``solution_entity_id``),
+         *     so "kept" (in neither list) means the deploy would UPDATE that row in place.
+         */
+        SolutionEntityDiff: {
+            /** Added */
+            added?: string[];
+            /** Removed */
+            removed?: string[];
+        };
+        /**
          * SolutionEntitySummary
          * @description Lightweight (id, name) entry for an owned entity — the detail UI links by id.
          */
@@ -20401,9 +20467,28 @@ export interface components {
             name: string;
         };
         /**
+         * SolutionExistingInstall
+         * @description The install a previewed zip would UPGRADE (matched by slug + scope).
+         */
+        SolutionExistingInstall: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Version */
+            version?: string | null;
+        };
+        /**
          * SolutionInstallPreview
          * @description Parse-only preview of a Solution install zip — what it would create + its
          *     declared configs. Nothing is persisted by the preview endpoint.
+         *
+         *     When an install already exists for the zip's slug at the requested scope,
+         *     ``existing_install`` + ``diff`` describe the upgrade the install would
+         *     perform (Task 22) — drag-drop routes to UPGRADE, never a second install.
          */
         SolutionInstallPreview: {
             /** Slug */
@@ -20412,6 +20497,8 @@ export interface components {
             name?: string | null;
             /** Scope */
             scope?: ("org" | "global") | null;
+            /** Version */
+            version?: string | null;
             /** Workflows */
             workflows?: {
                 [key: string]: unknown;
@@ -20436,6 +20523,8 @@ export interface components {
             config_schemas?: {
                 [key: string]: unknown;
             }[];
+            existing_install?: components["schemas"]["SolutionExistingInstall"] | null;
+            diff?: components["schemas"]["SolutionUpgradeDiff"] | null;
         };
         /**
          * SolutionUpdate
@@ -20461,6 +20550,18 @@ export interface components {
             git_connected?: boolean | null;
             /** Git Repo Url */
             git_repo_url?: string | null;
+        };
+        /**
+         * SolutionUpgradeDiff
+         * @description What deploying the previewed zip would change on the existing install.
+         */
+        SolutionUpgradeDiff: {
+            workflows?: components["schemas"]["SolutionEntityDiff"];
+            tables?: components["schemas"]["SolutionEntityDiff"];
+            forms?: components["schemas"]["SolutionEntityDiff"];
+            agents?: components["schemas"]["SolutionEntityDiff"];
+            apps?: components["schemas"]["SolutionEntityDiff"];
+            config_schemas?: components["schemas"]["SolutionConfigSchemaDiff"];
         };
         /** SolutionsList */
         SolutionsList: {
@@ -28726,7 +28827,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28759,7 +28860,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28792,7 +28893,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28825,7 +28926,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -35198,7 +35299,9 @@ export interface operations {
     };
     install_solution_api_solutions_install_post: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

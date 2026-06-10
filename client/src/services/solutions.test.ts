@@ -153,6 +153,21 @@ describe("solutions service", () => {
 		expect(out.id).toBe("sol-2");
 	});
 
+	it("installs with ?force=true when force is set", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ id: "sol-4" }),
+		});
+		const file = new File(["zip-bytes"], "demo.zip", {
+			type: "application/zip",
+		});
+
+		await installSolution({ file, force: true });
+
+		const [url] = mockAuthFetch.mock.calls[0];
+		expect(url).toBe("/api/solutions/install?force=true");
+	});
+
 	it("installs globally with empty organization_id when none given", async () => {
 		mockAuthFetch.mockResolvedValue({
 			ok: true,

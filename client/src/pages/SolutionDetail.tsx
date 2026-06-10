@@ -511,8 +511,16 @@ export function SolutionDetail() {
 							</h1>
 							<p className="mt-1 text-sm text-muted-foreground">
 								{sol.slug}
+								{sol.upgraded_from_version && (
+									<span className="ml-2 text-xs">
+										upgraded from v{sol.upgraded_from_version}
+									</span>
+								)}
 							</p>
 							<div className="mt-3 flex flex-wrap items-center gap-2">
+								{sol.version && (
+									<Badge variant="outline">v{sol.version}</Badge>
+								)}
 								<Badge
 									variant={sol.organization_id ? "outline" : "default"}
 									className="gap-1"

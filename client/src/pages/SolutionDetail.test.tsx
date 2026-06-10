@@ -102,6 +102,21 @@ describe("SolutionDetail", () => {
 		).toBeInTheDocument();
 	});
 
+	it("renders the version and upgraded-from subtext", async () => {
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			version: "2.1.0",
+			upgraded_from_version: "2.0.0",
+		} as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(screen.getByText("v2.1.0")).toBeInTheDocument();
+		expect(screen.getByText(/upgraded from v2\.0\.0/i)).toBeInTheDocument();
+	});
+
 	it("renders tabs with counts", async () => {
 		await renderPage();
 		await screen.findByTestId("solution-detail");

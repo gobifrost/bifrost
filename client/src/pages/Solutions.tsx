@@ -56,7 +56,9 @@ import {
 	previewInstall,
 	type Solution,
 	type SolutionInstallPreview,
+	type SolutionUpgradeDiff,
 } from "@/services/solutions";
+import type { components } from "@/lib/v1";
 
 /** A declared config schema item on a preview, narrowed from the loose dict. */
 interface PreviewConfigSchema {
@@ -135,6 +137,112 @@ function EntitySummary({
 	);
 }
 
+/** One "Added: …" / "Removed: …" pair for an entity kind; omits empty lists. */
+function DiffSection({
+	label,
+	added,
+	removed,
+}: {
+	label: string;
+	added: string[];
+	removed: string[];
+}) {
+	if (added.length === 0 && removed.length === 0) return null;
+	return (
+		<div className="text-sm">
+			<span className="font-medium">{label}</span>
+			{added.length > 0 && (
+				<p className="text-green-600 dark:text-green-500">
+					Added: {added.join(", ")}
+				</p>
+			)}
+			{removed.length > 0 && (
+				<p className="text-destructive">Removed: {removed.join(", ")}</p>
+			)}
+		</div>
+	);
+}
+
+/** Render a config declaration change as "KEY: secret→string, required→optional". */
+function describeConfigChange(
+	change: components["schemas"]["SolutionConfigSchemaChange"],
+): string {
+	const parts: string[] = [];
+	if (change.from.type !== change.to.type) {
+		parts.push(`${change.from.type}→${change.to.type}`);
+	}
+	if (change.from.required !== change.to.required) {
+		parts.push(
+			change.from.required ? "required→optional" : "optional→required",
+		);
+	}
+	return `${change.key}: ${parts.join(", ")}`;
+}
+
+/** What an upgrade changes, per entity type plus config declarations. */
+function UpgradeDiffView({ diff }: { diff: SolutionUpgradeDiff }) {
+	const entitySections: { label: string; key: keyof SolutionUpgradeDiff }[] = [
+		{ label: "Workflows", key: "workflows" },
+		{ label: "Apps", key: "apps" },
+		{ label: "Forms", key: "forms" },
+		{ label: "Agents", key: "agents" },
+		{ label: "Tables", key: "tables" },
+	];
+	const configs = diff.config_schemas;
+	const hasConfigDiff =
+		(configs?.added?.length ?? 0) > 0 ||
+		(configs?.removed?.length ?? 0) > 0 ||
+		(configs?.changed?.length ?? 0) > 0;
+	const hasEntityDiff = entitySections.some(({ key }) => {
+		const d = diff[key] as SolutionUpgradeDiff["workflows"] | undefined;
+		return (d?.added?.length ?? 0) > 0 || (d?.removed?.length ?? 0) > 0;
+	});
+	if (!hasEntityDiff && !hasConfigDiff) {
+		return (
+			<p className="text-sm text-muted-foreground">
+				No entity or configuration changes.
+			</p>
+		);
+	}
+	return (
+		<div className="space-y-3" data-testid="upgrade-diff">
+			{entitySections.map(({ label, key }) => {
+				const d = diff[key] as
+					| SolutionUpgradeDiff["workflows"]
+					| undefined;
+				return (
+					<DiffSection
+						key={key}
+						label={label}
+						added={d?.added ?? []}
+						removed={d?.removed ?? []}
+					/>
+				);
+			})}
+			{hasConfigDiff && configs && (
+				<div className="text-sm">
+					<span className="font-medium">Configs</span>
+					{(configs.added?.length ?? 0) > 0 && (
+						<p className="text-green-600 dark:text-green-500">
+							Added: {(configs.added ?? []).join(", ")}
+						</p>
+					)}
+					{(configs.removed?.length ?? 0) > 0 && (
+						<p className="text-destructive">
+							Removed: {(configs.removed ?? []).join(", ")}
+						</p>
+					)}
+					{(configs.changed ?? []).map((change) => (
+						<p key={change.key} className="text-muted-foreground">
+							{describeConfigChange(change)}
+						</p>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 export function Solutions() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -152,6 +260,9 @@ export function Solutions() {
 	const [configValues, setConfigValues] = useState<Record<string, string>>(
 		{},
 	);
+	// Set when an install attempt 409'd as a downgrade; gates a confirm step
+	// before retrying with force=true.
+	const [downgradeConfirm, setDowngradeConfirm] = useState(false);
 
 	// Delete dialog state.
 	const [deleteTarget, setDeleteTarget] = useState<Solution | null>(null);
@@ -192,7 +303,7 @@ export function Solutions() {
 	});
 
 	const installMutation = useMutation({
-		mutationFn: () => {
+		mutationFn: ({ force }: { force: boolean }) => {
 			if (!installFile) throw new Error("No file selected");
 			const values: Record<string, string> = {};
 			for (const [k, v] of Object.entries(configValues)) {
@@ -203,18 +314,29 @@ export function Solutions() {
 				organizationId:
 					scopeOrgId === "__global__" ? "" : scopeOrgId,
 				configValues: values,
+				force,
 			});
 		},
 		onSuccess: (created) => {
 			queryClient.invalidateQueries({ queryKey: ["solutions"] });
-			toast.success(`Installed ${created.name}`);
+			toast.success(
+				preview?.existing_install
+					? `Upgraded ${created.name}`
+					: `Installed ${created.name}`,
+			);
 			closeInstallDialog();
 			navigate(`/solutions/${created.id}`);
 		},
 		onError: (err: unknown) => {
-			setInstallError(
-				err instanceof Error ? err.message : "Failed to install",
-			);
+			const message =
+				err instanceof Error ? err.message : "Failed to install";
+			if (message.includes("older than installed")) {
+				// Server's downgrade guard (409) — ask before forcing.
+				setInstallError(null);
+				setDowngradeConfirm(true);
+				return;
+			}
+			setInstallError(message);
 		},
 	});
 
@@ -241,6 +363,7 @@ export function Solutions() {
 		setPreview(null);
 		setPreviewError(null);
 		setInstallError(null);
+		setDowngradeConfirm(false);
 		previewMutation.mutate(file);
 	}
 
@@ -249,6 +372,7 @@ export function Solutions() {
 		setPreview(null);
 		setPreviewError(null);
 		setInstallError(null);
+		setDowngradeConfirm(false);
 		setConfigValues({});
 		setScopeOrgId("__global__");
 		previewMutation.reset();
@@ -287,6 +411,8 @@ export function Solutions() {
 	}
 
 	const declaredConfigs = preview ? asConfigSchemas(preview.config_schemas) : [];
+	const existingInstall = preview?.existing_install ?? null;
+	const isUpgrade = existingInstall !== null;
 
 	return (
 		<div
@@ -433,6 +559,11 @@ export function Solutions() {
 										)}
 										{sol.git_connected ? "Git" : "Manual"}
 									</Badge>
+									{sol.version && (
+										<Badge variant="outline">
+											v{sol.version}
+										</Badge>
+									)}
 								</div>
 							</div>
 						))}
@@ -452,10 +583,15 @@ export function Solutions() {
 					data-testid="preview-dialog"
 				>
 					<DialogHeader>
-						<DialogTitle>Install Solution</DialogTitle>
+						<DialogTitle>
+							{isUpgrade && existingInstall
+								? `Upgrade ${existingInstall.name} v${existingInstall.version ?? "?"} → v${preview?.version ?? "?"}`
+								: "Install Solution"}
+						</DialogTitle>
 						<DialogDescription>
-							Review what this package creates, choose a scope, and
-							set any required configuration values.
+							{isUpgrade
+								? "This package upgrades an existing install in place. Review the changes below."
+								: "Review what this package creates, choose a scope, and set any required configuration values."}
 						</DialogDescription>
 					</DialogHeader>
 
@@ -468,55 +604,79 @@ export function Solutions() {
 						<p className="py-4 text-sm text-destructive">
 							{previewError}
 						</p>
+					) : preview && downgradeConfirm ? (
+						<div
+							data-testid="downgrade-confirm"
+							className="space-y-2 py-2"
+						>
+							<p className="text-sm font-medium">
+								This is a DOWNGRADE: v
+								{existingInstall?.version ?? "?"} → v
+								{preview.version ?? "?"}. Replace anyway?
+							</p>
+							<p className="text-xs text-muted-foreground">
+								The installed version is newer than this package.
+								Replacing it will overwrite the install's content
+								with the older version.
+							</p>
+						</div>
 					) : preview ? (
 						<div className="space-y-5">
-							<div>
-								<p className="text-sm">
-									This will install{" "}
-									<span className="font-semibold">
-										{preview.name ?? "this Solution"}
-									</span>
-									{preview.slug ? (
-										<span className="text-muted-foreground">
-											{" "}
-											({preview.slug})
+							{isUpgrade ? (
+								<UpgradeDiffView diff={preview.diff ?? {}} />
+							) : (
+								<div>
+									<p className="text-sm">
+										This will install{" "}
+										<span className="font-semibold">
+											{preview.name ?? "this Solution"}
 										</span>
-									) : null}
-									.
-								</p>
-								<div className="mt-3">
-									<EntitySummary preview={preview} />
+										{preview.slug ? (
+											<span className="text-muted-foreground">
+												{" "}
+												({preview.slug})
+											</span>
+										) : null}
+										.
+									</p>
+									<div className="mt-3">
+										<EntitySummary preview={preview} />
+									</div>
 								</div>
-							</div>
+							)}
 
-							{/* Scope picker */}
-							<div className="space-y-2">
-								<Label htmlFor="solution-scope">Scope</Label>
-								<Select
-									value={scopeOrgId}
-									onValueChange={setScopeOrgId}
-								>
-									<SelectTrigger
-										id="solution-scope"
-										data-testid="scope-select"
+							{/* Scope picker — only for fresh installs. An upgrade
+							    targets the existing install; there is no
+							    "create a second install" path here. */}
+							{!isUpgrade && (
+								<div className="space-y-2">
+									<Label htmlFor="solution-scope">Scope</Label>
+									<Select
+										value={scopeOrgId}
+										onValueChange={setScopeOrgId}
 									>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="__global__">
-											Global
-										</SelectItem>
-										{(organizations ?? []).map((org) => (
-											<SelectItem
-												key={org.id}
-												value={org.id}
-											>
-												{org.name}
+										<SelectTrigger
+											id="solution-scope"
+											data-testid="scope-select"
+										>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="__global__">
+												Global
 											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
+											{(organizations ?? []).map((org) => (
+												<SelectItem
+													key={org.id}
+													value={org.id}
+												>
+													{org.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+							)}
 
 							{/* Config values */}
 							{declaredConfigs.length > 0 && (
@@ -593,27 +753,56 @@ export function Solutions() {
 					) : null}
 
 					<DialogFooter>
-						<Button
-							variant="outline"
-							onClick={closeInstallDialog}
-							disabled={installMutation.isPending}
-						>
-							Cancel
-						</Button>
-						<Button
-							onClick={() => installMutation.mutate()}
-							disabled={
-								!preview ||
-								previewMutation.isPending ||
-								installMutation.isPending
-							}
-							data-testid="confirm-install"
-						>
-							{installMutation.isPending && (
-								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-							)}
-							Install
-						</Button>
+						{downgradeConfirm ? (
+							<>
+								<Button
+									variant="outline"
+									onClick={() => setDowngradeConfirm(false)}
+									disabled={installMutation.isPending}
+								>
+									Cancel
+								</Button>
+								<Button
+									variant="destructive"
+									onClick={() =>
+										installMutation.mutate({ force: true })
+									}
+									disabled={installMutation.isPending}
+									data-testid="confirm-downgrade"
+								>
+									{installMutation.isPending && (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									)}
+									Replace anyway
+								</Button>
+							</>
+						) : (
+							<>
+								<Button
+									variant="outline"
+									onClick={closeInstallDialog}
+									disabled={installMutation.isPending}
+								>
+									Cancel
+								</Button>
+								<Button
+									onClick={() =>
+										installMutation.mutate({ force: false })
+									}
+									disabled={
+										!preview ||
+										previewMutation.isPending ||
+										installMutation.isPending
+									}
+									data-testid="confirm-install"
+								>
+									{installMutation.isPending && (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									)}
+									{isUpgrade ? "Upgrade" : "Install"}
+								</Button>
+							</>
+						)}
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>

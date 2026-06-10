@@ -186,6 +186,171 @@ describe("Solutions — install preview flow", () => {
 	});
 });
 
+describe("Solutions — list version badge", () => {
+	it("shows a version badge on cards when version is present", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({ id: "v", name: "Versioned", version: "1.2.3" }),
+				makeSolution({ id: "nv", name: "Unversioned", slug: "nv" }),
+			],
+		});
+		await renderPage();
+
+		await screen.findByText("Versioned");
+		expect(screen.getByText("v1.2.3")).toBeInTheDocument();
+	});
+});
+
+function makeUpgradePreview(overrides: Record<string, unknown> = {}) {
+	return {
+		slug: "my-solution",
+		name: "My Solution",
+		scope: "global",
+		version: "2.0.0",
+		workflows: [{ name: "w1" }],
+		apps: [],
+		forms: [],
+		agents: [],
+		tables: [],
+		config_schemas: [],
+		existing_install: {
+			id: "sol-1",
+			name: "My Solution",
+			version: "1.0.0",
+		},
+		diff: {
+			workflows: { added: ["new_flow"], removed: ["old_flow"] },
+			tables: { added: [], removed: [] },
+			forms: { added: [], removed: [] },
+			agents: { added: [], removed: [] },
+			apps: { added: [], removed: [] },
+			config_schemas: {
+				added: ["NEW_KEY"],
+				removed: ["DEAD_KEY"],
+				changed: [
+					{
+						key: "API_KEY",
+						from: { type: "secret", required: true },
+						to: { type: "string", required: false },
+					},
+				],
+			},
+		},
+		...overrides,
+	};
+}
+
+describe("Solutions — upgrade flow", () => {
+	it("renders an upgrade title, diff entries, and no scope picker when existing_install is present", async () => {
+		mockPreviewInstall.mockResolvedValue(makeUpgradePreview());
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		const file = new File(["zip"], "my-solution.zip", {
+			type: "application/zip",
+		});
+		await user.upload(
+			screen.getByTestId("install-file-input") as HTMLInputElement,
+			file,
+		);
+
+		const dialog = await screen.findByTestId("preview-dialog");
+		// Upgrade title with both versions
+		expect(
+			within(dialog).getByText(/Upgrade My Solution v1\.0\.0 → v2\.0\.0/),
+		).toBeInTheDocument();
+		// Entity diff entries
+		expect(within(dialog).getByText(/new_flow/)).toBeInTheDocument();
+		expect(within(dialog).getByText(/old_flow/)).toBeInTheDocument();
+		// Config schema diff: added, removed, changed
+		expect(within(dialog).getByText(/NEW_KEY/)).toBeInTheDocument();
+		expect(within(dialog).getByText(/DEAD_KEY/)).toBeInTheDocument();
+		expect(
+			within(dialog).getByText(/API_KEY: secret→string, required→optional/),
+		).toBeInTheDocument();
+		// Confirm button is Upgrade, and no scope picker (no second install path)
+		expect(within(dialog).getByTestId("confirm-install")).toHaveTextContent(
+			"Upgrade",
+		);
+		expect(within(dialog).queryByTestId("scope-select")).toBeNull();
+	});
+
+	it("shows a downgrade confirm on a 409 'older than installed' and retries with force", async () => {
+		mockPreviewInstall.mockResolvedValue(
+			makeUpgradePreview({ version: "0.9.0" }),
+		);
+		mockInstallSolution
+			.mockRejectedValueOnce(
+				new Error(
+					"Solution version 0.9.0 is older than installed version 1.0.0",
+				),
+			)
+			.mockResolvedValueOnce(
+				makeSolution({ id: "sol-1", name: "My Solution" }),
+			);
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		const file = new File(["zip"], "my-solution.zip", {
+			type: "application/zip",
+		});
+		await user.upload(
+			screen.getByTestId("install-file-input") as HTMLInputElement,
+			file,
+		);
+		await screen.findByTestId("preview-dialog");
+		await user.click(screen.getByTestId("confirm-install"));
+
+		// First attempt without force
+		await waitFor(() =>
+			expect(mockInstallSolution).toHaveBeenCalledWith(
+				expect.objectContaining({ file, force: false }),
+			),
+		);
+
+		// Downgrade confirm step
+		const confirm = await screen.findByTestId("downgrade-confirm");
+		expect(confirm).toHaveTextContent(
+			"This is a DOWNGRADE: v1.0.0 → v0.9.0",
+		);
+		await user.click(screen.getByTestId("confirm-downgrade"));
+
+		await waitFor(() =>
+			expect(mockInstallSolution).toHaveBeenCalledTimes(2),
+		);
+		expect(mockInstallSolution).toHaveBeenLastCalledWith(
+			expect.objectContaining({ file, force: true }),
+		);
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/solutions/sol-1"),
+		);
+	});
+
+	it("surfaces non-downgrade install errors inline as before", async () => {
+		mockPreviewInstall.mockResolvedValue(makeUpgradePreview());
+		mockInstallSolution.mockRejectedValue(
+			new Error("Scope mismatch: install exists at a different scope"),
+		);
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		const file = new File(["zip"], "my-solution.zip", {
+			type: "application/zip",
+		});
+		await user.upload(
+			screen.getByTestId("install-file-input") as HTMLInputElement,
+			file,
+		);
+		await screen.findByTestId("preview-dialog");
+		await user.click(screen.getByTestId("confirm-install"));
+
+		expect(
+			await screen.findByText(/Scope mismatch/),
+		).toBeInTheDocument();
+		expect(screen.queryByTestId("downgrade-confirm")).toBeNull();
+	});
+});
+
 describe("Solutions — uninstall guard", () => {
 	it("requires typing the name before Uninstall is enabled", async () => {
 		mockListSolutions.mockResolvedValue({

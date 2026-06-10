@@ -7,6 +7,10 @@ export type SolutionsList = components["schemas"]["SolutionsList"];
 export type SolutionEntities = components["schemas"]["SolutionEntities"];
 export type SolutionInstallPreview =
 	components["schemas"]["SolutionInstallPreview"];
+export type SolutionExistingInstall =
+	components["schemas"]["SolutionExistingInstall"];
+export type SolutionUpgradeDiff =
+	components["schemas"]["SolutionUpgradeDiff"];
 export type SolutionDeleteSummary =
 	components["schemas"]["SolutionDeleteSummary"];
 export type SolutionUpdate = components["schemas"]["SolutionUpdate"];
@@ -142,22 +146,28 @@ export async function previewInstall(
 /**
  * Install a Solution zip. Posts a multipart `file`, optional `organization_id`
  * (empty string installs globally), and `config_values` (JSON-encoded map).
+ * Pass `force: true` to override the server's downgrade guard (409 when the
+ * package version is older than the installed version).
  */
 export async function installSolution(
 	params: {
 		file: File;
 		organizationId?: string;
 		configValues?: Record<string, unknown>;
+		force?: boolean;
 	},
 	options: RequestOptions = {},
 ): Promise<Solution> {
-	const { file, organizationId, configValues } = params;
+	const { file, organizationId, configValues, force } = params;
 	const formData = new FormData();
 	formData.append("file", file);
 	formData.append("organization_id", organizationId ?? "");
 	formData.append("config_values", JSON.stringify(configValues ?? {}));
 
-	const response = await authFetch("/api/solutions/install", {
+	const url = force
+		? "/api/solutions/install?force=true"
+		: "/api/solutions/install";
+	const response = await authFetch(url, {
 		method: "POST",
 		body: formData,
 		signal: options.signal,
