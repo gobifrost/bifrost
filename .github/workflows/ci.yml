@@ -129,6 +129,34 @@ jobs:
         run: npm run lint
 
   # =============================================================================
+  # Client Unit Tests (Vitest) - Fast, runs on host Node — no Docker needed.
+  # Parallel to Unit Tests; does NOT become the critical path.
+  # =============================================================================
+  test-client-unit:
+    # Skip on push: main — covered by the merge_group run.
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: Client Unit Tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client deps
+        working-directory: client
+        run: npm ci
+
+      - name: Vitest
+        working-directory: client
+        run: npm test
+
+  # =============================================================================
   # Unit Tests - Fast, gates all builds
   # =============================================================================
   test-unit:
@@ -143,7 +171,35 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
+      # Pre-build dev images via build-push-action for GHA layer caching.
+      # docker-compose.test.yml pins all api-stack services to bifrost-test-api-dev:latest
+      # and the client service to bifrost-test-client-dev:latest. When
+      # BIFROST_SKIP_BUILD=1, test.sh passes --no-build to compose so it reuses
+      # these local images instead of rebuilding (which would skip the GHA cache).
+      # Cache scope is shared with test-e2e so whichever job runs second gets warm hits.
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Build client dev image (cached)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile.dev
+          load: true
+          tags: bifrost-test-client-dev:latest
+          cache-from: type=gha,scope=test-client-dev
+          cache-to: type=gha,scope=test-client-dev,mode=max
+
       - name: Run unit tests
+        env:
+          BIFROST_SKIP_BUILD: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
@@ -158,13 +214,26 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # =============================================================================
-  # E2E Tests - Slow, only gates tag releases
+  # E2E Tests - Sharded across 2 parallel runners. Each shard boots its own
+  # isolated test stack (no xdist, no shared services between shards).
+  # scripts/e2e_shard.py deterministically allocates test files: heavies
+  # bin-packed first, then round-robin in sorted order — adding a file only
+  # moves files in shards downstream of the insertion point.
+  #
+  # The internal matrix job (test-e2e) uses shard names like
+  # "E2E Tests (shard 1/2)". The aggregate gate job below (test-e2e-gate)
+  # is named EXACTLY "E2E Tests" to match the required status check name —
+  # no ruleset edits needed.
   # =============================================================================
   test-e2e:
     # Skip on push: main — covered by the merge_group run.
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
-    name: E2E Tests
+    name: E2E Tests (shard ${{ matrix.shard }}/2)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -172,11 +241,57 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Run E2E tests
+      # See test-unit for caching strategy notes.
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Build client dev image (cached)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile.dev
+          load: true
+          tags: bifrost-test-client-dev:latest
+          cache-from: type=gha,scope=test-client-dev
+          cache-to: type=gha,scope=test-client-dev,mode=max
+
+      - name: Run E2E tests (shard ${{ matrix.shard }}/2)
+        env:
+          BIFROST_SKIP_BUILD: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
-          ./test.sh e2e
+          mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 2)
+          if [ ${#shard_files[@]} -eq 0 ]; then
+            echo "ERROR: shard ${{ matrix.shard }} resolved to zero files" >&2
+            exit 1
+          fi
+          echo "Shard ${{ matrix.shard }}/2: ${#shard_files[@]} files"
+          ./test.sh "${shard_files[@]}" -v --durations=50
+
+  # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
+  # Fails if any shard failed or was cancelled. Runs even when shards fail
+  # (if: always()) so branch protection always sees a conclusive result.
+  test-e2e-gate:
+    if: always() && (github.event_name != 'push' || github.ref != 'refs/heads/main')
+    needs: [test-e2e]
+    runs-on: ubuntu-latest
+    name: E2E Tests
+    steps:
+      - name: Check shard results
+        run: |
+          if [ "${{ needs.test-e2e.result }}" != "success" ]; then
+            echo "One or more e2e shards failed or were cancelled (result: ${{ needs.test-e2e.result }})"
+            exit 1
+          fi
+          echo "All e2e shards passed."
 
   # =============================================================================
   # Dev Build - Every push to main, gated by unit tests only
@@ -430,7 +545,7 @@ jobs:
   # =============================================================================
   build-api:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test-unit, test-e2e, lint]
+    needs: [test-unit, test-e2e-gate, lint]
     runs-on: ubuntu-latest
     name: Build API Image
     permissions:
@@ -537,7 +652,7 @@ jobs:
   # =============================================================================
   build-client:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test-unit, test-e2e, lint]
+    needs: [test-unit, test-e2e-gate, lint]
     runs-on: ubuntu-latest
     name: Build Client Image
     permissions:
