@@ -115,6 +115,56 @@ def test_materialize_merges_into_app_package_json(monkeypatch, tmp_path):
 
 
 @pytest.mark.e2e
+def test_build_subprocesses_have_timeouts(monkeypatch, tmp_path):
+    """Both npm install and vite build run under the self-renewing per-install
+    write lock — without a timeout, a hanging npm postinstall wedges the install
+    until process restart (every deploy 409s). Both calls must carry one."""
+    import subprocess
+
+    from src.services.solutions import app_build as ab
+
+    calls: list[dict] = []
+
+    def _fake_run(argv, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(ab.subprocess, "run", _fake_run)
+    (tmp_path / "dist").mkdir()
+
+    b = SolutionAppBuilder()
+    out = b._run_vite_build(tmp_path, base="/x/")
+
+    assert out == {}
+    assert len(calls) == 2
+    for kwargs in calls:
+        assert kwargs.get("timeout") == ab._BUILD_STEP_TIMEOUT_S
+
+
+@pytest.mark.e2e
+def test_build_timeout_translated_to_deploy_failure(monkeypatch):
+    """A TimeoutExpired from the npm/vite step surfaces as the deploy's
+    build-failure exception (409 with the reason), not a raw TimeoutExpired."""
+    import subprocess
+
+    import src.services.sdk_package as sdkpkg
+    from src.services.solutions import app_build as ab
+    from src.services.solutions.deploy import SolutionDeployConflict
+
+    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
+    app_id = uuid.uuid4()
+    b = SolutionAppBuilder()
+
+    def _hang(workdir, base="/"):
+        raise subprocess.TimeoutExpired(cmd=["npm", "install"], timeout=ab._BUILD_STEP_TIMEOUT_S)
+
+    monkeypatch.setattr(b, "_run_vite_build", _hang)
+
+    with pytest.raises(SolutionDeployConflict, match="timed out"):
+        b.compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
+
+
+@pytest.mark.e2e
 async def test_redeploy_clears_stale_dist_files(monkeypatch):
     """A second build with a different file set must not leave the old files
     fetchable (full replace of the dist/ artifact)."""

@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 
 APPS_PREFIX = "_apps/"
 
+# Hard cap per npm/vite step. The build runs under the self-renewing per-install
+# write lock (write_lock.py renews forever), so an un-timeboxed hang — e.g. a
+# dependency's postinstall script waiting on the network — would wedge the
+# install until process restart (every subsequent deploy 409s).
+_BUILD_STEP_TIMEOUT_S = 600
+
 
 class SolutionAppBuilder:
     """Builds a v2 app's dist/ and serves it from ``_apps/{app_id}/dist/``."""
@@ -72,9 +78,19 @@ class SolutionAppBuilder:
         with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
             workdir = Path(tmp)
             self._materialize(workdir, src_files, dependencies)
-            # base must match the serving route so emitted asset URLs resolve
-            # under /api/applications/{id}/dist/ rather than the site root.
-            return self._run_vite_build(workdir, base=self._dist_base(app_id))
+            try:
+                # base must match the serving route so emitted asset URLs resolve
+                # under /api/applications/{id}/dist/ rather than the site root.
+                return self._run_vite_build(workdir, base=self._dist_base(app_id))
+            except subprocess.TimeoutExpired as exc:
+                # Translate to the deploy's build-failure exception (→ 409 with
+                # the reason) instead of an unhandled TimeoutExpired 500.
+                from src.services.solutions.deploy import SolutionDeployConflict
+
+                raise SolutionDeployConflict(
+                    f"npm/vite step timed out after {_BUILD_STEP_TIMEOUT_S}s for "
+                    f"app {app_id}; a dependency's install script may be hanging"
+                ) from exc
 
     async def upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
         """Full-replace upload of an already-compiled dist/ to
@@ -155,12 +171,14 @@ class SolutionAppBuilder:
             cwd=str(workdir),
             check=True,
             capture_output=True,
+            timeout=_BUILD_STEP_TIMEOUT_S,
         )
         subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
             ["npx", "vite", "build", "--base", base],
             cwd=str(workdir),
             check=True,
             capture_output=True,
+            timeout=_BUILD_STEP_TIMEOUT_S,
         )
         dist_dir = workdir / "dist"
         out: dict[str, bytes] = {}
