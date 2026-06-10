@@ -305,3 +305,49 @@ class TestCrossOrgFormExecuteAnchor:
             f"execution stamped with caller org {exec_row.organization_id}, "
             f"expected the form's org {org_b}"
         )
+
+    async def test_admin_cross_org_startup_resolves_install_launch_workflow(
+        self, db_session, e2e_client, platform_admin
+    ):
+        """The LAUNCH-workflow path must anchor to the form's org like execute.
+
+        Pre-fix, the caller-org cascade excluded org B's install-owned launch
+        workflow, so a cross-org admin's startup call 404'd with "Launch
+        workflow not found" even though the install's row exists. Post-fix the
+        ref resolves; the run may then fail later for unrelated reasons (no
+        module source seeded), but it must get PAST resolution.
+        """
+        db = db_session
+        org_b = (await _org(db)).id
+        sol = Solution(
+            id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S", organization_id=org_b
+        )
+        db.add(sol)
+        await db.flush()
+
+        path = f"workflows/xorg_launch_{uuid4().hex[:8]}.py"
+        launch_wf = Workflow(
+            id=uuid4(), name="launch", function_name="main", path=path,
+            type="workflow", is_active=True, organization_id=org_b, solution_id=sol.id,
+        )
+        db.add(launch_wf)
+        await db.flush()
+        form = Form(
+            id=uuid4(), name="xorg-launch-form", organization_id=org_b,
+            solution_id=sol.id, workflow_id=f"{path}::main",
+            launch_workflow_id=f"{path}::main", created_by="test",
+        )
+        db.add(form)
+        await db.commit()
+
+        r = e2e_client.post(
+            f"/api/forms/{form.id}/startup",
+            headers=platform_admin.headers,
+            json={"input_data": {}},
+        )
+        assert not (
+            r.status_code == 404 and "Launch workflow not found" in r.text
+        ), (
+            "cross-org caller could not resolve the install's own launch "
+            f"workflow: {r.status_code} {r.text}"
+        )

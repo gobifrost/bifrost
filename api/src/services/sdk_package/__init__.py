@@ -60,6 +60,9 @@ def _bundle(workdir: Path) -> bytes:
         check=True,
         capture_output=True,
         env={"NODE_PATH": str(_NODE_MODULES), "PATH": "/usr/bin:/usr/local/bin:/bin"},
+        # Same wedge class app_build guards against: this runs under the
+        # install write lock during app deploys; a hung node must not hold it.
+        timeout=120,
     )
     return out.read_bytes()
 

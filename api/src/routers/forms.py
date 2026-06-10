@@ -1005,7 +1005,12 @@ async def execute_startup_workflow(
     # Resolve on the FORM's behalf (is_superuser=True): the form access gate
     # above is authoritative, so we must not apply the workflow's RBAC filter
     # here — a form user with no role on the launch workflow must still reach it.
-    _launch_repo = WorkflowRepository(db, org_id=ctx.org_id, is_superuser=True)
+    # Anchored to the FORM's org like the execute path: a cross-org bypass
+    # caller must resolve the install's own launch workflow, not their org's.
+    launch_anchor_org_id = (
+        form.organization_id if form.organization_id is not None else ctx.org_id
+    )
+    _launch_repo = WorkflowRepository(db, org_id=launch_anchor_org_id, is_superuser=True)
     _resolved_launch = await _launch_repo.resolve(
         form.launch_workflow_id, solution_scope=form.solution_id
     )
@@ -1020,17 +1025,17 @@ async def execute_startup_workflow(
     verified_params = ctx.user.verified_params or {}
     merged_params = {**(form.default_launch_params or {}), **verified_params, **input_data}
 
-    # Create organization object if org_id is set
+    # The launch workflow runs in the form's data world (same anchor as
+    # resolution above and as the execute path).
     org = None
-    if ctx.org_id:
-        org = Organization(id=str(ctx.org_id), name="", is_active=True)
+    if launch_anchor_org_id:
+        org = Organization(id=str(launch_anchor_org_id), name="", is_active=True)
 
-    # Create shared context for execution
     shared_ctx = SharedContext(
         user_id=str(ctx.user.user_id),
         name=ctx.user.name,
         email=ctx.user.email,
-        scope=str(ctx.org_id) if ctx.org_id else "GLOBAL",
+        scope=str(launch_anchor_org_id) if launch_anchor_org_id else "GLOBAL",
         organization=org,
         is_platform_admin=ctx.user.is_superuser,
         is_function_key=False,
