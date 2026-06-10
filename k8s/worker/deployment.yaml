@@ -24,6 +24,8 @@ spec:
         app.kubernetes.io/component: worker
         app.kubernetes.io/part-of: bifrost
     spec:
+      # C1.2: Worker makes no k8s API calls — SA token is pure attack surface.
+      automountServiceAccountToken: false
       containers:
         - name: worker
           image: jackmusick/bifrost-api:latest
@@ -33,6 +35,13 @@ spec:
                 name: bifrost-config
             - secretRef:
                 name: bifrost-secrets
+          env:
+            # C1.3: pip runs rarely (template startup); no-cache avoids bloating /home/bifrost.
+            - name: PIP_NO_CACHE_DIR
+              value: "1"
+            # C1.3: Explicit HOME so pip user-site and credentials file resolve correctly.
+            - name: HOME
+              value: /home/bifrost
           resources:
             requests:
               cpu: "100m"
@@ -40,6 +49,19 @@ spec:
             limits:
               cpu: "2000m"
               memory: "2Gi"
+          # C1.1: Container-level hardening — all added on top of pod-level runAsUser/Group/fsGroup.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            # RuntimeDefault is correct for Phase 1. Phase 3 replaces with a custom profile
+            # that adds the bwrap syscall allowances (unshare CLONE_NEWUSER etc.).
+            seccompProfile:
+              type: RuntimeDefault
+            # readOnlyRootFilesystem requires writable emptyDir at /home/bifrost and /tmp
+            # (see volumeMounts + volumes below).
+            readOnlyRootFilesystem: true
           # Workers don't have HTTP endpoints, use exec probe
           livenessProbe:
             exec:
@@ -55,9 +77,22 @@ spec:
             preStop:
               exec:
                 command: ["sleep", "5"]
+          # C1.3: Writable emptyDir mounts for pip user-site, credentials file, and tempfiles.
+          volumeMounts:
+            - name: home
+              mountPath: /home/bifrost
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
       # Drain budget: drain deadline (300s) + cleanup margin (60s)
       terminationGracePeriodSeconds: 360
-      # Run as non-root user (matches Dockerfile)
+      # Run as non-root user (matches Dockerfile).
+      # Pod-level context sets UID/GID/fsGroup; container-level securityContext above adds
+      # allowPrivilegeEscalation, runAsNonRoot, capabilities drop, seccomp, and readOnly FS.
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
