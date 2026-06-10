@@ -4,6 +4,24 @@ Date: 2026-06-09
 Branch: worktree-solutions-success-criteria
 Scope: adversarial QA across six axes (scope-isolation, lifecycle, readonly-enforcement, global-repo-data-fallback, ui-ux, cli-docs-literalism). Every CONFIRMED finding below was independently reproduced by a second verifier on a fresh port-mode stack.
 
+> ## ⚠️ SUPERSEDED (2026-06-09, same day): "0 high open" did NOT hold for the branch
+>
+> A full-branch static review (7 finder angles over the ~31k-line diff, every candidate
+> independently verified) found **7 high-severity bugs this fan-out missed**, plus ~10
+> medium/low. The fan-out drove the feature from the front door; the misses lived in
+> side doors it never constructed: name/slug COEXISTENCE states (same-name `_repo/`
+> table → uninstall stuck; multi-install slugs → `embed.py`/`websocket.py`/MCP crashes
+> on endpoints the branch never touched), cross-org admin execution (forms resolved in
+> the CALLER's org), git-connected sync (config schemas wiped every pull), Windows
+> (`npm.cmd`), and npm-dev SDK mode (transport raced child effects; ws subscribe never
+> authenticated). Lesson for the next fan-out: axes must include *pre-existing-state
+> collisions* and *unmodified endpoints whose invariants the branch relaxed*.
+>
+> **All findings fixed on this branch** — plan + finding↔commit map:
+> `docs/superpowers/plans/2026-06-09-solutions-review-fixes.md` (commits `a530f41b`..,
+> 19 fix tasks + the versioning/upgrade scope change, each spec- and quality-reviewed).
+> The M1/low backlog below remains valid where not covered by those fixes.
+
 ## STATUS (CONFIRMED only)
 
 - critical: 0
