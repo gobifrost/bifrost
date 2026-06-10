@@ -671,6 +671,12 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         "is_provider": org.is_provider,
                     }
 
+            # Mint engine token parent-side (consumer holds SECRET_KEY legitimately).
+            # The child receives the token via context_data and writes it to the
+            # credentials file directly — no SECRET_KEY needed in the child.
+            from src.core.security import mint_engine_token
+            engine_token, engine_token_expires_at = mint_engine_token()
+
             # Build context for worker process
             context_data = {
                 "execution_id": execution_id,
@@ -698,6 +704,10 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 "file_path": file_path,  # Path for __file__ injection and fallback loading
                 "content_hash": content_hash,  # Pinned hash at dispatch time
                 "event": event_data,  # EventContext dict (None if not event-triggered)
+                # Pre-minted engine token: child writes directly to credentials file,
+                # no SECRET_KEY required in child env.
+                "engine_token": engine_token,
+                "engine_token_expires_at": engine_token_expires_at,
             }
 
             # Route to process pool

@@ -124,13 +124,26 @@ async def _run_execution(execution_id: str, context_data: dict[str, Any]) -> dic
     from src.sdk.context import Caller, Organization
     from src.services.execution.engine import ExecutionRequest, execute
     from src.models.enums import ExecutionStatus
-    from src.core.security import authenticate_engine
-    from bifrost.credentials import is_token_expired
+    from bifrost.credentials import is_token_expired, save_credentials
 
-    # Only refresh engine credentials when token is expired or close to expiry.
-    # This avoids a file-write race when multiple worker processes all call
-    # authenticate_engine() simultaneously with identical content.
-    if is_token_expired(buffer_seconds=3600):
+    # Engine credentials: prefer the pre-minted token handed down from the
+    # consumer via context_data["engine_token"].  This keeps SECRET_KEY out of
+    # the child process entirely.
+    # Fall back to authenticate_engine() only for callers (e.g. direct engine
+    # tests) that bypass the consumer and do not supply a pre-minted token.
+    engine_token = context_data.get("engine_token")
+    if engine_token:
+        import os
+        api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
+        expires_at = context_data.get("engine_token_expires_at", "")
+        save_credentials(
+            api_url=api_url,
+            access_token=engine_token,
+            refresh_token=engine_token,  # Not used but required by schema
+            expires_at=expires_at,
+        )
+    elif is_token_expired(buffer_seconds=3600):
+        from src.core.security import authenticate_engine
         authenticate_engine()
 
     start_time = datetime.now(timezone.utc)

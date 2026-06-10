@@ -402,13 +402,43 @@ def validate_csrf_token(cookie_token: str, header_token: str) -> bool:
     return secrets.compare_digest(cookie_token, header_token)
 
 
+def mint_engine_token() -> tuple[str, str]:
+    """
+    Mint a long-lived engine token (30 days) parent-side.
+
+    Called by the consumer (which legitimately holds SECRET_KEY) before
+    dispatching an execution.  The returned token and expiry ISO string are
+    placed in context_data and handed to the child via Redis; the child writes
+    them to the credentials file with save_credentials() — no SECRET_KEY
+    required in the child process.
+
+    Returns:
+        (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
+    """
+    ENGINE_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+    token_data = {
+        "sub": ENGINE_USER_ID,
+        "email": "engine@bifrost.internal",
+        "name": "Bifrost Engine",
+        "is_superuser": True,
+    }
+
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    token = create_access_token(token_data, expires_delta=timedelta(days=30))
+
+    return token, expires_at.isoformat()
+
+
 def authenticate_engine() -> None:
     """
     Create/refresh engine credentials for SDK calls in worker processes.
 
-    This creates a long-lived superuser token and saves it to the credentials
-    file (~/.bifrost/credentials.json). Called at the start of each workflow
-    execution as a failsafe to ensure the token is always valid.
+    LEGACY PATH — called by worker.py only when no pre-minted token is
+    available in context_data (e.g. direct engine.execute() calls from tests
+    that bypass the consumer).  Production executions dispatched through the
+    consumer should always carry context_data["engine_token"] from
+    mint_engine_token() instead.
 
     The SDK's get_client() will find these credentials automatically, making
     the worker behave identically to CLI mode but with superuser privileges.
