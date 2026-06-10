@@ -169,6 +169,10 @@ class FormRepository(OrgScopedRepository[FormORM]):
                     return entity
                 return None
 
+        # External principals have no global tier — no fallback (EXT-1 rule 1).
+        if self.external_restricted:
+            return None
+
         # Fall back to global
         global_query = query.where(self.model.organization_id.is_(None))
         result = await self.session.execute(global_query)
