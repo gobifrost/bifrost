@@ -1126,22 +1126,30 @@ class SolutionDeployer:
         id, so they must be added to the tables' present-set — otherwise this same
         sweep would delete the table we just reattached.
         """
-        wf_deleted = await self._reconcile_one(
-            Workflow, sid, {UUID(w["id"]) for w in bundle.workflows}
+        wf_deleted = len(
+            await self._reconcile_one(
+                Workflow, sid, {UUID(w["id"]) for w in bundle.workflows}
+            )
         )
-        tbl_deleted = await self._reconcile_one(
-            Table,
-            sid,
-            {UUID(t["id"]) for t in bundle.tables} | adopted_table_ids,
+        tbl_deleted = len(
+            await self._reconcile_one(
+                Table,
+                sid,
+                {UUID(t["id"]) for t in bundle.tables} | adopted_table_ids,
+            )
         )
-        app_deleted, stale_app_dist = await self._reconcile_apps(
-            sid, {UUID(a["id"]) for a in bundle.apps}
+        # Stale app ids are kept (not just counted): their ``_apps/{id}/dist/``
+        # artifacts must be swept in the S3 phase (deferred via
+        # :meth:`_delete_stale_app_dist` so a DB rollback leaves no dangling S3
+        # deletions — Codex P1-e).
+        stale_app_dist = await self._reconcile_one(
+            Application, sid, {UUID(a["id"]) for a in bundle.apps}
         )
-        form_deleted = await self._reconcile_one(
-            Form, sid, {UUID(f["id"]) for f in bundle.forms}
+        form_deleted = len(
+            await self._reconcile_one(Form, sid, {UUID(f["id"]) for f in bundle.forms})
         )
-        agent_deleted = await self._reconcile_one(
-            Agent, sid, {UUID(a["id"]) for a in bundle.agents}
+        agent_deleted = len(
+            await self._reconcile_one(Agent, sid, {UUID(a["id"]) for a in bundle.agents})
         )
         # Config declarations reconcile alongside the rest; deploy is the single
         # writer for solution-owned schema rows. The count is not surfaced — no
@@ -1150,40 +1158,20 @@ class SolutionDeployer:
             SolutionConfigSchema, sid, {UUID(c["id"]) for c in bundle.config_schemas}
         )
         return (
-            wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
+            wf_deleted, tbl_deleted, len(stale_app_dist), form_deleted, agent_deleted,
             stale_app_dist,
         )
 
-    async def _reconcile_apps(
-        self, sid: UUID, present_ids: set[UUID]
-    ) -> tuple[int, set[UUID]]:
-        """Delete this install's stale Application ROWS (DB-only). Returns the
-        count + the stale ids whose ``_apps/{id}/dist/`` artifacts must be swept
-        in the S3 phase (deferred via :meth:`_delete_stale_app_dist` so a DB
-        rollback leaves no dangling S3 deletions — Codex P1-e)."""
-        stmt = select(Application.id).where(Application.solution_id == sid)
-        existing = set((await self.db.execute(stmt)).scalars().all())
-        stale = existing - present_ids
-        if not stale:
-            return 0, set()
-        await self.db.execute(
-            delete(Application).where(
-                Application.solution_id == sid,
-                Application.id.in_(stale),
-            )
-        )
-        logger.info("Solution %s: deleted %d stale application row(s)", sid, len(stale))
-        return len(stale), stale
-
     async def _reconcile_one(
         self, model: type, sid: UUID, present_ids: set[UUID]
-    ) -> int:
+    ) -> set[UUID]:
+        """Delete this install's stale rows (DB-only). Returns the stale ids."""
         # Find this install's rows that are NOT in the bundle.
         stmt = select(model.id).where(model.solution_id == sid)  # type: ignore[attr-defined]
         existing = set((await self.db.execute(stmt)).scalars().all())
         stale = existing - present_ids
         if not stale:
-            return 0
+            return set()
         await self.db.execute(
             delete(model).where(
                 model.solution_id == sid,  # type: ignore[attr-defined]
@@ -1196,4 +1184,4 @@ class SolutionDeployer:
             len(stale),
             model.__tablename__,  # type: ignore[attr-defined]
         )
-        return len(stale)
+        return stale
