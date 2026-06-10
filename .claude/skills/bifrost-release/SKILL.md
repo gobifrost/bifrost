@@ -85,8 +85,8 @@ git push origin main
 
 > "Pushed. CI will now:
 > 1. Run **unit tests** (fast ~2 min) — if they pass:
-> 2. Build and push `ghcr.io/jackmusick/bifrost-api:dev` and `ghcr.io/jackmusick/bifrost-client:dev`
-> 3. Also tag `ghcr.io/jackmusick/bifrost-api:<git-describe>` for traceability
+> 2. Build and push `ghcr.io/gobifrost/bifrost-api:dev` and `ghcr.io/gobifrost/bifrost-client:dev`
+> 3. Also tag `ghcr.io/gobifrost/bifrost-api:<git-describe>` for traceability
 >
 > E2E tests run in parallel but don't block the build.
 >
@@ -95,7 +95,7 @@ git push origin main
 > kubectl rollout restart deployment/bifrost-api deployment/bifrost-worker deployment/bifrost-scheduler deployment/bifrost-client -n bifrost
 > ```
 >
-> Watch CI: https://github.com/jackmusick/bifrost/actions"
+> Watch CI: https://github.com/gobifrost/bifrost/actions"
 
 ---
 
@@ -316,11 +316,11 @@ gh release edit <tag> --notes-file /tmp/release-notes-<tag>.md
 > "Tag `<tag>` pushed. CI will now:
 > 1. Run **unit tests + E2E tests** (both required for a release, ~12 min total)
 > 2. Build and push images:
->    - `ghcr.io/jackmusick/bifrost-api:<version>` (e.g., `2.1.0`)
->    - `ghcr.io/jackmusick/bifrost-api:2.1` and `ghcr.io/jackmusick/bifrost-api:2`
->    - `ghcr.io/jackmusick/bifrost-api:latest`
+>    - `ghcr.io/gobifrost/bifrost-api:<version>` (e.g., `2.1.0`)
+>    - `ghcr.io/gobifrost/bifrost-api:2.1` and `ghcr.io/gobifrost/bifrost-api:2`
+>    - `ghcr.io/gobifrost/bifrost-api:latest`
 >    - Same for `bifrost-client`
-> 3. Create a GitHub Release at https://github.com/jackmusick/bifrost/releases
+> 3. Create a GitHub Release at https://github.com/gobifrost/bifrost/releases
 >
 > After CI completes, K8s pods on `:latest` or `:<version>` will need a rollout:
 > ```bash
@@ -329,7 +329,7 @@ gh release edit <tag> --notes-file /tmp/release-notes-<tag>.md
 >
 > CLI users on `:latest` will automatically get the new version next `pipx install`.
 >
-> Watch CI: https://github.com/jackmusick/bifrost/actions"
+> Watch CI: https://github.com/gobifrost/bifrost/actions"
 
 ### 6. Offer to draft a blog post (gobifrost `/blog` skill)
 
@@ -362,8 +362,8 @@ Follow the skill's workflow exactly — it handles preflight, voice-matching aga
 ## K8s Quick Reference
 
 **Current image tags in use** (all in namespace `bifrost`):
-- `api`, `init container`, `worker`, `scheduler` → `ghcr.io/jackmusick/bifrost-api:dev`
-- `client` → `ghcr.io/jackmusick/bifrost-client:dev`
+- `api`, `init container`, `worker`, `scheduler` → `ghcr.io/gobifrost/bifrost-api:dev`
+- `client` → `ghcr.io/gobifrost/bifrost-client:dev`
 
 **Force rollout after a push:**
 ```bash

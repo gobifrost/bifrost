@@ -3,7 +3,7 @@
 #
 # Publishes results to:
 #   - GitHub Security tab → Code scanning (under "scorecard")
-#   - https://api.securityscorecards.dev/projects/github.com/jackmusick/bifrost
+#   - https://api.securityscorecards.dev/projects/github.com/gobifrost/bifrost
 #
 # The README badge auto-updates from the public API.
 

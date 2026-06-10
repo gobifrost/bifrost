@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: jackmusick/bifrost-api:latest
+          image: ghcr.io/gobifrost/bifrost-api:latest
           command: ["python", "-m", "src.worker.main"]
           envFrom:
             - configMapRef:

@@ -30,7 +30,7 @@ from pathlib import PurePosixPath
 import httpx
 
 
-_DEFAULT_REPO = "jackmusick/bifrost"
+_DEFAULT_REPO = "gobifrost/bifrost"
 _DEFAULT_REF = "main"
 
 
@@ -51,7 +51,7 @@ Subcommands:
 
 Options for update:
   --ref <tag-or-branch>   Git ref to pull from (default: main)
-  --repo <owner/repo>     GitHub repo to pull from (default: jackmusick/bifrost)
+  --repo <owner/repo>     GitHub repo to pull from (default: gobifrost/bifrost)
 
 Examples:
   bifrost skill list

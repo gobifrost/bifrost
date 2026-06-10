@@ -5,7 +5,7 @@ description: Track work on Bifrost via GitHub Issues + isolated worktrees, AND o
 
 # Bifrost Issues + Worktrees
 
-All trackable work on `jackmusick/bifrost` lives in **GitHub Issues**, and all non-trivial work happens in **isolated git worktrees** under `.worktrees/`. This skill owns both halves: issue creation/triage and worktree setup/teardown. One skill because the triggers are identical — the moment the user expresses work intent on a non-trivial change, both pipelines fire.
+All trackable work on `gobifrost/bifrost` lives in **GitHub Issues**, and all non-trivial work happens in **isolated git worktrees** under `.worktrees/`. This skill owns both halves: issue creation/triage and worktree setup/teardown. One skill because the triggers are identical — the moment the user expresses work intent on a non-trivial change, both pipelines fire.
 
 ## Core Principles
 
@@ -137,7 +137,7 @@ The PR isn't done at "opened." Carry it through to merged. The path depends on w
 
 ```bash
 # Detect required-checks gating. ≥1 → protection exists; 0 / 404 → no protection.
-gh api repos/jackmusick/bifrost/branches/main/protection \
+gh api repos/gobifrost/bifrost/branches/main/protection \
   --jq '.required_status_checks.contexts // [] | length' 2>/dev/null
 ```
 
@@ -160,9 +160,9 @@ Once a PR is open, three independent signals can come in: CI check transitions, 
 prev=""
 prev_c=""
 while true; do
-  s=$(gh pr view <N> --repo jackmusick/bifrost \
+  s=$(gh pr view <N> --repo gobifrost/bifrost \
         --json reviews,statusCheckRollup,reviewDecision,mergeStateStatus,state 2>/dev/null) || { sleep 60; continue; }
-  c=$(gh api repos/jackmusick/bifrost/pulls/<N>/comments --jq '.[] | "\(.user.login):\(.id):\(.path):\(.line):\(.body|gsub("\n";" ")|.[0:100])"' 2>/dev/null | sort)
+  c=$(gh api repos/gobifrost/bifrost/pulls/<N>/comments --jq '.[] | "\(.user.login):\(.id):\(.path):\(.line):\(.body|gsub("\n";" ")|.[0:100])"' 2>/dev/null | sort)
   cur=$(printf '%s\n%s' "$s" "$c" | sha256sum | cut -d' ' -f1)
   if [ "$cur" != "$prev" ]; then
     echo "=== $(date -u +%H:%M:%S) PR <N> update ==="
@@ -187,7 +187,7 @@ done
 1. Confirm with the user once ("Queue auto-merge so it ships when CI is green?").
 2. On approval, do BOTH:
    - `gh pr merge <N> --auto --squash --delete-branch=false` (GitHub-native auto-merge; keeps the remote branch — worktree still references it, cleanup in step 8).
-   - `gh api -X POST repos/jackmusick/bifrost/issues/<N>/labels -f "labels[]=automerge"` (Kodiak label; required by `kodiak.toml` `require_automerge_label = true`).
+   - `gh api -X POST repos/gobifrost/bifrost/issues/<N>/labels -f "labels[]=automerge"` (Kodiak label; required by `kodiak.toml` `require_automerge_label = true`).
    Both are needed: GitHub-native auto-merge alone will sit idle when the branch goes `BEHIND` main, because Kodiak owns the rebase (`update_branch_immediately = true`) and Kodiak only acts on labeled PRs.
 3. **Arm the combined watcher above.** `--auto` does not exempt you from picking up review comments — CodeQL still fires after queueing, and the auto-merge will not proceed past a `BLOCKED`/`DIRTY` mergeStateStatus.
 4. If a review is required (`required_pull_request_reviews` is set) and the user isn't admin, surface that the merge is gated on approval and offer to request reviewers via `gh pr edit <N> --add-reviewer <login>`. Don't pick reviewers unprompted.
@@ -297,4 +297,4 @@ Mirror the relevant template in `.github/ISSUE_TEMPLATE/`. Use `[bug]:`, `[featu
 - Auto-stop a `./debug.sh` in another worktree — user controls that manually.
 - Manage milestones, projects, priority, or status labels.
 - Touch closed issues (reopening is a human decision).
-- Work across repos — scoped to `jackmusick/bifrost`.
+- Work across repos — scoped to `gobifrost/bifrost`.

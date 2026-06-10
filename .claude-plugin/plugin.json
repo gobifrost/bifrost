@@ -4,9 +4,9 @@
   "version": "0.9.2-dev.84",
   "author": {
     "name": "Jack Musick",
-    "url": "https://github.com/jackmusick/bifrost"
+    "url": "https://github.com/gobifrost/bifrost"
   },
-  "homepage": "https://github.com/jackmusick/bifrost",
-  "repository": "https://github.com/jackmusick/bifrost",
+  "homepage": "https://github.com/gobifrost/bifrost",
+  "repository": "https://github.com/gobifrost/bifrost",
   "license": "AGPL-3.0"
 }
