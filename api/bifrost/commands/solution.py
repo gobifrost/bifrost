@@ -887,11 +887,15 @@ def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
     host.reload()
     click.echo(f"Discovered {len(host.refs())} local function(s).")
 
-    if shutil.which("npm") is None:
+    # Spawn npm via the RESOLVED path: shutil.which honors PATHEXT (finds
+    # `npm.cmd` on Windows) but CreateProcess with a literal "npm" argv[0] does
+    # not — a bare "npm" spawn raises FileNotFoundError there.
+    npm = shutil.which("npm")
+    if npm is None:
         raise click.ClickException("npm not found on PATH — install Node.js to run the dev server.")
     if not (chosen.app_dir / "node_modules").is_dir():
         click.echo("Installing app dependencies (npm install)…")
-        subprocess.run(["npm", "install"], cwd=chosen.app_dir, check=True)
+        subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
 
     vite_env = dict(os.environ)
     vite_env["VITE_BIFROST_APP_ID"] = chosen.app_id
@@ -906,7 +910,7 @@ def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
     # bound). Killing the group reaps both. (POSIX; Windows falls back to a plain
     # terminate of the npm process.)
     vite_proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", str(vite_port), "--strictPort"],
+        [npm, "run", "dev", "--", "--port", str(vite_port), "--strictPort"],
         cwd=chosen.app_dir, env=vite_env,
         start_new_session=True,
     )
