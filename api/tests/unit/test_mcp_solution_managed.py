@@ -318,6 +318,145 @@ async def test_mcp_push_files_allows_unmanaged(db_session, monkeypatch):
     assert wrote["repo"] is True
 
 
+async def _two_install_apps(db, slug: str) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Two solution-managed Application rows sharing one slug across two orgs —
+    the multi-install shape (criterion 9, permitted by the per-install partial
+    unique indexes). Returns (org_a_id, org_b_id, app_a_id, app_b_id)."""
+    from src.models.orm.applications import Application
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
+
+    org_a = Organization(id=uuid.uuid4(), name=f"A-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+    org_b = Organization(id=uuid.uuid4(), name=f"B-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+    db.add_all([org_a, org_b])
+    await db.flush()
+
+    app_ids: list[uuid.UUID] = []
+    for org in (org_a, org_b):
+        sol = Solution(
+            id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP",
+            organization_id=org.id,
+        )
+        db.add(sol)
+        await db.flush()
+        aid = uuid.uuid4()
+        db.add(Application(
+            id=aid,
+            name=f"app_{uuid.uuid4().hex[:8]}",
+            slug=slug,
+            organization_id=org.id,
+            solution_id=sol.id,
+            repo_path=f"solutions/{sol.slug}/apps/{slug}",
+            created_by="system",
+        ))
+        await db.flush()
+        app_ids.append(aid)
+    return org_a.id, org_b.id, app_ids[0], app_ids[1]
+
+
+async def test_mcp_get_app_multi_install_slug_does_not_error(db_session, monkeypatch):
+    """A slug held by two installs must resolve to ONE app for a platform admin
+    (prefer caller-org row), not blow up with MultipleResultsFound."""
+    from src.services.app_storage import AppStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    slug = f"multi-{uuid.uuid4().hex[:8]}"
+    org_a, _org_b, app_a, app_b = await _two_install_apps(db_session, slug)
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    async def _no_files(self, app_id, target):  # noqa: ANN001
+        return []
+
+    monkeypatch.setattr(AppStorageService, "list_files", _no_files)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=org_a, user_id=uuid.uuid4())
+    result = await mcp_apps.get_app(context, app_slug=slug)
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert "Multiple rows" not in text, text
+    assert "Error getting app" not in text, text
+    # Caller-org row preferred over the other install's row.
+    assert str(app_a) in text, text
+    assert str(app_b) not in text, text
+
+
+async def test_mcp_get_app_dependencies_multi_install_slug_does_not_error(db_session, monkeypatch):
+    """Same multi-install seed for get_app_dependencies: one deterministic app,
+    no MultipleResultsFound."""
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    slug = f"multi-{uuid.uuid4().hex[:8]}"
+    org_a, _org_b, app_a, app_b = await _two_install_apps(db_session, slug)
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=org_a, user_id=uuid.uuid4())
+    result = await mcp_apps.get_app_dependencies(context, app_slug=slug)
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert "Multiple rows" not in text, text
+    assert "Error getting dependencies" not in text, text
+    assert str(app_a) in text, text
+    assert str(app_b) not in text, text
+
+
+async def test_mcp_create_app_allows_repo_slug_shadowing_solution(db_session, monkeypatch):
+    """A SOLUTION-managed row (another org's install) holding slug X must not
+    block create_app(slug=X) — the partial unique index only constrains the
+    solution_id IS NULL namespace."""
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
+    from src.models.orm.applications import Application
+    from src.services.file_storage import FileStorageService
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    slug = f"shadow-{uuid.uuid4().hex[:8]}"
+
+    org_a = Organization(id=uuid.uuid4(), name=f"A-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+    org_b = Organization(id=uuid.uuid4(), name=f"B-{uuid.uuid4().hex[:6]}", created_by="dev@x")
+    db_session.add_all([org_a, org_b])
+    await db_session.flush()
+    sol = Solution(
+        id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP",
+        organization_id=org_b.id,
+    )
+    db_session.add(sol)
+    await db_session.flush()
+    db_session.add(Application(
+        id=uuid.uuid4(),
+        name=f"app_{uuid.uuid4().hex[:8]}",
+        slug=slug,
+        organization_id=org_b.id,
+        solution_id=sol.id,
+        repo_path=f"solutions/{sol.slug}/apps/{slug}",
+        created_by="system",
+    ))
+    await db_session.flush()
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    async def _noop_write(self, *args, **kwargs):  # noqa: ANN001
+        pass
+
+    monkeypatch.setattr(FileStorageService, "write_file", _noop_write)
+
+    context = SimpleNamespace(
+        is_platform_admin=True, org_id=org_a.id, user_id=uuid.uuid4()
+    )
+    result = await mcp_apps.create_app(
+        context,
+        name=f"Shadow {slug}",
+        slug=slug,
+        scope="organization",
+        organization_id=str(org_a.id),
+    )
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert "already exists" not in text, text
+    assert "Created application" in text, text
+
+
 async def _managed_agent_with_tool(db) -> tuple[uuid.UUID, uuid.UUID]:
     """A solution-managed agent with one AgentTool binding. Returns (agent_id,
     workflow_id of the tool)."""

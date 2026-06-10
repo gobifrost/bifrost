@@ -24,6 +24,30 @@ from src.services.mcp_server.tools.db import get_tool_db
 logger = logging.getLogger(__name__)
 
 
+def _pick_slug_row(rows: list[Any], org_id: Any) -> Any | None:
+    """Disambiguate multiple Application rows sharing one slug.
+
+    Slug uniqueness is per-install (partial unique indexes: global for
+    ``solution_id IS NULL``, ``(solution_id, slug)`` for installs), so a bare
+    ``scalar_one_or_none`` raises ``MultipleResultsFound`` for platform-admin
+    contexts. Resolve like ``ApplicationRepository.get_by_slug_global``:
+    prefer the caller-org row, then the global (NULL-org) row, then a
+    deterministic lowest-id pick.
+    """
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    if org_id is not None:
+        for row in rows:
+            if row.organization_id is not None and str(row.organization_id) == str(org_id):
+                return row
+    for row in rows:
+        if row.organization_id is None:
+            return row
+    return sorted(rows, key=lambda row: str(row.id))[0]
+
+
 def _guard_message(err: Exception) -> str:
     """Extract the read-only message from a solution-guard rejection.
 
@@ -139,10 +163,17 @@ async def create_app(
 
     try:
         async with get_tool_db(context) as db:
+            # Scope the duplicate check to the namespace the new row will
+            # occupy: the partial unique index is global on slug only WHERE
+            # solution_id IS NULL, so solution-managed rows (any org's
+            # installs) never block an ad-hoc _repo app.
             existing = await db.execute(
-                select(Application).where(Application.slug == slug)
+                select(Application.id).where(
+                    Application.slug == slug,
+                    Application.solution_id.is_(None),
+                )
             )
-            if existing.scalar_one_or_none():
+            if existing.first():
                 return error_result(f"Application with slug '{slug}' already exists")
 
             app = Application(
@@ -262,7 +293,11 @@ async def get_app(
                 )
 
             result = await db.execute(query)
-            app = result.scalar_one_or_none()
+            if app_id:
+                app = result.scalar_one_or_none()
+            else:
+                # Slugs are unique per install, not globally — disambiguate.
+                app = _pick_slug_row(list(result.scalars().all()), context.org_id)
 
             if not app:
                 return error_result(f"Application not found: {app_id or app_slug}")
@@ -1029,7 +1064,11 @@ async def get_app_dependencies(
                 )
 
             result = await db.execute(query)
-            app = result.scalar_one_or_none()
+            if app_id:
+                app = result.scalar_one_or_none()
+            else:
+                # Slugs are unique per install, not globally — disambiguate.
+                app = _pick_slug_row(list(result.scalars().all()), context.org_id)
             if not app:
                 return error_result(f"Application not found: {app_id or app_slug}")
 
