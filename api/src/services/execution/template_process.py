@@ -92,7 +92,6 @@ CMD_SHUTDOWN = "shutdown"
 
 def _template_main(
     pipe: Connection,
-    preload_modules: list[str] | None = None,
 ) -> None:
     """
     Entry point for the template process.
@@ -103,7 +102,6 @@ def _template_main(
 
     Args:
         pipe: Connection to receive commands from and send responses to consumer.
-        preload_modules: Optional list of module names to import at startup.
     """
     # Configure logging (no thread-based handlers)
     logging.basicConfig(
@@ -162,14 +160,6 @@ def _template_main(
             install_virtual_import_hook()
         except ImportError as e:
             logger.warning(f"Execution infrastructure not available: {e} — continuing without it")
-
-        # Preload any additional requested modules
-        if preload_modules:
-            for mod_name in preload_modules:
-                try:
-                    __import__(mod_name)
-                except ImportError:
-                    logger.warning(f"Failed to preload module: {mod_name}")
 
     except Exception as e:
         logger.exception(f"Template process failed to load dependencies: {e}")
