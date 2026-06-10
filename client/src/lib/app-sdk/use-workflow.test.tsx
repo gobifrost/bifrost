@@ -89,6 +89,101 @@ describe("useWorkflow", () => {
     expect("app_id" in calls[0].body).toBe(false);
   });
 
+  it("rejects on status=failed even when error is null, leaving data unchanged", async () => {
+    const fakeFetch = (async () =>
+      new Response(
+        JSON.stringify({ status: "failed", error: null, result: null }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as typeof fetch;
+
+    const onResult = vi.fn();
+    const rejections: Error[] = [];
+    function FailureRunner() {
+      const { run, data, loading, error } = useWorkflow<{ ok: boolean }>("my-wf");
+      return (
+        <div>
+          <button
+            onClick={() =>
+              run({})
+                .then(onResult)
+                .catch((e: Error) => rejections.push(e))
+            }
+          >
+            go
+          </button>
+          <span data-testid="state">{loading ? "loading" : error ? "error" : "idle"}</span>
+          <span data-testid="data">{data === null ? "null" : JSON.stringify(data)}</span>
+        </div>
+      );
+    }
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="tok-x" fetchImpl={fakeFetch}>
+        <FailureRunner />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+
+    await waitFor(() => expect(screen.getByTestId("state").textContent).toBe("error"));
+    expect(onResult).not.toHaveBeenCalled();
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0].message).toMatch(/failed/);
+    // data must NOT be set to the failed run's null result
+    expect(screen.getByTestId("data").textContent).toBe("null");
+  });
+
+  it("a slow stale run cannot overwrite a newer run's result", async () => {
+    // Two overlapping runs: A (started first, resolves last) and B. After
+    // both settle, data must be B's result and loading must be false.
+    const resolvers = new Map<string, (r: Response) => void>();
+    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        input_data: { which: string };
+      };
+      return new Promise<Response>((resolve) => {
+        resolvers.set(body.input_data.which, resolve);
+      });
+    }) as typeof fetch;
+
+    function SequenceRunner() {
+      const { run, data, loading } = useWorkflow<string>("my-wf");
+      return (
+        <div>
+          <button onClick={() => void run({ which: "A" }).catch(() => {})}>runA</button>
+          <button onClick={() => void run({ which: "B" }).catch(() => {})}>runB</button>
+          <span data-testid="data">{data ?? "none"}</span>
+          <span data-testid="loading">{String(loading)}</span>
+        </div>
+      );
+    }
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="tok-x" fetchImpl={fakeFetch}>
+        <SequenceRunner />
+      </BifrostProvider>,
+    );
+
+    screen.getByText("runA").click();
+    screen.getByText("runB").click();
+    await waitFor(() => expect(resolvers.size).toBe(2));
+
+    const ok = (result: string) =>
+      new Response(JSON.stringify({ status: "completed", result }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    // Newer run B settles first…
+    resolvers.get("B")!(ok("B-result"));
+    await waitFor(() => expect(screen.getByTestId("data").textContent).toBe("B-result"));
+
+    // …then the stale run A settles. It must not clobber B's result.
+    resolvers.get("A")!(ok("A-result"));
+    // flush the resolved promise chain through React
+    await waitFor(() => expect(screen.getByTestId("loading").textContent).toBe("false"));
+    expect(screen.getByTestId("data").textContent).toBe("B-result");
+  });
+
   it("surfaces a workflow-level error", async () => {
     const fakeFetch = (async () =>
       new Response(JSON.stringify({ status: "failed", error: "boom" }), {

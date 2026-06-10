@@ -13,7 +13,7 @@
  *   - `run(input)` POSTs `/api/workflows/execute` with `sync: true` and returns
  *     the workflow `result`.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { useBifrostContext } from "./provider";
 
@@ -46,9 +46,16 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  // Monotonic run counter: overlapping runs each capture their own seq, and
+  // only the LATEST run (seq === seqRef.current) may write hook state. A slow
+  // stale run can't overwrite a newer run's data or flip `loading` while the
+  // newer run is still in flight. Each caller's promise still settles with its
+  // own result/rejection.
+  const seqRef = useRef(0);
 
   const run = useCallback(
     async (input: Record<string, unknown> = {}): Promise<T> => {
+      const seq = ++seqRef.current;
       setLoading(true);
       setError(null);
       try {
@@ -68,18 +75,22 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
           throw new Error(`workflow execution failed: ${resp.status} ${resp.statusText}`);
         }
         const body = (await resp.json()) as ExecuteResponse;
-        if (body.error) {
-          throw new Error(body.error);
+        // A failed run can come back with `error: null` — status is the
+        // authoritative signal, the message is best-effort.
+        if (body.error || body.status === "failed") {
+          throw new Error(
+            body.error ?? `Workflow failed (status: ${body.status})`,
+          );
         }
         const result = body.result as T;
-        setData(result);
+        if (seq === seqRef.current) setData(result);
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
+        if (seq === seqRef.current) setError(err);
         throw err;
       } finally {
-        setLoading(false);
+        if (seq === seqRef.current) setLoading(false);
       }
     },
     [authedFetch, workflowRef, appId],
