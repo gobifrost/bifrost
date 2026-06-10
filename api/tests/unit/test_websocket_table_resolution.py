@@ -88,6 +88,21 @@ def _org_user(org_id) -> UserPrincipal:
 
 
 class TestResolveTableIdByName:
+    async def test_plain_repo_table_still_resolves(self, patched_db) -> None:
+        """Happy-path regression guard: an ordinary `_repo/` table with no
+        same-name siblings must keep resolving by name — an over-aggressive
+        future filter change should fail here, not in production.
+        """
+        db = patched_db
+        org = await _make_org(db)
+        name = f"customers_{uuid.uuid4().hex[:8]}"
+
+        live = _table(name, org_id=org)
+        db.add(live)
+        await db.flush()
+
+        assert await ws_mod._resolve_table_id(name, _org_user(org)) == str(live.id)
+
     async def test_repo_row_wins_over_same_name_solution_row(self, patched_db) -> None:
         """A live `_repo/` table and a solution table share (org, name): the
         name lookup must return the `_repo/` row — not raise
@@ -145,6 +160,9 @@ class TestLoadPoliciesForTableByName:
         assert policies == TablePolicies()
 
     async def test_name_lookup_excludes_orphans(self, patched_db) -> None:
+        """Orphan-only name: the policy name branch returns None (not-found),
+        never the orphaned row's policy document.
+        """
         db = patched_db
         org = await _make_org(db)
         name = f"customers_{uuid.uuid4().hex[:8]}"
