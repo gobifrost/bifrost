@@ -300,6 +300,22 @@ services:
       # Worker needs minimal DB connections — Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
+      # C1.4: pip runs rarely (template startup); avoids bloating /home/bifrost emptyDir.
+      PIP_NO_CACHE_DIR: "1"
+      # C1.4: Explicit HOME so pip user-site and engine credentials file resolve correctly.
+      HOME: /home/bifrost
+    # C1.4: Run as bifrost uid/gid (matches k8s runAsUser: 1000).
+    # Bypasses the gosu chown branch in entrypoint.sh — worker has no host-bind volumes
+    # needing root chown (verified: no host volumes in this service).
+    user: "1000:1000"
+    # C1.4: No new privileges (prevents setuid escalation).
+    security_opt: ["no-new-privileges:true"]
+    # C1.4: Drop all Linux capabilities (worker needs none).
+    cap_drop: ["ALL"]
+    # Note: read_only: true is NOT set here — it requires writable emptyDir mounts
+    # which are a k8s feature (volumes/volumeMounts). Compose parity for readOnly FS
+    # is deferred to Phase 3 (compose tmpfs support is workable but adds complexity;
+    # the k8s hardening in C1.1 already covers the production case).
     # No workspace volume mount needed - modules loaded from Redis cache
     depends_on:
       init:

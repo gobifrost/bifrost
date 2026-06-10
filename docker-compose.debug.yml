@@ -239,9 +239,12 @@ services:
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
-      BIFROST_USE_THREAD_WORKERS: "true"
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
+      # C1.5: pip cache parity with k8s (C1.3).
+      PIP_NO_CACHE_DIR: "1"
+      # C1.5: Explicit HOME so pip user-site and engine credentials file resolve correctly.
+      HOME: /home/bifrost
     volumes:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules
@@ -259,7 +262,15 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    user: root
+    # C1.5: Capability parity with k8s (C1.4). No-new-privileges + cap_drop ALL.
+    # Note: user: is NOT set here — hot-reload (watchmedo) writes compiled .pyc files
+    # and the debug stack mounts source :ro. The host source tree is owned by the
+    # developer, so running as bifrost (uid 1000) only works when host UIDs match.
+    # read_only: is also NOT set — hot-reload needs to write to /tmp and __pycache__.
+    # Capability hardening (the meaningful posture improvement) is applied here;
+    # UID hardening is deferred to a future "production-only" debug-stack flag.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     command: >
       watchmedo auto-restart --directory=/app/src --directory=/app/shared
       --pattern="*.py" --recursive -- python -m src.worker.main
