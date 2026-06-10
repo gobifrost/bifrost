@@ -3,6 +3,8 @@ full-replace the wrong client's install when multiple org-scoped installs share
 a slug (success-criteria §3.4, Codex G5)."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from bifrost.commands.solution import _AmbiguousInstall, _resolve_target_install
@@ -123,3 +125,117 @@ def test_deploy_fails_loudly_when_install_list_fetch_fails(tmp_path, monkeypatch
     assert "Failed to list installs (500)" in result.output
     assert "internal server error" in result.output
     assert "Failed to create install" not in result.output
+
+
+# ── deploy version + --force (Task 21) ──────────────────────────────────────
+
+
+class _Resp:
+    def __init__(self, status_code: int, text: str = "", body: dict | None = None):
+        self.status_code = status_code
+        self._body = body or {}
+        self.text = text or json.dumps(self._body)
+
+    def json(self):
+        return self._body
+
+
+class _DeployFakeClient:
+    """Resolves the install by slug and records the deploy request body."""
+
+    organization = {"id": "org-1"}
+
+    def __init__(self, deploy_resp: _Resp | None = None):
+        self.deploy_body: dict | None = None
+        self._deploy_resp = deploy_resp or _Resp(
+            200, body={"workflows_upserted": 0, "workflows_deleted": 0}
+        )
+
+    async def get(self, path, **kwargs):
+        assert path == "/api/solutions"
+        return _Resp(
+            200,
+            body={"solutions": [{"id": "inst-1", "slug": "s", "organization_id": "org-1"}]},
+        )
+
+    async def post(self, path, **kwargs):
+        if path == "/api/solutions/inst-1/deploy":
+            self.deploy_body = kwargs.get("json")
+            return self._deploy_resp
+        raise AssertionError(f"unexpected POST {path}")
+
+
+def _deploy_workspace(tmp_path, monkeypatch, fake, descriptor_text: str):
+    from click.testing import CliRunner
+
+    import bifrost.client as client_mod
+    from bifrost.commands.solution import solution_group
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text(descriptor_text)
+    monkeypatch.setattr(
+        client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: fake)
+    )
+    return CliRunner(), solution_group
+
+
+def test_deploy_body_includes_descriptor_version(tmp_path, monkeypatch):
+    fake = _DeployFakeClient()
+    runner, grp = _deploy_workspace(
+        tmp_path, monkeypatch, fake, "slug: s\nname: S\nversion: 1.2.3\n"
+    )
+    result = runner.invoke(grp, ["deploy"])
+    assert result.exit_code == 0, result.output
+    assert fake.deploy_body is not None
+    assert fake.deploy_body["version"] == "1.2.3"
+    assert fake.deploy_body["force"] is False
+
+
+def test_deploy_force_flag_sets_force_true(tmp_path, monkeypatch):
+    fake = _DeployFakeClient()
+    runner, grp = _deploy_workspace(
+        tmp_path, monkeypatch, fake, "slug: s\nname: S\nversion: 1.2.3\n"
+    )
+    result = runner.invoke(grp, ["deploy", "--force"])
+    assert result.exit_code == 0, result.output
+    assert fake.deploy_body is not None
+    assert fake.deploy_body["force"] is True
+
+
+def test_deploy_no_descriptor_version_sends_null(tmp_path, monkeypatch):
+    """A versionless descriptor deploys fine — version null, never a crash."""
+    fake = _DeployFakeClient()
+    runner, grp = _deploy_workspace(tmp_path, monkeypatch, fake, "slug: s\nname: S\n")
+    result = runner.invoke(grp, ["deploy"])
+    assert result.exit_code == 0, result.output
+    assert fake.deploy_body is not None
+    assert fake.deploy_body.get("version") is None
+
+
+def test_deploy_downgrade_409_prints_detail_and_force_hint(tmp_path, monkeypatch):
+    """The downgrade 409 (Task 20 gate) surfaces the server detail PLUS a
+    re-run-with---force hint."""
+    detail = (
+        "bundle version 0.9.0 is older than installed 1.0.0; "
+        "re-run with force to downgrade"
+    )
+    fake = _DeployFakeClient(deploy_resp=_Resp(409, body={"detail": detail}))
+    runner, grp = _deploy_workspace(
+        tmp_path, monkeypatch, fake, "slug: s\nname: S\nversion: 0.9.0\n"
+    )
+    result = runner.invoke(grp, ["deploy"])
+    assert result.exit_code != 0
+    assert detail in result.output
+    assert "--force" in result.output
+
+
+def test_deploy_other_409_unchanged(tmp_path, monkeypatch):
+    """Non-downgrade 409s keep the generic 'Deploy failed' path — no hint."""
+    fake = _DeployFakeClient(deploy_resp=_Resp(409, body={"detail": "slug conflict"}))
+    runner, grp = _deploy_workspace(
+        tmp_path, monkeypatch, fake, "slug: s\nname: S\nversion: 1.0.0\n"
+    )
+    result = runner.invoke(grp, ["deploy"])
+    assert result.exit_code != 0
+    assert "Deploy failed: 409" in result.output
+    assert "--force" not in result.output

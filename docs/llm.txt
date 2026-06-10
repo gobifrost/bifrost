@@ -128,10 +128,10 @@ A Solution is an installable surface: a workspace (apps + workflows + tables + c
 
 Commands: `solution init / scaffold-app / start / deploy / install`.
 
-- `solution init --slug <s> [--name] [--scope org|global] [--global-repo-access]` — write the `bifrost.solution.yaml` descriptor.
+- `solution init --slug <s> [--name] [--version <v>] [--scope org|global] [--global-repo-access]` — write the `bifrost.solution.yaml` descriptor. `--version` (default `0.1.0`) is the bundle version recorded on the install at deploy time.
 - `solution scaffold-app <slug> [--api-url]` — generate a `standalone_v2` React app skeleton (Vite, wired for tokenless local dev) and a runnable sample workflow at `<solution-root>/functions/hello.py`. The app's `useWorkflow("functions/hello.py::main")` ref resolves it.
 - `solution start [<app-slug>] [--org <ref>] [--port N]` — **firebase/swa-style local dev**. Runs the app's Vite dev server AND the workspace's local `@workflow` functions in-process behind ONE origin (default port 3000), proxying everything else (tables, configs, ai) to the dev API. The app's own `path::fn` calls run locally (no deploy); edits to those `.py` files hot-reload. Deploys NOTHING — the platform is only mutated by `deploy`. Serves one app at a time; with multiple apps, name one. Injects the app's id + `--org` so local dev exercises the same install-scoped → org → global workflow resolution as deployed.
-- `solution deploy [path] [--solution <id>]` (alias: top-level `bifrost deploy`) — bundle the workspace and full-replace the install (resolve-or-create by slug+scope). Non-interactive.
+- `solution deploy [path] [--solution <id>] [--force]` (alias: top-level `bifrost deploy`) — bundle the workspace and full-replace the install (resolve-or-create by slug+scope). Non-interactive. Sends the descriptor's `version`; a bundle older than the installed version is refused (409) unless `--force` is set (deliberate downgrade).
 - `solution install <zip> [--org] [--set KEY=VALUE]` — install from a workspace zip (drag-and-drop equivalent); applies config values atomically.
 
 Non-obvious semantics:

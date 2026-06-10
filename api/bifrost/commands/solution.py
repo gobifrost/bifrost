@@ -62,9 +62,13 @@ def solution_group() -> None:
 @click.argument("path", type=click.Path(file_okay=False), default=".")
 @click.option("--slug", required=True, help="Solution slug (definition identity).")
 @click.option("--name", default=None, help="Display name (defaults to slug).")
+@click.option("--version", "version", default="0.1.0", show_default=True,
+              help="Bundle version recorded on the install at deploy time.")
 @click.option("--scope", type=click.Choice(["org", "global"]), default="org", show_default=True)
 @click.option("--global-repo-access/--no-global-repo-access", default=False, show_default=True)
-def init_cmd(path: str, slug: str, name: str | None, scope: str, global_repo_access: bool) -> None:
+def init_cmd(
+    path: str, slug: str, name: str | None, version: str, scope: str, global_repo_access: bool
+) -> None:
     workspace = pathlib.Path(path)
     workspace.mkdir(parents=True, exist_ok=True)
     descriptor = workspace / DESCRIPTOR_FILENAME
@@ -75,6 +79,7 @@ def init_cmd(path: str, slug: str, name: str | None, scope: str, global_repo_acc
             {
                 "slug": slug,
                 "name": name or slug,
+                "version": version,
                 "scope": scope,
                 "global_repo_access": global_repo_access,
             },
@@ -717,7 +722,9 @@ def _resolve_target_install(
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
-def deploy_cmd(path: str, solution_id: str | None) -> None:
+@click.option("--force", is_flag=True, default=False,
+              help="Apply even if the bundle version is older than the installed version (downgrade).")
+def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
     workspace = pathlib.Path(path).resolve()
     if not is_solution_workspace(workspace):
         raise click.ClickException(
@@ -797,7 +804,14 @@ def deploy_cmd(path: str, solution_id: str | None) -> None:
             "forms": forms,
             "agents": agents,
             "config_schemas": config_schemas,
+            "version": descriptor.version,
+            "force": force,
         })
+        if deploy.status_code == 409 and "older than installed" in deploy.text:
+            # Task 20 downgrade gate — surface the server's detail and how to
+            # override it deliberately.
+            detail = deploy.json().get("detail", deploy.text)
+            raise click.ClickException(f"{detail}\nRe-run with --force to downgrade.")
         if deploy.status_code not in (200, 201):
             click.echo(f"Deploy failed: {deploy.status_code} {deploy.text}", err=True)
             return 1

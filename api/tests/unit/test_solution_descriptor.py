@@ -104,3 +104,45 @@ def test_find_solution_root_none_when_absent(tmp_path: pathlib.Path) -> None:
     sub = tmp_path / "a" / "b"
     sub.mkdir(parents=True)
     assert find_solution_root(sub) is None
+
+
+def test_version_round_trips(tmp_path: pathlib.Path) -> None:
+    """The descriptor carries an optional bundle version (Task 21)."""
+    _write(tmp_path, "slug: mna\nname: MNA\nversion: 1.2.3\n")
+    d = load_descriptor(tmp_path)
+    assert d.version == "1.2.3"
+
+
+def test_version_defaults_to_none(tmp_path: pathlib.Path) -> None:
+    """Pre-versioning descriptors (no version key) still load."""
+    _write(tmp_path, "slug: mna\nname: MNA\n")
+    assert load_descriptor(tmp_path).version is None
+
+
+def test_init_writes_version(tmp_path: pathlib.Path) -> None:
+    """`bifrost solution init` writes the version (default 0.1.0) into the
+    descriptor, ordered after name and before scope for readability, and
+    load_descriptor round-trips it."""
+    from click.testing import CliRunner
+
+    from bifrost.commands.solution import solution_group
+
+    ws = tmp_path / "ws"
+    result = CliRunner().invoke(solution_group, ["init", str(ws), "--slug", "mna"])
+    assert result.exit_code == 0, result.output
+    assert load_descriptor(ws).version == "0.1.0"
+    text = (ws / DESCRIPTOR_FILENAME).read_text()
+    assert text.index("name:") < text.index("version:") < text.index("scope:")
+
+
+def test_init_writes_explicit_version(tmp_path: pathlib.Path) -> None:
+    from click.testing import CliRunner
+
+    from bifrost.commands.solution import solution_group
+
+    ws = tmp_path / "ws"
+    result = CliRunner().invoke(
+        solution_group, ["init", str(ws), "--slug", "mna", "--version", "2.0.0"]
+    )
+    assert result.exit_code == 0, result.output
+    assert load_descriptor(ws).version == "2.0.0"
