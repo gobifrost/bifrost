@@ -90,7 +90,7 @@ def init_cmd(path: str, slug: str, name: str | None, scope: str, global_repo_acc
 )
 @click.argument("slug")
 @click.option("--path", "path", default=None,
-              help="App dir (default: apps/<slug> under the cwd).")
+              help="App dir inside the solution workspace (default: apps/<slug> under the solution root).")
 @click.option("--api-url", default=None,
               help="Instance URL the app resolves `bifrost` from (default: $BIFROST_API_URL).")
 def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
