@@ -192,8 +192,16 @@ def _template_main(
     except Exception as e:
         logger.warning(f"Could not check get_settings cache state: {e}")
 
+    # Note: BIFROST_SECRET_KEY is intentionally NOT scrubbed here.
+    # The Settings Pydantic model requires it (no default), so removing it
+    # would cause get_settings() to fail in the child path (_read_context_from_redis
+    # calls get_settings() for redis_url). The child no longer USES SECRET_KEY
+    # to mint tokens — that path is covered by the token hand-down (step 1) — but
+    # the Settings validation dependency means the key must remain present.
+    # Risk: child still holds SECRET_KEY in env. Mitigation: the only child code
+    # path that previously used it (authenticate_engine → create_access_token) is
+    # now bypassed by the pre-minted engine_token from context_data.
     _SCRUB_KEYS = [
-        "BIFROST_SECRET_KEY",
         "BIFROST_DATABASE_URL",
         "BIFROST_DATABASE_URL_SYNC",
         "BIFROST_RABBITMQ_URL",
