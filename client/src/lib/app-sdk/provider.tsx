@@ -131,6 +131,9 @@ export function BifrostProvider({
   const install = () => {
     const restoreTransport = setBifrostTransport({
       baseUrl: baseUrl.replace(/\/$/, ""),
+      // Raw token for the ws client (query-param auth — WebSocket can't send
+      // an Authorization header). HTTP calls use the header below.
+      token,
       fetchImpl,
       headers: {
         Authorization: `Bearer ${token}`,

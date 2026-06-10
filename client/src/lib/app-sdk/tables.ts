@@ -1,5 +1,10 @@
 import type { components } from "@/lib/v1";
+import { getBifrostTransport } from "./transport";
 import { subscribeToTable } from "./ws-client";
+
+// Transport state lives in ./transport (shared with the ws client); re-export
+// the setters/getters here so existing import sites keep working.
+export { getBifrostTransport, setBifrostTransport } from "./transport";
 
 type DocumentPublic = components["schemas"]["DocumentPublic"];
 type DocumentQuery = components["schemas"]["DocumentQuery"];
@@ -12,43 +17,6 @@ const base = "/api/tables";
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : "";
-}
-
-/**
- * Transport the table SDK uses for HTTP. Two modes:
- *
- * - **Default (v1 inline apps):** `baseUrl` empty + `fetchImpl` undefined →
- *   same-origin requests with cookie/CSRF auth (the platform serves the app,
- *   so the session cookie is present). Unchanged behavior.
- * - **v2 standalone apps:** `<BifrostProvider>` installs a transport pointing
- *   at the configured `baseUrl` with a bearer token (and optional org header),
- *   so `tables.*`/`useTable` reach the real Bifrost API even when the app is
- *   served by its own dev server (`npm run dev`) on a different origin.
- */
-interface BifrostTransport {
-  baseUrl: string;
-  fetchImpl?: typeof fetch;
-  headers?: Record<string, string>;
-}
-
-let transport: BifrostTransport = { baseUrl: "" };
-
-/**
- * Install the transport the table SDK uses. Called by `<BifrostProvider>` on
- * mount; the returned cleanup restores the prior transport on unmount. v1
- * inline apps never call this and keep the same-origin cookie default.
- */
-export function setBifrostTransport(next: BifrostTransport): () => void {
-  const prev = transport;
-  transport = next;
-  return () => {
-    transport = prev;
-  };
-}
-
-/** Read the currently installed transport (default: same-origin, no headers). */
-export function getBifrostTransport(): BifrostTransport {
-  return transport;
 }
 
 /**
@@ -129,6 +97,7 @@ async function http<T>(
   options: { throwOnNotFound?: boolean } = {},
 ): Promise<T | null> {
   const method = (init.method ?? "GET").toUpperCase();
+  const transport = getBifrostTransport();
   const usingProvider = Boolean(transport.baseUrl || transport.headers);
   // Same-origin (v1) uses cookie + CSRF. A provider transport (v2) carries its
   // own auth headers (bearer) and targets a possibly cross-origin baseUrl, so
