@@ -393,8 +393,21 @@ async def cleanup_test_data(db_session: AsyncSession):
     )
 
     # Clean up orgs and roles last (entities FK into these)
+    from src.models.orm.executions import Execution
     from src.models.orm.organizations import Organization
     from src.models.orm.users import Role
+
+    # Executions FK into organizations (RESTRICT): other suites legitimately
+    # create executions inside their created_by="test" orgs (e.g. the form
+    # anchor tests stamp the execution with the FORM's org), and a single
+    # surviving row makes this org sweep raise ForeignKeyViolationError —
+    # which cascades as a teardown error into EVERY later test in this file.
+    cohort_orgs = select(Organization.id).where(
+        Organization.created_by.in_(["git-sync", "test"])
+    )
+    await db_session.execute(
+        delete(Execution).where(Execution.organization_id.in_(cohort_orgs))
+    )
     await db_session.execute(delete(Organization).where(Organization.created_by.in_(["git-sync", "test"])))
     await db_session.execute(delete(Role).where(Role.created_by == "git-sync"))
     await db_session.commit()
