@@ -40,6 +40,8 @@ def _pick_slug_row(rows: list[Any], org_id: Any) -> Any | None:
         return rows[0]
     if org_id is not None:
         for row in rows:
+            # str() on both sides: MCP context.org_id may be a string UUID
+            # while the ORM column is a UUID object.
             if row.organization_id is not None and str(row.organization_id) == str(org_id):
                 return row
     for row in rows:
