@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from src.core.auth import Context, CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.events import (
     CreateDeliveryRequest,

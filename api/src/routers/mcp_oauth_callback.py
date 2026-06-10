@@ -36,7 +36,7 @@ from starlette.responses import HTMLResponse
 from src.core.log_safety import log_safe
 
 from src.config import get_settings
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.security import decrypt_secret, encrypt_secret
 from src.models.orm.external_mcp import (
     MCPConnection,

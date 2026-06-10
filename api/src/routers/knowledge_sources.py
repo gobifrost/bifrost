@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, or_, select, update
 
 from src.core.auth import CurrentActiveUser, CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, resolve_org_filter
 from src.models.contracts.knowledge import (

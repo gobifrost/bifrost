@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select, or_
 
 from src.core.auth import Context, CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models import Workflow
 from src.models import WorkflowKeyCreateRequest, WorkflowKeyResponse

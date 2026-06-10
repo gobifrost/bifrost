@@ -26,7 +26,8 @@ from shared.policies.probe import (
     compile_read_filter,
     evaluate_action,
 )
-from src.core.auth import Context, CurrentSuperuser, UserPrincipal
+from src.core.auth import Context, CurrentSuperuser
+from src.core.principal import UserPrincipal
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter, resolve_target_org

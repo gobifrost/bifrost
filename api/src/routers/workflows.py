@@ -64,7 +64,7 @@ from src.models.orm.users import Role
 from src.services.workflow_validation import _extract_relative_path
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.pubsub import publish_execution_update, publish_history_update
 from src.core.cache import get_cached_data_provider

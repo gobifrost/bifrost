@@ -15,7 +15,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.rate_limit import RateLimiter
 from src.services.events.processor import EventProcessor, resolve_webhook_source

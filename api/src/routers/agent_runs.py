@@ -17,7 +17,8 @@ from sqlalchemy.orm import selectinload
 from src.core.auth import CurrentActiveUser
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
-from src.core.database import DbSession, get_session_factory
+from src.core.database import get_session_factory
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.agent_run_flag_conversations import (
     FlagConversationResponse,

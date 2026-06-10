@@ -11,7 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.auth import Context, CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.pubsub import publish_git_operation
 from src.models import (

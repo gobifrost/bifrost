@@ -19,7 +19,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentActiveUser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
 from src.models.contracts.agent_stats import AgentStatsResponse, FleetStatsResponse

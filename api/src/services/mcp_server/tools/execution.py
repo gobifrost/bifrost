@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools.db import get_tool_db
 

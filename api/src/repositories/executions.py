@@ -17,7 +17,7 @@ from sqlalchemy import desc, func, select, update
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
 from src.models import (
     AIUsage,
