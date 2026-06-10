@@ -286,21 +286,31 @@ export function Solutions() {
 		return org?.name ?? orgId;
 	};
 
-	const previewMutation = useMutation({
-		mutationFn: (file: File) => previewInstall(file),
-		onSuccess: (data) => {
+	// Monotonic guard so a stale preview response (e.g. the operator changed
+	// the scope again while one was in flight) can't clobber a newer one.
+	const previewSeq = useRef(0);
+	const [previewLoading, setPreviewLoading] = useState(false);
+
+	/** Run (or re-run) the zip preview against a scope selection. */
+	async function runPreview(file: File, scopeId: string) {
+		const seq = ++previewSeq.current;
+		setPreviewLoading(true);
+		try {
+			const data = await previewInstall(file, {
+				organizationId: scopeId === "__global__" ? "" : scopeId,
+			});
+			if (seq !== previewSeq.current) return;
 			setPreview(data);
 			setPreviewError(null);
-			// Default to Global scope; operator picks an org if desired.
-			setScopeOrgId("__global__");
-			setConfigValues({});
-		},
-		onError: (err: unknown) => {
+		} catch (err: unknown) {
+			if (seq !== previewSeq.current) return;
 			setPreviewError(
 				err instanceof Error ? err.message : "Failed to read package",
 			);
-		},
-	});
+		} finally {
+			if (seq === previewSeq.current) setPreviewLoading(false);
+		}
+	}
 
 	const installMutation = useMutation({
 		mutationFn: ({ force }: { force: boolean }) => {
@@ -364,7 +374,10 @@ export function Solutions() {
 		setPreviewError(null);
 		setInstallError(null);
 		setDowngradeConfirm(false);
-		previewMutation.mutate(file);
+		// Default to Global scope; operator picks an org if desired.
+		setScopeOrgId("__global__");
+		setConfigValues({});
+		void runPreview(file, "__global__");
 	}
 
 	function closeInstallDialog() {
@@ -375,7 +388,9 @@ export function Solutions() {
 		setDowngradeConfirm(false);
 		setConfigValues({});
 		setScopeOrgId("__global__");
-		previewMutation.reset();
+		// Invalidate any in-flight preview so a late response is dropped.
+		previewSeq.current++;
+		setPreviewLoading(false);
 		installMutation.reset();
 	}
 
@@ -595,7 +610,7 @@ export function Solutions() {
 						</DialogDescription>
 					</DialogHeader>
 
-					{previewMutation.isPending ? (
+					{previewLoading ? (
 						<div className="flex items-center gap-2 py-8 text-muted-foreground">
 							<Loader2 className="h-4 w-4 animate-spin" />
 							Reading package…
@@ -653,7 +668,18 @@ export function Solutions() {
 									<Label htmlFor="solution-scope">Scope</Label>
 									<Select
 										value={scopeOrgId}
-										onValueChange={setScopeOrgId}
+										onValueChange={(value) => {
+											setScopeOrgId(value);
+											// Re-preview at the selected scope so
+											// an existing install there is caught
+											// and surfaced as an upgrade.
+											if (installFile) {
+												void runPreview(
+													installFile,
+													value,
+												);
+											}
+										}}
 									>
 										<SelectTrigger
 											id="solution-scope"
@@ -791,7 +817,7 @@ export function Solutions() {
 									}
 									disabled={
 										!preview ||
-										previewMutation.isPending ||
+										previewLoading ||
 										installMutation.isPending
 									}
 									data-testid="confirm-install"

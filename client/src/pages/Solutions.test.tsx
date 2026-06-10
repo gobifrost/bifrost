@@ -139,7 +139,9 @@ describe("Solutions — install preview flow", () => {
 		await user.upload(input, file);
 
 		const dialog = await screen.findByTestId("preview-dialog");
-		expect(mockPreviewInstall).toHaveBeenCalledWith(file);
+		expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
+			organizationId: "",
+		});
 		expect(within(dialog).getByText(/New Solution/)).toBeInTheDocument();
 		// Entity summary chip count for workflows
 		expect(within(dialog).getByTestId("preview-summary")).toHaveTextContent(
@@ -323,6 +325,77 @@ describe("Solutions — upgrade flow", () => {
 		);
 		await waitFor(() =>
 			expect(mockNavigate).toHaveBeenCalledWith("/solutions/sol-1"),
+		);
+	});
+
+	it("re-previews against the selected org and enters upgrade mode for an org-scoped install", async () => {
+		// Initial preview at global scope: fresh slug, no existing install.
+		mockPreviewInstall.mockResolvedValueOnce({
+			slug: "my-solution",
+			name: "My Solution",
+			scope: "org",
+			version: "2.0.0",
+			workflows: [{ name: "w1" }],
+			apps: [],
+			forms: [],
+			agents: [],
+			tables: [],
+			config_schemas: [],
+		});
+		// Re-preview against org-1: matches an existing org-scoped install.
+		mockPreviewInstall.mockResolvedValueOnce(makeUpgradePreview());
+		mockInstallSolution.mockResolvedValue(
+			makeSolution({ id: "sol-1", name: "My Solution" }),
+		);
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		const file = new File(["zip"], "my-solution.zip", {
+			type: "application/zip",
+		});
+		await user.upload(
+			screen.getByTestId("install-file-input") as HTMLInputElement,
+			file,
+		);
+		const dialog = await screen.findByTestId("preview-dialog");
+		// Initial preview runs at global scope.
+		expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
+			organizationId: "",
+		});
+		// Fresh-slug mode: scope picker present.
+		await within(dialog).findByTestId("scope-select");
+
+		// Select org X — preview must be re-run against that org.
+		await user.click(within(dialog).getByTestId("scope-select"));
+		await user.click(screen.getByRole("option", { name: "Acme Corp" }));
+
+		await waitFor(() =>
+			expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
+				organizationId: "org-1",
+			}),
+		);
+
+		// The re-preview matched an existing install → upgrade mode.
+		expect(
+			await within(dialog).findByText(
+				/Upgrade My Solution v1\.0\.0 → v2\.0\.0/,
+			),
+		).toBeInTheDocument();
+		expect(within(dialog).queryByTestId("scope-select")).toBeNull();
+		expect(within(dialog).getByTestId("confirm-install")).toHaveTextContent(
+			"Upgrade",
+		);
+
+		// Install stays locked to the org the preview matched.
+		await user.click(within(dialog).getByTestId("confirm-install"));
+		await waitFor(() =>
+			expect(mockInstallSolution).toHaveBeenCalledWith(
+				expect.objectContaining({
+					file,
+					organizationId: "org-1",
+					force: false,
+				}),
+			),
 		);
 	});
 

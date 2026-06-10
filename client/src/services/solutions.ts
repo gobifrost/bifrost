@@ -118,14 +118,18 @@ async function parseUploadError(
 }
 
 /**
- * Preview a Solution install zip (parse-only). Posts a multipart `file`.
+ * Preview a Solution install zip (parse-only). Posts a multipart `file` and an
+ * optional `organization_id` (empty/absent = global) so the server can match
+ * an existing install at that scope and return `existing_install` + `diff`.
  */
 export async function previewInstall(
 	file: File,
+	params: { organizationId?: string } = {},
 	options: RequestOptions = {},
 ): Promise<SolutionInstallPreview> {
 	const formData = new FormData();
 	formData.append("file", file);
+	formData.append("organization_id", params.organizationId ?? "");
 
 	const response = await authFetch("/api/solutions/install/preview", {
 		method: "POST",

@@ -125,6 +125,21 @@ describe("solutions service", () => {
 		expect(out.slug).toBe("demo");
 	});
 
+	it("previews with an organization_id form field when given", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ slug: "demo" }),
+		});
+		const file = new File(["zip-bytes"], "demo.zip", {
+			type: "application/zip",
+		});
+
+		await previewInstall(file, { organizationId: "org-7" });
+
+		const body = mockAuthFetch.mock.calls[0][1].body as FormData;
+		expect(body.get("organization_id")).toBe("org-7");
+	});
+
 	it("installs a solution with file, organization_id, and config_values", async () => {
 		mockAuthFetch.mockResolvedValue({
 			ok: true,
