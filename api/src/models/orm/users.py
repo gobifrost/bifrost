@@ -37,6 +37,12 @@ class User(Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_registered: Mapped[bool] = mapped_column(Boolean, default=True)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # External (portal/guest) user: an external, non-bypass principal sees only
+    # its own org tier — no global (NULL-org) entities and no
+    # access_level="authenticated" entitlement. Enforced in OrgScopedRepository.
+    is_external: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_enforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     organization_id: Mapped[UUID | None] = mapped_column(

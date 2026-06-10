@@ -77,6 +77,13 @@ class UserBase(BaseModel):
     is_verified: bool = Field(default=False)
     is_registered: bool = Field(default=True)
     is_system: bool = Field(default=False)
+    is_external: bool = Field(
+        default=False,
+        description=(
+            "External (portal/guest) user: sees only their own org tier — no "
+            "global entities and no 'authenticated' access-level entitlement"
+        ),
+    )
     mfa_enabled: bool = Field(default=False)
 
 
@@ -87,6 +94,7 @@ class UserCreate(BaseModel):
     password: str | None = None  # Plain text, will be hashed
     is_active: bool = True
     is_superuser: bool = False
+    is_external: bool = False  # External (portal/guest) user — settable at invite
     organization_id: UUID | None = None
     invite: bool = False  # If True, generate invite record; link returned and event optionally fired
     trigger_automation: bool | None = None  # None treated as True for contract compat during transition
@@ -100,6 +108,7 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     is_superuser: bool | None = None
     is_verified: bool | None = None
+    is_external: bool | None = None
     mfa_enabled: bool | None = None
     organization_id: UUID | None = None
 

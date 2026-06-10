@@ -137,6 +137,7 @@ async def create_user(
         hashed_password="",  # No password for admin-created users
         is_active=request.is_active,
         is_superuser=request.is_superuser,
+        is_external=request.is_external,
         is_verified=True,  # Trusted since created by admin
         is_registered=False,  # User must complete registration to set password
         organization_id=request.organization_id,
@@ -498,6 +499,8 @@ async def update_user(
             db_user.organization_id = PROVIDER_ORG_ID
     if request.is_verified is not None:
         db_user.is_verified = request.is_verified
+    if request.is_external is not None:
+        db_user.is_external = request.is_external
     if request.mfa_enabled is not None:
         db_user.mfa_enabled = request.mfa_enabled
     if request.organization_id is not None:
