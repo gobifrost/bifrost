@@ -1,13 +1,21 @@
 ---
 name: bifrost:release
-description: Build and release Bifrost. Use when pushing commits to main, cutting a versioned release, or deploying to K8s. Handles dev push (CI builds :dev image) and full release (version tag → GitHub Release + :latest).
+description: Build and release Bifrost. Use when pushing commits to main, cutting a versioned release, or deploying to K8s. Handles dev push (CI builds :dev image), pre-release (vX.Y.Z-rc.N tag → pre-release GitHub Release), and full release (version tag → GitHub Release + :latest).
 ---
 
 # Bifrost Release
 
 ## Step 1: Ask which workflow
 
-> "Are you doing a **dev push** (push commits → CI builds `:dev`) or a **full release** (version tag → GitHub Release + `:latest`)?"
+> "Which release rung?
+> - **dev push** — commits to main → CI builds `:dev` (every merge; you + community track bleeding edge)
+> - **pre-release** — tag `vX.Y.Z-rc.N` → versioned images + a GitHub Release marked *pre-release* (newer than the last final, not yet blessed)
+> - **full release** — tag `vX.Y.Z` → versioned images + `:latest` + a final GitHub Release"
+
+The ladder is **dev → pre-release (`-rc.N`) → full release (`:latest`)**. SemVer orders pre-releases
+below the final (`v0.9.3-rc.1 < v0.9.3-rc.2 < v0.9.3`), and CI's `create-release` job auto-detects a
+pre-release from the `-` in the tag — so an `-rc` tag never gets `:latest` and never becomes the
+`git describe` baseline that dev versions count from.
 
 ---
 
@@ -96,6 +104,63 @@ git push origin main
 > ```
 >
 > Watch CI: https://github.com/gobifrost/bifrost/actions"
+
+---
+
+## Pre-Release
+
+For a release candidate — a versioned, signed build the community can pin and test, that is
+explicitly **not** final. Same machinery as a full release EXCEPT the `-rc.N` suffix makes CI mark
+the GitHub Release as a pre-release and skip the `:latest` tag.
+
+### 1. Determine the version
+
+Ask: "What pre-release tag? Format `vX.Y.Z-rc.N` — e.g. `v0.9.3-rc.1`. Bump `N` for each candidate
+of the same target version (`-rc.1`, `-rc.2`, …)."
+
+- The tag MUST start with `v` and MUST contain a `-` (the `-` is what flips CI to pre-release).
+- `X.Y.Z` is the version you intend to finalize; `-rc.N` says "candidate N for that version."
+- Do NOT reuse an `-rc` number. Do NOT cut `vX.Y.Z` with no suffix here — that's the full-release path.
+
+### 2. Plugin manifest version guard
+
+The tag-build CI job has a hard guard: every plugin manifest `version` must equal the tag's version
+(WITH the `-rc.N` suffix). Run the bump locally first, land it via a PR, THEN tag:
+
+```bash
+TAG="vX.Y.Z-rc.N"; VERSION="${TAG#v}"
+scripts/update-plugin-version.sh "$VERSION"
+```
+
+Same guard and trade-off as a full release — forgetting it fails the build, it doesn't ship stale.
+
+### 3. Tag and push
+
+```bash
+git tag vX.Y.Z-rc.N
+git push origin vX.Y.Z-rc.N
+```
+
+### 4. What CI does
+
+> "Pushed the pre-release tag. CI will:
+> 1. Run the gate jobs on the tag ref.
+> 2. Build + push versioned images:
+>    - `ghcr.io/gobifrost/bifrost-api:X.Y.Z-rc.N` (and client)
+>    - **NOT** `:latest` — that stays on the last full release.
+> 3. Create a GitHub Release marked **pre-release** (CI detects the `-` in the tag).
+>
+> The `:dev` images are unaffected, and the dev baseline (`git describe`) does NOT move to an `-rc`
+> tag — dev versions keep counting from the last FULL release.
+>
+> Watch CI: https://github.com/gobifrost/bifrost/actions"
+
+### 5. Release notes (scaled rigor)
+
+Pre-releases still get human notes via `gh release edit <tag> --notes-file <file>` — a short
+"what's new to test / known issues" is enough. The full Contributors + Fixed-CVEs rigor below is for
+*final* releases. Do **not** draft a gobifrost.com blog post for a pre-release (that's a full-release
+step).
 
 ---
 
