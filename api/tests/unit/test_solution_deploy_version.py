@@ -11,7 +11,6 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-import pytest as _pytest
 
 from src.models.orm.solutions import Solution
 from src.services.solutions.deploy import (
@@ -20,7 +19,6 @@ from src.services.solutions.deploy import (
     SolutionDowngradeBlocked,
     _is_downgrade,
 )
-
 
 def _wf_entry(wf_id: str, name: str) -> dict:
     """A minimal manifest-shaped workflow entry."""
@@ -31,7 +29,6 @@ def _wf_entry(wf_id: str, name: str) -> dict:
         "path": f"workflows/{name}.py",
         "type": "workflow",
     }
-
 
 class TestIsDowngrade:
     """(f) _is_downgrade: PEP 440 ordering, never block on unordered versions."""
@@ -62,8 +59,7 @@ class TestIsDowngrade:
         assert _is_downgrade("1.0.0rc1", "1.0.0") is True
         assert _is_downgrade("1.0.0", "1.0.0rc1") is False
 
-
-@_pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True)
 def _reset_redis_singleton():
     """See test_solution_deploy_reconcile: drop the loop-bound Redis singleton
     so cross-test event-loop teardown can't poison the deployer's cache sync."""
@@ -72,7 +68,6 @@ def _reset_redis_singleton():
     rc._redis_client = None
     yield
     rc._redis_client = None
-
 
 @pytest.mark.e2e
 class TestSolutionDeployVersion:
@@ -119,7 +114,7 @@ class TestSolutionDeployVersion:
         """(b) v0.9.0 over v1.0.0 → SolutionDowngradeBlocked, nothing recorded."""
         db = db_session
         sol = await self._make_install(db, f"ver-{uuid4().hex[:8]}", version="1.0.0")
-        with _pytest.raises(SolutionDowngradeBlocked) as exc:
+        with pytest.raises(SolutionDowngradeBlocked) as exc:
             await SolutionDeployer(db).deploy(self._bundle(sol, "0.9.0"))
         assert "0.9.0" in str(exc.value)
         assert "1.0.0" in str(exc.value)
