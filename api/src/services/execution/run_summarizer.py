@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-import openai
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -46,15 +45,26 @@ SUMMARIZE_BACKFILL_QUEUE = "agent-summarization-backfill"
 # with an older version.
 SUMMARIZE_PROMPT_VERSION = "v4"
 
-# Transient LLM provider errors worth retrying in-handler. The consumer runs
-# with prefetch_count=1, so retrying here naturally backpressures the whole
-# pod — another pod's handler is free to service other messages meanwhile.
-_TRANSIENT_LLM_ERRORS: tuple[type[BaseException], ...] = (
-    openai.RateLimitError,
-    openai.APITimeoutError,
-    openai.APIConnectionError,
-    openai.InternalServerError,
-)
+def _transient_llm_errors() -> tuple[type[BaseException], ...]:
+    """Transient LLM provider errors worth retrying in-handler.
+
+    The consumer runs with prefetch_count=1, so retrying here naturally
+    backpressures the whole pod — another pod's handler is free to service
+    other messages meanwhile.
+
+    openai is imported lazily so the SDK stays out of the worker import
+    closure (tests/unit/test_import_hygiene.py); except clauses evaluate
+    this call only when an exception is being matched, i.e. after an LLM
+    call has already loaded the SDK.
+    """
+    import openai
+
+    return (
+        openai.RateLimitError,
+        openai.APITimeoutError,
+        openai.APIConnectionError,
+        openai.InternalServerError,
+    )
 
 # Max wall time we'll spend retrying a single summarization. OpenRouter's RPM
 # windows reset every 60s, so ~2 minutes covers the common 429 case plus one
@@ -255,7 +265,7 @@ async def _complete_with_retry(
     for attempt in range(_MAX_RETRIES + 1):
         try:
             return await llm_client.complete(messages=messages, model=model)
-        except _TRANSIENT_LLM_ERRORS as exc:
+        except _transient_llm_errors() as exc:
             last_exc = exc
             if attempt >= _MAX_RETRIES:
                 break
@@ -412,7 +422,7 @@ async def summarize_run(
             await db.commit()
             await _broadcast_run(run, db)
         return
-    except _TRANSIENT_LLM_ERRORS as exc:
+    except _transient_llm_errors() as exc:
         logger.warning(
             "Summarizer exhausted retries on transient error for run %s: %s",
             run_id,

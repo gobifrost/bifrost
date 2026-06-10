@@ -18,7 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Response, status
 
 from src.core.auth import CurrentActiveUser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.passkeys import (
     PasskeyAuthOptionsRequest,

@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select, delete
 
 from src.core.auth import CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.services.audit import emit_audit
 from src.models import (

@@ -13,7 +13,7 @@ Scope Parameter Values:
 from enum import Enum
 from uuid import UUID
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 
 
 class OrgFilterType(Enum):

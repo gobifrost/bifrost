@@ -15,9 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
 from src.models.orm import SystemConfig
-from src.services.llm.anthropic_client import AnthropicClient
 from src.services.llm.base import BaseLLMClient, LLMConfig
-from src.services.llm.openai_client import OpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +129,16 @@ async def get_llm_client(session: AsyncSession) -> BaseLLMClient:
     config = await get_llm_config(session)
 
     if config.provider == "openai":
+        # Imported lazily so the openai SDK stays out of the worker/scheduler
+        # import closure (tests/unit/test_import_hygiene.py).
+        from src.services.llm.openai_client import OpenAIClient
+
         return OpenAIClient(config)
     elif config.provider == "anthropic":
+        # Imported lazily so the anthropic SDK stays out of the worker/scheduler
+        # import closure (tests/unit/test_import_hygiene.py).
+        from src.services.llm.anthropic_client import AnthropicClient
+
         return AnthropicClient(config)
     else:
         # This shouldn't happen due to validation in get_llm_config
@@ -173,8 +179,16 @@ def create_llm_client(
     )
 
     if provider == "openai":
+        # Imported lazily so the openai SDK stays out of the worker/scheduler
+        # import closure (tests/unit/test_import_hygiene.py).
+        from src.services.llm.openai_client import OpenAIClient
+
         return OpenAIClient(config)
     elif provider == "anthropic":
+        # Imported lazily so the anthropic SDK stays out of the worker/scheduler
+        # import closure (tests/unit/test_import_hygiene.py).
+        from src.services.llm.anthropic_client import AnthropicClient
+
         return AnthropicClient(config)
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")

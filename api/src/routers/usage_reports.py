@@ -17,7 +17,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
 from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.models import (
     UsageReportResponse,
     UsageReportSummary,

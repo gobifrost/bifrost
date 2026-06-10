@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, status
 
 from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.roi import (
     ROISettingsRequest,

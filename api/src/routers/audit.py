@@ -12,7 +12,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from src.core.auth import CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.models import AuditLogActor, AuditLogEntry, AuditLogListResponse
 from src.models import Organization as OrganizationORM
 from src.models import User as UserORM

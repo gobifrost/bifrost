@@ -33,7 +33,8 @@ from src.models.contracts.executions import (
 from src.models.orm.ai_usage import AIUsage
 
 from bifrost._logging import read_logs_from_stream
-from src.core.auth import Context, UserPrincipal
+from src.core.auth import Context
+from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter, OrgFilterType
 from src.core.pubsub import publish_execution_update, publish_history_update

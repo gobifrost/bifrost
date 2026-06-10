@@ -9,6 +9,8 @@ Provides real-time updates for:
 Uses Redis pub/sub for scalability across multiple API instances.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass, field
@@ -17,9 +19,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from src.models.orm.agent_runs import AgentRun
+    from fastapi import WebSocket
 
-from fastapi import WebSocket
+    from src.models.orm.agent_runs import AgentRun
 
 from src.config import get_settings
 from src.core.cache.redis_client import get_redis

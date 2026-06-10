@@ -149,7 +149,7 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
     from unittest.mock import patch
     from uuid import uuid4
 
-    from src.core.auth import UserPrincipal
+    from src.core.principal import UserPrincipal
     from src.models.contracts.agent_runs import BackfillSummariesRequest
     from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent

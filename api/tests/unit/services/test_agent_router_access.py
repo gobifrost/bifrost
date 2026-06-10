@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent, AgentRole, Conversation
 from src.models.orm.organizations import Organization

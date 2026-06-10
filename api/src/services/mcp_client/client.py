@@ -17,11 +17,12 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from typing import TYPE_CHECKING
 
 from src.models.orm.external_mcp import MCPConnection
+
+if TYPE_CHECKING:
+    from mcp import ClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,11 @@ async def open_session(
             to use (per-user vs. shared service) happens in ``auth_resolution``;
             this layer is auth-agnostic.
     """
+    # Imported lazily so the mcp SDK (and its sse_starlette/uvicorn deps)
+    # stays out of the worker import closure (tests/unit/test_import_hygiene.py).
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+
     server_url = _resolve_server_url(connection)
     headers = {"Authorization": f"Bearer {access_token}"}
 

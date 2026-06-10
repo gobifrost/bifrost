@@ -50,7 +50,7 @@ from src.models.contracts.passkeys import (
 )
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.rate_limit import auth_limiter, mfa_limiter, get_client_ip
 from src.services.audit import emit_audit
