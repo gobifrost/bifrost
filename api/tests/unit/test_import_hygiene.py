@@ -9,6 +9,13 @@ import json
 import subprocess
 import sys
 
+import pytest
+
+# Each test spawns a fresh Python interpreter via subprocess to inspect a
+# module's import closure — that's ~1.5s per case. Marked `slow` so the
+# every-PR unit lane skips them; they still run in `./test.sh all` and nightly.
+pytestmark = pytest.mark.slow
+
 HEAVY = {"fastapi", "starlette", "uvicorn", "anthropic", "openai", "mcp", "numpy", "pgvector"}
 # The spawn-entry and template modules must be stdlib-thin, not merely heavy-free:
 THIN_EXTRA = {"sqlalchemy", "pydantic", "redis", "httpx", "aio_pika", "apscheduler", "src.worker.app"}

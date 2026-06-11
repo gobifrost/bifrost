@@ -252,7 +252,12 @@ run_pytest() {
     return "${PIPESTATUS[0]}"
 }
 
-cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -v "$@"; }
+# `unit` is the fast every-PR lane: it deselects `@pytest.mark.slow` tests
+# (real-process forks, memory-profiling, subprocess import scans — seconds each,
+# not the ms a unit test should cost). Those still run in `all` and nightly, so
+# no coverage is dropped — just moved off the per-PR critical path. A caller can
+# re-include them ad hoc with `./test.sh unit -m slow` or `-m ""`.
+cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
 cmd_e2e()  { run_pytest tests/e2e/ -v "$@"; }
 cmd_all()  { run_pytest tests/ -v "$@"; }
 

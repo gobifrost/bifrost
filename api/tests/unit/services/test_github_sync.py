@@ -4,6 +4,8 @@ Unit tests for GitHub Sync Service.
 Tests the GitHubSyncService data models and exceptions.
 """
 
+import pytest
+
 from src.models.contracts.github import (
     OrphanInfo,
     PreflightIssue,
@@ -163,6 +165,10 @@ class TestSyncExceptions:
         assert str(error) == "Sync failed"
 
 
+# Memory-profiling tests: each builds many large files and measures RSS, so
+# they cost seconds, not milliseconds. Marked `slow` so the every-PR unit lane
+# skips them; they still run in `./test.sh all` and nightly.
+@pytest.mark.slow
 class TestMemoryUsageDuringFileScan:
     """
     Memory profiling tests for file scanning operations.
