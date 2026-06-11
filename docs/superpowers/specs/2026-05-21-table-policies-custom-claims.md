@@ -2,7 +2,7 @@
 
 ## Status
 
-Extension to `2026-04-30-table-policies-design.md`. Additive: existing policies keep working unchanged. Targets the "user × tag × scope" access patterns (RTM, multi-campus, per-project, per-tenant) that cannot be expressed today because the principal carries only fixed fields.
+Extension to `2026-04-30-table-policies-design.md`. Additive: existing policies keep working unchanged. Targets the "user × tag × scope" access patterns (multi-campus client portals, per-project, per-tenant) that cannot be expressed today because the principal carries only fixed fields.
 
 ## Why this exists
 
@@ -45,7 +45,7 @@ policies:
         - { in: [{ row: doc_type_id }, { claims: allowed_doc_type_ids }] }
 ```
 
-That's it. The whole RTM access model is four lines.
+That's it. The whole multi-campus portal access model is four lines.
 
 ## Reference root: `{claims: <name>}`
 
@@ -131,7 +131,7 @@ SQL: `data->>'campus_id' = ANY(ARRAY['c1','c2',...])` where the array is the res
 
 Per-row evaluator: same — checks membership against the in-memory list.
 
-**Nothing else changes.** `eq`/`neq`/`lt`/etc. with `{claims: <scalar-claim>}` already work — a scalar claim resolves to a value and compares like any other. `intersects` is deferred until there's a concrete second use case beyond RTM.
+**Nothing else changes.** `eq`/`neq`/`lt`/etc. with `{claims: <scalar-claim>}` already work — a scalar claim resolves to a value and compares like any other. `intersects` is deferred until there's a concrete second use case beyond the portal pattern.
 
 ## Validation
 
@@ -160,7 +160,7 @@ Claims are **org-scoped**. Same boundary as tables, workflows, forms, policies.
 - Custom Claim REST mutations are restricted to superusers and require the caller to have org context. Regular org users cannot create/edit/delete claims.
 - No global / platform-wide claims for v1. If a future feature needs "every org has `allowed_internal_doc_ids`," we'd add a `scope: platform` field. Not needed now.
 
-This lets the RTM org say "these are the RTM claims" alongside RTM's tables and policies — same shape as every other Bifrost resource.
+This lets a client org say "these are our claims" alongside its tables and policies — same shape as every other Bifrost resource.
 
 ## Admin UI
 
@@ -249,7 +249,7 @@ Tables that currently have policies referencing only `{user: ...}` and `{row: ..
 
 ## What's deferred
 
-- **`intersects` operator** — when both sides are lists. Not needed for RTM (one-side-list `in` covers it). Add when there's a concrete second use case.
+- **`intersects` operator** — when both sides are lists. Not needed for the portal pattern (one-side-list `in` covers it). Add when there's a concrete second use case.
 - **`exists_in` / subquery operator** — the spec already defers this (policies design doc, open questions). Claims don't change that calculus.
 - **Real-time invalidation on membership change** — for now, claims refresh on next request (REST) or next reconnect (websocket). A future enhancement can emit `claims_invalidated` events from membership-table writes and clear the cache mid-connection.
 - **Platform-scope claims** — `scope: platform` for claims that apply across all orgs. Add if/when a real use case appears.

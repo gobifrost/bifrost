@@ -38,7 +38,7 @@
 | 22 | Playwright happy-path | ⏳ pending | — |
 | 23 | Docs (`llm.txt` + spec finalize) | ⏳ pending | — |
 | 24 | Pre-completion verification | ⏳ pending | — |
-| ★ | **Demo seed: RTM org + simple app** (post-24) | ⏳ pending | — |
+| ★ | **Demo seed: demo org + simple app** (post-24) | ⏳ pending | — |
 
 **Test surface as of snapshot:** `./test.sh tests/unit/claims tests/unit/policies` → **176 passing, 0 failing.**
 
@@ -64,7 +64,7 @@ After Task 12, continue serially with Tasks 13 → 24, then the demo. Convention
 ### Demo plan (post-task-24)
 
 Build in the debug stack (URL via `./debug.sh status`):
-- New org "RTM"
+- New org "Demo Portal"
 - Three tables: `user_campus_access` (user_id, campus_id), `user_group_doc_types` (user_id, doc_type_id), `documents` (campus_id, doc_type_id, title, body)
 - Two test users: alice (campuses {c1}, doc_types {d1}), bob (campuses {c2}, doc_types {d2})
 - Two claims:
