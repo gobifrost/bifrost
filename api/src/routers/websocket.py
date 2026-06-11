@@ -19,7 +19,8 @@ from sqlalchemy.orm import selectinload
 from shared.policies.probe import is_subscribe_authorized
 from shared.policies.subscription import decide_visibility_change
 from shared.role_cache import get_user_roles
-from src.core.auth import UserPrincipal, get_current_user_ws
+from src.core.auth import get_current_user_ws
+from src.core.principal import UserPrincipal
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
 from src.core.pubsub import manager

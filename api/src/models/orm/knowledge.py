@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
+from src.models.orm.vector_type import Vector
 
 if TYPE_CHECKING:
     from src.models.orm.organizations import Organization

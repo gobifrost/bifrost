@@ -18,7 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, func
 
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.models import (
     ROISummaryResponse,
     ROIByWorkflowResponse,

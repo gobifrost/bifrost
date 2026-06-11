@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
     ChatStreamChunk,

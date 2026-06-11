@@ -35,12 +35,12 @@ Call it out in the PR description so the reviewer doesn't have to rediscover it.
 
 ## How to pick up work
 
-All trackable work — bugs, features, chores, ideas — lives in [GitHub Issues](https://github.com/jackmusick/bifrost/issues). If it's not an issue, it's not on the roadmap.
+All trackable work — bugs, features, chores, ideas — lives in [GitHub Issues](https://github.com/gobifrost/bifrost/issues). If it's not an issue, it's not on the roadmap.
 
 **Looking for something to pick up?**
 
-- [`help wanted`](https://github.com/jackmusick/bifrost/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) — issues I won't get to soon and would love help on.
-- [`good first issue`](https://github.com/jackmusick/bifrost/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — ramp-up-friendly, smaller scope.
+- [`help wanted`](https://github.com/gobifrost/bifrost/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) — issues I won't get to soon and would love help on.
+- [`good first issue`](https://github.com/gobifrost/bifrost/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — ramp-up-friendly, smaller scope.
 - Unassigned issues without those labels are technically takeable, but I may already have them in my head — leave a comment first to avoid double work.
 
 **Claim an issue** by self-assigning from the issue sidebar. If you change your mind, unassign — no hard feelings.

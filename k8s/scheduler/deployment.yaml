@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: scheduler
-          image: jackmusick/bifrost-api:latest
+          image: ghcr.io/gobifrost/bifrost-api:latest
           command: ["python", "-m", "src.scheduler.main"]
           envFrom:
             - configMapRef:

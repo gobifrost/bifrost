@@ -98,7 +98,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: jackmusick/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:latest
     container_name: bifrost-init
     environment:
       # Core (required by Settings during migrations)
@@ -154,7 +154,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: jackmusick/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:latest
     environment:
       # Core
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
@@ -218,7 +218,7 @@ services:
     #   context: ./client
     #   dockerfile: Dockerfile
     #   target: production
-    image: jackmusick/bifrost-client:latest
+    image: ghcr.io/gobifrost/bifrost-client:latest
     container_name: bifrost-client
     environment:
       API_URL: http://api:8000
@@ -235,7 +235,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: jackmusick/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:latest
     container_name: bifrost-scheduler
     environment:
       # Core (must match API)
@@ -276,7 +276,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: jackmusick/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:latest
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}

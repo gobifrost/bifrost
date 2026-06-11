@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 from src.routers.cli import _resolve_sdk_org_id
 
 

@@ -57,7 +57,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import CurrentUser, UserPrincipal
+from src.core.auth import CurrentUser
+from src.core.principal import UserPrincipal
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models import Organization

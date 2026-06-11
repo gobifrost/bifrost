@@ -1,18 +1,24 @@
-"""Tests for ``bifrost.cli._check_cli_version``.
+"""Tests for ``bifrost.cli._check_cli_version`` — URL resolution and transport.
 
-The check must:
+The *behavioral* contract of the gate (contract-version hard gate, build-drift
+soft notice, old-server fallback, un-reachable warning) lives in
+``test_cli_contract_gate.py``. This file keeps the still-valid cross-cutting
+concerns the gate must honor regardless of which gate fires:
 
 * Skip silently for source/dev installs (``__version__`` of ``"unknown"`` or
   ``"0.0.0+source"``).
 * Resolve the API URL via ``credentials._resolve_url`` so a project
   ``.env`` (loaded by python-dotenv before the call) is honored alongside
-  the keyring/JSON store. We use ``_resolve_url`` (not
-  ``get_credentials``) because the version check only needs the URL — a
-  logged-out CLI with ``BIFROST_API_URL`` set in ``.env`` should still get
-  checked, even though it has no tokens yet.
-* Compare installed vs. server version with string equality and ``sys.exit(1)``
-  when they differ — no warning-and-continue, no escape hatch.
-* Treat network/parse failures as best-effort: skip silently, do not block.
+  the keyring/JSON store. We use ``_resolve_url`` (not ``get_credentials``)
+  because the version check only needs the URL — a logged-out CLI with
+  ``BIFROST_API_URL`` set in ``.env`` should still get checked.
+* Route the request through httpx (not urllib) so CDN/WAF UA blocking doesn't
+  silently no-op the check.
+
+Note: network/parse/missing-version failures now emit a visible stderr warning
+(not a silent skip) — see ``test_cli_contract_gate.py::TestUnreachableVerdict``.
+The skip-case tests below only assert "does not raise SystemExit"; they no
+longer assert silence.
 """
 
 from __future__ import annotations
@@ -185,49 +191,6 @@ class TestVersionComparison:
         ):
             cli._check_cli_version()  # no SystemExit
 
-    def test_exits_on_stale_cli(self, monkeypatch, capsys):
-        """Mismatch → exit 1 with upgrade message on stderr."""
-        _patch_version(monkeypatch, "1.2.3")
-        from bifrost import cli
-
-        with patch(
-            "bifrost.credentials._resolve_url",
-            return_value="http://server.example",
-        ), patch(
-            "httpx.get",
-            return_value=_make_url_response({"version": "1.3.0"}),
-        ):
-            with pytest.raises(SystemExit) as excinfo:
-                cli._check_cli_version()
-            assert excinfo.value.code == 1
-
-        err = capsys.readouterr().err
-        assert "1.2.3" in err
-        assert "1.3.0" in err
-        # Upgrade instructions reference the resolved api_url.
-        assert "http://server.example/api/cli/download" in err
-
-    def test_exits_when_server_is_older_too(self, monkeypatch):
-        """Policy is ``!=``, not ordering — even a 'newer' CLI exits.
-
-        This is intentional: every CLI is expected to track the deployed server
-        exactly. If a user is on a fresher dev build than prod, they should
-        downgrade (or pin BIFROST_API_URL to the right server) before running.
-        """
-        _patch_version(monkeypatch, "2.0.0")
-        from bifrost import cli
-
-        with patch(
-            "bifrost.credentials._resolve_url",
-            return_value="http://server.example",
-        ), patch(
-            "httpx.get",
-            return_value=_make_url_response({"version": "1.9.9"}),
-        ):
-            with pytest.raises(SystemExit) as excinfo:
-                cli._check_cli_version()
-            assert excinfo.value.code == 1
-
     def test_passes_with_semver_dev_format(self, monkeypatch):
         """Regression: the new CI dev-version format `0.8.1-dev.47` must
         match itself through the strict-equality check, just like any other
@@ -245,24 +208,6 @@ class TestVersionComparison:
             return_value=_make_url_response({"version": "0.8.1-dev.47"}),
         ):
             cli._check_cli_version()  # no SystemExit
-
-    def test_exits_on_dev_count_mismatch(self, monkeypatch):
-        """Regression: two dev builds with different commit counts must
-        be treated as different versions, even though they share a base."""
-        _patch_version(monkeypatch, "0.8.1-dev.47")
-        from bifrost import cli
-
-        with patch(
-            "bifrost.credentials._resolve_url",
-            return_value="http://server.example",
-        ), patch(
-            "httpx.get",
-            return_value=_make_url_response({"version": "0.8.1-dev.48"}),
-        ):
-            with pytest.raises(SystemExit) as excinfo:
-                cli._check_cli_version()
-            assert excinfo.value.code == 1
-
 
 # --------------------------------------------------------------------------- #
 # URL resolution: .env / env-var path

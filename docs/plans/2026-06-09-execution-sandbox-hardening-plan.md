@@ -231,6 +231,30 @@ Branch off main once. Tests-first within each task. `cd api && pyright && ruff c
 
 ---
 
+## ADDENDUM — MUST-VERIFY probe results (2026-06-10, empirical)
+
+- **T1 ✅ M1 scrub point confirmed.** The template never calls `get_settings()` before fork
+  (`cache_info()` empty after full startup); first call is in the child at
+  `simple_worker.py:451`. Scrub once in `_template_main` before `pipe.send("ready")`; no
+  cache-clear needed.
+- **T2 ⚠️ S3 fallback IS real.** `get_module_sync`/`get_requirements_sync` S3 fallbacks fire on
+  every cold-Redis start. `BIFROST_S3_*` cannot be scrubbed without a replacement. Options:
+  (a) narrowed read-only S3 credential scoped to the module prefix, or (b) an API module-fetch
+  endpoint so the child needs only the engine token. **Decision pending; recommendation: (b)** —
+  consistent with the API-only goal, kills the credential class entirely.
+- **T3 ⚠️ bwrap needs CAP_SYS_ADMIN in-container** (mount MS_SLAVE) — `seccomp=Unconfined` alone
+  is NOT sufficient; the findings doc was incomplete on this. Phase 3 as designed would require
+  granting `SYS_ADMIN` back to the worker and dropping `readOnlyRootFilesystem` — a real posture
+  regression that needs an explicit design decision (alternatives: dedicated sandbox runner pod
+  with the capability, or stopping at Phase 2 + NetworkPolicy and skipping in-worker bwrap).
+- **T4 ✅ token hand-down viable.** `save_credentials()` is standalone; parent mints, child writes.
+  SECRET_KEY fully removable from the child env.
+- **Phase 1: DONE** — landed on `worktree-solutions-success-criteria` (commits b4b343fb…0d018b0b),
+  all four drives green under non-root/caps-dropped worker, posture guardrail green, pyright/ruff
+  clean. Note: rides PR #347 rather than its own PR.
+- **Phase 2 sequencing:** wait for the worker memory-slimming branch to land first — it rewrites
+  `src/worker/main.py` / touches `template_process.py`, the same files Phase 2 edits.
+
 ## Critical files
 
 - `api/src/services/execution/template_process.py` — spawn template, fork, the env-scrub point (P2), bwrap seam (P3)

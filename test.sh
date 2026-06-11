@@ -154,16 +154,28 @@ stack_up() {
     docker compose -f "$COMPOSE_FILE" up -d pgbouncer
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
 
+    # CI pre-builds the dev images via docker/build-push-action with GHA cache
+    # and tags them as bifrost-test-api-dev:latest / bifrost-test-client-dev:latest
+    # before calling stack up. Setting BIFROST_SKIP_BUILD=1 tells compose to
+    # use those local images directly instead of building. Local dev leaves
+    # this unset so `--build` continues to apply (image layer cache makes the
+    # rebuilds fast after the first one).
+    local build_flag="--build"
+    if [ "${BIFROST_SKIP_BUILD:-0}" = "1" ]; then
+        build_flag="--no-build"
+        echo "BIFROST_SKIP_BUILD=1 — using pre-built images from local docker."
+    fi
+
     echo "Building template database..."
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
 
     echo "Starting API + Worker + Scheduler..."
-    docker compose -f "$COMPOSE_FILE" --profile e2e up -d --build
+    docker compose -f "$COMPOSE_FILE" --profile e2e up -d "$build_flag"
     echo "Waiting for API to be serving traffic on /health/ready..."
     wait_for_api_ready "$COMPOSE_FILE"
 
     echo "Starting client..."
-    docker compose -f "$COMPOSE_FILE" --profile client up -d --build client
+    docker compose -f "$COMPOSE_FILE" --profile client up -d "$build_flag" client
     echo "Waiting for client to be healthy..."
     for i in {1..120}; do
         cid=$(docker compose -f "$COMPOSE_FILE" ps -q client 2>/dev/null)
@@ -228,12 +240,24 @@ run_pytest() {
     # changed migrations they should run `./test.sh stack reset` once.
     require_stack_up
     reset_state
+    # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
+    # into the test-runner container at /tmp/bifrost. The container runs as
+    # uid 1000 (non-root, hardened), so it cannot write pytest's --junitxml file
+    # into a dir it doesn't own -> PermissionError [Errno 13] at pytest exit, and
+    # the whole session is reported as ERROR even though every test ran. Make the
+    # mount dir world-writable so the uid-1000 container can write results into it.
+    chmod 777 "$LOG_DIR" 2>/dev/null || true
     docker compose -f "$COMPOSE_FILE" --profile test run --rm test-runner \
         pytest "$@" --junitxml="/tmp/bifrost/test-results.xml" 2>&1 | tee "$LOG_DIR/test-runner.log"
     return "${PIPESTATUS[0]}"
 }
 
-cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -v "$@"; }
+# `unit` is the fast every-PR lane: it deselects `@pytest.mark.slow` tests
+# (real-process forks, memory-profiling, subprocess import scans — seconds each,
+# not the ms a unit test should cost). Those still run in `all` and nightly, so
+# no coverage is dropped — just moved off the per-PR critical path. A caller can
+# re-include them ad hoc with `./test.sh unit -m slow` or `-m ""`.
+cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
 cmd_e2e()  { run_pytest tests/e2e/ -v "$@"; }
 cmd_all()  { run_pytest tests/ -v "$@"; }
 

@@ -16,7 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import ColumnElement, false, or_
 
-from src.core.auth import UserPrincipal
+from src.core.principal import UserPrincipal
 
 
 class OrgFilterType(Enum):

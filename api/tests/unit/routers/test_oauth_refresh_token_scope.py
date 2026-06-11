@@ -22,7 +22,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from src.core.auth import ExecutionContext, UserPrincipal
+from src.core.auth import ExecutionContext
+from src.core.principal import UserPrincipal
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
 

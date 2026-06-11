@@ -24,12 +24,14 @@ autonomous case (an autonomous run can't prompt a user to reconnect).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from mcp.types import CallToolResult
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from mcp.types import CallToolResult
 
 from src.models.orm.external_mcp import MCPConnection, MCPConnectionTool
 from src.services.mcp_client import client as mcp_client_session

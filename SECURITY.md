@@ -19,7 +19,7 @@ Two ways to report privately:
 
 ### 1. GitHub private vulnerability reporting (preferred)
 
-Go to https://github.com/jackmusick/bifrost/security/advisories/new
+Go to https://github.com/gobifrost/bifrost/security/advisories/new
 and submit a draft advisory. This keeps the report confidential and lets
 us discuss + patch + coordinate disclosure inside GitHub's tooling.
 
@@ -53,7 +53,7 @@ The repo runs:
   (see `.github/workflows/codeql.yml`)
 - **Secret scanning + push protection** at the repo level
 - **OpenSSF Scorecard** weekly, results published to
-  https://api.securityscorecards.dev/projects/github.com/jackmusick/bifrost
+  https://api.securityscorecards.dev/projects/github.com/gobifrost/bifrost
 
 ### Auto-Merge Policy for Dependency Updates
 

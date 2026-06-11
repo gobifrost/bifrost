@@ -67,6 +67,12 @@ jobs:
     steps:
       - run: echo "Skipped — docs/config-only PR."
 
+  test-client-unit:
+    runs-on: ubuntu-latest
+    name: Client Unit Tests
+    steps:
+      - run: echo "Skipped — docs/config-only PR."
+
   test-e2e:
     runs-on: ubuntu-latest
     name: E2E Tests

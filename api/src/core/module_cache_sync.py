@@ -7,11 +7,15 @@ for the MetaPathFinder to fetch modules during import.
 This module provides synchronous versions of the cache functions
 specifically for use in virtual_import.py's MetaPathFinder.
 
-When a cache miss occurs, we fall back to S3 to fetch the module
-and re-cache it in Redis. This provides self-healing behavior when:
-- Redis cache entries expire (24hr TTL)
-- Redis restarts or evicts keys
-- Cache warming at startup was incomplete
+When a cache miss occurs, we fall back via two paths (tried in order):
+1. API module-fetch endpoint (GET /api/sdk/modules/<path>) — preferred when
+   BIFROST_API_URL is set and a credentials file is present.  This path does
+   not require BIFROST_S3_* in the child env (Phase 2 hardening).
+2. Direct S3 access via botocore — legacy fallback, only active when
+   BIFROST_S3_ACCESS_KEY/SECRET_KEY are set in the environment.
+
+Self-healing: on any successful fetch, the result is re-cached to Redis so
+subsequent calls on the same worker hit the fast path.
 """
 
 import hashlib
@@ -130,6 +134,145 @@ def _get_sync_redis() -> Any:
     )
 
 
+def _get_engine_credentials() -> tuple[str, str] | None:
+    """
+    Read the engine bearer token and API URL from the credentials file.
+
+    The file is written by save_credentials() (either from the handed-down
+    context_data["engine_token"] path or the legacy authenticate_engine()
+    path) and carries both the access token and the API URL.  Returning the
+    URL from here means the API module-fetch fallback works even when
+    BIFROST_API_URL is not set in the child env (it is not, in either the
+    test stack or the k8s worker manifests).
+
+    Returns (api_url, access_token) or None if unavailable.
+    """
+    try:
+        from bifrost.credentials import get_credentials
+        creds = get_credentials()
+        if creds and creds.get("access_token") and creds.get("api_url"):
+            return creds["api_url"].rstrip("/"), creds["access_token"]
+    except Exception:
+        # Credentials file absent/unreadable in this child — caller falls back
+        # to BIFROST_API_URL or treats the cold-cache fetch as unavailable.
+        pass
+    return None
+
+
+def _fetch_module_from_api(path: str) -> CachedModule | None:
+    """
+    Fetch a module via GET /api/sdk/modules/<path> (synchronous, httpx).
+
+    Uses the engine bearer token and API URL from the credentials file,
+    falling back to the BIFROST_API_URL env var only if the creds file has
+    no URL.  Returns a CachedModule dict on success, None on any error
+    (404, auth failure, etc.).
+
+    This is the primary cold-cache fallback when BIFROST_S3_* are absent
+    from the child environment (Phase 2 hardening).
+    """
+    creds = _get_engine_credentials()
+    if not creds:
+        return None
+    creds_url, token = creds
+
+    # Creds-file URL is the source of truth; env var is a secondary source.
+    api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
+    if not api_url:
+        return None
+
+    try:
+        import httpx
+
+        url = f"{api_url}/api/sdk/modules/{path}"
+        resp = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            logger.warning(
+                f"API module-fetch returned {resp.status_code} for {path}"
+            )
+            return None
+
+        data: CachedModule = resp.json()
+        return data
+    except Exception as e:
+        logger.warning(f"API module-fetch error for {path}: {e}")
+        return None
+
+
+def _fetch_module_index_from_api() -> set[str]:
+    """
+    Fetch the module index via GET /api/sdk/modules-index (synchronous).
+
+    Returns the set of known workspace module paths from the API server,
+    used when the Redis index is cold.  Returns empty set on any error.
+    """
+    creds = _get_engine_credentials()
+    if not creds:
+        return set()
+    creds_url, token = creds
+    api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
+    if not api_url:
+        return set()
+
+    try:
+        import httpx
+
+        resp = httpx.get(
+            f"{api_url}/api/sdk/modules-index",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            return set()
+        return set(resp.json().get("paths", []))
+    except Exception as e:
+        logger.warning(f"API module-index fetch error: {e}")
+        return set()
+
+
+def _fetch_requirements_from_api() -> str | None:
+    """
+    Fetch requirements.txt via GET /api/sdk/requirements (synchronous).
+
+    Returns the requirements content string, or None on any error / 404.
+    Used as the primary cold-cache fallback in get_requirements_sync() when
+    BIFROST_S3_* are absent from the child environment (Phase 2 hardening).
+    """
+    creds = _get_engine_credentials()
+    if not creds:
+        return None
+    creds_url, token = creds
+    api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
+    if not api_url:
+        return None
+
+    try:
+        import httpx
+
+        resp = httpx.get(
+            f"{api_url}/api/sdk/requirements",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            logger.warning(f"API requirements-fetch returned {resp.status_code}")
+            return None
+
+        data = resp.json()
+        return data.get("content")
+    except Exception as e:
+        logger.warning(f"API requirements-fetch error: {e}")
+        return None
+
+
 def _get_s3_client() -> Any:
     """
     Get or create a sync S3 client using botocore (always available via aiobotocore).
@@ -230,9 +373,14 @@ def get_module_sync(path: str) -> CachedModule | None:
 
     Per candidate, the lookup order is:
     1. Redis cache (fast path)
-    2. S3 (fallback, re-caches to Redis)
+    2. API endpoint GET /api/sdk/modules/<storage_path>  — preferred cold-cache
+       fallback (no S3 env vars required; uses engine token from credentials
+       file; the server performs the Redis→S3 lookup)
+    3. Direct S3 via botocore — legacy fallback when BIFROST_S3_* are present
     Then the next candidate; None if no candidate resolves.
 
+    On any successful fallback hit the module is re-cached to Redis (under the
+    storage-path key) so the next call on the same worker takes the fast path.
     The returned CachedModule keeps the logical (bare) ``path`` so __file__ and
     spec origin stay stable regardless of where the bytes were stored.
     """
@@ -245,7 +393,17 @@ def get_module_sync(path: str) -> CachedModule | None:
             if data:
                 return json.loads(data)
 
-            # Redis miss — try S3 fallback for this candidate
+            # --- Cold-cache fallback 1: API endpoint ---
+            api_module = _fetch_module_from_api(storage_path)
+            if api_module is not None:
+                try:
+                    client.setex(key, MODULE_CACHE_TTL, json.dumps(api_module))
+                    client.sadd(MODULE_INDEX_KEY, storage_path)
+                except redis.RedisError as e:
+                    logger.warning(f"Failed to re-cache API module to Redis: {e}")
+                return api_module
+
+            # --- Cold-cache fallback 2: direct S3 (legacy; not needed post-scrub) ---
             s3_content = _get_s3_module(storage_path)
             if s3_content is None:
                 continue
@@ -271,7 +429,7 @@ def get_module_sync(path: str) -> CachedModule | None:
 
             return module
 
-        logger.debug(f"Module not in cache or S3: {path}")
+        logger.debug(f"Module not in cache, API, or S3: {path}")
         return None
 
     except redis.RedisError as e:
@@ -315,7 +473,12 @@ def get_module_index_sync() -> set[str]:
     Get all cached module paths (synchronous).
 
     When the Redis index is empty (cold cache after restart or eviction),
-    falls back to listing S3 and repopulates Redis so subsequent calls are fast.
+    falls back via two paths (tried in order):
+    1. API endpoint GET /api/sdk/modules-index — preferred (no S3 env needed)
+    2. Direct S3 listing — legacy fallback when BIFROST_S3_* are present
+
+    On any successful fallback hit, Redis is repopulated so subsequent calls
+    take the fast path.
     """
     try:
         client = _get_sync_redis()
@@ -323,11 +486,21 @@ def get_module_index_sync() -> set[str]:
         if paths:
             return {p if isinstance(p, str) else p.decode() for p in paths}
 
-        # Redis index is empty — could be cold cache. Try S3.
-        logger.debug("Module index empty in Redis, falling back to S3 listing")
+        # Redis index is empty — try API first
+        logger.debug("Module index empty in Redis, falling back to API listing")
+        api_paths = _fetch_module_index_from_api()
+        if api_paths:
+            try:
+                client.sadd(MODULE_INDEX_KEY, *api_paths)
+                client.expire(MODULE_INDEX_KEY, MODULE_CACHE_TTL)
+            except redis.RedisError as e:
+                logger.warning(f"Failed to repopulate module index from API: {e}")
+            return api_paths
+
+        # API not available — try direct S3 (legacy path)
+        logger.debug("API index unavailable, falling back to S3 listing")
         s3_paths = _list_s3_modules()
         if s3_paths:
-            # Repopulate Redis index so subsequent calls are fast
             try:
                 client.sadd(MODULE_INDEX_KEY, *s3_paths)
                 client.expire(MODULE_INDEX_KEY, MODULE_CACHE_TTL)

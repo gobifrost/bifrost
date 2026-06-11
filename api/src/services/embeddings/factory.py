@@ -20,7 +20,6 @@ from src.services.embeddings.base import (
     BaseEmbeddingClient,
     EmbeddingConfig,
 )
-from src.services.embeddings.openai_client import OpenAIEmbeddingClient
 
 logger = logging.getLogger(__name__)
 
@@ -158,4 +157,8 @@ async def get_embedding_client(session: AsyncSession) -> BaseEmbeddingClient:
         ValueError: If configuration is invalid or missing
     """
     config = await get_embedding_config(session)
+    # Imported lazily so the openai SDK stays out of the worker/scheduler
+    # import closure (tests/unit/test_import_hygiene.py).
+    from src.services.embeddings.openai_client import OpenAIEmbeddingClient
+
     return OpenAIEmbeddingClient(config)

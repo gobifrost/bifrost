@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 
-from src.core.auth import ExecutionContext, UserPrincipal
+from src.core.auth import ExecutionContext
+from src.core.principal import UserPrincipal
 from src.core.security import encrypt_secret
 from src.models.orm import OAuthProvider, OAuthToken
 from src.models.orm.integrations import IntegrationMapping

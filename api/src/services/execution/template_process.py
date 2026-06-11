@@ -92,7 +92,6 @@ CMD_SHUTDOWN = "shutdown"
 
 def _template_main(
     pipe: Connection,
-    preload_modules: list[str] | None = None,
 ) -> None:
     """
     Entry point for the template process.
@@ -103,7 +102,6 @@ def _template_main(
 
     Args:
         pipe: Connection to receive commands from and send responses to consumer.
-        preload_modules: Optional list of module names to import at startup.
     """
     # Configure logging (no thread-based handlers)
     logging.basicConfig(
@@ -163,19 +161,75 @@ def _template_main(
         except ImportError as e:
             logger.warning(f"Execution infrastructure not available: {e} — continuing without it")
 
-        # Preload any additional requested modules
-        if preload_modules:
-            for mod_name in preload_modules:
-                try:
-                    __import__(mod_name)
-                except ImportError:
-                    logger.warning(f"Failed to preload module: {mod_name}")
-
     except Exception as e:
         logger.exception(f"Template process failed to load dependencies: {e}")
         pipe.send({"status": "error", "error": str(e)})
         pipe.close()
         return
+
+    # ----- Env scrub (Phase 2, M1) -----
+    # Scrub credentials that the template loaded during startup but that
+    # forked children must NOT inherit.  This point is chosen deliberately:
+    # - AFTER install_requirements() which needs BIFROST_S3_* for cold-cache
+    #   requirements fetch (legacy path) — safe to remove now.
+    # - BEFORE pipe.send({"status": "ready"}) — all forks inherit this scrubbed env.
+    #
+    # Assertion: get_settings() must NOT have been called by this point.
+    # If it were, the lru_cache would hold a Settings object with the secrets;
+    # we log loudly and the cache_clear() below evicts it before priming.
+    from src.config import get_settings
+    try:
+        cache_info = get_settings.cache_info()
+        if cache_info.currsize != 0:
+            logger.error(
+                "SECURITY: get_settings() cache is non-empty at env-scrub point "
+                f"(currsize={cache_info.currsize}). A Settings object holding "
+                "real secrets was constructed during template startup — find and "
+                "remove that call. Evicting it now before the sanitized re-prime."
+            )
+        else:
+            logger.info("get_settings cache_info at scrub: currsize=0 (clean)")
+    except Exception as e:
+        logger.warning(f"Could not check get_settings cache state: {e}")
+
+    _SCRUB_KEYS = [
+        "BIFROST_DATABASE_URL",
+        "BIFROST_DATABASE_URL_SYNC",
+        "BIFROST_RABBITMQ_URL",
+        # S3 credentials: child uses API endpoint fallback (Phase 2 step 2).
+        "BIFROST_S3_ACCESS_KEY",
+        "BIFROST_S3_SECRET_KEY",
+        "BIFROST_S3_ENDPOINT_URL",
+        "BIFROST_S3_BUCKET",
+        "BIFROST_S3_REGION",
+    ]
+    scrubbed = []
+    for key in _SCRUB_KEYS:
+        if key in os.environ:
+            del os.environ[key]
+            scrubbed.append(key)
+    if scrubbed:
+        logger.info(f"Scrubbed {len(scrubbed)} env var(s) from template before fork: {scrubbed}")
+    else:
+        logger.info("Env scrub: no forbidden vars found (already absent — expected in tests)")
+
+    # BIFROST_SECRET_KEY needs more than deletion: Settings.secret_key is
+    # required (min_length=32, no default), and child code calls get_settings()
+    # on every execution (engine.py reads settings.public_url; the SDK redis
+    # helpers read settings.redis_url). Deleting the var outright would crash
+    # Settings construction in every fork; keeping it would hand every child
+    # the JWT-signing key. So: swap in an inert sentinel, prime the
+    # get_settings() cache from the now-scrubbed env, then delete the var.
+    # Forks inherit the cached object via COW: get_settings() keeps working
+    # everywhere in the child, but its secret_key is the sentinel and its
+    # DB/RabbitMQ/S3 fields are localhost defaults. The real key exists in
+    # neither the child's env nor its memory; tokens are pre-minted by the
+    # parent (token hand-down), so nothing in the child signs JWTs.
+    os.environ["BIFROST_SECRET_KEY"] = "scrubbed-execution-children-hold-no-platform-credentials"
+    get_settings.cache_clear()
+    get_settings()
+    del os.environ["BIFROST_SECRET_KEY"]
+    logger.info("SECRET_KEY scrubbed: settings cache primed with inert sentinel, env var removed")
 
     logger.info("Template process ready — all dependencies loaded")
     pipe.send({"status": "ready", "pid": os.getpid()})

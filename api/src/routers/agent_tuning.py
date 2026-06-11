@@ -22,7 +22,8 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from src.core.auth import CurrentActiveUser
-from src.core.database import DbSession, get_session_factory
+from src.core.database import get_session_factory
+from src.core.db_deps import DbSession
 from src.models.contracts.agent_tuning import (
     ApplyTuningRequest,
     ApplyTuningResponse,

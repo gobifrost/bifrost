@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src.core.auth import CurrentSuperuser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.services.dependency_graph import DependencyGraphService
 
 

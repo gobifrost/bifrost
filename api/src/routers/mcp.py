@@ -34,7 +34,7 @@ from fastapi import APIRouter, HTTPException, status
 from starlette.middleware.cors import CORSMiddleware
 
 from src.core.auth import CurrentActiveUser
-from src.core.database import DbSession
+from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
     MCPConfigResponse,

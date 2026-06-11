@@ -16,6 +16,16 @@ from src.services.execution.template_process import TemplateProcess
 
 logger = logging.getLogger(__name__)
 
+# These tests fork real OS processes (see module docstring — fork behavior
+# can't be mocked), so they cost seconds each, not milliseconds. They are
+# integration tests living in the unit tree. Mark the whole module `slow` so
+# the every-PR unit lane (`./test.sh unit`, which runs `-m "not slow"`) skips
+# them; they still run in `./test.sh all` and nightly. This file alone was
+# ~90s of the ~140s unit-suite cost. Fork EXECUTION is also covered end-to-end
+# by tests/e2e/platform/test_fork_pool.py; these cover the TemplateProcess
+# primitive directly, so the coverage is retained, just at the right cadence.
+pytestmark = pytest.mark.slow
+
 
 def _wait_for_pid_to_die(pid: int, timeout: float = 5.0) -> None:
     """

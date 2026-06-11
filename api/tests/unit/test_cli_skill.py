@@ -78,7 +78,7 @@ def stub_github(monkeypatch: pytest.MonkeyPatch):
         "public_skill_targets": None,
     }
 
-    def install(files: dict[str, bytes], repo: str = "jackmusick/bifrost") -> None:
+    def install(files: dict[str, bytes], repo: str = "gobifrost/bifrost") -> None:
         def _get(url: str, **_kwargs):
             state["calls"].append(url)  # type: ignore[union-attr]
             ref = "main"
@@ -260,7 +260,7 @@ class TestSkillUpdate:
         """Windows checkouts may turn a symlink into a file containing its target."""
 
         tarball = _make_tarball(
-            "jackmusick/bifrost",
+            "gobifrost/bifrost",
             "main",
             {
                 ".claude/skills/bifrost-setup/SKILL.md": b"setup\n",

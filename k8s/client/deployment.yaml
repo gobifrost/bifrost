@@ -28,7 +28,7 @@ spec:
       terminationGracePeriodSeconds: 35
       containers:
         - name: client
-          image: jackmusick/bifrost-client:latest
+          image: ghcr.io/gobifrost/bifrost-client:latest
           ports:
             - containerPort: 80
               name: http
