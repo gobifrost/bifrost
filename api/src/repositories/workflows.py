@@ -229,23 +229,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         if active_only:
             stmt = stmt.where(Workflow.is_active.is_(True))
 
-        # External principals have no global tier (EXT-1 rule 1). Honor
-        # self.external_restricted even though the caller already resolved a
-        # filter_type — defense in depth against a caller that passed
-        # ORG_PLUS_GLOBAL/GLOBAL_ONLY without consulting resolve_org_filter.
-        if self.external_restricted:
-            if filter_org_id is not None and filter_type in (
-                OrgFilterType.ORG_PLUS_GLOBAL,
-                OrgFilterType.ORG_ONLY,
-            ):
-                stmt = stmt.where(Workflow.organization_id == filter_org_id)
-            else:
-                # GLOBAL_ONLY (or no org) for an external => nothing.
-                stmt = stmt.where(false())
-        elif filter_type is OrgFilterType.EMPTY:
-            # Org-less external sentinel (EXT-1 NEW-J): match nothing.
-            stmt = stmt.where(false())
-        elif filter_type is OrgFilterType.ORG_PLUS_GLOBAL:
+        if filter_type is OrgFilterType.ORG_PLUS_GLOBAL:
             if filter_org_id is None:
                 stmt = stmt.where(Workflow.organization_id.is_(None))
             else:
@@ -256,7 +240,8 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                     )
                 )
         elif filter_type is OrgFilterType.ORG_ONLY:
-            # A None org here is not a license to read global (EXT-1 NEW-J).
+            # A None org here is not a license to read global (``== None``
+            # compiles to ``IS NULL``) — it means no rows.
             if filter_org_id is None:
                 stmt = stmt.where(false())
             else:

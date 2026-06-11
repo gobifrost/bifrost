@@ -1236,9 +1236,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         # Check if this is a knowledge search tool call
         if tool_call.name == "search_knowledge" and agent:
-            return await self._execute_knowledge_search(
-                tool_call, agent, caller_user_id=caller_user_id
-            )
+            return await self._execute_knowledge_search(tool_call, agent)
 
         # Check if this is a delegation tool call
         if tool_call.name.startswith("delegate_to_") and agent:
@@ -1498,43 +1496,18 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             count = result.scalar() or 0
         return count == 0
 
-    async def _resolve_caller_is_external(
-        self, caller_user_id: UUID | None
-    ) -> bool:
-        """Whether the chat owner is an external, non-bypass principal.
-
-        Loads the User and delegates to ``resolve_external_claim`` (the same
-        bypass-neutralizing rule used at token mint). Returns False when the
-        user is unknown — fail-open to the existing full-cascade only when
-        there is no identifiable caller (system/agentless paths).
-        """
-        if caller_user_id is None:
-            return False
-        from shared.external_access import resolve_external_claim
-        from src.models import User as UserORM
-
-        async with self._db() as session:
-            user = await session.get(UserORM, caller_user_id)
-            if user is None:
-                return False
-            return await resolve_external_claim(session, user)
-
     async def _execute_knowledge_search(
         self,
         tool_call: ToolCallRequest,
         agent: Agent,
-        *,
-        caller_user_id: UUID | None = None,
     ) -> ToolResult:
         """
         Execute a knowledge search using the agent's configured namespaces.
 
-        This is a built-in tool that doesn't require a workflow.
-
-        ``caller_user_id`` identifies the chat owner (a USER-invoked call). If
-        that user is EXTERNAL (and not a bypass principal), the search is forced
-        org-only — no global KB document content (EXT-1 rule 1 / LEAK #6). The
-        autonomous/engine executor is a SEPARATE class and stays full-cascade.
+        This is a built-in tool that doesn't require a workflow. The search
+        is the AGENT's own grounding (the agent is the access boundary the
+        caller was granted), so it always uses the full org+global cascade
+        regardless of who is chatting.
         """
         start_time = time.time()
 
@@ -1571,12 +1544,6 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 embedding_client = await get_embedding_client(session)
             query_embedding = await embedding_client.embed_single(query)
 
-            # Resolve the caller's external-ness (bypass-neutralized). An
-            # external chat owner gets org-only knowledge — no global content.
-            caller_is_external = await self._resolve_caller_is_external(
-                caller_user_id
-            )
-
             # Search knowledge store
             async with self._db() as session:
                 repo = KnowledgeRepository(
@@ -1586,8 +1553,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     query_embedding=query_embedding,
                     namespace=namespaces,
                     limit=limit,
-                    # Org + global for normal users; org-only for externals.
-                    fallback=not caller_is_external,
+                    fallback=True,
                 )
 
             duration_ms = int((time.time() - start_time) * 1000)

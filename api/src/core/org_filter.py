@@ -26,14 +26,6 @@ class OrgFilterType(Enum):
     GLOBAL_ONLY = "global"  # Only org_id IS NULL
     ORG_ONLY = "org_only"  # Only specific org, NO global fallback (platform admin selecting org)
     ORG_PLUS_GLOBAL = "org"  # Specific org + global records (org users only)
-    # EMPTY: match NOTHING (EXT-1 NEW-J). Returned for an org-less EXTERNAL
-    # principal — an ``org_id == None`` filter compiles to ``IS NULL`` (the
-    # global tier), so an external whose organization_id is None (a
-    # misconfiguration — users.py accepts is_external + no org) would otherwise
-    # read ALL global entities. This sentinel forces a no-match in every
-    # consumer, mirroring OrgScopedRepository.external_restricted's org-less
-    # short-circuit.
-    EMPTY = "empty"
 
 
 def org_filter_clause(
@@ -41,29 +33,26 @@ def org_filter_clause(
     filter_type: "OrgFilterType",
     filter_org_id: UUID | None,
 ) -> ColumnElement[bool] | None:
-    """Build the SQL predicate for a resolved org filter (EXT-1 NEW-J).
+    """Build the SQL predicate for a resolved org filter.
 
     Single source of truth for translating ``(filter_type, filter_org_id)``
     into a WHERE clause, so an inline consumer can never re-derive it wrongly
-    (the NEW-J failure: ``org_column == None`` compiling to ``IS NULL``).
+    (``org_column == None`` compiles to ``IS NULL``, silently widening an
+    org-pinned filter to the global tier).
 
     Returns:
         - ``None`` for ALL (caller applies no org predicate).
-        - ``false()`` for EMPTY (org-less external — match nothing).
         - the appropriate ``IS NULL`` / ``== org`` / ``(== org OR IS NULL)``
-          predicate otherwise. ORG_ONLY/ORG_PLUS_GLOBAL with a None org_id
-          collapse to a no-match rather than leaking the global tier.
+          predicate otherwise. ORG_ONLY with a None org_id collapses to a
+          no-match rather than leaking the global tier.
     """
     if filter_type is OrgFilterType.ALL:
         return None
-    if filter_type is OrgFilterType.EMPTY:
-        return false()
     if filter_type is OrgFilterType.GLOBAL_ONLY:
         return org_column.is_(None)
     if filter_type is OrgFilterType.ORG_ONLY:
         # NO global fallback. A None org here is not a license to read global —
-        # it means "no rows" (defense in depth; resolve_org_filter already maps
-        # the org-less external to EMPTY).
+        # it means "no rows" (``== None`` would compile to ``IS NULL``).
         if filter_org_id is None:
             return false()
         return org_column == filter_org_id
@@ -127,15 +116,6 @@ def resolve_org_filter(
                 return (OrgFilterType.ORG_ONLY, org_uuid)
             except ValueError:
                 raise ValueError(f"Invalid scope value: {scope}")
-    elif getattr(user, "is_external", False):
-        # External (portal/guest) users: their OWN org tier ONLY — no global
-        # fallback (EXT-1 rule 1).
-        if user.organization_id is None:
-            # EXT-1 NEW-J: an org-less external must read NOTHING. Returning
-            # (ORG_ONLY, None) would let a consumer compile ``org_id == None``
-            # to ``IS NULL`` and leak the GLOBAL tier. EMPTY forces a no-match.
-            return (OrgFilterType.EMPTY, None)
-        return (OrgFilterType.ORG_ONLY, user.organization_id)
     else:
         # Org users: always filter to their organization, ignore the scope parameter
         if user.organization_id is not None:

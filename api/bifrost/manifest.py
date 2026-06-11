@@ -91,7 +91,7 @@ class ManifestWorkflow(BaseModel):
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
     )
-    access_level: str = Field(default="authenticated", description="role_based | authenticated | public")
+    access_level: str = Field(default="authenticated", description="role_based | authenticated | everyone | public")
     endpoint_enabled: bool = Field(default=False, description="Expose as HTTP API endpoint")
     timeout_seconds: int = Field(default=1800, description="Max execution time in seconds. 0 = no timeout. Default 1800 (30 min), max 86400 (24h).")
     public_endpoint: bool = Field(default=False, description="Allow unauthenticated API access")
@@ -123,7 +123,7 @@ class ManifestForm(BaseModel):
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
     )
-    access_level: str | None = Field(default=None, description="role_based | authenticated | public")
+    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public")
     # -- Portable content (inline) --
     description: str | None = Field(default=None, description="Form description")
     workflow_id: str | None = Field(default=None, description="Workflow UUID to execute on submit")
@@ -155,7 +155,7 @@ class ManifestAgent(BaseModel):
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
     )
-    access_level: str | None = Field(default=None, description="role_based | authenticated | public")
+    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public")
     # -- Portable content (inline) --
     description: str | None = Field(default=None, description="Agent description")
     system_prompt: str | None = Field(default=None, description="LLM system prompt")
@@ -191,7 +191,7 @@ class ManifestApp(BaseModel):
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
     )
-    access_level: str | None = Field(default=None, description="role_based | authenticated | public")
+    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public")
     app_model: str = Field(default="inline_v1", description="Render model: inline_v1 | standalone_v2")
 
 

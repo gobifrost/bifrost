@@ -166,6 +166,9 @@ async def _validate_user_tool_access(
         if not workflow.is_active:
             raise HTTPException(422, f"Tool '{workflow.name}' is inactive")
 
+        if workflow.access_level == "everyone":
+            continue
+
         if workflow.access_level == "authenticated" and not is_external:
             continue
 

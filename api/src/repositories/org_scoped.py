@@ -22,7 +22,7 @@ Scoping Patterns (for name/key lookups):
 from typing import Any, Generic, TypeVar
 from uuid import UUID
 
-from sqlalchemy import Select, false, or_, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import AccessDeniedError
@@ -134,14 +134,15 @@ class OrgScopedRepository(Generic[ModelT]):
             user_id: User UUID for role checks (None for system/superuser).
                 Same string-coercion contract as org_id.
             is_superuser: If True, bypasses role checks (trusts scope)
-            is_external: True for external (portal/guest) principals. An
-                external, non-superuser principal sees only its own org tier:
-                no global (NULL-org) rows from the cascade, and no
-                ``access_level="authenticated"`` entitlement (role grant or
-                ownership required). The flag comes from the principal
-                (``UserPrincipal.is_external``), which is already neutralized
-                for bypass callers (platform admin / provider org) at token
-                mint — see ``shared/external_access.py``.
+            is_external: True for external (portal/guest) principals. Affects
+                ONLY the access-level check, never the org cascade: an
+                external gets no ``access_level="authenticated"`` entitlement
+                (an ``everyone`` tier, an explicit role grant, or ownership is
+                required). Cascade scoping is identical for everyone —
+                org→global, keyed on the effective org. The flag comes from
+                the principal (``UserPrincipal.is_external``), which is
+                already neutralized for bypass callers (platform admin /
+                provider org) at token mint — see ``shared/external_access.py``.
         """
         self.session = session
         self.org_id = UUID(org_id) if isinstance(org_id, str) else org_id
@@ -151,11 +152,12 @@ class OrgScopedRepository(Generic[ModelT]):
 
     @property
     def external_restricted(self) -> bool:
-        """True when the external-user isolation rules apply.
+        """True when the external access-level rule applies.
 
-        ``is_superuser=True`` neutralizes the restriction: the engine
-        sentinel and platform admins keep the full cascade (rule 3 of
-        EXT-1 — engine-sentinel runtime resolution is unchanged).
+        Feeds ONLY the access-level check (`authenticated` does not grant
+        to externals); it never alters the org cascade. ``is_superuser=True``
+        neutralizes it: the engine sentinel and platform admins are never
+        externally restricted.
         """
         return self.is_external and not self.is_superuser
 
@@ -221,16 +223,9 @@ class OrgScopedRepository(Generic[ModelT]):
             if self.is_superuser:
                 return entity
 
-            # Regular users: verify entity is in their scope (their org or global).
-            # External users: global (NULL-org) does NOT count as in-scope —
-            # by-id access must not leak the global tier to externals.
+            # Regular users: verify entity is in their scope (their org or global)
             entity_org_id = getattr(entity, "organization_id", None)
-            if self.external_restricted:
-                in_scope = (
-                    entity_org_id is not None and entity_org_id == self.org_id
-                )
-            else:
-                in_scope = entity_org_id is None or entity_org_id == self.org_id
+            in_scope = entity_org_id is None or entity_org_id == self.org_id
             if in_scope and await self._can_access_entity(entity):
                 return entity
             return None
@@ -267,11 +262,7 @@ class OrgScopedRepository(Generic[ModelT]):
                     return entity
                 return None
 
-        # Step 2: Fall back to global — skipped for external principals,
-        # who have no global tier (EXT-1 rule 1).
-        if self.external_restricted:
-            return None
-
+        # Step 2: Fall back to global scope
         global_query = query.where(_org_is_null(self.model))
         result = await self.session.execute(global_query)
         entity = result.scalar_one_or_none()
@@ -385,8 +376,6 @@ class OrgScopedRepository(Generic[ModelT]):
 
         - org_id set: WHERE (organization_id = org_id OR organization_id IS NULL)
         - org_id None: WHERE organization_id IS NULL
-        - external principal: org tier ONLY — the global (NULL-org) tier is
-          excluded entirely (and an external repo with no org sees nothing).
 
         This is org-scope ONLY; it does NOT filter solution-managed rows. Both
         ``list()`` (criterion 16: deployed entities must appear in listings) and
@@ -397,13 +386,6 @@ class OrgScopedRepository(Generic[ModelT]):
         ``include_solution_managed``), and the path-ref resolver prefers the
         solution row over a shared _repo/ row.
         """
-        if self.external_restricted:
-            if self.org_id is not None:
-                return query.where(_org_filter(self.model, self.org_id))
-            # Defense-in-depth: an external principal always has an org
-            # (token parsing rejects non-superusers without one); if a repo
-            # is ever constructed without it, show nothing — never global.
-            return query.where(false())
         if self.org_id is not None:
             query = query.where(
                 or_(
@@ -430,10 +412,12 @@ class OrgScopedRepository(Generic[ModelT]):
         Access rules:
         1. Superusers can access anything (scope already filtered)
         2. Entities without access_level: accessible (cascade scoping only)
-        3. access_level="authenticated": any user in scope — EXCEPT external
-           users, who get no authenticated-tier entitlement (EXT-1 rule 2):
-           an external needs role_based + an assigned role, or ownership.
-        4. access_level="role_based": check role membership
+        3. access_level="authenticated" ("Everyone except external users"):
+           any user in scope EXCEPT externals, who get no authenticated-tier
+           entitlement — an external needs the "everyone" tier, role_based +
+           an assigned role, or ownership.
+        4. access_level="everyone": any user in scope, including externals.
+        5. access_level="role_based": check role membership
         """
         # Superusers bypass role checks
         if self.is_superuser:
@@ -461,6 +445,9 @@ class OrgScopedRepository(Generic[ModelT]):
 
         if access_level == "authenticated":
             return self._authenticated_tier_grants(entity)
+
+        if access_level == "everyone":
+            return True
 
         if access_level == "role_based":
             return await self._check_role_access(entity)

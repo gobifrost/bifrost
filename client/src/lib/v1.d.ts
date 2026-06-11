@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4400,7 +4400,8 @@ export interface paths {
          *     Engine sentinel: the SDK has already resolved scope, so non-external
          *     principals get is_superuser=True and we trust the org_uuid. The base
          *     class handles the cascade (org + global) for us. EXTERNAL principals
-         *     do not inherit sentinel trust — they get the org tier only (OPEN-B).
+         *     do not inherit sentinel trust (OPEN-B) — they get the normal user
+         *     cascade (org + global table names/schemas; row data is policy-gated).
          */
         post: operations["cli_list_tables_api_sdk_tables_list_post"];
         delete?: never;
@@ -8963,10 +8964,13 @@ export interface components {
         };
         /**
          * AgentAccessLevel
-         * @description Agent access control levels
+         * @description Agent access control levels.
+         *
+         *     AUTHENTICATED is "Everyone except external users" in the UI; EVERYONE
+         *     additionally grants to external (portal/guest) users.
          * @enum {string}
          */
-        AgentAccessLevel: "authenticated" | "role_based" | "private";
+        AgentAccessLevel: "authenticated" | "everyone" | "role_based" | "private";
         /**
          * AgentChannel
          * @description Supported agent communication channels
@@ -14240,10 +14244,13 @@ export interface components {
         };
         /**
          * FormAccessLevel
-         * @description Form access control levels
+         * @description Form access control levels.
+         *
+         *     AUTHENTICATED is "Everyone except external users" in the UI; EVERYONE
+         *     additionally grants to external (portal/guest) users.
          * @enum {string}
          */
-        FormAccessLevel: "authenticated" | "role_based";
+        FormAccessLevel: "authenticated" | "everyone" | "role_based";
         /**
          * FormCreate
          * @description Input for creating a form.
@@ -18840,7 +18847,7 @@ export interface components {
             organization_id?: string | null;
             /**
              * Access Level
-             * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required). Omit to leave at the schema default.
+             * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required). Omit to leave at the schema default.
              */
             access_level?: string | null;
             /**
@@ -22143,7 +22150,7 @@ export interface components {
             solution_id?: string | null;
             /**
              * Access Level
-             * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required)
+             * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)
              * @default role_based
              */
             access_level: string;
@@ -22387,7 +22394,7 @@ export interface components {
             organization_id?: string | null;
             /**
              * Access Level
-             * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required)
+             * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)
              */
             access_level?: string | null;
             /**
@@ -28775,7 +28782,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28808,7 +28815,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28841,7 +28848,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -28874,7 +28881,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {

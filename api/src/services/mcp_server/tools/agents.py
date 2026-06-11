@@ -140,10 +140,11 @@ async def get_agent(
     Returns:
         ToolResult with agent details
     """
-    from sqlalchemy import false, or_, select
+    from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from src.models.orm import Agent
+    from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
 
     logger.info(f"MCP get_agent called: agent_id={agent_id}, agent_name={agent_name}")
 
@@ -159,11 +160,6 @@ async def get_agent(
                 selectinload(Agent.roles),
             )
 
-            # External (portal/guest) principals have no global tier (EXT-1
-            # rule 1): the org==NULL arm is dropped, and a no-org external sees
-            # nothing. Engine sentinel / platform admins keep the full cascade.
-            is_external = bool(getattr(context, "is_external", False))
-
             if agent_id:
                 # ID-based lookup: IDs are unique, so cascade filter is safe
                 try:
@@ -172,42 +168,16 @@ async def get_agent(
                     return error_result(f"'{agent_id}' is not a valid UUID")
                 query = query.where(Agent.id == uuid_id)
                 # Apply org scoping for non-admins (cascade filter for ID lookups)
-                if not context.is_platform_admin and context.org_id:
-                    org_uuid = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-                    if is_external:
-                        query = query.where(Agent.organization_id == org_uuid)
-                    else:
-                        query = query.where(
-                            or_(
-                                Agent.organization_id == org_uuid,
-                                Agent.organization_id.is_(None)  # Global agents
-                            )
-                        )
-                elif not context.is_platform_admin and is_external:
-                    # External with no org: no agent is in reach.
-                    query = query.where(false())
+                query = apply_mcp_org_scope(query, Agent, context)
             else:
                 # Name-based lookup: use prioritized lookup (org-specific > global)
                 query = query.where(Agent.name == agent_name)
+                query = apply_mcp_org_scope(query, Agent, context)
                 if not context.is_platform_admin and context.org_id:
-                    org_uuid = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-                    if is_external:
-                        query = query.where(Agent.organization_id == org_uuid).limit(1)
-                    else:
-                        query = query.where(
-                            or_(
-                                Agent.organization_id == org_uuid,
-                                Agent.organization_id.is_(None)  # Global agents
-                            )
-                        )
-                        # Prioritize org-specific over global (nulls come last)
-                        query = query.order_by(Agent.organization_id.desc().nulls_last()).limit(1)
-                elif not context.is_platform_admin:
-                    # No org context: external sees nothing; others get global.
-                    if is_external:
-                        query = query.where(false())
-                    else:
-                        query = query.where(Agent.organization_id.is_(None))
+                    # Prioritize org-specific over global (nulls come last)
+                    query = query.order_by(
+                        Agent.organization_id.desc().nulls_last()
+                    ).limit(1)
 
             result = await db.execute(query)
             agent = result.scalar_one_or_none()

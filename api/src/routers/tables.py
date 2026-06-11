@@ -16,7 +16,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import String, cast, false, func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
@@ -668,25 +668,14 @@ async def _resolve_solution_table_by_name(
     )
     # Org gate: non-superusers see only their-org-or-global tables. (A solution's
     # entities inherit the install's org, so gating the Table's org is sufficient
-    # and matches how repo.get(id=...) gates a UUID lookup.) An EXTERNAL
-    # (non-bypass) principal has NO global tier — the IS NULL arm is dropped, so
-    # a global solution-managed table can't be resolved by name (EXT-1 NEW-3).
+    # and matches how repo.get(id=...) gates a UUID lookup.)
     if not ctx.user.is_superuser:
-        if getattr(ctx.user, "is_external", False):
-            # External: own org only, no global tier. An ORG-LESS external
-            # (target_org_id None) must read NOTHING — ``== None`` would compile
-            # to ``IS NULL`` and resolve a GLOBAL solution table (EXT-1 NEW-J).
-            if target_org_id is None:
-                stmt = stmt.where(false())
-            else:
-                stmt = stmt.where(Table.organization_id == target_org_id)
-        else:
-            stmt = stmt.where(
-                or_(
-                    Table.organization_id == target_org_id,
-                    Table.organization_id.is_(None),
-                )
+        stmt = stmt.where(
+            or_(
+                Table.organization_id == target_org_id,
+                Table.organization_id.is_(None),
             )
+        )
     return (await ctx.db.execute(stmt)).scalar_one_or_none()
 
 

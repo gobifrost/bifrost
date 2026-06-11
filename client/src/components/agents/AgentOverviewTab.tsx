@@ -263,8 +263,10 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 						<dt className={TONE_MUTED}>Access</dt>
 						<dd>
 							{agent?.access_level === "authenticated"
-								? "Any user"
-								: "Role-based"}
+								? "Everyone except external users"
+								: agent?.access_level === "everyone"
+									? "Everyone"
+									: "Role-based"}
 						</dd>
 						<dt className={TONE_MUTED}>Owner</dt>
 						<dd className={cn("truncate", TYPE_MONO)}>

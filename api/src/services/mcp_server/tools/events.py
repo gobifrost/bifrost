@@ -28,10 +28,9 @@ def _build_callback_url(source_id: UUID) -> str:
 def _source_in_scope(context: Any, source_org_id: UUID | None) -> bool:
     """Whether the MCP caller may touch an event source in ``source_org_id``.
 
-    EXT-1 NEW-2 — by-id reads/writes must respect the caller's org scope:
+    By-id reads/writes must respect the caller's org scope (NEW-2):
     - platform admin: any source.
-    - regular org user: own org OR global.
-    - external (non-bypass): own org ONLY (no global tier).
+    - org user: own org OR global.
     A cross-org source is out of scope for any non-bypass caller.
     """
     if getattr(context, "is_platform_admin", False):
@@ -41,8 +40,7 @@ def _source_in_scope(context: Any, source_org_id: UUID | None) -> bool:
         ctx_org = UUID(ctx_org)
     if source_org_id is not None:
         return source_org_id == ctx_org
-    # Global source: allowed only for a non-external principal.
-    return not bool(getattr(context, "is_external", False))
+    return True
 
 
 async def list_event_sources(
@@ -69,26 +67,19 @@ async def list_event_sources(
                 )
 
         is_admin = bool(getattr(context, "is_platform_admin", False))
-        is_external = bool(getattr(context, "is_external", False))
         ctx_org = getattr(context, "org_id", None)
         if isinstance(ctx_org, str) and ctx_org:
             ctx_org = UUID(ctx_org)
 
-        # Org scoping (EXT-1 NEW-2): a non-bypass caller may ONLY list their own
-        # org's sources — never a caller-supplied foreign org, and externals get
-        # no global tier. A platform admin may target any org via organization_id.
+        # Org scoping (NEW-2): a non-bypass caller may ONLY list their own
+        # org's sources — never a caller-supplied foreign org. A platform
+        # admin may target any org via organization_id.
         if is_admin:
             org_id = UUID(organization_id) if organization_id else None
             include_global = org_id is None
         else:
             org_id = ctx_org
-            include_global = not is_external
-            if org_id is None and is_external:
-                # External with no org: no source is in reach (the repo's
-                # no-org branch would otherwise return global-only).
-                return success_result(
-                    "No event sources found", {"sources": [], "count": 0}
-                )
+            include_global = True
 
         async with get_tool_db(context) as db:
             repo = EventSourceRepository(db)

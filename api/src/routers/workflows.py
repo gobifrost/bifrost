@@ -837,45 +837,10 @@ async def execute_workflow(
         try:
             await workflow_repo.can_access(id=workflow.id)
         except AccessDeniedError:
-            # W3 — own-install carve-out for EXTERNAL principals: a
-            # solution-managed workflow reached THROUGH its own install's
-            # scope (the request's app_id/form_id/solution_id derived to the
-            # workflow's solution_id) is that install's API surface — e.g. an
-            # client portal user clicking View/Download. The external boundary
-            # (no global tier, no authenticated-tier entitlement) is an
-            # org/global-cascade rule and must not strip an external of their
-            # OWN install's workflows. The carve-out grants only what the
-            # authenticated tier grants a non-external org member:
-            # role_based workflows stay role-gated, cross-install refs are
-            # impossible (resolve() never yields a sibling install's row),
-            # and global/_repo/ workflows stay unreachable (org match
-            # re-checked here).
-            raw_level = getattr(workflow, "access_level", None)
-            access_level = (
-                raw_level.value
-                if hasattr(raw_level, "value")
-                else (str(raw_level) if raw_level is not None else None)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to execute this workflow",
             )
-            # Same-org guard: the workflow's org must match the caller's. This
-            # is a Python equality on already-loaded ORM attributes (not a SQL
-            # cascade filter); compute it in locals so it isn't an inline
-            # organization_id query expression.
-            wf_org = workflow.organization_id
-            caller_org = ctx.org_id
-            own_install_authenticated = (
-                ctx.user.is_external
-                and workflow.solution_id is not None
-                and solution_scope is not None
-                and workflow.solution_id == solution_scope
-                and wf_org is not None
-                and wf_org == caller_org
-                and access_level in (None, "authenticated")
-            )
-            if not own_install_authenticated:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to execute this workflow",
-                )
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1308,10 +1273,10 @@ async def register_workflow(
     org_uuid = UUID(request.organization_id) if request.organization_id else None
 
     # Validate access_level early so we don't half-register on a typo
-    if request.access_level is not None and request.access_level not in ("authenticated", "role_based"):
+    if request.access_level is not None and request.access_level not in ("authenticated", "everyone", "role_based"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid access_level: '{request.access_level}'. Must be 'authenticated' or 'role_based'",
+            detail=f"Invalid access_level: '{request.access_level}'. Must be 'authenticated', 'everyone', or 'role_based'",
         )
 
     # Parse role_ids and verify they exist before any DB mutation
@@ -1484,10 +1449,10 @@ async def update_workflow(
 
         # Update access_level if provided
         if request.access_level is not None:
-            if request.access_level not in ("authenticated", "role_based"):
+            if request.access_level not in ("authenticated", "everyone", "role_based"):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid access_level: '{request.access_level}'. Must be 'authenticated' or 'role_based'",
+                    detail=f"Invalid access_level: '{request.access_level}'. Must be 'authenticated', 'everyone', or 'role_based'",
                 )
             workflow.access_level = request.access_level
 

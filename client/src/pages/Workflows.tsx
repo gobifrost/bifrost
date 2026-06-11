@@ -67,7 +67,7 @@ import type { components } from "@/lib/v1";
 type BaseWorkflow = components["schemas"]["WorkflowMetadata"];
 type Workflow = BaseWorkflow & {
 	is_orphaned?: boolean;
-	access_level?: "authenticated" | "role_based";
+	access_level?: "authenticated" | "everyone" | "role_based";
 };
 type Organization = components["schemas"]["OrganizationPublic"];
 
@@ -538,6 +538,11 @@ export function Workflows() {
 																			<Users className="h-3 w-3" />
 																			Auth
 																		</>
+																	) : workflow.access_level === "everyone" ? (
+																		<>
+																			<Users className="h-3 w-3" />
+																			Everyone
+																		</>
 																	) : (
 																		<>
 																			<Shield className="h-3 w-3" />
@@ -548,8 +553,10 @@ export function Workflows() {
 															</TooltipTrigger>
 															<TooltipContent>
 																{workflow.access_level === "authenticated"
-																	? "Any authenticated user can execute"
-																	: "Role-based access required"}
+																	? "Any signed-in user except external users can execute"
+																	: workflow.access_level === "everyone"
+																		? "Any signed-in user, including external users, can execute"
+																		: "Role-based access required"}
 															</TooltipContent>
 														</Tooltip>
 													</>

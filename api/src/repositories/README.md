@@ -53,8 +53,8 @@ flowchart TD
     HFINAL --> J
     I --> J
     J{"GATE 3 — RBAC / access_level<br/>role-table match: FormRole, AppRole,<br/>AgentRole, WorkflowRole<br/><i>org_scoped.py role filter</i>"}
-    J -->|"no matching role<br/>(role_based entity)"| DENY2["403 / not visible"]
-    J -->|"authenticated / role matches / superuser"| K
+    J -->|"no matching role<br/>(role_based entity)<br/>or external on authenticated tier"| DENY2["403 / not visible"]
+    J -->|"authenticated (non-external) /<br/>everyone / role matches / superuser"| K
 
     K{"GATE 4 — Table access policies<br/>evaluate_action — OR of rules,<br/>DEFAULT DENY, per row<br/><i>shared/policies/probe.py · CustomClaim</i>"}
     K -->|"no rule grants action"| DENY3["row denied"]
@@ -72,6 +72,42 @@ flag does **not** apply today — data fallback to `_repo/` is currently
 ungated; whether it should be gated is an open question (see the Solutions
 section). Table policies (gate 4) gate individual *rows* after the *table*
 itself has been resolved and RBAC-checked.
+
+### External users live at gate 3 only
+
+`User.is_external` marks portal/guest principals. The flag is neutralized at
+token mint for bypass callers (`shared/external_access.py`:
+`is_platform_admin OR is_provider_org` → never externally restricted) and
+affects EXACTLY ONE thing: the access-level check at gate 3.
+
+- `access_level="authenticated"` is **"Everyone except external users"** —
+  it does not grant to an external principal, org-scoped or global.
+- `access_level="everyone"` grants to any signed-in user in scope,
+  including externals. This is the lever for a provider-built global
+  app/form/agent/workflow that external users should reach without
+  per-person role grants.
+- `role_based` grants an external exactly what it grants anyone holding
+  the role — **including on global entities**.
+- `private` (agents) stays owner-only.
+
+`is_external` plays **no part in gates 1–2**: scope resolution and the
+cascade are org-keyed, never user-keyed. Do not drop the global arm of the
+cascade for externals — that breaks explicit role grants on global entities
+(the row disappears before the role check can run). The workflow engine is
+likewise untouched: the sentinel resolves with the full cascade, and
+`ExecutionContext.is_external` is purely informational material a workflow
+developer may use to self-filter.
+
+One carve-out family sits OUTSIDE the tiers because those surfaces have no
+grant axis at all:
+
+- **Knowledge content** (CLI `/api/cli/knowledge/*`, MCP `search_knowledge`,
+  `/api/knowledge-sources/*` reads): externals are 403'd outright; their
+  agents/workflows still ground on KB via the engine.
+- **Decrypted global secrets** (SDK config `merged_for_sdk(external=True)`
+  drops the global tier; the global OAuth token lookup returns None for
+  externals; `/api/sdk/integrations/*` is gated): a global third-party
+  credential never reaches a direct external caller.
 
 ---
 

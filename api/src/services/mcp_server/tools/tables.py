@@ -23,7 +23,7 @@ async def list_tables(
     scope: str | None = None,
 ) -> ToolResult:
     """List tables with org filtering for non-admins."""
-    from sqlalchemy import false, select
+    from sqlalchemy import select
 
     from src.models.orm.tables import Table
 
@@ -33,16 +33,12 @@ async def list_tables(
         async with get_tool_db(context) as db:
             query = select(Table)
 
-            # Org cascade (external-aware): own org [+ global, unless external].
+            # Org cascade: own org + global (admins unscoped).
             query = apply_mcp_org_scope(query, Table, context)
 
-            # Apply scope filter if provided. An external principal has no
-            # global tier, so scope="global" yields nothing for them.
+            # Apply scope filter if provided.
             if scope == "global":
-                if getattr(context, "is_external", False) and not context.is_platform_admin:
-                    query = query.where(false())
-                else:
-                    query = query.where(Table.organization_id.is_(None))
+                query = query.where(Table.organization_id.is_(None))
             elif scope == "organization":
                 query = query.where(Table.organization_id.isnot(None))
 

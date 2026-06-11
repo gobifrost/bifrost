@@ -79,8 +79,10 @@ class ApplicationCreate(ApplicationBase):
     @classmethod
     def validate_access_level(cls, v: str) -> str:
         """Validate access_level is one of the allowed values."""
-        if v not in ("authenticated", "role_based"):
-            raise ValueError("access_level must be 'authenticated' or 'role_based'")
+        if v not in ("authenticated", "everyone", "role_based"):
+            raise ValueError(
+                "access_level must be 'authenticated', 'everyone', or 'role_based'"
+            )
         return v
 
 
@@ -124,8 +126,10 @@ class ApplicationUpdate(BaseModel):
     @classmethod
     def validate_access_level(cls, v: str | None) -> str | None:
         """Validate access_level is one of the allowed values."""
-        if v is not None and v not in ("authenticated", "role_based"):
-            raise ValueError("access_level must be 'authenticated' or 'role_based'")
+        if v is not None and v not in ("authenticated", "everyone", "role_based"):
+            raise ValueError(
+                "access_level must be 'authenticated', 'everyone', or 'role_based'"
+            )
         return v
 
 

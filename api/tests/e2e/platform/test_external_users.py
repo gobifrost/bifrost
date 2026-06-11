@@ -1,19 +1,23 @@
-"""E2E: external-user isolation (EXT-1).
+"""E2E: external-user access rules.
 
-An EXTERNAL, non-bypass user sees only role-granted entities in their own
-org:
+The model (api/src/repositories/README.md): org cascade scoping is pure
+org→global for EVERY principal — ``is_external`` never subtracts scope.
+External access is governed by the ACCESS LEVEL:
 
-- No global (NULL-org) tier: listings contain ZERO global entities, by-id
-  access to global entities is denied — while a normal user in the same org
-  still sees the global tier.
-- No authenticated-tier entitlement: ``access_level="authenticated"``
-  entities (even in their own org) do not grant; ``role_based`` + an
-  explicitly assigned role does, and the form is executable.
+- ``authenticated`` ("Everyone except external users"): does not grant to
+  externals — org or global.
+- ``everyone``: grants to any signed-in user in scope, including externals.
+- ``role_based``: grants externals exactly what it grants anyone with the
+  role — including on GLOBAL entities.
+- Knowledge content has no grant axis, so its direct endpoints deny
+  externals outright; externals reach KB content only through workflows and
+  agents they were granted.
+- Decrypted global secrets (config/OAuth) stay denied to externals on the
+  SDK surfaces (the OPEN-E/NEW-1 carve-out).
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -50,6 +54,38 @@ async def e2e_external_users_workflow(foo: str = "bar") -> dict:
     yield result
     e2e_client.delete(
         "/api/files/editor?path=e2e_external_users_workflow.py",
+        headers=platform_admin.headers,
+    )
+
+
+@pytest.fixture(scope="module")
+def ext_denied_workflow(e2e_client, platform_admin):
+    """A GLOBAL workflow with NO role grants — the denial canary.
+
+    Kept separate from ext_workflow, which the role-form fixtures
+    deliberately grant (form role_ids sync additively onto the linked
+    workflow via sync_entity_roles_to_workflows).
+    """
+    content = '''"""E2E External Users Denied Workflow"""
+from bifrost import workflow
+
+@workflow(
+    name="e2e_external_users_denied_workflow",
+    description="Never role-granted; externals must not execute it",
+)
+async def e2e_external_users_denied_workflow() -> dict:
+    return {"ok": True}
+'''
+    result = write_and_register(
+        e2e_client,
+        platform_admin.headers,
+        "e2e_external_users_denied_workflow.py",
+        content,
+        "e2e_external_users_denied_workflow",
+    )
+    yield result
+    e2e_client.delete(
+        "/api/files/editor?path=e2e_external_users_denied_workflow.py",
         headers=platform_admin.headers,
     )
 
@@ -93,7 +129,7 @@ def _create_form(e2e_client, headers, *, name, workflow_id, org_id, access_level
 
 @pytest.fixture(scope="module")
 def global_auth_form(e2e_client, platform_admin, ext_workflow):
-    """GLOBAL form at access_level=authenticated — the canary entity."""
+    """GLOBAL form at access_level=authenticated — excluded-tier canary."""
     form = _create_form(
         e2e_client,
         platform_admin.headers,
@@ -101,6 +137,45 @@ def global_auth_form(e2e_client, platform_admin, ext_workflow):
         workflow_id=ext_workflow["id"],
         org_id=None,
         access_level="authenticated",
+    )
+    yield form
+    e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
+
+
+@pytest.fixture(scope="module")
+def global_role_form(e2e_client, platform_admin, ext_workflow, portal_role):
+    """GLOBAL role_based form granted to the external user's role.
+
+    The capability the old cascade-drop broke: an explicit role grant on a
+    GLOBAL entity must work for an external user.
+    """
+    form = _create_form(
+        e2e_client,
+        platform_admin.headers,
+        name=f"E2E Ext Global Role Form {SUFFIX}",
+        workflow_id=ext_workflow["id"],
+        org_id=None,
+        access_level="role_based",
+        role_ids=[portal_role["id"]],
+    )
+    yield form
+    e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
+
+
+@pytest.fixture(scope="module")
+def global_everyone_form(e2e_client, platform_admin, ext_workflow):
+    """GLOBAL form at access_level=everyone — grants to externals, no roles.
+
+    The provider-built global app case (PAM/Customer Portal): one flag, no
+    per-person role grants.
+    """
+    form = _create_form(
+        e2e_client,
+        platform_admin.headers,
+        name=f"E2E Ext Global Everyone Form {SUFFIX}",
+        workflow_id=ext_workflow["id"],
+        org_id=None,
+        access_level="everyone",
     )
     yield form
     e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
@@ -135,25 +210,6 @@ def org_role_form(e2e_client, platform_admin, ext_workflow, org1, portal_role):
     )
     yield form
     e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
-
-
-@pytest.fixture(scope="module")
-def global_auth_agent(e2e_client, platform_admin):
-    """GLOBAL agent at access_level=authenticated — agents-listing canary."""
-    resp = e2e_client.post(
-        "/api/agents",
-        headers=platform_admin.headers,
-        json={
-            "name": f"E2E Ext Global Agent {SUFFIX}",
-            "system_prompt": "You are an e2e canary.",
-            "access_level": "authenticated",
-            "organization_id": None,
-        },
-    )
-    assert resp.status_code == 201, resp.text
-    agent = resp.json()
-    yield agent
-    e2e_client.delete(f"/api/agents/{agent['id']}", headers=platform_admin.headers)
 
 
 @pytest.fixture(scope="module")
@@ -199,83 +255,34 @@ def _form_ids(e2e_client, user) -> set[str]:
     return {f["id"] for f in resp.json()}
 
 
-def _global_entities(items: list[dict]) -> list[dict]:
-    return [i for i in items if i.get("organization_id") is None]
+def _execute_form(e2e_client, user, form_id):
+    return e2e_client.post(
+        f"/api/forms/{form_id}/execute",
+        headers=user.headers,
+        json={"form_data": {"foo": "x"}},
+    )
 
 
-class TestExternalUserGlobalTier:
-    def test_external_listings_contain_zero_global_entities(
-        self,
-        e2e_client,
-        external_user,
-        global_auth_form,
-        global_auth_agent,
-    ):
-        # Forms: not just the canary — ZERO global entries of any kind.
-        resp = e2e_client.get("/api/forms", headers=external_user.headers)
-        assert resp.status_code == 200, resp.text
-        forms = resp.json()
-        assert _global_entities(forms) == [], (
-            "external user's form listing must contain zero global forms"
-        )
-        assert global_auth_form["id"] not in {f["id"] for f in forms}
+class TestExternalAuthenticatedTier:
+    """``authenticated`` ("Everyone except external users") never grants to an
+    external — org-scoped or global. The denial is the ACCESS LEVEL, not the
+    scope."""
 
-        # Agents.
-        resp = e2e_client.get("/api/agents", headers=external_user.headers)
-        assert resp.status_code == 200, resp.text
-        agents = resp.json()
-        agent_items = agents if isinstance(agents, list) else agents.get("agents", [])
-        assert _global_entities(agent_items) == [], (
-            "external user's agent listing must contain zero global agents"
-        )
-        assert global_auth_agent["id"] not in {a["id"] for a in agent_items}
-
-    def test_normal_org_user_still_sees_global_tier(
-        self,
-        e2e_client,
-        org1_user,
-        global_auth_form,
-        global_auth_agent,
-    ):
-        assert global_auth_form["id"] in _form_ids(e2e_client, org1_user), (
-            "normal org user must still see the global authenticated form"
-        )
-        resp = e2e_client.get("/api/agents", headers=org1_user.headers)
-        assert resp.status_code == 200, resp.text
-        agents = resp.json()
-        agent_items = agents if isinstance(agents, list) else agents.get("agents", [])
-        assert global_auth_agent["id"] in {a["id"] for a in agent_items}
-
-    def test_external_user_denied_global_form_by_id(
+    def test_global_authenticated_form_not_listed_or_reachable(
         self, e2e_client, external_user, global_auth_form
     ):
+        assert global_auth_form["id"] not in _form_ids(e2e_client, external_user)
         resp = e2e_client.get(
             f"/api/forms/{global_auth_form['id']}", headers=external_user.headers
         )
-        assert resp.status_code in (403, 404), (
-            f"global form must not be reachable by id for externals: {resp.status_code}"
-        )
+        assert resp.status_code in (403, 404)
+        resp = _execute_form(e2e_client, external_user, global_auth_form["id"])
+        assert resp.status_code in (403, 404)
 
-    def test_external_user_cannot_execute_global_authenticated_form(
-        self, e2e_client, external_user, global_auth_form
-    ):
-        resp = e2e_client.post(
-            f"/api/forms/{global_auth_form['id']}/execute",
-            headers=external_user.headers,
-            json={"form_data": {"foo": "x"}},
-        )
-        assert resp.status_code in (403, 404), (
-            f"global authenticated form must not execute for externals: {resp.status_code}"
-        )
-
-
-class TestExternalUserAuthenticatedTier:
     def test_org_authenticated_form_not_visible_to_external(
         self, e2e_client, external_user, org_auth_form
     ):
-        assert org_auth_form["id"] not in _form_ids(e2e_client, external_user), (
-            "authenticated-tier org form must not grant to an external user"
-        )
+        assert org_auth_form["id"] not in _form_ids(e2e_client, external_user)
         resp = e2e_client.get(
             f"/api/forms/{org_auth_form['id']}", headers=external_user.headers
         )
@@ -286,27 +293,50 @@ class TestExternalUserAuthenticatedTier:
     ):
         assert org_auth_form["id"] in _form_ids(e2e_client, org1_user)
 
+    def test_normal_org_user_still_sees_global_tier(
+        self, e2e_client, org1_user, global_auth_form
+    ):
+        assert global_auth_form["id"] in _form_ids(e2e_client, org1_user)
 
-class TestExternalUserRoleGrant:
-    def test_role_granted_form_is_listed(
+
+class TestExternalRoleGrant:
+    """``role_based`` + an assigned role grants an external exactly what it
+    grants anyone — INCLUDING on global entities (the pure-cascade capability
+    the old external scope-drop broke)."""
+
+    def test_org_role_granted_form_is_listed_and_executable(
         self, e2e_client, external_user, org_role_form
     ):
-        assert org_role_form["id"] in _form_ids(e2e_client, external_user), (
-            "role_based form granted to the external user's role must be listed"
-        )
+        assert org_role_form["id"] in _form_ids(e2e_client, external_user)
+        resp = _execute_form(e2e_client, external_user, org_role_form["id"])
+        assert resp.status_code == 200, resp.text
 
-    def test_role_granted_form_is_executable(
-        self, e2e_client, external_user, org_role_form
+    def test_global_role_granted_form_is_listed_and_executable(
+        self, e2e_client, external_user, global_role_form
     ):
-        resp = e2e_client.post(
-            f"/api/forms/{org_role_form['id']}/execute",
-            headers=external_user.headers,
-            json={"form_data": {"foo": "external"}},
+        assert global_role_form["id"] in _form_ids(e2e_client, external_user), (
+            "a role grant on a GLOBAL form must reach the external user — "
+            "the cascade is org-keyed, not user-keyed"
         )
-        assert resp.status_code == 200, (
-            f"role-granted form must execute for the external user: "
-            f"{resp.status_code} {resp.text}"
-        )
+        resp = _execute_form(e2e_client, external_user, global_role_form["id"])
+        assert resp.status_code == 200, resp.text
+
+
+class TestExternalEveryoneTier:
+    """``everyone`` grants to any signed-in user including externals — the
+    provider-built global app case, no per-person role grants."""
+
+    def test_global_everyone_form_is_listed_and_executable(
+        self, e2e_client, external_user, global_everyone_form
+    ):
+        assert global_everyone_form["id"] in _form_ids(e2e_client, external_user)
+        resp = _execute_form(e2e_client, external_user, global_everyone_form["id"])
+        assert resp.status_code == 200, resp.text
+
+    def test_everyone_form_works_for_normal_user_too(
+        self, e2e_client, org1_user, global_everyone_form
+    ):
+        assert global_everyone_form["id"] in _form_ids(e2e_client, org1_user)
 
 
 @pytest.fixture(scope="module")
@@ -337,40 +367,29 @@ async def e2e_external_users_global_tool(q: str = "x") -> str:
     )
 
 
-def _tool_workflow_ids(e2e_client, user) -> list[dict]:
-    resp = e2e_client.get("/api/tools?type=workflow", headers=user.headers)
-    assert resp.status_code == 200, resp.text
-    return resp.json()["tools"]
+class TestExternalToolsCatalog:
+    """The tools catalog is org-cascade scoped the same for every principal —
+    an external sees global tool metadata like any org user."""
 
-
-class TestExternalUserGlobalTools:
-    """Proof: an external user gets ZERO global tools from /api/tools."""
-
-    def test_external_user_sees_no_global_tools(
+    def test_external_user_sees_global_tool(
         self, e2e_client, external_user, global_tool
     ):
-        tools = _tool_workflow_ids(e2e_client, external_user)
-        global_tools = [t for t in tools if t.get("organization_id") is None]
-        assert global_tools == [], (
-            "external user's /api/tools must contain zero global tools"
+        resp = e2e_client.get(
+            "/api/tools?type=workflow", headers=external_user.headers
         )
-        assert global_tool["id"] not in {t["id"] for t in tools}
-
-    def test_normal_user_sees_global_tool(
-        self, e2e_client, org1_user, global_tool
-    ):
-        tools = _tool_workflow_ids(e2e_client, org1_user)
+        assert resp.status_code == 200, resp.text
+        tools = resp.json()["tools"]
         assert global_tool["id"] in {t["id"] for t in tools}, (
-            "normal org user must still see the global tool"
+            "external user lists global tools like any org user"
         )
 
 
 @pytest.fixture
 async def global_kb_doc(db_session, org1):
-    """Seed a GLOBAL and an org knowledge document directly in the DB — the
-    content-leak canary. Seeding via DB (not the embedding-dependent
-    create_document endpoint) keeps the test independent of an embedding
-    service; the /documents LIST path under test is a plain SELECT.
+    """Seed a GLOBAL and an org knowledge document directly in the DB.
+
+    Seeding via DB (not the embedding-dependent create_document endpoint)
+    keeps the test independent of an embedding service.
     """
     from src.models.orm.knowledge import KnowledgeStore
 
@@ -403,24 +422,28 @@ async def global_kb_doc(db_session, org1):
     await db_session.commit()
 
 
-class TestExternalUserGlobalKnowledge:
-    """Proof (worst leak): an external user reads ZERO global KB documents."""
+class TestExternalKnowledgeDenied:
+    """Knowledge content has no grant axis (no roles, no access_level, no row
+    policies), so every direct KB surface denies externals outright. Their
+    agents/workflows still ground on KB via the engine sentinel."""
 
-    def test_external_user_lists_no_global_docs(
+    def test_external_denied_knowledge_sources_documents(
         self, e2e_client, external_user, global_kb_doc
     ):
         resp = e2e_client.get(
             "/api/knowledge-sources/documents",
             headers=external_user.headers,
-            params={"namespace": f"e2e-ext-ns-{SUFFIX}"},
+            params={"namespace": global_kb_doc["namespace"]},
         )
-        assert resp.status_code == 200, resp.text
-        docs = resp.json()
-        global_docs = [d for d in docs if d.get("organization_id") is None]
-        assert global_docs == [], (
-            "external user must read zero global knowledge documents"
+        assert resp.status_code == 403, resp.text
+
+    def test_external_denied_sdk_knowledge_namespaces(
+        self, e2e_client, external_user
+    ):
+        resp = e2e_client.get(
+            "/api/sdk/knowledge/namespaces", headers=external_user.headers
         )
-        assert global_kb_doc["id"] not in {d["id"] for d in docs}
+        assert resp.status_code == 403, resp.text
 
     def test_normal_user_lists_global_doc(
         self, e2e_client, org1_user, global_kb_doc
@@ -428,7 +451,7 @@ class TestExternalUserGlobalKnowledge:
         resp = e2e_client.get(
             "/api/knowledge-sources/documents",
             headers=org1_user.headers,
-            params={"namespace": f"e2e-ext-ns-{SUFFIX}"},
+            params={"namespace": global_kb_doc["namespace"]},
         )
         assert resp.status_code == 200, resp.text
         assert global_kb_doc["id"] in {d["id"] for d in resp.json()}, (
@@ -436,87 +459,10 @@ class TestExternalUserGlobalKnowledge:
         )
 
 
-@pytest.mark.e2e
-class TestOrglessExternalEmptyTier:
-    """EXT-1 NEW-J: an ORG-LESS external (organization_id=None — a
-    misconfiguration: users.py accepts is_external + no org) must read NOTHING,
-    never the GLOBAL tier. The HTTP auth gate (auth.py: non-superuser + no org +
-    not embed -> 401) blocks such a token today, so the leak is not reachable
-    over HTTP — but the data layer must still be safe (defense in depth). These
-    tests exercise the EXACT query path the knowledge list router builds, via
-    resolve_org_filter + org_filter_clause, for an org-less external principal,
-    and assert the global canary is never returned. The non-regressions
-    (org-having external -> own org; normal -> own+global) are covered by the
-    HTTP-reachable sibling classes above."""
-
-    async def test_orgless_external_knowledge_query_is_empty(
-        self, db_session, global_kb_doc
-    ):
-        from sqlalchemy import select
-
-        from src.core.org_filter import org_filter_clause, resolve_org_filter
-        from src.models.orm.knowledge import KnowledgeStore
-
-        # The org-less external principal (the misconfiguration NEW-J hardens).
-        principal = SimpleNamespace(
-            is_superuser=False, is_external=True, organization_id=None
-        )
-        filter_type, filter_org_id = resolve_org_filter(principal)
-
-        stmt = select(KnowledgeStore).where(
-            KnowledgeStore.namespace == global_kb_doc["namespace"]
-        )
-        clause = org_filter_clause(
-            KnowledgeStore.organization_id, filter_type, filter_org_id
-        )
-        assert clause is not None, "org-less external must get a (false) clause"
-        stmt = stmt.where(clause)
-
-        rows = (await db_session.execute(stmt)).scalars().all()
-        assert rows == [], (
-            "org-less external must read ZERO knowledge docs (incl. the global "
-            f"canary {global_kb_doc['id']}) — got {[str(r.id) for r in rows]}"
-        )
-
-    async def test_orghaving_external_knowledge_query_excludes_global(
-        self, db_session, global_kb_doc, org1
-    ):
-        # Non-regression: an ORG-HAVING external still reads its own org's docs,
-        # and still NOT the global one.
-        from sqlalchemy import select
-
-        from src.core.org_filter import org_filter_clause, resolve_org_filter
-        from src.models.orm.knowledge import KnowledgeStore
-
-        principal = SimpleNamespace(
-            is_superuser=False,
-            is_external=True,
-            organization_id=UUID(org1["id"]),
-        )
-        filter_type, filter_org_id = resolve_org_filter(principal)
-        stmt = select(KnowledgeStore).where(
-            KnowledgeStore.namespace == global_kb_doc["namespace"]
-        )
-        clause = org_filter_clause(
-            KnowledgeStore.organization_id, filter_type, filter_org_id
-        )
-        stmt = stmt.where(clause)
-        rows = (await db_session.execute(stmt)).scalars().all()
-        org_ids = {
-            str(r.organization_id) if r.organization_id else None for r in rows
-        }
-        assert None not in org_ids, (
-            "org-having external must not read the global tier"
-        )
-        assert org1["id"] in org_ids, (
-            "org-having external must still read its own org's doc"
-        )
-
-
 @pytest.fixture(scope="module")
 def config_canaries(e2e_client, platform_admin, org1):
     """A GLOBAL secret config + an org config, both under a unique key, so the
-    SDK/CLI config-get path (EXT-1 NEW-1) can be exercised end-to-end."""
+    SDK/CLI config-get path (the NEW-1 secrets carve-out) can be exercised."""
     gkey = f"ext_global_secret_{SUFFIX}"
     okey = f"ext_org_val_{SUFFIX}"
     g = e2e_client.post(
@@ -543,11 +489,11 @@ def config_canaries(e2e_client, platform_admin, org1):
 
 
 class TestExternalUserConfigPath:
-    """EXT-1 NEW-1 (user-facing): a direct EXTERNAL user calling the SDK/CLI
-    config-get endpoint gets ONLY their org's config on default scope (no global
-    union — so a global SECRET is never returned/decrypted), and is 403'd if
-    they explicitly ask for global or a foreign org (the _resolve_sdk_org_id
-    gate). The engine-sentinel/workflow path is unaffected (separate principal)."""
+    """The secrets carve-out (NEW-1/OPEN-E): a direct EXTERNAL user calling the
+    SDK config-get endpoint gets ONLY their org's config on default scope (no
+    global union — a global SECRET is never returned/decrypted), and is 403'd
+    if they explicitly ask for global or a foreign org. The engine-sentinel
+    path is unaffected (separate principal)."""
 
     def _get(self, e2e_client, user, *, key, scope=None):
         body = {"key": key}
@@ -559,7 +505,6 @@ class TestExternalUserConfigPath:
         self, e2e_client, external_user, config_canaries
     ):
         resp = self._get(e2e_client, external_user, key=config_canaries["global_key"])
-        # Global config is not in the external user's org-only view → None/404.
         assert resp.status_code in (200, 404), resp.text
         if resp.status_code == 200:
             assert resp.json() is None, (
@@ -590,10 +535,7 @@ class TestExternalUserConfigPath:
 @pytest.fixture(scope="module")
 def global_role_agent(e2e_client, platform_admin, global_tool, portal_role):
     """A GLOBAL role_based agent, assigned to portal_role (which the external
-    user holds), exposing the global tool workflow. Pre-fix an external user
-    would reach this agent's tools via the global tier + role-name match
-    (LEAK #2); post-fix the org filter drops it before the role check.
-    """
+    user holds), exposing the global tool workflow."""
     resp = e2e_client.post(
         "/api/agents",
         headers=platform_admin.headers,
@@ -612,9 +554,11 @@ def global_role_agent(e2e_client, platform_admin, global_tool, portal_role):
     e2e_client.delete(f"/api/agents/{agent['id']}", headers=platform_admin.headers)
 
 
-class TestExternalUserMCPAgentIsolation:
-    """Proof (LEAK #2): an external user cannot reach a global/cross-org agent's
-    tools via /api/mcp/tools, even when they share the agent's role."""
+class TestExternalMCPAgentRoleGrant:
+    """An external user holding the agent's role reaches a GLOBAL role_based
+    agent's tools — the explicit grant works across the global tier (LEAK #2's
+    org-scoping fix still holds for cross-org/by-name collisions; the
+    external-specific scope drop is gone)."""
 
     def _mcp_tool_names(self, e2e_client, user) -> set[str]:
         resp = e2e_client.get("/api/mcp/tools", headers=user.headers)
@@ -623,74 +567,29 @@ class TestExternalUserMCPAgentIsolation:
         tools = body.get("tools", body) if isinstance(body, dict) else body
         return {t.get("name") or t.get("id") for t in tools}
 
-    def test_external_user_cannot_reach_global_agent_tools(
+    def test_external_user_with_role_reaches_global_agent_tools(
         self, e2e_client, external_user, global_role_agent, global_tool
     ):
         names = self._mcp_tool_names(e2e_client, external_user)
-        assert global_tool["name"] not in names, (
-            "external user must NOT reach a global role_based agent's tools "
-            "(no global tier — LEAK #2)"
+        assert global_tool["name"] in names, (
+            "external user holding the role must reach the global role_based "
+            "agent's tools"
         )
-        assert global_tool["id"] not in names
-
-    def test_normal_user_with_role_reaches_global_agent_tools(
-        self, e2e_client, platform_admin, org1, portal_role,
-        global_role_agent, global_tool,
-    ):
-        # A NON-external org user holding portal_role DOES reach the global
-        # agent's tools — proving the restriction is external-specific.
-        suffix = uuid4().hex[:8]
-        user = E2EUser(
-            email=f"e2e-mcp-normal-{suffix}@gobifrost.dev",
-            password="NormalPass123!",
-            name=f"Normal {suffix}",
-            organization_id=UUID(org1["id"]),
-        )
-        resp = e2e_client.post(
-            "/api/users",
-            headers=platform_admin.headers,
-            json={
-                "email": user.email,
-                "name": user.name,
-                "organization_id": org1["id"],
-                "is_superuser": False,
-            },
-        )
-        assert resp.status_code == 201, resp.text
-        user.user_id = UUID(resp.json()["id"])
-        e2e_client.post(
-            f"/api/roles/{portal_role['id']}/users",
-            headers=platform_admin.headers,
-            json={"user_ids": [str(user.user_id)]},
-        )
-        user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
-        try:
-            names = self._mcp_tool_names(e2e_client, user)
-            assert global_tool["name"] in names, (
-                "normal org user with the role must reach the global agent's tools"
-            )
-        finally:
-            e2e_client.patch(
-                f"/api/users/{user.user_id}",
-                headers=platform_admin.headers,
-                json={"is_active": False},
-            )
-            e2e_client.delete(
-                f"/api/users/{user.user_id}", headers=platform_admin.headers
-            )
 
 
 # =============================================================================
-# W3 — an external user must be able to execute their OWN install's
-# solution-managed workflow (the client portal ship-blocker), while the
-# global/_repo/ boundary still holds.
+# Solution install: external execution is governed by the workflow's access
+# level — ``everyone`` executes, ``authenticated`` does not. (Replaces the
+# old W3 own-install carve-out: the solution author marks external-facing
+# workflows ``everyone`` explicitly.)
 # =============================================================================
 
 
 @pytest.fixture(scope="module")
-def w3_install(e2e_client, platform_admin, org1):
-    """An org1-scoped Solution install shipping a workflow + a v2 app."""
-    slug = f"ext-w3-{SUFFIX}"
+def ext_install(e2e_client, platform_admin, org1):
+    """An org1-scoped Solution install shipping two workflows + a v2 app:
+    one workflow at access_level=everyone, one at authenticated."""
+    slug = f"ext-tier-{SUFFIX}"
     resp = e2e_client.post(
         "/api/solutions",
         headers=platform_admin.headers,
@@ -717,25 +616,40 @@ def w3_install(e2e_client, platform_admin, org1):
                     "async def ping():\n"
                     "    return {'pong': True}\n"
                 ),
+                "workflows/internal.py": (
+                    "from bifrost import workflow\n\n"
+                    "@workflow\n"
+                    "async def internal():\n"
+                    "    return {'internal': True}\n"
+                ),
             },
-            "workflows": [{
-                "id": str(uuid4()),
-                "name": f"ping_{slug}",
-                "function_name": "ping",
-                "path": "workflows/ping.py",
-                "type": "workflow",
-                # The authenticated tier is what real solutions ship for app
-                # function-call workflows — W3 restores external parity for
-                # exactly this tier (role_based stays role-gated).
-                "access_level": "authenticated",
-            }],
+            "workflows": [
+                {
+                    "id": str(uuid4()),
+                    "name": f"ping_{slug}",
+                    "function_name": "ping",
+                    "path": "workflows/ping.py",
+                    "type": "workflow",
+                    # The external-facing tier: the solution author marks
+                    # workflows externals may call as ``everyone``.
+                    "access_level": "everyone",
+                },
+                {
+                    "id": str(uuid4()),
+                    "name": f"internal_{slug}",
+                    "function_name": "internal",
+                    "path": "workflows/internal.py",
+                    "type": "workflow",
+                    "access_level": "authenticated",
+                },
+            ],
             "apps": [{
                 "id": app_manifest_id,
                 "slug": f"app-{slug}",
-                "name": "W3 App",
+                "name": "Ext Tier App",
                 "app_model": "standalone_v2",
                 "dependencies": {},
-                "access_level": "authenticated",
+                "access_level": "everyone",
                 "dist_files": {
                     "index.html": '<!doctype html><div id="root"></div>',
                 },
@@ -752,92 +666,64 @@ def w3_install(e2e_client, platform_admin, org1):
     e2e_client.delete(f"/api/solutions/{sid}", headers=platform_admin.headers)
 
 
-class TestExternalOwnInstallWorkflowExecution:
-    """W3: an external portal user invoking their OWN install's
-    solution-managed workflow via path-ref + app_id (the v2 app function-call
-    channel) must succeed — pre-fix the access re-check applied the
-    authenticated-tier exclusion and 403'd them out of the very solution
-    they are authorized to use. The boundary still holds: global/_repo/
-    workflows remain unreachable for the same external user."""
-
-    def test_external_executes_own_install_workflow(
-        self, e2e_client, external_user, w3_install
+class TestExternalSolutionWorkflowTiers:
+    def test_external_executes_everyone_tier_install_workflow(
+        self, e2e_client, external_user, ext_install
     ):
         resp = e2e_client.post(
             "/api/workflows/execute",
             headers=external_user.headers,
             json={
                 "workflow_id": "workflows/ping.py::ping",
-                "app_id": w3_install["app_id"],
+                "app_id": ext_install["app_id"],
                 "sync": True,
             },
         )
         assert resp.status_code == 200, (
-            f"external user must execute their own install's workflow: "
+            f"everyone-tier install workflow must execute for the external: "
             f"{resp.status_code} {resp.text}"
         )
         body = resp.json()
         assert body["status"] == "Success", body
         assert body["result"] == {"pong": True}, body
 
-    def test_external_still_cannot_execute_global_repo_workflow(
-        self, e2e_client, external_user, ext_workflow, w3_install
+    def test_external_denied_authenticated_tier_install_workflow(
+        self, e2e_client, external_user, ext_install
     ):
-        # The GLOBAL _repo/ workflow stays unreachable even when the external
-        # smuggles their own install's app_id alongside the global ref.
         resp = e2e_client.post(
             "/api/workflows/execute",
             headers=external_user.headers,
             json={
-                "workflow_id": ext_workflow["id"],
-                "app_id": w3_install["app_id"],
+                "workflow_id": "workflows/internal.py::internal",
+                "app_id": ext_install["app_id"],
                 "sync": True,
             },
         )
         assert resp.status_code in (403, 404), (
-            f"external user must NOT execute a global _repo/ workflow: "
-            f"{resp.status_code} {resp.text}"
+            f"authenticated-tier install workflow must NOT execute for the "
+            f"external: {resp.status_code} {resp.text}"
         )
 
-
-class TestExternalUserSDKKnowledge:
-    """OPEN-A: the /api/sdk/knowledge endpoints are plain CurrentUser routes
-    that hardcoded ``is_superuser=True`` (sentinel trust), so an external user
-    inherited the full cascade — global KB document content via search, global
-    namespace counts via the listing. Post-fix the repo is constructed from
-    the calling principal: external → org tier only. (The search endpoint's
-    SQL is proven in tests/unit/test_cli_sdk_external.py — it requires an
-    embedding service, so the e2e proof uses the embedding-free namespaces
-    listing, which shares the same construction fix.)"""
-
-    def test_external_namespaces_exclude_global_scope(
-        self, e2e_client, external_user, global_kb_doc
+    def test_external_still_cannot_execute_ungranted_global_repo_workflow(
+        self, e2e_client, external_user, ext_denied_workflow, ext_install
     ):
-        resp = e2e_client.get(
-            "/api/sdk/knowledge/namespaces", headers=external_user.headers
+        # A global _repo/ workflow with NO role granted to the external stays
+        # unreachable even when they smuggle their own install's app_id
+        # alongside the ref — the access level (not the scope) denies it.
+        # (ext_workflow itself is NOT usable here: the role-form fixtures
+        # sync portal_role onto it, deliberately granting execute.)
+        resp = e2e_client.post(
+            "/api/workflows/execute",
+            headers=external_user.headers,
+            json={
+                "workflow_id": ext_denied_workflow["id"],
+                "app_id": ext_install["app_id"],
+                "sync": True,
+            },
         )
-        assert resp.status_code == 200, resp.text
-        by_ns = {n["namespace"]: n["scopes"] for n in resp.json()}
-        ns = global_kb_doc["namespace"]
-        # The org-scoped doc keeps the namespace visible to the external…
-        assert ns in by_ns, "external must still see their org's namespace"
-        # …but the GLOBAL doc must not be counted for them.
-        assert by_ns[ns].get("global", 0) == 0, (
-            "external user must not see the global knowledge scope"
-        )
-
-    def test_normal_user_namespaces_include_global_scope(
-        self, e2e_client, org1_user, global_kb_doc
-    ):
-        resp = e2e_client.get(
-            "/api/sdk/knowledge/namespaces", headers=org1_user.headers
-        )
-        assert resp.status_code == 200, resp.text
-        by_ns = {n["namespace"]: n["scopes"] for n in resp.json()}
-        ns = global_kb_doc["namespace"]
-        assert ns in by_ns
-        assert by_ns[ns].get("global", 0) >= 1, (
-            "normal org user still sees the global knowledge scope"
+        assert resp.status_code in (403, 404), (
+            f"external user must NOT execute an ungranted global _repo/ "
+            f"workflow: {resp.status_code} {resp.text}"
         )
 
 
@@ -868,9 +754,10 @@ def table_canaries(e2e_client, platform_admin, org1):
 
 
 class TestExternalUserSDKTablesList:
-    """OPEN-B: /api/sdk/tables/list hardcoded ``is_superuser=True`` on a plain
-    CurrentUser route, so an external user listed GLOBAL table names/schemas.
-    Post-fix: external → org tier only; normal users keep the cascade."""
+    """Tables are cascade-scoped like everything else: an external lists org +
+    global table names/schemas (row DATA stays policy-gated, default deny).
+    OPEN-B's keeper is sentinel trust: the external must not inherit
+    ``is_superuser=True`` and see ALL orgs."""
 
     def _names(self, e2e_client, user) -> set[str]:
         resp = e2e_client.post(
@@ -879,24 +766,20 @@ class TestExternalUserSDKTablesList:
         assert resp.status_code == 200, resp.text
         return {t["name"] for t in resp.json()}
 
-    def test_external_list_excludes_global_table(
+    def test_external_list_matches_normal_cascade(
         self, e2e_client, external_user, table_canaries
     ):
         names = self._names(e2e_client, external_user)
-        assert table_canaries["org"]["name"] in names, (
-            "external user must still list their org's tables"
-        )
-        assert table_canaries["global"]["name"] not in names, (
-            "external user must NOT list global table names/schemas"
+        assert table_canaries["org"]["name"] in names
+        assert table_canaries["global"]["name"] in names, (
+            "external user lists global table names like any org user"
         )
 
     def test_normal_user_list_includes_global_table(
         self, e2e_client, org1_user, table_canaries
     ):
         names = self._names(e2e_client, org1_user)
-        assert table_canaries["global"]["name"] in names, (
-            "normal org user still lists global tables"
-        )
+        assert table_canaries["global"]["name"] in names
 
 
 class TestExternalFlagLifecycle:

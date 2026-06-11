@@ -92,7 +92,7 @@ export function RoleDropTarget({ role, onDrop }: RoleDropTargetProps) {
 	const isAuthenticated = role === "authenticated";
 	const isClearRoles = role === "clear-roles";
 	const name = isAuthenticated
-		? "Authenticated"
+		? "Everyone except external users"
 		: isClearRoles
 			? "Clear Roles"
 			: role.name;

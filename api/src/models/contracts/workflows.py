@@ -78,7 +78,7 @@ class WorkflowMetadata(BaseModel):
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 
     # Access control
-    access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required)")
+    access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)")
 
     # Optional fields with defaults
     category: str = Field(default="General", description="Category for organization")
@@ -173,7 +173,7 @@ class RegisterWorkflowRequest(BaseModel):
     organization_id: str | None = Field(default=None, description="Organization ID to scope the workflow to, or null for global scope")
     access_level: str | None = Field(
         default=None,
-        description="Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required). Omit to leave at the schema default.",
+        description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required). Omit to leave at the schema default.",
     )
     role_ids: list[str] | None = Field(
         default=None,
@@ -293,7 +293,7 @@ class WorkflowUpdateRequest(BaseModel):
     )
     access_level: str | None = Field(
         default=None,
-        description="Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles required)"
+        description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)"
     )
     clear_roles: bool = Field(
         default=False,

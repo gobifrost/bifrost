@@ -1,26 +1,23 @@
 """
-OPEN-A / OPEN-B failing-first proofs: /api/sdk REST endpoints in
-``src/routers/cli.py`` hardcoded ``is_superuser=True`` (sentinel trust) on a
-PLAIN ``CurrentUser`` route, so a direct EXTERNAL caller inherited the full
-cascade:
+External principals on the /api/sdk direct-token surfaces.
 
-OPEN-A — POST /api/sdk/knowledge/search: an external portal user read GLOBAL
-         knowledge-store DOCUMENT CONTENT (the request's ``fallback=True``
-         default was honored because ``external_restricted`` never engaged).
-OPEN-B — POST /api/sdk/tables/list: an external user listed GLOBAL table
-         names/schemas (the cascade union included the NULL-org tier).
+Knowledge (the OPEN-A surface): the store has NO grant axis (no roles, no
+access_level, no row policies), so its direct endpoints are implicitly
+internal-only — an external (portal/guest) principal is 403'd outright.
+Externals reach KB content only THROUGH workflows/agents they were granted
+(the engine sentinel keeps the full cascade).
 
-The fix constructs the repository from the calling PRINCIPAL: the engine
-sentinel and admins keep sentinel trust (their ``is_external`` claim is
-bypass-neutralized at token mint, so ``not is_external`` stays True), while
-an external principal gets ``is_superuser=False, is_external=True`` →
-``external_restricted`` engages (org tier only, fallback forced off).
+Tables (the OPEN-B surface): an external principal gets the NORMAL user
+cascade — org + global table names/schemas (row data is policy-gated,
+default deny). What OPEN-B keeps fixed is sentinel trust: an external must
+not inherit ``is_superuser=True`` from the legacy hardcoding.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from src.core.auth import UserPrincipal
 from src.models.contracts.cli import CLIKnowledgeSearchRequest, SDKTableListRequest
@@ -66,8 +63,7 @@ def _embedding_client():
 
 @pytest.mark.asyncio
 class TestCLIKnowledgeSearchExternal:
-    """OPEN-A: the SDK knowledge-search endpoint must drop the global tier
-    for an external principal even though the request defaults fallback=True."""
+    """The SDK knowledge-search endpoint 403s external principals outright."""
 
     async def _search(self, user, *, fallback=True):
         session = _session()
@@ -82,11 +78,16 @@ class TestCLIKnowledgeSearchExternal:
             )
         return _executed_sql(session)
 
-    async def test_external_search_drops_global_arm(self):
-        sql = await self._search(_principal(is_external=True))
-        assert "organization_id IS NULL" not in sql, (
-            "external caller must not reach global knowledge content"
-        )
+    async def test_external_search_is_denied(self):
+        session = _session()
+        with pytest.raises(HTTPException) as exc:
+            await cli_knowledge_search(
+                CLIKnowledgeSearchRequest(query="q"),
+                _principal(is_external=True),
+                session,
+            )
+        assert exc.value.status_code == 403
+        session.execute.assert_not_awaited()
 
     async def test_normal_user_search_keeps_global_fallback(self):
         sql = await self._search(_principal(is_external=False))
@@ -104,18 +105,17 @@ class TestCLIKnowledgeSearchExternal:
 
 @pytest.mark.asyncio
 class TestCLIListTablesExternal:
-    """OPEN-B: the SDK tables-list endpoint must return the org tier only
-    for an external principal (no global table names/schemas)."""
+    """The SDK tables-list endpoint gives externals the NORMAL user cascade."""
 
     async def _list(self, user):
         session = _session()
         await cli_list_tables(SDKTableListRequest(), user, session)
         return _executed_sql(session)
 
-    async def test_external_list_drops_global_arm(self):
+    async def test_external_list_gets_normal_cascade(self):
         sql = await self._list(_principal(is_external=True))
-        assert "organization_id IS NULL" not in sql, (
-            "external caller must not list global tables"
+        assert "organization_id IS NULL" in sql, (
+            "external caller lists org + global table names like any org user"
         )
 
     async def test_normal_user_list_keeps_global_arm(self):

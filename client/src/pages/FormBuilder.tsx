@@ -109,7 +109,8 @@ export function FormBuilder() {
 				default_launch_params:
 					(existingForm.default_launch_params as Record<string, unknown>) || {},
 				access_level:
-					(existingForm.access_level as "authenticated" | "role_based") || "role_based",
+					(existingForm.access_level as "authenticated" | "everyone" | "role_based") ||
+					"role_based",
 				role_ids: [],
 				organization_id: existingForm.organization_id ?? defaultOrgId,
 			});
@@ -124,7 +125,8 @@ export function FormBuilder() {
 	const defaultLaunchParams = formInfo?.default_launch_params ||
 		(existingForm?.default_launch_params as Record<string, unknown>) || {};
 	const accessLevel = formInfo?.access_level ||
-		(existingForm?.access_level as "authenticated" | "role_based") || "role_based";
+		(existingForm?.access_level as "authenticated" | "everyone" | "role_based") ||
+		"role_based";
 	const selectedRoleIds = formInfo?.role_ids || [];
 	const organizationId = formInfo?.organization_id ??
 		existingForm?.organization_id ?? defaultOrgId;

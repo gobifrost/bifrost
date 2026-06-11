@@ -2,8 +2,9 @@
 LEAK #2 failing-first proof: MCPToolAccessService._get_accessible_agents
 queried agents across ALL orgs with a role-NAME match and no org filter, so a
 role_based agent in another org (or global) with a same-named role leaked to
-the caller. The org cascade must be applied in-query, and externals get no
-global tier.
+the caller. The org cascade must be applied in-query. The cascade is the same
+for every principal (org + global) — external access is governed by the
+access-level filter, not by scope.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -52,15 +53,18 @@ class TestAccessibleAgentsOrgScope:
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
-    async def test_external_user_query_drops_global(self, session):
+    async def test_external_user_query_keeps_normal_cascade(self, session):
         svc = MCPToolAccessService(session)
         org = uuid4()
         await svc._get_accessible_agents(
             user_roles=["r"], is_superuser=False, is_external=True, org_id=org
         )
         sql = _executed_sql(session)
+        # Same cascade as any org user — global role_based agents an external
+        # was granted must remain reachable; the access-level filter (not the
+        # scope) is what excludes authenticated-tier agents.
         assert "organization_id" in sql
-        assert "IS NULL" not in sql
+        assert "IS NULL" in sql
 
     async def test_superuser_query_unscoped(self, session):
         svc = MCPToolAccessService(session)
@@ -88,7 +92,7 @@ class TestGetToolsForAgentByIdOrgScope:
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
-    async def test_external_user_by_id_query_drops_global(self, session):
+    async def test_external_user_by_id_query_keeps_normal_cascade(self, session):
         svc = MCPToolAccessService(session)
         await svc.get_tools_for_agent(
             agent_id=str(uuid4()), user_roles=["r"], is_superuser=False,
@@ -96,4 +100,4 @@ class TestGetToolsForAgentByIdOrgScope:
         )
         sql = _executed_sql(session)
         assert "organization_id" in sql
-        assert "IS NULL" not in sql
+        assert "IS NULL" in sql

@@ -125,11 +125,9 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/solutions.py', 'else SolutionORM.organization_id.is_(None)', 'uninstall: global-scope variant of the same shared-key guard (NOT cascade)'),
     ('routers/tables.py', 'CustomClaimORM.organization_id == organization_id', 'tables custom claim cross-ref; phase 6 migrates'),
     # X-Bifrost-App app-scoped solution table lookup (install-scoped, NOT org
-    # cascade). EXT-1 NEW-3 split the cascade into an external-aware branch:
-    # external principals get the org-only arm (no IS NULL). All install-scoped.
-    ('routers/tables.py', 'stmt = stmt.where(Table.organization_id == target_org_id)', 'NEW-3 external branch: install-scoped solution table lookup (org-only)'),
-    ('routers/tables.py', 'Table.organization_id == target_org_id,', 'NEW-3 non-external org arm: install-scoped solution table lookup'),
-    ('routers/tables.py', 'Table.organization_id.is_(None),', 'NEW-3 non-external global arm: install-scoped solution table lookup'),
+    # cascade).
+    ('routers/tables.py', 'Table.organization_id == target_org_id,', 'install-scoped solution table lookup: org arm'),
+    ('routers/tables.py', 'Table.organization_id.is_(None),', 'install-scoped solution table lookup: global arm'),
     ('routers/usage_reports.py', 'base_conditions.append(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'exec_conditions.append(Execution.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
@@ -140,8 +138,8 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/usage_reports.py', 'KnowledgeStorageDaily.organization_id == filter_org_id', 'identity-entity scope filter (permanent)'),
     ('routers/users.py', 'query = query.where(UserORM.organization_id.is_(None))', 'User identity-entity filter (permanent)'),
     ('routers/users.py', 'query = query.where(UserORM.organization_id == filter_org)', 'User identity-entity filter (permanent)'),
-    ('routers/websocket.py', 'org_cond = TableOrm.organization_id == user.organization_id', 'websocket table subscription filter (external-aware); phase 6 migrates'),
-    ('routers/websocket.py', 'org_cond = org_cond | TableOrm.organization_id.is_(None)', 'websocket table subscription filter (external-aware); phase 6 migrates'),
+    ('routers/websocket.py', '(TableOrm.organization_id == user.organization_id)', 'websocket table subscription filter; phase 6 migrates'),
+    ('routers/websocket.py', '| TableOrm.organization_id.is_(None)', 'websocket table subscription filter; phase 6 migrates'),
     ('routers/workflows.py', 'query = query.where(WorkflowORM.organization_id.is_(None))', 'workflows inline cascade; phase 6 migrates'),
     ('routers/workflows.py', 'query = query.where(WorkflowORM.organization_id == filter_org)', 'workflows inline cascade; phase 6 migrates'),
     ('routers/workflows.py', 'WorkflowORM.organization_id == filter_org,', 'workflows inline cascade; phase 6 migrates'),

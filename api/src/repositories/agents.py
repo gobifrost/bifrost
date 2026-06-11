@@ -37,7 +37,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
         active_only: bool = True,
     ) -> list[Agent]:
         """List agents with cascade scoping, role-based access, and user's private agents."""
-        from sqlalchemy import false, or_
+        from sqlalchemy import or_
         from src.models.enums import AgentAccessLevel
 
         query = select(self.model).options(
@@ -47,15 +47,10 @@ class AgentRepository(OrgScopedRepository[Agent]):
         )
 
         # Build scope filter: cascade (org + global) OR user's own private agents.
-        # External principals get no global tier (org-specific only).
         cascade_conditions = []
         if self.org_id is not None:
             cascade_conditions.append(self.model.organization_id == self.org_id)
-        if not self.external_restricted:
-            cascade_conditions.append(self.model.organization_id.is_(None))
-        if not cascade_conditions:
-            # External repo without an org: nothing is in scope.
-            cascade_conditions.append(false())
+        cascade_conditions.append(self.model.organization_id.is_(None))
 
         private_condition = (
             (self.model.access_level == AgentAccessLevel.PRIVATE) &
@@ -117,9 +112,6 @@ class AgentRepository(OrgScopedRepository[Agent]):
         if filter_type == OrgFilterType.ALL:
             # No org filter - show everything
             pass
-        elif filter_type == OrgFilterType.EMPTY:
-            # Org-less external sentinel (EXT-1 NEW-J): match nothing.
-            query = query.where(self.model.id.is_(None))
         elif filter_type == OrgFilterType.GLOBAL_ONLY:
             # Only global agents (org_id IS NULL)
             query = query.where(self.model.organization_id.is_(None))
@@ -209,10 +201,6 @@ class AgentRepository(OrgScopedRepository[Agent]):
                 if await self._can_access_entity(entity):
                     return entity
                 return None
-
-        # External principals have no global tier — no fallback (EXT-1 rule 1).
-        if self.external_restricted:
-            return None
 
         global_query = query.where(self.model.organization_id.is_(None))
         result = await self.session.execute(global_query)

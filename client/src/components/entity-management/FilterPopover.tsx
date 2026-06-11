@@ -68,7 +68,8 @@ export function FilterPopover({
 
 	const accessOptions = [
 		{ value: "all", label: "All Access Levels" },
-		{ value: "authenticated", label: "Authenticated" },
+		{ value: "authenticated", label: "Everyone except external users" },
+		{ value: "everyone", label: "Everyone" },
 		{ value: "role_based", label: "Role-based" },
 	];
 

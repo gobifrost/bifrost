@@ -77,7 +77,7 @@ import type { components } from "@/lib/v1";
 type Workflow = components["schemas"]["WorkflowMetadata"];
 type RolePublic = components["schemas"]["RolePublic"];
 
-type WorkflowAccessLevel = "authenticated" | "role_based";
+type WorkflowAccessLevel = "authenticated" | "everyone" | "role_based";
 
 const ACCESS_LEVELS: {
 	value: WorkflowAccessLevel;
@@ -87,8 +87,14 @@ const ACCESS_LEVELS: {
 }[] = [
 	{
 		value: "authenticated",
-		label: "Authenticated",
-		description: "Any logged-in user can execute",
+		label: "Everyone except external users",
+		description: "Any signed-in user except external users can execute",
+		icon: <Users className="h-4 w-4" />,
+	},
+	{
+		value: "everyone",
+		label: "Everyone",
+		description: "Any signed-in user, including external users, can execute",
 		icon: <Users className="h-4 w-4" />,
 	},
 	{

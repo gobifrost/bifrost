@@ -22,8 +22,13 @@ class ExecutionStatus(str, Enum):
 
 
 class FormAccessLevel(str, Enum):
-    """Form access control levels"""
+    """Form access control levels.
+
+    AUTHENTICATED is "Everyone except external users" in the UI; EVERYONE
+    additionally grants to external (portal/guest) users.
+    """
     AUTHENTICATED = "authenticated"
+    EVERYONE = "everyone"
     ROLE_BASED = "role_based"
 
 
@@ -77,15 +82,25 @@ class GitStatus(str, Enum):
 
 
 class AgentAccessLevel(str, Enum):
-    """Agent access control levels"""
+    """Agent access control levels.
+
+    AUTHENTICATED is "Everyone except external users" in the UI; EVERYONE
+    additionally grants to external (portal/guest) users.
+    """
     AUTHENTICATED = "authenticated"
+    EVERYONE = "everyone"
     ROLE_BASED = "role_based"
     PRIVATE = "private"
 
 
 class AppAccessLevel(str, Enum):
-    """Application access control levels"""
+    """Application access control levels.
+
+    AUTHENTICATED is "Everyone except external users" in the UI; EVERYONE
+    additionally grants to external (portal/guest) users.
+    """
     AUTHENTICATED = "authenticated"
+    EVERYONE = "everyone"
     ROLE_BASED = "role_based"
 
 

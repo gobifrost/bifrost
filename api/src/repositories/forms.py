@@ -97,9 +97,6 @@ class FormRepository(OrgScopedRepository[FormORM]):
         if filter_type == OrgFilterType.ALL:
             # No org filter - show everything
             pass
-        elif filter_type == OrgFilterType.EMPTY:
-            # Org-less external sentinel (EXT-1 NEW-J): match nothing.
-            query = query.where(self.model.id.is_(None))
         elif filter_type == OrgFilterType.GLOBAL_ONLY:
             # Only global forms (org_id IS NULL)
             query = query.where(self.model.organization_id.is_(None))
@@ -171,10 +168,6 @@ class FormRepository(OrgScopedRepository[FormORM]):
                 if await self._can_access_entity(entity):
                     return entity
                 return None
-
-        # External principals have no global tier — no fallback (EXT-1 rule 1).
-        if self.external_restricted:
-            return None
 
         # Fall back to global
         global_query = query.where(self.model.organization_id.is_(None))

@@ -1,18 +1,19 @@
 """
-Unit tests for external-user isolation in OrgScopedRepository (EXT-1).
+Unit tests for external-user access rules in OrgScopedRepository.
 
 Semantics under test, for an EXTERNAL, NON-BYPASS principal
 (``is_external=True`` and ``is_superuser=False``):
 
-1. No global tier: the name-cascade in ``get()`` and the cascade union in
-   ``list()`` exclude ``organization_id IS NULL`` rows.
+1. Scope is UNCHANGED: the cascade (get-by-id in-scope check, name-cascade
+   global fallback, list() union) is pure org→global for every principal —
+   ``is_external`` never subtracts the global tier.
 2. No authenticated-tier entitlement: ``access_level="authenticated"``
-   entities do NOT grant — externals need role_based + an assigned role,
-   or ownership.
-3. By-id access: a global entity is NOT "in scope" for an external user.
-4. Bypass unaffected: ``is_superuser=True`` neutralizes the external
-   restriction entirely (the provider-org half of bypass is neutralized
-   upstream, at token mint — see shared/external_access.py).
+   ("Everyone except external users") does NOT grant — externals need the
+   ``everyone`` tier, role_based + an assigned role, or ownership.
+3. ``everyone`` grants to externals (and everyone else) in scope.
+4. Bypass unaffected: ``is_superuser=True`` neutralizes the external rule
+   (the provider-org half of bypass is neutralized upstream, at token
+   mint — see shared/external_access.py).
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -68,21 +69,17 @@ def _rows_result(values):
     return result
 
 
-class TestByIdGlobalDenial:
-    """get(id=...) must not leak global (NULL-org) entities to externals."""
+class TestExternalScopeUnchanged:
+    """The cascade is identical for externals — scope is org-keyed, not
+    user-keyed. (The old external scope-drop broke role grants on global
+    entities: the row vanished before the role check could run.)"""
 
-    async def test_external_user_denied_global_entity_by_id(self, session):
+    async def test_external_user_gets_global_entity_by_id(self, session):
         entity = _entity(org_id=None)
         session.execute.return_value = _result_for(entity)
         repo = _FakeRepo(
             session, org_id=uuid4(), user_id=uuid4(), is_external=True
         )
-        assert await repo.get(id=entity.id) is None
-
-    async def test_regular_user_still_gets_global_entity_by_id(self, session):
-        entity = _entity(org_id=None)
-        session.execute.return_value = _result_for(entity)
-        repo = _FakeRepo(session, org_id=uuid4(), user_id=uuid4())
         assert await repo.get(id=entity.id) is entity
 
     async def test_external_user_gets_own_org_entity_by_id(self, session):
@@ -92,98 +89,19 @@ class TestByIdGlobalDenial:
         repo = _FakeRepo(session, org_id=org_id, user_id=uuid4(), is_external=True)
         assert await repo.get(id=entity.id) is entity
 
-    async def test_external_superuser_bypasses_restriction_by_id(self, session):
-        entity = _entity(org_id=None)
-        session.execute.return_value = _result_for(entity)
-        repo = _FakeRepo(
-            session,
-            org_id=uuid4(),
-            user_id=uuid4(),
-            is_superuser=True,
-            is_external=True,
-        )
-        assert await repo.get(id=entity.id) is entity
-
-
-class TestNameCascadeNoGlobalFallback:
-    """get(name=...) cascade: no global fallback step for externals."""
-
-    async def test_external_user_org_miss_does_not_fall_back_to_global(self, session):
-        # Org-specific lookup misses; the global fallback would hit.
+    async def test_external_user_org_miss_falls_back_to_global(self, session):
         global_entity = _entity(org_id=None)
         session.execute.side_effect = [_result_for(None), _result_for(global_entity)]
         repo = _FakeRepo(session, org_id=uuid4(), user_id=uuid4(), is_external=True)
-
-        assert await repo.get(name="anything") is None
-        # Only the org-specific query ran; the global fallback was skipped.
-        assert session.execute.await_count == 1
-
-    async def test_regular_user_org_miss_falls_back_to_global(self, session):
-        global_entity = _entity(org_id=None)
-        session.execute.side_effect = [_result_for(None), _result_for(global_entity)]
-        repo = _FakeRepo(session, org_id=uuid4(), user_id=uuid4())
-
         assert await repo.get(name="anything") is global_entity
 
-    async def test_external_user_still_resolves_org_specific_by_name(self, session):
-        org_id = uuid4()
-        entity = _entity(org_id=org_id)
-        session.execute.return_value = _result_for(entity)
-        repo = _FakeRepo(session, org_id=org_id, user_id=uuid4(), is_external=True)
-
-        assert await repo.get(name="anything") is entity
-
-    async def test_external_superuser_keeps_global_fallback(self, session):
-        global_entity = _entity(org_id=None)
-        session.execute.side_effect = [_result_for(None), _result_for(global_entity)]
-        repo = _FakeRepo(
-            session,
-            org_id=uuid4(),
-            user_id=uuid4(),
-            is_superuser=True,
-            is_external=True,
-        )
-        assert await repo.get(name="anything") is global_entity
-
-
-class TestCascadeScopeSQL:
-    """_apply_cascade_scope: the list() union drops the NULL-org tier."""
-
-    def _compiled_where(self, repo):
+    def test_external_user_list_union_includes_global_tier(self, session):
         from sqlalchemy import select
 
-        query = repo._apply_cascade_scope(select(Workflow))
-        return str(query.compile(compile_kwargs={"literal_binds": True}))
-
-    def test_regular_user_union_includes_global_tier(self, session):
-        repo = _FakeRepo(session, org_id=uuid4(), user_id=uuid4())
-        sql = self._compiled_where(repo)
-        assert "organization_id IS NULL" in sql
-
-    def test_external_user_union_excludes_global_tier(self, session):
         repo = _FakeRepo(session, org_id=uuid4(), user_id=uuid4(), is_external=True)
-        sql = self._compiled_where(repo)
-        assert "organization_id IS NULL" not in sql
-
-    def test_external_superuser_union_keeps_global_tier(self, session):
-        repo = _FakeRepo(
-            session,
-            org_id=uuid4(),
-            user_id=uuid4(),
-            is_superuser=True,
-            is_external=True,
-        )
-        sql = self._compiled_where(repo)
+        query = repo._apply_cascade_scope(select(Workflow))
+        sql = str(query.compile(compile_kwargs={"literal_binds": True}))
         assert "organization_id IS NULL" in sql
-
-    def test_external_user_with_no_org_sees_nothing(self, session):
-        # Defense-in-depth: a non-superuser principal always has an org
-        # (token parsing enforces it), but if an external repo is ever
-        # constructed without one it must not fall into global-only scope.
-        repo = _FakeRepo(session, org_id=None, user_id=uuid4(), is_external=True)
-        sql = self._compiled_where(repo)
-        assert "organization_id IS NULL" not in sql
-        assert "false" in sql.lower()
 
 
 class TestAuthenticatedTierDenial:
@@ -235,6 +153,20 @@ class TestAuthenticatedTierDenial:
         )
         assert await repo._can_access_entity(entity) is True
 
+    async def test_external_user_role_grant_works_on_global_entity(self, session):
+        # The capability the old scope-drop broke: a role grant on a GLOBAL
+        # entity grants the external user like anyone else.
+        role_id = uuid4()
+        entity = _entity(org_id=None, access_level="role_based")
+        session.execute.side_effect = [
+            _rows_result([role_id]),
+            _rows_result([role_id]),
+        ]
+        repo = _FakeRbacRepo(
+            session, org_id=uuid4(), user_id=uuid4(), is_external=True
+        )
+        assert await repo._can_access_entity(entity) is True
+
     async def test_external_user_denied_role_based_entity_without_role(self, session):
         entity = _entity(org_id=uuid4(), access_level="role_based")
         session.execute.side_effect = [
@@ -254,5 +186,30 @@ class TestAuthenticatedTierDenial:
             user_id=uuid4(),
             is_superuser=True,
             is_external=True,
+        )
+        assert await repo._can_access_entity(entity) is True
+
+
+class TestEveryoneTier:
+    """access_level='everyone' grants to any in-scope user, external or not."""
+
+    async def test_external_user_granted_everyone_entity(self, session):
+        entity = _entity(org_id=uuid4(), access_level="everyone")
+        repo = _FakeRbacRepo(
+            session, org_id=entity.organization_id, user_id=uuid4(), is_external=True
+        )
+        assert await repo._can_access_entity(entity) is True
+
+    async def test_external_user_granted_global_everyone_entity(self, session):
+        entity = _entity(org_id=None, access_level="everyone")
+        repo = _FakeRbacRepo(
+            session, org_id=uuid4(), user_id=uuid4(), is_external=True
+        )
+        assert await repo._can_access_entity(entity) is True
+
+    async def test_regular_user_granted_everyone_entity(self, session):
+        entity = _entity(org_id=uuid4(), access_level="everyone")
+        repo = _FakeRbacRepo(
+            session, org_id=entity.organization_id, user_id=uuid4()
         )
         assert await repo._can_access_entity(entity) is True

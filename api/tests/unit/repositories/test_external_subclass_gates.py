@@ -1,11 +1,12 @@
 """
-External-user isolation in repository subclasses that hand-roll cascade.
+Repository subclasses that hand-roll cascade keep it pure org→global.
 
 ``AgentRepository.list_agents`` / ``get_agent_with_access_check`` and
 ``FormRepository.get_form_with_access_check`` build their own org/global
 queries (for eager loading and the private-agent OR-branch) instead of
-calling the base cascade primitive. They must honor the same external
-rule: no global (NULL-org) tier for an external, non-bypass principal.
+calling the base cascade primitive. The cascade must be identical for every
+principal — ``is_external`` never drops the global (NULL-org) tier; external
+access is governed by the access-level check, not scope.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -41,15 +42,15 @@ def _compiled(query) -> str:
     return str(query.compile(compile_kwargs={"literal_binds": True}))
 
 
-class TestAgentListExternal:
-    async def test_external_list_agents_query_excludes_global_tier(self, session):
+class TestAgentListCascade:
+    async def test_external_list_agents_query_includes_global_tier(self, session):
         session.execute.return_value = _list_result([])
         repo = AgentRepository(
             session, org_id=uuid4(), user_id=uuid4(), is_external=True
         )
         await repo.list_agents()
         sql = _compiled(session.execute.await_args.args[0])
-        assert "organization_id IS NULL" not in sql
+        assert "organization_id IS NULL" in sql
 
     async def test_regular_list_agents_query_includes_global_tier(self, session):
         session.execute.return_value = _list_result([])
@@ -59,15 +60,14 @@ class TestAgentListExternal:
         assert "organization_id IS NULL" in sql
 
 
-class TestAgentByIdExternal:
-    async def test_external_get_with_access_check_skips_global_fallback(self, session):
+class TestAgentByIdCascade:
+    async def test_external_get_with_access_check_keeps_global_fallback(self, session):
         session.execute.return_value = _scalar_result(None)
         repo = AgentRepository(
             session, org_id=uuid4(), user_id=uuid4(), is_external=True
         )
         assert await repo.get_agent_with_access_check(uuid4()) is None
-        # Only the org-specific query ran; no global fallback for externals.
-        assert session.execute.await_count == 1
+        assert session.execute.await_count == 2
 
     async def test_regular_get_with_access_check_keeps_global_fallback(self, session):
         session.execute.return_value = _scalar_result(None)
@@ -76,14 +76,14 @@ class TestAgentByIdExternal:
         assert session.execute.await_count == 2
 
 
-class TestFormByIdExternal:
-    async def test_external_get_with_access_check_skips_global_fallback(self, session):
+class TestFormByIdCascade:
+    async def test_external_get_with_access_check_keeps_global_fallback(self, session):
         session.execute.return_value = _scalar_result(None)
         repo = FormRepository(
             session, org_id=uuid4(), user_id=uuid4(), is_external=True
         )
         assert await repo.get_form_with_access_check(uuid4()) is None
-        assert session.execute.await_count == 1
+        assert session.execute.await_count == 2
 
     async def test_regular_get_with_access_check_keeps_global_fallback(self, session):
         session.execute.return_value = _scalar_result(None)

@@ -2144,6 +2144,22 @@ async def cli_ai_info(
 # =============================================================================
 
 
+def _deny_external_knowledge(current_user: UserPrincipal) -> None:
+    """403 an external principal off the direct knowledge surface.
+
+    The knowledge store has no grant axis (no roles, no access_level, no row
+    policies), so its direct endpoints are implicitly "any signed-in user" —
+    a tier external (portal/guest) users are excluded from. Externals reach
+    knowledge content only THROUGH workflows/agents they were granted (the
+    engine sentinel keeps the full cascade).
+    """
+    if current_user.is_external:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="External users cannot access the knowledge store directly",
+        )
+
+
 @router.post(
     "/knowledge/store",
     summary="Store a document in knowledge store",
@@ -2154,6 +2170,7 @@ async def cli_knowledge_store(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Store a document with its embedding in the knowledge store."""
+    _deny_external_knowledge(current_user)
     from src.repositories.knowledge import KnowledgeRepository
     from src.services.embeddings import get_embedding_client
 
@@ -2164,16 +2181,10 @@ async def cli_knowledge_store(
         embedding_client = await get_embedding_client(db)
 
         # Store document
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         doc_ids = await repo.store_chunked(
             content=request.content,
             namespace=request.namespace,
@@ -2215,6 +2226,7 @@ async def cli_knowledge_store_many(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Store multiple documents with batch embedding."""
+    _deny_external_knowledge(current_user)
     from src.repositories.knowledge import KnowledgeRepository
     from src.services.embeddings import get_embedding_client
 
@@ -2225,16 +2237,10 @@ async def cli_knowledge_store_many(
         embedding_client = await get_embedding_client(db)
 
         # Store each document
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         doc_ids = []
         for doc in request.documents:
             inserted_ids = await repo.store_chunked(
@@ -2279,6 +2285,7 @@ async def cli_knowledge_search(
     db: AsyncSession = Depends(get_db),
 ) -> list[CLIKnowledgeDocumentResponse]:
     """Search for similar documents using vector similarity."""
+    _deny_external_knowledge(current_user)
     from src.models.contracts.cli import CLIKnowledgeDocumentResponse
     from src.repositories.knowledge import KnowledgeRepository
     from src.services.embeddings import get_embedding_client
@@ -2292,16 +2299,10 @@ async def cli_knowledge_search(
         query_embedding = await embedding_client.embed_single(request.query)
 
         # Search
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         results = await repo.search(
             query_embedding=query_embedding,
             namespace=request.namespace,
@@ -2352,22 +2353,17 @@ async def cli_knowledge_delete(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete a document by key from the knowledge store."""
+    _deny_external_knowledge(current_user)
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         deleted = await repo.delete_by_key(
             key=request.key,
             namespace=request.namespace,
@@ -2400,22 +2396,17 @@ async def cli_knowledge_delete_namespace(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete all documents in a namespace."""
+    _deny_external_knowledge(current_user)
     from src.repositories.knowledge import KnowledgeRepository
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         deleted_count = await repo.delete_namespace(
             namespace=namespace,
         )
@@ -2447,6 +2438,7 @@ async def cli_knowledge_list_namespaces(
     db: AsyncSession = Depends(get_db),
 ) -> list[CLIKnowledgeNamespaceInfo]:
     """List all namespaces with document counts per scope."""
+    _deny_external_knowledge(current_user)
     from src.models.contracts.cli import CLIKnowledgeNamespaceInfo
     from src.repositories.knowledge import KnowledgeRepository
 
@@ -2454,16 +2446,10 @@ async def cli_knowledge_list_namespaces(
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         results = await repo.list_namespaces(
             include_global=include_global,
         )
@@ -2498,6 +2484,7 @@ async def cli_knowledge_get(
     db: AsyncSession = Depends(get_db),
 ) -> CLIKnowledgeDocumentResponse | None:
     """Get a document by key from the knowledge store."""
+    _deny_external_knowledge(current_user)
     from src.models.contracts.cli import CLIKnowledgeDocumentResponse
     from src.repositories.knowledge import KnowledgeRepository
 
@@ -2505,16 +2492,10 @@ async def cli_knowledge_get(
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
-        # is_superuser=True (their is_external claim is neutralized at mint);
-        # an EXTERNAL principal must not inherit it — external_restricted
-        # engages (org tier only, global fallback forced off).
-        repo = KnowledgeRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
+        # Externals were 403'd at the top of this endpoint
+        # (_deny_external_knowledge); every caller past the gate gets the
+        # SDK trust this surface has always extended.
+        repo = KnowledgeRepository(db, org_id=org_uuid)
         result = await repo.get_by_key(
             key=key,
             namespace=namespace,
@@ -2801,7 +2782,8 @@ async def cli_list_tables(
     Engine sentinel: the SDK has already resolved scope, so non-external
     principals get is_superuser=True and we trust the org_uuid. The base
     class handles the cascade (org + global) for us. EXTERNAL principals
-    do not inherit sentinel trust — they get the org tier only (OPEN-B).
+    do not inherit sentinel trust (OPEN-B) — they get the normal user
+    cascade (org + global table names/schemas; row data is policy-gated).
     """
     # Local import keeps the router file's top-level imports lean.
     from src.repositories.tables import TableRepository
@@ -2811,8 +2793,8 @@ async def cli_list_tables(
 
     # Principal-derived sentinel trust (OPEN-B): the sentinel/admins keep
     # is_superuser=True (their is_external claim is neutralized at mint); an
-    # EXTERNAL principal must not inherit it — external_restricted engages
-    # and the list is org tier only (no global table names/schemas).
+    # EXTERNAL principal must not inherit it — they get the regular-user
+    # cascade instead.
     repo = TableRepository(
         db,
         org_id=org_uuid,

@@ -1,14 +1,15 @@
 """
 NEW-2 failing-first proof: MCP list_event_sources / get_event_source did not
-consult context.org_id or external-ness:
+consult context.org_id:
 
-- list_event_sources(organization_id=None) → include_global=True (external gets
-  global); a caller-supplied FOREIGN org UUID read that org's sources.
+- list_event_sources with a caller-supplied FOREIGN org UUID read that org's
+  sources.
 - get_event_source did get_by_id_with_details with ZERO org scoping — any
   caller read any event source in any org by id.
 
-The fix scopes to context.org_id; a non-bypass caller never reads global or
-cross-org sources, and an external gets no global tier.
+The fix scopes to context.org_id; a non-bypass caller never reads cross-org
+sources. The cascade is the same for every principal (org + global) —
+``is_external`` plays no part in scope.
 """
 
 from types import SimpleNamespace
@@ -62,11 +63,12 @@ class TestListEventSourcesScope:
         assert "event_sources.organization_id =" in sql
         assert "event_sources.organization_id IS NULL" in sql
 
-    async def test_external_scoped_to_own_org_no_global(self):
+    async def test_external_gets_normal_cascade(self):
         ctx = _ctx(is_external=True)
         await events_tool.list_event_sources(ctx)
         sql = _executed_sql(ctx)
-        assert "event_sources.organization_id IS NULL" not in sql
+        assert "event_sources.organization_id =" in sql
+        assert "event_sources.organization_id IS NULL" in sql
 
     async def test_caller_supplied_foreign_org_is_ignored(self):
         ctx = _ctx(is_external=False)
@@ -158,10 +160,12 @@ class TestGetEventSourceScope:
         res = await events_tool.get_event_source(ctx, source_id=str(uuid4()))
         assert _is_error(res), "non-admin must not read a foreign-org event source"
 
-    async def test_external_denied_global_source(self):
+    async def test_external_allowed_global_source(self):
+        # Global sources are shared — an external in an org reads them like
+        # any org user (scope is org-keyed, not user-keyed).
         ctx = _ctx_returning(_source(None), is_external=True)
         res = await events_tool.get_event_source(ctx, source_id=str(uuid4()))
-        assert _is_error(res), "external must not read a global event source"
+        assert not _is_error(res)
 
     async def test_non_admin_allowed_own_org_source(self):
         org = uuid4()
@@ -221,14 +225,12 @@ def _ctx_source_then(source, then=None, **kw):
 
 @pytest.mark.asyncio
 class TestListEventSubscriptionsScope:
-    async def test_external_denied_global_source_subscriptions(self):
+    async def test_external_allowed_global_source_subscriptions(self):
         ctx = _ctx_source_then(_source(None), is_external=True)
         res = await events_tool.list_event_subscriptions(
             ctx, source_id=str(uuid4())
         )
-        assert _is_error(res), (
-            "external must not enumerate a global source's subscriptions"
-        )
+        assert not _is_error(res)
 
     async def test_non_admin_denied_cross_org_source_subscriptions(self):
         ctx = _ctx_source_then(_source(uuid4()), is_external=False)
@@ -257,14 +259,13 @@ class TestListEventSubscriptionsScope:
 
 @pytest.mark.asyncio
 class TestCreateEventSubscriptionScope:
-    async def test_external_cannot_wire_onto_global_source(self):
+    async def test_external_may_wire_onto_global_source(self):
+        # Same entitlement as any org user — global sources are shared.
         ctx = _ctx_source_then(_source(None), is_external=True)
         res = await events_tool.create_event_subscription(
             ctx, source_id=str(uuid4()), workflow_id=str(uuid4())
         )
-        assert _is_error(res), (
-            "external must not create a subscription on a global source"
-        )
+        assert not _is_error(res)
 
     async def test_non_admin_cannot_wire_onto_foreign_org_source(self):
         ctx = _ctx_source_then(_source(uuid4()), is_external=False)
@@ -293,7 +294,7 @@ class TestUpdateDeleteEventSubscriptionScope:
             "non-admin must not update a subscription on a foreign-org source"
         )
 
-    async def test_delete_denied_for_external_on_global_source(self):
+    async def test_delete_allowed_for_external_on_global_source(self):
         source_id = uuid4()
         ctx = _ctx_source_then(
             _source(None), then=_subscription(source_id), is_external=True
@@ -301,9 +302,7 @@ class TestUpdateDeleteEventSubscriptionScope:
         res = await events_tool.delete_event_subscription(
             ctx, source_id=str(source_id), subscription_id=str(uuid4())
         )
-        assert _is_error(res), (
-            "external must not delete a subscription on a global source"
-        )
+        assert not _is_error(res)
 
     async def test_update_allowed_for_own_org_source(self):
         org = uuid4()

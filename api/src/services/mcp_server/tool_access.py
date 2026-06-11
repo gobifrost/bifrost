@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import false, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -201,17 +201,12 @@ class MCPToolAccessService:
         if not is_superuser:
             scope_org = UUID(org_id) if isinstance(org_id, str) and org_id else org_id
             if scope_org is not None:
-                if is_external:
-                    query = query.where(Agent.organization_id == scope_org)
-                else:
-                    query = query.where(
-                        or_(
-                            Agent.organization_id == scope_org,
-                            Agent.organization_id.is_(None),
-                        )
+                query = query.where(
+                    or_(
+                        Agent.organization_id == scope_org,
+                        Agent.organization_id.is_(None),
                     )
-            elif is_external:
-                query = query.where(false())
+                )
             else:
                 query = query.where(Agent.organization_id.is_(None))
 
@@ -369,8 +364,12 @@ class MCPToolAccessService:
     ) -> bool:
         """Check if user has access to a specific agent (same rules as _get_accessible_agents)."""
         if agent.access_level == AgentAccessLevel.AUTHENTICATED:
-            # External users get no authenticated-tier entitlement (EXT-1).
+            # "Everyone except external users": no authenticated-tier
+            # entitlement for externals.
             return is_superuser or not is_external
+
+        if agent.access_level == AgentAccessLevel.EVERYONE:
+            return True
 
         if agent.access_level == AgentAccessLevel.ROLE_BASED:
             agent_role_names = {role.name for role in agent.roles}
@@ -399,8 +398,7 @@ class MCPToolAccessService:
 
         Org scoping (LEAK #2): the query is org-scoped IN THE DATABASE so a
         role_based agent in another org with a same-named role can NEVER leak.
-        A regular user sees their org + global; an external user sees their
-        org ONLY (no global tier); a superuser sees all orgs.
+        A regular user sees their org + global; a superuser sees all orgs.
         """
         # Query active agents, scoped to the caller's org cascade.
         query = (
@@ -415,19 +413,12 @@ class MCPToolAccessService:
         if not is_superuser:
             scope_org = UUID(org_id) if isinstance(org_id, str) and org_id else org_id
             if scope_org is not None:
-                if is_external:
-                    # External: own org tier ONLY (no global arm).
-                    query = query.where(Agent.organization_id == scope_org)
-                else:
-                    query = query.where(
-                        or_(
-                            Agent.organization_id == scope_org,
-                            Agent.organization_id.is_(None),
-                        )
+                query = query.where(
+                    or_(
+                        Agent.organization_id == scope_org,
+                        Agent.organization_id.is_(None),
                     )
-            elif is_external:
-                # External with no org: no agent is in reach.
-                query = query.where(false())
+                )
             else:
                 # Non-admin with no org: global only.
                 query = query.where(Agent.organization_id.is_(None))
@@ -441,10 +432,13 @@ class MCPToolAccessService:
 
         for agent in all_agents:
             if agent.access_level == AgentAccessLevel.AUTHENTICATED:
-                # Any authenticated user can access — except external users,
-                # who get no authenticated-tier entitlement (EXT-1).
+                # "Everyone except external users": no authenticated-tier
+                # entitlement for externals.
                 if is_superuser or not is_external:
                     accessible_agents.append(agent)
+
+            elif agent.access_level == AgentAccessLevel.EVERYONE:
+                accessible_agents.append(agent)
 
             elif agent.access_level == AgentAccessLevel.ROLE_BASED:
                 # Get role names from agent's roles
