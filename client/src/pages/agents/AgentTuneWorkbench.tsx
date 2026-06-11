@@ -163,7 +163,7 @@ export function AgentTuneWorkbench() {
 			{/* Dry-run results (full-width, appears after first run) */}
 			{dryRun ? (
 				<div
-					className="flex flex-col gap-2 rounded-md border bg-card p-4"
+					className="flex flex-col gap-2 rounded-2xl bg-card p-4 shadow-sm ring-1 ring-foreground/5 dark:ring-foreground/10"
 					data-testid="dryrun-results"
 				>
 					<div className="flex items-center justify-between">
@@ -184,7 +184,7 @@ export function AgentTuneWorkbench() {
 						{dryRun.results.map((r) => (
 							<div
 								key={r.run_id}
-								className="rounded-md border bg-muted/10 p-2 text-xs"
+								className="rounded-md bg-muted/50 p-2 text-xs ring-1 ring-foreground/5"
 							>
 								<div className="flex items-center justify-between gap-2">
 									<span className="font-mono text-[11px] text-muted-foreground">
@@ -225,7 +225,7 @@ export function AgentTuneWorkbench() {
 					) : !hasFlaggedRuns ? (
 						<div
 							className={cn(
-								"rounded-md border bg-muted/20 p-4 text-center",
+								"rounded-2xl border border-dashed p-4 text-center",
 								TYPE_MUTED,
 								TONE_MUTED,
 							)}
@@ -262,7 +262,7 @@ export function AgentTuneWorkbench() {
 					<div className={TYPE_PANE_LABEL}>Prompt editor</div>
 
 					{/* Current prompt (collapsible) */}
-					<div className="rounded-md border bg-card">
+					<div className="overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5 dark:ring-foreground/10">
 						<button
 							type="button"
 							data-testid="current-prompt-toggle"
@@ -287,7 +287,7 @@ export function AgentTuneWorkbench() {
 
 					{/* Proposed prompt */}
 					{tuningSession.isPending ? (
-						<div className="rounded-md border bg-card p-4">
+						<div className="rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5 dark:ring-foreground/10 p-4">
 							<div className={cn("mb-2 text-xs", TONE_MUTED)}>
 								Building proposal…
 							</div>
@@ -297,7 +297,7 @@ export function AgentTuneWorkbench() {
 						<div
 							data-testid="editor-empty-state"
 							className={cn(
-								"rounded-md border border-dashed bg-muted/10 p-6 text-center",
+								"rounded-2xl border border-dashed p-6 text-center",
 								TYPE_MUTED,
 								TONE_MUTED,
 							)}
@@ -308,7 +308,7 @@ export function AgentTuneWorkbench() {
 						</div>
 					) : (
 						<div className="flex flex-col gap-3">
-							<div className="rounded-md border bg-card">
+							<div className="overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5 dark:ring-foreground/10">
 								<div className="border-b px-3 py-2 text-xs font-medium">
 									Proposed prompt (editable)
 								</div>
@@ -317,7 +317,7 @@ export function AgentTuneWorkbench() {
 									value={edits}
 									onChange={(e) => setEdits(e.target.value)}
 									rows={12}
-									className="h-72 max-h-72 resize-y overflow-y-auto border-0 font-mono text-[12px] [field-sizing:fixed] focus-visible:ring-0"
+									className="h-72 max-h-72 resize-y overflow-y-auto rounded-none border-0 font-mono text-[12px] [field-sizing:fixed] focus-visible:ring-0"
 								/>
 							</div>
 							{proposal.summary ? (

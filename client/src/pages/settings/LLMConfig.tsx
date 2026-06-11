@@ -1214,7 +1214,7 @@ function EmbeddingConfigCard({
 
 				{/* Inherit-mode informational row with Override action */}
 				{inheritActive && (
-					<div className="flex flex-col gap-3 rounded-md border bg-muted/30 px-3 py-2 sm:flex-row sm:items-start sm:justify-between">
+					<div className="flex flex-col gap-3 rounded-md bg-muted/50 px-3 py-2 ring-1 ring-foreground/5 sm:flex-row sm:items-start sm:justify-between">
 						<p className="text-sm text-muted-foreground">
 							Inheriting endpoint and key from your LLM
 							provider. Pick an embedding model below — Save

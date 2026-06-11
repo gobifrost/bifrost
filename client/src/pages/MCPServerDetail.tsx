@@ -373,7 +373,7 @@ export function MCPServerDetail() {
 								<Label className="text-xs text-muted-foreground">
 									Discovery metadata
 								</Label>
-								<pre className="mt-1 text-xs bg-muted p-2 rounded max-h-72 overflow-auto">
+								<pre className="mt-1 text-xs bg-muted p-2 rounded-md ring-1 ring-foreground/5 max-h-72 overflow-auto">
 									{JSON.stringify(
 										server.discovery_metadata ?? null,
 										null,

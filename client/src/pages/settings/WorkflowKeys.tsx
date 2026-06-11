@@ -656,7 +656,7 @@ export function WorkflowKeys() {
 
 						<div className="space-y-2">
 							<Label>Usage Example</Label>
-							<div className="bg-muted p-3 rounded-md">
+							<div className="bg-muted p-3 rounded-md ring-1 ring-foreground/5">
 								<pre className="text-xs overflow-x-auto">
 									<code>{`curl -X POST ${
 										window.location.protocol

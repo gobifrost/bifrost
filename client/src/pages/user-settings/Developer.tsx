@@ -35,7 +35,7 @@ function CopyButton({ text }: { text: string }) {
 		<button
 			type="button"
 			onClick={handleCopy}
-			className="ml-auto flex-shrink-0 p-1 rounded hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
+			className="ml-auto flex-shrink-0 p-1 rounded-md hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
 			title="Copy to clipboard"
 		>
 			{copied ? (
@@ -65,7 +65,7 @@ export function DeveloperSettings() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
-					<div className="rounded-lg border bg-muted/50 p-4 space-y-3">
+					<div className="rounded-lg bg-muted/50 p-4 space-y-3 ring-1 ring-foreground/5">
 						<p className="font-medium">Quick Start</p>
 						<div className="space-y-2 text-sm">
 							<div className="flex items-start gap-2">
@@ -74,7 +74,7 @@ export function DeveloperSettings() {
 								</span>
 								<div className="flex-1">
 									<p>Install the SDK:</p>
-									<code className="flex items-center mt-1 p-2 bg-background rounded text-xs">
+									<code className="flex items-center mt-1 p-2 bg-muted rounded-md text-xs">
 										<span>pipx install --force {window.location.origin}/api/cli/download</span>
 										<CopyButton text={`pipx install --force ${window.location.origin}/api/cli/download`} />
 									</code>
@@ -86,7 +86,7 @@ export function DeveloperSettings() {
 								</span>
 								<div className="flex-1">
 									<p>Login to authenticate:</p>
-									<code className="flex items-center mt-1 p-2 bg-background rounded text-xs">
+									<code className="flex items-center mt-1 p-2 bg-muted rounded-md text-xs">
 										<span>bifrost login</span>
 										<CopyButton text="bifrost login" />
 									</code>
@@ -98,7 +98,7 @@ export function DeveloperSettings() {
 								</span>
 								<div className="flex-1">
 									<p>Run your workflow:</p>
-									<code className="flex items-center mt-1 p-2 bg-background rounded text-xs">
+									<code className="flex items-center mt-1 p-2 bg-muted rounded-md text-xs">
 										<span>bifrost run my_workflow.py</span>
 										<CopyButton text="bifrost run my_workflow.py" />
 									</code>

@@ -313,7 +313,7 @@ export function AgentRunDetailPage() {
 						<CollapsibleTrigger asChild>
 							<button
 								type="button"
-								className="flex w-full items-center gap-2 rounded-md border bg-card px-3 py-2 text-left text-xs text-muted-foreground hover:bg-accent/40"
+								className="flex w-full items-center gap-2 rounded-2xl bg-card px-3 py-2 text-left text-xs text-muted-foreground shadow-sm ring-1 ring-foreground/5 hover:bg-accent/40 dark:ring-foreground/10"
 							>
 								<ChevronDown
 									className={`h-3 w-3 transition-transform ${

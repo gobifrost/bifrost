@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
 	AlertDialog,
@@ -361,7 +362,7 @@ Keep these codes in a secure location.
 					{/* MFA enabled */}
 					{!mfaLoading && mfaStatus && mfaStatus.mfa_enabled && totpStep === "idle" && (
 						<div className="space-y-4">
-							<div className="flex items-center justify-between p-4 border rounded-lg">
+							<div className="flex items-center justify-between p-4 rounded-lg ring-1 ring-foreground/5">
 								<div className="flex items-center gap-4">
 									<div className="p-2 bg-green-100 dark:bg-green-900 rounded-full">
 										<ShieldCheck className="h-5 w-5 text-green-600 dark:text-green-400" />
@@ -538,7 +539,7 @@ Keep these codes in a secure location.
 								</AlertDescription>
 							</Alert>
 
-							<div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-lg font-mono text-sm">
+							<div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-lg font-mono text-sm ring-1 ring-foreground/5">
 								{recoveryCodes.map((code, i) => (
 									<div key={i} className="text-center py-1">
 										{code}
@@ -566,14 +567,12 @@ Keep these codes in a secure location.
 							</div>
 
 							<div className="flex items-center space-x-2">
-								<input
-									type="checkbox"
+								<Checkbox
 									id="savedCodes"
 									checked={recoveryCodesSaved}
-									onChange={(e) =>
-										setRecoveryCodesSaved(e.target.checked)
+									onCheckedChange={(checked) =>
+										setRecoveryCodesSaved(checked === true)
 									}
-									className="rounded border-gray-300"
 								/>
 								<Label
 									htmlFor="savedCodes"
@@ -680,7 +679,7 @@ Keep these codes in a secure location.
 									{passkeys.map((passkey) => (
 										<div
 											key={passkey.id}
-											className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+											className="flex items-center justify-between p-4 rounded-lg ring-1 ring-foreground/5 hover:bg-muted/50 transition-colors"
 										>
 											<div className="flex items-center gap-4">
 												{getDeviceIcon(passkey.device_type)}

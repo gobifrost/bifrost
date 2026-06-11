@@ -11,6 +11,7 @@ import { getOAuthProviders, hashOAuthState, initOAuth } from "@/services/auth";
 import { supportsPasskeys } from "@/services/passkeys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
 	Card,
@@ -555,15 +556,13 @@ export function Login() {
 								</div>
 
 								<div className="flex items-center space-x-2">
-									<input
-										type="checkbox"
-										id="trustDevice"
-										checked={trustDevice}
-										onChange={(e) =>
-											setTrustDevice(e.target.checked)
-										}
-										className="rounded border-gray-300"
-									/>
+									<Checkbox
+									id="trustDevice"
+									checked={trustDevice}
+									onCheckedChange={(checked) =>
+										setTrustDevice(checked === true)
+									}
+								/>
 									<Label
 										htmlFor="trustDevice"
 										className="text-sm font-normal"

@@ -46,7 +46,7 @@ export function ExecutionRow({ execution }: ExecutionRowProps) {
 			exit={{ opacity: 0, x: 20 }}
 			transition={{ duration: 0.2 }}
 			className={cn(
-				"flex items-center justify-between py-2 px-3 rounded",
+				"flex items-center justify-between py-2 px-3 rounded-lg",
 				execution.status === "STUCK" && "bg-red-50 dark:bg-red-950/30"
 			)}
 		>

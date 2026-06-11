@@ -541,7 +541,7 @@ export function FormBuilder() {
 						</DialogDescription>
 					</DialogHeader>
 					<div className="space-y-4">
-						<div className="p-4 bg-muted rounded-md">
+						<div className="p-4 bg-muted rounded-md ring-1 ring-foreground/5">
 							<pre className="text-xs overflow-auto max-h-[400px]">
 								{JSON.stringify(workflowResults, null, 2)}
 							</pre>

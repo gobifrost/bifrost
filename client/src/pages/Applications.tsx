@@ -265,7 +265,7 @@ export function Applications() {
 											defaultTarget();
 										}
 									}}
-									className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[10px] border bg-card transition-colors hover:border-border/80 hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5 transition-all hover:-translate-y-px hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:ring-foreground/10 dark:hover:ring-foreground/15"
 								>
 									{/* Header — logo + name + admin toolbar */}
 									<div className="border-b px-4 py-3">

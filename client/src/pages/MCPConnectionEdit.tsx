@@ -623,7 +623,7 @@ export function MCPConnectionEdit() {
 							 * tokens once, instead of slapping a misleading
 							 * badge on every row.
 							 */}
-							<div className="text-xs text-muted-foreground border-l-2 border-blue-500 bg-blue-500/5 px-3 py-2 rounded-sm">
+							<div className="text-xs text-muted-foreground border-l-2 border-blue-500 bg-blue-500/5 px-3 py-2 rounded-md">
 								{isClientCredentials ? (
 									<>
 										<strong>Server-to-server auth:</strong>{" "}

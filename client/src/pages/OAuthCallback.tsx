@@ -267,7 +267,7 @@ export function OAuthCallback() {
 					{/* Success state */}
 					{status === "success" && capturedEntityId && (
 						<>
-							<div className="rounded-md border bg-muted/30 p-3 mb-4">
+							<div className="rounded-md bg-muted/50 p-3 mb-4 ring-1 ring-foreground/5">
 								<p className="text-xs text-muted-foreground mb-1">
 									Captured Entity ID
 								</p>

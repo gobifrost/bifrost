@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
 	DataTable,
 	DataTableBody,
@@ -753,7 +754,7 @@ function KnowledgeTab({ roleId }: { roleId: string }) {
 					))}
 				</div>
 			) : entries.length === 0 ? (
-				<div className="text-sm text-muted-foreground py-8 text-center border rounded">
+				<div className="text-sm text-muted-foreground py-8 text-center rounded-2xl border border-dashed">
 					No knowledge namespaces assigned to this role yet.
 				</div>
 			) : (
@@ -802,7 +803,7 @@ function KnowledgeTab({ roleId }: { roleId: string }) {
 			)}
 
 			{effective.size > 0 && (
-				<div className="sticky bottom-2 flex items-center gap-3 rounded-lg border bg-popover px-4 py-2 shadow-lg">
+				<div className="sticky bottom-2 flex items-center gap-3 rounded-2xl bg-popover px-4 py-2 shadow-lg ring-1 ring-foreground/5 dark:ring-foreground/10">
 					<span className="text-sm font-medium">
 						{effective.size} selected
 					</span>
@@ -898,12 +899,11 @@ function KnowledgeAssignDrawer({
 				<div className="px-4 space-y-3">
 					<label className="block text-sm">
 						<span className="block mb-1 text-muted-foreground">Namespace</span>
-						<input
+						<Input
 							type="text"
 							value={namespace}
 							onChange={(e) => setNamespace(e.target.value)}
 							placeholder="e.g. customer-docs"
-							className="w-full border rounded px-3 py-2 text-sm bg-background"
 						/>
 					</label>
 
@@ -912,7 +912,7 @@ function KnowledgeAssignDrawer({
 						<select
 							value={orgId}
 							onChange={(e) => setOrgId(e.target.value)}
-							className="w-full border rounded px-3 py-2 text-sm bg-background"
+							className="h-8 w-full rounded-2xl border border-transparent bg-input/50 px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
 						>
 							<option value="global">All organizations</option>
 							{(orgs ?? []).map((o) => (

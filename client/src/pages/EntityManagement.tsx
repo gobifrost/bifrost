@@ -742,7 +742,7 @@ export function EntityManagement() {
 				<div className="lg:col-span-2 flex flex-col min-h-0">
 					{/* Relationship Filter Banner */}
 					{relationshipFilter && (
-						<div className="flex items-center gap-2 mb-4 p-3 rounded-lg border bg-accent/50">
+						<div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-accent/50 ring-1 ring-foreground/5">
 							<Network className="h-4 w-4 text-primary" />
 							<span className="text-sm">
 								Related to: <strong>{relationshipFilter.entityName}</strong>

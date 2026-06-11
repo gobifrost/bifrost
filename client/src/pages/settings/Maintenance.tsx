@@ -361,7 +361,7 @@ export function Maintenance() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
-					<div className="rounded-md border divide-y">
+					<div className="rounded-md ring-1 ring-foreground/5 divide-y">
 						{actions.map((action) => {
 							const Icon = action.icon;
 							const isRunning = runningAction === action.id;
@@ -486,7 +486,7 @@ function DocsIndexResults({ result }: { result: DocsIndexResponse }) {
 			{/* Stats */}
 			{isSuccess && (
 				<div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-					<div className="rounded-lg border bg-muted/50 p-3 text-center">
+					<div className="rounded-lg bg-muted/50 p-3 text-center ring-1 ring-foreground/5">
 						<div className="text-2xl font-bold">
 							{result.files_indexed}
 						</div>
@@ -494,7 +494,7 @@ function DocsIndexResults({ result }: { result: DocsIndexResponse }) {
 							Indexed
 						</div>
 					</div>
-					<div className="rounded-lg border bg-muted/50 p-3 text-center">
+					<div className="rounded-lg bg-muted/50 p-3 text-center ring-1 ring-foreground/5">
 						<div className="text-2xl font-bold">
 							{result.files_unchanged}
 						</div>
@@ -502,7 +502,7 @@ function DocsIndexResults({ result }: { result: DocsIndexResponse }) {
 							Unchanged
 						</div>
 					</div>
-					<div className="rounded-lg border bg-muted/50 p-3 text-center">
+					<div className="rounded-lg bg-muted/50 p-3 text-center ring-1 ring-foreground/5">
 						<div className="text-2xl font-bold">
 							{result.files_deleted}
 						</div>
@@ -510,7 +510,7 @@ function DocsIndexResults({ result }: { result: DocsIndexResponse }) {
 							Deleted
 						</div>
 					</div>
-					<div className="rounded-lg border bg-muted/50 p-3 text-center">
+					<div className="rounded-lg bg-muted/50 p-3 text-center ring-1 ring-foreground/5">
 						<div className="text-2xl font-bold">
 							{formatDuration(result.duration_ms)}
 						</div>
@@ -598,7 +598,7 @@ function AppDepScanResults({ result }: { result: AppDependencyScanResponse }) {
 					<h4 className="text-sm font-medium text-muted-foreground">
 						Missing workflow references:
 					</h4>
-					<div className="max-h-64 overflow-y-auto rounded-md border bg-muted/50 p-3 space-y-3">
+					<div className="max-h-64 overflow-y-auto rounded-md bg-muted/50 p-3 space-y-3 ring-1 ring-foreground/5">
 						{Object.entries(issuesByApp).map(
 							([appSlug, { app_name, issues }]) => (
 								<div key={appSlug} className="space-y-1">

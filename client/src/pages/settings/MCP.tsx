@@ -211,7 +211,7 @@ export function MCP() {
 			)}
 
 			{/* MCP Server URL */}
-			<div className="rounded-lg border bg-muted/50 p-3">
+			<div className="rounded-lg bg-muted/50 p-3 ring-1 ring-foreground/5">
 				<div className="flex items-center justify-between">
 					<div>
 						<p className="text-sm font-medium">MCP Server URL</p>

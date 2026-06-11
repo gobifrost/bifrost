@@ -351,7 +351,7 @@ function RoleRow({
 								<TooltipTrigger asChild>
 									<Link
 										to={`/roles/${role.id}/${key}`}
-										className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-muted hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										aria-label={`${count} ${label.toLowerCase()} — open ${label.toLowerCase()} tab`}
 									>
 										<Icon className="h-3 w-3" />

@@ -11,6 +11,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 // because it handles the MFA setup flow before full authentication is complete
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
 	Card,
@@ -421,7 +422,7 @@ Keep these codes in a secure location.
 								</AlertDescription>
 							</Alert>
 
-							<div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-lg font-mono text-sm">
+							<div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-lg font-mono text-sm ring-1 ring-foreground/5">
 								{recoveryCodes.map((code, i) => (
 									<div key={i} className="text-center py-1">
 										{code}
@@ -449,14 +450,12 @@ Keep these codes in a secure location.
 							</div>
 
 							<div className="flex items-center space-x-2">
-								<input
-									type="checkbox"
+								<Checkbox
 									id="savedCodes"
 									checked={recoveryCodesSaved}
-									onChange={(e) =>
-										setRecoveryCodesSaved(e.target.checked)
+									onCheckedChange={(checked) =>
+										setRecoveryCodesSaved(checked === true)
 									}
-									className="rounded border-gray-300"
 								/>
 								<Label
 									htmlFor="savedCodes"

@@ -373,7 +373,7 @@ export function Branding() {
 						<div>
 							<Label>Preview</Label>
 							<div
-								className="h-10 w-20 rounded border"
+								className="h-10 w-20 rounded-md ring-1 ring-foreground/10"
 								style={{ backgroundColor: primaryColor }}
 							/>
 						</div>

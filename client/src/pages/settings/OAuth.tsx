@@ -193,7 +193,7 @@ function ProviderCard({
 				</CardHeader>
 				<CardContent className="space-y-4">
 					{/* Callback URL */}
-					<div className="rounded-lg border bg-muted/50 p-3">
+					<div className="rounded-lg bg-muted/50 p-3 ring-1 ring-foreground/5">
 						<div className="flex items-center justify-between">
 							<div>
 								<p className="text-sm font-medium">
@@ -215,7 +215,7 @@ function ProviderCard({
 
 					{/* Current Configuration (when configured and not editing) */}
 					{configured && !isEditing && (
-						<div className="space-y-3 rounded-lg border p-4">
+						<div className="space-y-3 rounded-lg p-4 ring-1 ring-foreground/5">
 							<div className="grid gap-2">
 								<div className="flex items-center justify-between text-sm">
 									<span className="text-muted-foreground">

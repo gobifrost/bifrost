@@ -294,17 +294,17 @@ export function FleetPage() {
 						</div>
 					)}
 				</div>
-				<div className="inline-flex items-center overflow-hidden rounded-md border">
+				<div className="inline-flex items-center rounded-2xl bg-muted p-[3px]">
 					<button
 						type="button"
 						aria-label="Grid view"
 						aria-pressed={view === "grid"}
 						onClick={() => setView("grid")}
 						className={cn(
-							"inline-flex items-center gap-1.5 border-r px-3 py-1.5 text-[12.5px] transition-colors",
+							"inline-flex items-center gap-1.5 rounded-2xl px-3 py-1 text-[12.5px] transition-colors",
 							view === "grid"
-								? "bg-card text-foreground"
-								: "text-muted-foreground hover:bg-accent/40",
+								? "bg-card text-foreground shadow-sm"
+								: "text-muted-foreground hover:text-foreground",
 						)}
 					>
 						<LayoutGrid className="h-3 w-3" /> Grid
@@ -315,10 +315,10 @@ export function FleetPage() {
 						aria-pressed={view === "table"}
 						onClick={() => setView("table")}
 						className={cn(
-							"inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] transition-colors",
+							"inline-flex items-center gap-1.5 rounded-2xl px-3 py-1 text-[12.5px] transition-colors",
 							view === "table"
-								? "bg-card text-foreground"
-								: "text-muted-foreground hover:bg-accent/40",
+								? "bg-card text-foreground shadow-sm"
+								: "text-muted-foreground hover:text-foreground",
 						)}
 					>
 						<List className="h-3 w-3" /> Table
@@ -569,7 +569,7 @@ function McpUrlBadge({ agentId }: { agentId: string }) {
 			title={url}
 			aria-label="Copy agent MCP URL"
 			data-testid="agent-mcp-copy"
-			className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+			className="inline-flex items-center gap-1 rounded-2xl border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
 		>
 			MCP
 			<Copy className="h-3 w-3" />

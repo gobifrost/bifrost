@@ -466,17 +466,17 @@ export function Config() {
 								</strong>
 								?
 							</p>
-							<div className="bg-muted p-3 rounded-md border border-border">
+							<div className="bg-muted/50 p-3 rounded-md ring-1 ring-foreground/5">
 								<p className="text-sm font-medium text-foreground mb-2">
 									Before deleting:
 								</p>
 								<p className="text-sm">
 									We recommend searching for{" "}
-									<code className="bg-background px-1.5 py-0.5 rounded text-xs">
+									<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
 										get_config('{configToDelete?.key}')
 									</code>{" "}
 									in your{" "}
-									<code className="bg-background px-1.5 py-0.5 rounded text-xs">
+									<code className="bg-muted px-1.5 py-0.5 rounded text-xs">
 										@workflows/workspace/
 									</code>{" "}
 									repo to confirm it isn't being used.
