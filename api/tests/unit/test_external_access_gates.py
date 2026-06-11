@@ -222,6 +222,141 @@ def _is_superuser_value(node: ast.Call) -> ast.expr | None:
     return None
 
 
+# A literal ``is_superuser=True`` is sentinel trust. The lint above exempts it
+# unconditionally — which is EXACTLY how OPEN-A/OPEN-B slipped: the SDK
+# endpoints hardcoded ``is_superuser=True`` on a PLAIN ``CurrentUser`` route,
+# so an external caller inherited the full cascade with no red build. This
+# allow-list re-closes that hole: in a USER-reachable path (a router authing
+# CurrentUser/CurrentActiveUser/Context, or an MCP tool), a literal
+# ``is_superuser=True`` org-scoped repo construction must EITHER pass
+# ``is_external`` alongside, OR be listed here with a verified reason naming
+# the actual gate (a superuser-only route, or method-level external handling).
+# Engine/sentinel/job paths are NOT user-reachable and never reach this lint.
+#
+# Key is ``"<relative/path>::<function>"``.
+_LITERAL_SUPERUSER_USER_REACHABLE_ALLOWLIST: dict[str, str] = {
+    # config router: every mutating/reading endpoint is CurrentSuperuser-gated
+    # (src/routers/config.py imports CurrentSuperuser; verified per-endpoint).
+    "routers/config.py::get_config": "CurrentSuperuser route",
+    "routers/config.py::set_config": "CurrentSuperuser route",
+    "routers/config.py::update_config": "CurrentSuperuser route",
+    "routers/config.py::delete_config": "CurrentSuperuser route",
+    # cli SDK config: external handling lives in the METHOD arg
+    # (merged_for_sdk(external=current_user.is_external)) — EXT-1 NEW-1 — not
+    # in the repo construction; the repo stays sentinel for decryption.
+    "routers/cli.py::cli_get_config": "external gated via merged_for_sdk(external=...) (NEW-1)",
+    "routers/cli.py::cli_list_config": "external gated via merged_for_sdk(external=...) (NEW-1)",
+    # cli SDK integrations: OAuth token resolution is an engine/SDK-or-superuser
+    # surface (_resolve_sdk_org_id gates the org; tokens are not org-cascade
+    # user data an external enumerates). Sentinel by call-site.
+    "routers/cli.py::sdk_integrations_get": "SDK/engine OAuth token resolve (org gated by _resolve_sdk_org_id)",
+    "routers/cli.py::sdk_integrations_refresh_token": "SDK/engine OAuth token refresh (org gated)",
+    # tables router: create/list/update/delete are all CurrentSuperuser-gated.
+    "routers/tables.py::create_table": "CurrentSuperuser route",
+    "routers/tables.py::list_tables": "CurrentSuperuser route",
+    "routers/tables.py::update_table": "CurrentSuperuser route",
+    "routers/tables.py::delete_table": "CurrentSuperuser route",
+    # mcp_servers router: server templates are platform-admin only.
+    "routers/mcp_servers.py::update_mcp_server": "CurrentSuperuser route",
+    "routers/mcp_servers.py::delete_mcp_server": "CurrentSuperuser route",
+    # forms execute: the workflow repo is built sentinel ON THE FORM'S BEHALF
+    # after the form's own access gate (which DOES carry is_external) already
+    # authorized the caller — forms intentionally let users run workflows they
+    # have no direct role on. Anchored to the form's org.
+    "routers/forms.py::execute_form": "form access gate (is_external) authorizes; wf repo resolves on form's behalf",
+    "routers/forms.py::execute_startup_workflow": "form access gate (is_external) authorizes; launch wf resolves on form's behalf",
+    # oauth_connections router: every endpoint is CurrentSuperuser-gated.
+    "routers/oauth_connections.py::get_connection": "CurrentSuperuser route",
+    "routers/oauth_connections.py::create_connection": "CurrentSuperuser route",
+    "routers/oauth_connections.py::update_connection": "CurrentSuperuser route",
+    "routers/oauth_connections.py::delete_connection": "CurrentSuperuser route",
+    "routers/oauth_connections.py::authorize_connection": "CurrentSuperuser route",
+    "routers/oauth_connections.py::cancel_authorization": "CurrentSuperuser route",
+    "routers/oauth_connections.py::refresh_token": "CurrentSuperuser route",
+    "routers/oauth_connections.py::oauth_callback": "CurrentSuperuser route",
+    "routers/oauth_connections.py::get_credentials": "CurrentSuperuser route",
+    # MCP knowledge search: external handling is in the METHOD arg
+    # (search(fallback=not is_external)); repo stays sentinel for embedding.
+    "services/mcp_server/tools/knowledge.py::search_knowledge": "external gated via search(fallback=not is_external) (LEAK #6)",
+    # MCP list_forms: the is_superuser=True branch is the is_platform_admin
+    # arm (admins see all); the non-admin arms construct with is_superuser=False
+    # and the FormRepository cascade honors external-ness there.
+    "services/mcp_server/tools/forms.py::list_forms": "is_superuser=True branch is the platform-admin arm only",
+}
+
+_USER_REACHABLE_IDENTS = {"CurrentActiveUser", "CurrentUser", "Context"}
+
+
+def _enclosing_function_names(tree: ast.Module) -> dict[int, str]:
+    """Map a Call node's id() to the name of the function lexically enclosing
+    it (best-effort — nested defs resolve to the innermost)."""
+    out: dict[int, str] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call):
+                    out[id(node)] = fn.name
+    return out
+
+
+def test_literal_superuser_repo_in_user_path_requires_external_or_allowlist():
+    """A literal ``is_superuser=True`` org-scoped repo construction is sentinel
+    trust. In a USER-reachable router/service path it must NOT be auto-exempt —
+    that auto-exemption is exactly what let OPEN-A/OPEN-B (SDK endpoints
+    hardcoding ``is_superuser=True`` on a plain ``CurrentUser`` route) ship a
+    cross-tenant leak with a green build.
+
+    Such a site must either pass ``is_external`` alongside, OR be listed in
+    ``_LITERAL_SUPERUSER_USER_REACHABLE_ALLOWLIST`` with a verified reason
+    (a superuser-only route, or method-level external handling).
+    """
+    repo_names = _org_scoped_repo_class_names()
+    roots = [API_SRC / "routers", API_SRC / "services"]
+
+    violations: list[str] = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            rel = str(path.relative_to(API_SRC)).replace("\\", "/")
+            text = path.read_text()
+            tree = ast.parse(text)
+            idents = _identifiers_in_module(tree)
+            is_mcp_tool = "services/mcp_server/tools/" in rel
+            if not (_USER_REACHABLE_IDENTS & idents or is_mcp_tool):
+                continue
+            enclosing = _enclosing_function_names(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                name = (
+                    fn.id
+                    if isinstance(fn, ast.Name)
+                    else fn.attr if isinstance(fn, ast.Attribute) else None
+                )
+                if name not in repo_names:
+                    continue
+                su = _is_superuser_value(node)
+                # Only LITERAL True is sentinel trust; literal False / dynamic
+                # are handled by the principal-derived lint above.
+                if not (isinstance(su, ast.Constant) and su.value is True):
+                    continue
+                if _is_external_value_present(node):
+                    continue
+                key = f"{rel}::{enclosing.get(id(node), '?')}"
+                if key in _LITERAL_SUPERUSER_USER_REACHABLE_ALLOWLIST:
+                    continue
+                violations.append(f"{key} (line {node.lineno}) — {name}")
+
+    assert not violations, (
+        "A literal is_superuser=True org-scoped repo construction sits on a "
+        "USER-reachable path with no is_external alongside and is not "
+        "allow-listed. This is the OPEN-A/OPEN-B class — an external caller "
+        "would inherit the full cascade. Pass is_external from the principal, "
+        "or add the site to _LITERAL_SUPERUSER_USER_REACHABLE_ALLOWLIST with a "
+        "verified reason naming its actual gate:\n  " + "\n  ".join(violations)
+    )
+
+
 def test_principal_derived_repo_constructions_pass_is_external():
     """Every org-scoped repo construction with a principal-derived
     ``is_superuser`` must also pass ``is_external`` — whether the args are
