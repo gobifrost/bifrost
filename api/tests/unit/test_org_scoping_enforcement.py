@@ -124,7 +124,12 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/solutions.py', 'SolutionORM.organization_id == sol.organization_id', 'uninstall: find OTHER live installs declaring the same key in this org to skip stamping a shared value (NOT cascade)'),
     ('routers/solutions.py', 'else SolutionORM.organization_id.is_(None)', 'uninstall: global-scope variant of the same shared-key guard (NOT cascade)'),
     ('routers/tables.py', 'CustomClaimORM.organization_id == organization_id', 'tables custom claim cross-ref; phase 6 migrates'),
-    ('routers/tables.py', 'or_(Table.organization_id == target_org_id, Table.organization_id.is_(None))', 'X-Bifrost-App app-scoped solution table lookup (install-scoped, NOT org cascade); from solution branch'),
+    # X-Bifrost-App app-scoped solution table lookup (install-scoped, NOT org
+    # cascade). EXT-1 NEW-3 split the cascade into an external-aware branch:
+    # external principals get the org-only arm (no IS NULL). All install-scoped.
+    ('routers/tables.py', 'stmt = stmt.where(Table.organization_id == target_org_id)', 'NEW-3 external branch: install-scoped solution table lookup (org-only)'),
+    ('routers/tables.py', 'Table.organization_id == target_org_id,', 'NEW-3 non-external org arm: install-scoped solution table lookup'),
+    ('routers/tables.py', 'Table.organization_id.is_(None),', 'NEW-3 non-external global arm: install-scoped solution table lookup'),
     ('routers/usage_reports.py', 'base_conditions.append(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'exec_conditions.append(Execution.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),

@@ -436,6 +436,80 @@ class TestExternalUserGlobalKnowledge:
 
 
 @pytest.fixture(scope="module")
+def config_canaries(e2e_client, platform_admin, org1):
+    """A GLOBAL secret config + an org config, both under a unique key, so the
+    SDK/CLI config-get path (EXT-1 NEW-1) can be exercised end-to-end."""
+    gkey = f"ext_global_secret_{SUFFIX}"
+    okey = f"ext_org_val_{SUFFIX}"
+    g = e2e_client.post(
+        "/api/config",
+        headers=platform_admin.headers,
+        json={"key": gkey, "value": "GLOBAL-SECRET", "type": "secret", "organization_id": None},
+    )
+    assert g.status_code in (200, 201), g.text
+    o = e2e_client.post(
+        "/api/config",
+        headers=platform_admin.headers,
+        json={"key": okey, "value": "org-value", "type": "string", "organization_id": org1["id"]},
+    )
+    assert o.status_code in (200, 201), o.text
+    yield {"global_key": gkey, "org_key": okey}
+    e2e_client.request(
+        "DELETE", "/api/sdk/config/delete",
+        headers=platform_admin.headers, json={"key": gkey, "scope": "global"},
+    )
+    e2e_client.request(
+        "DELETE", "/api/sdk/config/delete",
+        headers=platform_admin.headers, json={"key": okey, "scope": org1["id"]},
+    )
+
+
+class TestExternalUserConfigPath:
+    """EXT-1 NEW-1 (user-facing): a direct EXTERNAL user calling the SDK/CLI
+    config-get endpoint gets ONLY their org's config on default scope (no global
+    union — so a global SECRET is never returned/decrypted), and is 403'd if
+    they explicitly ask for global or a foreign org (the _resolve_sdk_org_id
+    gate). The engine-sentinel/workflow path is unaffected (separate principal)."""
+
+    def _get(self, e2e_client, user, *, key, scope=None):
+        body = {"key": key}
+        if scope is not None:
+            body["scope"] = scope
+        return e2e_client.post("/api/sdk/config/get", headers=user.headers, json=body)
+
+    def test_external_default_scope_excludes_global_secret(
+        self, e2e_client, external_user, config_canaries
+    ):
+        resp = self._get(e2e_client, external_user, key=config_canaries["global_key"])
+        # Global config is not in the external user's org-only view → None/404.
+        assert resp.status_code in (200, 404), resp.text
+        if resp.status_code == 200:
+            assert resp.json() is None, (
+                "external user must NOT receive the global secret value"
+            )
+
+    def test_external_explicit_global_scope_is_forbidden(
+        self, e2e_client, external_user, config_canaries
+    ):
+        resp = self._get(
+            e2e_client, external_user, key=config_canaries["global_key"], scope="global"
+        )
+        assert resp.status_code == 403, (
+            f"external user requesting global scope must be 403'd: {resp.status_code}"
+        )
+
+    def test_normal_user_default_scope_sees_global(
+        self, e2e_client, org1_user, config_canaries
+    ):
+        resp = self._get(e2e_client, org1_user, key=config_canaries["global_key"])
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body is not None and body.get("value") == "GLOBAL-SECRET", (
+            "normal org user's default-scope read still unions global config"
+        )
+
+
+@pytest.fixture(scope="module")
 def global_role_agent(e2e_client, platform_admin, global_tool, portal_role):
     """A GLOBAL role_based agent, assigned to portal_role (which the external
     user holds), exposing the global tool workflow. Pre-fix an external user

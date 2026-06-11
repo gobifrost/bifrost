@@ -70,19 +70,13 @@ class TestMergedForSdkExternal:
         where = _executed_where(session)
         assert "organization_id IS NULL" in where
 
-    async def test_external_cache_key_is_namespaced(self, session):
-        """The external view must NOT read the shared org cache key (which is a
-        global-merged view) — it uses a distinct, external-only key."""
+    async def test_external_read_bypasses_cache(self, session):
+        """The external view must NOT read OR write the shared org cache key
+        (which holds the global-merged view) — external reads skip the cache
+        entirely and go straight to the org-only DB query."""
         org = uuid4()
-        seen_keys: list[str] = []
-
         redis = AsyncMock()
-
-        async def _hgetall(key):
-            seen_keys.append(key)
-            return {}
-
-        redis.hgetall = _hgetall
+        redis.hgetall = AsyncMock(return_value={})
         redis.hset = AsyncMock()
         redis.expire = AsyncMock()
 
@@ -95,7 +89,22 @@ class TestMergedForSdkExternal:
         ):
             await repo.merged_for_sdk()
 
-        assert seen_keys, "expected a cache read"
-        assert any("external" in k for k in seen_keys), (
-            f"external config cache key must be namespaced; got {seen_keys}"
-        )
+        redis.hgetall.assert_not_awaited()
+        redis.hset.assert_not_awaited()
+
+    async def test_normal_read_uses_cache(self, session):
+        """A non-external read still reads the cache (regression guard)."""
+        org = uuid4()
+        redis = AsyncMock()
+        redis.hgetall = AsyncMock(return_value={})
+        redis.hset = AsyncMock()
+        redis.expire = AsyncMock()
+
+        repo = ConfigRepository(session, org_id=org, is_superuser=True)
+        with patch(
+            "src.core.cache.redis_client.get_shared_redis",
+            new=AsyncMock(return_value=redis),
+        ):
+            await repo.merged_for_sdk()
+
+        redis.hgetall.assert_awaited()

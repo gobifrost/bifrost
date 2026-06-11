@@ -87,14 +87,7 @@ async def upsert_config(
             # re-fetches from DB and re-merges. NEVER hset a single field
             # into a merged hash — that's the partial-hash bug.
             versioned_hash = await config_hash_key_versioned(r, org_id)
-            # Drop BOTH the standard org-merged hash and the external-only
-            # sibling (EXT-1 NEW-1) so an org-config write is reflected for
-            # external portal users too.
-            external_hash = await config_hash_key_versioned(
-                r, org_id, external=True
-            )
             await r.delete(versioned_hash)
-            await r.delete(external_hash)
             await r.delete(config_key(org_id, key))
             logger.debug(
                 f"Org-scoped config upsert invalidated merged hash: "
@@ -137,12 +130,7 @@ async def invalidate_config(org_id: str | None, key: str | None = None) -> None:
 
         if org_id is not None and org_id != "GLOBAL":
             versioned_hash = await config_hash_key_versioned(r, org_id)
-            # External-only sibling too (EXT-1 NEW-1).
-            external_hash = await config_hash_key_versioned(
-                r, org_id, external=True
-            )
             await r.delete(versioned_hash)
-            await r.delete(external_hash)
             if key:
                 await r.delete(config_key(org_id, key))
         else:

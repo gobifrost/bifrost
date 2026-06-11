@@ -121,13 +121,23 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
     async def merged_for_sdk(self, *, external: bool | None = None) -> dict[str, Any]:
         """Return the full merged config dict for this scope.
 
-        ``external`` (EXT-1 NEW-1): when the calling principal is EXTERNAL,
-        drop the global (organization_id IS NULL) tier entirely and read/write a
-        SEPARATE org-only cache key, so an external portal user can never read
-        (and the CLI endpoint can never decrypt) a global secret. Defaults to
-        ``self.is_external`` when not passed explicitly. It is a distinct signal
-        from ``is_superuser`` — the CLI passes ``is_superuser=True`` for
-        role-bypass (sentinel trust), which is orthogonal to external-ness.
+        ``external`` (EXT-1 NEW-1): when the calling principal is a direct,
+        EXTERNAL (non-bypass) USER — e.g. a portal user hitting ``bifrost config
+        get`` / ``/api/sdk/config/get`` directly — drop the global
+        (organization_id IS NULL) tier so they can't read (nor the endpoint
+        decrypt) a global secret. Defaults to ``self.is_external``.
+
+        This is the USER-facing restriction ONLY. The ENGINE/sentinel path
+        (workflow execution, embed-app sessions — ``is_superuser`` sentinel,
+        ``is_external`` False) keeps the full org+global merge UNCHANGED: a
+        workflow legitimately reads global config, and an external user's whole
+        portal runs on those workflows. The CLI/SDK endpoints distinguish by
+        passing ``external=current_user.is_external`` (False for the sentinel).
+
+        External reads BYPASS the cache entirely — they're a rare,
+        portal-admin-only path, and a separate cache namespace would add
+        invalidation complexity for no benefit. Only the (cached) org+global
+        view is ever stored under the org key.
         """
         if external is None:
             external = self.is_external
@@ -142,24 +152,25 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         if external and self.org_id is None:
             return {}
 
-        try:
-            redis = await get_shared_redis()
-            hash_key = await config_hash_key_versioned(
-                redis, org_id_str, external=external
-            )
-            cached = await redis.hgetall(hash_key)  # type: ignore[misc]
-            if cached:
-                out: dict[str, Any] = {}
-                for key, value in cached.items():
-                    key_str = key.decode() if isinstance(key, bytes) else key
-                    value_str = value.decode() if isinstance(value, bytes) else value
-                    try:
-                        out[key_str] = json.loads(value_str)
-                    except json.JSONDecodeError:
-                        out[key_str] = {"value": value_str, "type": "string"}
-                return out
-        except Exception as e:
-            logger.warning(f"Config cache read failed: {e}")
+        # External reads skip the cache (the cached org key holds the
+        # global-merged view — reusing it would re-leak global).
+        if not external:
+            try:
+                redis = await get_shared_redis()
+                hash_key = await config_hash_key_versioned(redis, org_id_str)
+                cached = await redis.hgetall(hash_key)  # type: ignore[misc]
+                if cached:
+                    out: dict[str, Any] = {}
+                    for key, value in cached.items():
+                        key_str = key.decode() if isinstance(key, bytes) else key
+                        value_str = value.decode() if isinstance(value, bytes) else value
+                        try:
+                            out[key_str] = json.loads(value_str)
+                        except json.JSONDecodeError:
+                            out[key_str] = {"value": value_str, "type": "string"}
+                    return out
+            except Exception as e:
+                logger.warning(f"Config cache read failed: {e}")
 
         config_dict: dict[str, Any] = {}
 
@@ -205,12 +216,11 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
                     else "string",
                 }
 
-        if config_dict:
+        # Only the org+global (non-external) view is cached under the org key.
+        if config_dict and not external:
             try:
                 redis = await get_shared_redis()
-                hash_key = await config_hash_key_versioned(
-                    redis, org_id_str, external=external
-                )
+                hash_key = await config_hash_key_versioned(redis, org_id_str)
                 mapping = {key: json.dumps(value) for key, value in config_dict.items()}
                 await redis.hset(hash_key, mapping=mapping)  # type: ignore[misc]
                 await redis.expire(hash_key, TTL_CONFIG)
