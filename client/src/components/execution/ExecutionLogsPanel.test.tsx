@@ -1,14 +1,14 @@
 /**
  * Component tests for ExecutionLogsPanel.
  *
- * The panel renders three distinct "modes" (running / complete / unknown)
- * and an embedded variant, each with its own empty-state copy and copy-
- * button affordance. We cover:
+ * The panel is a single framed "inspector" surface (header band + log list)
+ * whose empty-state copy varies by status bucket (running / complete /
+ * unknown). We cover:
  *   - empty-state copy per status bucket
  *   - logs render in order (including order preservation when logs are
  *     appended via re-render, simulating streaming updates)
  *   - the copy button writes a formatted blob to the clipboard
- *   - the embedded variant shows a Live badge while streaming is running
+ *   - the Live badge shows while streaming is running and connected
  */
 
 import { describe, it, expect, vi, beforeEach, MockInstance } from "vitest";
@@ -150,18 +150,17 @@ describe("ExecutionLogsPanel — copy button", () => {
 	});
 });
 
-describe("ExecutionLogsPanel — embedded variant", () => {
+describe("ExecutionLogsPanel — live streaming header", () => {
 	it("renders a Live badge while streaming is connected", () => {
 		renderWithProviders(
 			<ExecutionLogsPanel
 				status="Running"
 				isConnected={true}
-				embedded={true}
 				logs={[log("INFO", "streaming")]}
 			/>,
 		);
 		expect(screen.getByText(/live/i)).toBeInTheDocument();
-		// The embedded header labels the region with "Logs".
+		// The header band labels the region with "Logs".
 		const header = screen.getByText("Logs");
 		expect(header).toBeInTheDocument();
 		// And the streamed message body is present.
@@ -175,7 +174,6 @@ describe("ExecutionLogsPanel — embedded variant", () => {
 			<ExecutionLogsPanel
 				status="Running"
 				isConnected={false}
-				embedded={true}
 				logs={[]}
 			/>,
 		);
@@ -221,12 +219,11 @@ describe("ExecutionLogsPanel — traceback coalescing", () => {
 	});
 });
 
-describe("ExecutionLogsPanel — embedded affordances", () => {
-	it("shows a copy button and line count in the embedded header", async () => {
+describe("ExecutionLogsPanel — header affordances", () => {
+	it("shows a copy button and line count in the header band", async () => {
 		const { user } = renderWithProviders(
 			<ExecutionLogsPanel
 				status="Success"
-				embedded
 				logs={[log("INFO", "one"), log("INFO", "two")]}
 			/>,
 		);

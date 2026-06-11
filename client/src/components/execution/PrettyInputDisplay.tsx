@@ -132,25 +132,26 @@ export function PrettyInputDisplay({
 	// Tree view
 	if (view === "tree") {
 		return (
-			<div className="space-y-4">
+			<div className="space-y-2">
 				<div className="flex items-center justify-between">
 					{showToggle ? (
-						<p className="text-sm text-muted-foreground">
+						<p className="text-xs text-muted-foreground">
 							Viewing tree structure
 						</p>
 					) : (
 						<div />
 					)}
-					<div className="flex gap-2">
+					<div className="flex gap-1.5">
 						<Button
 							variant="outline"
 							size="sm"
+							className="h-7 px-2.5 text-xs"
 							onClick={handleCopy}
 						>
 							{copied ? (
-								<Check className="mr-2 h-4 w-4" />
+								<Check className="mr-1.5 h-3.5 w-3.5" />
 							) : (
-								<Copy className="mr-2 h-4 w-4" />
+								<Copy className="mr-1.5 h-3.5 w-3.5" />
 							)}
 							{copied ? "Copied!" : "Copy"}
 						</Button>
@@ -158,15 +159,16 @@ export function PrettyInputDisplay({
 							<Button
 								variant="outline"
 								size="sm"
+								className="h-7 px-2.5 text-xs"
 								onClick={() => setView("pretty")}
 							>
-								<Eye className="mr-2 h-4 w-4" />
+								<Eye className="mr-1.5 h-3.5 w-3.5" />
 								Pretty View
 							</Button>
 						)}
 					</div>
 				</div>
-				<div className="rounded-lg ring-1 ring-foreground/5 p-4 bg-muted/50">
+				<div className="rounded-lg ring-1 ring-foreground/5 p-3 bg-muted/50">
 					<VariablesTreeView data={inputData} />
 				</div>
 			</div>
@@ -185,19 +187,20 @@ export function PrettyInputDisplay({
 	}
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-2">
 			{showToggle && (
 				<div className="flex items-center justify-between">
-					<p className="text-sm text-muted-foreground">
+					<p className="text-xs text-muted-foreground">
 						Viewing {entries.length} parameter
 						{entries.length !== 1 ? "s" : ""}
 					</p>
 					<Button
 						variant="outline"
 						size="sm"
+						className="h-7 px-2.5 text-xs"
 						onClick={() => setView("tree")}
 					>
-						<TreeDeciduous className="mr-2 h-4 w-4" />
+						<TreeDeciduous className="mr-1.5 h-3.5 w-3.5" />
 						Tree View
 					</Button>
 				</div>
@@ -211,10 +214,10 @@ export function PrettyInputDisplay({
 					return (
 						<div
 							key={key}
-							className="flex items-start gap-4 p-4 hover:bg-muted/50 transition-colors"
+							className="flex items-start gap-4 px-3 py-2.5 hover:bg-muted/50 transition-colors"
 						>
 							<div className="flex-1 min-w-0">
-								<div className="flex items-center gap-2 mb-1">
+								<div className="flex items-center gap-2 mb-0.5">
 									<label className="text-sm font-medium">
 										{friendlyLabel}
 									</label>
@@ -234,8 +237,8 @@ export function PrettyInputDisplay({
 											language="json"
 											style={oneDark}
 											customStyle={{
-												margin: 0,
-												borderRadius: "0.25rem",
+												margin: "0.25rem 0 0 0",
+												borderRadius: "0.375rem",
 												fontSize: "0.75rem",
 												maxHeight: "16rem",
 												maxWidth: "100%",

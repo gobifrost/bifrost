@@ -1,14 +1,7 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/v1";
@@ -32,12 +25,10 @@ interface ExecutionLogsPanelProps {
 	isLoading?: boolean;
 	/** Whether the user is a platform admin (shows DEBUG logs) */
 	isPlatformAdmin?: boolean;
-	/** Optional className for the card */
+	/** Optional className for the panel */
 	className?: string;
 	/** Maximum height for the logs container */
 	maxHeight?: string;
-	/** Render without Card wrapper (for embedding in other panels) */
-	embedded?: boolean;
 }
 
 const levelColors: Record<string, string> = {
@@ -90,7 +81,6 @@ export function ExecutionLogsPanel({
 	isPlatformAdmin = false,
 	className,
 	maxHeight = "600px",
-	embedded = false,
 }: ExecutionLogsPanelProps) {
 	const logsContainerRef = useRef<HTMLDivElement>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -238,179 +228,55 @@ export function ExecutionLogsPanel({
 	const lineCount = displayLogs.length;
 	const countLabel = `${lineCount} line${lineCount !== 1 ? "s" : ""}`;
 
-	// Embedded content (no Card wrapper)
-	const renderEmbeddedContent = () => {
-		const logsContent =
-			displayLogs.length === 0 && !isLoading ? (
-				<div className="text-center text-sm text-muted-foreground py-8">
-					{isRunning
-						? "Waiting for logs..."
-						: isComplete
-							? "No logs captured"
-							: "No execution in progress"}
-				</div>
-			) : isLoading && displayLogs.length === 0 ? (
-				<div className="space-y-2 p-4">
-					<Skeleton className="h-3 w-full" />
-					<Skeleton className="h-3 w-5/6" />
-					<Skeleton className="h-3 w-4/5" />
-				</div>
-			) : (
-				renderLogList()
-			);
-
-		return (
-			<div
-				className={cn(
-					"overflow-hidden rounded-lg bg-muted/50 ring-1 ring-foreground/5",
-					className,
-				)}
-			>
-				{/* Header */}
-				<div className="flex items-center justify-between border-b border-border/50 bg-muted px-4 py-1.5">
-					<div className="flex items-center gap-2">
-						<span className="text-sm font-medium">Logs</span>
-						{lineCount > 0 && (
-							<span className="text-xs text-muted-foreground">
-								{countLabel}
-								{!isPlatformAdmin && " · INFO and above"}
-							</span>
-						)}
-						{isConnected && isRunning && (
-							<Badge variant="secondary" className="text-xs">
-								<Loader2 className="mr-1 h-3 w-3 animate-spin" />
-								Live
-							</Badge>
-						)}
-					</div>
-					{copyButton}
-				</div>
-				{/* Content */}
-				{logsContent}
+	// Inspector panel: one step-1 surface framed by a hairline ring, with a
+	// step-2 header band — same idiom in the drawer and the details page.
+	const logsContent =
+		displayLogs.length === 0 && !isLoading ? (
+			<div className="text-center text-sm text-muted-foreground py-8">
+				{isRunning
+					? "Waiting for logs..."
+					: isComplete
+						? "No logs captured"
+						: "No execution in progress"}
 			</div>
+		) : isLoading && displayLogs.length === 0 ? (
+			<div className="space-y-2 p-4">
+				<Skeleton className="h-3 w-full" />
+				<Skeleton className="h-3 w-5/6" />
+				<Skeleton className="h-3 w-4/5" />
+			</div>
+		) : (
+			renderLogList()
 		);
-	};
 
-	// Use embedded rendering if requested
-	if (embedded) {
-		return renderEmbeddedContent();
-	}
-
-	// Running state - show logs as they stream in
-	if (isRunning) {
-		return (
-			<Card className={className}>
-				<CardHeader className="pb-3">
-					<div className="flex items-center justify-between">
-						<CardTitle className="flex items-center gap-2">
-							Logs
-							{lineCount > 0 && (
-								<span className="text-xs font-normal text-muted-foreground">
-									{countLabel}
-									{!isPlatformAdmin && " · INFO and above"}
-								</span>
-							)}
-							{isConnected && (
-								<Badge variant="secondary" className="text-xs">
-									<Loader2 className="mr-1 h-3 w-3 animate-spin" />
-									Live
-								</Badge>
-							)}
-						</CardTitle>
-						{copyButton}
-					</div>
-				</CardHeader>
-				<CardContent>
-					{displayLogs.length === 0 && !isLoading ? (
-						<div className="text-center text-sm text-muted-foreground py-8">
-							Waiting for logs...
-						</div>
-					) : isLoading && displayLogs.length === 0 ? (
-						<div className="space-y-2">
-							<Skeleton className="h-3 w-full" />
-							<Skeleton className="h-3 w-5/6" />
-							<Skeleton className="h-3 w-4/5" />
-						</div>
-					) : (
-						renderLogList()
-					)}
-				</CardContent>
-			</Card>
-		);
-	}
-
-	// Complete state - show persisted logs
-	if (isComplete) {
-		return (
-			<Card className={className}>
-				<CardHeader className="pb-3">
-					<div className="flex items-center justify-between">
-						<CardTitle className="flex items-center gap-2">
-							Logs
-							{lineCount > 0 && (
-								<span className="text-xs font-normal text-muted-foreground">
-									{countLabel}
-									{!isPlatformAdmin && " · INFO and above"}
-								</span>
-							)}
-						</CardTitle>
-						{copyButton}
-					</div>
-				</CardHeader>
-				<CardContent>
-					<AnimatePresence mode="wait">
-						{isLoading ? (
-							<motion.div
-								key="loading"
-								initial={{ opacity: 0 }}
-								animate={{ opacity: 1 }}
-								exit={{ opacity: 0 }}
-								transition={{ duration: 0.2 }}
-								className="space-y-2"
-							>
-								<Skeleton className="h-4 w-full" />
-								<Skeleton className="h-4 w-5/6" />
-								<Skeleton className="h-4 w-4/5" />
-							</motion.div>
-						) : logs.length === 0 ? (
-							<motion.div
-								key="empty"
-								initial={{ opacity: 0 }}
-								animate={{ opacity: 1 }}
-								exit={{ opacity: 0 }}
-								transition={{ duration: 0.2 }}
-								className="text-center text-sm text-muted-foreground py-8"
-							>
-								No logs captured
-							</motion.div>
-						) : (
-							<motion.div
-								key="content"
-								initial={{ opacity: 0 }}
-								animate={{ opacity: 1 }}
-								exit={{ opacity: 0 }}
-								transition={{ duration: 0.2 }}
-							>
-								{renderLogList()}
-							</motion.div>
-						)}
-					</AnimatePresence>
-				</CardContent>
-			</Card>
-		);
-	}
-
-	// Default/unknown state
 	return (
-		<Card className={className}>
-			<CardHeader className="pb-3">
-				<CardTitle>Logs</CardTitle>
-			</CardHeader>
-			<CardContent>
-				<div className="text-center text-sm text-muted-foreground py-8">
-					No execution in progress
+		<div
+			className={cn(
+				"overflow-hidden rounded-lg bg-muted/50 ring-1 ring-foreground/5",
+				className,
+			)}
+		>
+			{/* Header band (step-2) */}
+			<div className="flex items-center justify-between border-b border-border/50 bg-muted px-3 py-1.5">
+				<div className="flex items-center gap-2">
+					<span className="text-sm font-medium">Logs</span>
+					{lineCount > 0 && (
+						<span className="text-xs text-muted-foreground">
+							{countLabel}
+							{!isPlatformAdmin && " · INFO and above"}
+						</span>
+					)}
+					{isConnected && isRunning && (
+						<Badge variant="secondary" className="text-xs">
+							<Loader2 className="mr-1 h-3 w-3 animate-spin" />
+							Live
+						</Badge>
+					)}
 				</div>
-			</CardContent>
-		</Card>
+				{copyButton}
+			</div>
+			{/* Content */}
+			{logsContent}
+		</div>
 	);
 }

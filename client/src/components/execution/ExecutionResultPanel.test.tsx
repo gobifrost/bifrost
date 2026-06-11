@@ -122,12 +122,11 @@ describe("ExecutionResultPanel — renderer dispatch", () => {
 	});
 });
 
-describe("ExecutionResultPanel — embedded variant", () => {
-	it("renders a section label instead of a Card title", async () => {
+describe("ExecutionResultPanel — section header", () => {
+	it("renders the small-caps section label", async () => {
 		await renderPanel({
 			result: { ok: true },
 			resultType: "json",
-			embedded: true,
 		});
 		const heading = screen.getByRole("heading", { name: /result/i });
 		expect(heading.tagName).toBe("H4");

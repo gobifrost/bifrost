@@ -1,10 +1,4 @@
 import { motion, AnimatePresence } from "framer-motion";
-import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PrettyInputDisplay } from "./PrettyInputDisplay";
 import { SafeHTMLRenderer } from "./SafeHTMLRenderer";
@@ -18,10 +12,8 @@ interface ExecutionResultPanelProps {
 	workflowName?: string;
 	/** Whether the result is still loading */
 	isLoading?: boolean;
-	/** Optional className for the card */
+	/** Optional className for the section */
 	className?: string;
-	/** Render without the Card wrapper (drawer / compact contexts) */
-	embedded?: boolean;
 }
 
 export function ExecutionResultPanel({
@@ -30,7 +22,6 @@ export function ExecutionResultPanel({
 	workflowName,
 	isLoading = false,
 	className,
-	embedded = false,
 }: ExecutionResultPanelProps) {
 	const renderResult = () => {
 		// JSON result type
@@ -65,7 +56,7 @@ export function ExecutionResultPanel({
 		// Text result type
 		if (resultType === "text" && typeof result === "string") {
 			return (
-				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-4">
+				<pre className="whitespace-pre-wrap font-mono text-xs rounded-lg bg-muted/50 ring-1 ring-foreground/5 px-3 py-2.5">
 					{result}
 				</pre>
 			);
@@ -85,7 +76,7 @@ export function ExecutionResultPanel({
 		// String without explicit type
 		if (!resultType && typeof result === "string") {
 			return (
-				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-4">
+				<pre className="whitespace-pre-wrap font-mono text-xs rounded-lg bg-muted/50 ring-1 ring-foreground/5 px-3 py-2.5">
 					{result}
 				</pre>
 			);
@@ -94,7 +85,7 @@ export function ExecutionResultPanel({
 		// Primitive values
 		if (result !== null && result !== undefined) {
 			return (
-				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-4">
+				<pre className="whitespace-pre-wrap font-mono text-xs rounded-lg bg-muted/50 ring-1 ring-foreground/5 px-3 py-2.5">
 					{String(result)}
 				</pre>
 			);
@@ -143,23 +134,14 @@ export function ExecutionResultPanel({
 		</AnimatePresence>
 	);
 
-	if (embedded) {
-		return (
-			<div className={className}>
-				<h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-					Result
-				</h4>
-				{body}
-			</div>
-		);
-	}
-
+	// Inspector section idiom: compact small-caps header, content carries its
+	// own single step-1 surface (PrettyInputDisplay group / pre block).
 	return (
-		<Card className={className}>
-			<CardHeader className="pb-3">
-				<CardTitle>Result</CardTitle>
-			</CardHeader>
-			<CardContent>{body}</CardContent>
-		</Card>
+		<section className={className}>
+			<h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+				Result
+			</h4>
+			{body}
+		</section>
 	);
 }

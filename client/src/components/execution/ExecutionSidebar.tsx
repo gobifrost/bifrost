@@ -1,14 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Info, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -80,6 +73,42 @@ interface ExecutionSidebarProps {
 	extrasOnly?: boolean;
 }
 
+/**
+ * Inspector section idiom shared with the result/logs panels: a compact
+ * small-caps header (with optional muted description and trailing action),
+ * then content that carries a single step-1 surface.
+ */
+function InspectorSection({
+	title,
+	description,
+	action,
+	children,
+}: {
+	title: string;
+	description?: string;
+	action?: ReactNode;
+	children: ReactNode;
+}) {
+	return (
+		<section>
+			<div className="mb-1.5 flex items-start justify-between gap-2">
+				<div className="min-w-0">
+					<h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+						{title}
+					</h4>
+					{description && (
+						<p className="mt-0.5 text-xs text-muted-foreground/80">
+							{description}
+						</p>
+					)}
+				</div>
+				{action}
+			</div>
+			{children}
+		</section>
+	);
+}
+
 export function ExecutionSidebar({
 	executedByName,
 	orgName,
@@ -129,99 +158,90 @@ export function ExecutionSidebar({
 	const isLoadingVariables = isLoading;
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-5">
 			{!extrasOnly && (
 				<>
-					{/* Details — compact definition list. The workflow name and
-					    status live in the page header; repeating them here was
-					    pure duplication. */}
-					<Card>
-						<CardHeader className="pb-3">
-							<CardTitle>Details</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<dl className="space-y-2.5 text-sm">
-								<div className="flex items-baseline justify-between gap-4">
+					{/* Details — dense definition list: one step-1 surface,
+					    hairline-separated rows. The workflow name and status
+					    live in the page header; repeating them here was pure
+					    duplication. */}
+					<InspectorSection title="Details">
+						<dl className="divide-y divide-border/60 overflow-hidden rounded-lg bg-muted/50 ring-1 ring-foreground/5 text-sm">
+							<div className="flex items-baseline justify-between gap-4 px-3 py-2">
+								<dt className="text-muted-foreground">
+									Run by
+								</dt>
+								<dd className="text-right">
+									{executedByName || "Unknown"}
+								</dd>
+							</div>
+							<div className="flex items-baseline justify-between gap-4 px-3 py-2">
+								<dt className="text-muted-foreground">
+									Scope
+								</dt>
+								<dd className="text-right">
+									{orgName || "Global"}
+								</dd>
+							</div>
+							{scheduledAt && (
+								<div className="flex items-baseline justify-between gap-4 px-3 py-2">
 									<dt className="text-muted-foreground">
-										Run by
+										Scheduled for
 									</dt>
 									<dd className="text-right">
-										{executedByName || "Unknown"}
+										{formatDate(scheduledAt)}
 									</dd>
 								</div>
-								<div className="flex items-baseline justify-between gap-4">
+							)}
+							<div className="flex items-baseline justify-between gap-4 px-3 py-2">
+								<dt className="text-muted-foreground">
+									Started
+								</dt>
+								<dd
+									className="text-right"
+									{...(startedAt
+										? { title: formatDate(startedAt) }
+										: {})}
+								>
+									{startedAt
+										? formatRelativeTime(startedAt)
+										: "Not started"}
+								</dd>
+							</div>
+							{completedAt && (
+								<div className="flex items-baseline justify-between gap-4 px-3 py-2">
 									<dt className="text-muted-foreground">
-										Scope
-									</dt>
-									<dd className="text-right">
-										{orgName || "Global"}
-									</dd>
-								</div>
-								{scheduledAt && (
-									<div className="flex items-baseline justify-between gap-4">
-										<dt className="text-muted-foreground">
-											Scheduled for
-										</dt>
-										<dd className="text-right">
-											{formatDate(scheduledAt)}
-										</dd>
-									</div>
-								)}
-								<div className="flex items-baseline justify-between gap-4">
-									<dt className="text-muted-foreground">
-										Started
+										Completed
 									</dt>
 									<dd
 										className="text-right"
-										{...(startedAt
-											? { title: formatDate(startedAt) }
-											: {})}
+										title={formatDate(completedAt)}
 									>
-										{startedAt
-											? formatRelativeTime(startedAt)
-											: "Not started"}
+										{formatRelativeTime(completedAt)}
 									</dd>
 								</div>
-								{completedAt && (
-									<div className="flex items-baseline justify-between gap-4">
-										<dt className="text-muted-foreground">
-											Completed
-										</dt>
-										<dd
-											className="text-right"
-											title={formatDate(completedAt)}
-										>
-											{formatRelativeTime(completedAt)}
-										</dd>
-									</div>
-								)}
-								{durationMs != null && (
-									<div className="flex items-baseline justify-between gap-4">
-										<dt className="text-muted-foreground">
-											Duration
-										</dt>
-										<dd className="text-right font-mono tabular-nums">
-											{formatDuration(durationMs)}
-										</dd>
-									</div>
-								)}
-							</dl>
-						</CardContent>
-					</Card>
+							)}
+							{durationMs != null && (
+								<div className="flex items-baseline justify-between gap-4 px-3 py-2">
+									<dt className="text-muted-foreground">
+										Duration
+									</dt>
+									<dd className="text-right font-mono tabular-nums">
+										{formatDuration(durationMs)}
+									</dd>
+								</div>
+							)}
+						</dl>
+					</InspectorSection>
 
 					{/* Input Parameters - All users */}
-					<Card>
-						<CardHeader className="pb-3">
-							<CardTitle>Input Parameters</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<PrettyInputDisplay
-								inputData={inputData as Record<string, unknown>}
-								showToggle={true}
-								defaultView="pretty"
-							/>
-						</CardContent>
-					</Card>
+					<InspectorSection title="Input Parameters">
+						<PrettyInputDisplay
+							inputData={inputData as Record<string, unknown>}
+							showToggle={true}
+							defaultView="pretty"
+						/>
+					</InspectorSection>
 				</>
 			)}
 
@@ -232,27 +252,22 @@ export function ExecutionSidebar({
 					animate={{ opacity: 1, y: 0 }}
 					transition={{ duration: 0.3, delay: 0.1 }}
 				>
-					<Card>
-						<CardHeader>
-							<div className="flex items-center justify-between">
-								<div>
-									<CardTitle>Execution Context</CardTitle>
-									<CardDescription>
-										The context object available to this workflow (admin only)
-									</CardDescription>
-								</div>
-								<Popover>
-									<PopoverTrigger asChild>
-										<Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground">
-											<Info className="h-4 w-4" />
-										</Button>
-									</PopoverTrigger>
-									<PopoverContent side="left" align="start" className="w-auto max-w-sm p-0 border-none">
-										<SyntaxHighlighter
-											language="python"
-											style={oneDark}
-											customStyle={{ margin: 0, borderRadius: "0.375rem", fontSize: "0.75rem" }}
-										>
+					<InspectorSection
+						title="Execution Context"
+						description="The context object available to this workflow (admin only)"
+						action={
+							<Popover>
+								<PopoverTrigger asChild>
+									<Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground">
+										<Info className="h-4 w-4" />
+									</Button>
+								</PopoverTrigger>
+								<PopoverContent side="left" align="start" className="w-auto max-w-sm p-0 border-none">
+									<SyntaxHighlighter
+										language="python"
+										style={oneDark}
+										customStyle={{ margin: 0, borderRadius: "0.375rem", fontSize: "0.75rem" }}
+									>
 {`from bifrost import context
 
 context.parameters       # input params + _event
@@ -260,17 +275,17 @@ context.parameters["_event"]  # webhook metadata
 context.org_id           # organization scope
 context.email            # caller email
 context.roi.time_saved   # ROI tracking`}
-										</SyntaxHighlighter>
-									</PopoverContent>
-								</Popover>
-							</div>
-						</CardHeader>
-						<CardContent>
+									</SyntaxHighlighter>
+								</PopoverContent>
+							</Popover>
+						}
+					>
+						<div className="rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-3">
 							<VariablesTreeView
 								data={executionContext as Record<string, unknown>}
 							/>
-						</CardContent>
-					</Card>
+						</div>
+					</InspectorSection>
 				</motion.div>
 			)}
 
@@ -281,15 +296,11 @@ context.roi.time_saved   # ROI tracking`}
 					animate={{ opacity: 1, y: 0 }}
 					transition={{ duration: 0.3, delay: 0.2 }}
 				>
-					<Card>
-						<CardHeader>
-							<CardTitle>Runtime Variables</CardTitle>
-							<CardDescription>
-								Variables captured from script
-								namespace (admin only)
-							</CardDescription>
-						</CardHeader>
-						<CardContent>
+					<InspectorSection
+						title="Runtime Variables"
+						description="Variables captured from script namespace (admin only)"
+					>
+						<div className="rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-3">
 							<AnimatePresence mode="wait">
 								{isLoadingVariables ? (
 									<motion.div
@@ -343,8 +354,8 @@ context.roi.time_saved   # ROI tracking`}
 									</motion.div>
 								)}
 							</AnimatePresence>
-						</CardContent>
-					</Card>
+						</div>
+					</InspectorSection>
 				</motion.div>
 			)}
 
@@ -360,14 +371,11 @@ context.roi.time_saved   # ROI tracking`}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.3, delay: 0.2 }}
 					>
-						<Card>
-							<CardHeader className="pb-3">
-								<CardTitle>Usage</CardTitle>
-								<CardDescription>
-									Execution metrics and costs
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-4">
+						<InspectorSection
+							title="Usage"
+							description="Execution metrics and costs"
+						>
+							<div className="rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-3 space-y-3">
 								{/* Compute Resources - Platform admins only */}
 								{isPlatformAdmin &&
 									(peakMemoryBytes ||
@@ -580,8 +588,8 @@ context.roi.time_saved   # ROI tracking`}
 											</CollapsibleContent>
 										</Collapsible>
 									)}
-							</CardContent>
-						</Card>
+							</div>
+						</InspectorSection>
 					</motion.div>
 				)}
 		</div>

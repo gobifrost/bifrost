@@ -552,7 +552,7 @@ export function ExecutionDetails({
 				{actionsContainer &&
 					createPortal(actionButtons, actionsContainer)}
 
-				<div className="p-4 space-y-3">
+				<div className="p-4 space-y-4">
 					{/* Compact metadata header */}
 					<ExecutionMetadataBar
 						workflowName={execution.workflow_name}
@@ -600,15 +600,14 @@ export function ExecutionDetails({
 							resultType={resultData?.result_type}
 							workflowName={execution.workflow_name}
 							isLoading={isLoadingResult}
-							embedded
 						/>
 					)}
 
 					{/* Input data */}
 					{execution.input_data && (
-						<div className="space-y-2">
-							<h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-								Input parameters
+						<section>
+							<h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+								Input Parameters
 							</h4>
 							<PrettyInputDisplay
 								inputData={
@@ -617,7 +616,7 @@ export function ExecutionDetails({
 								showToggle={true}
 								defaultView="pretty"
 							/>
-						</div>
+						</section>
 					)}
 
 					{/* Logs */}
@@ -628,7 +627,6 @@ export function ExecutionDetails({
 						isLoading={isLoadingLogs}
 						isPlatformAdmin={isPlatformAdmin}
 						maxHeight="50vh"
-						embedded
 					/>
 
 					{/* Extra details — collapsible */}
