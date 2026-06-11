@@ -77,6 +77,11 @@ def _token_from_context(context: "MCPContext") -> str:
         "email": context.user_email or "",
         "name": context.user_name or "",
         "is_superuser": bool(context.is_platform_admin),
+        # OPEN-F: carry is_external from the MCP context. The real user-token
+        # mints (mcp_server/auth.py) stamp this via resolve_external_claim;
+        # this fallback mint (executor / test contexts) is the one site that
+        # dropped it, re-opening the global tier to external MCP principals.
+        "is_external": bool(getattr(context, "is_external", False)),
         "org_id": str(context.org_id) if context.org_id else None,
     }
     return create_access_token(data=claims)
