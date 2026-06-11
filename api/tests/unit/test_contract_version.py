@@ -138,7 +138,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 #: the live fingerprint, this test fails — update this value, and bump
 #: CONTRACT_VERSION (both sides) IF the change is breaking. See module docstring.
 EXPECTED_CONTRACT_FINGERPRINT = (
-    "e6460f50e29885a406c962823bf9490db0272221c76c7b5f5e12adf03ce0f9f4"
+    "69ee67a38ed521b63d0b9aa3698202ab37b2ec1fd097860772972d5424870883"
 )
 
 

@@ -144,7 +144,7 @@ async def get_workflow(
 @click.option(
     "--access-level",
     "access_level",
-    type=click.Choice(["authenticated", "role_based"]),
+    type=click.Choice(["authenticated", "everyone", "role_based"]),
     default=None,
     help="Access level for the workflow. Omit to leave at default.",
 )
