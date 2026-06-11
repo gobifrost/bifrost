@@ -2114,7 +2114,16 @@ async def cli_knowledge_store(
         embedding_client = await get_embedding_client(db)
 
         # Store document
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         doc_ids = await repo.store_chunked(
             content=request.content,
             namespace=request.namespace,
@@ -2166,7 +2175,16 @@ async def cli_knowledge_store_many(
         embedding_client = await get_embedding_client(db)
 
         # Store each document
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         doc_ids = []
         for doc in request.documents:
             inserted_ids = await repo.store_chunked(
@@ -2224,7 +2242,16 @@ async def cli_knowledge_search(
         query_embedding = await embedding_client.embed_single(request.query)
 
         # Search
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         results = await repo.search(
             query_embedding=query_embedding,
             namespace=request.namespace,
@@ -2281,7 +2308,16 @@ async def cli_knowledge_delete(
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         deleted = await repo.delete_by_key(
             key=request.key,
             namespace=request.namespace,
@@ -2320,7 +2356,16 @@ async def cli_knowledge_delete_namespace(
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         deleted_count = await repo.delete_namespace(
             namespace=namespace,
         )
@@ -2359,7 +2404,16 @@ async def cli_knowledge_list_namespaces(
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         results = await repo.list_namespaces(
             include_global=include_global,
         )
@@ -2401,7 +2455,16 @@ async def cli_knowledge_get(
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        repo = KnowledgeRepository(db, org_id=org_uuid, is_superuser=True)
+        # Principal-derived sentinel trust (OPEN-A): the sentinel/admins keep
+        # is_superuser=True (their is_external claim is neutralized at mint);
+        # an EXTERNAL principal must not inherit it — external_restricted
+        # engages (org tier only, global fallback forced off).
+        repo = KnowledgeRepository(
+            db,
+            org_id=org_uuid,
+            is_superuser=not current_user.is_external,
+            is_external=current_user.is_external,
+        )
         result = await repo.get_by_key(
             key=key,
             namespace=namespace,
@@ -2685,9 +2748,10 @@ async def cli_list_tables(
 ) -> list[SDKTableInfo]:
     """List tables via SDK.
 
-    Engine sentinel: the SDK has already resolved scope, so we pass
-    is_superuser=True to TableRepository and trust the org_uuid.
-    The base class handles the cascade (org + global) for us.
+    Engine sentinel: the SDK has already resolved scope, so non-external
+    principals get is_superuser=True and we trust the org_uuid. The base
+    class handles the cascade (org + global) for us. EXTERNAL principals
+    do not inherit sentinel trust — they get the org tier only (OPEN-B).
     """
     # Local import keeps the router file's top-level imports lean.
     from src.repositories.tables import TableRepository
@@ -2695,7 +2759,16 @@ async def cli_list_tables(
     org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
-    repo = TableRepository(db, org_id=org_uuid, is_superuser=True)
+    # Principal-derived sentinel trust (OPEN-B): the sentinel/admins keep
+    # is_superuser=True (their is_external claim is neutralized at mint); an
+    # EXTERNAL principal must not inherit it — external_restricted engages
+    # and the list is org tier only (no global table names/schemas).
+    repo = TableRepository(
+        db,
+        org_id=org_uuid,
+        is_superuser=not current_user.is_external,
+        is_external=current_user.is_external,
+    )
     tables = await repo.list()
     tables = sorted(tables, key=lambda t: t.name)
 

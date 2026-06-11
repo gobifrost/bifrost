@@ -602,6 +602,105 @@ class TestExternalUserMCPAgentIsolation:
             )
 
 
+class TestExternalUserSDKKnowledge:
+    """OPEN-A: the /api/sdk/knowledge endpoints are plain CurrentUser routes
+    that hardcoded ``is_superuser=True`` (sentinel trust), so an external user
+    inherited the full cascade — global KB document content via search, global
+    namespace counts via the listing. Post-fix the repo is constructed from
+    the calling principal: external → org tier only. (The search endpoint's
+    SQL is proven in tests/unit/test_cli_sdk_external.py — it requires an
+    embedding service, so the e2e proof uses the embedding-free namespaces
+    listing, which shares the same construction fix.)"""
+
+    def test_external_namespaces_exclude_global_scope(
+        self, e2e_client, external_user, global_kb_doc
+    ):
+        resp = e2e_client.get(
+            "/api/sdk/knowledge/namespaces", headers=external_user.headers
+        )
+        assert resp.status_code == 200, resp.text
+        by_ns = {n["namespace"]: n["scopes"] for n in resp.json()}
+        ns = global_kb_doc["namespace"]
+        # The org-scoped doc keeps the namespace visible to the external…
+        assert ns in by_ns, "external must still see their org's namespace"
+        # …but the GLOBAL doc must not be counted for them.
+        assert by_ns[ns].get("global", 0) == 0, (
+            "external user must not see the global knowledge scope"
+        )
+
+    def test_normal_user_namespaces_include_global_scope(
+        self, e2e_client, org1_user, global_kb_doc
+    ):
+        resp = e2e_client.get(
+            "/api/sdk/knowledge/namespaces", headers=org1_user.headers
+        )
+        assert resp.status_code == 200, resp.text
+        by_ns = {n["namespace"]: n["scopes"] for n in resp.json()}
+        ns = global_kb_doc["namespace"]
+        assert ns in by_ns
+        assert by_ns[ns].get("global", 0) >= 1, (
+            "normal org user still sees the global knowledge scope"
+        )
+
+
+@pytest.fixture(scope="module")
+def table_canaries(e2e_client, platform_admin, org1):
+    """A GLOBAL table + an org1 table — the SDK tables/list canaries."""
+    gname = f"e2e_ext_global_table_{SUFFIX}"
+    oname = f"e2e_ext_org_table_{SUFFIX}"
+    g = e2e_client.post(
+        "/api/tables",
+        headers=platform_admin.headers,
+        json={"name": gname, "organization_id": None},
+    )
+    assert g.status_code == 201, g.text
+    o = e2e_client.post(
+        "/api/tables",
+        headers=platform_admin.headers,
+        json={"name": oname, "organization_id": org1["id"]},
+    )
+    assert o.status_code == 201, o.text
+    yield {"global": g.json(), "org": o.json()}
+    e2e_client.delete(
+        f"/api/tables/{g.json()['id']}", headers=platform_admin.headers
+    )
+    e2e_client.delete(
+        f"/api/tables/{o.json()['id']}", headers=platform_admin.headers
+    )
+
+
+class TestExternalUserSDKTablesList:
+    """OPEN-B: /api/sdk/tables/list hardcoded ``is_superuser=True`` on a plain
+    CurrentUser route, so an external user listed GLOBAL table names/schemas.
+    Post-fix: external → org tier only; normal users keep the cascade."""
+
+    def _names(self, e2e_client, user) -> set[str]:
+        resp = e2e_client.post(
+            "/api/sdk/tables/list", headers=user.headers, json={}
+        )
+        assert resp.status_code == 200, resp.text
+        return {t["name"] for t in resp.json()}
+
+    def test_external_list_excludes_global_table(
+        self, e2e_client, external_user, table_canaries
+    ):
+        names = self._names(e2e_client, external_user)
+        assert table_canaries["org"]["name"] in names, (
+            "external user must still list their org's tables"
+        )
+        assert table_canaries["global"]["name"] not in names, (
+            "external user must NOT list global table names/schemas"
+        )
+
+    def test_normal_user_list_includes_global_table(
+        self, e2e_client, org1_user, table_canaries
+    ):
+        names = self._names(e2e_client, org1_user)
+        assert table_canaries["global"]["name"] in names, (
+            "normal org user still lists global tables"
+        )
+
+
 class TestExternalFlagLifecycle:
     def test_flag_updatable_via_user_update(
         self, e2e_client, platform_admin, org1
