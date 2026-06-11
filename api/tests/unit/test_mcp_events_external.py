@@ -179,3 +179,142 @@ class TestGetEventSourceScope:
         ctx = _ctx_returning(_source(uuid4()), is_platform_admin=True)
         res = await events_tool.get_event_source(ctx, source_id=str(uuid4()))
         assert not _is_error(res)
+
+
+# =============================================================================
+# OPEN-C — the SUBSCRIPTION tools missed the NEW-2 _source_in_scope gate:
+# list/create fetched the source by id with ZERO org scoping (an external
+# enumerated/wired onto a foreign-org or global source), and update/delete
+# matched (subscription_id, source_id) with no org scope at all (cross-org
+# tamper by id). Every subscription tool must gate on the SOURCE's org.
+# =============================================================================
+
+
+def _subscription(source_id):
+    sub = MagicMock()
+    sub.id = uuid4()
+    sub.event_source_id = source_id
+    sub.workflow_id = uuid4()
+    sub.workflow = None
+    sub.event_type = None
+    sub.input_mapping = None
+    sub.is_active = True
+    return sub
+
+
+def _ctx_source_then(source, then=None, **kw):
+    """Context whose FIRST by-id fetch returns ``source``; later statements
+    return ``then`` (a scalar_one_or_none-able object) or empty shapes."""
+    ctx = _ctx(**kw)
+    first = MagicMock()
+    first.unique.return_value.scalar_one_or_none = MagicMock(return_value=source)
+    first.scalar_one_or_none = MagicMock(return_value=source)
+    first.scalars.return_value.all.return_value = []
+    rest = MagicMock()
+    rest.unique.return_value.scalar_one_or_none = MagicMock(return_value=then)
+    rest.scalar_one_or_none = MagicMock(return_value=then)
+    rest.scalars.return_value.all.return_value = []
+    rest.scalar = MagicMock(return_value=0)
+    ctx.session.execute = AsyncMock(side_effect=[first] + [rest] * 8)
+    return ctx
+
+
+@pytest.mark.asyncio
+class TestListEventSubscriptionsScope:
+    async def test_external_denied_global_source_subscriptions(self):
+        ctx = _ctx_source_then(_source(None), is_external=True)
+        res = await events_tool.list_event_subscriptions(
+            ctx, source_id=str(uuid4())
+        )
+        assert _is_error(res), (
+            "external must not enumerate a global source's subscriptions"
+        )
+
+    async def test_non_admin_denied_cross_org_source_subscriptions(self):
+        ctx = _ctx_source_then(_source(uuid4()), is_external=False)
+        res = await events_tool.list_event_subscriptions(
+            ctx, source_id=str(uuid4())
+        )
+        assert _is_error(res), (
+            "non-admin must not enumerate a foreign-org source's subscriptions"
+        )
+
+    async def test_own_org_source_subscriptions_allowed(self):
+        org = uuid4()
+        ctx = _ctx_source_then(_source(org), is_external=True, org_id=org)
+        res = await events_tool.list_event_subscriptions(
+            ctx, source_id=str(uuid4())
+        )
+        assert not _is_error(res)
+
+    async def test_regular_user_allowed_global_source_subscriptions(self):
+        ctx = _ctx_source_then(_source(None), is_external=False)
+        res = await events_tool.list_event_subscriptions(
+            ctx, source_id=str(uuid4())
+        )
+        assert not _is_error(res)
+
+
+@pytest.mark.asyncio
+class TestCreateEventSubscriptionScope:
+    async def test_external_cannot_wire_onto_global_source(self):
+        ctx = _ctx_source_then(_source(None), is_external=True)
+        res = await events_tool.create_event_subscription(
+            ctx, source_id=str(uuid4()), workflow_id=str(uuid4())
+        )
+        assert _is_error(res), (
+            "external must not create a subscription on a global source"
+        )
+
+    async def test_non_admin_cannot_wire_onto_foreign_org_source(self):
+        ctx = _ctx_source_then(_source(uuid4()), is_external=False)
+        res = await events_tool.create_event_subscription(
+            ctx, source_id=str(uuid4()), workflow_id=str(uuid4())
+        )
+        assert _is_error(res), (
+            "non-admin must not create a subscription on a foreign-org source"
+        )
+
+
+@pytest.mark.asyncio
+class TestUpdateDeleteEventSubscriptionScope:
+    async def test_update_denied_for_cross_org_source(self):
+        source_id = uuid4()
+        ctx = _ctx_source_then(
+            _source(uuid4()), then=_subscription(source_id), is_external=False
+        )
+        res = await events_tool.update_event_subscription(
+            ctx,
+            source_id=str(source_id),
+            subscription_id=str(uuid4()),
+            is_active=False,
+        )
+        assert _is_error(res), (
+            "non-admin must not update a subscription on a foreign-org source"
+        )
+
+    async def test_delete_denied_for_external_on_global_source(self):
+        source_id = uuid4()
+        ctx = _ctx_source_then(
+            _source(None), then=_subscription(source_id), is_external=True
+        )
+        res = await events_tool.delete_event_subscription(
+            ctx, source_id=str(source_id), subscription_id=str(uuid4())
+        )
+        assert _is_error(res), (
+            "external must not delete a subscription on a global source"
+        )
+
+    async def test_update_allowed_for_own_org_source(self):
+        org = uuid4()
+        source_id = uuid4()
+        ctx = _ctx_source_then(
+            _source(org), then=_subscription(source_id), is_external=True, org_id=org
+        )
+        res = await events_tool.update_event_subscription(
+            ctx,
+            source_id=str(source_id),
+            subscription_id=str(uuid4()),
+            is_active=False,
+        )
+        assert not _is_error(res)

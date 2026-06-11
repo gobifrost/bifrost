@@ -628,6 +628,13 @@ async def list_event_subscriptions(
             if not source:
                 return error_result(f"Event source not found: {source_id}")
 
+            # Org gate (EXT-1 OPEN-C): subscriptions are reached through their
+            # SOURCE, so the by-id source fetch must respect the caller's scope
+            # — 404-style denial for out-of-scope sources (don't reveal
+            # existence cross-org / global-to-external).
+            if not _source_in_scope(context, source.organization_id):
+                return error_result(f"Event source not found: {source_id}")
+
             sub_repo = EventSubscriptionRepository(db)
             subscriptions = await sub_repo.get_by_source(UUID(source_id), active_only=False)
 
@@ -697,6 +704,11 @@ async def create_event_subscription(
             if not source:
                 return error_result(f"Event source not found: {source_id}")
 
+            # Org gate (EXT-1 OPEN-C): a caller must not wire a workflow onto
+            # a foreign-org source by id, and an external gets no global tier.
+            if not _source_in_scope(context, source.organization_id):
+                return error_result(f"Event source not found: {source_id}")
+
             subscription = EventSubscription(
                 event_source_id=UUID(source_id),
                 workflow_id=UUID(workflow_id),
@@ -747,6 +759,7 @@ async def update_event_subscription(
 ) -> ToolResult:
     """Update an event subscription."""
     from src.models.orm.events import EventSubscription
+    from src.repositories.events import EventSourceRepository
 
     logger.info(f"MCP update_event_subscription called: sub={subscription_id}")
 
@@ -755,6 +768,14 @@ async def update_event_subscription(
 
     try:
         async with get_tool_db(context) as db:
+            # Org gate (EXT-1 OPEN-C): (subscription_id, source_id) alone is
+            # no org scope — fetch the SOURCE and gate on it, or any caller
+            # could tamper with a cross-org subscription by id.
+            source_repo = EventSourceRepository(db)
+            source = await source_repo.get_by_id(UUID(source_id))
+            if not source or not _source_in_scope(context, source.organization_id):
+                return error_result(f"Event source not found: {source_id}")
+
             result = await db.execute(
                 select(EventSubscription)
                 .options(joinedload(EventSubscription.workflow))
@@ -803,6 +824,7 @@ async def delete_event_subscription(
 ) -> ToolResult:
     """Soft delete an event subscription."""
     from src.models.orm.events import EventSubscription
+    from src.repositories.events import EventSourceRepository
 
     logger.info(f"MCP delete_event_subscription called: sub={subscription_id}")
 
@@ -811,6 +833,13 @@ async def delete_event_subscription(
 
     try:
         async with get_tool_db(context) as db:
+            # Org gate (EXT-1 OPEN-C): same rule as update — the source's org
+            # scopes the subscription; no cross-org/global-to-external deletes.
+            source_repo = EventSourceRepository(db)
+            source = await source_repo.get_by_id(UUID(source_id))
+            if not source or not _source_in_scope(context, source.organization_id):
+                return error_result(f"Event source not found: {source_id}")
+
             result = await db.execute(
                 select(EventSubscription).where(
                     EventSubscription.id == UUID(subscription_id),
