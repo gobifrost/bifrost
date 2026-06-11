@@ -215,7 +215,7 @@ export function ExecutionLogsPanel({
 						<summary className="cursor-pointer text-muted-foreground">
 							data
 						</summary>
-						<pre className="mt-1 p-2 rounded bg-muted dark:bg-muted/50">
+						<pre className="mt-1 p-2 rounded bg-muted">
 							{JSON.stringify(data, null, 2)}
 						</pre>
 					</details>
@@ -262,12 +262,12 @@ export function ExecutionLogsPanel({
 		return (
 			<div
 				className={cn(
-					"overflow-hidden rounded-lg bg-muted/30 ring-1 ring-foreground/5 dark:bg-background/40",
+					"overflow-hidden rounded-lg bg-muted/50 ring-1 ring-foreground/5",
 					className,
 				)}
 			>
 				{/* Header */}
-				<div className="flex items-center justify-between border-b border-border/50 bg-muted/40 px-4 py-1.5 dark:bg-muted/20">
+				<div className="flex items-center justify-between border-b border-border/50 bg-muted px-4 py-1.5">
 					<div className="flex items-center gap-2">
 						<span className="text-sm font-medium">Logs</span>
 						{lineCount > 0 && (

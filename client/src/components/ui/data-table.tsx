@@ -86,7 +86,10 @@ const DataTableHeader = React.forwardRef<
 	<thead
 		ref={ref}
 		className={cn(
-			"sticky top-0 z-10 bg-card [&_tr]:border-b",
+			// Chrome band: base `background` (near-black in dark, white in light)
+			// against the lighter `card` body — see "the elevation ladder" in
+			// docs/research/ui-history-diagnosis.md.
+			"sticky top-0 z-10 bg-background [&_tr]:border-b",
 			className,
 		)}
 		{...props}
@@ -113,7 +116,8 @@ const DataTableFooter = React.forwardRef<
 	<tfoot
 		ref={ref}
 		className={cn(
-			"bg-card font-medium [&>tr]:last:border-b-0",
+			// Chrome band — same `background` step as DataTableHeader.
+			"bg-background font-medium [&>tr]:last:border-b-0",
 			className,
 		)}
 		{...props}

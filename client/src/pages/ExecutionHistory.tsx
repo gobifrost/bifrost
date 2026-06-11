@@ -874,7 +874,7 @@ export function ExecutionHistory() {
 										>
 											<DataTableCell
 												colSpan={columnCount}
-												className="bg-muted/40 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+												className="bg-muted/40 dark:bg-background/50 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
 											>
 												{group.label}
 											</DataTableCell>

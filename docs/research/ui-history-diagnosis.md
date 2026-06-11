@@ -66,6 +66,28 @@ job actually needs: how many runs, how many failed.
 
 ## Candidates for a future light design system (not built here)
 
+- **The elevation ladder** (replaces the earlier "recess darker" convention, which was
+  wrong — Jack 2026-06-11, anchored on ui.shadcn.com's home dashboard: "the main card
+  is always the darkest, then subcards get progressively lighter"). Nesting always
+  moves AWAY from the base, never back toward it.
+  - **Dark** (each nested layer LIGHTER): `background` oklch(0.145) → `card`/`popover`
+    oklch(0.205) → step-1 nested block `bg-muted/50` over the surface (≈0.237) →
+    step-2 (code/pre, panel headers inside step-1) full `bg-muted` oklch(0.269).
+    Reference sampled off ui.shadcn.com dark: background lab(2.75) → card lab(7.78) →
+    muted/secondary lab(15.2) → accent lab(27).
+  - **Light** (each nested layer GREYER): `background`/`card` white → step-1
+    `bg-muted/50` (≈0.985) → step-2 `bg-muted` oklch(0.97). Reference: white →
+    muted lab(96.5) → input lab(90.9).
+  - **Chrome bands** (sticky table header/footer, slideout sticky header): the base
+    `background` token — a near-black band against the lighter `card`/`popover` body
+    in dark ("that header used to be basically black… it looks way better"), clean
+    white + border in light. Bands are app chrome showing the base through, not a
+    nesting step.
+  - **Grouping bands** (day-separator rows inside a table body): half-step between
+    the chrome band and the body — `dark:bg-background/50` over the card (≈0.175),
+    so dark reads band (0.145) < day row (≈0.175) < body (0.205); light keeps the
+    soft `bg-muted/40` grey.
+  - Edges on nested blocks: `ring-1 ring-foreground/5`, no border-in-border.
 - **Page header pattern**: title + optional mode toggle + summary line + actions, with
   fixed slots, so every page stops hand-rolling its own.
 - **Status badge philosophy**: quiet-success/loud-failure variants as a shared

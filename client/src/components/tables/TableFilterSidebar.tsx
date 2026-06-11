@@ -101,7 +101,7 @@ function FiltersSection({
 							{conditions.map((condition) => (
 								<div
 									key={condition.id}
-									className="flex flex-col gap-1.5 rounded-xl bg-muted/40 p-2 ring-1 ring-foreground/5 dark:bg-background/40"
+									className="flex flex-col gap-1.5 rounded-xl bg-muted/50 p-2 ring-1 ring-foreground/5"
 								>
 									<div className="flex items-center gap-1">
 										<Input

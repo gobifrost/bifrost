@@ -65,7 +65,7 @@ export function ExecutionResultPanel({
 		// Text result type
 		if (resultType === "text" && typeof result === "string") {
 			return (
-				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/60 dark:bg-background/60 ring-1 ring-foreground/5 p-4">
+				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-4">
 					{result}
 				</pre>
 			);
@@ -85,7 +85,7 @@ export function ExecutionResultPanel({
 		// String without explicit type
 		if (!resultType && typeof result === "string") {
 			return (
-				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/60 dark:bg-background/60 ring-1 ring-foreground/5 p-4">
+				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-4">
 					{result}
 				</pre>
 			);
@@ -94,7 +94,7 @@ export function ExecutionResultPanel({
 		// Primitive values
 		if (result !== null && result !== undefined) {
 			return (
-				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/60 dark:bg-background/60 ring-1 ring-foreground/5 p-4">
+				<pre className="whitespace-pre-wrap font-mono text-sm rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-4">
 					{String(result)}
 				</pre>
 			);

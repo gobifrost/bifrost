@@ -509,7 +509,7 @@ export function Users() {
 										sortDirection={sortDirection}
 									/>
 								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-card"></DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>

@@ -38,8 +38,11 @@ export function ExecutionDrawer({
 				side="right"
 				className="w-full sm:max-w-xl md:max-w-2xl overflow-y-auto p-0"
 			>
-				<div className="sticky top-0 bg-popover z-10 px-4 py-2 border-b border-border/50">
-					<SheetHeader>
+				{/* Chrome band: base `background` step (near-black in dark), matching
+				    DataTable header/footer. px-4 lines up with the p-4 content below —
+				    SheetHeader's default p-6 is stripped so nothing double-indents. */}
+				<div className="sticky top-0 bg-background z-10 px-4 py-2 border-b border-border/50">
+					<SheetHeader className="p-0">
 						<div className="flex items-center justify-between">
 							<SheetTitle className="text-sm font-medium text-muted-foreground">
 								Execution Details

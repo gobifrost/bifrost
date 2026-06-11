@@ -166,7 +166,7 @@ export function PrettyInputDisplay({
 						)}
 					</div>
 				</div>
-				<div className="rounded-lg ring-1 ring-foreground/5 p-4 bg-muted/30 dark:bg-background/40">
+				<div className="rounded-lg ring-1 ring-foreground/5 p-4 bg-muted/50">
 					<VariablesTreeView data={inputData} />
 				</div>
 			</div>
@@ -203,7 +203,7 @@ export function PrettyInputDisplay({
 				</div>
 			)}
 
-			<div className="divide-y divide-border/60 overflow-hidden rounded-lg ring-1 ring-foreground/5 bg-muted/30 dark:bg-background/40">
+			<div className="divide-y divide-border/60 overflow-hidden rounded-lg ring-1 ring-foreground/5 bg-muted/50">
 				{entries.map(([key, value]) => {
 					const friendlyLabel = snakeCaseToTitleCase(key);
 					const { display, badge } = formatValue(value);
