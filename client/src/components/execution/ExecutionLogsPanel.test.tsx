@@ -99,7 +99,7 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 		expect(positions).toEqual([...positions].sort((a, b) => a - b));
 	});
 
-	it("hides DEBUG-only subtitle when the viewer is a platform admin", () => {
+	it("hides the level-filter note when the viewer is a platform admin", () => {
 		renderWithProviders(
 			<ExecutionLogsPanel
 				status="Success"
@@ -108,7 +108,7 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 			/>,
 		);
 		expect(
-			screen.queryByText(/info, warning, error only/i),
+			screen.queryByText(/INFO and above/i),
 		).not.toBeInTheDocument();
 	});
 
@@ -121,7 +121,7 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 			/>,
 		);
 		expect(
-			screen.getByText(/info, warning, error only/i),
+			screen.getByText(/INFO and above/i),
 		).toBeInTheDocument();
 	});
 });
@@ -180,5 +180,60 @@ describe("ExecutionLogsPanel — embedded variant", () => {
 			/>,
 		);
 		expect(screen.queryByText(/live/i)).not.toBeInTheDocument();
+	});
+});
+
+describe("ExecutionLogsPanel — traceback coalescing", () => {
+	it("coalesces consecutive TRACEBACK lines into one block", () => {
+		renderWithProviders(
+			<ExecutionLogsPanel
+				status="Failed"
+				logs={[
+					log("INFO", "starting"),
+					log("TRACEBACK", "Traceback (most recent call last):"),
+					log("TRACEBACK", '  File "wf.py", line 3, in run'),
+					log("TRACEBACK", "RuntimeError: boom"),
+				]}
+			/>,
+		);
+		const blocks = screen.getAllByTestId("log-traceback-block");
+		expect(blocks).toHaveLength(1);
+		// The block contains all three lines joined.
+		expect(blocks[0]).toHaveTextContent("Traceback (most recent call last):");
+		expect(blocks[0]).toHaveTextContent("RuntimeError: boom");
+		// The repeated level label renders exactly once (exact node match —
+		// the message text also contains the word "Traceback").
+		expect(within(blocks[0]).getAllByText("traceback")).toHaveLength(1);
+	});
+
+	it("starts a new block when tracebacks are separated by other levels", () => {
+		renderWithProviders(
+			<ExecutionLogsPanel
+				status="Failed"
+				logs={[
+					log("TRACEBACK", "first"),
+					log("ERROR", "between"),
+					log("TRACEBACK", "second"),
+				]}
+			/>,
+		);
+		expect(screen.getAllByTestId("log-traceback-block")).toHaveLength(2);
+	});
+});
+
+describe("ExecutionLogsPanel — embedded affordances", () => {
+	it("shows a copy button and line count in the embedded header", async () => {
+		const { user } = renderWithProviders(
+			<ExecutionLogsPanel
+				status="Success"
+				embedded
+				logs={[log("INFO", "one"), log("INFO", "two")]}
+			/>,
+		);
+		expect(screen.getByText(/2 lines/i)).toBeInTheDocument();
+		await user.click(screen.getByTitle(/copy logs/i));
+		expect(writeTextSpy).toHaveBeenCalledWith(
+			expect.stringContaining("one"),
+		);
 	});
 });

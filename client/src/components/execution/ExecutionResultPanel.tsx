@@ -4,7 +4,6 @@ import {
 	CardContent,
 	CardHeader,
 	CardTitle,
-	CardDescription,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PrettyInputDisplay } from "./PrettyInputDisplay";
@@ -21,6 +20,8 @@ interface ExecutionResultPanelProps {
 	isLoading?: boolean;
 	/** Optional className for the card */
 	className?: string;
+	/** Render without the Card wrapper (drawer / compact contexts) */
+	embedded?: boolean;
 }
 
 export function ExecutionResultPanel({
@@ -29,6 +30,7 @@ export function ExecutionResultPanel({
 	workflowName,
 	isLoading = false,
 	className,
+	embedded = false,
 }: ExecutionResultPanelProps) {
 	const renderResult = () => {
 		// JSON result type
@@ -101,15 +103,9 @@ export function ExecutionResultPanel({
 		return null;
 	};
 
-	return (
-		<Card className={className}>
-			<CardHeader>
-				<CardTitle>Result</CardTitle>
-				<CardDescription>Workflow execution result</CardDescription>
-			</CardHeader>
-			<CardContent>
-				<AnimatePresence mode="wait">
-					{isLoading ? (
+	const body = (
+		<AnimatePresence mode="wait">
+			{isLoading ? (
 						<motion.div
 							key="loading"
 							initial={{ opacity: 0 }}
@@ -144,8 +140,26 @@ export function ExecutionResultPanel({
 							{renderResult()}
 						</motion.div>
 					)}
-				</AnimatePresence>
-			</CardContent>
+		</AnimatePresence>
+	);
+
+	if (embedded) {
+		return (
+			<div className={className}>
+				<h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+					Result
+				</h4>
+				{body}
+			</div>
+		);
+	}
+
+	return (
+		<Card className={className}>
+			<CardHeader className="pb-3">
+				<CardTitle>Result</CardTitle>
+			</CardHeader>
+			<CardContent>{body}</CardContent>
 		</Card>
 	);
 }

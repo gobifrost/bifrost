@@ -121,3 +121,16 @@ describe("ExecutionResultPanel — renderer dispatch", () => {
 		expect(pre.tagName.toLowerCase()).toBe("pre");
 	});
 });
+
+describe("ExecutionResultPanel — embedded variant", () => {
+	it("renders a section label instead of a Card title", async () => {
+		await renderPanel({
+			result: { ok: true },
+			resultType: "json",
+			embedded: true,
+		});
+		const heading = screen.getByRole("heading", { name: /result/i });
+		expect(heading.tagName).toBe("H4");
+		expect(screen.getByLabelText("pretty-input-stub")).toBeInTheDocument();
+	});
+});

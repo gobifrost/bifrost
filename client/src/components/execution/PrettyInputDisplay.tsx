@@ -237,9 +237,9 @@ export function PrettyInputDisplay({
 												margin: 0,
 												borderRadius: "0.25rem",
 												fontSize: "0.75rem",
-												maxHeight: "8rem",
+												maxHeight: "16rem",
 												maxWidth: "100%",
-												overflowX: "auto",
+												overflow: "auto",
 											}}
 										>
 											{display}

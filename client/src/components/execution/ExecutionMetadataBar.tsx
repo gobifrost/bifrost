@@ -1,6 +1,6 @@
 import { User, Building2, Clock, Timer } from "lucide-react";
-import { ExecutionStatusBadge } from "./ExecutionStatusBadge";
-import { formatDate } from "@/lib/utils";
+import { RunStatusBadge } from "./RunStatusBadge";
+import { formatDate, formatRelativeTime } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
 type ExecutionStatus =
@@ -45,10 +45,10 @@ export function ExecutionMetadataBar({
 		<div className="space-y-1.5">
 			{/* Workflow name + status */}
 			<div className="flex items-center gap-2 min-w-0">
-				<h3 className="text-base font-semibold truncate">
+				<h3 className="font-mono text-base font-semibold truncate">
 					{workflowName}
 				</h3>
-				<ExecutionStatusBadge
+				<RunStatusBadge
 					status={status}
 					queuePosition={queuePosition}
 					waitReason={waitReason}
@@ -66,9 +66,12 @@ export function ExecutionMetadataBar({
 					<Building2 className="h-3 w-3" />
 					{orgName || "Global"}
 				</span>
-				<span className="flex items-center gap-1">
+				<span
+					className="flex items-center gap-1"
+					{...(startedAt ? { title: formatDate(startedAt) } : {})}
+				>
 					<Clock className="h-3 w-3" />
-					{startedAt ? formatDate(startedAt) : "Not started"}
+					{startedAt ? formatRelativeTime(startedAt) : "Not started"}
 				</span>
 				<span className="flex items-center gap-1">
 					<Timer className="h-3 w-3" />

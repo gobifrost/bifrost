@@ -30,7 +30,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { LogsView } from "./ExecutionHistory/components/LogsView";
 import { ExecutionDrawer } from "./ExecutionHistory/components/ExecutionDrawer";
-import { RunStatusBadge } from "./ExecutionHistory/components/RunStatusBadge";
+import { RunStatusBadge } from "@/components/execution";
 import {
 	formatRunDuration,
 	formatRunTime,

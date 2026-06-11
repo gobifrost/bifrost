@@ -74,3 +74,35 @@ describe("RunStatusBadge — scheduled tooltip", () => {
 		expect(badge).not.toHaveAttribute("title");
 	});
 });
+
+describe("RunStatusBadge — pending wait variants", () => {
+	it("shows queue position when waiting in queue", () => {
+		renderWithProviders(
+			<RunStatusBadge
+				status="Pending"
+				waitReason="queued"
+				queuePosition={3}
+			/>,
+		);
+		expect(screen.getByText(/queued — position 3/i)).toBeInTheDocument();
+	});
+
+	it("shows memory figures under memory pressure", () => {
+		renderWithProviders(
+			<RunStatusBadge
+				status="Pending"
+				waitReason="memory_pressure"
+				availableMemoryMb={512}
+				requiredMemoryMb={1024}
+			/>,
+		);
+		expect(
+			screen.getByText(/heavy load \(512MB \/ 1024MB\)/i),
+		).toBeInTheDocument();
+	});
+
+	it("falls back to plain Pending without wait metadata", () => {
+		renderWithProviders(<RunStatusBadge status="Pending" />);
+		expect(screen.getByText(/^pending$/i)).toBeInTheDocument();
+	});
+});

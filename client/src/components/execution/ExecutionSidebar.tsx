@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Info, Sparkles, XCircle } from "lucide-react";
+import { ChevronDown, Info, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -24,27 +24,20 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PrettyInputDisplay } from "./PrettyInputDisplay";
-import { ExecutionStatusBadge, ExecutionStatusIcon } from "./ExecutionStatusBadge";
 import { VariablesTreeView } from "@/components/ui/variables-tree-view";
 import {
 	formatDate,
+	formatRelativeTime,
 	formatBytes,
 	formatNumber,
 	formatCost,
+	formatDuration,
 } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
-type ExecutionStatus =
-	| components["schemas"]["ExecutionStatus"]
-	| "Cancelling"
-	| "Cancelled";
 type AIUsagePublicSimple = components["schemas"]["AIUsagePublicSimple"];
 
 interface ExecutionSidebarProps {
-	/** Current execution status */
-	status: ExecutionStatus;
-	/** Workflow name */
-	workflowName: string;
 	/** Who executed the workflow */
 	executedByName?: string | null;
 	/** Organization name (effective scope) */
@@ -81,24 +74,13 @@ interface ExecutionSidebarProps {
 		total_cost?: string | number | null;
 		total_duration_ms?: number | null;
 	} | null;
-	/** Stream state for pending status badge details */
-	streamState?: {
-		queuePosition?: number;
-		waitReason?: string;
-		availableMemoryMb?: number;
-		requiredMemoryMb?: number;
-	};
-	/** Error message from the execution */
-	errorMessage?: string | null;
 	/** Persisted execution context (admin only) */
 	executionContext?: Record<string, unknown> | null;
-	/** When true, only render AI usage, metrics, variables, and execution context — skip status, workflow info, input, and error sections */
+	/** When true, only render AI usage, metrics, variables, and execution context — skip details and input sections */
 	extrasOnly?: boolean;
 }
 
 export function ExecutionSidebar({
-	status,
-	workflowName,
 	executedByName,
 	orgName,
 	scheduledAt,
@@ -114,8 +96,6 @@ export function ExecutionSidebar({
 	durationMs,
 	aiUsage,
 	aiTotals,
-	streamState,
-	errorMessage,
 	executionContext,
 	extrasOnly = false,
 }: ExecutionSidebarProps) {
@@ -152,123 +132,87 @@ export function ExecutionSidebar({
 		<div className="space-y-6">
 			{!extrasOnly && (
 				<>
-					{/* Status Card */}
+					{/* Details — compact definition list. The workflow name and
+					    status live in the page header; repeating them here was
+					    pure duplication. */}
 					<Card>
-						<CardHeader>
-							<CardTitle>Execution Status</CardTitle>
+						<CardHeader className="pb-3">
+							<CardTitle>Details</CardTitle>
 						</CardHeader>
 						<CardContent>
-							<div className="flex flex-col items-center justify-center py-4 text-center">
-								<ExecutionStatusIcon status={status} />
-								<div className="mt-4">
-									<ExecutionStatusBadge
-										status={status}
-										queuePosition={streamState?.queuePosition}
-										waitReason={streamState?.waitReason}
-										availableMemoryMb={streamState?.availableMemoryMb}
-										requiredMemoryMb={streamState?.requiredMemoryMb}
-									/>
+							<dl className="space-y-2.5 text-sm">
+								<div className="flex items-baseline justify-between gap-4">
+									<dt className="text-muted-foreground">
+										Run by
+									</dt>
+									<dd className="text-right">
+										{executedByName || "Unknown"}
+									</dd>
 								</div>
-							</div>
-						</CardContent>
-					</Card>
-
-					{/* Error Section */}
-					{errorMessage && (
-						<motion.div
-							initial={{ opacity: 0, y: 20 }}
-							animate={{ opacity: 1, y: 0 }}
-							transition={{ duration: 0.3 }}
-						>
-							<Card className="border-destructive">
-								<CardHeader>
-									<CardTitle className="flex items-center gap-2 text-destructive">
-										<XCircle className="h-5 w-5" />
-										Error
-									</CardTitle>
-									<CardDescription>
-										Workflow execution failed
-									</CardDescription>
-								</CardHeader>
-								<CardContent>
-									<pre className="text-sm whitespace-pre-wrap break-words font-mono bg-destructive/10 p-4 rounded-md overflow-x-auto">
-										{errorMessage}
-									</pre>
-								</CardContent>
-							</Card>
-						</motion.div>
-					)}
-
-					{/* Workflow Information Card */}
-					<Card>
-						<CardHeader>
-							<CardTitle>Workflow Information</CardTitle>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<div>
-								<p className="text-sm font-medium text-muted-foreground">
-									Workflow Name
-								</p>
-								<p className="font-mono text-sm mt-1">
-									{workflowName}
-								</p>
-							</div>
-							<div>
-								<p className="text-sm font-medium text-muted-foreground">
-									Executed By
-								</p>
-								<p className="text-sm mt-1">
-									{executedByName}
-								</p>
-							</div>
-							<div>
-								<p className="text-sm font-medium text-muted-foreground">
-									Effective Scope
-								</p>
-								<p className="text-sm mt-1">
-									{orgName || "Global"}
-								</p>
-							</div>
-							{scheduledAt && (
-								<div>
-									<p className="text-sm font-medium text-muted-foreground">
-										Scheduled For
-									</p>
-									<p className="text-sm mt-1">
-										{formatDate(scheduledAt)}
-									</p>
+								<div className="flex items-baseline justify-between gap-4">
+									<dt className="text-muted-foreground">
+										Scope
+									</dt>
+									<dd className="text-right">
+										{orgName || "Global"}
+									</dd>
 								</div>
-							)}
-							<div>
-								<p className="text-sm font-medium text-muted-foreground">
-									Started At
-								</p>
-								<p className="text-sm mt-1">
-									{startedAt
-										? formatDate(startedAt)
-										: "N/A"}
-								</p>
-							</div>
-							{completedAt && (
-								<div>
-									<p className="text-sm font-medium text-muted-foreground">
-										Completed At
-									</p>
-									<p className="text-sm mt-1">
-										{formatDate(completedAt)}
-									</p>
+								{scheduledAt && (
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-muted-foreground">
+											Scheduled for
+										</dt>
+										<dd className="text-right">
+											{formatDate(scheduledAt)}
+										</dd>
+									</div>
+								)}
+								<div className="flex items-baseline justify-between gap-4">
+									<dt className="text-muted-foreground">
+										Started
+									</dt>
+									<dd
+										className="text-right"
+										{...(startedAt
+											? { title: formatDate(startedAt) }
+											: {})}
+									>
+										{startedAt
+											? formatRelativeTime(startedAt)
+											: "Not started"}
+									</dd>
 								</div>
-							)}
+								{completedAt && (
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-muted-foreground">
+											Completed
+										</dt>
+										<dd
+											className="text-right"
+											title={formatDate(completedAt)}
+										>
+											{formatRelativeTime(completedAt)}
+										</dd>
+									</div>
+								)}
+								{durationMs != null && (
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-muted-foreground">
+											Duration
+										</dt>
+										<dd className="text-right font-mono tabular-nums">
+											{formatDuration(durationMs)}
+										</dd>
+									</div>
+								)}
+							</dl>
 						</CardContent>
 					</Card>
 
 					{/* Input Parameters - All users */}
 					<Card>
-						<CardHeader>
+						<CardHeader className="pb-3">
 							<CardTitle>Input Parameters</CardTitle>
-							<CardDescription>
-								Workflow parameters that were passed in
-							</CardDescription>
 						</CardHeader>
 						<CardContent>
 							<PrettyInputDisplay
@@ -449,22 +393,6 @@ context.roi.time_saved   # ROI tracking`}
 													<p className="text-sm font-mono">
 														{cpuTotalSeconds.toFixed(
 															3,
-														)}
-														s
-													</p>
-												</div>
-											)}
-											{durationMs && (
-												<div>
-													<p className="text-sm font-medium text-muted-foreground">
-														Duration
-													</p>
-													<p className="text-sm font-mono">
-														{(
-															durationMs /
-															1000
-														).toFixed(
-															2,
 														)}
 														s
 													</p>

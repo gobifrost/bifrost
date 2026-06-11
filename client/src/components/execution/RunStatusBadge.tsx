@@ -1,9 +1,9 @@
 /**
- * Status badge for the History feed with an explicit visual hierarchy:
- * the common case (success) renders quietly — color lives only on the
- * icon — while failures are the loudest elements on the page. This is
- * intentionally NOT the loud-green `ExecutionStatusBadge` used on detail
- * views; in a list of mostly-successful runs, success is the non-event.
+ * The canonical execution status badge, with an explicit visual
+ * hierarchy: the common case (success) renders quietly — color lives
+ * only on the icon — while failures are the loudest elements on the
+ * surface. Used by the History feed, the execution drawer, and the
+ * details page so all three agree on what success and failure look like.
  */
 
 import {
@@ -19,9 +19,24 @@ interface RunStatusBadgeProps {
 	status: string;
 	/** ISO datetime a Scheduled run will fire; shown via title tooltip. */
 	scheduledAt?: string | null;
+	/** Queue position for Pending executions (live stream metadata). */
+	queuePosition?: number;
+	/** Why a Pending execution is waiting (queued, memory_pressure). */
+	waitReason?: string;
+	/** Available memory in MB (memory_pressure waits). */
+	availableMemoryMb?: number;
+	/** Required memory in MB (memory_pressure waits). */
+	requiredMemoryMb?: number;
 }
 
-export function RunStatusBadge({ status, scheduledAt }: RunStatusBadgeProps) {
+export function RunStatusBadge({
+	status,
+	scheduledAt,
+	queuePosition,
+	waitReason,
+	availableMemoryMb,
+	requiredMemoryMb,
+}: RunStatusBadgeProps) {
 	switch (status) {
 		case "Success":
 			return (
@@ -64,7 +79,30 @@ export function RunStatusBadge({ status, scheduledAt }: RunStatusBadgeProps) {
 					Running
 				</Badge>
 			);
-		case "Pending":
+		case "Pending": {
+			if (waitReason === "queued" && queuePosition) {
+				return (
+					<Badge
+						variant="outline"
+						className="gap-1 font-normal text-muted-foreground"
+					>
+						<Clock className="h-3 w-3" />
+						Queued — position {queuePosition}
+					</Badge>
+				);
+			}
+			if (waitReason === "memory_pressure") {
+				return (
+					<Badge
+						variant="outline"
+						className="gap-1 border-orange-500/50 font-normal text-orange-600 dark:text-orange-400"
+					>
+						<Loader2 className="h-3 w-3 animate-spin" />
+						Heavy load ({availableMemoryMb ?? "?"}MB /{" "}
+						{requiredMemoryMb ?? "?"}MB)
+					</Badge>
+				);
+			}
 			return (
 				<Badge
 					variant="outline"
@@ -74,6 +112,7 @@ export function RunStatusBadge({ status, scheduledAt }: RunStatusBadgeProps) {
 					Pending
 				</Badge>
 			);
+		}
 		case "Scheduled": {
 			let title: string | undefined;
 			if (scheduledAt) {

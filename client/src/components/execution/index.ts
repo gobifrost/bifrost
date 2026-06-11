@@ -8,12 +8,7 @@ export type {
 
 export { ExecutionResultPanel } from "./ExecutionResultPanel";
 
-export {
-	ExecutionStatusBadge,
-	ExecutionStatusIcon,
-	isExecutionComplete,
-	isExecutionRunning,
-} from "./ExecutionStatusBadge";
+export { RunStatusBadge } from "./RunStatusBadge";
 
 export { ExecutionSidebar } from "./ExecutionSidebar";
 

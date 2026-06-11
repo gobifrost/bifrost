@@ -3,15 +3,17 @@
  *
  * Despite the name, this component is a details panel (not a list). It
  * renders a stack of cards whose visibility is gated by a handful of flags:
- *   - extrasOnly → hide status/workflow info/input/error sections
- *   - errorMessage → show the Error card
+ *   - extrasOnly → hide the Details and Input Parameters sections
  *   - executionContext → show the Execution Context card (admin)
  *   - isPlatformAdmin + isComplete → show Runtime Variables card
  *   - Usage card when (admin compute metrics) OR aiUsage has entries
  *
+ * The status badge and error display intentionally do NOT live here —
+ * status belongs to the page header and the error banner leads the main
+ * content column (see ExecutionDetails).
+ *
  * We stub the child renderers that do heavy lifting (PrettyInputDisplay,
- * VariablesTreeView, ExecutionStatusBadge, ExecutionStatusIcon) so the
- * assertions target the sidebar's own structure.
+ * VariablesTreeView) so the assertions target the sidebar's own structure.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -33,26 +35,10 @@ vi.mock("@/components/ui/variables-tree-view", () => ({
 	),
 }));
 
-vi.mock("./ExecutionStatusBadge", async (orig) => {
-	const actual =
-		(await orig()) as typeof import("./ExecutionStatusBadge");
-	return {
-		...actual,
-		ExecutionStatusBadge: ({ status }: { status: string }) => (
-			<span aria-label="status-badge-stub">{status}</span>
-		),
-		ExecutionStatusIcon: ({ status }: { status: string }) => (
-			<span aria-label="status-icon-stub">{status}</span>
-		),
-	};
-});
-
 function render(
 	props: Partial<ComponentProps<typeof ExecutionSidebar>> = {},
 ) {
 	const baseProps = {
-		status: "Success" as const,
-		workflowName: "my_wf",
 		executedByName: "alice",
 		orgName: "Acme",
 		startedAt: "2026-04-20T12:00:00Z",
@@ -67,17 +53,14 @@ function render(
 }
 
 describe("ExecutionSidebar — default layout", () => {
-	it("renders Status, Workflow Info, and Input Parameters cards", async () => {
+	it("renders Details and Input Parameters cards", async () => {
 		await render();
-		// CardTitle is rendered as a <div>, so we target its text content.
-		expect(screen.getByText(/execution status/i)).toBeInTheDocument();
-		expect(screen.getByText(/workflow information/i)).toBeInTheDocument();
+		expect(screen.getByText(/^details$/i)).toBeInTheDocument();
 		expect(screen.getByText(/input parameters/i)).toBeInTheDocument();
 	});
 
-	it("renders workflow name, executor, and scope", async () => {
+	it("renders executor and scope", async () => {
 		await render({ orgName: "Acme" });
-		expect(screen.getByText("my_wf")).toBeInTheDocument();
 		expect(screen.getByText("alice")).toBeInTheDocument();
 		expect(screen.getByText("Acme")).toBeInTheDocument();
 	});
@@ -87,14 +70,12 @@ describe("ExecutionSidebar — default layout", () => {
 		expect(screen.getByText("Global")).toBeInTheDocument();
 	});
 
-	it("shows Completed At only when completedAt is set", async () => {
+	it("shows the Completed row only when completedAt is set", async () => {
 		const { rerender } = await render({ completedAt: null });
-		expect(screen.queryByText(/completed at/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/^completed$/i)).not.toBeInTheDocument();
 
 		rerender(
 			<ExecutionSidebar
-				status="Success"
-				workflowName="my_wf"
 				executedByName="alice"
 				orgName="Acme"
 				startedAt="2026-04-20T12:00:00Z"
@@ -105,34 +86,30 @@ describe("ExecutionSidebar — default layout", () => {
 				isLoading={false}
 			/>,
 		);
-		expect(screen.getByText(/completed at/i)).toBeInTheDocument();
-	});
-});
-
-describe("ExecutionSidebar — errorMessage", () => {
-	it("renders the Error card when errorMessage is provided", async () => {
-		await render({ errorMessage: "stack trace here" });
-		// Match the CardTitle div exactly to avoid matching substrings.
-		expect(screen.getByText(/^error$/i)).toBeInTheDocument();
-		expect(screen.getByText("stack trace here")).toBeInTheDocument();
+		expect(screen.getByText(/^completed$/i)).toBeInTheDocument();
 	});
 
-	it("hides the Error card when errorMessage is null", async () => {
-		await render({ errorMessage: null });
-		expect(screen.queryByText(/^error$/i)).not.toBeInTheDocument();
+	it("shows a Duration row when durationMs is provided", async () => {
+		await render({ durationMs: 5000 });
+		expect(screen.getByText(/^duration$/i)).toBeInTheDocument();
+		expect(screen.getByText("5.00s")).toBeInTheDocument();
+	});
+
+	it("exposes the absolute started time via a title tooltip", async () => {
+		await render();
+		const started = screen.getByText(/^started$/i)
+			.nextElementSibling as HTMLElement;
+		expect(started).toHaveAttribute("title");
 	});
 });
 
 describe("ExecutionSidebar — extrasOnly mode", () => {
-	it("hides status / workflow info / input / error when extrasOnly is true", async () => {
-		await render({
-			extrasOnly: true,
-			errorMessage: "should be hidden",
-		});
-		expect(screen.queryByText(/execution status/i)).not.toBeInTheDocument();
-		expect(screen.queryByText(/workflow information/i)).not.toBeInTheDocument();
-		expect(screen.queryByText(/input parameters/i)).not.toBeInTheDocument();
-		expect(screen.queryByText(/^error$/i)).not.toBeInTheDocument();
+	it("hides details / input when extrasOnly is true", async () => {
+		await render({ extrasOnly: true });
+		expect(screen.queryByText(/^details$/i)).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/input parameters/i),
+		).not.toBeInTheDocument();
 	});
 });
 
@@ -180,12 +157,10 @@ describe("ExecutionSidebar — Usage card", () => {
 			isComplete: true,
 			peakMemoryBytes: 1024 * 1024 * 200,
 			cpuTotalSeconds: 1.23456,
-			durationMs: 5000,
 		});
 		expect(screen.getByText(/^usage$/i)).toBeInTheDocument();
 		expect(screen.getByText(/memory/i)).toBeInTheDocument();
 		expect(screen.getByText(/cpu time/i)).toBeInTheDocument();
-		expect(screen.getByText(/^duration$/i)).toBeInTheDocument();
 		// CPU time is fixed to 3 decimals.
 		expect(screen.getByText(/1\.235s/)).toBeInTheDocument();
 	});

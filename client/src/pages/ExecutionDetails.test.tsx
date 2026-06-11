@@ -62,7 +62,7 @@ vi.mock("@/components/execution", () => ({
 	ExecutionMetadataBar: ({ workflowName }: { workflowName: string }) => (
 		<div>{workflowName}</div>
 	),
-	ExecutionStatusBadge: ({ status }: { status: string }) => (
+	RunStatusBadge: ({ status }: { status: string }) => (
 		<span>{status}</span>
 	),
 	PrettyInputDisplay: () => <div>Input</div>,
@@ -143,5 +143,38 @@ describe("ExecutionDetails — rerun visibility", () => {
 		expect(mockUseWorkflowsMetadata).toHaveBeenCalledWith({
 			enabled: true,
 		});
+	});
+});
+
+describe("ExecutionDetails — failed-run hierarchy", () => {
+	it("leads with a copyable error banner and skips the Result panel", async () => {
+		mockUseExecution.mockReturnValue({
+			data: {
+				...execution,
+				status: "Failed",
+				result: null,
+				result_type: null,
+				error_message: "RuntimeError: boom",
+			},
+			isLoading: false,
+			error: null,
+		});
+
+		await renderPage();
+
+		const banner = screen.getByTestId("execution-error-banner");
+		expect(banner).toHaveTextContent("This run failed");
+		expect(banner).toHaveTextContent("RuntimeError: boom");
+		// The stubbed Result panel must NOT render for a failed run with no
+		// result — previously it produced a dead "No result returned" card.
+		expect(screen.queryByText("Result")).not.toBeInTheDocument();
+	});
+
+	it("renders the Result panel for successful runs and no error banner", async () => {
+		await renderPage();
+		expect(screen.getByText("Result")).toBeInTheDocument();
+		expect(
+			screen.queryByTestId("execution-error-banner"),
+		).not.toBeInTheDocument();
 	});
 });
