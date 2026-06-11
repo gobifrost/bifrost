@@ -10,7 +10,7 @@ New code should use WorkflowRepository.get_data_providers() instead.
 
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 
 from src.models import Workflow
 from src.repositories.org_scoped import OrgScopedRepository
@@ -63,8 +63,14 @@ class DataProviderRepository(OrgScopedRepository[Workflow]):
             .where(Workflow.is_active.is_(True))
         )
 
-        # Apply cascade scoping manually (count queries can't use _apply_cascade_scope)
-        if self.org_id is not None:
+        # Apply cascade scoping manually (count queries can't use
+        # _apply_cascade_scope). External principals have no global tier.
+        if self.external_restricted:
+            if self.org_id is not None:
+                query = query.where(Workflow.organization_id == self.org_id)
+            else:
+                query = query.where(false())
+        elif self.org_id is not None:
             query = query.where(
                 (Workflow.organization_id == self.org_id)
                 | (Workflow.organization_id.is_(None))

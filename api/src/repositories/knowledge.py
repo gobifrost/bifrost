@@ -173,6 +173,14 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             KnowledgeStore.namespace.in_(namespaces)
         )
 
+        # External principals have no global tier (EXT-1 rule 1) — force
+        # org-only regardless of the fallback flag the caller passed.
+        if self.external_restricted:
+            fallback = False
+            if not target_org_id:
+                # No org for an external => no readable knowledge at all.
+                return []
+
         # Organization scoping with optional fallback
         if target_org_id and fallback:
             # Search both org and global
@@ -317,6 +325,11 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         """
         # Use self.org_id as default if not explicitly provided
         target_org_id = organization_id if organization_id is not None else self.org_id
+        # External principals have no global tier (EXT-1 rule 1).
+        if self.external_restricted:
+            include_global = False
+            if not target_org_id:
+                return []
         # This is a bit complex - we need to get counts grouped by namespace and org_id
         stmt = select(
             KnowledgeStore.namespace,
@@ -500,6 +513,11 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             List of KnowledgeDocument
         """
         target_org_id = organization_id if organization_id is not None else self.org_id
+        # External principals have no global tier (EXT-1 rule 1).
+        if self.external_restricted:
+            include_global = False
+            if not target_org_id:
+                return []
         stmt = select(KnowledgeStore)
 
         if namespace:

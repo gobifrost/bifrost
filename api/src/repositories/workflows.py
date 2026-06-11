@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Literal, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from src.core.org_filter import OrgFilterType
@@ -229,7 +229,20 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         if active_only:
             stmt = stmt.where(Workflow.is_active.is_(True))
 
-        if filter_type is OrgFilterType.ORG_PLUS_GLOBAL:
+        # External principals have no global tier (EXT-1 rule 1). Honor
+        # self.external_restricted even though the caller already resolved a
+        # filter_type — defense in depth against a caller that passed
+        # ORG_PLUS_GLOBAL/GLOBAL_ONLY without consulting resolve_org_filter.
+        if self.external_restricted:
+            if filter_org_id is not None and filter_type in (
+                OrgFilterType.ORG_PLUS_GLOBAL,
+                OrgFilterType.ORG_ONLY,
+            ):
+                stmt = stmt.where(Workflow.organization_id == filter_org_id)
+            else:
+                # GLOBAL_ONLY (or no org) for an external => nothing.
+                stmt = stmt.where(false())
+        elif filter_type is OrgFilterType.ORG_PLUS_GLOBAL:
             if filter_org_id is None:
                 stmt = stmt.where(Workflow.organization_id.is_(None))
             else:

@@ -79,6 +79,11 @@ def resolve_org_filter(
                 return (OrgFilterType.ORG_ONLY, org_uuid)
             except ValueError:
                 raise ValueError(f"Invalid scope value: {scope}")
+    elif getattr(user, "is_external", False):
+        # External (portal/guest) users: their OWN org tier ONLY — no global
+        # fallback (EXT-1 rule 1). ORG_ONLY with org=None resolves to nothing,
+        # NOT GLOBAL_ONLY (an org-less external must never reach global).
+        return (OrgFilterType.ORG_ONLY, user.organization_id)
     else:
         # Org users: always filter to their organization, ignore the scope parameter
         if user.organization_id is not None:
