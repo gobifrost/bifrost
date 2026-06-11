@@ -413,8 +413,10 @@ async def cli_get_config(
     org_uuid = UUID(org_id) if org_id else None
 
     # Canonical SDK config load: cascade (global + org-specific) merged.
+    # An EXTERNAL portal caller gets org-only — no global tier — so a global
+    # secret value is never returned (and never decrypted below). EXT-1 NEW-1.
     repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
-    all_config = await repo.merged_for_sdk()
+    all_config = await repo.merged_for_sdk(external=current_user.is_external)
 
     if request.key not in all_config:
         return None
@@ -540,8 +542,9 @@ async def cli_list_config(
     org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
+    # External callers get org-only (no global tier) — EXT-1 NEW-1.
     repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
-    all_config = await repo.merged_for_sdk()
+    all_config = await repo.merged_for_sdk(external=current_user.is_external)
 
     if not all_config:
         return {}

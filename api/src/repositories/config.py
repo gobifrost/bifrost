@@ -118,8 +118,19 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         """Get config by key with cascade scoping: org-specific > global."""
         return await self.get(key=key)
 
-    async def merged_for_sdk(self) -> dict[str, Any]:
-        """Return the full merged config dict for this scope."""
+    async def merged_for_sdk(self, *, external: bool | None = None) -> dict[str, Any]:
+        """Return the full merged config dict for this scope.
+
+        ``external`` (EXT-1 NEW-1): when the calling principal is EXTERNAL,
+        drop the global (organization_id IS NULL) tier entirely and read/write a
+        SEPARATE org-only cache key, so an external portal user can never read
+        (and the CLI endpoint can never decrypt) a global secret. Defaults to
+        ``self.is_external`` when not passed explicitly. It is a distinct signal
+        from ``is_superuser`` — the CLI passes ``is_superuser=True`` for
+        role-bypass (sentinel trust), which is orthogonal to external-ness.
+        """
+        if external is None:
+            external = self.is_external
         from src.core.cache.keys import (
             TTL_CONFIG,
             config_hash_key_versioned,
@@ -127,10 +138,15 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         from src.core.cache.redis_client import get_shared_redis
 
         org_id_str = str(self.org_id) if self.org_id is not None else None
+        # An external principal with no org has no readable config at all.
+        if external and self.org_id is None:
+            return {}
 
         try:
             redis = await get_shared_redis()
-            hash_key = await config_hash_key_versioned(redis, org_id_str)
+            hash_key = await config_hash_key_versioned(
+                redis, org_id_str, external=external
+            )
             cached = await redis.hgetall(hash_key)  # type: ignore[misc]
             if cached:
                 out: dict[str, Any] = {}
@@ -147,25 +163,27 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
 
         config_dict: dict[str, Any] = {}
 
-        global_q = select(self.model).where(
-            self.model.organization_id.is_(None),
-            self.model.integration_id.is_(None),
-            # Orphaned values (former-install data) are unreachable at runtime —
-            # invisible until the Solution is reinstalled/reattached, matching
-            # the table invariant.
-            self.model.orphaned_at.is_(None),
-        )
-        global_rows = (await self.session.execute(global_q)).scalars()
-        for config in global_rows:
-            value = (
-                config.value.get("value")
-                if isinstance(config.value, dict)
-                else config.value
+        # Global tier — SKIPPED for an external caller (no global scope).
+        if not external:
+            global_q = select(self.model).where(
+                self.model.organization_id.is_(None),
+                self.model.integration_id.is_(None),
+                # Orphaned values (former-install data) are unreachable at
+                # runtime — invisible until the Solution is reinstalled/
+                # reattached, matching the table invariant.
+                self.model.orphaned_at.is_(None),
             )
-            config_dict[config.key] = {
-                "value": value,
-                "type": config.config_type.value if config.config_type else "string",
-            }
+            global_rows = (await self.session.execute(global_q)).scalars()
+            for config in global_rows:
+                value = (
+                    config.value.get("value")
+                    if isinstance(config.value, dict)
+                    else config.value
+                )
+                config_dict[config.key] = {
+                    "value": value,
+                    "type": config.config_type.value if config.config_type else "string",
+                }
 
         if self.org_id is not None:
             org_q = select(self.model).where(
@@ -190,7 +208,9 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         if config_dict:
             try:
                 redis = await get_shared_redis()
-                hash_key = await config_hash_key_versioned(redis, org_id_str)
+                hash_key = await config_hash_key_versioned(
+                    redis, org_id_str, external=external
+                )
                 mapping = {key: json.dumps(value) for key, value in config_dict.items()}
                 await redis.hset(hash_key, mapping=mapping)  # type: ignore[misc]
                 await redis.expire(hash_key, TTL_CONFIG)

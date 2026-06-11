@@ -79,6 +79,8 @@ async def _current_global_version(redis_client) -> int:  # type: ignore[no-untyp
 async def config_hash_key_versioned(
     redis_client,  # type: ignore[no-untyped-def]
     org_id: str | None,
+    *,
+    external: bool = False,
 ) -> str:
     """Versioned variant of ``config_hash_key``.
 
@@ -88,12 +90,22 @@ async def config_hash_key_versioned(
     Reader and writer must use this helper so a global write naturally
     causes every org read to see a fresh cache key (and thus a DB
     re-merge on next read).
+
+    ``external=True`` returns a SEPARATE, org-only-view key
+    (``…:config:external:v{N}``). An external principal must never read the
+    shared org key, which caches the global-merged view (EXT-1 NEW-1). The
+    external view is still version-suffixed so a global write doesn't leave a
+    stale external key around, and an org-scoped invalidation that drops the
+    base key must also drop this sibling.
     """
     base = config_hash_key(org_id)
     if org_id is None or org_id == "GLOBAL":
+        # An external principal has no global scope; this branch is the plain
+        # global key (sentinel/global reads only) and is never external.
         return base
     version = await _current_global_version(redis_client)
-    return f"{base}:v{version}"
+    suffix = ":external" if external else ""
+    return f"{base}{suffix}:v{version}"
 
 
 # =============================================================================

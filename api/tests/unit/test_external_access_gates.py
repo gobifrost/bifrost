@@ -288,6 +288,11 @@ _METHOD_SELF_GUARDING: dict[str, str] = {
     "knowledge.list_namespaces": "forces org-only when self.external_restricted",
     "knowledge.list_documents_by_namespace": "forces org-only when self.external_restricted",
     "workflows.list_tools_for_filter": "forces org-only when self.external_restricted",
+    # merged_for_sdk is reachable behind the PLAIN CurrentUser endpoint
+    # /api/cli/config/get — NOT sentinel-only. It honors an explicit `external`
+    # flag (defaulting to self.is_external) that drops the global tier. EXT-1
+    # NEW-1. Verified self-guarding: stripping the flag re-leaks global secrets.
+    "config.merged_for_sdk": "drops global tier for external caller (EXT-1 NEW-1)",
 }
 
 # SENTINEL/ADMIN-ONLY methods: never reached by a direct external user, so the
@@ -300,7 +305,6 @@ _METHOD_SENTINEL_ONLY: dict[str, str] = {
     "external_mcp.list_all_in_scope": "superuser-only enumeration (OrgFilterType, router-gated)",
     "tables.list_tables": "CurrentSuperuser route only (is_superuser=True caller)",
     "config.list_configs": "superuser-only config endpoint (is_superuser=True)",
-    "config.merged_for_sdk": "SDK sentinel config load (is_superuser=True)",
     "oauth.get_token": "SDK/engine-or-superuser gated (is_superuser=True)",
     "oauth.get_org_level_for_provider": "SDK/engine token resolve (is_superuser=True)",
     "knowledge.get_by_key": "SDK/CLI sentinel knowledge read (is_superuser=True)",
