@@ -467,47 +467,12 @@ class IntegrationDetailResponse(BaseModel):
     )
 
 
-# ==================== SDK RESPONSE MODELS ====================
-
-
-class IntegrationSDKResponse(BaseModel):
-    """
-    Integration data for API SDK endpoint responses.
-    Used by /api/integrations/sdk/{name} endpoint.
-    Does NOT include decrypted OAuth tokens (use IntegrationData from sdk.py for that).
-    """
-
-    model_config = ConfigDict(from_attributes=True)
-
-    integration_id: UUID = Field(
-        ..., description="Integration ID"
-    )
-    entity_id: str = Field(
-        ..., description="Mapped external entity ID"
-    )
-    entity_name: str | None = Field(
-        default=None,
-        description="Display name for the mapped entity",
-    )
-    config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Merged configuration (schema defaults + org overrides)",
-    )
-    oauth_client_id: str | None = Field(
-        default=None,
-        description="OAuth client ID (from provider or override)",
-    )
-    oauth_token_url: str | None = Field(
-        default=None,
-        description="OAuth token URL (with {entity_id} placeholder if applicable)",
-    )
-    oauth_scopes: str | None = Field(
-        default=None,
-        description="OAuth scopes for this integration",
-    )
-
-
 # ==================== INTEGRATION TEST MODELS ====================
+#
+# NOTE (EXT-1 NEW-H): IntegrationSDKResponse was REMOVED with its only consumer,
+# the orphaned cross-tenant-leaking GET /api/integrations/sdk/{name} endpoint.
+# SDK integration reads go through POST /api/sdk/integrations/get (cli.py), which
+# is org-scoped via _resolve_sdk_org_id and external-gated.
 
 
 class IntegrationTestRequest(BaseModel):

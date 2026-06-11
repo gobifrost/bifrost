@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4397,9 +4397,10 @@ export interface paths {
          * List tables
          * @description List tables via SDK.
          *
-         *     Engine sentinel: the SDK has already resolved scope, so we pass
-         *     is_superuser=True to TableRepository and trust the org_uuid.
-         *     The base class handles the cascade (org + global) for us.
+         *     Engine sentinel: the SDK has already resolved scope, so non-external
+         *     principals get is_superuser=True and we trust the org_uuid. The base
+         *     class handles the cascade (org + global) for us. EXTERNAL principals
+         *     do not inherit sentinel trust — they get the org tier only (OPEN-B).
          */
         post: operations["cli_list_tables_api_sdk_tables_list_post"];
         delete?: never;
@@ -5889,26 +5890,6 @@ export interface paths {
          * @description Persists the admin's picker selection. Optionally backfills a specific mapping's entity_id (used when the picker fires inside the OAuth popup of a per-mapping connect). Platform admin only.
          */
         patch: operations["set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch"];
-        trace?: never;
-    };
-    "/api/integrations/sdk/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get integration data for SDK
-         * @description Get integration data with resolved OAuth and merged config for SDK consumption
-         */
-        get: operations["get_integration_sdk_data_api_integrations_sdk__name__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/integrations/{integration_id}/test": {
@@ -15467,52 +15448,6 @@ export interface components {
              * @description Last update timestamp
              */
             updated_at: string;
-        };
-        /**
-         * IntegrationSDKResponse
-         * @description Integration data for API SDK endpoint responses.
-         *     Used by /api/integrations/sdk/{name} endpoint.
-         *     Does NOT include decrypted OAuth tokens (use IntegrationData from sdk.py for that).
-         */
-        IntegrationSDKResponse: {
-            /**
-             * Integration Id
-             * Format: uuid
-             * @description Integration ID
-             */
-            integration_id: string;
-            /**
-             * Entity Id
-             * @description Mapped external entity ID
-             */
-            entity_id: string;
-            /**
-             * Entity Name
-             * @description Display name for the mapped entity
-             */
-            entity_name?: string | null;
-            /**
-             * Config
-             * @description Merged configuration (schema defaults + org overrides)
-             */
-            config?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Oauth Client Id
-             * @description OAuth client ID (from provider or override)
-             */
-            oauth_client_id?: string | null;
-            /**
-             * Oauth Token Url
-             * @description OAuth token URL (with {entity_id} placeholder if applicable)
-             */
-            oauth_token_url?: string | null;
-            /**
-             * Oauth Scopes
-             * @description OAuth scopes for this integration
-             */
-            oauth_scopes?: string | null;
         };
         /**
          * IntegrationTestRequest
@@ -28840,7 +28775,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28873,7 +28808,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28906,7 +28841,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -28939,7 +28874,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -32673,40 +32608,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_integration_sdk_data_api_integrations_sdk__name__get: {
-        parameters: {
-            query: {
-                /** @description Organization ID for resolving mapping */
-                org_id: string;
-            };
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IntegrationSDKResponse"];
                 };
             };
             /** @description Validation Error */

@@ -35,7 +35,6 @@ from src.models import (
     IntegrationMappingResponse,
     IntegrationMappingUpdate,
     IntegrationResponse,
-    IntegrationSDKResponse,
     IntegrationTestRequest,
     IntegrationTestResponse,
     IntegrationUpdate,
@@ -552,13 +551,25 @@ class IntegrationsRepository:
                 return raw
         return raw
 
-    async def get_integration_defaults(self, integration_id: UUID) -> dict[str, Any]:
+    async def get_integration_defaults(
+        self, integration_id: UUID, *, external: bool
+    ) -> dict[str, Any]:
         """
         Get integration-level default config values.
 
         These are stored in the configs table with integration_id set
         but organization_id is NULL.
+
+        ``external`` is REQUIRED (no default — EXT-1 NEW-G/NEW-H defense in
+        depth). These defaults ARE the global (org_id=NULL) tier and may carry
+        decrypted SECRETs. An EXTERNAL portal caller passes True and gets {};
+        the superuser admin routes that use this class pass False explicitly.
+        No default so a future call site can't silently leak the global tier
+        (this is the class behind the now-deleted cross-tenant /sdk/{name}).
         """
+        if external:
+            return {}
+
         config_query = select(ConfigModel).where(
             and_(
                 ConfigModel.integration_id == integration_id,
@@ -625,7 +636,7 @@ class IntegrationsRepository:
         return configs_by_org
 
     async def get_config_for_mapping(
-        self, integration_id: UUID, org_id: UUID
+        self, integration_id: UUID, org_id: UUID, *, external: bool
     ) -> dict[str, Any]:
         """
         Get merged configuration for an integration mapping.
@@ -636,12 +647,17 @@ class IntegrationsRepository:
 
         Per-org values override integration defaults.
 
-        Used by SDK endpoint where we need the fully resolved config.
+        ``external`` is REQUIRED (no default — EXT-1 NEW-G/NEW-H). An EXTERNAL
+        portal caller passes True and gets org-specific overrides ONLY (no
+        global defaults — a decrypted SECRET never crosses to a portal user);
+        the superuser admin routes pass False explicitly.
         """
-        # Start with integration-level defaults
-        config = await self.get_integration_defaults(integration_id)
+        # Integration-level defaults (skipped entirely for external callers).
+        config = await self.get_integration_defaults(
+            integration_id, external=external
+        )
 
-        # Merge org overrides
+        # Merge org overrides (always the caller's own resolved org).
         org_overrides = await self.get_org_config_overrides(integration_id, org_id)
         config.update(org_overrides)
 
@@ -768,7 +784,7 @@ async def get_integration(
         ]
 
     # Get integration-level default config values
-    config_defaults = await repo.get_integration_defaults(integration.id)
+    config_defaults = await repo.get_integration_defaults(integration.id, external=False)
 
     return IntegrationDetailResponse(
         id=integration.id,
@@ -920,7 +936,7 @@ async def update_integration_config(
     logger.info(f"Updated default config for integration {log_safe(integration_id)}")
 
     # Return the saved config
-    saved_config = await repo.get_integration_defaults(integration_id)
+    saved_config = await repo.get_integration_defaults(integration_id, external=False)
     return IntegrationConfigResponse(
         integration_id=integration_id,
         config=saved_config,
@@ -949,7 +965,7 @@ async def get_integration_config(
             detail="Integration not found",
         )
 
-    config = await repo.get_integration_defaults(integration_id)
+    config = await repo.get_integration_defaults(integration_id, external=False)
     return IntegrationConfigResponse(
         integration_id=integration_id,
         config=config,
@@ -1693,75 +1709,17 @@ async def clear_entity_id_source(
 
 
 # =============================================================================
-# HTTP Endpoints - SDK Data
-# =============================================================================
-
-
-@router.get(
-    "/sdk/{name}",
-    response_model=IntegrationSDKResponse,
-    summary="Get integration data for SDK",
-    description="Get integration data with resolved OAuth and merged config for SDK consumption",
-)
-async def get_integration_sdk_data(
-    name: str,
-    ctx: Context,
-    org_id: UUID = Query(..., description="Organization ID for resolving mapping"),
-) -> IntegrationSDKResponse:
-    """
-    Get integration data for SDK consumption.
-    Returns resolved OAuth provider and merged configuration.
-    Called from workflow execution contexts with organization scope.
-    """
-    repo = IntegrationsRepository(ctx.db)
-
-    # Get integration by name
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Integration '{name}' not found",
-        )
-
-    # Get mapping for this org
-    mapping = await repo.get_mapping_by_org(integration.id, org_id)
-    if not mapping:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Mapping not found for integration '{name}' in organization",
-        )
-
-    # Get merged configuration
-    config = await repo.get_config_for_mapping(integration.id, org_id)
-
-    # Get OAuth provider info if present
-    oauth_client_id = None
-    oauth_token_url = None
-    oauth_scopes = None
-
-    if integration.oauth_provider:
-        oauth_client_id = integration.oauth_provider.client_id
-        oauth_token_url = integration.oauth_provider.token_url
-        oauth_scopes = (
-            " ".join(integration.oauth_provider.scopes)
-            if integration.oauth_provider.scopes
-            else None
-        )
-
-    return IntegrationSDKResponse(
-        integration_id=integration.id,
-        entity_id=mapping.entity_id,
-        entity_name=mapping.entity_name,
-        config=config if config else {},
-        oauth_client_id=oauth_client_id,
-        oauth_token_url=oauth_token_url,
-        oauth_scopes=oauth_scopes,
-    )
-
-
-# =============================================================================
 # HTTP Endpoints - Integration Testing
 # =============================================================================
+#
+# NOTE (EXT-1 NEW-H): the former GET /api/integrations/sdk/{name} endpoint was
+# DELETED. It took ``org_id`` as a free Query param with NO own-org check and
+# returned decrypted SECRET config + OAuth metadata for ANY org_id the caller
+# named — any authenticated user (incl. an external hospital portal user) could
+# read ANY tenant's integration secrets. It was orphaned (superseded by
+# POST /api/sdk/integrations/get, which goes through _resolve_sdk_org_id and the
+# external gate); no live Python/TS/app/workflow caller referenced it. Removed
+# along with its IntegrationSDKResponse contract.
 
 
 # Test code template that runs in workflow execution context

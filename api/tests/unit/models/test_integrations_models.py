@@ -15,7 +15,6 @@ from src.models.contracts.integrations import (
     IntegrationUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
-    IntegrationSDKResponse,
 )
 
 
@@ -154,30 +153,4 @@ class TestIntegrationMappingUpdate:
         """Empty entity_id clears the field — see commit 030b4c9f."""
         update = IntegrationMappingUpdate(entity_id="")
         assert update.entity_id == ""
-
-
-class TestIntegrationSDKResponse:
-    """Tests for IntegrationSDKResponse model (SDK response)."""
-
-    def test_integration_data_missing_integration_id(self):
-        """Test that integration_id is required and cannot be None."""
-        with pytest.raises(ValidationError) as exc_info:
-            IntegrationSDKResponse(integration_id=None, entity_id="entity-1")  # type: ignore
-        errors = exc_info.value.errors()
-        # Passing None to a UUID field raises uuid_type error
-        assert any(
-            e["type"] == "uuid_type" and e["loc"] == ("integration_id",)
-            for e in errors
-        )
-
-    def test_integration_data_missing_entity_id(self):
-        """Test that entity_id is required and cannot be None."""
-        with pytest.raises(ValidationError) as exc_info:
-            IntegrationSDKResponse(integration_id=uuid4(), entity_id=None)  # type: ignore
-        errors = exc_info.value.errors()
-        # Passing None to a str field raises string_type error
-        assert any(
-            e["type"] == "string_type" and e["loc"] == ("entity_id",)
-            for e in errors
-        )
 
