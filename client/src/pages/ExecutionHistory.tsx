@@ -93,6 +93,15 @@ type ExecutionStatus =
 	| "Cancelling"
 	| "Cancelled";
 
+/** Statuses with a tab on this page — accepted via the `?status=` param. */
+const STATUS_TABS: ExecutionStatus[] = [
+	"Success",
+	"Running",
+	"Failed",
+	"Pending",
+	"Scheduled",
+];
+
 interface StuckExecution {
 	execution_id: string;
 	workflow_name: string;
@@ -120,7 +129,13 @@ export function ExecutionHistory() {
 		searchParams.get("workflow") || "",
 	);
 	const [statusFilter, setStatusFilter] = useState<ExecutionStatus | "all">(
-		"all",
+		() => {
+			const statusParam = searchParams.get("status")?.toLowerCase();
+			return (
+				STATUS_TABS.find((s) => s.toLowerCase() === statusParam) ??
+				"all"
+			);
+		},
 	);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [dateRange, setDateRange] = useState<DateRange | undefined>();
