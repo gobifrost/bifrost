@@ -606,7 +606,7 @@ export function Users() {
 															</Badge>
 														</TooltipTrigger>
 														<TooltipContent>
-															External user — sees only role-granted entities in their organization
+															External user — sees only what the Everyone tier or an explicit role grant allows
 														</TooltipContent>
 													</Tooltip>
 												)}

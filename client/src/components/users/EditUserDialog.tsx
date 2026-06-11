@@ -392,8 +392,9 @@ function EditUserDialogContent({
 						<div className="space-y-0.5">
 							<Label htmlFor="external">External user</Label>
 							<p className="text-xs text-muted-foreground">
-								Sees only role-granted entities in their
-								organization — no shared global resources
+								Sees only what the Everyone tier or an explicit
+								role grant allows — excluded from
+								&ldquo;Everyone except external users&rdquo; content
 							</p>
 						</div>
 						<Switch
