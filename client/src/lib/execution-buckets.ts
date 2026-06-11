@@ -6,6 +6,8 @@
  * separate success / failed counts per bucket.
  */
 
+import { parseBackendDate } from "@/lib/utils";
+
 export type ChartWindow = "24h" | "7d" | "30d";
 
 export interface BucketableExecution {
@@ -31,19 +33,40 @@ const WINDOW_SPECS: Record<ChartWindow, { buckets: number; unit: BucketUnit }> =
 		"30d": { buckets: 30, unit: "day" },
 	};
 
-/** Terminal states an operator reads as "it broke". */
-const FAILURE_STATUSES = new Set([
+/**
+ * Terminal states an operator reads as "it broke". Exported so the History
+ * page's Failed tab can request exactly this set from the server — the
+ * dashboard's "N failed" link and the Failed tab must agree on what counts.
+ */
+export const FAILURE_STATUSES: ReadonlySet<string> = new Set([
 	"Failed",
 	"Timeout",
 	"Stuck",
 	"CompletedWithErrors",
 ]);
 
-function classify(status: string): "success" | "failed" | null {
+/** Still-active states (Cancelling is in flight until the worker confirms). */
+const RUNNING_STATUSES = new Set(["Running", "Pending", "Cancelling"]);
+
+export type ExecutionOutcome =
+	| "success"
+	| "failed"
+	| "running"
+	| "scheduled"
+	| "cancelled";
+
+/**
+ * The single status → outcome classifier shared by the dashboard chart,
+ * the stat cards, and the History rollup. Decisions encoded here:
+ * Stuck is a terminal failure (it broke); Cancelling is still running
+ * (active until the worker confirms). Returns null for unknown statuses.
+ */
+export function executionOutcome(status: string): ExecutionOutcome | null {
 	if (status === "Success") return "success";
 	if (FAILURE_STATUSES.has(status)) return "failed";
-	// Running / Pending / Scheduled / Cancelling / Cancelled are not
-	// terminal outcomes — they don't belong on either series.
+	if (RUNNING_STATUSES.has(status)) return "running";
+	if (status === "Scheduled") return "scheduled";
+	if (status === "Cancelled") return "cancelled";
 	return null;
 }
 
@@ -103,7 +126,7 @@ export function summarizeOutcomes(
 	let success = 0;
 	let failed = 0;
 	for (const execution of executions) {
-		const outcome = classify(execution.status);
+		const outcome = executionOutcome(execution.status);
 		if (outcome === "success") success += 1;
 		else if (outcome === "failed") failed += 1;
 	}
@@ -142,10 +165,15 @@ export function bucketExecutions(
 	}
 
 	for (const execution of executions) {
-		const outcome = classify(execution.status);
-		if (!outcome || !execution.started_at) continue;
+		const outcome = executionOutcome(execution.status);
+		if (
+			(outcome !== "success" && outcome !== "failed") ||
+			!execution.started_at
+		) {
+			continue;
+		}
 
-		const startedAt = new Date(execution.started_at).getTime();
+		const startedAt = parseBackendDate(execution.started_at).getTime();
 		if (Number.isNaN(startedAt)) continue;
 
 		// Walk from the newest bucket down: an execution belongs to the
@@ -160,4 +188,33 @@ export function bucketExecutions(
 	}
 
 	return buckets;
+}
+
+/**
+ * When the fetch was truncated (API row cap hit), the rows only cover
+ * [oldest fetched row, now] — older buckets would render as fake zeros.
+ * Drop the buckets that end before the oldest fetched row so the chart's
+ * time domain matches the data actually fetched. With no datable rows the
+ * buckets are returned unchanged.
+ */
+export function clampBucketsToData(
+	buckets: ExecutionBucket[],
+	executions: readonly BucketableExecution[],
+): ExecutionBucket[] {
+	let oldest: number | null = null;
+	for (const execution of executions) {
+		if (!execution.started_at) continue;
+		const startedAt = parseBackendDate(execution.started_at).getTime();
+		if (Number.isNaN(startedAt)) continue;
+		if (oldest === null || startedAt < oldest) oldest = startedAt;
+	}
+	if (oldest === null) return buckets;
+
+	// Keep the bucket containing the oldest row and everything after it.
+	// A bucket's end is the next bucket's start; the last bucket is open.
+	const firstCovered = buckets.findIndex((_, i) => {
+		const next = buckets[i + 1];
+		return next === undefined || next.start.getTime() > (oldest as number);
+	});
+	return firstCovered <= 0 ? buckets : buckets.slice(firstCovered);
 }

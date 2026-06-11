@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,16 @@ export function Dashboard() {
 		isError: executionsError,
 		refetch: refetchExecutions,
 	} = useExecutionsWindow(chartWindow);
+
+	// The window fetch is capped at one page (limit=1000). When the API
+	// returns a continuation token the window is truncated — the cards and
+	// chart annotate themselves and the chart clamps its time domain.
+	const windowExecutions = executionsData?.executions;
+	const windowTruncated = Boolean(executionsData?.continuation_token);
+	const outcomes = useMemo(
+		() => summarizeOutcomes(windowExecutions ?? []),
+		[windowExecutions],
+	);
 
 	const {
 		data: agentsData,
@@ -101,7 +111,8 @@ export function Dashboard() {
 			{/* Headline numbers paired with the chart, inventory, and value */}
 			<DashboardStatCards
 				windowLabel={WINDOW_LABELS[chartWindow]}
-				outcomes={summarizeOutcomes(executionsData?.executions ?? [])}
+				outcomes={outcomes}
+				truncated={windowTruncated}
 				executionsLoading={executionsLoading}
 				executionsError={executionsError}
 				inventory={{
@@ -128,7 +139,9 @@ export function Dashboard() {
 			<ExecutionsOverTimeCard
 				window={chartWindow}
 				onWindowChange={setChartWindow}
-				executions={executionsData?.executions}
+				executions={windowExecutions}
+				outcomes={outcomes}
+				truncated={windowTruncated}
 				isLoading={executionsLoading}
 				isError={executionsError}
 			/>

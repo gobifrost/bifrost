@@ -4,6 +4,7 @@
  */
 
 import { parseBackendDate, formatDateShort } from "@/lib/utils";
+import { executionOutcome } from "@/lib/execution-buckets";
 
 /** The minimal execution shape the History list needs for grouping/rollup. */
 export interface HistoryRunLike {
@@ -47,30 +48,39 @@ function dayLabel(date: Date, now: Date): string {
 }
 
 /**
- * Group an already-ordered execution list into consecutive calendar-day
- * buckets. Order within and across groups is preserved exactly as given
- * (the server returns newest-first).
+ * Group an execution list into calendar-day buckets keyed by each run's
+ * anchor date. Grouping is non-consecutive (a Map per day) so interleaved
+ * rows — e.g. Scheduled runs, whose NULL started_at sorts arbitrarily on
+ * the server but whose anchor is a future scheduled_at — never produce
+ * duplicate day headers or duplicate React keys. Groups are ordered
+ * newest day first (matching the newest-first feed), with undated runs
+ * last; order within a group is preserved as given.
  */
 export function groupExecutionsByDay<T extends HistoryRunLike>(
 	executions: T[],
 	now: Date = new Date(),
 ): DayGroup<T>[] {
-	const groups: DayGroup<T>[] = [];
+	const byKey = new Map<string, DayGroup<T>>();
 	for (const run of executions) {
 		const anchor = runAnchorDate(run);
 		const key = anchor ? localDayKey(anchor) : "unknown";
-		const last = groups[groups.length - 1];
-		if (last && last.key === key) {
-			last.executions.push(run);
+		const existing = byKey.get(key);
+		if (existing) {
+			existing.executions.push(run);
 		} else {
-			groups.push({
+			byKey.set(key, {
 				key,
 				label: anchor ? dayLabel(anchor, now) : "Undated",
 				executions: [run],
 			});
 		}
 	}
-	return groups;
+	return Array.from(byKey.values()).sort((a, b) => {
+		if (a.key === "unknown") return 1;
+		if (b.key === "unknown") return -1;
+		// Keys are "YYYY-MM-DD" — lexicographic compare is chronological.
+		return b.key.localeCompare(a.key);
+	});
 }
 
 export interface RunRollup {
@@ -91,23 +101,20 @@ export function summarizeRuns(executions: HistoryRunLike[]): RunRollup {
 		scheduled: 0,
 	};
 	for (const run of executions) {
-		switch (run.status) {
-			case "Success":
+		switch (executionOutcome(run.status)) {
+			case "success":
 				rollup.succeeded += 1;
 				break;
-			case "Failed":
-			case "Timeout":
-			case "CompletedWithErrors":
+			case "failed":
 				rollup.failed += 1;
 				break;
-			case "Running":
-			case "Pending":
-			case "Cancelling":
+			case "running":
 				rollup.running += 1;
 				break;
-			case "Scheduled":
+			case "scheduled":
 				rollup.scheduled += 1;
 				break;
+			// "cancelled" and unknown statuses count toward total only.
 		}
 	}
 	return rollup;

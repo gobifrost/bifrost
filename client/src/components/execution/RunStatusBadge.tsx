@@ -14,6 +14,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { parseBackendDate } from "@/lib/utils";
 
 interface RunStatusBadgeProps {
 	status: string;
@@ -114,13 +115,14 @@ export function RunStatusBadge({
 			);
 		}
 		case "Scheduled": {
+			// new Date() never throws — an unparseable string yields an
+			// Invalid Date, so guard with NaN and fall back to the raw value.
 			let title: string | undefined;
 			if (scheduledAt) {
-				try {
-					title = `Scheduled for ${new Date(scheduledAt).toLocaleString()}`;
-				} catch {
-					title = `Scheduled for ${scheduledAt}`;
-				}
+				const fireAt = parseBackendDate(scheduledAt);
+				title = Number.isNaN(fireAt.getTime())
+					? `Scheduled for ${scheduledAt}`
+					: `Scheduled for ${fireAt.toLocaleString()}`;
 			}
 			return (
 				<Badge

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { AlertCircle } from "lucide-react";
@@ -19,14 +20,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
 	bucketExecutions,
+	clampBucketsToData,
 	type BucketableExecution,
 	type ChartWindow,
+	type OutcomeSummary,
 } from "@/lib/execution-buckets";
 
 interface ExecutionsOverTimeCardProps {
 	window: ChartWindow;
 	onWindowChange: (window: ChartWindow) => void;
 	executions: readonly BucketableExecution[] | undefined;
+	/** Shared outcome tally — the same object the stat cards render. */
+	outcomes: OutcomeSummary;
+	/** True when the window fetch hit the API row cap (more rows exist). */
+	truncated: boolean;
 	isLoading: boolean;
 	isError: boolean;
 }
@@ -52,13 +59,17 @@ export function ExecutionsOverTimeCard({
 	window,
 	onWindowChange,
 	executions,
+	outcomes,
+	truncated,
 	isLoading,
 	isError,
 }: ExecutionsOverTimeCardProps) {
-	const buckets = bucketExecutions(executions ?? [], window);
-	const successTotal = buckets.reduce((sum, b) => sum + b.success, 0);
-	const failedTotal = buckets.reduce((sum, b) => sum + b.failed, 0);
-	const total = successTotal + failedTotal;
+	// Truncated fetches only cover [oldest fetched row, now]; clamping the
+	// bucket range keeps older buckets from rendering as a fake-zero cliff.
+	const buckets = useMemo(() => {
+		const full = bucketExecutions(executions ?? [], window);
+		return truncated ? clampBucketsToData(full, executions ?? []) : full;
+	}, [executions, window, truncated]);
 
 	return (
 		<Card>
@@ -69,19 +80,24 @@ export function ExecutionsOverTimeCard({
 						WINDOW_LABELS[window]
 					) : (
 						<>
-							{`${WINDOW_LABELS[window]} · ${total.toLocaleString()} ${
-								total === 1 ? "run" : "runs"
+							{`${WINDOW_LABELS[window]} · ${outcomes.total.toLocaleString()} ${
+								outcomes.total === 1 ? "run" : "runs"
 							}`}
-							{failedTotal > 0 && (
+							{outcomes.failed > 0 && (
 								<>
 									{" · "}
 									<Link
 										to="/history?status=Failed"
 										className="text-destructive transition-colors hover:underline"
 									>
-										{failedTotal.toLocaleString()} failed
+										{outcomes.failed.toLocaleString()} failed
 									</Link>
 								</>
+							)}
+							{truncated && (
+								<span data-testid="executions-chart-truncated">
+									{" · showing latest 1,000 runs"}
+								</span>
 							)}
 						</>
 					)}
@@ -132,7 +148,7 @@ export function ExecutionsOverTimeCard({
 							Couldn't load executions for this window.
 						</p>
 					</div>
-				) : total === 0 ? (
+				) : outcomes.total === 0 ? (
 					<div
 						className="flex h-[220px] flex-col items-center justify-center gap-1 text-center"
 						data-testid="executions-chart-empty"

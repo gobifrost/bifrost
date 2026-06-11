@@ -38,6 +38,7 @@ import {
 	runAnchorDate,
 	summarizeRuns,
 } from "./ExecutionHistory/components/historyView";
+import { FAILURE_STATUSES } from "@/lib/execution-buckets";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -128,15 +129,27 @@ export function ExecutionHistory() {
 	const [workflowIdFilter, setWorkflowIdFilter] = useState(
 		searchParams.get("workflow") || "",
 	);
-	const [statusFilter, setStatusFilter] = useState<ExecutionStatus | "all">(
-		() => {
-			const statusParam = searchParams.get("status")?.toLowerCase();
-			return (
-				STATUS_TABS.find((s) => s.toLowerCase() === statusParam) ??
-				"all"
-			);
-		},
-	);
+	// `?status=` is the single source of truth for the status tab — derived
+	// from the URL and written back through setSearchParams (same pattern as
+	// `historyType` below), so tab changes survive refresh/back and Clear
+	// filters can't leave a stale param behind.
+	const statusParam = searchParams.get("status")?.toLowerCase();
+	const statusFilter: ExecutionStatus | "all" =
+		STATUS_TABS.find((s) => s.toLowerCase() === statusParam) ?? "all";
+	const setStatusFilter = (value: ExecutionStatus | "all") => {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				if (value === "all") {
+					next.delete("status");
+				} else {
+					next.set("status", value);
+				}
+				return next;
+			},
+			{ replace: true },
+		);
+	};
 	const [searchTerm, setSearchTerm] = useState("");
 	const [dateRange, setDateRange] = useState<DateRange | undefined>();
 	const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
@@ -193,10 +206,18 @@ export function ExecutionHistory() {
 		return org?.name || orgId;
 	};
 
-	// Build filters including date range and local executions toggle
+	// Build filters including date range and local executions toggle.
+	// The Failed tab means the whole failure group (Failed, Timeout, Stuck,
+	// CompletedWithErrors) — the same set the dashboard's "N failed" link
+	// counts — so it sends the comma-separated group to the server's
+	// match-any status filter instead of a single exact status.
 	const filters = useMemo(() => {
-		const baseFilters: Record<string, string | boolean> =
-			statusFilter !== "all" ? { status: statusFilter as string } : {};
+		const baseFilters: Record<string, string | boolean> = {};
+		if (statusFilter === "Failed") {
+			baseFilters.status = Array.from(FAILURE_STATUSES).join(",");
+		} else if (statusFilter !== "all") {
+			baseFilters.status = statusFilter;
+		}
 
 		// Add excludeLocal filter (inverse of showLocal)
 		baseFilters.excludeLocal = !showLocal;
@@ -363,14 +384,12 @@ export function ExecutionHistory() {
 	};
 
 	// Apply search filter
-	const searchFilteredExecutions = useSearch(executions || [], searchTerm, [
+	const filteredExecutions = useSearch(executions, searchTerm, [
 		"workflow_name",
 		"executed_by_name",
 		"execution_id",
 		(exec) => exec.status,
 	]);
-
-	const filteredExecutions = searchFilteredExecutions;
 
 	// Pagination handlers
 	const handleNextPage = () => {
@@ -432,7 +451,6 @@ export function ExecutionHistory() {
 
 	const handleClearFilters = () => {
 		setSearchTerm("");
-		setStatusFilter("all");
 		setDateRange(undefined);
 		setFilterOrgId(undefined);
 		setWorkflowIdFilter("");
@@ -440,6 +458,7 @@ export function ExecutionHistory() {
 			(prev) => {
 				const next = new URLSearchParams(prev);
 				next.delete("workflow");
+				next.delete("status");
 				return next;
 			},
 			{ replace: true },
@@ -648,7 +667,7 @@ export function ExecutionHistory() {
 			>
 				{historyType === "agents" ? (
 					"View agent run history across the fleet"
-				) : executions.length > 0 ? (
+				) : rollup.total > 0 ? (
 					<>
 						{rollup.total} run{rollup.total !== 1 ? "s" : ""}
 						{rollup.succeeded > 0 && (

@@ -95,21 +95,18 @@ export function ExecutionLogsPanel({
 		status === "Timeout" ||
 		status === "Cancelled";
 
-	// Parent (ExecutionDetails) already merges API + streaming logs via mergeLogsWithDedup
-	const displayLogs = useMemo(() => logs, [logs]);
-	const renderItems = useMemo(
-		() => coalesceTracebacks(displayLogs),
-		[displayLogs],
-	);
+	// Parent (ExecutionDetails) already merges API + streaming logs via
+	// mergeLogsWithDedup and memoizes the array, so `logs` is a stable input.
+	const renderItems = useMemo(() => coalesceTracebacks(logs), [logs]);
 
 	// Auto-scroll to bottom when new logs arrive.
 	// Uses scrollTop instead of scrollIntoView to avoid scrolling the outer page.
 	useEffect(() => {
 		const container = logsContainerRef.current;
-		if (autoScroll && container && displayLogs.length > 0) {
+		if (autoScroll && container && logs.length > 0) {
 			container.scrollTop = container.scrollHeight;
 		}
-	}, [displayLogs.length, autoScroll]);
+	}, [logs.length, autoScroll]);
 
 	// Handle scroll to detect if user has scrolled up (pause auto-scroll)
 	const handleLogsScroll = useCallback(() => {
@@ -126,7 +123,7 @@ export function ExecutionLogsPanel({
 	}, []);
 
 	const handleCopyLogs = useCallback(() => {
-		const text = displayLogs
+		const text = logs
 			.map((log) => {
 				const time = formatLogTime(log.timestamp);
 				const level = (log.level || "INFO").toUpperCase();
@@ -137,9 +134,9 @@ export function ExecutionLogsPanel({
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		});
-	}, [displayLogs]);
+	}, [logs]);
 
-	const copyButton = displayLogs.length > 0 && (
+	const copyButton = logs.length > 0 && (
 		<Button
 			variant="ghost"
 			size="icon"
@@ -225,13 +222,13 @@ export function ExecutionLogsPanel({
 		</div>
 	);
 
-	const lineCount = displayLogs.length;
+	const lineCount = logs.length;
 	const countLabel = `${lineCount} line${lineCount !== 1 ? "s" : ""}`;
 
 	// Inspector panel: one step-1 surface framed by a hairline ring, with a
 	// step-2 header band — same idiom in the drawer and the details page.
 	const logsContent =
-		displayLogs.length === 0 && !isLoading ? (
+		logs.length === 0 && !isLoading ? (
 			<div className="text-center text-sm text-muted-foreground py-8">
 				{isRunning
 					? "Waiting for logs..."
@@ -239,7 +236,7 @@ export function ExecutionLogsPanel({
 						? "No logs captured"
 						: "No execution in progress"}
 			</div>
-		) : isLoading && displayLogs.length === 0 ? (
+		) : isLoading && logs.length === 0 ? (
 			<div className="space-y-2 p-4">
 				<Skeleton className="h-3 w-full" />
 				<Skeleton className="h-3 w-5/6" />

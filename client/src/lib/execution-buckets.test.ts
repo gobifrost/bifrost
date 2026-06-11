@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
 	bucketExecutions,
+	clampBucketsToData,
+	executionOutcome,
 	summarizeOutcomes,
 	windowStartIso,
 	type BucketableExecution,
@@ -14,6 +16,21 @@ function exec(
 	startedAt: string | null | undefined,
 ): BucketableExecution {
 	return { status, started_at: startedAt };
+}
+
+/**
+ * Local-wall-clock instant as a "Z" ISO string. Buckets are floored in
+ * local time while backend timestamps are parsed as UTC (parseBackendDate),
+ * so fixtures must be built from local components to stay TZ-robust.
+ */
+function localIso(
+	year: number,
+	month: number,
+	day: number,
+	hour = 0,
+	minute = 0,
+): string {
+	return new Date(year, month - 1, day, hour, minute).toISOString();
 }
 
 describe("windowStartIso", () => {
@@ -63,10 +80,10 @@ describe("bucketExecutions", () => {
 	it("counts successes and failures in the right daily bucket", () => {
 		const buckets = bucketExecutions(
 			[
-				exec("Success", "2026-06-11T09:00:00"),
-				exec("Success", "2026-06-11T17:30:00"),
-				exec("Failed", "2026-06-11T17:35:00"),
-				exec("Success", "2026-06-09T08:00:00"),
+				exec("Success", localIso(2026, 6, 11, 9)),
+				exec("Success", localIso(2026, 6, 11, 17, 30)),
+				exec("Failed", localIso(2026, 6, 11, 17, 35)),
+				exec("Success", localIso(2026, 6, 9, 8)),
 			],
 			"7d",
 			NOW,
@@ -82,8 +99,8 @@ describe("bucketExecutions", () => {
 	it("buckets hourly within the 24h window", () => {
 		const buckets = bucketExecutions(
 			[
-				exec("Success", "2026-06-11T17:05:00"),
-				exec("Failed", "2026-06-11T16:59:00"),
+				exec("Success", localIso(2026, 6, 11, 17, 5)),
+				exec("Failed", localIso(2026, 6, 11, 16, 59)),
 			],
 			"24h",
 			NOW,
@@ -96,9 +113,9 @@ describe("bucketExecutions", () => {
 	it("treats Timeout, Stuck and CompletedWithErrors as failures", () => {
 		const buckets = bucketExecutions(
 			[
-				exec("Timeout", "2026-06-11T10:00:00"),
-				exec("Stuck", "2026-06-11T10:00:00"),
-				exec("CompletedWithErrors", "2026-06-11T10:00:00"),
+				exec("Timeout", localIso(2026, 6, 11, 10)),
+				exec("Stuck", localIso(2026, 6, 11, 10)),
+				exec("CompletedWithErrors", localIso(2026, 6, 11, 10)),
 			],
 			"7d",
 			NOW,
@@ -110,11 +127,11 @@ describe("bucketExecutions", () => {
 	it("excludes non-terminal and cancelled executions from both series", () => {
 		const buckets = bucketExecutions(
 			[
-				exec("Running", "2026-06-11T10:00:00"),
-				exec("Pending", "2026-06-11T10:00:00"),
-				exec("Scheduled", "2026-06-11T10:00:00"),
-				exec("Cancelling", "2026-06-11T10:00:00"),
-				exec("Cancelled", "2026-06-11T10:00:00"),
+				exec("Running", localIso(2026, 6, 11, 10)),
+				exec("Pending", localIso(2026, 6, 11, 10)),
+				exec("Scheduled", localIso(2026, 6, 11, 10)),
+				exec("Cancelling", localIso(2026, 6, 11, 10)),
+				exec("Cancelled", localIso(2026, 6, 11, 10)),
 			],
 			"7d",
 			NOW,
@@ -141,7 +158,7 @@ describe("bucketExecutions", () => {
 
 	it("skips executions before the window start", () => {
 		const buckets = bucketExecutions(
-			[exec("Success", "2026-06-01T12:00:00")],
+			[exec("Success", localIso(2026, 6, 1, 12))],
 			"7d",
 			NOW,
 		);
@@ -191,5 +208,70 @@ describe("summarizeOutcomes", () => {
 			summarizeOutcomes([exec("Pending", "2026-06-11T09:00:00")])
 				.successRate,
 		).toBeNull();
+	});
+});
+
+describe("executionOutcome", () => {
+	it("classifies every known status into one shared outcome", () => {
+		expect(executionOutcome("Success")).toBe("success");
+		// Stuck is terminal-bad — it counts as failed everywhere.
+		expect(executionOutcome("Failed")).toBe("failed");
+		expect(executionOutcome("Timeout")).toBe("failed");
+		expect(executionOutcome("Stuck")).toBe("failed");
+		expect(executionOutcome("CompletedWithErrors")).toBe("failed");
+		// Cancelling is still active — it counts as running everywhere.
+		expect(executionOutcome("Running")).toBe("running");
+		expect(executionOutcome("Pending")).toBe("running");
+		expect(executionOutcome("Cancelling")).toBe("running");
+		expect(executionOutcome("Scheduled")).toBe("scheduled");
+		expect(executionOutcome("Cancelled")).toBe("cancelled");
+	});
+
+	it("returns null for unknown statuses", () => {
+		expect(executionOutcome("SomethingNew")).toBeNull();
+		expect(executionOutcome("")).toBeNull();
+	});
+});
+
+describe("clampBucketsToData", () => {
+	it("drops buckets older than the oldest fetched row", () => {
+		const buckets = bucketExecutions([], "7d", NOW);
+		const executions = [
+			exec("Success", localIso(2026, 6, 9, 8)),
+			exec("Failed", localIso(2026, 6, 11, 10)),
+		];
+		const clamped = clampBucketsToData(buckets, executions);
+		// Oldest row is Jun 9 → the Jun 5–8 buckets are not covered.
+		expect(clamped).toHaveLength(3);
+		expect(clamped[0].start).toEqual(new Date(2026, 5, 9));
+	});
+
+	it("keeps the bucket containing the oldest row (not just later ones)", () => {
+		const buckets = bucketExecutions([], "24h", NOW);
+		const clamped = clampBucketsToData(buckets, [
+			exec("Success", localIso(2026, 6, 11, 16, 30)),
+		]);
+		// 16:30 lives in the 16:00 bucket → 16:00 and 17:00 remain.
+		expect(clamped).toHaveLength(2);
+		expect(clamped[0].start.getHours()).toBe(16);
+	});
+
+	it("returns buckets unchanged when no row has a parseable start time", () => {
+		const buckets = bucketExecutions([], "7d", NOW);
+		expect(clampBucketsToData(buckets, [])).toBe(buckets);
+		expect(
+			clampBucketsToData(buckets, [
+				exec("Success", null),
+				exec("Failed", "not-a-date"),
+			]),
+		).toBe(buckets);
+	});
+
+	it("returns buckets unchanged when the data spans the full window", () => {
+		const buckets = bucketExecutions([], "7d", NOW);
+		const clamped = clampBucketsToData(buckets, [
+			exec("Success", localIso(2026, 6, 5, 1)),
+		]);
+		expect(clamped).toHaveLength(7);
 	});
 });

@@ -2,17 +2,28 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ExecutionsOverTimeCard } from "./ExecutionsOverTimeCard";
-import type { BucketableExecution } from "@/lib/execution-buckets";
+import {
+	summarizeOutcomes,
+	type BucketableExecution,
+} from "@/lib/execution-buckets";
 
 function renderCard(
 	overrides: Partial<
 		React.ComponentProps<typeof ExecutionsOverTimeCard>
 	> = {},
 ) {
+	const executions =
+		"executions" in overrides
+			? overrides.executions
+			: ([] as BucketableExecution[]);
 	const props = {
 		window: "7d" as const,
 		onWindowChange: vi.fn(),
-		executions: [] as BucketableExecution[],
+		executions,
+		// The card shares the stat cards' outcome summary in production
+		// (Dashboard computes it once); mirror that wiring here.
+		outcomes: summarizeOutcomes(executions ?? []),
+		truncated: false,
 		isLoading: false,
 		isError: false,
 		...overrides,
@@ -86,5 +97,28 @@ describe("ExecutionsOverTimeCard", () => {
 		const { props } = renderCard();
 		fireEvent.click(screen.getByRole("radio", { name: "Last 24 hours" }));
 		expect(props.onWindowChange).toHaveBeenCalledWith("24h");
+	});
+
+	it("annotates the subtitle when the window fetch was truncated", () => {
+		renderCard({
+			executions: [
+				{ status: "Success", started_at: new Date().toISOString() },
+			],
+			truncated: true,
+		});
+		expect(
+			screen.getByTestId("executions-chart-truncated"),
+		).toHaveTextContent(/showing latest 1,000 runs/);
+	});
+
+	it("omits the truncation annotation for complete windows", () => {
+		renderCard({
+			executions: [
+				{ status: "Success", started_at: new Date().toISOString() },
+			],
+		});
+		expect(
+			screen.queryByTestId("executions-chart-truncated"),
+		).not.toBeInTheDocument();
 	});
 });

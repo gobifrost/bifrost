@@ -27,6 +27,8 @@ interface DashboardStatCardsProps {
 	/** Human window label shared with the chart, e.g. "Last 7 days". */
 	windowLabel: string;
 	outcomes: OutcomeSummary;
+	/** True when the window fetch hit the API row cap (counts are partial). */
+	truncated: boolean;
 	executionsLoading: boolean;
 	executionsError: boolean;
 	inventory: InventoryCounts;
@@ -78,6 +80,7 @@ const INVENTORY_ITEMS: Array<{
 export function DashboardStatCards({
 	windowLabel,
 	outcomes,
+	truncated,
 	executionsLoading,
 	executionsError,
 	inventory,
@@ -86,6 +89,10 @@ export function DashboardStatCards({
 	roiLoading,
 }: DashboardStatCardsProps) {
 	const executionsUnavailable = executionsError || executionsLoading;
+	// Honest about scope when the fetch hit the API row cap.
+	const executionsWindowLabel = truncated
+		? `${windowLabel} · latest 1,000 runs`
+		: windowLabel;
 
 	return (
 		<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -115,7 +122,7 @@ export function DashboardStatCards({
 							</div>
 						)}
 						<p className="text-xs text-muted-foreground">
-							{windowLabel}
+							{executionsWindowLabel}
 						</p>
 					</CardContent>
 				</Card>
@@ -145,7 +152,7 @@ export function DashboardStatCards({
 							</div>
 						)}
 						<p className="text-xs text-muted-foreground">
-							{windowLabel}
+							{executionsWindowLabel}
 						</p>
 					</CardContent>
 				</Card>

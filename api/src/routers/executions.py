@@ -90,7 +90,12 @@ class ExecutionRepository:
             query = query.where(ExecutionModel.workflow_name == workflow_name)
 
         if status_filter:
-            query = query.where(ExecutionModel.status == status_filter)
+            # Comma-separated values match any of the listed statuses, so the
+            # UI's Failed tab can ask for the whole failure group
+            # (Failed,Timeout,Stuck,CompletedWithErrors) in one server-side
+            # filter. A single value behaves exactly as before.
+            statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+            query = query.where(ExecutionModel.status.in_(statuses))
 
         if start_date:
             try:
@@ -547,7 +552,7 @@ async def list_executions(
     ),
     workflowName: str | None = Query(None, description="Filter by workflow name"),
     workflowId: str | None = Query(None, description="Filter by workflow UUID"),
-    status_filter: str | None = Query(None, alias="status", description="Filter by execution status"),
+    status_filter: str | None = Query(None, alias="status", description="Filter by execution status (comma-separated values match any)"),
     startDate: str | None = Query(None, description="Filter by start date (ISO format)"),
     endDate: str | None = Query(None, description="Filter by end date (ISO format)"),
     excludeLocal: bool = Query(True, description="Exclude local runner executions"),

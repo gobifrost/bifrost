@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useLocation } from "react-router-dom";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 
 // -----------------------------------------------------------------------------
@@ -155,9 +156,25 @@ beforeEach(() => {
 	});
 });
 
+/** Mirrors the router's current URL so tests can assert param round-trips. */
+function LocationProbe() {
+	const location = useLocation();
+	return (
+		<div data-testid="location-probe">
+			{location.pathname + location.search}
+		</div>
+	);
+}
+
 async function renderPage(initialEntries?: string[]) {
 	const { ExecutionHistory } = await import("./ExecutionHistory");
-	return renderWithProviders(<ExecutionHistory />, { initialEntries });
+	return renderWithProviders(
+		<>
+			<ExecutionHistory />
+			<LocationProbe />
+		</>,
+		{ initialEntries },
+	);
 }
 
 // -----------------------------------------------------------------------------
@@ -172,6 +189,88 @@ describe("ExecutionHistory — status filter", () => {
 		expect(
 			screen.getByRole("tab", { name: /^Scheduled$/i }),
 		).toBeInTheDocument();
+	});
+});
+
+describe("ExecutionHistory — ?status= round-trip", () => {
+	it("derives the Failed tab from the URL and requests the whole failure group", async () => {
+		// The server returns exactly the failure group when asked for it.
+		mockUseExecutions.mockReturnValue({
+			data: {
+				executions: [
+					makeRow({
+						execution_id: "62222222-2222-2222-2222-222222222222",
+						status: "Failed",
+					}),
+					makeRow({
+						execution_id: "63333333-3333-3333-3333-333333333333",
+						status: "Timeout",
+					}),
+					makeRow({
+						execution_id: "64444444-4444-4444-4444-444444444444",
+						status: "Stuck",
+					}),
+					makeRow({
+						execution_id: "65555555-5555-5555-5555-555555555555",
+						status: "CompletedWithErrors",
+					}),
+				],
+				continuation_token: null,
+			},
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+
+		await renderPage(["/history?status=Failed"]);
+
+		expect(screen.getByRole("tab", { name: /^Failed$/i })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		// The Failed tab means the SAME failure set the dashboard's "N
+		// failed" link counts — sent as the API's comma-separated match-any
+		// status filter so pagination and counts stay server-accurate.
+		expect(mockUseExecutions).toHaveBeenLastCalledWith(
+			undefined,
+			expect.objectContaining({
+				status: "Failed,Timeout,Stuck,CompletedWithErrors",
+			}),
+			undefined,
+		);
+		// The dashboard's "4 failed" link promise lands on exactly 4 rows.
+		expect(screen.getAllByTestId("execution-row")).toHaveLength(4);
+		const summary = screen.getByTestId("history-summary");
+		expect(summary).toHaveTextContent("4 runs");
+		expect(summary).toHaveTextContent("4 failed");
+	});
+
+	it("writes tab changes to the URL and clears the param with Clear filters", async () => {
+		const { user } = await renderPage(["/history"]);
+
+		await user.click(screen.getByRole("tab", { name: /^Running$/i }));
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			"/history?status=Running",
+		);
+		// Exact-match tabs still filter server-side.
+		expect(mockUseExecutions).toHaveBeenLastCalledWith(
+			undefined,
+			expect.objectContaining({ status: "Running" }),
+			undefined,
+		);
+
+		// No rows match → filtered empty state; clearing filters must also
+		// drop the URL param so it can't resurrect on refresh/back.
+		await user.click(
+			await screen.findByRole("button", { name: /clear filters/i }),
+		);
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			/^\/history$/,
+		);
+		expect(screen.getByRole("tab", { name: /^All$/i })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
 	});
 });
 

@@ -45,7 +45,9 @@ import {
 } from "@/lib/executionLogs";
 import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { copyToClipboard } from "@/lib/clipboard";
+import type { StreamingLog } from "@/stores/executionStreamStore";
 
 type ExecutionStatus =
 	| components["schemas"]["ExecutionStatus"]
@@ -61,6 +63,19 @@ type WorkflowExecutionResponse =
 interface WorkflowsMetadataResponse {
 	workflows: WorkflowMetadata[];
 	dataProviders: unknown[];
+}
+
+// Stable empty array so the merged-logs memo doesn't recompute every
+// render while no stream is attached.
+const NO_STREAMING_LOGS: StreamingLog[] = [];
+
+/** Copy with the secure/insecure-context-aware helper; only toast success when it worked. */
+async function copyWithToast(text: string, successMessage: string) {
+	if (await copyToClipboard(text)) {
+		toast.success(successMessage);
+	} else {
+		toast.error("Failed to copy to clipboard");
+	}
 }
 
 interface ExecutionDetailsProps {
@@ -112,7 +127,7 @@ export function ExecutionDetails({
 	const streamState = useExecutionStreamStore((state) =>
 		executionId ? state.streams[executionId] : undefined,
 	);
-	const streamingLogs = streamState?.streamingLogs ?? [];
+	const streamingLogs = streamState?.streamingLogs ?? NO_STREAMING_LOGS;
 
 	// Reset fallback when execution ID changes (important for rerun
 	// navigation). Adjust during render with a previous-ID sentinel rather
@@ -392,8 +407,10 @@ export function ExecutionDetails({
 		}
 	};
 
-	// Compute merged logs for the logs panel
-	const mergedLogs = (() => {
+	// Merged logs for the logs panel — memoized so ExecutionLogsPanel's
+	// traceback-coalescing memo keeps a stable input (rebuilding this array
+	// every render made coalescing O(n²) while streaming).
+	const mergedLogs = useMemo(() => {
 		const existingLogs = (logsData as ExecutionLogEntry[]) || [];
 		if (
 			executionStatus === "Running" ||
@@ -403,7 +420,7 @@ export function ExecutionDetails({
 			return mergeLogsWithDedup(existingLogs, streamingLogs);
 		}
 		return existingLogs;
-	})();
+	}, [logsData, streamingLogs, executionStatus]);
 
 	// Skeleton mirroring the drawer layout: identity header, a content
 	// block, and log lines — holds the layout instead of collapsing to a
@@ -579,12 +596,12 @@ export function ExecutionDetails({
 									variant="ghost"
 									size="icon"
 									className="h-6 w-6 flex-shrink-0 text-destructive/70 hover:text-destructive"
-									onClick={() => {
-										navigator.clipboard.writeText(
+									onClick={() =>
+										void copyWithToast(
 											execution.error_message ?? "",
-										);
-										toast.success("Error copied");
-									}}
+											"Error copied",
+										)
+									}
 									title="Copy error"
 								>
 									<Copy className="h-3.5 w-3.5" />
@@ -764,10 +781,12 @@ export function ExecutionDetails({
 									variant="ghost"
 									size="icon"
 									className="h-7 w-7"
-									onClick={() => {
-										navigator.clipboard.writeText(execution.execution_id);
-										toast.success("Execution ID copied");
-									}}
+									onClick={() =>
+										void copyWithToast(
+											execution.execution_id,
+											"Execution ID copied",
+										)
+									}
 									title="Copy execution ID"
 								>
 									<Copy className="h-3.5 w-3.5" />
@@ -807,13 +826,13 @@ export function ExecutionDetails({
 											variant="ghost"
 											size="icon"
 											className="h-7 w-7 flex-shrink-0 text-destructive/70 hover:text-destructive"
-											onClick={() => {
-												navigator.clipboard.writeText(
+											onClick={() =>
+												void copyWithToast(
 													execution.error_message ??
 														"",
-												);
-												toast.success("Error copied");
-											}}
+													"Error copied",
+												)
+											}
 											title="Copy error"
 										>
 											<Copy className="h-4 w-4" />

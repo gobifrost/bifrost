@@ -115,6 +115,68 @@ describe("groupExecutionsByDay", () => {
 		]);
 	});
 
+	it("groups non-consecutive same-day rows under one header (interleaved scheduled rows)", () => {
+		// Scheduled rows have started_at NULL; Postgres NULLS FIRST puts
+		// them before everything in arbitrary order, anchored to future
+		// scheduled_at dates. Day headers must still be unique.
+		const now = new Date(2026, 5, 11, 12, 0, 0);
+		const rows = [
+			run({
+				execution_id: "sched-13",
+				status: "Scheduled",
+				started_at: null,
+				completed_at: null,
+				scheduled_at: new Date(2026, 5, 13, 9, 0, 0).toISOString(),
+			}),
+			run({
+				execution_id: "sched-12-a",
+				status: "Scheduled",
+				started_at: null,
+				completed_at: null,
+				scheduled_at: new Date(2026, 5, 12, 8, 0, 0).toISOString(),
+			}),
+			run({
+				execution_id: "sched-13-b",
+				status: "Scheduled",
+				started_at: null,
+				completed_at: null,
+				scheduled_at: new Date(2026, 5, 13, 17, 0, 0).toISOString(),
+			}),
+			run({
+				execution_id: "sched-12-b",
+				status: "Scheduled",
+				started_at: null,
+				completed_at: null,
+				scheduled_at: new Date(2026, 5, 12, 16, 0, 0).toISOString(),
+			}),
+			run({
+				execution_id: "ran-today",
+				started_at: new Date(2026, 5, 11, 9, 0, 0).toISOString(),
+			}),
+		];
+
+		const groups = groupExecutionsByDay(rows, now);
+
+		// One group per day — no duplicate headers, no duplicate keys.
+		const keys = groups.map((g) => g.key);
+		expect(new Set(keys).size).toBe(keys.length);
+		expect(groups).toHaveLength(3);
+
+		// Newest day first; given order preserved within each group.
+		expect(groups[0].executions.map((r) => r.execution_id)).toEqual([
+			"sched-13",
+			"sched-13-b",
+		]);
+		expect(groups[1].executions.map((r) => r.execution_id)).toEqual([
+			"sched-12-a",
+			"sched-12-b",
+		]);
+		expect(groups[2].label).toBe("Today");
+		expect(groups[2].executions.map((r) => r.execution_id)).toEqual([
+			"ran-today",
+		]);
+	});
+
 	it("buckets runs without any timestamp under Undated", () => {
 		const groups = groupExecutionsByDay([
 			run({
@@ -133,12 +195,13 @@ describe("groupExecutionsByDay", () => {
 });
 
 describe("summarizeRuns", () => {
-	it("rolls statuses up into operator-facing buckets", () => {
+	it("rolls statuses up into operator-facing buckets via the shared classifier", () => {
 		const rollup = summarizeRuns([
 			run({ status: "Success" }),
 			run({ status: "Success" }),
 			run({ status: "Failed" }),
 			run({ status: "Timeout" }),
+			run({ status: "Stuck" }),
 			run({ status: "CompletedWithErrors" }),
 			run({ status: "Running" }),
 			run({ status: "Pending" }),
@@ -147,9 +210,12 @@ describe("summarizeRuns", () => {
 			run({ status: "Cancelled" }),
 		]);
 		expect(rollup).toEqual({
-			total: 10,
+			total: 11,
 			succeeded: 2,
-			failed: 3, // Failed + Timeout + CompletedWithErrors all need attention
+			// Failed + Timeout + Stuck + CompletedWithErrors — same failure
+			// set the dashboard counts; the rollup buckets sum to total
+			// minus Cancelled.
+			failed: 4,
 			running: 3, // Running + Pending + Cancelling
 			scheduled: 1,
 		});

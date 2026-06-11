@@ -155,8 +155,6 @@ export function ExecutionSidebar({
 		return Array.from(groups.values());
 	}, [aiUsage]);
 
-	const isLoadingVariables = isLoading;
-
 	return (
 		<div className="space-y-5">
 			{!extrasOnly && (
@@ -302,7 +300,7 @@ context.roi.time_saved   # ROI tracking`}
 					>
 						<div className="rounded-lg bg-muted/50 ring-1 ring-foreground/5 p-3">
 							<AnimatePresence mode="wait">
-								{isLoadingVariables ? (
+								{isLoading ? (
 									<motion.div
 										key="loading"
 										initial={{ opacity: 0 }}

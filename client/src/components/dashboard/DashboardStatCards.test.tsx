@@ -18,6 +18,7 @@ function renderCards(
 			...Array.from({ length: 9 }, () => ({ status: "Success" })),
 			...Array.from({ length: 3 }, () => ({ status: "Failed" })),
 		]),
+		truncated: false,
 		executionsLoading: false,
 		executionsError: false,
 		inventory: INVENTORY,
@@ -39,6 +40,14 @@ describe("DashboardStatCards", () => {
 		expect(screen.getByText("75.0%")).toBeInTheDocument();
 		expect(screen.getByText("12")).toBeInTheDocument();
 		expect(screen.getAllByText("Last 7 days")).toHaveLength(2);
+	});
+
+	it("annotates the window label when the fetch was truncated", () => {
+		renderCards({ truncated: true });
+		expect(
+			screen.getAllByText("Last 7 days · latest 1,000 runs"),
+		).toHaveLength(2);
+		expect(screen.queryByText("Last 7 days")).not.toBeInTheDocument();
 	});
 
 	it("shows skeletons while the executions window is loading", () => {
