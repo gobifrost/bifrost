@@ -44,6 +44,10 @@ class TestRefreshTokenClientCredentials:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
 
         mock_db = AsyncMock()
 
@@ -116,6 +120,10 @@ class TestRefreshTokenClientCredentials:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
         mock_db = AsyncMock()
 
         provider_id = uuid4()
@@ -182,6 +190,10 @@ class TestRefreshTokenAuthorizationCode:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
         mock_db = AsyncMock()
 
         provider_id = uuid4()
@@ -257,6 +269,10 @@ class TestRefreshTokenAuthorizationCode:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
         mock_db = AsyncMock()
 
         mock_provider = MagicMock()
@@ -326,6 +342,10 @@ class TestRefreshTokenAuthorizationCode:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
         mock_db = AsyncMock()
 
         mock_provider = MagicMock()
@@ -379,6 +399,10 @@ class TestRefreshTokenErrorHandling:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
         mock_db = AsyncMock()
 
         # Provider not found
@@ -405,6 +429,10 @@ class TestRefreshTokenErrorHandling:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        # SDK refresh is called by the engine sentinel / non-external
+        # principal; is_external is a real bool (a MagicMock default is
+        # truthy and would wrongly drop the global provider cascade).
+        mock_user.is_external = False
         mock_db = AsyncMock()
 
         mock_provider = MagicMock()
