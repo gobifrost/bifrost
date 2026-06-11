@@ -923,8 +923,13 @@ async def sdk_integrations_list_mappings(
 
         items = []
         for mapping in mappings:
-            # Get merged config (integration defaults + org overrides)
-            config = await repo.get_config_for_mapping(integration.id, mapping.organization_id)
+            # Get merged config (integration defaults + org overrides).
+            # External callers drop the global tier (NEW-G).
+            config = await repo.get_config_for_mapping(
+                integration.id,
+                mapping.organization_id,
+                external=current_user.is_external,
+            )
             items.append({
                 "id": str(mapping.id),
                 "integration_id": str(mapping.integration_id),
@@ -999,8 +1004,13 @@ async def sdk_integrations_get_mapping(
         if not mapping:
             return None
 
-        # Get merged config for the mapping
-        config = await repo.get_config_for_mapping(integration.id, mapping.organization_id)
+        # Get merged config for the mapping. External callers drop the global
+        # tier (NEW-G).
+        config = await repo.get_config_for_mapping(
+            integration.id,
+            mapping.organization_id,
+            external=current_user.is_external,
+        )
 
         logger.info(f"SDK retrieved mapping for integration '{log_safe(request.name)}' for user {current_user.email}")
 
@@ -1095,8 +1105,13 @@ async def sdk_integrations_upsert_mapping(
 
         await db.commit()
 
-        # Get merged config for response
-        config = await repo.get_config_for_mapping(integration.id, mapping.organization_id)
+        # Get merged config for the post-write echo. External callers drop the
+        # global tier (NEW-G).
+        config = await repo.get_config_for_mapping(
+            integration.id,
+            mapping.organization_id,
+            external=current_user.is_external,
+        )
 
         return SDKIntegrationsMappingItem(
             id=str(mapping.id),

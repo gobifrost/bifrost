@@ -781,3 +781,106 @@ def test_user_reachable_paths_dont_hand_roll_global_arm():
         "_PATH_GLOBAL_ARM_ALLOWLIST with a reason:\n  "
         + "\n  ".join(sorted(set(violations)))
     )
+
+
+# =============================================================================
+# 3d. EXTERNAL-FLAG lint: BaseRepository config-merge methods carry a global
+#     tier behind an ``external=`` flag (not the OrgScoped cascade the
+#     method-lint sees). A user-reachable router calling them WITHOUT
+#     external= (now a required arg) or with ``external=False`` LITERAL on a
+#     plain-user path is a leak — this is the NEW-G/OPEN-E class (four sibling
+#     SDK endpoints, one missed flag = a portal user reads another tenant's
+#     decrypted secrets).
+# =============================================================================
+
+# Methods that merge/return the GLOBAL (org_id=NULL) integration tier and gate
+# it on an ``external=`` keyword. Any user-reachable caller MUST pass
+# ``external=<principal>.is_external`` (NOT a False literal) unless allow-listed.
+_EXTERNAL_FLAG_METHODS = {
+    "get_config_for_mapping",
+    "get_integration_defaults",
+}
+
+# Call sites that legitimately pass ``external=False`` because the route is
+# SUPERUSER-only (no external principal ever reaches them). Key is
+# ``"<relative/path>::<function>"`` with a verified reason.
+_EXTERNAL_FLAG_FALSE_ALLOWLIST: dict[str, str] = {
+    # integrations.py admin config routes are all CurrentSuperuser-gated.
+    "routers/integrations.py::get_integration": "CurrentSuperuser route",
+    "routers/integrations.py::update_integration_config": "CurrentSuperuser route",
+    "routers/integrations.py::get_integration_config": "CurrentSuperuser route",
+    # The local IntegrationsRepository.get_config_for_mapping delegates to
+    # get_integration_defaults(external=external) — it FORWARDS the flag, it
+    # does not hardcode False. (Listed so the forwarding call is explicit.)
+    "routers/integrations.py::get_config_for_mapping": "forwards external= to get_integration_defaults",
+}
+
+
+def _external_kwarg(node: ast.Call) -> ast.expr | None:
+    for kw in node.keywords:
+        if kw.arg == "external":
+            return kw.value
+    return None
+
+
+def test_user_reachable_callers_pass_external_flag():
+    """Every user-reachable call to a global-tier config-merge method
+    (get_config_for_mapping / get_integration_defaults) must pass
+    ``external=<principal>.is_external`` — NOT omit it (now a required arg) and
+    NOT pass a ``False`` literal on a plain-user path. A ``False`` literal is
+    allowed only at an allow-listed superuser-only call site.
+
+    This is the structural backstop for the NEW-G/OPEN-E class: the methods sit
+    on a BaseRepository (not OrgScoped), so the cascade method-lint can't see
+    their call sites. Without this, a 5th sibling SDK endpoint that forgets the
+    flag (or copy-pastes external=False) silently re-opens the global secret
+    tier to a hospital portal user.
+    """
+    roots = [API_SRC / "routers", API_SRC / "services"]
+    violations: list[str] = []
+
+    for root in roots:
+        for path in root.rglob("*.py"):
+            rel = str(path.relative_to(API_SRC)).replace("\\", "/")
+            text = path.read_text()
+            if not any(m in text for m in _EXTERNAL_FLAG_METHODS):
+                continue
+            tree = ast.parse(text)
+            idents = _identifiers_in_module(tree)
+            is_mcp_tool = "services/mcp_server/tools/" in rel
+            user_reachable = (
+                bool({"CurrentActiveUser", "CurrentUser", "Context"} & idents)
+                or is_mcp_tool
+            )
+            if not user_reachable:
+                continue
+            enclosing = _enclosing_function_names(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else None
+                if name not in _EXTERNAL_FLAG_METHODS:
+                    continue
+                key = f"{rel}::{enclosing.get(id(node), '?')}"
+                ext = _external_kwarg(node)
+                if ext is None:
+                    # Required arg omitted — a runtime TypeError AND a leak risk.
+                    violations.append(f"{key} (line {node.lineno}) — {name}() missing external=")
+                    continue
+                is_false_literal = (
+                    isinstance(ext, ast.Constant) and ext.value is False
+                )
+                if is_false_literal and key not in _EXTERNAL_FLAG_FALSE_ALLOWLIST:
+                    violations.append(
+                        f"{key} (line {node.lineno}) — {name}(external=False) "
+                        f"on a user-reachable path (not allow-listed)"
+                    )
+
+    assert not violations, (
+        "A user-reachable router/service calls a global-tier config-merge "
+        "method without threading the principal's is_external (NEW-G/OPEN-E "
+        "class). Pass external=<principal>.is_external, or — only for a "
+        "superuser-only route — external=False with an entry in "
+        "_EXTERNAL_FLAG_FALSE_ALLOWLIST:\n  " + "\n  ".join(sorted(set(violations)))
+    )

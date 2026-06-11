@@ -617,7 +617,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
         return config
 
     async def get_config_for_mapping(
-        self, integration_id: UUID, org_id: UUID, *, external: bool = False
+        self, integration_id: UUID, org_id: UUID, *, external: bool
     ) -> dict:
         """
         Get merged configuration for an integration mapping.
@@ -628,11 +628,16 @@ class IntegrationsRepository(BaseRepository[Integration]):
         Args:
             integration_id: Integration UUID
             org_id: Organization UUID
-            external: When True (EXT-1 OPEN-E), an EXTERNAL portal caller —
-                drop the global (org_id=NULL) integration defaults entirely so
-                a decrypted global SECRET is never returned. Org-specific
-                config only. Engine/sentinel/normal callers leave this False
-                and keep the defaults+overrides merge.
+            external: REQUIRED (no default — EXT-1 OPEN-E / NEW-G). Every call
+                site MUST consciously decide: an EXTERNAL portal caller passes
+                True (drop the global org_id=NULL integration defaults entirely
+                so a decrypted global SECRET is never returned — org-specific
+                config only); engine/sentinel/admin callers pass False
+                explicitly (keep the defaults+overrides merge). The default was
+                removed so a new sibling endpoint can't silently re-open the
+                global tier by forgetting the flag (the OPEN-E/NEW-G failure
+                mode — four sibling endpoints, one missed flag = a hospital
+                portal user reading another tenant's secrets).
 
         Returns:
             dict: Merged configuration (integration defaults + org overrides),
@@ -692,7 +697,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
         return config
 
     async def get_integration_defaults(
-        self, integration_id: UUID, *, external: bool = False
+        self, integration_id: UUID, *, external: bool
     ) -> dict[str, Any]:
         """
         Get integration-level config defaults (org_id=NULL).
@@ -701,10 +706,12 @@ class IntegrationsRepository(BaseRepository[Integration]):
 
         Args:
             integration_id: Integration UUID
-            external: When True (EXT-1 OPEN-E), an EXTERNAL portal caller —
-                these defaults ARE the global (org_id=NULL) tier and may carry
-                decrypted SECRETs, so return nothing. An external with no org
-                mapping gets no integration config at all (no global leak).
+            external: REQUIRED (no default — EXT-1 OPEN-E / NEW-G). These
+                defaults ARE the global (org_id=NULL) tier and may carry
+                decrypted SECRETs. An EXTERNAL portal caller passes True and
+                gets nothing (no global leak); engine/sentinel/admin callers
+                pass False explicitly. No default so a new call site can't
+                silently leak the global tier.
 
         Returns:
             dict: Integration-level config defaults, or empty for externals.

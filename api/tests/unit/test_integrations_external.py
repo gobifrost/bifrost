@@ -124,7 +124,9 @@ class TestIntegrationsConfigExternal:
         session = _session()
         session.execute.return_value = _result([])
         repo = IntegrationsRepository(session)
-        await repo.get_config_for_mapping(uuid4(), uuid4())
+        # external is now a REQUIRED kwarg (NEW-G defense in depth) — the
+        # normal/sentinel caller passes False explicitly.
+        await repo.get_config_for_mapping(uuid4(), uuid4(), external=False)
         sql = _all_sql(session)
         assert "organization_id IS NULL" in sql
 
@@ -140,7 +142,7 @@ class TestIntegrationsConfigExternal:
         session = _session()
         session.execute.return_value = _result([])
         repo = IntegrationsRepository(session)
-        await repo.get_integration_defaults(uuid4())
+        await repo.get_integration_defaults(uuid4(), external=False)
         sql = _all_sql(session)
         assert "organization_id IS NULL" in sql
 
