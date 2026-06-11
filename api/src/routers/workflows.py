@@ -832,10 +832,39 @@ async def execute_workflow(
         try:
             await workflow_repo.can_access(id=workflow.id)
         except AccessDeniedError:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to execute this workflow",
+            # W3 — own-install carve-out for EXTERNAL principals: a
+            # solution-managed workflow reached THROUGH its own install's
+            # scope (the request's app_id/form_id/solution_id derived to the
+            # workflow's solution_id) is that install's API surface — e.g. an
+            # client portal user clicking View/Download. The external boundary
+            # (no global tier, no authenticated-tier entitlement) is an
+            # org/global-cascade rule and must not strip an external of their
+            # OWN install's workflows. The carve-out grants only what the
+            # authenticated tier grants a non-external org member:
+            # role_based workflows stay role-gated, cross-install refs are
+            # impossible (resolve() never yields a sibling install's row),
+            # and global/_repo/ workflows stay unreachable (org match
+            # re-checked here).
+            raw_level = getattr(workflow, "access_level", None)
+            access_level = (
+                raw_level.value
+                if hasattr(raw_level, "value")
+                else (str(raw_level) if raw_level is not None else None)
             )
+            own_install_authenticated = (
+                ctx.user.is_external
+                and workflow.solution_id is not None
+                and solution_scope is not None
+                and workflow.solution_id == solution_scope
+                and workflow.organization_id is not None
+                and workflow.organization_id == ctx.org_id
+                and access_level in (None, "authenticated")
+            )
+            if not own_install_authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to execute this workflow",
+                )
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

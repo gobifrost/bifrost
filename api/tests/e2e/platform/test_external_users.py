@@ -602,6 +602,126 @@ class TestExternalUserMCPAgentIsolation:
             )
 
 
+# =============================================================================
+# W3 — an external user must be able to execute their OWN install's
+# solution-managed workflow (the client portal ship-blocker), while the
+# global/_repo/ boundary still holds.
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def w3_install(e2e_client, platform_admin, org1):
+    """An org1-scoped Solution install shipping a workflow + a v2 app."""
+    slug = f"ext-w3-{SUFFIX}"
+    resp = e2e_client.post(
+        "/api/solutions",
+        headers=platform_admin.headers,
+        json={
+            "slug": slug,
+            "name": slug,
+            "scope": "org",
+            "organization_id": org1["id"],
+            "global_repo_access": False,
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text
+    sid = resp.json()["id"]
+
+    app_manifest_id = str(uuid4())
+    deploy = e2e_client.post(
+        f"/api/solutions/{sid}/deploy",
+        headers=platform_admin.headers,
+        json={
+            "python_files": {
+                "workflows/ping.py": (
+                    "from bifrost import workflow\n\n"
+                    "@workflow\n"
+                    "async def ping():\n"
+                    "    return {'pong': True}\n"
+                ),
+            },
+            "workflows": [{
+                "id": str(uuid4()),
+                "name": f"ping_{slug}",
+                "function_name": "ping",
+                "path": "workflows/ping.py",
+                "type": "workflow",
+                # The authenticated tier is what real solutions ship for app
+                # function-call workflows — W3 restores external parity for
+                # exactly this tier (role_based stays role-gated).
+                "access_level": "authenticated",
+            }],
+            "apps": [{
+                "id": app_manifest_id,
+                "slug": f"app-{slug}",
+                "name": "W3 App",
+                "app_model": "standalone_v2",
+                "dependencies": {},
+                "access_level": "authenticated",
+                "dist_files": {
+                    "index.html": '<!doctype html><div id="root"></div>',
+                },
+            }],
+        },
+    )
+    assert deploy.status_code in (200, 201), deploy.text
+
+    # The app's DB id is the remapped uuid5(install, manifest_id).
+    from src.services.solutions.deploy import solution_entity_id
+
+    app_db_id = str(solution_entity_id(UUID(sid), UUID(app_manifest_id)))
+    yield {"id": sid, "app_id": app_db_id, "slug": slug}
+    e2e_client.delete(f"/api/solutions/{sid}", headers=platform_admin.headers)
+
+
+class TestExternalOwnInstallWorkflowExecution:
+    """W3: an external portal user invoking their OWN install's
+    solution-managed workflow via path-ref + app_id (the v2 app function-call
+    channel) must succeed — pre-fix the access re-check applied the
+    authenticated-tier exclusion and 403'd them out of the very solution
+    they are authorized to use. The boundary still holds: global/_repo/
+    workflows remain unreachable for the same external user."""
+
+    def test_external_executes_own_install_workflow(
+        self, e2e_client, external_user, w3_install
+    ):
+        resp = e2e_client.post(
+            "/api/workflows/execute",
+            headers=external_user.headers,
+            json={
+                "workflow_id": "workflows/ping.py::ping",
+                "app_id": w3_install["app_id"],
+                "sync": True,
+            },
+        )
+        assert resp.status_code == 200, (
+            f"external user must execute their own install's workflow: "
+            f"{resp.status_code} {resp.text}"
+        )
+        body = resp.json()
+        assert body["status"] == "Success", body
+        assert body["result"] == {"pong": True}, body
+
+    def test_external_still_cannot_execute_global_repo_workflow(
+        self, e2e_client, external_user, ext_workflow, w3_install
+    ):
+        # The GLOBAL _repo/ workflow stays unreachable even when the external
+        # smuggles their own install's app_id alongside the global ref.
+        resp = e2e_client.post(
+            "/api/workflows/execute",
+            headers=external_user.headers,
+            json={
+                "workflow_id": ext_workflow["id"],
+                "app_id": w3_install["app_id"],
+                "sync": True,
+            },
+        )
+        assert resp.status_code in (403, 404), (
+            f"external user must NOT execute a global _repo/ workflow: "
+            f"{resp.status_code} {resp.text}"
+        )
+
+
 class TestExternalUserSDKKnowledge:
     """OPEN-A: the /api/sdk/knowledge endpoints are plain CurrentUser routes
     that hardcoded ``is_superuser=True`` (sentinel trust), so an external user
