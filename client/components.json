@@ -1,6 +1,9 @@
 {
 	"$schema": "https://ui.shadcn.com/schema.json",
-	"style": "new-york",
+	"style": "radix-rhea",
+	"iconLibrary": "lucide",
+	"menuColor": "default",
+	"menuAccent": "subtle",
 	"rsc": false,
 	"tsx": true,
 	"tailwind": {
