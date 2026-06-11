@@ -28,6 +28,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from shared.external_access import resolve_external_claim
+
 logger = logging.getLogger(__name__)
 
 # TTLs for MCP OAuth flow
@@ -416,14 +418,18 @@ class BifrostAuthProvider:
                         status_code=400
                     )
 
-                # Create tokens with full user context
+                # Create tokens with full user context. The is_external claim
+                # (EXT-1) is neutralized for bypass principals at this mint —
+                # without it every MCP-OAuth token defaulted to is_external=False
+                # (LEAK #1), re-opening the global tier to external users.
                 token_data = {
                     "sub": str(user.id),
                     "email": user.email,
                     "name": user.name,
                     "is_superuser": user.is_superuser,
+                    "is_external": await resolve_external_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
-                                        "type": "access",
+                    "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
                 refresh_token, _jti = create_refresh_token(data={"sub": str(user.id)})
@@ -469,14 +475,15 @@ class BifrostAuthProvider:
                         status_code=400
                     )
 
-                # Create new tokens
+                # Create new tokens (carry the is_external claim — LEAK #1).
                 token_data = {
                     "sub": str(user.id),
                     "email": user.email,
                     "name": user.name,
                     "is_superuser": user.is_superuser,
+                    "is_external": await resolve_external_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
-                                        "type": "access",
+                    "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
                 new_refresh_token, _jti = create_refresh_token(data={"sub": str(user.id)})
