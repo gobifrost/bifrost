@@ -453,9 +453,20 @@ async def get_form(
         orm_form.role_ids = await _load_form_role_ids(db, orm_form.id)  # type: ignore[attr-defined]
         return FormPublic.model_validate(orm_form)
 
-    # Check access - admins and embed users can see all forms
-    if ctx.user.is_superuser or ctx.user.embed:
+    # Platform admins see all forms.
+    if ctx.user.is_superuser:
         return await _to_public(form)
+
+    # Embed users are HMAC-pre-authorized — but ONLY for the form their token
+    # is bound to (EXT-1 NEW-I). An unbound embed token must not read a
+    # cross-tenant form's schema/workflow ids/launch params.
+    if ctx.user.embed:
+        if _embed_can_access_form(ctx, form):
+            return await _to_public(form)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Form not found",
+        )
 
     # Non-admins can only see active forms
     if not form.is_active:
@@ -736,6 +747,35 @@ async def _check_form_access(
     return accessible is not None
 
 
+def _embed_can_access_form(ctx, form: FormORM) -> bool:
+    """Whether an EMBED principal is bound to THIS form (EXT-1 NEW-I).
+
+    An embed token is HMAC-pre-authorized for exactly ONE resource. Before this
+    gate, the embed short-circuits in get_form / execute_form /
+    execute_startup_workflow / generate_upload_url skipped access control for
+    ANY embed token regardless of which form the path named — so an embed token
+    minted for app A in org H could read AND EXECUTE any form in any other org
+    (cross-tenant workflow execution as sentinel in the victim's org). Mirrors
+    the app-binding pattern in applications.py / app_code_files.py.
+
+    Binding rules (the token must be bound to the form being touched):
+    - form-embed token (``form_id`` claim set): must match the path form
+      exactly — ``ctx.user.form_id == str(form.id)``.
+    - app-embed token (``app_id`` set, no ``form_id``): the form must live in
+      the embed's OWN org (the form's org equals the token's org — a concrete
+      org). A global form (org-id None) is never embed-reachable, and a
+      cross-org form is rejected. This is the safe minimum that kills the
+      cross-tenant exec even without a form->app FK.
+    - a token with neither claim is never form-bound.
+    """
+    if ctx.user.form_id is not None:
+        return ctx.user.form_id == str(form.id)
+    if ctx.user.app_id is not None:
+        form_org = getattr(form, "organization_id", None)
+        return form_org is not None and form_org == ctx.user.organization_id
+    return False
+
+
 @router.post(
     "/{form_id}/execute",
     response_model=WorkflowExecutionResponse,
@@ -778,8 +818,16 @@ async def execute_form(
             detail="Form not found",
         )
 
-    # Check access — embed users are pre-authorized via HMAC
-    if not ctx.user.embed:
+    # Check access. Embed users are pre-authorized via HMAC — but ONLY for the
+    # form their token is bound to (EXT-1 NEW-I): an unbound embed token must
+    # not execute a cross-tenant form's workflow as sentinel in the victim org.
+    if ctx.user.embed:
+        if not _embed_can_access_form(ctx, form):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found",
+            )
+    else:
         has_access = await _check_form_access(
             db,
             form,
@@ -982,8 +1030,16 @@ async def execute_startup_workflow(
             detail="Form not found",
         )
 
-    # Check access — embed users are pre-authorized via HMAC
-    if not ctx.user.embed:
+    # Check access. Embed users are pre-authorized via HMAC — but ONLY for the
+    # form their token is bound to (EXT-1 NEW-I): an unbound embed token must
+    # not run a cross-tenant form's launch workflow as sentinel.
+    if ctx.user.embed:
+        if not _embed_can_access_form(ctx, form):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found",
+            )
+    else:
         has_access = await _check_form_access(
             db,
             form,
@@ -1189,8 +1245,16 @@ async def generate_upload_url(
             detail="Form not found",
         )
 
-    # Check access — embed users are pre-authorized via HMAC
-    if not ctx.user.embed:
+    # Check access. Embed users are pre-authorized via HMAC — but ONLY for the
+    # form their token is bound to (EXT-1 NEW-I): an unbound embed token must
+    # not mint an upload URL for a cross-tenant form.
+    if ctx.user.embed:
+        if not _embed_can_access_form(ctx, form):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found",
+            )
+    else:
         has_access = await _check_form_access(
             db,
             form,
