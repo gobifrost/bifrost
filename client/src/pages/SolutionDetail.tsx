@@ -35,6 +35,15 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
+import { SearchBox } from "@/components/search/SearchBox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -111,6 +120,14 @@ function asConfigType(type: string): ConfigType {
 	return "string";
 }
 
+const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs">, string> = {
+	workflows: "workflows",
+	apps: "apps",
+	forms: "forms",
+	agents: "agents",
+	tables: "tables",
+};
+
 function EntityTabContent({
 	kind,
 	items,
@@ -120,25 +137,58 @@ function EntityTabContent({
 	items: EntitySummary[];
 	solutionId: string;
 }) {
+	const navigate = useNavigate();
+	const [search, setSearch] = useState("");
+
+	const q = search.trim().toLowerCase();
+	const visible = q
+		? items.filter((e) => e.name.toLowerCase().includes(q))
+		: items;
+
 	if (items.length === 0) {
 		return (
-			<div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
-				None
+			<div className="text-sm text-muted-foreground py-8 text-center rounded-2xl border border-dashed">
+				This Solution deploys no {ENTITY_TAB_LABEL[kind]}.
 			</div>
 		);
 	}
 	return (
-		<div className="divide-y rounded-lg border">
-			{items.map((entity) => (
-				<Link
-					key={entity.id}
-					to={entityHref(kind, entity, solutionId)}
-					className="flex items-center justify-between px-4 py-3 text-sm transition-colors hover:bg-accent/50"
-				>
-					<span className="truncate font-medium">{entity.name}</span>
-					<ChevronLeft className="h-4 w-4 rotate-180 text-muted-foreground" />
-				</Link>
-			))}
+		<div className="flex flex-col gap-3">
+			<SearchBox
+				value={search}
+				onChange={setSearch}
+				placeholder={`Search ${ENTITY_TAB_LABEL[kind]}...`}
+			/>
+			{visible.length === 0 ? (
+				<div className="text-sm text-muted-foreground py-8 text-center rounded-2xl border border-dashed">
+					No {ENTITY_TAB_LABEL[kind]} match “{search.trim()}”.
+				</div>
+			) : (
+				<DataTable>
+					<DataTableHeader>
+						<DataTableRow>
+							<DataTableHead>Name</DataTableHead>
+						</DataTableRow>
+					</DataTableHeader>
+					<DataTableBody>
+						{visible.map((entity) => {
+							const href = entityHref(kind, entity, solutionId);
+							return (
+								<DataTableRow
+									key={entity.id}
+									clickable
+									href={href}
+									onClick={() => navigate(href)}
+								>
+									<DataTableCell className="font-medium">
+										{entity.name}
+									</DataTableCell>
+								</DataTableRow>
+							);
+						})}
+					</DataTableBody>
+				</DataTable>
+			)}
 		</div>
 	);
 }

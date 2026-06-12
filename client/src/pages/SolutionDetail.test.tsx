@@ -144,16 +144,35 @@ describe("SolutionDetail", () => {
 		).toBeInTheDocument();
 	});
 
-	it("links a table row to its entity page with ?from=solution:", async () => {
+	it("navigates a table row to its entity page with ?from=solution:", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("tab-tables"));
-		const link = screen.getByRole("link", { name: /customers/i });
-		expect(link).toHaveAttribute(
-			"href",
+		// Entity tabs render the shared DataTable (Roles paradigm): rows are
+		// clickable and navigate, carrying the from=solution backlink.
+		await user.click(screen.getByRole("row", { name: /customers/i }));
+		expect(mockNavigate).toHaveBeenCalledWith(
 			"/tables/tbl-1?from=solution:sol-1",
 		);
+	});
+
+	it("filters entity rows with the tab's search box", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-tables"));
+		expect(screen.getByRole("row", { name: /customers/i })).toBeInTheDocument();
+
+		await user.type(
+			screen.getByPlaceholderText("Search tables..."),
+			"zzz",
+		);
+		// SearchBox debounces input before propagating it.
+		expect(await screen.findByText(/no tables match/i)).toBeInTheDocument();
+		expect(
+			screen.queryByRole("row", { name: /customers/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("shows Set/Not set status and config inputs on the Configs tab", async () => {
