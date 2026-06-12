@@ -365,7 +365,7 @@ same password (externals), `dev@gobifrost.com` / `password` (platform).
 - Groups question answered: C# Groups were NOT migrated (replaced by per-user
   grants) → Jack wants **Grant Templates** as the migration path (below).
 
-### IN-FLIGHT — Grant Templates v0.8.0 (built + deployed, E2E drive FAILING at step 1)
+### DONE — Grant Templates v0.8.0 (committed to bifrost-workspace, deployed, E2E drive GREEN)
 
 Design (locked with Jack): template = named doc-type set + access level
 (C# `Group` parity; `legacy_id` for GroupId migration). Reference + materialize:
@@ -374,26 +374,30 @@ claims/policy chain is untouched; **editing a template re-materializes all
 members** (mass maintenance). Per-user custom grants remain the option. Template
 delete refused while in use. Template-first UX (CreateUser preselects first template).
 
-Built (all in rtm-portal workspace, NOT yet committed):
-- `.bifrost/tables.yaml`: + `grant_templates` table (uuid baea47c3-…), + `template_id`
-  col on portal_access.
-- `modules/rtm_portal.py`: `get_template`, `apply_template`, write_grants stamps template_id.
-- `functions/manage_portal_user.py`: `template_id` param on create/set_grants.
-- `functions/manage_grant_template.py` (NEW, uuid a6d187b9-… in workflows.yaml):
-  create/update(+re-materialize members)/delete(refuse-if-members).
-- Client: `staff/GrantTemplates.tsx` (admin CRUD page, member counts, nav
-  `/staff/templates`); GrantMatrix.tsx refactor (exported `DocTypePicker`,
-  `TemplateCampusList`, shared `AddCampusPicker`); Users.tsx template-first
-  GrantEditor in both modals + template badge on user cards.
-- tsc clean, vite build clean, deployed (16 workflows upserted).
+Shipped: `grant_templates` table + `template_id` on portal_access (tables.yaml);
+`manage_grant_template` workflow (create/update+re-materialize/delete-refuse-if-members);
+`manage_portal_user` takes `template_id`; client GrantTemplates.tsx admin page,
+template-first GrantEditor in Users modals, template badge on user cards,
+DocTypePicker/TemplateCampusList extracted from GrantMatrix.
 
-**BLOCKER:** drive `/tmp/rtm-drive/templates-verify.mjs` fails at create-template —
-red error banner ("workflow executi…"), and the worker logs show NO
-manage_grant_template execution → fails at the API submit layer, before the
-engine. Suspects: app-scoped path-ref resolution for a workflow ADDED to an
-existing install, or workflow-entity access gating for a non-superuser (dee).
-NEXT: capture exact error (re-run probe `/tmp/rtm-drive/tpl-error.mjs` or
-`bifrost run functions/manage_grant_template.py::main` from the solution dir as
-dev), fix, re-run templates-verify.mjs (expects architect Riverside docs 2 → 3
-after template edit), screenshot, bump bifrost.solution.yaml → 0.8.0, commit
-to bifrost-workspace.
+E2E proof (`/tmp/rtm-drive/templates-verify.mjs`, shots `/tmp/rtm-shots/templates/`):
+dee created "Binders Only" (green+red), assigned to architect via the Grants
+modal; architect saw 2 Riverside docs; dee added Egress Analysis to the template;
+architect saw 3 — **no per-user action**. Per-campus expiry survives template
+swaps (verified on tom). Delete disabled while in use. No HTTP/page errors.
+
+Two bugs found & fixed along the way:
+1. **Latent install bug:** workflows deployed `role_based` with no roles → ALL
+   staff workflows (manage_portal_user, upload, every report) were
+   platform-admin-only; dee got 403. Fix: `role_names:` in workflows.yaml
+   (deploy resolves names→UUIDs). Admin-only: manage_portal_user,
+   manage_grant_template. Staff: upload + all reports.
+2. Dev-stack-only surgeries (NOT in code): architect@studio-demo.com had no
+   password auth (hashed_password copied from jim + is_registered=true via
+   psql, password RtmDemo2026x); tom's grants restored after a wrong-card
+   drive click (template briefly assigned to him).
+
+Migration note for the real cutover: import C# Groups → grant_templates rows
+(stamp legacy_id = GroupId), then per user: campuses from CampusUser +
+template_id from User.GroupId via legacy_id lookup → manage_portal_user
+create/set_grants with template_id.
