@@ -1,272 +1,64 @@
 /**
  * Solutions Page
  *
- * Operator home for managing Solution installs. Lists installed Solution
- * packages as cards, supports a whole-page drag-and-drop zip install
- * (preview -> scope -> config values -> deploy), and a type-to-confirm,
- * non-destructive uninstall.
+ * Operator home for managing Solution installs. Mirrors the Applications page
+ * conventions: grid/table view toggle, search, and the standard Organization
+ * filter at the top. Installing goes through the CreateEditSolution dialog
+ * (opened by the + button, or prefilled by dropping a .zip anywhere on the
+ * page). Uninstall lives on the individual Solution page.
  */
 
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Boxes,
-	Upload,
-	GitBranch,
-	HardDriveUpload,
-	Globe,
 	Building2,
-	Trash2,
-	Loader2,
-	Workflow,
-	AppWindow,
-	FileCode,
-	Bot,
-	Database,
-	SlidersHorizontal,
+	GitBranch,
+	Globe,
+	HardDriveUpload,
+	LayoutGrid,
+	Plus,
+	Table as TableIcon,
+	Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
+import { SearchBox } from "@/components/search/SearchBox";
+import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
+	CreateEditSolution,
+	type CreateEditSolutionMode,
+} from "@/components/solutions/CreateEditSolution";
+import { useSearch } from "@/hooks/useSearch";
 import { useOrganizations } from "@/hooks/useOrganizations";
-import {
-	deleteSolution,
-	installSolution,
-	listSolutions,
-	previewInstall,
-	type Solution,
-	type SolutionInstallPreview,
-	type SolutionUpgradeDiff,
-} from "@/services/solutions";
-import type { components } from "@/lib/v1";
-
-/** A declared config schema item on a preview, narrowed from the loose dict. */
-interface PreviewConfigSchema {
-	key: string;
-	type: string;
-	required: boolean;
-	description: string | null;
-}
-
-function asConfigSchemas(
-	raw: SolutionInstallPreview["config_schemas"],
-): PreviewConfigSchema[] {
-	if (!raw) return [];
-	return raw
-		.map((item) => {
-			const key = typeof item.key === "string" ? item.key : "";
-			if (!key) return null;
-			return {
-				key,
-				type: typeof item.type === "string" ? item.type : "string",
-				required: item.required === true,
-				description:
-					typeof item.description === "string"
-						? item.description
-						: null,
-			};
-		})
-		.filter((x): x is PreviewConfigSchema => x !== null);
-}
-
-function isSecretType(type: string): boolean {
-	const t = type.toLowerCase();
-	return t === "secret" || t === "password";
-}
-
-/** Summary chips of what an install/preview creates. */
-function EntitySummary({
-	preview,
-}: {
-	preview: SolutionInstallPreview;
-}) {
-	const items: { icon: typeof Workflow; label: string; count: number }[] = [
-		{
-			icon: Workflow,
-			label: "workflows",
-			count: preview.workflows?.length ?? 0,
-		},
-		{ icon: AppWindow, label: "apps", count: preview.apps?.length ?? 0 },
-		{ icon: FileCode, label: "forms", count: preview.forms?.length ?? 0 },
-		{ icon: Bot, label: "agents", count: preview.agents?.length ?? 0 },
-		{ icon: Database, label: "tables", count: preview.tables?.length ?? 0 },
-		{
-			icon: SlidersHorizontal,
-			label: "configs",
-			count: preview.config_schemas?.length ?? 0,
-		},
-	];
-	const present = items.filter((i) => i.count > 0);
-	if (present.length === 0) {
-		return (
-			<p className="text-sm text-muted-foreground">
-				This package declares no entities.
-			</p>
-		);
-	}
-	return (
-		<div className="flex flex-wrap gap-2" data-testid="preview-summary">
-			{present.map(({ icon: Icon, label, count }) => (
-				<Badge key={label} variant="secondary" className="gap-1.5 py-1">
-					<Icon className="h-3.5 w-3.5" />
-					<span className="tabular-nums font-semibold">{count}</span>
-					<span className="text-muted-foreground">{label}</span>
-				</Badge>
-			))}
-		</div>
-	);
-}
-
-/** One "Added: …" / "Removed: …" pair for an entity kind; omits empty lists. */
-function DiffSection({
-	label,
-	added,
-	removed,
-}: {
-	label: string;
-	added: string[];
-	removed: string[];
-}) {
-	if (added.length === 0 && removed.length === 0) return null;
-	return (
-		<div className="text-sm">
-			<span className="font-medium">{label}</span>
-			{added.length > 0 && (
-				<p className="text-green-600 dark:text-green-500">
-					Added: {added.join(", ")}
-				</p>
-			)}
-			{removed.length > 0 && (
-				<p className="text-destructive">Removed: {removed.join(", ")}</p>
-			)}
-		</div>
-	);
-}
-
-/** Render a config declaration change as "KEY: secret→string, required→optional". */
-function describeConfigChange(
-	change: components["schemas"]["SolutionConfigSchemaChange"],
-): string {
-	const parts: string[] = [];
-	if (change.from.type !== change.to.type) {
-		parts.push(`${change.from.type}→${change.to.type}`);
-	}
-	if (change.from.required !== change.to.required) {
-		parts.push(
-			change.from.required ? "required→optional" : "optional→required",
-		);
-	}
-	return `${change.key}: ${parts.join(", ")}`;
-}
-
-/** What an upgrade changes, per entity type plus config declarations. */
-function UpgradeDiffView({ diff }: { diff: SolutionUpgradeDiff }) {
-	const entitySections: { label: string; key: keyof SolutionUpgradeDiff }[] = [
-		{ label: "Workflows", key: "workflows" },
-		{ label: "Apps", key: "apps" },
-		{ label: "Forms", key: "forms" },
-		{ label: "Agents", key: "agents" },
-		{ label: "Tables", key: "tables" },
-	];
-	const configs = diff.config_schemas;
-	const hasConfigDiff =
-		(configs?.added?.length ?? 0) > 0 ||
-		(configs?.removed?.length ?? 0) > 0 ||
-		(configs?.changed?.length ?? 0) > 0;
-	const hasEntityDiff = entitySections.some(({ key }) => {
-		const d = diff[key] as SolutionUpgradeDiff["workflows"] | undefined;
-		return (d?.added?.length ?? 0) > 0 || (d?.removed?.length ?? 0) > 0;
-	});
-	if (!hasEntityDiff && !hasConfigDiff) {
-		return (
-			<p className="text-sm text-muted-foreground">
-				No entity or configuration changes.
-			</p>
-		);
-	}
-	return (
-		<div className="space-y-3" data-testid="upgrade-diff">
-			{entitySections.map(({ label, key }) => {
-				const d = diff[key] as
-					| SolutionUpgradeDiff["workflows"]
-					| undefined;
-				return (
-					<DiffSection
-						key={key}
-						label={label}
-						added={d?.added ?? []}
-						removed={d?.removed ?? []}
-					/>
-				);
-			})}
-			{hasConfigDiff && configs && (
-				<div className="text-sm">
-					<span className="font-medium">Configs</span>
-					{(configs.added?.length ?? 0) > 0 && (
-						<p className="text-green-600 dark:text-green-500">
-							Added: {(configs.added ?? []).join(", ")}
-						</p>
-					)}
-					{(configs.removed?.length ?? 0) > 0 && (
-						<p className="text-destructive">
-							Removed: {(configs.removed ?? []).join(", ")}
-						</p>
-					)}
-					{(configs.changed ?? []).map((change) => (
-						<p key={change.key} className="text-muted-foreground">
-							{describeConfigChange(change)}
-						</p>
-					))}
-				</div>
-			)}
-		</div>
-	);
-}
+import { listSolutions, type Solution } from "@/services/solutions";
 
 export function Solutions() {
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
-	const fileInputRef = useRef<HTMLInputElement>(null);
 	const dragDepth = useRef(0);
 
 	const [isDragging, setIsDragging] = useState(false);
-
-	// Preview / install dialog state.
-	const [installFile, setInstallFile] = useState<File | null>(null);
-	const [preview, setPreview] = useState<SolutionInstallPreview | null>(null);
-	const [previewError, setPreviewError] = useState<string | null>(null);
-	const [installError, setInstallError] = useState<string | null>(null);
-	const [scopeOrgId, setScopeOrgId] = useState<string>("__global__");
-	const [configValues, setConfigValues] = useState<Record<string, string>>(
-		{},
+	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+	const [searchTerm, setSearchTerm] = useState("");
+	// undefined = all organizations, null = global only, string = one org.
+	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
+		undefined,
 	);
-	// Set when an install attempt 409'd as a downgrade; gates a confirm step
-	// before retrying with force=true.
-	const [downgradeConfirm, setDowngradeConfirm] = useState(false);
-
-	// Delete dialog state.
-	const [deleteTarget, setDeleteTarget] = useState<Solution | null>(null);
-	const [deleteConfirm, setDeleteConfirm] = useState("");
+	const [dialogMode, setDialogMode] = useState<CreateEditSolutionMode | null>(
+		null,
+	);
 
 	const { data: organizations } = useOrganizations();
 
@@ -286,126 +78,16 @@ export function Solutions() {
 		return org?.name ?? orgId;
 	};
 
-	// Monotonic guard so a stale preview response (e.g. the operator changed
-	// the scope again while one was in flight) can't clobber a newer one.
-	const previewSeq = useRef(0);
-	const [previewLoading, setPreviewLoading] = useState(false);
+	const scopeFiltered =
+		filterOrgId === undefined
+			? solutions
+			: solutions.filter(
+					(sol) => (sol.organization_id ?? null) === filterOrgId,
+				);
+	const filtered = useSearch(scopeFiltered, searchTerm, ["name", "slug"]);
 
-	/** Run (or re-run) the zip preview against a scope selection. */
-	async function runPreview(file: File, scopeId: string) {
-		const seq = ++previewSeq.current;
-		setPreviewLoading(true);
-		try {
-			const data = await previewInstall(file, {
-				organizationId: scopeId === "__global__" ? "" : scopeId,
-			});
-			if (seq !== previewSeq.current) return;
-			setPreview(data);
-			setPreviewError(null);
-		} catch (err: unknown) {
-			if (seq !== previewSeq.current) return;
-			// Disarm the previous scope's preview: leaving it set would enable
-			// Install into a scope that was never successfully previewed — the
-			// exact silent-replace path the upgrade flow exists to prevent.
-			setPreview(null);
-			setPreviewError(
-				err instanceof Error ? err.message : "Failed to read package",
-			);
-		} finally {
-			if (seq === previewSeq.current) setPreviewLoading(false);
-		}
-	}
-
-	const installMutation = useMutation({
-		mutationFn: ({ force }: { force: boolean }) => {
-			if (!installFile) throw new Error("No file selected");
-			const values: Record<string, string> = {};
-			for (const [k, v] of Object.entries(configValues)) {
-				if (v.trim() !== "") values[k] = v;
-			}
-			return installSolution({
-				file: installFile,
-				organizationId:
-					scopeOrgId === "__global__" ? "" : scopeOrgId,
-				configValues: values,
-				force,
-			});
-		},
-		onSuccess: (created) => {
-			queryClient.invalidateQueries({ queryKey: ["solutions"] });
-			toast.success(
-				preview?.existing_install
-					? `Upgraded ${created.name}`
-					: `Installed ${created.name}`,
-			);
-			closeInstallDialog();
-			navigate(`/solutions/${created.id}`);
-		},
-		onError: (err: unknown) => {
-			const message =
-				err instanceof Error ? err.message : "Failed to install";
-			if (message.includes("older than installed")) {
-				// Server's downgrade guard (409) — ask before forcing.
-				setInstallError(null);
-				setDowngradeConfirm(true);
-				return;
-			}
-			setInstallError(message);
-		},
-	});
-
-	const deleteMutation = useMutation({
-		mutationFn: (id: string) => deleteSolution(id),
-		onSuccess: (summary) => {
-			queryClient.invalidateQueries({ queryKey: ["solutions"] });
-			toast.success("Solution uninstalled", {
-				description: `Removed ${summary.workflows_deleted} workflows, ${summary.apps_deleted} apps, ${summary.forms_deleted} forms, ${summary.agents_deleted} agents. Kept ${summary.tables_orphaned} tables and ${summary.config_values_orphaned} config values as orphaned data.`,
-			});
-			setDeleteTarget(null);
-			setDeleteConfirm("");
-		},
-		onError: (err: unknown) => {
-			toast.error("Failed to uninstall", {
-				description:
-					err instanceof Error ? err.message : "Unknown error",
-			});
-		},
-	});
-
-	function openInstallForFile(file: File) {
-		setInstallFile(file);
-		setPreview(null);
-		setPreviewError(null);
-		setInstallError(null);
-		setDowngradeConfirm(false);
-		// Default to Global scope; operator picks an org if desired.
-		setScopeOrgId("__global__");
-		setConfigValues({});
-		void runPreview(file, "__global__");
-	}
-
-	function closeInstallDialog() {
-		setInstallFile(null);
-		setPreview(null);
-		setPreviewError(null);
-		setInstallError(null);
-		setDowngradeConfirm(false);
-		setConfigValues({});
-		setScopeOrgId("__global__");
-		// Invalidate any in-flight preview so a late response is dropped.
-		previewSeq.current++;
-		setPreviewLoading(false);
-		installMutation.reset();
-	}
-
-	function handleFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
-		const file = e.target.files?.[0];
-		if (file) openInstallForFile(file);
-		// Reset so picking the same file again re-fires change.
-		e.target.value = "";
-	}
-
-	// Whole-page drag-and-drop handlers.
+	// Whole-page drag-and-drop: dropping a .zip opens the install dialog
+	// prefilled with that file.
 	function handleDragEnter(e: React.DragEvent) {
 		if (!e.dataTransfer?.types?.includes("Files")) return;
 		e.preventDefault();
@@ -426,12 +108,37 @@ export function Solutions() {
 		dragDepth.current = 0;
 		setIsDragging(false);
 		const file = e.dataTransfer?.files?.[0];
-		if (file) openInstallForFile(file);
+		if (file) setDialogMode({ kind: "create", file });
 	}
 
-	const declaredConfigs = preview ? asConfigSchemas(preview.config_schemas) : [];
-	const existingInstall = preview?.existing_install ?? null;
-	const isUpgrade = existingInstall !== null;
+	function sourceBadge(sol: Solution) {
+		return (
+			<Badge variant="secondary" className="gap-1">
+				{sol.git_connected ? (
+					<GitBranch className="h-3 w-3" />
+				) : (
+					<HardDriveUpload className="h-3 w-3" />
+				)}
+				{sol.git_connected ? "Git" : "Manual"}
+			</Badge>
+		);
+	}
+
+	function orgBadge(sol: Solution) {
+		return (
+			<Badge
+				variant={sol.organization_id ? "outline" : "default"}
+				className="gap-1"
+			>
+				{sol.organization_id ? (
+					<Building2 className="h-3 w-3" />
+				) : (
+					<Globe className="h-3 w-3" />
+				)}
+				{getOrgName(sol.organization_id)}
+			</Badge>
+		);
+	}
 
 	return (
 		<div
@@ -442,15 +149,6 @@ export function Solutions() {
 			onDrop={handleDrop}
 			className="relative h-full flex flex-col space-y-6 max-w-7xl mx-auto"
 		>
-			<input
-				ref={fileInputRef}
-				type="file"
-				accept=".zip,application/zip"
-				className="hidden"
-				data-testid="install-file-input"
-				onChange={handleFilePicked}
-			/>
-
 			{/* Drag overlay */}
 			{isDragging && (
 				<div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/80 backdrop-blur-sm">
@@ -473,10 +171,50 @@ export function Solutions() {
 						Installed Solution packages
 					</p>
 				</div>
-				<Button onClick={() => fileInputRef.current?.click()}>
-					<Upload className="mr-2 h-4 w-4" />
-					Install Solution
-				</Button>
+				<div className="flex flex-wrap gap-2">
+					<ToggleGroup
+						type="single"
+						value={viewMode}
+						onValueChange={(value: string) =>
+							value && setViewMode(value as "grid" | "table")
+						}
+					>
+						<ToggleGroupItem value="grid" aria-label="Grid view" size="sm">
+							<LayoutGrid className="h-4 w-4" />
+						</ToggleGroupItem>
+						<ToggleGroupItem value="table" aria-label="Table view" size="sm">
+							<TableIcon className="h-4 w-4" />
+						</ToggleGroupItem>
+					</ToggleGroup>
+					<Button
+						variant="outline"
+						size="icon"
+						title="Install Solution"
+						data-testid="open-install"
+						onClick={() => setDialogMode({ kind: "create" })}
+					>
+						<Plus className="h-4 w-4" />
+					</Button>
+				</div>
+			</div>
+
+			{/* Search + Organization filter */}
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+				<SearchBox
+					value={searchTerm}
+					onChange={setSearchTerm}
+					placeholder="Search Solutions by name or slug..."
+					className="flex-1"
+				/>
+				<div className="w-full sm:w-64">
+					<OrganizationSelect
+						value={filterOrgId}
+						onChange={setFilterOrgId}
+						showAll
+						showGlobal
+						placeholder="All organizations"
+					/>
+				</div>
 			</div>
 
 			<div className="flex-1 min-h-0 overflow-auto">
@@ -497,7 +235,7 @@ export function Solutions() {
 				) : solutions.length === 0 ? (
 					<button
 						type="button"
-						onClick={() => fileInputRef.current?.click()}
+						onClick={() => setDialogMode({ kind: "create" })}
 						className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed py-20 text-center transition-colors hover:border-primary/60 hover:bg-accent/30"
 					>
 						<Boxes className="h-12 w-12 text-muted-foreground" />
@@ -505,13 +243,17 @@ export function Solutions() {
 							No Solutions installed yet
 						</h3>
 						<p className="mt-2 max-w-sm text-sm text-muted-foreground">
-							Drag a Solution .zip anywhere on this page, or click
-							to choose a file to install.
+							Drag a Solution .zip anywhere on this page, or click to
+							choose a file to install.
 						</p>
 					</button>
-				) : (
+				) : filtered.length === 0 ? (
+					<div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
+						No Solutions match the current filters.
+					</div>
+				) : viewMode === "grid" ? (
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
-						{solutions.map((sol) => (
+						{filtered.map((sol) => (
 							<div
 								key={sol.id}
 								data-testid="install-card"
@@ -524,7 +266,7 @@ export function Solutions() {
 										navigate(`/solutions/${sol.id}`);
 									}
 								}}
-								className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[10px] border bg-card transition-colors hover:border-border/80 hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[10px] border bg-card transition-colors hover:border-border/80 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							>
 								<div className="flex items-start justify-between gap-3 border-b px-4 py-3">
 									<div className="flex min-w-0 items-center gap-2">
@@ -538,387 +280,68 @@ export function Solutions() {
 											</div>
 										</div>
 									</div>
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-										title="Uninstall"
-										aria-label="Uninstall"
-										onClick={(e) => {
-											e.stopPropagation();
-											setDeleteTarget(sol);
-											setDeleteConfirm("");
-										}}
-									>
-										<Trash2 className="h-4 w-4" />
-									</Button>
 								</div>
 								<div className="flex items-center gap-2 px-4 py-3">
-									<Badge
-										variant={
-											sol.organization_id
-												? "outline"
-												: "default"
-										}
-										className="gap-1"
-									>
-										{sol.organization_id ? (
-											<Building2 className="h-3 w-3" />
-										) : (
-											<Globe className="h-3 w-3" />
-										)}
-										{getOrgName(sol.organization_id)}
-									</Badge>
-									<Badge variant="secondary" className="gap-1">
-										{sol.git_connected ? (
-											<GitBranch className="h-3 w-3" />
-										) : (
-											<HardDriveUpload className="h-3 w-3" />
-										)}
-										{sol.git_connected ? "Git" : "Manual"}
-									</Badge>
+									{orgBadge(sol)}
+									{sourceBadge(sol)}
 									{sol.version && (
-										<Badge variant="outline">
-											v{sol.version}
-										</Badge>
+										<Badge variant="outline">v{sol.version}</Badge>
 									)}
 								</div>
 							</div>
 						))}
 					</div>
+				) : (
+					<DataTable>
+						<DataTableHeader>
+							<DataTableRow>
+								<DataTableHead>Name</DataTableHead>
+								<DataTableHead>Slug</DataTableHead>
+								<DataTableHead>Organization</DataTableHead>
+								<DataTableHead>Source</DataTableHead>
+								<DataTableHead>Version</DataTableHead>
+							</DataTableRow>
+						</DataTableHeader>
+						<DataTableBody>
+							{filtered.map((sol) => (
+								<DataTableRow
+									key={sol.id}
+									data-testid="install-row"
+									className="cursor-pointer"
+									onClick={() => navigate(`/solutions/${sol.id}`)}
+								>
+									<DataTableCell className="font-medium">
+										<span className="flex items-center gap-2">
+											<Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
+											{sol.name}
+										</span>
+									</DataTableCell>
+									<DataTableCell className="text-muted-foreground">
+										{sol.slug}
+									</DataTableCell>
+									<DataTableCell>{orgBadge(sol)}</DataTableCell>
+									<DataTableCell>{sourceBadge(sol)}</DataTableCell>
+									<DataTableCell className="text-muted-foreground">
+										{sol.version ? `v${sol.version}` : "—"}
+									</DataTableCell>
+								</DataTableRow>
+							))}
+						</DataTableBody>
+					</DataTable>
 				)}
 			</div>
 
-			{/* Preview / Install dialog */}
-			<Dialog
-				open={installFile !== null}
-				onOpenChange={(open) => {
-					if (!open) closeInstallDialog();
-				}}
-			>
-				<DialogContent
-					className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
-					data-testid="preview-dialog"
-				>
-					<DialogHeader>
-						<DialogTitle>
-							{isUpgrade && existingInstall
-								? `Upgrade ${existingInstall.name} v${existingInstall.version ?? "?"} → v${preview?.version ?? "?"}`
-								: "Install Solution"}
-						</DialogTitle>
-						<DialogDescription>
-							{isUpgrade
-								? "This package upgrades an existing install in place. Review the changes below."
-								: "Review what this package creates, choose a scope, and set any required configuration values."}
-						</DialogDescription>
-					</DialogHeader>
-
-					{previewLoading ? (
-						<div className="flex items-center gap-2 py-8 text-muted-foreground">
-							<Loader2 className="h-4 w-4 animate-spin" />
-							Reading package…
-						</div>
-					) : previewError ? (
-						<p className="py-4 text-sm text-destructive">
-							{previewError}
-						</p>
-					) : preview && downgradeConfirm ? (
-						<div
-							data-testid="downgrade-confirm"
-							className="space-y-2 py-2"
-						>
-							<p className="text-sm font-medium">
-								This is a DOWNGRADE: v
-								{existingInstall?.version ?? "?"} → v
-								{preview.version ?? "?"}. Replace anyway?
-							</p>
-							<p className="text-xs text-muted-foreground">
-								The installed version is newer than this package.
-								Replacing it will overwrite the install's content
-								with the older version.
-							</p>
-						</div>
-					) : preview ? (
-						<div className="space-y-5">
-							{isUpgrade ? (
-								<UpgradeDiffView diff={preview.diff ?? {}} />
-							) : (
-								<div>
-									<p className="text-sm">
-										This will install{" "}
-										<span className="font-semibold">
-											{preview.name ?? "this Solution"}
-										</span>
-										{preview.slug ? (
-											<span className="text-muted-foreground">
-												{" "}
-												({preview.slug})
-											</span>
-										) : null}
-										.
-									</p>
-									<div className="mt-3">
-										<EntitySummary preview={preview} />
-									</div>
-								</div>
-							)}
-
-							{/* Scope picker — only for fresh installs. An upgrade
-							    targets the existing install; there is no
-							    "create a second install" path here. */}
-							{!isUpgrade && (
-								<div className="space-y-2">
-									<Label htmlFor="solution-scope">Scope</Label>
-									<Select
-										value={scopeOrgId}
-										onValueChange={(value) => {
-											setScopeOrgId(value);
-											// Re-preview at the selected scope so
-											// an existing install there is caught
-											// and surfaced as an upgrade.
-											if (installFile) {
-												void runPreview(
-													installFile,
-													value,
-												);
-											}
-										}}
-									>
-										<SelectTrigger
-											id="solution-scope"
-											data-testid="scope-select"
-										>
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="__global__">
-												Global
-											</SelectItem>
-											{(organizations ?? []).map((org) => (
-												<SelectItem
-													key={org.id}
-													value={org.id}
-												>
-													{org.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</div>
-							)}
-
-							{/* Config values */}
-							{declaredConfigs.length > 0 && (
-								<div className="space-y-3">
-									<p className="text-sm font-medium">
-										Configuration
-									</p>
-									{declaredConfigs.map((cfg) => {
-										const value = configValues[cfg.key] ?? "";
-										const missing =
-											cfg.required && value.trim() === "";
-										return (
-											<div
-												key={cfg.key}
-												className="space-y-1"
-											>
-												<Label
-													htmlFor={`cfg-${cfg.key}`}
-													className="flex items-center gap-1"
-												>
-													{cfg.key}
-													{cfg.required && (
-														<span
-															className="text-destructive"
-															aria-hidden
-														>
-															*
-														</span>
-													)}
-												</Label>
-												{cfg.description && (
-													<p className="text-xs text-muted-foreground">
-														{cfg.description}
-													</p>
-												)}
-												<Input
-													id={`cfg-${cfg.key}`}
-													type={
-														isSecretType(cfg.type)
-															? "password"
-															: "text"
-													}
-													value={value}
-													onChange={(e) =>
-														setConfigValues(
-															(prev) => ({
-																...prev,
-																[cfg.key]:
-																	e.target
-																		.value,
-															}),
-														)
-													}
-												/>
-												{missing && (
-													<p className="text-xs text-yellow-600 dark:text-yellow-500">
-														Required — you can still
-														install and set this
-														later.
-													</p>
-												)}
-											</div>
-										);
-									})}
-								</div>
-							)}
-
-							{installError && (
-								<p className="text-sm text-destructive">
-									{installError}
-								</p>
-							)}
-						</div>
-					) : null}
-
-					<DialogFooter>
-						{downgradeConfirm ? (
-							<>
-								<Button
-									variant="outline"
-									onClick={() => setDowngradeConfirm(false)}
-									disabled={installMutation.isPending}
-								>
-									Cancel
-								</Button>
-								<Button
-									variant="destructive"
-									onClick={() =>
-										installMutation.mutate({ force: true })
-									}
-									disabled={installMutation.isPending}
-									data-testid="confirm-downgrade"
-								>
-									{installMutation.isPending && (
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									)}
-									Replace anyway
-								</Button>
-							</>
-						) : (
-							<>
-								<Button
-									variant="outline"
-									onClick={closeInstallDialog}
-									disabled={installMutation.isPending}
-								>
-									Cancel
-								</Button>
-								<Button
-									onClick={() =>
-										installMutation.mutate({ force: false })
-									}
-									disabled={
-										!preview ||
-										previewLoading ||
-										installMutation.isPending
-									}
-									data-testid="confirm-install"
-								>
-									{installMutation.isPending && (
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									)}
-									{isUpgrade ? "Upgrade" : "Install"}
-								</Button>
-							</>
-						)}
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-
-			{/* Delete / uninstall dialog */}
-			<Dialog
-				open={deleteTarget !== null}
-				onOpenChange={(open) => {
-					if (!open) {
-						setDeleteTarget(null);
-						setDeleteConfirm("");
-					}
-				}}
-			>
-				<DialogContent data-testid="delete-dialog">
-					<DialogHeader>
-						<DialogTitle>
-							Uninstall {deleteTarget?.name}?
-						</DialogTitle>
-						<DialogDescription asChild>
-							<div className="space-y-2 text-sm text-muted-foreground">
-								<p>
-									Workflows, apps, forms, and agents will be
-									removed.
-								</p>
-								<p>
-									<span className="font-medium text-foreground">
-										Tables (and their data) and config values
-										are kept as orphaned data
-									</span>{" "}
-									— they will be reattached if you reinstall
-									this Solution, and remain visible via "Show
-									orphaned" on the Tables and Configs pages.
-								</p>
-								<p>The git repository is not touched.</p>
-							</div>
-						</DialogDescription>
-					</DialogHeader>
-
-					<div className="space-y-2">
-						<Label htmlFor="delete-confirm">
-							Type{" "}
-							<span className="font-mono font-semibold text-foreground">
-								{deleteTarget?.name}
-							</span>{" "}
-							to confirm
-						</Label>
-						<Input
-							id="delete-confirm"
-							data-testid="delete-confirm-input"
-							value={deleteConfirm}
-							onChange={(e) => setDeleteConfirm(e.target.value)}
-							autoComplete="off"
-						/>
-					</div>
-
-					<DialogFooter>
-						<Button
-							variant="outline"
-							onClick={() => {
-								setDeleteTarget(null);
-								setDeleteConfirm("");
-							}}
-						>
-							Cancel
-						</Button>
-						<Button
-							variant="destructive"
-							data-testid="confirm-delete"
-							disabled={
-								deleteConfirm !== deleteTarget?.name ||
-								deleteMutation.isPending
-							}
-							onClick={() => {
-								if (deleteTarget)
-									deleteMutation.mutate(deleteTarget.id);
-							}}
-						>
-							{deleteMutation.isPending && (
-								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-							)}
-							Uninstall
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
+			{dialogMode && (
+				<CreateEditSolution
+					mode={dialogMode}
+					open
+					onClose={() => setDialogMode(null)}
+					onSaved={(sol) => {
+						setDialogMode(null);
+						navigate(`/solutions/${sol.id}`);
+					}}
+				/>
+			)}
 		</div>
 	);
 }

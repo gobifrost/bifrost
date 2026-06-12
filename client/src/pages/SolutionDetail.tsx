@@ -36,7 +36,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -47,21 +46,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { CreateEditSolution } from "@/components/solutions/CreateEditSolution";
 import {
 	getSolutionEntities,
-	updateSolution,
 	deleteSolution,
 	setSolutionConfig,
-	type Solution,
-	type SolutionUpdate,
 } from "@/services/solutions";
 import type { components } from "@/lib/v1";
 
@@ -250,154 +240,6 @@ function ConfigRow({
 				</Button>
 			</div>
 		</div>
-	);
-}
-
-function EditSolutionDialog({
-	solution,
-	open,
-	onClose,
-	onSaved,
-}: {
-	solution: Solution;
-	open: boolean;
-	onClose: () => void;
-	onSaved: () => void;
-}) {
-	const { data: organizations } = useOrganizations();
-	const [name, setName] = useState(solution.name);
-	const [scope, setScope] = useState<string>(
-		solution.organization_id ?? "__global__",
-	);
-	const [globalRepoAccess, setGlobalRepoAccess] = useState(
-		solution.global_repo_access,
-	);
-	const [gitConnected, setGitConnected] = useState(solution.git_connected);
-	const [gitRepoUrl, setGitRepoUrl] = useState(solution.git_repo_url ?? "");
-
-	const saveMut = useMutation({
-		mutationFn: () => {
-			const update: SolutionUpdate = {};
-			if (name !== solution.name) update.name = name;
-			const nextOrg = scope === "__global__" ? null : scope;
-			if (nextOrg !== (solution.organization_id ?? null))
-				update.organization_id = nextOrg;
-			if (globalRepoAccess !== solution.global_repo_access)
-				update.global_repo_access = globalRepoAccess;
-			if (gitConnected !== solution.git_connected)
-				update.git_connected = gitConnected;
-			const nextUrl = gitRepoUrl.trim() === "" ? null : gitRepoUrl;
-			if (nextUrl !== (solution.git_repo_url ?? null))
-				update.git_repo_url = nextUrl;
-			return updateSolution(solution.id, update);
-		},
-		onSuccess: () => {
-			toast.success("Solution updated");
-			onSaved();
-			onClose();
-		},
-		onError: (err: unknown) => {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to update Solution",
-			);
-		},
-	});
-
-	return (
-		<Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-			<DialogContent data-testid="solution-edit-dialog">
-				<DialogHeader>
-					<DialogTitle>Edit Solution</DialogTitle>
-					<DialogDescription>
-						Update install-local settings. Portable content (workflows,
-						apps, forms, etc.) is owned by the bundle and is read-only.
-					</DialogDescription>
-				</DialogHeader>
-
-				<div className="space-y-4">
-					<div className="space-y-1.5">
-						<Label htmlFor="edit-name">Name</Label>
-						<Input
-							id="edit-name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-						/>
-					</div>
-
-					<div className="space-y-1.5">
-						<Label htmlFor="edit-scope">Scope</Label>
-						<Select value={scope} onValueChange={setScope}>
-							<SelectTrigger id="edit-scope">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="__global__">Global</SelectItem>
-								{(organizations ?? []).map((org) => (
-									<SelectItem key={org.id} value={org.id}>
-										{org.name}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</div>
-
-					<div className="flex items-center justify-between rounded-lg border p-3">
-						<div className="space-y-0.5">
-							<Label htmlFor="edit-global-repo">
-								Global repo access
-							</Label>
-							<p className="text-xs text-muted-foreground">
-								Allow this install to read the global repository.
-							</p>
-						</div>
-						<Switch
-							id="edit-global-repo"
-							checked={globalRepoAccess}
-							onCheckedChange={setGlobalRepoAccess}
-						/>
-					</div>
-
-					<div className="flex items-center justify-between rounded-lg border p-3">
-						<div className="space-y-0.5">
-							<Label htmlFor="edit-git-connected">Git connected</Label>
-							<p className="text-xs text-muted-foreground">
-								This install is backed by a git repository.
-							</p>
-						</div>
-						<Switch
-							id="edit-git-connected"
-							checked={gitConnected}
-							onCheckedChange={setGitConnected}
-						/>
-					</div>
-
-					<div className="space-y-1.5">
-						<Label htmlFor="edit-git-url">Git repository URL</Label>
-						<Input
-							id="edit-git-url"
-							value={gitRepoUrl}
-							placeholder="https://github.com/org/repo"
-							onChange={(e) => setGitRepoUrl(e.target.value)}
-						/>
-					</div>
-				</div>
-
-				<DialogFooter>
-					<Button variant="outline" onClick={onClose}>
-						Cancel
-					</Button>
-					<Button
-						disabled={saveMut.isPending}
-						onClick={() => saveMut.mutate()}
-					>
-						{saveMut.isPending && (
-							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-						)}
-						Save changes
-					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
 	);
 }
 
@@ -655,12 +497,17 @@ export function SolutionDetail() {
 						</TabsContent>
 					</Tabs>
 
-					<EditSolutionDialog
-						solution={sol}
-						open={editOpen}
-						onClose={() => setEditOpen(false)}
-						onSaved={invalidate}
-					/>
+					{editOpen && (
+						<CreateEditSolution
+							mode={{ kind: "edit", solution: sol }}
+							open
+							onClose={() => setEditOpen(false)}
+							onSaved={() => {
+								setEditOpen(false);
+								invalidate();
+							}}
+						/>
+					)}
 
 					{/* Delete / uninstall dialog (type-to-confirm) */}
 					<Dialog

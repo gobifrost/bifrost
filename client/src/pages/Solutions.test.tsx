@@ -1,7 +1,8 @@
 /**
- * Tests for the Solutions list page — install list rendering, empty state,
- * the drag-and-drop / file-picker install preview flow, and the type-to-confirm
- * uninstall guard.
+ * Tests for the Solutions list page — card/table rendering, search + org
+ * filtering, and the CreateEditSolution install flow (dialog dropzone,
+ * preview, scope re-preview, upgrade/downgrade guards). Uninstall lives on
+ * the detail page (SolutionDetail.test.tsx).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -27,15 +28,27 @@ vi.mock("@/hooks/useOrganizations", () => ({
 	}),
 }));
 
+const mockCreateRepoMutate = vi.fn();
+vi.mock("@/hooks/useGitHub", () => ({
+	useGitHubConfig: () => ({
+		data: { configured: true, token_saved: true },
+		isLoading: false,
+	}),
+	useCreateGitHubRepository: () => ({
+		mutate: mockCreateRepoMutate,
+		isPending: false,
+	}),
+}));
+
 const mockListSolutions = vi.fn();
 const mockPreviewInstall = vi.fn();
 const mockInstallSolution = vi.fn();
-const mockDeleteSolution = vi.fn();
+const mockUpdateSolution = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	listSolutions: (...a: unknown[]) => mockListSolutions(...a),
 	previewInstall: (...a: unknown[]) => mockPreviewInstall(...a),
 	installSolution: (...a: unknown[]) => mockInstallSolution(...a),
-	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
+	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 }));
 
 function makeSolution(overrides: Record<string, unknown> = {}) {
@@ -62,8 +75,22 @@ async function renderPage() {
 	return renderWithProviders(<Solutions />);
 }
 
+/** Open the install dialog via the + button and upload a file through it. */
+async function uploadThroughDialog(
+	user: ReturnType<typeof renderWithProviders>["user"],
+	file: File,
+) {
+	await user.click(screen.getByTestId("open-install"));
+	const dialog = await screen.findByTestId("solution-dialog");
+	await user.upload(
+		within(dialog).getByTestId("install-file-input") as HTMLInputElement,
+		file,
+	);
+	return dialog;
+}
+
 describe("Solutions — list", () => {
-	it("renders install cards with scope and source chips", async () => {
+	it("renders install cards with scope and source chips and no per-card delete", async () => {
 		mockListSolutions.mockResolvedValue({
 			solutions: [
 				makeSolution({
@@ -89,12 +116,13 @@ describe("Solutions — list", () => {
 
 		expect(screen.getByText("Git Solution")).toBeInTheDocument();
 		expect(screen.getByText("Manual Solution")).toBeInTheDocument();
-		// Scope chips: org name + Global
 		expect(screen.getByText("Acme Corp")).toBeInTheDocument();
-		expect(screen.getByText("Global")).toBeInTheDocument();
-		// Source chips: Git vs Manual
 		expect(screen.getByText("Git")).toBeInTheDocument();
 		expect(screen.getByText("Manual")).toBeInTheDocument();
+		// Uninstall moved to the detail page — no per-card delete affordance.
+		expect(
+			screen.queryByRole("button", { name: /uninstall/i }),
+		).toBeNull();
 	});
 
 	it("shows an empty state when there are no installs", async () => {
@@ -104,10 +132,58 @@ describe("Solutions — list", () => {
 			await screen.findByText(/no solutions installed yet/i),
 		).toBeInTheDocument();
 	});
+
+	it("shows a version badge on cards when version is present", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({ id: "v", name: "Versioned", version: "1.2.3" }),
+				makeSolution({ id: "nv", name: "Unversioned", slug: "nv" }),
+			],
+		});
+		await renderPage();
+		await screen.findByText("Versioned");
+		expect(screen.getByText("v1.2.3")).toBeInTheDocument();
+	});
+
+	it("switches to a table view with one row per install", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({ id: "a", name: "Alpha", slug: "alpha" }),
+				makeSolution({ id: "b", name: "Beta", slug: "beta" }),
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findAllByTestId("install-card");
+
+		await user.click(screen.getByRole("radio", { name: /table view/i }));
+
+		const rows = await screen.findAllByTestId("install-row");
+		expect(rows).toHaveLength(2);
+		expect(within(rows[0]).getByText("Alpha")).toBeInTheDocument();
+	});
+
+	it("filters by search term", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({ id: "a", name: "Alpha", slug: "alpha" }),
+				makeSolution({ id: "b", name: "Beta", slug: "beta" }),
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findAllByTestId("install-card");
+
+		await user.type(screen.getByPlaceholderText(/search solutions/i), "alp");
+
+		await waitFor(() =>
+			expect(screen.getAllByTestId("install-card")).toHaveLength(1),
+		);
+		expect(screen.getByText("Alpha")).toBeInTheDocument();
+		expect(screen.queryByText("Beta")).toBeNull();
+	});
 });
 
-describe("Solutions — install preview flow", () => {
-	it("opens the preview dialog with an entity summary and config input", async () => {
+describe("Solutions — install flow (CreateEditSolution)", () => {
+	it("opens the dialog with an entity summary, Organization selector, and config input", async () => {
 		mockPreviewInstall.mockResolvedValue({
 			slug: "new-sol",
 			name: "New Solution",
@@ -127,30 +203,27 @@ describe("Solutions — install preview flow", () => {
 			],
 		});
 		const { user } = await renderPage();
-
 		await screen.findByText(/no solutions installed yet/i);
 
 		const file = new File(["zip-bytes"], "new-sol.zip", {
 			type: "application/zip",
 		});
-		const input = screen.getByTestId(
-			"install-file-input",
-		) as HTMLInputElement;
-		await user.upload(input, file);
+		const dialog = await uploadThroughDialog(user, file);
 
-		const dialog = await screen.findByTestId("preview-dialog");
 		expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
 			organizationId: "",
 		});
-		expect(within(dialog).getByText(/New Solution/)).toBeInTheDocument();
-		// Entity summary chip count for workflows
+		expect(
+			await within(dialog).findByText(/New Solution/),
+		).toBeInTheDocument();
 		expect(within(dialog).getByTestId("preview-summary")).toHaveTextContent(
 			"workflows",
 		);
-		// Config input for the declared key
-		expect(
-			within(dialog).getByLabelText(/api_token/i),
-		).toBeInTheDocument();
+		expect(within(dialog).getByLabelText(/api_token/i)).toBeInTheDocument();
+		// Standard Organization selector at the top.
+		expect(within(dialog).getByText("Organization")).toBeInTheDocument();
+		// Git section offers connection (GitHub configured in this suite).
+		expect(within(dialog).getByTestId("git-section")).toBeInTheDocument();
 	});
 
 	it("installs and navigates to the new install on success", async () => {
@@ -170,12 +243,9 @@ describe("Solutions — install preview flow", () => {
 		const file = new File(["zip"], "new-sol.zip", {
 			type: "application/zip",
 		});
-		await user.upload(
-			screen.getByTestId("install-file-input") as HTMLInputElement,
-			file,
-		);
-		await screen.findByTestId("preview-dialog");
-		await user.click(screen.getByTestId("confirm-install"));
+		const dialog = await uploadThroughDialog(user, file);
+		await within(dialog).findByTestId("preview-summary");
+		await user.click(within(dialog).getByTestId("confirm-install"));
 
 		await waitFor(() =>
 			expect(mockInstallSolution).toHaveBeenCalledWith(
@@ -185,21 +255,48 @@ describe("Solutions — install preview flow", () => {
 		await waitFor(() =>
 			expect(mockNavigate).toHaveBeenCalledWith("/solutions/installed-1"),
 		);
+		// No repo URL entered — git stays untouched.
+		expect(mockUpdateSolution).not.toHaveBeenCalled();
 	});
-});
 
-describe("Solutions — list version badge", () => {
-	it("shows a version badge on cards when version is present", async () => {
-		mockListSolutions.mockResolvedValue({
-			solutions: [
-				makeSolution({ id: "v", name: "Versioned", version: "1.2.3" }),
-				makeSolution({ id: "nv", name: "Unversioned", slug: "nv" }),
-			],
+	it("stamps the repo URL on the new install when one is set", async () => {
+		mockPreviewInstall.mockResolvedValue({
+			slug: "new-sol",
+			name: "New Solution",
+			scope: "global",
+			workflows: [{ name: "w1" }],
+			config_schemas: [],
 		});
-		await renderPage();
+		mockInstallSolution.mockResolvedValue(
+			makeSolution({ id: "installed-1", name: "New Solution" }),
+		);
+		mockUpdateSolution.mockResolvedValue(
+			makeSolution({
+				id: "installed-1",
+				git_repo_url: "https://github.com/acme/solution-new-sol-abc123",
+				git_connected: true,
+			}),
+		);
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
 
-		await screen.findByText("Versioned");
-		expect(screen.getByText("v1.2.3")).toBeInTheDocument();
+		const dialog = await uploadThroughDialog(
+			user,
+			new File(["zip"], "new-sol.zip", { type: "application/zip" }),
+		);
+		await within(dialog).findByTestId("git-section");
+		await user.type(
+			within(dialog).getByTestId("git-repo-url"),
+			"https://github.com/acme/solution-new-sol-abc123",
+		);
+		await user.click(within(dialog).getByTestId("confirm-install"));
+
+		await waitFor(() =>
+			expect(mockUpdateSolution).toHaveBeenCalledWith("installed-1", {
+				git_repo_url: "https://github.com/acme/solution-new-sol-abc123",
+				git_connected: true,
+			}),
+		);
 	});
 });
 
@@ -243,7 +340,7 @@ function makeUpgradePreview(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Solutions — upgrade flow", () => {
-	it("renders an upgrade title, diff entries, and no scope picker when existing_install is present", async () => {
+	it("renders an upgrade title, diff entries, and no Organization picker when existing_install is present", async () => {
 		mockPreviewInstall.mockResolvedValue(makeUpgradePreview());
 		const { user } = await renderPage();
 		await screen.findByText(/no solutions installed yet/i);
@@ -251,30 +348,25 @@ describe("Solutions — upgrade flow", () => {
 		const file = new File(["zip"], "my-solution.zip", {
 			type: "application/zip",
 		});
-		await user.upload(
-			screen.getByTestId("install-file-input") as HTMLInputElement,
-			file,
-		);
+		const dialog = await uploadThroughDialog(user, file);
 
-		const dialog = await screen.findByTestId("preview-dialog");
-		// Upgrade title with both versions
 		expect(
-			within(dialog).getByText(/Upgrade My Solution v1\.0\.0 → v2\.0\.0/),
+			await within(dialog).findByText(
+				/Upgrade My Solution v1\.0\.0 → v2\.0\.0/,
+			),
 		).toBeInTheDocument();
-		// Entity diff entries
 		expect(within(dialog).getByText(/new_flow/)).toBeInTheDocument();
 		expect(within(dialog).getByText(/old_flow/)).toBeInTheDocument();
-		// Config schema diff: added, removed, changed
 		expect(within(dialog).getByText(/NEW_KEY/)).toBeInTheDocument();
 		expect(within(dialog).getByText(/DEAD_KEY/)).toBeInTheDocument();
 		expect(
 			within(dialog).getByText(/API_KEY: secret→string, required→optional/),
 		).toBeInTheDocument();
-		// Confirm button is Upgrade, and no scope picker (no second install path)
 		expect(within(dialog).getByTestId("confirm-install")).toHaveTextContent(
 			"Upgrade",
 		);
-		expect(within(dialog).queryByTestId("scope-select")).toBeNull();
+		// An upgrade targets the existing install — no Organization picker.
+		expect(within(dialog).queryByText("Organization")).toBeNull();
 	});
 
 	it("shows a downgrade confirm on a 409 'older than installed' and retries with force", async () => {
@@ -296,30 +388,21 @@ describe("Solutions — upgrade flow", () => {
 		const file = new File(["zip"], "my-solution.zip", {
 			type: "application/zip",
 		});
-		await user.upload(
-			screen.getByTestId("install-file-input") as HTMLInputElement,
-			file,
-		);
-		await screen.findByTestId("preview-dialog");
-		await user.click(screen.getByTestId("confirm-install"));
+		const dialog = await uploadThroughDialog(user, file);
+		await within(dialog).findByTestId("confirm-install");
+		await user.click(within(dialog).getByTestId("confirm-install"));
 
-		// First attempt without force
 		await waitFor(() =>
 			expect(mockInstallSolution).toHaveBeenCalledWith(
 				expect.objectContaining({ file, force: false }),
 			),
 		);
 
-		// Downgrade confirm step
 		const confirm = await screen.findByTestId("downgrade-confirm");
-		expect(confirm).toHaveTextContent(
-			"This is a DOWNGRADE: v1.0.0 → v0.9.0",
-		);
+		expect(confirm).toHaveTextContent("This is a DOWNGRADE: v1.0.0 → v0.9.0");
 		await user.click(screen.getByTestId("confirm-downgrade"));
 
-		await waitFor(() =>
-			expect(mockInstallSolution).toHaveBeenCalledTimes(2),
-		);
+		await waitFor(() => expect(mockInstallSolution).toHaveBeenCalledTimes(2));
 		expect(mockInstallSolution).toHaveBeenLastCalledWith(
 			expect.objectContaining({ file, force: true }),
 		);
@@ -329,7 +412,6 @@ describe("Solutions — upgrade flow", () => {
 	});
 
 	it("re-previews against the selected org and enters upgrade mode for an org-scoped install", async () => {
-		// Initial preview at global scope: fresh slug, no existing install.
 		mockPreviewInstall.mockResolvedValueOnce({
 			slug: "my-solution",
 			name: "My Solution",
@@ -342,7 +424,6 @@ describe("Solutions — upgrade flow", () => {
 			tables: [],
 			config_schemas: [],
 		});
-		// Re-preview against org-1: matches an existing org-scoped install.
 		mockPreviewInstall.mockResolvedValueOnce(makeUpgradePreview());
 		mockInstallSolution.mockResolvedValue(
 			makeSolution({ id: "sol-1", name: "My Solution" }),
@@ -353,21 +434,18 @@ describe("Solutions — upgrade flow", () => {
 		const file = new File(["zip"], "my-solution.zip", {
 			type: "application/zip",
 		});
-		await user.upload(
-			screen.getByTestId("install-file-input") as HTMLInputElement,
-			file,
-		);
-		const dialog = await screen.findByTestId("preview-dialog");
-		// Initial preview runs at global scope.
+		const dialog = await uploadThroughDialog(user, file);
 		expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
 			organizationId: "",
 		});
-		// Fresh-slug mode: scope picker present.
-		await within(dialog).findByTestId("scope-select");
+		// Fresh-slug mode: Organization picker present.
+		await within(dialog).findByText("Organization");
 
-		// Select org X — preview must be re-run against that org.
-		await user.click(within(dialog).getByTestId("scope-select"));
-		await user.click(screen.getByRole("option", { name: "Acme Corp" }));
+		// Select an org — preview must re-run against it.
+		await user.click(within(dialog).getByRole("combobox"));
+		await user.click(
+			await screen.findByRole("option", { name: /Acme Corp/ }),
+		);
 
 		await waitFor(() =>
 			expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
@@ -375,18 +453,15 @@ describe("Solutions — upgrade flow", () => {
 			}),
 		);
 
-		// The re-preview matched an existing install → upgrade mode.
 		expect(
 			await within(dialog).findByText(
 				/Upgrade My Solution v1\.0\.0 → v2\.0\.0/,
 			),
 		).toBeInTheDocument();
-		expect(within(dialog).queryByTestId("scope-select")).toBeNull();
 		expect(within(dialog).getByTestId("confirm-install")).toHaveTextContent(
 			"Upgrade",
 		);
 
-		// Install stays locked to the org the preview matched.
 		await user.click(within(dialog).getByTestId("confirm-install"));
 		await waitFor(() =>
 			expect(mockInstallSolution).toHaveBeenCalledWith(
@@ -400,9 +475,6 @@ describe("Solutions — upgrade flow", () => {
 	});
 
 	it("disarms the stale preview when a scope re-preview fails", async () => {
-		// A failed re-preview must NOT leave the previous scope's preview armed:
-		// Install would then fire into a scope that was never previewed — the
-		// silent-replace path the upgrade flow exists to prevent.
 		mockPreviewInstall.mockResolvedValueOnce({
 			slug: "my-solution",
 			name: "My Solution",
@@ -422,15 +494,13 @@ describe("Solutions — upgrade flow", () => {
 		const file = new File(["zip"], "my-solution.zip", {
 			type: "application/zip",
 		});
-		await user.upload(
-			screen.getByTestId("install-file-input") as HTMLInputElement,
-			file,
-		);
-		const dialog = await screen.findByTestId("preview-dialog");
-		await within(dialog).findByTestId("scope-select");
+		const dialog = await uploadThroughDialog(user, file);
+		await within(dialog).findByText("Organization");
 
-		await user.click(within(dialog).getByTestId("scope-select"));
-		await user.click(screen.getByRole("option", { name: "Acme Corp" }));
+		await user.click(within(dialog).getByRole("combobox"));
+		await user.click(
+			await screen.findByRole("option", { name: /Acme Corp/ }),
+		);
 
 		await within(dialog).findByText(/network blip/);
 		expect(within(dialog).getByTestId("confirm-install")).toBeDisabled();
@@ -448,55 +518,42 @@ describe("Solutions — upgrade flow", () => {
 		const file = new File(["zip"], "my-solution.zip", {
 			type: "application/zip",
 		});
-		await user.upload(
-			screen.getByTestId("install-file-input") as HTMLInputElement,
-			file,
-		);
-		await screen.findByTestId("preview-dialog");
-		await user.click(screen.getByTestId("confirm-install"));
+		const dialog = await uploadThroughDialog(user, file);
+		await within(dialog).findByTestId("confirm-install");
+		await user.click(within(dialog).getByTestId("confirm-install"));
 
-		expect(
-			await screen.findByText(/Scope mismatch/),
-		).toBeInTheDocument();
+		expect(await screen.findByText(/Scope mismatch/)).toBeInTheDocument();
 		expect(screen.queryByTestId("downgrade-confirm")).toBeNull();
 	});
 });
 
-describe("Solutions — uninstall guard", () => {
-	it("requires typing the name before Uninstall is enabled", async () => {
-		mockListSolutions.mockResolvedValue({
-			solutions: [makeSolution({ id: "sol-x", name: "Delete Me" })],
+describe("Solutions — page dropzone", () => {
+	it("opens the install dialog prefilled when a file is dropped on the page", async () => {
+		mockPreviewInstall.mockResolvedValue({
+			slug: "dropped",
+			name: "Dropped Solution",
+			scope: "global",
+			workflows: [],
+			config_schemas: [],
 		});
-		mockDeleteSolution.mockResolvedValue({
-			solution_id: "sol-x",
-			workflows_deleted: 1,
-			apps_deleted: 0,
-			forms_deleted: 0,
-			agents_deleted: 0,
-			config_declarations_deleted: 0,
-			tables_orphaned: 2,
-			config_values_orphaned: 1,
+		await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		const file = new File(["zip"], "dropped.zip", {
+			type: "application/zip",
 		});
-		const { user } = await renderPage();
+		const dropzone = screen.getByTestId("install-dropzone");
+		const { fireEvent } = await import("@testing-library/react");
+		fireEvent.drop(dropzone, {
+			dataTransfer: { files: [file], types: ["Files"] },
+		});
 
-		await screen.findByText("Delete Me");
-		await user.click(screen.getByRole("button", { name: /uninstall/i }));
-
-		const dialog = await screen.findByTestId("delete-dialog");
-		const confirmBtn = within(dialog).getByTestId("confirm-delete");
-		expect(confirmBtn).toBeDisabled();
-
-		const input = within(dialog).getByTestId("delete-confirm-input");
-		await user.type(input, "Wrong Name");
-		expect(confirmBtn).toBeDisabled();
-
-		await user.clear(input);
-		await user.type(input, "Delete Me");
-		expect(confirmBtn).toBeEnabled();
-
-		await user.click(confirmBtn);
+		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByText(file.name)).toBeInTheDocument();
 		await waitFor(() =>
-			expect(mockDeleteSolution).toHaveBeenCalledWith("sol-x"),
+			expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
+				organizationId: "",
+			}),
 		);
 	});
 });

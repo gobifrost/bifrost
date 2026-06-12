@@ -356,7 +356,10 @@ export function Applications() {
 													Open Published
 												</button>
 											)}
-											{canManageApps && (
+											{/* Solution-managed apps have no draft state —
+											    deploy IS the publish — so there is nothing
+											    to preview. */}
+											{canManageApps && !app.is_solution_managed && (
 												<button
 													type="button"
 													className="pointer-events-auto text-left text-[13px] font-medium text-foreground hover:text-primary"
