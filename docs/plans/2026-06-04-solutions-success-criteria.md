@@ -314,3 +314,29 @@ finds no P1/P2 spec gaps. Only then is this worth human QA.
 
 ### Loop to "QA-ready"
 Fix G1→G7 (TDD each), local-verify, re-run full Codex spec review, repeat until Codex finds no P1/P2 spec gaps. Only then is this worth human QA.
+
+---
+
+## 9. REAL STATUS (2026-06-12) — current
+
+The two §8 sections above are the 2026-06-05 snapshot, kept for history. As of
+2026-06-12, **G1–G7 are all closed** (entity visibility, forms/agents deploy,
+multi-install app collision, git-sync dropping apps, ambiguous deploy resolution,
+module isolation content-hash + per-install roots, same-document v2 mount), the
+Solutions versioning/upgrade flow, the management UI redesign (CreateEditSolution,
+table view, standard Organization selector, solution-level icon), and the RTM Portal
+live drive are shipped on this branch.
+
+### Remaining spec gaps
+
+| Gap | Criterion | Detail |
+|-----|-----------|--------|
+| Auto-pull trigger missing | 13 (half) | One-writer holds (deploy/zip refused for connected installs) and the sync core works, but it is only reachable via manual `POST /api/solutions/{id}/sync`. No GitHub webhook / poller fires it on a push to main. |
+| `global_repo_access` gates imports only | 4 (intent) | Solution executions resolve tables/configs own-first → `_repo/`; the global fallback is NOT gated by the flag, so a self-contained install can silently resolve a global-tier table/config by name. |
+
+### Known follow-ups (not criteria)
+
+- SDK `tables.check_access(...)` so workflows stop re-implementing table policy
+  (the RTM staff-lockout class of bug; friction log #13).
+- SDK tarball cache keyed on source mtime/hash, killing the docker-exec +
+  api-restart dev dance (friction log #14).
