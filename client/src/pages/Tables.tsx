@@ -37,6 +37,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SearchBox } from "@/components/search/SearchBox";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/contexts/AuthContext";
@@ -366,6 +367,11 @@ export function Tables() {
 											<DataTableCell className="font-medium font-mono">
 												<span className="flex items-center gap-2">
 													{table.name}
+													{table.is_solution_managed && (
+														<SolutionManagedBadge
+															solutionId={table.solution_id}
+														/>
+													)}
 													{table.orphaned_at && (
 														<Badge
 															variant="outline"

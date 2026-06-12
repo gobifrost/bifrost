@@ -246,9 +246,12 @@ export function Applications() {
 				viewMode === "grid" || !canManageApps ? (
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
 						{filteredApps.map((app) => {
-							const defaultTarget = app.is_published
-								? () => handleLaunch(app.slug)
-								: () => handlePreview(app.slug);
+							// v2 apps have no draft preview — an unpublished v2 app
+							// still targets launch (which explains the missing publish).
+							const defaultTarget =
+								app.is_published || app.app_model === "standalone_v2"
+									? () => handleLaunch(app.slug)
+									: () => handlePreview(app.slug);
 							const orgLabel = isPlatformAdmin
 								? app.organization_id
 									? getOrgName(app.organization_id)
@@ -356,10 +359,10 @@ export function Applications() {
 													Open Published
 												</button>
 											)}
-											{/* Solution-managed apps have no draft state —
-											    deploy IS the publish — so there is nothing
-											    to preview. */}
-											{canManageApps && !app.is_solution_managed && (
+											{/* standalone_v2 apps have no draft bundle —
+											    deploy IS the publish; /preview would serve
+											    the same dist. No preview affordance. */}
+											{canManageApps && app.app_model !== "standalone_v2" && (
 												<button
 													type="button"
 													className="pointer-events-auto text-left text-[13px] font-medium text-foreground hover:text-primary"
@@ -526,9 +529,11 @@ export function Applications() {
 												>
 													<PlayCircle className="h-4 w-4" />
 												</Button>
-												{/* Preview is a READ action — available for managed apps too
-												    (managed apps serve their dist as a draft). */}
-												{canManageApps && app.has_unpublished_changes && (
+												{/* No preview for standalone_v2 — there is no draft
+												    bundle; deploy IS the publish. */}
+												{canManageApps &&
+													app.app_model !== "standalone_v2" &&
+													app.has_unpublished_changes && (
 													<Button
 														variant="ghost"
 														size="sm"
