@@ -210,3 +210,49 @@ describe("solutions service", () => {
 		await expect(previewInstall(file)).rejects.toThrow(/invalid zip/);
 	});
 });
+
+describe("exportSolution", () => {
+	it("downloads the export zip and parses the server filename", async () => {
+		const blob = new Blob(["zipbytes"], { type: "application/zip" });
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			headers: new Headers({
+				"Content-Disposition": 'attachment; filename="rtm-portal-0.9.0.zip"',
+			}),
+			blob: () => Promise.resolve(blob),
+		});
+
+		const { exportSolution } = await import("./solutions");
+		const out = await exportSolution("sol-1");
+
+		expect(mockAuthFetch).toHaveBeenCalledWith("/api/solutions/sol-1/export");
+		expect(out.filename).toBe("rtm-portal-0.9.0.zip");
+		expect(out.blob).toBe(blob);
+	});
+
+	it("falls back to a generic filename without a disposition header", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			blob: () => Promise.resolve(new Blob([])),
+		});
+
+		const { exportSolution } = await import("./solutions");
+		const out = await exportSolution("sol-1");
+
+		expect(out.filename).toBe("solution-sol-1.zip");
+	});
+
+	it("surfaces the server detail on failure", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: false,
+			headers: new Headers(),
+			json: () => Promise.resolve({ detail: "No stored bundle for this install" }),
+		});
+
+		const { exportSolution } = await import("./solutions");
+		await expect(exportSolution("sol-1")).rejects.toThrow(
+			"No stored bundle for this install",
+		);
+	});
+});

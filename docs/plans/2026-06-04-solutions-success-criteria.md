@@ -341,6 +341,21 @@ live drive are shipped on this branch.
 - SDK tarball cache keyed on source mtime/hash, killing the docker-exec +
   api-restart dev dance (friction log #14).
 
+### Shipped 2026-06-12 (post-merge of the main UI overhaul)
+
+- **Export** (feedback "still no export button"): every write persists the
+  install's workspace zip (`_solution_exports/{id}.zip`, pre-remap ids, byte-
+  deterministic); `GET /api/solutions/{id}/export` + Export button on the
+  solution page. The export is directly re-installable — proven e2e
+  (install → export → preview matches the same install → re-install no-op).
+- **/solutions paradigm**: verified against the merged Rhea overhaul — list
+  and detail pages inherit the new conventions cleanly (search, view toggle,
+  org filter, RoleDetail-shaped detail).
+- **Moving things TO Solutions**: design proposal written —
+  `2026-06-12-solution-capture-design.md` (capture = adopt-in-place + export;
+  identity-preserving remap exception; dependency walker; open decisions for
+  Jack). Not implemented.
+
 ---
 
 ## 10. RTM Portal punch list + Grant Templates (2026-06-12, in-flight)
