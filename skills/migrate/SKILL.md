@@ -115,17 +115,26 @@ The classifier is regex, not AST — **review the diff** for names you declared 
 to match a platform export. Verify with `vite build` (step 8): a leftover `bifrost` import of a
 shadcn/React name fails the build loudly with "not exported by bifrost" — that's your to-do list.
 
+> **NEVER run `migrate-imports` over `src/components/ui/`** — those are real shadcn source files
+> (from `shadcn add`), and the classifier will inject bogus `from "bifrost"` imports into them,
+> corrupting the components. Run it only on `src/pages` + your own `src/components` (not `ui/`). If
+> you corrupt them, `npx shadcn add <comp> --overwrite` restores clean source.
+
 ### 5. Resolve the UI components — `shadcn add` only what's used
 
-For every shadcn component the app actually uses (the ones `migrate-imports` left pointing at
-`bifrost`, since they're not in the v2 SDK):
+The scaffold ALREADY ships Tailwind v4 + `components.json` + `cn` (`src/lib/utils.ts`) + the shadcn
+`.dark` token layer (`src/index.css`), so `npx shadcn add` works immediately — no `shadcn init`,
+no Tailwind setup. For every shadcn component the app uses (the ones still importing from `bifrost`
+after the rewrite — they're not in the v2 SDK):
 ```bash
-cd apps/<new-slug> && npx shadcn@latest add button card dialog … # ONLY the ones used
+cd apps/<new-slug> && npx shadcn@latest add button card dialog select table tabs tooltip badge … --yes
 ```
-Add `cn` (clsx + tailwind-merge) and any `format` helper as local utils or their npm packages.
-**Do not** add a `@bifrost/ui` package — there is none; shadcn is copy-source-in, so each app
-vendors exactly what it uses. Wire Tailwind if the app uses utility classes (shadcn's init covers
-this).
+This drops REAL current shadcn source (rounded, token-based, dark-aware) into `src/components/ui/`.
+Then point the app's import sites at `@/components/ui/<component>`. `Combobox` is NOT a base
+primitive — it's the Popover+Command recipe; `shadcn add popover command` and vendor a small
+`combobox.tsx` wrapper. `toast` → `sonner` (add `<Toaster />` in App.tsx). **Do not** hand-write
+stub components and **do not** add a `@bifrost/ui` package — a stub/no-Tailwind app renders
+UNSTYLED (the exact regression this guidance prevents). Verify with a screenshot, not just a build.
 
 ### 6. Derive package.json + wire provider/theme/header/basename
 

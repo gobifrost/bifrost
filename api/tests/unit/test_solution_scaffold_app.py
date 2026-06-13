@@ -75,6 +75,47 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "useWorkflow" in app
 
 
+def test_scaffold_ships_tailwind_v4_shadcn_and_theme() -> None:
+    """A v2 app with no Tailwind renders UNSTYLED — so the scaffold ships Tailwind
+    v4 + the shadcn token layer + theme wiring by DEFAULT (this is the fix for the
+    migrated-app 'unstyled gray box, no dark toggle' regression)."""
+    files = _v2_scaffold_files("my-app", "https://inst.example")
+    pkg = json.loads(files["package.json"])
+
+    # Tailwind v4 via the vite plugin + the shadcn cn() deps.
+    assert "tailwindcss" in pkg["devDependencies"]
+    assert "@tailwindcss/vite" in pkg["devDependencies"]
+    for dep in ("clsx", "tailwind-merge", "class-variance-authority"):
+        assert dep in pkg["dependencies"], f"{dep} missing (shadcn needs it)"
+
+    # vite wires the tailwind plugin + the `@/` alias shadcn source imports use.
+    vc = files["vite.config.ts"]
+    assert "tailwindcss()" in vc
+    assert '"@"' in vc and "alias" in vc
+
+    # The CSS imports tailwind, defines the shadcn tokens, AND the `.dark` layer
+    # the BifrostProvider toggles — without `.dark` tokens the dark toggle does
+    # nothing.
+    css = files["src/index.css"]
+    assert '@import "tailwindcss"' in css
+    assert ".dark" in css
+    assert "--radius" in css           # rounded corners come from this token
+    assert "custom-variant dark" in css
+
+    # components.json so `npx shadcn add <component>` drops REAL current source.
+    cfg = json.loads(files["components.json"])
+    assert cfg["tailwind"]["css"] == "src/index.css"
+    assert cfg["aliases"]["ui"] == "@/components/ui"
+
+    # cn() helper for shadcn components.
+    assert "twMerge" in files["src/lib/utils.ts"]
+
+    # Theme is ON by default: supportsTheme makes BifrostHeader show the toggle.
+    main = files["src/main.tsx"]
+    assert "supportsTheme" in main
+    assert 'import "./index.css"' in main
+
+
 def test_scaffold_app_nested_path_anchors_manifests_at_root(tmp_path, monkeypatch) -> None:
     # With a nested --path, the .bifrost/ manifests must land at the DESCRIPTOR
     # root (not app_dir.parent.parent), and the manifest path entry must be a

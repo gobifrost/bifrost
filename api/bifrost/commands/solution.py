@@ -200,16 +200,24 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
         "type": "module",
         "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
         # `bifrost` resolves from THIS instance (same mechanism as the server
-        # build) — no public-npm publish, no token pasting.
+        # build) — no public-npm publish, no token pasting. Tailwind v4 +
+        # clsx/tailwind-merge/cva ship by default so shadcn components (added via
+        # `npx shadcn add`) are styled out of the box — a v2 app with no Tailwind
+        # renders unstyled, which is never what you want.
         "dependencies": {
             "bifrost": f"{api_url.rstrip('/')}/api/sdk/download",
             "react": "^18.2.0",
             "react-dom": "^18.2.0",
             "react-router-dom": "^6.22.0",
             "lucide-react": "^0.400.0",
+            "class-variance-authority": "^0.7.0",
+            "clsx": "^2.1.1",
+            "tailwind-merge": "^2.5.4",
         },
         "devDependencies": {
             "@vitejs/plugin-react": "^4.2.0",
+            "@tailwindcss/vite": "^4.0.0",
+            "tailwindcss": "^4.0.0",
             "typescript": "^5.4.0",
             "vite": "^5.2.0",
         },
@@ -219,6 +227,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -290,8 +299,11 @@ export default defineConfig(({ command }) => {
         }
       : {};
   return {
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     define,
+    // `@/` → src, so shadcn component source (which imports `@/lib/utils` and
+    // `@/components/ui/*`) resolves the same as in the shadcn docs.
+    resolve: { alias: { "@": join(process.cwd(), "src") } },
   };
 });
 """
@@ -312,6 +324,7 @@ import { BrowserRouter } from "react-router-dom";
 import { BifrostProvider } from "bifrost";
 
 import App from "./App";
+import "./index.css";
 
 // Deployed: the platform injects this app's bootstrap (mount node, basename,
 // per-viewer token, org). It keys the bootstrap by THIS entry's `m` nonce in a
@@ -331,9 +344,9 @@ const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
 const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
 // This app's id, so useWorkflow scopes path refs to THIS install's workflow.
 const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;
-// Platform theme, so a theme-aware app starts in sync. Add supportsTheme to
-// BifrostProvider (and key your styles off the `dark` class) to opt into the
-// header's light/dark toggle.
+// Platform theme, so the app starts in sync. supportsTheme is ON by default:
+// the scaffold ships Tailwind + the shadcn `.dark` token layer, so the app DOES
+// respond to theme — which makes BifrostHeader show the light/dark toggle.
 const theme = boot?.theme ?? "light";
 
 const root = createRoot(mountEl);
@@ -342,7 +355,7 @@ boot?.registerUnmount?.(() => root.unmount());
 
 root.render(
   <StrictMode>
-    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} appId={appId} theme={theme} onLogout={boot?.onLogout}>
+    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} appId={appId} theme={theme} supportsTheme onLogout={boot?.onLogout}>
       <BrowserRouter basename={basename}>
         <App />
       </BrowserRouter>
@@ -428,12 +441,147 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
 
     bifrost deploy
 """
+    # Tailwind v4 + shadcn token layer. v4 is config-less (the `@theme`/`:root`
+    # tokens live in CSS); `@custom-variant dark` wires the `.dark` class the
+    # BifrostProvider toggles, so shadcn components react to the platform theme.
+    index_css = """\
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  body { background-color: var(--background); color: var(--foreground); }
+}
+"""
+    # shadcn CLI config so `npx shadcn add <component>` drops real, current
+    # component source into src/components/ui with the right aliases.
+    components_json = json.dumps({
+        "$schema": "https://ui.shadcn.com/schema.json",
+        "style": "new-york",
+        "rsc": False,
+        "tsx": True,
+        "tailwind": {
+            "config": "",
+            "css": "src/index.css",
+            "baseColor": "neutral",
+            "cssVariables": True,
+        },
+        "iconLibrary": "lucide",
+        "aliases": {
+            "components": "@/components",
+            "utils": "@/lib/utils",
+            "ui": "@/components/ui",
+            "lib": "@/lib",
+            "hooks": "@/hooks",
+        },
+    }, indent=2) + "\n"
+    utils_ts = """\
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+// shadcn's cn(): merge conditional + conflicting Tailwind classes.
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+"""
+    tsconfig = json.dumps({
+        "compilerOptions": {
+            "target": "ES2020",
+            "useDefineForClassFields": True,
+            "lib": ["ES2020", "DOM", "DOM.Iterable"],
+            "module": "ESNext",
+            "skipLibCheck": True,
+            "moduleResolution": "bundler",
+            "allowImportingTsExtensions": True,
+            "resolveJsonModule": True,
+            "isolatedModules": True,
+            "noEmit": True,
+            "jsx": "react-jsx",
+            "strict": True,
+            "baseUrl": ".",
+            "paths": {"@/*": ["./src/*"]},
+        },
+        "include": ["src"],
+    }, indent=2) + "\n"
     return {
         "package.json": json.dumps(pkg, indent=2) + "\n",
         "vite.config.ts": vite_config,
+        "tsconfig.json": tsconfig,
+        "components.json": components_json,
         "index.html": index_html,
         "src/main.tsx": main_tsx,
         "src/App.tsx": app_tsx,
+        "src/index.css": index_css,
+        "src/lib/utils.ts": utils_ts,
         ".env.example": env_example,
         "README.md": readme,
     }
