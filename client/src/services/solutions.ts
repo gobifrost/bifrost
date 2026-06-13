@@ -5,6 +5,10 @@ import type { components } from "@/lib/v1";
 export type Solution = components["schemas"]["Solution"];
 export type SolutionsList = components["schemas"]["SolutionsList"];
 export type SolutionEntities = components["schemas"]["SolutionEntities"];
+export type SolutionEntitySummary =
+	components["schemas"]["SolutionEntitySummary"];
+export type SolutionConfigStatus =
+	components["schemas"]["SolutionConfigStatus"];
 export type SolutionInstallPreview =
 	components["schemas"]["SolutionInstallPreview"];
 export type SolutionExistingInstall =
@@ -14,6 +18,18 @@ export type SolutionUpgradeDiff =
 export type SolutionDeleteSummary =
 	components["schemas"]["SolutionDeleteSummary"];
 export type SolutionUpdate = components["schemas"]["SolutionUpdate"];
+export type SolutionCaptureCandidates =
+	components["schemas"]["SolutionCaptureCandidates"];
+export type SolutionCaptureRequest =
+	components["schemas"]["SolutionCaptureRequest"];
+export type SolutionDependencyPreview =
+	components["schemas"]["SolutionDependencyPreview"];
+export type SolutionDependencyPreviewRequest =
+	components["schemas"]["SolutionDependencyPreviewRequest"];
+export type DependencyRef = components["schemas"]["DependencyRef"];
+export type OutsideReference = components["schemas"]["OutsideReference"];
+export type SolutionCaptureResponse =
+	components["schemas"]["SolutionCaptureResponse"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
@@ -67,6 +83,55 @@ export async function updateSolution(
 		{ params: { path: { solution_id: solutionId } }, body: update, signal },
 	);
 	if (error) throw new Error(getErrorMessage(error, "Failed to update solution"));
+	return data;
+}
+
+export async function getSolutionCaptureCandidates(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<SolutionCaptureCandidates> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/{solution_id}/capture/candidates",
+		{ params: { path: { solution_id: solutionId } }, signal },
+	);
+	if (error) {
+		throw new Error(
+			getErrorMessage(error, "Failed to list capture candidates"),
+		);
+	}
+	return data;
+}
+
+export async function previewSolutionCapture(
+	solutionId: string,
+	request: SolutionDependencyPreviewRequest,
+	options: RequestOptions = {},
+): Promise<SolutionDependencyPreview> {
+	const { signal } = options;
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/{solution_id}/capture/preview",
+		{ params: { path: { solution_id: solutionId } }, body: request, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to preview capture"));
+	}
+	return data;
+}
+
+export async function captureSolutionEntities(
+	solutionId: string,
+	request: SolutionCaptureRequest,
+	options: RequestOptions = {},
+): Promise<SolutionCaptureResponse> {
+	const { signal } = options;
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/{solution_id}/capture",
+		{ params: { path: { solution_id: solutionId } }, body: request, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to capture entities"));
+	}
 	return data;
 }
 

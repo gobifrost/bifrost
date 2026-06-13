@@ -9,13 +9,14 @@ from src.models.contracts.claims import ClaimQuery, CustomClaim
 from src.models.contracts.policies import TablePolicies
 
 
-def _claim(name: str) -> CustomClaim:
+def _claim(name: str, *, organization_id=None, solution_id=None, table="memberships") -> CustomClaim:
     return CustomClaim(
         id=uuid4(),
-        organization_id=uuid4(),
+        organization_id=organization_id or uuid4(),
+        solution_id=solution_id,
         name=name,
         type="list",
-        query=ClaimQuery(table="memberships", select="campus_id"),
+        query=ClaimQuery(table=table, select="campus_id"),
     )
 
 
@@ -30,14 +31,15 @@ async def test_preresolve_resolves_each_referenced_claim_once(monkeypatch):
     }
     resolved: list[str] = []
 
-    async def fake_load(db, loaded_org_id):
+    async def fake_load(db, loaded_org_id, loaded_solution_id=None):
         assert loaded_org_id == org_id
+        assert loaded_solution_id is None
         return claims
 
     async def fake_resolve(claim, all_claims, user, db, resolving):
         resolved.append(claim.name)
 
-    monkeypatch.setattr(preresolve, "_load_org_claims", fake_load)
+    monkeypatch.setattr(preresolve, "_load_claims", fake_load)
     monkeypatch.setattr(preresolve, "_resolve_claim", fake_resolve)
 
     policies = TablePolicies.model_validate({
@@ -86,10 +88,10 @@ async def test_preresolve_resolves_each_referenced_claim_once(monkeypatch):
 async def test_preresolve_noops_when_no_claim_refs(monkeypatch):
     from shared.claims import preresolve
 
-    async def fail_load(db, org_id):
+    async def fail_load(db, org_id, solution_id=None):
         raise AssertionError("claims should not be loaded")
 
-    monkeypatch.setattr(preresolve, "_load_org_claims", fail_load)
+    monkeypatch.setattr(preresolve, "_load_claims", fail_load)
     policies = TablePolicies.model_validate({
         "policies": [
             {
@@ -106,6 +108,50 @@ async def test_preresolve_noops_when_no_claim_refs(monkeypatch):
         db=None,  # type: ignore[arg-type]
         org_id=uuid4(),
     )
+
+
+@pytest.mark.e2e
+async def test_load_claims_prefers_solution_claim_over_repo_claim(db_session):
+    from shared.claims import preresolve
+    from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
+
+    org = Organization(id=uuid4(), name=f"ClaimsOrg-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    sol = Solution(
+        id=uuid4(),
+        slug=f"claims-{uuid4().hex[:8]}",
+        name="Claims",
+        organization_id=org.id,
+    )
+    db_session.add(sol)
+    await db_session.flush()
+    db_session.add_all([
+        CustomClaimORM(
+            id=uuid4(),
+            organization_id=org.id,
+            solution_id=None,
+            name="allowed_campus_ids",
+            type="list",
+            query={"table": "repo_memberships", "select": "campus_id"},
+        ),
+        CustomClaimORM(
+            id=uuid4(),
+            organization_id=org.id,
+            solution_id=sol.id,
+            name="allowed_campus_ids",
+            type="list",
+            query={"table": "solution_memberships", "select": "campus_id"},
+        ),
+    ])
+    await db_session.flush()
+
+    claims = await preresolve._load_claims(db_session, org.id, sol.id)
+
+    assert claims["allowed_campus_ids"].solution_id == sol.id
+    assert claims["allowed_campus_ids"].query.table == "solution_memberships"
 
 
 @pytest.mark.asyncio

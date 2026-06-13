@@ -17,6 +17,8 @@ from sqlalchemy import select
 import pytest as _pytest
 
 from src.models.orm.solutions import Solution
+from src.models.orm.custom_claims import CustomClaim
+from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
 from src.services.solutions.deploy import (
     SolutionBundle,
@@ -34,6 +36,16 @@ def _wf_entry(wf_id: str, name: str) -> dict:
         "function_name": "run",
         "path": f"workflows/{name}.py",
         "type": "workflow",
+    }
+
+
+def _claim_entry(claim_id: str, name: str, table: str = "memberships") -> dict:
+    return {
+        "id": claim_id,
+        "name": name,
+        "description": "solution claim",
+        "type": "list",
+        "query": {"table": table, "select": "campus_id"},
     }
 
 
@@ -180,6 +192,91 @@ class TestSolutionDeployReconcile:
         assert wf is not None
         assert wf.solution_id == org_install.id
         assert wf.organization_id == org_install.organization_id
+
+    async def test_deploy_stamps_and_reconciles_claims(self, db_session) -> None:
+        """Solution claims are deploy-owned definitions: upserted under the
+        install and deleted when removed from the bundle."""
+        db = db_session
+        sol = await self._make_install(db, f"claim-{uuid4().hex[:8]}")
+        claim_manifest_id = uuid4()
+
+        result = await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            claims=[_claim_entry(str(claim_manifest_id), "allowed_campus_ids")],
+        ))
+        await db.flush()
+        claim_id = solution_entity_id(sol.id, claim_manifest_id)
+        claim = await db.get(CustomClaim, claim_id)
+        assert claim is not None
+        assert claim.solution_id == sol.id
+        assert claim.organization_id == sol.organization_id
+        assert claim.name == "allowed_campus_ids"
+        assert result.claims_upserted == 1
+
+        result2 = await SolutionDeployer(db).deploy(SolutionBundle(solution=sol))
+        await db.flush()
+        assert await db.get(CustomClaim, claim_id) is None
+        assert result2.claims_deleted == 1
+
+    async def test_deploy_table_policy_can_reference_solution_claim(self, db_session) -> None:
+        """Deploy validates table policies against claims in the same bundle."""
+        db = db_session
+        sol = await self._make_install(db, f"claim-pol-{uuid4().hex[:8]}")
+        claim_id = uuid4()
+        table_id = uuid4()
+
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            claims=[_claim_entry(str(claim_id), "allowed_campus_ids")],
+            tables=[{
+                "id": str(table_id),
+                "name": "documents",
+                "schema": {"columns": [{"name": "campus_id"}]},
+                "policies": [
+                    {
+                        "name": "claim_read",
+                        "actions": ["read"],
+                        "when": {
+                            "in": [
+                                {"row": "campus_id"},
+                                {"claims": "allowed_campus_ids"},
+                            ]
+                        },
+                    }
+                ],
+            }],
+        ))
+        await db.flush()
+
+        table = await db.get(Table, solution_entity_id(sol.id, table_id))
+        assert table is not None
+        assert table.access["policies"][0]["name"] == "claim_read"
+
+    async def test_deploy_table_policy_rejects_missing_solution_claim(self, db_session) -> None:
+        db = db_session
+        sol = await self._make_install(db, f"claim-miss-{uuid4().hex[:8]}")
+
+        with _pytest.raises(SolutionDeployConflict, match="unknown claims"):
+            await SolutionDeployer(db).deploy(SolutionBundle(
+                solution=sol,
+                tables=[{
+                    "id": str(uuid4()),
+                    "name": "documents",
+                    "schema": {"columns": [{"name": "campus_id"}]},
+                    "policies": [
+                        {
+                            "name": "claim_read",
+                            "actions": ["read"],
+                            "when": {
+                                "in": [
+                                    {"row": "campus_id"},
+                                    {"claims": "missing_claim"},
+                                ]
+                            },
+                        }
+                    ],
+                }],
+            ))
 
     async def test_unique_install_per_slug_and_scope(self, db_session) -> None:
         """Install identity is unique per (slug, scope) — §3.4 (Codex P2)."""

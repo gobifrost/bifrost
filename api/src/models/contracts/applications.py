@@ -405,3 +405,18 @@ class ApplicationReplaceRequest(BaseModel):
             "Use when repointing before files are pushed."
         ),
     )
+
+
+class ApplicationSwapSlugsRequest(BaseModel):
+    """Atomically exchange two applications' slugs (v1→v2 migration cutover).
+
+    The slug is the public URL handle (``/apps/{slug}``). A migration scaffolds
+    the v2 app under a temporary slug, then this swap gives it the v1 app's slug
+    (so bookmarks/links survive) and parks the v1 app under the temp slug — both
+    in ONE transaction holding the slug advisory lock, so there is no observable
+    window where the live slug is unowned and no race with a same-slug deploy.
+    See ``POST /api/applications/swap-slugs``.
+    """
+
+    app_a: UUID = Field(description="First application id.")
+    app_b: UUID = Field(description="Second application id; its slug is exchanged with app_a's.")

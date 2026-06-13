@@ -416,3 +416,72 @@ Migration note for the real cutover: import C# Groups → grant_templates rows
 (stamp legacy_id = GroupId), then per user: campuses from CampusUser +
 template_id from User.GroupId via legacy_id lookup → manage_portal_user
 create/set_grants with template_id.
+
+---
+
+## 11. Solutions management UI follow-up (2026-06-13)
+
+Status: implemented in `worktree-solutions-success-criteria`; targeted client
+verification green. This section updates the stale 2026-06-12 note that capture
+was only designed.
+
+### Shipped
+
+- **Capture existing entities:** Solution detail has a `Capture` action and
+  picker (`SolutionCaptureDialog`) for same-scope workflows, apps, forms,
+  agents, tables, and custom claims. Captured entities become solution-managed.
+- **Custom Claims tab:** Solution detail includes a Custom Claims tab and counts,
+  matching the table-policy dependency reality: claims are first-class solution
+  contents and cannot be omitted from a complete solution view.
+- **Shared parent-page list surfaces:** `/workflows`, `/applications`, and
+  `/forms` now render through reusable list surfaces that Solution detail also
+  consumes:
+  - `WorkflowListSurface`
+  - `ApplicationListSurface`
+  - `FormListSurface`
+- **Workflow Solution tab behavior:** Solution-managed workflows show the same
+  parent-page list/table surface and keep the explicit `Execute Workflow`
+  button. Cards no longer act as a disguised run/code affordance.
+- **Forms Solution tab behavior:** Solution-managed forms show the same
+  parent-page surface and expose `Launch`; edit/toggle/delete controls are
+  suppressed because managed forms are read-only in the platform UI.
+- **Apps behavior parity:** `/applications` and the Solution apps tab share the
+  same application surface. Standalone V2 apps open directly on card click;
+  `Open Published` is hidden for V2 apps. Legacy apps keep the published/preview
+  hover behavior.
+- **Apps payload parity fix:** Solution entity summaries now include the app
+  inline `logo` data URL, so the shared app surface can render the same custom
+  icon in Solution tabs that it renders on `/applications`.
+- **Organization display in Solution tabs:** the shared surfaces still know how
+  to render organization chips/columns, but Solution detail intentionally passes
+  the org-display/admin flag off because the install scope is already the
+  governing context for every entity in the tab.
+- **Deprecated code-app creation removed:** the old `CreateAppModal` export/file
+  is gone and `/applications` no longer exposes the stray create-code-application
+  entry point.
+
+### Intentional non-solution in this pass
+
+- **Solution source/code browsing:** do not route Solution-tab code buttons into
+  normal editable app/form/workflow editors. That would violate the read-only
+  contract and recreate the confusion this pass removed. The right follow-up is
+  a read-only Solution contents/code route that opens the installed/exported
+  solution file tree, lets the user browse files, and hides irrelevant editing,
+  save, publish, and drift controls.
+
+### Verification
+
+- `./test.sh client unit Applications SolutionDetail Forms Workflows`:
+  23 files passed, 146 tests passed.
+- `./test.sh tests/e2e/platform/test_solution_entities_endpoint.py::test_get_solution_entities_includes_app_logo -v`:
+  passed.
+- `cd client && npm run tsc`: passed.
+- `OPENAPI_URL=http://localhost:37791/openapi.json npm run generate:types`:
+  passed.
+- `cd api && ruff check src/routers/solutions.py src/models/contracts/solutions.py tests/e2e/platform/test_solution_entities_endpoint.py`:
+  passed.
+- `cd client && npm run lint`: passed with one existing warning in
+  `components/forms/FormRenderer.tsx` (`react-hooks/incompatible-library` around
+  `watch()`), unrelated to this pass.
+- Live debug Vite check: `GET http://localhost:37791/src/pages/SolutionDetail.tsx`
+  returned `200 OK`, resolving the dynamic-import failure seen while testing.

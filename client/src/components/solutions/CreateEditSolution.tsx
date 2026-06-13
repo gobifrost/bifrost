@@ -63,7 +63,12 @@ import {
 import type { components } from "@/lib/v1";
 
 export type CreateEditSolutionMode =
-	| { kind: "create"; file?: File }
+	| {
+			kind: "create";
+			file?: File;
+			organizationId?: string | null;
+			intent?: "install" | "update";
+	  }
 	| { kind: "edit"; solution: Solution };
 
 /** A declared config schema item on a preview, narrowed from the loose dict. */
@@ -361,6 +366,9 @@ export function CreateEditSolution({
 				{mode.kind === "create" ? (
 					<CreateBody
 						initialFile={mode.file ?? null}
+						initialOrgId={mode.organizationId ?? null}
+						lockOrganization={mode.organizationId !== undefined}
+						intent={mode.intent ?? "install"}
 						onClose={onClose}
 						onSaved={onSaved}
 					/>
@@ -374,10 +382,16 @@ export function CreateEditSolution({
 
 function CreateBody({
 	initialFile,
+	initialOrgId,
+	lockOrganization,
+	intent,
 	onClose,
 	onSaved,
 }: {
 	initialFile: File | null;
+	initialOrgId: string | null;
+	lockOrganization: boolean;
+	intent: "install" | "update";
 	onClose: () => void;
 	onSaved: (solution: Solution) => void;
 }) {
@@ -385,7 +399,7 @@ function CreateBody({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const [file, setFile] = useState<File | null>(initialFile);
-	const [orgId, setOrgId] = useState<string | null>(null);
+	const [orgId, setOrgId] = useState<string | null>(initialOrgId);
 	const [preview, setPreview] = useState<SolutionInstallPreview | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 	const [previewLoading, setPreviewLoading] = useState(false);
@@ -505,11 +519,15 @@ function CreateBody({
 				<DialogTitle>
 					{isUpgrade && existingInstall
 						? `Upgrade ${existingInstall.name} v${existingInstall.version ?? "?"} → v${preview?.version ?? "?"}`
-						: "Install Solution"}
+						: intent === "update"
+							? "Update Solution"
+							: "Install Solution"}
 				</DialogTitle>
 				<DialogDescription>
 					{isUpgrade
 						? "This package upgrades an existing install in place. Review the changes below."
+						: intent === "update"
+							? "Choose a package to update this install in place."
 						: "Choose a package and an organization, review what it creates, and set any required configuration values."}
 				</DialogDescription>
 			</DialogHeader>
@@ -589,7 +607,7 @@ function CreateBody({
 				{/* Organization — standard selector, always at the top. An upgrade
 				    targets the existing install's scope; re-picking would create
 				    nothing, so it is hidden then. */}
-				{!isUpgrade && (
+				{!isUpgrade && !lockOrganization && (
 					<div className="space-y-2">
 						<Label>Organization</Label>
 						<OrganizationSelect

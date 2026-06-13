@@ -24,17 +24,49 @@ import {
 	Bot,
 	Database,
 	SlidersHorizontal,
+	KeyRound,
 	CheckCircle2,
 	Circle,
 	AlertTriangle,
-	Pencil,
-	Trash2,
-	Download,
 	Loader2,
+	Upload,
+	LayoutGrid,
+	Table as TableIcon,
+	PlayCircle,
+	Code2,
+	Shield,
+	Users,
+	Unlink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
+import { SearchBox } from "@/components/search/SearchBox";
+import { EntityLogo } from "@/components/EntityLogo";
+import {
+	ApplicationListSurface,
+	type ApplicationListItem,
+} from "@/components/applications/ApplicationListSurface";
+import {
+	FormListSurface,
+	type FormListItem,
+	type FormValidationState,
+} from "@/components/forms/FormListSurface";
+import {
+	WorkflowListSurface,
+	type WorkflowListItem,
+} from "@/components/workflows/WorkflowListSurface";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
 	DataTable,
 	DataTableBody,
@@ -43,11 +75,6 @@ import {
 	DataTableHeader,
 	DataTableRow,
 } from "@/components/ui/data-table";
-import { SearchBox } from "@/components/search/SearchBox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
 	Dialog,
 	DialogContent,
@@ -58,6 +85,8 @@ import {
 } from "@/components/ui/dialog";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { CreateEditSolution } from "@/components/solutions/CreateEditSolution";
+import { SolutionCaptureDialog } from "@/components/solutions/SolutionCaptureDialog";
+import { SolutionActionsMenu } from "@/components/solutions/SolutionActionsMenu";
 import {
 	getSolutionEntities,
 	deleteSolution,
@@ -70,7 +99,14 @@ type EntitySummary = components["schemas"]["SolutionEntitySummary"];
 type ConfigStatus = components["schemas"]["SolutionConfigStatus"];
 type ConfigType = components["schemas"]["ConfigType"];
 
-type TabKey = "workflows" | "apps" | "forms" | "agents" | "tables" | "configs";
+type TabKey =
+	| "workflows"
+	| "apps"
+	| "forms"
+	| "agents"
+	| "tables"
+	| "claims"
+	| "configs";
 
 const ENTITY_TABS: {
 	key: Exclude<TabKey, "configs">;
@@ -82,6 +118,7 @@ const ENTITY_TABS: {
 	{ key: "forms", label: "Forms", Icon: FileCode },
 	{ key: "agents", label: "Agents", Icon: Bot },
 	{ key: "tables", label: "Tables", Icon: Database },
+	{ key: "claims", label: "Custom Claims", Icon: KeyRound },
 ];
 
 /** Per-entity-page link target, carrying the `?from` so the entity page can
@@ -95,6 +132,8 @@ function entityHref(
 	switch (kind) {
 		case "tables":
 			return `/tables/${entity.id}${from}`;
+		case "claims":
+			return `/tables${from}`;
 		case "agents":
 			return `/agents/${entity.id}${from}`;
 		case "forms":
@@ -126,7 +165,481 @@ const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs">, string> = {
 	forms: "forms",
 	agents: "agents",
 	tables: "tables",
+	claims: "custom claims",
 };
+
+const GRID_TABLE_ENTITY_TABS = new Set<Exclude<TabKey, "configs">>([
+	"workflows",
+	"apps",
+	"forms",
+	"agents",
+]);
+
+function sourceRef(entity: EntitySummary): string {
+	if (entity.path && entity.function_name) {
+		return `${entity.path}::${entity.function_name}`;
+	}
+	return entity.path ?? entity.slug ?? "-";
+}
+
+function formatDate(value: string | null | undefined): string {
+	if (!value) return "-";
+	return new Date(value).toLocaleDateString(undefined, {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+	});
+}
+
+function workflowTypeBadge(entity: EntitySummary) {
+	if (entity.type === "tool") {
+		return (
+			<Badge
+				variant="secondary"
+				className="bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
+			>
+				<Bot className="mr-1 h-3 w-3" />
+				Tool
+			</Badge>
+		);
+	}
+	if (entity.type === "data_provider") {
+		return (
+			<Badge
+				variant="secondary"
+				className="bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+			>
+				<Database className="mr-1 h-3 w-3" />
+				Data Provider
+			</Badge>
+		);
+	}
+	return (
+		<Badge variant="secondary">
+			<PlayCircle className="mr-1 h-3 w-3" />
+			Workflow
+		</Badge>
+	);
+}
+
+function accessBadge(accessLevel: string | null | undefined) {
+	if (!accessLevel) return null;
+	return (
+		<span className="flex items-center gap-1">
+			{accessLevel === "role_based" ? (
+				<Shield className="h-3 w-3" />
+			) : (
+				<Users className="h-3 w-3" />
+			)}
+			{accessLevel === "role_based"
+				? "Roles"
+				: accessLevel === "everyone"
+					? "Everyone"
+					: "Auth"}
+		</span>
+	);
+}
+
+function entityStatus(entity: EntitySummary, kind: Exclude<TabKey, "configs">) {
+	if (kind === "forms") {
+		return entity.is_active === false ? "Inactive" : "Active";
+	}
+	if (kind === "agents") {
+		return entity.is_active === false ? "Paused" : "Active";
+	}
+	return null;
+}
+
+function SolutionEntityGrid({
+	kind,
+	items,
+	solutionId,
+}: {
+	kind: Exclude<TabKey, "configs">;
+	items: EntitySummary[];
+	solutionId: string;
+}) {
+	const navigate = useNavigate();
+	return (
+		<div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
+			{items.map((entity) => {
+				const href = entityHref(kind, entity, solutionId);
+				const status = entityStatus(entity, kind);
+				if (kind === "apps") {
+					return (
+						<div
+							key={entity.id}
+							role="button"
+							tabIndex={0}
+							onClick={() => navigate(href)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter" || event.key === " ") {
+									event.preventDefault();
+									navigate(href);
+								}
+							}}
+							className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5 transition-all hover:-translate-y-px hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:ring-foreground/10 dark:hover:ring-foreground/15"
+						>
+							<div className="border-b px-4 py-3">
+								<div className="flex items-start justify-between gap-3">
+									<div className="flex min-w-0 items-center gap-2">
+										<EntityLogo
+											entityType="app"
+											entityId={entity.id}
+											fallback={
+												<AppWindow className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+											}
+											size={20}
+											className="h-5 w-5 rounded object-cover shrink-0"
+										/>
+										<span className="truncate text-[14.5px] font-semibold">
+											{entity.name}
+										</span>
+									</div>
+									<Badge variant="outline" className="text-[10px] px-1.5 py-0">
+										{entity.app_model ?? "app"}
+									</Badge>
+								</div>
+							</div>
+							<div className="relative flex-1 px-4 py-3 min-h-[72px]">
+								{entity.description ? (
+									<p className="line-clamp-2 text-[13px] text-muted-foreground">
+										{entity.description}
+									</p>
+								) : (
+									<p className="text-[13px] italic text-muted-foreground/50">
+										No description
+									</p>
+								)}
+								<div className="pointer-events-none absolute inset-0 flex flex-col items-start justify-center gap-1.5 bg-background/85 px-4 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+									<span className="text-left text-[13px] font-medium text-foreground">
+										<Code2 className="-mt-0.5 mr-1.5 inline h-3.5 w-3.5" />
+										Open in Apps
+									</span>
+								</div>
+							</div>
+							<div className="flex items-center justify-between gap-2 border-t px-4 py-2.5">
+								<div className="flex items-center gap-1.5">
+									<span className="text-[11px] text-muted-foreground">
+										{entity.slug ?? sourceRef(entity)}
+									</span>
+								</div>
+								<Badge variant="default" className="text-[10px] px-1.5 py-0">
+									Managed
+								</Badge>
+							</div>
+						</div>
+					);
+				}
+
+				if (kind === "agents") {
+					return (
+						<a
+							key={entity.id}
+							href={href}
+							className="group flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm ring-1 ring-foreground/5 transition-all hover:-translate-y-px hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							<div className="border-b px-4 pb-3 pt-3.5">
+								<div className="flex items-start justify-between gap-3">
+									<div className="flex min-w-0 items-center gap-2">
+										<EntityLogo
+											entityType="agent"
+											entityId={entity.id}
+											fallback={
+												<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+											}
+											size={20}
+											className="h-5 w-5 rounded shrink-0 object-cover"
+										/>
+										<span className="truncate text-[14.5px] font-semibold">
+											{entity.name}
+										</span>
+										{status && (
+											<Badge variant={status === "Paused" ? "secondary" : "default"} className="text-[11px]">
+												{status}
+											</Badge>
+										)}
+									</div>
+								</div>
+								{entity.description && (
+									<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+										{entity.description}
+									</p>
+								)}
+							</div>
+							<div className="flex flex-1 items-center justify-between gap-2 p-4 text-xs text-muted-foreground">
+								<span>{entity.access_level ?? "authenticated"}</span>
+								<span>{entity.type ?? "agent"}</span>
+							</div>
+						</a>
+					);
+				}
+
+				return (
+					<Card
+						key={entity.id}
+						className="hover:border-primary transition-colors flex flex-col"
+					>
+						<CardHeader className="pb-2">
+							<div className="mb-3 flex items-center justify-between gap-2">
+								<div className="flex items-center gap-2">
+									{kind === "workflows" ? (
+										workflowTypeBadge(entity)
+									) : kind === "forms" ? (
+										<Badge variant="secondary">
+											<FileCode className="mr-1 h-3 w-3" />
+											Form
+										</Badge>
+									) : kind === "tables" ? (
+										<Badge variant="secondary">
+											<Database className="mr-1 h-3 w-3" />
+											Table
+										</Badge>
+									) : (
+										<Badge variant="secondary">
+											<KeyRound className="mr-1 h-3 w-3" />
+											Custom Claim
+										</Badge>
+									)}
+								</div>
+								<Button
+									variant="outline"
+									size="icon-sm"
+									onClick={() => navigate(href)}
+									title={`Open ${entity.name}`}
+								>
+									<Code2 className="h-3.5 w-3.5" />
+								</Button>
+							</div>
+							<CardTitle
+								className={
+									kind === "workflows" || kind === "tables" || kind === "claims"
+										? "font-mono text-base break-all"
+										: "text-base break-all"
+								}
+							>
+								{entity.name}
+							</CardTitle>
+							{entity.description && (
+								<CardDescription className="mt-2 text-sm break-words line-clamp-2">
+									{entity.description}
+								</CardDescription>
+							)}
+						</CardHeader>
+						<CardContent className="pt-0 mt-auto space-y-3">
+							<div className="flex items-center gap-2 text-xs text-muted-foreground">
+								{entity.category && <span>{entity.category}</span>}
+								{entity.category && <span>·</span>}
+								{kind === "workflows" && <span>{sourceRef(entity)}</span>}
+								{kind === "forms" && accessBadge(entity.access_level)}
+								{kind === "tables" && <span>{formatDate(entity.created_at)}</span>}
+								{kind === "claims" && (
+									<span className="font-mono">
+										{entity.source_table ?? "-"}.{entity.select ?? "*"}
+									</span>
+								)}
+							</div>
+							{status && (
+								<div className="flex flex-wrap items-center gap-1.5">
+									<Badge variant={status === "Active" ? "default" : "secondary"}>
+										{status}
+									</Badge>
+								</div>
+							)}
+							{kind === "workflows" && entity.type === "data_provider" && (
+								<div className="flex flex-wrap items-center gap-1.5">
+									<Badge variant="outline">
+										<Database className="mr-1 h-3 w-3" />
+										Data provider
+									</Badge>
+								</div>
+							)}
+							{kind === "tables" && entity.source_table && (
+								<div className="flex flex-wrap items-center gap-1.5">
+									<Badge variant="outline">
+										<Unlink className="mr-1 h-3 w-3" />
+										{entity.source_table}
+									</Badge>
+								</div>
+							)}
+						</CardContent>
+					</Card>
+				);
+			})}
+		</div>
+	);
+}
+
+function SolutionEntityTable({
+	kind,
+	items,
+	solutionId,
+}: {
+	kind: Exclude<TabKey, "configs">;
+	items: EntitySummary[];
+	solutionId: string;
+}) {
+	const navigate = useNavigate();
+	return (
+		<DataTable>
+			<DataTableHeader>
+				<DataTableRow>
+					<DataTableHead>Name</DataTableHead>
+					<DataTableHead>Description</DataTableHead>
+					{kind === "workflows" && (
+						<>
+							<DataTableHead className="w-0 whitespace-nowrap">Type</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Category</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Source</DataTableHead>
+						</>
+					)}
+					{kind === "apps" && (
+						<>
+							<DataTableHead className="w-0 whitespace-nowrap">Model</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Source</DataTableHead>
+						</>
+					)}
+					{kind === "forms" && (
+						<>
+							<DataTableHead className="w-0 whitespace-nowrap">Access</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Status</DataTableHead>
+						</>
+					)}
+					{kind === "agents" && (
+						<>
+							<DataTableHead className="w-0 whitespace-nowrap">Access</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Status</DataTableHead>
+						</>
+					)}
+					{kind === "tables" && (
+						<DataTableHead className="w-0 whitespace-nowrap">Created</DataTableHead>
+					)}
+					{kind === "claims" && (
+						<>
+							<DataTableHead className="w-0 whitespace-nowrap">Type</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Source table</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">Select</DataTableHead>
+						</>
+					)}
+				</DataTableRow>
+			</DataTableHeader>
+			<DataTableBody>
+				{items.map((entity) => {
+					const status = entityStatus(entity, kind);
+					return (
+						<DataTableRow
+							key={entity.id}
+							clickable
+							onClick={() => navigate(entityHref(kind, entity, solutionId))}
+						>
+							<DataTableCell
+								className={
+									kind === "workflows" || kind === "tables" || kind === "claims"
+										? "font-mono font-medium"
+										: "font-medium"
+								}
+							>
+								<span className="flex items-center gap-2">
+									{kind === "apps" && (
+										<EntityLogo
+											entityType="app"
+											entityId={entity.id}
+											fallback={
+												<AppWindow className="h-4 w-4 shrink-0 text-muted-foreground" />
+											}
+											size={18}
+											className="h-[18px] w-[18px] rounded object-cover shrink-0"
+										/>
+									)}
+									{kind === "agents" && (
+										<EntityLogo
+											entityType="agent"
+											entityId={entity.id}
+											fallback={
+												<Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+											}
+											size={18}
+											className="h-[18px] w-[18px] rounded object-cover shrink-0"
+										/>
+									)}
+									{entity.name}
+								</span>
+							</DataTableCell>
+							<DataTableCell className="max-w-xs truncate text-muted-foreground">
+								{entity.description || "-"}
+							</DataTableCell>
+							{kind === "workflows" && (
+								<>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										{workflowTypeBadge(entity)}
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+										{entity.category || "-"}
+									</DataTableCell>
+									<DataTableCell className="w-0 max-w-[18rem] truncate font-mono text-xs text-muted-foreground">
+										{sourceRef(entity)}
+									</DataTableCell>
+								</>
+							)}
+							{kind === "apps" && (
+								<>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<Badge variant="outline">{entity.app_model ?? "-"}</Badge>
+									</DataTableCell>
+									<DataTableCell className="w-0 max-w-[18rem] truncate font-mono text-xs text-muted-foreground">
+										{sourceRef(entity)}
+									</DataTableCell>
+								</>
+							)}
+							{kind === "forms" && (
+								<>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<Badge variant="outline">{entity.access_level ?? "-"}</Badge>
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<Badge variant={status === "Inactive" ? "secondary" : "default"}>
+											{status}
+										</Badge>
+									</DataTableCell>
+								</>
+							)}
+							{kind === "agents" && (
+								<>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<Badge variant="outline">{entity.access_level ?? "-"}</Badge>
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<Badge variant={status === "Paused" ? "secondary" : "default"}>
+											{status}
+										</Badge>
+									</DataTableCell>
+								</>
+							)}
+							{kind === "tables" && (
+								<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+									{formatDate(entity.created_at)}
+								</DataTableCell>
+							)}
+							{kind === "claims" && (
+								<>
+									<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+										{entity.type || "-"}
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap font-mono text-sm">
+										{entity.source_table || "-"}
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap font-mono text-sm">
+										{entity.select || "-"}
+									</DataTableCell>
+								</>
+							)}
+						</DataTableRow>
+					);
+				})}
+			</DataTableBody>
+		</DataTable>
+	);
+}
 
 function EntityTabContent({
 	kind,
@@ -139,11 +652,38 @@ function EntityTabContent({
 }) {
 	const navigate = useNavigate();
 	const [search, setSearch] = useState("");
+	const canToggleView = GRID_TABLE_ENTITY_TABS.has(kind);
+	const [viewMode, setViewMode] = useState<"grid" | "table">(
+		canToggleView ? "grid" : "table",
+	);
 
 	const q = search.trim().toLowerCase();
 	const visible = q
-		? items.filter((e) => e.name.toLowerCase().includes(q))
+		? items.filter((e) =>
+				[
+					e.name,
+					e.description,
+					e.slug,
+					e.path,
+					e.function_name,
+					e.type,
+					e.category,
+					e.source_table,
+					e.select,
+				].some((value) => value?.toLowerCase().includes(q)),
+				)
 		: items;
+	const managedVisible = visible.map((entity) => ({
+		...entity,
+		is_solution_managed: true,
+		solution_id: solutionId,
+	}));
+	const formValidation = new Map<string, FormValidationState>(
+		visible.map((entity) => [
+			entity.id,
+			{ valid: true, missingParams: [] },
+		]),
+	);
 
 	if (items.length === 0) {
 		return (
@@ -154,40 +694,93 @@ function EntityTabContent({
 	}
 	return (
 		<div className="flex flex-col gap-3">
-			<SearchBox
-				value={search}
-				onChange={setSearch}
-				placeholder={`Search ${ENTITY_TAB_LABEL[kind]}...`}
-			/>
-			{visible.length === 0 ? (
-				<div className="text-sm text-muted-foreground py-8 text-center rounded-2xl border border-dashed">
-					No {ENTITY_TAB_LABEL[kind]} match “{search.trim()}”.
-				</div>
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<SearchBox
+					value={search}
+					onChange={setSearch}
+					placeholder={`Search ${ENTITY_TAB_LABEL[kind]}...`}
+					className="flex-1"
+				/>
+					{canToggleView && (
+						<ToggleGroup
+							type="single"
+							value={viewMode}
+							onValueChange={(value: string) =>
+								value && setViewMode(value as "grid" | "table")
+							}
+						>
+							<ToggleGroupItem value="grid" aria-label="Grid view" size="sm">
+								<LayoutGrid className="h-4 w-4" />
+							</ToggleGroupItem>
+							<ToggleGroupItem value="table" aria-label="Table view" size="sm">
+								<TableIcon className="h-4 w-4" />
+							</ToggleGroupItem>
+						</ToggleGroup>
+					)}
+			</div>
+				{visible.length === 0 ? (
+					<div className="text-sm text-muted-foreground py-8 text-center rounded-2xl border border-dashed">
+						No {ENTITY_TAB_LABEL[kind]} match “{search.trim()}”.
+					</div>
+				) : kind === "workflows" ? (
+					<WorkflowListSurface
+						workflows={managedVisible as WorkflowListItem[]}
+						viewMode={viewMode}
+						isPlatformAdmin={false}
+						canManageWorkflows={true}
+						getOrgName={() => "Solution"}
+						onViewHistory={(workflow) =>
+							navigate(`/history?workflow=${workflow.id ?? ""}`)
+						}
+						onExecute={(workflow) =>
+							navigate(
+								`/workflows/${encodeURIComponent(workflow.name ?? "")}/execute?from=solution:${solutionId}`,
+							)
+						}
+						emptySearchActive={Boolean(search.trim())}
+					/>
+				) : kind === "apps" ? (
+					<ApplicationListSurface
+						apps={managedVisible as ApplicationListItem[]}
+						viewMode={viewMode}
+						isPlatformAdmin={false}
+						canManageApps={true}
+						getOrgName={() => "Solution"}
+						onLaunch={(app) =>
+							navigate(`/apps/${app.slug ?? app.id}?from=solution:${solutionId}`)
+						}
+						onPreview={(app) =>
+							navigate(
+								`/apps/${app.slug ?? app.id}/preview?from=solution:${solutionId}`,
+							)
+						}
+						emptySearchActive={Boolean(search.trim())}
+					/>
+				) : kind === "forms" ? (
+					<FormListSurface
+						forms={managedVisible as FormListItem[]}
+						viewMode={viewMode}
+						isPlatformAdmin={false}
+						canManageForms={true}
+						getOrgName={() => "Solution"}
+						formValidation={formValidation}
+						onLaunch={(form) =>
+							navigate(`/execute/${form.id}?from=solution:${solutionId}`)
+						}
+						emptySearchActive={Boolean(search.trim())}
+					/>
+				) : viewMode === "grid" ? (
+					<SolutionEntityGrid
+						kind={kind}
+					items={visible}
+					solutionId={solutionId}
+				/>
 			) : (
-				<DataTable>
-					<DataTableHeader>
-						<DataTableRow>
-							<DataTableHead>Name</DataTableHead>
-						</DataTableRow>
-					</DataTableHeader>
-					<DataTableBody>
-						{visible.map((entity) => {
-							const href = entityHref(kind, entity, solutionId);
-							return (
-								<DataTableRow
-									key={entity.id}
-									clickable
-									href={href}
-									onClick={() => navigate(href)}
-								>
-									<DataTableCell className="font-medium">
-										{entity.name}
-									</DataTableCell>
-								</DataTableRow>
-							);
-						})}
-					</DataTableBody>
-				</DataTable>
+				<SolutionEntityTable
+					kind={kind}
+					items={visible}
+					solutionId={solutionId}
+				/>
 			)}
 		</div>
 	);
@@ -303,6 +896,8 @@ export function SolutionDetail() {
 
 	const [tab, setTab] = useState<TabKey>("workflows");
 	const [editOpen, setEditOpen] = useState(false);
+	const [updateOpen, setUpdateOpen] = useState(false);
+	const [captureOpen, setCaptureOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleteConfirm, setDeleteConfirm] = useState("");
 
@@ -369,6 +964,7 @@ export function SolutionDetail() {
 			forms: data?.forms?.length ?? 0,
 			agents: data?.agents?.length ?? 0,
 			tables: data?.tables?.length ?? 0,
+			claims: data?.claims?.length ?? 0,
 			configs: data?.configs?.length ?? 0,
 		} satisfies Record<TabKey, number>;
 	}, [data]);
@@ -455,40 +1051,25 @@ export function SolutionDetail() {
 								</Badge>
 							</div>
 						</div>
-						<div className="flex shrink-0 gap-2">
+						<div className="flex shrink-0 items-center justify-end gap-2">
 							<Button
-								variant="outline"
-								data-testid="export-solution"
-								disabled={exportMut.isPending}
-								onClick={() => exportMut.mutate()}
+								data-testid="update-solution"
+								className="whitespace-nowrap"
+								onClick={() => setUpdateOpen(true)}
 							>
-								{exportMut.isPending ? (
-									<Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-								) : (
-									<Download className="mr-1.5 h-4 w-4" />
-								)}
-								Export
+								<Upload className="mr-1.5 h-4 w-4" />
+								Update
 							</Button>
-							<Button
-								variant="outline"
-								data-testid="edit-solution"
-								onClick={() => setEditOpen(true)}
-							>
-								<Pencil className="mr-1.5 h-4 w-4" />
-								Edit
-							</Button>
-							<Button
-								variant="outline"
-								data-testid="delete-solution"
-								className="text-destructive hover:text-destructive"
-								onClick={() => {
+							<SolutionActionsMenu
+								exporting={exportMut.isPending}
+								onCapture={() => setCaptureOpen(true)}
+								onExport={() => exportMut.mutate()}
+								onEdit={() => setEditOpen(true)}
+								onDelete={() => {
 									setDeleteConfirm("");
 									setDeleteOpen(true);
 								}}
-							>
-								<Trash2 className="mr-1.5 h-4 w-4" />
-								Delete
-							</Button>
+							/>
 						</div>
 					</div>
 
@@ -592,6 +1173,29 @@ export function SolutionDetail() {
 							}}
 						/>
 					)}
+
+					{updateOpen && (
+						<CreateEditSolution
+							mode={{
+								kind: "create",
+								organizationId: sol.organization_id ?? null,
+								intent: "update",
+							}}
+							open
+							onClose={() => setUpdateOpen(false)}
+							onSaved={() => {
+								setUpdateOpen(false);
+								invalidate();
+							}}
+						/>
+					)}
+
+					<SolutionCaptureDialog
+						open={captureOpen}
+						solutionId={sol.id}
+						onClose={() => setCaptureOpen(false)}
+						onCaptured={invalidate}
+					/>
 
 					{/* Delete / uninstall dialog (type-to-confirm) */}
 					<Dialog

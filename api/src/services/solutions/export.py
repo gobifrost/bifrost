@@ -121,6 +121,11 @@ def build_workspace_zip(bundle: "SolutionBundle") -> bytes:
                 ".bifrost/agents.yaml",
                 _manifest_yaml("agents", {str(e["id"]): dict(e) for e in bundle.agents}),
             )
+        if bundle.claims:
+            put(
+                ".bifrost/claims.yaml",
+                _manifest_yaml("claims", {str(e["id"]): dict(e) for e in bundle.claims}),
+            )
         if bundle.config_schemas:
             put(
                 ".bifrost/configs.yaml",

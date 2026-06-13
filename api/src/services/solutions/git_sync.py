@@ -84,7 +84,11 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
     # type missing from the bundle gets DELETED by deploy's reconcile sweep
     # (apps: criteria 12/13; config schemas were wiped on every sync until
     # this collected them).
-    from bifrost.commands.solution import _collect_apps, _collect_config_schemas
+    from bifrost.commands.solution import (
+        _collect_apps,
+        _collect_claims,
+        _collect_config_schemas,
+    )
     from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
 
     apps = _collect_apps(workspace)
@@ -101,6 +105,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         apps=apps,
         forms=forms,
         agents=agents,
+        claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
         version=version,
     )

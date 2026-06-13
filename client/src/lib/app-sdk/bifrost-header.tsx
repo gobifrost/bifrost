@@ -41,8 +41,22 @@ export interface BifrostHeaderProps {
   className?: string;
 }
 
-// Self-contained palette (neutral, matches Bifrost's light chrome).
-const C = {
+// Self-contained palette. A theme-aware app (supportsTheme) flips the header's
+// OWN chrome to dark when the theme is dark, so it doesn't sit as a light bar
+// above a dark app (the D3 half-themed-header miss). An app that doesn't support
+// theming always gets the light palette — its colors are hardcoded light too.
+interface Palette {
+  border: string;
+  fg: string;
+  muted: string;
+  faint: string;
+  accent: string;
+  surface: string;
+  danger: string;
+  brand: string;
+}
+
+const LIGHT: Palette = {
   border: "#e4e4e7",
   fg: "#18181b",
   muted: "#71717a",
@@ -51,7 +65,18 @@ const C = {
   surface: "#ffffff",
   danger: "#dc2626",
   brand: "#2563eb",
-} as const;
+};
+
+const DARK: Palette = {
+  border: "#27272a",
+  fg: "#fafafa",
+  muted: "#a1a1aa",
+  faint: "#71717a",
+  accent: "#27272a",
+  surface: "#18181b",
+  danger: "#f87171",
+  brand: "#3b82f6",
+};
 
 interface Me {
   name?: string;
@@ -60,19 +85,29 @@ interface Me {
 }
 
 const STYLE_ID = "bifrost-header-style";
-const SCOPED_CSS = `
-[data-bifrost-header] .bfh-link,[data-bifrost-header] .bfh-trigger{color:${C.muted};transition:color .12s,background-color .12s}
-[data-bifrost-header] .bfh-link:hover{color:${C.fg}}
-[data-bifrost-header] .bfh-trigger:hover{color:${C.fg};background-color:${C.accent}}
-[data-bifrost-header] .bfh-item:hover{background-color:${C.accent}}
-`;
 
-function ensureStyle(): void {
+// The hover selectors are qualified by the theme attribute (``[data-bifrost-header-theme="..."]``),
+// NOT a bare ``[data-bifrost-header]`` — otherwise a light and a dark header on
+// the same page would share one global selector and whichever stylesheet was
+// appended last would set hover colors for BOTH (Codex). Theme-qualified +
+// theme-suffixed id means each theme's sheet only styles its own headers.
+function scopedCss(C: Palette, themeKey: string): string {
+  const s = `[data-bifrost-header][data-bifrost-header-theme="${themeKey}"]`;
+  return `
+${s} .bfh-link,${s} .bfh-trigger{color:${C.muted};transition:color .12s,background-color .12s}
+${s} .bfh-link:hover{color:${C.fg}}
+${s} .bfh-trigger:hover{color:${C.fg};background-color:${C.accent}}
+${s} .bfh-item:hover{background-color:${C.accent}}
+`;
+}
+
+function ensureStyle(C: Palette, themeKey: string): void {
   if (typeof document === "undefined") return;
-  if (document.getElementById(STYLE_ID)) return;
+  const id = `${STYLE_ID}-${themeKey}`;
+  if (document.getElementById(id)) return;
   const el = document.createElement("style");
-  el.id = STYLE_ID;
-  el.textContent = SCOPED_CSS;
+  el.id = id;
+  el.textContent = scopedCss(C, themeKey);
   document.head.appendChild(el);
 }
 
@@ -84,32 +119,11 @@ function initials(me: Me | null): string {
   return src[0].toUpperCase();
 }
 
-const headerStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "1rem",
-  borderBottom: `1px solid ${C.border}`,
-  padding: "0.5rem 1rem",
-  background: C.surface,
-  fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif",
-  position: "relative",
-};
+// Palette-independent layout (shared by light + dark).
 const leftStyle: CSSProperties = { display: "flex", alignItems: "center", gap: "0.7rem", minWidth: 0 };
-const backLinkStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "0.25rem",
-  fontSize: "0.8125rem",
-  textDecoration: "none",
-  paddingRight: "0.7rem",
-  borderRight: `1px solid ${C.border}`,
-};
 const logoStyle: CSSProperties = { height: 26, width: "auto", borderRadius: 5, display: "block" };
-const titleStyle: CSSProperties = { fontSize: "0.95rem", fontWeight: 600, color: C.fg, whiteSpace: "nowrap" };
 const rightStyle: CSSProperties = { display: "flex", alignItems: "center", gap: "0.5rem" };
 const iconStyle: CSSProperties = { width: "1rem", height: "1rem" };
-
 const triggerStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -122,7 +136,32 @@ const triggerStyle: CSSProperties = {
   fontSize: "0.875rem",
   fontFamily: "inherit",
 };
-const avatarStyle = (size: number): CSSProperties => ({
+
+// Palette-keyed chrome (the parts that recolor between light + dark).
+const headerStyle = (C: Palette): CSSProperties => ({
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "1rem",
+  borderBottom: `1px solid ${C.border}`,
+  padding: "0.5rem 1rem",
+  background: C.surface,
+  fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif",
+  position: "relative",
+});
+const backLinkStyle = (C: Palette): CSSProperties => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "0.25rem",
+  fontSize: "0.8125rem",
+  textDecoration: "none",
+  paddingRight: "0.7rem",
+  borderRight: `1px solid ${C.border}`,
+});
+const titleStyle = (C: Palette): CSSProperties => ({
+  fontSize: "0.95rem", fontWeight: 600, color: C.fg, whiteSpace: "nowrap",
+});
+const avatarStyle = (C: Palette, size: number): CSSProperties => ({
   width: size,
   height: size,
   borderRadius: "9999px",
@@ -136,7 +175,7 @@ const avatarStyle = (size: number): CSSProperties => ({
   flexShrink: 0,
   overflow: "hidden",
 });
-const menuStyle: CSSProperties = {
+const menuStyle = (C: Palette): CSSProperties => ({
   position: "absolute",
   top: "calc(100% - 2px)",
   right: "1rem",
@@ -147,8 +186,8 @@ const menuStyle: CSSProperties = {
   boxShadow: "0 12px 32px rgba(24,24,27,0.14)",
   padding: 6,
   zIndex: 70,
-};
-const menuItemStyle: CSSProperties = {
+});
+const menuItemStyle = (C: Palette): CSSProperties => ({
   display: "flex",
   alignItems: "center",
   gap: "0.5rem",
@@ -162,13 +201,18 @@ const menuItemStyle: CSSProperties = {
   fontFamily: "inherit",
   color: C.fg,
   textAlign: "left",
-};
+});
 
 export function BifrostHeader({ title, logo, action, className }: BifrostHeaderProps) {
   const { baseUrl, appId, authedFetch, logout, theme, toggleTheme, supportsTheme } =
     useBifrostContext();
   const platformRoot = `${baseUrl.replace(/\/$/, "")}/`;
-  ensureStyle();
+  // Only a theme-aware app recolors the chrome; otherwise stay light (the app's
+  // own colors are hardcoded light, so a dark header would clash).
+  const dark = supportsTheme && theme === "dark";
+  const C = dark ? DARK : LIGHT;
+  const themeKey = dark ? "dark" : "light";
+  ensureStyle(C, themeKey);
 
   const [me, setMe] = useState<Me | null>(null);
   const [fetchedLogo, setFetchedLogo] = useState<string | null>(null);
@@ -230,14 +274,14 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
   const email = me?.email || "";
 
   return (
-    <header data-bifrost-header style={headerStyle} className={className}>
+    <header data-bifrost-header data-bifrost-header-theme={themeKey} style={headerStyle(C)} className={className}>
       <div style={leftStyle}>
-        <a href={platformRoot} className="bfh-link" style={backLinkStyle}>
+        <a href={platformRoot} className="bfh-link" style={backLinkStyle(C)}>
           <ArrowLeft style={iconStyle} />
           Bifrost
         </a>
         {effectiveLogo ? <img src={effectiveLogo} alt="" style={logoStyle} /> : null}
-        <span style={titleStyle}>{title}</span>
+        <span style={titleStyle(C)}>{title}</span>
       </div>
 
       <div style={rightStyle}>
@@ -267,7 +311,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
             aria-label="Account menu"
             style={triggerStyle}
           >
-            <span style={avatarStyle(26)}>
+            <span style={avatarStyle(C, 26)}>
               {me?.avatar_url ? (
                 <img src={me.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               ) : (
@@ -279,9 +323,9 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
           </button>
 
           {open && (
-            <div role="menu" style={menuStyle}>
+            <div role="menu" style={menuStyle(C)}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", padding: "0.5rem 0.625rem" }}>
-                <span style={avatarStyle(36)}>
+                <span style={avatarStyle(C, 36)}>
                   {me?.avatar_url ? (
                     <img src={me.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   ) : (
@@ -300,7 +344,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
                 </div>
               </div>
               <div style={{ height: 1, background: C.border, margin: "4px 0" }} />
-              <a href={platformRoot} className="bfh-item" role="menuitem" style={{ ...menuItemStyle, textDecoration: "none" }}>
+              <a href={platformRoot} className="bfh-item" role="menuitem" style={{ ...menuItemStyle(C), textDecoration: "none" }}>
                 <ArrowLeft style={iconStyle} />
                 Back to Bifrost
               </a>
@@ -312,7 +356,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
                   setOpen(false);
                   logout();
                 }}
-                style={{ ...menuItemStyle, color: C.danger }}
+                style={{ ...menuItemStyle(C), color: C.danger }}
               >
                 <LogOut style={iconStyle} />
                 Log out

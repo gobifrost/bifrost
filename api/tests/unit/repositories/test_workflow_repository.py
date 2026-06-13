@@ -60,13 +60,13 @@ class TestWorkflowRepository:
         assert result == mock_workflow
         mock_get.assert_called_once_with(id=mock_workflow.id)
 
-    async def test_resolve_bare_name_returns_none(self, repository):
-        """resolve() does not support bare names — only UUID and path::function_name."""
-        with patch.object(repository, 'get') as mock_get:
+    async def test_resolve_bare_name_uses_active_repo_cascade(self, repository, mock_workflow):
+        """Bare names resolve through the active non-solution org/global cascade."""
+        with patch.object(repository, 'get', return_value=mock_workflow) as mock_get:
             result = await repository.resolve("my_workflow")
 
-        assert result is None
-        mock_get.assert_not_called()
+        assert result == mock_workflow
+        mock_get.assert_called_once_with(name="my_workflow", is_active=True)
 
     async def test_resolve_uuid_not_found(self, repository):
         """Test resolve() returns None when UUID not found."""

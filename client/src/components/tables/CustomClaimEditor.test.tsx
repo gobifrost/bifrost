@@ -29,10 +29,12 @@ import type { CustomClaim } from "@/services/claims";
 const claim: CustomClaim = {
 	id: "11111111-1111-4111-8111-111111111111",
 	organization_id: "22222222-2222-4222-8222-222222222222",
+	solution_id: null,
 	name: "allowed_campus_ids",
 	description: "",
 	type: "list",
 	query: { table: "user_campus_access", select: "campus_id" },
+	is_solution_managed: false,
 };
 
 describe("CustomClaimEditor", () => {

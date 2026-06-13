@@ -30,15 +30,26 @@ vi.mock("@/hooks/useOrganizations", () => ({
 	}),
 }));
 
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({ isPlatformAdmin: true }),
+}));
+
 const mockGetSolutionEntities = vi.fn();
 const mockUpdateSolution = vi.fn();
 const mockDeleteSolution = vi.fn();
 const mockSetSolutionConfig = vi.fn();
+const mockExportSolution = vi.fn();
+const mockGetSolutionCaptureCandidates = vi.fn();
+const mockCaptureSolutionEntities = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	getSolutionEntities: (...a: unknown[]) => mockGetSolutionEntities(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
 	setSolutionConfig: (...a: unknown[]) => mockSetSolutionConfig(...a),
+	exportSolution: (...a: unknown[]) => mockExportSolution(...a),
+	getSolutionCaptureCandidates: (...a: unknown[]) =>
+		mockGetSolutionCaptureCandidates(...a),
+	captureSolutionEntities: (...a: unknown[]) => mockCaptureSolutionEntities(...a),
 }));
 
 function makeEntities() {
@@ -53,11 +64,50 @@ function makeEntities() {
 			git_repo_url: null,
 			scope: "org",
 		},
-		workflows: [{ id: "wf-1", name: "Sync Tickets" }],
-		apps: [],
-		forms: [],
+		workflows: [
+			{
+				id: "wf-1",
+				name: "Sync Tickets",
+				description: "Sync external tickets",
+				type: "workflow",
+				category: "Support",
+				path: "workflows/tickets.py",
+				function_name: "sync_tickets",
+			},
+		],
+			apps: [
+				{
+					id: "app-1",
+					name: "Solution App",
+					slug: "solution-app",
+					description: "Solution app",
+					app_model: "standalone_v2",
+					is_published: true,
+					has_unpublished_changes: false,
+					logo: "data:image/svg+xml;base64,PHN2Zy8+",
+				},
+			],
+			forms: [
+				{
+					id: "form-1",
+					name: "Ticket Intake",
+					description: "Collect ticket context",
+					is_active: true,
+					organization_id: "org-1",
+				},
+			],
 		agents: [],
 		tables: [{ id: "tbl-1", name: "Customers" }],
+		claims: [
+			{
+				id: "claim-1",
+				name: "customer_regions",
+				description: "Regions for the current user",
+				type: "list",
+				source_table: "customers",
+				select: "region",
+			},
+		],
 		configs: [
 			{
 				id: "cfg-1",
@@ -88,6 +138,25 @@ async function renderPage() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSolutionEntities.mockResolvedValue(makeEntities());
+	mockGetSolutionCaptureCandidates.mockResolvedValue({
+		workflows: [],
+		apps: [],
+		forms: [],
+		agents: [],
+		tables: [{ id: "tbl-2", name: "Orders", description: "Order data" }],
+		claims: [],
+		configs: [],
+	});
+	mockCaptureSolutionEntities.mockResolvedValue({
+		solution_id: "sol-1",
+		workflows_captured: 0,
+		apps_captured: 0,
+		forms_captured: 0,
+		agents_captured: 0,
+		tables_captured: 1,
+		claims_captured: 0,
+		config_declarations_captured: 0,
+	});
 });
 
 describe("SolutionDetail", () => {
@@ -132,21 +201,108 @@ describe("SolutionDetail", () => {
 		const configs = screen.getByTestId("tab-configs");
 		expect(configs).toHaveTextContent("Configs");
 		expect(configs).toHaveTextContent("2");
+
+		const claims = screen.getByTestId("tab-claims");
+		expect(claims).toHaveTextContent("Custom Claims");
+		expect(claims).toHaveTextContent("1");
 	});
 
-	it("shows the required-unset config warning banner", async () => {
-		await renderPage();
-		expect(
-			await screen.findByTestId("required-config-warning"),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(/1 required config needs a value/i),
-		).toBeInTheDocument();
-	});
-
-	it("navigates a table row to its entity page with ?from=solution:", async () => {
+	it("renders the update action and the overflow menu in the header", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
+
+		expect(screen.getByRole("button", { name: /update/i })).toBeInTheDocument();
+
+		// The secondary actions (Capture, Export, Edit, Delete) live behind the
+		// "⋯" overflow menu now, not as a flat row of buttons.
+		await user.click(screen.getByTestId("solution-actions"));
+		expect(
+			await screen.findByRole("menuitem", { name: /capture/i }),
+		).toBeInTheDocument();
+	});
+
+	it("opens the scoped update dialog from the header", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByRole("button", { name: /update/i }));
+
+		expect(
+			await screen.findByRole("heading", { name: /update solution/i }),
+		).toBeInTheDocument();
+	});
+
+	it("opens the capture picker from the header", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		await user.click(await screen.findByRole("menuitem", { name: /capture/i }));
+
+		expect(
+			await screen.findByRole("heading", { name: /capture existing entities/i }),
+		).toBeInTheDocument();
+		expect(await screen.findByLabelText(/capture orders/i)).toBeInTheDocument();
+	});
+
+		it("shows the required-unset config warning banner", async () => {
+			await renderPage();
+			expect(
+				await screen.findByTestId("required-config-warning"),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(/1 required config needs a value/i),
+			).toBeInTheDocument();
+		});
+
+		it("uses the workflow list execute action instead of making the card open execution", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
+
+			const execute = screen.getByRole("button", { name: /execute workflow/i });
+			await user.click(execute);
+
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/workflows/Sync%20Tickets/execute?from=solution:sol-1",
+			);
+		});
+
+		it("uses the forms list launch action without exposing edit controls", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
+
+			await user.click(screen.getByTestId("tab-forms"));
+			expect(screen.getByText("Ticket Intake")).toBeInTheDocument();
+			expect(
+				screen.queryByRole("button", { name: /edit form/i }),
+			).not.toBeInTheDocument();
+
+			await user.click(screen.getByRole("button", { name: /launch/i }));
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/execute/form-1?from=solution:sol-1",
+			);
+		});
+
+		it("uses the applications list open behavior for solution apps", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
+
+			await user.click(screen.getByTestId("tab-apps"));
+			expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
+			expect(screen.getByTestId("entity-logo")).toHaveAttribute(
+				"src",
+				"data:image/svg+xml;base64,PHN2Zy8+",
+			);
+			await user.click(screen.getByRole("button", { name: /solution app/i }));
+
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/apps/solution-app?from=solution:sol-1",
+			);
+		});
+
+		it("navigates a table row to its entity page with ?from=solution:", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("tab-tables"));
 		// Entity tabs render the shared DataTable (Roles paradigm): rows are

@@ -1,4 +1,4 @@
-"""CRUD endpoints for Custom Claims (org-scoped).
+"""CRUD endpoints for loose Custom Claims (org-scoped).
 
 Custom Claims are query-resolved facts about the calling user (e.g.
 ``allowed_campus_ids``) that table policies in the same org can reference
@@ -41,9 +41,11 @@ router = APIRouter(prefix="/api/claims", tags=["Claims"])
 def _resolve_target_org(ctx: Context, scope: str | None) -> UUID:
     """Resolve the target org for write/scoped operations.
 
-    Custom Claims are always tied to a concrete org — there is no global
-    scope. Superusers may target any org via ``?scope=<uuid>``; non-superusers
-    are forced to their home org and ``scope`` is ignored.
+    Loose Custom Claims created through this endpoint are always tied to a
+    concrete org — there is no global loose-claim create path. Superusers may
+    target any org via ``?scope=<uuid>``; non-superusers are forced to their
+    home org and ``scope`` is ignored. Solution-owned claims may be global, but
+    deploy is their writer.
     """
     try:
         target = resolve_target_org(ctx.user, scope, ctx.org_id)
@@ -65,7 +67,9 @@ async def _check_source_table_exists(
 ) -> None:
     result = await db.execute(
         select(Table.id).where(
-            Table.organization_id == org_id, Table.name == table_name
+            Table.organization_id == org_id,
+            Table.name == table_name,
+            Table.solution_id.is_(None),
         )
     )
     if result.first() is None:
@@ -92,7 +96,9 @@ async def _check_known_claim_refs(
     rows = (
         await db.execute(
             select(ClaimORM.name).where(
-                ClaimORM.organization_id == org_id, ClaimORM.name.in_(refs)
+                ClaimORM.organization_id == org_id,
+                ClaimORM.name.in_(refs),
+                ClaimORM.solution_id.is_(None),
             )
         )
     ).scalars().all()
@@ -113,7 +119,10 @@ async def _check_no_cycles(db: AsyncSession, org_id: UUID) -> None:
     # the async equivalent here to avoid a sync/async split in shared/.
     rows = (
         await db.execute(
-            select(ClaimORM).where(ClaimORM.organization_id == org_id)
+            select(ClaimORM).where(
+                ClaimORM.organization_id == org_id,
+                ClaimORM.solution_id.is_(None),
+            )
         )
     ).scalars().all()
     claims = {r.name: ClaimDTO.model_validate(r) for r in rows}
@@ -193,7 +202,9 @@ async def get_claim(
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
-                ClaimORM.organization_id == org_id, ClaimORM.name == name
+                ClaimORM.organization_id == org_id,
+                ClaimORM.name == name,
+                ClaimORM.solution_id.is_(None),
             )
         )
     ).scalar_one_or_none()
@@ -224,6 +235,7 @@ async def create_claim(
     )
     row = ClaimORM(
         organization_id=org_id,
+        solution_id=None,
         name=body.name,
         description=body.description,
         type=body.type,
@@ -268,7 +280,9 @@ async def update_claim(
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
-                ClaimORM.organization_id == org_id, ClaimORM.name == name
+                ClaimORM.organization_id == org_id,
+                ClaimORM.name == name,
+                ClaimORM.solution_id.is_(None),
             )
         )
     ).scalar_one_or_none()
@@ -316,7 +330,9 @@ async def delete_claim(
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
-                ClaimORM.organization_id == org_id, ClaimORM.name == name
+                ClaimORM.organization_id == org_id,
+                ClaimORM.name == name,
+                ClaimORM.solution_id.is_(None),
             )
         )
     ).scalar_one_or_none()

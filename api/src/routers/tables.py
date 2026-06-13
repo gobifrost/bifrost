@@ -166,6 +166,7 @@ async def _check_action_or_403(
         policies,
         db,
         table.organization_id,
+        table.solution_id,
     )
     if evaluate_action(action, policies, row, user):
         return
@@ -540,15 +541,22 @@ def _validate_policy_claim_refs(
 async def _known_claim_names_for_org(
     db: AsyncSession,
     organization_id: UUID | None,
+    solution_id: UUID | None = None,
 ) -> set[str]:
-    if organization_id is None:
-        return set()
-    rows = (
-        await db.execute(
-            select(CustomClaimORM.name).where(
-                CustomClaimORM.organization_id == organization_id
+    from sqlalchemy import or_
+
+    stmt = select(CustomClaimORM.name).where(CustomClaimORM.organization_id == organization_id)
+    if solution_id is None:
+        stmt = stmt.where(CustomClaimORM.solution_id.is_(None))
+    else:
+        stmt = stmt.where(
+            or_(
+                CustomClaimORM.solution_id == solution_id,
+                CustomClaimORM.solution_id.is_(None),
             )
         )
+    rows = (
+        await db.execute(stmt)
     ).scalars().all()
     return set(rows)
 
@@ -557,10 +565,11 @@ async def _validate_table_policy_claim_refs(
     db: AsyncSession,
     organization_id: UUID | None,
     policies: TablePolicies | None,
+    solution_id: UUID | None = None,
 ) -> None:
     if policies is None:
         return
-    known = await _known_claim_names_for_org(db, organization_id)
+    known = await _known_claim_names_for_org(db, organization_id, solution_id)
     for policy in policies.policies:
         _validate_policy_claim_refs(policy.when, known)
 
@@ -943,6 +952,7 @@ async def update_table(
                 ctx.db,
                 existing_table.organization_id,
                 data.policies,
+                existing_table.solution_id,
             )
         except ValueError as e:
             raise HTTPException(
@@ -1148,6 +1158,7 @@ async def count_documents(
         policies,
         ctx.db,
         table.organization_id,
+        table.solution_id,
     )
     read_filter = compile_read_filter(policies, ctx.user)
     if read_filter is None:
@@ -1280,6 +1291,7 @@ async def query_documents(
         policies,
         ctx.db,
         table.organization_id,
+        table.solution_id,
     )
     read_filter = compile_read_filter(policies, ctx.user)
     if read_filter is None:
@@ -1334,6 +1346,7 @@ async def batch_documents(
         policies,
         ctx.db,
         table.organization_id,
+        table.solution_id,
     )
 
     # Pre-resolve attribution per item up front so any forged-attribution
@@ -1446,6 +1459,7 @@ async def batch_delete_documents(
         policies,
         ctx.db,
         table.organization_id,
+        table.solution_id,
     )
 
     # Pre-flight: load each existing row and check `delete` against policy.

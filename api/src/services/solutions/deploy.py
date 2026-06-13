@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
+from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.forms import Form, FormRole
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution
@@ -224,6 +225,8 @@ class DeployResult:
     forms_deleted: int = 0
     agents_upserted: int = 0
     agents_deleted: int = 0
+    claims_upserted: int = 0
+    claims_deleted: int = 0
     finalize_s3: Callable[[], Awaitable[None]] = field(
         default=_noop_finalize, compare=False, repr=False
     )
@@ -246,6 +249,7 @@ class SolutionBundle:
     apps: list[dict[str, Any]] = field(default_factory=list)
     forms: list[dict[str, Any]] = field(default_factory=list)
     agents: list[dict[str, Any]] = field(default_factory=list)
+    claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
     # The bundle's declared version (bifrost.solution.yaml ``version:``).
     # Recorded on the install by deploy; gates downgrades (Task 20).
@@ -307,10 +311,11 @@ class SolutionDeployer:
         # operate on the remapped bundle; the manifest ids never touch the DB, so
         # a byte-identical bundle installs independently into N scopes (and a
         # redeploy is stable).
-        rb = self._remapped_bundle(bundle)
+        rb = await self._remapped_bundle(bundle)
 
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, rb.workflows)
+        await self._upsert_claims(solution, rb.claims)
         adopted_table_ids = await self._upsert_tables(solution, rb.tables)
         builds = await self._upsert_apps(solution, rb.apps)
         await self._upsert_forms(solution, rb.forms)
@@ -328,6 +333,7 @@ class SolutionDeployer:
         )
         (
             wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
+            claim_deleted,
             stale_app_dist,
         ) = await self._reconcile_deletions(sid, rb, adopted_table_ids)
 
@@ -397,11 +403,13 @@ class SolutionDeployer:
             forms_deleted=form_deleted,
             agents_upserted=len(rb.agents),
             agents_deleted=agent_deleted,
+            claims_upserted=len(rb.claims),
+            claims_deleted=claim_deleted,
             finalize_s3=_finalize_s3,
         )
 
     # ── Per-install identity remap ───────────────────────────────────────────
-    def _remapped_bundle(self, bundle: "SolutionBundle") -> "SolutionBundle":
+    async def _remapped_bundle(self, bundle: "SolutionBundle") -> "SolutionBundle":
         """Return a NEW bundle whose every entity id is ``uuid5(install,
         manifest_id)`` and whose in-bundle cross-refs are translated through the
         same map. The caller's ``bundle`` is NEVER mutated.
@@ -436,12 +444,28 @@ class SolutionDeployer:
         apps = [copy.deepcopy(e) for e in bundle.apps]
         forms = [copy.deepcopy(e) for e in bundle.forms]
         agents = [copy.deepcopy(e) for e in bundle.agents]
+        claims = [copy.deepcopy(e) for e in bundle.claims]
         config_schemas = [copy.deepcopy(e) for e in bundle.config_schemas]
 
+        typed_entries: list[tuple[type, dict[str, Any]]] = [
+            *[(Workflow, e) for e in workflows],
+            *[(Table, e) for e in tables],
+            *[(Application, e) for e in apps],
+            *[(Form, e) for e in forms],
+            *[(Agent, e) for e in agents],
+            *[(CustomClaim, e) for e in claims],
+            *[(SolutionConfigSchema, e) for e in config_schemas],
+        ]
+
         # Pass 1: remap each entity's own id.
-        for entry in workflows + tables + apps + forms + agents + config_schemas:
+        for model, entry in typed_entries:
             original = UUID(str(entry["id"]))
-            remapped = solution_entity_id(sid, original)
+            owner = (
+                await self.db.execute(
+                    select(model.solution_id).where(model.id == original)  # type: ignore[attr-defined]
+                )
+            ).scalar_one_or_none()
+            remapped = original if owner == sid else solution_entity_id(sid, original)
             id_map[original] = remapped
             entry["id"] = str(remapped)
 
@@ -465,6 +489,7 @@ class SolutionDeployer:
             apps=apps,
             forms=forms,
             agents=agents,
+            claims=claims,
             config_schemas=config_schemas,
             version=bundle.version,
         )
@@ -721,7 +746,18 @@ class SolutionDeployer:
             policies = mtbl.get("policies")
             if policies is not None:
                 access = {"policies": policies}
-                TablePolicies.model_validate(access)  # raises on a bad AST
+                policy_model = TablePolicies.model_validate(access)  # raises on a bad AST
+                from src.routers.tables import _validate_table_policy_claim_refs
+
+                try:
+                    await _validate_table_policy_claim_refs(
+                        self.db,
+                        solution.organization_id,
+                        policy_model,
+                        solution.id,
+                    )
+                except ValueError as exc:
+                    raise SolutionDeployConflict(str(exc)) from exc
             else:
                 # None / absent -> seed admin_bypass, matching API-created tables
                 # and manifest import; without it RLS denies all table I/O.
@@ -823,6 +859,43 @@ class SolutionDeployer:
                 await publish_policy_changed(str(tbl_id))
 
         return adopted_ids
+
+    async def _upsert_claims(
+        self, solution: Solution, claims: list[dict[str, Any]]
+    ) -> None:
+        """Upsert solution-owned Custom Claim definitions.
+
+        Claims are deploy-owned definitions, not runtime data. Names are unique
+        per install, matching the policy resolver's own-first lookup.
+        """
+        from src.models.contracts.claims import ClaimQuery
+
+        sid = solution.id
+        seen_names: set[str] = set()
+        for mclaim in claims:
+            name = str(mclaim.get("name"))
+            if name in seen_names:
+                raise SolutionDeployConflict(
+                    f"two claims named '{name}' in this Solution bundle; claim names "
+                    f"must be unique within an install"
+                )
+            seen_names.add(name)
+
+        for mclaim in claims:
+            claim_id = UUID(mclaim["id"])
+            await self._guard_owner(CustomClaim, claim_id, sid)
+            query = ClaimQuery.model_validate(mclaim["query"]).model_dump(mode="json")
+            values: dict[str, Any] = {
+                "organization_id": solution.organization_id,
+                "solution_id": sid,
+                "name": mclaim["name"],
+                "description": mclaim.get("description"),
+                "type": mclaim.get("type", "list"),
+                "query": query,
+            }
+            await Upsert(
+                model=CustomClaim, id=claim_id, values=values, match_on="id"
+            ).execute(self.db)
 
     async def _upsert_apps(
         self, solution: Solution, apps: list[dict[str, Any]]
@@ -1240,7 +1313,7 @@ class SolutionDeployer:
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────
     async def _reconcile_deletions(
         self, sid: UUID, bundle: SolutionBundle, adopted_table_ids: set[UUID]
-    ) -> tuple[int, int, int, int, int, set[UUID]]:
+    ) -> tuple[int, int, int, int, int, int, set[UUID]]:
         """Delete this install's entities that are absent from the bundle.
 
         Strictly scoped: ``solution_id == sid AND id NOT IN bundle_ids``. Never
@@ -1251,7 +1324,7 @@ class SolutionDeployer:
         ``_apps/{id}/dist/`` artifact is deleted alongside the row. Config
         DECLARATIONS (SolutionConfigSchema) are also reconciled here, though
         their deleted count is intentionally not surfaced. Returns
-        (workflows, tables, apps, forms, agents) deleted counts.
+        (workflows, tables, apps, forms, agents, claims) deleted counts.
 
         ``adopted_table_ids`` are orphan ids re-adopted by THIS deploy
         (Task 14c). They carry the orphan's id, not this deploy's remapped bundle
@@ -1283,6 +1356,11 @@ class SolutionDeployer:
         agent_deleted = len(
             await self._reconcile_one(Agent, sid, {UUID(a["id"]) for a in bundle.agents})
         )
+        claim_deleted = len(
+            await self._reconcile_one(
+                CustomClaim, sid, {UUID(c["id"]) for c in bundle.claims}
+            )
+        )
         # Config declarations reconcile alongside the rest; deploy is the single
         # writer for solution-owned schema rows. The count is not surfaced — no
         # consumer needs a config-deleted tally — so the return value is dropped.
@@ -1291,6 +1369,7 @@ class SolutionDeployer:
         )
         return (
             wf_deleted, tbl_deleted, len(stale_app_dist), form_deleted, agent_deleted,
+            claim_deleted,
             stale_app_dist,
         )
 

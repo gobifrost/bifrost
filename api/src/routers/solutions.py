@@ -10,6 +10,7 @@ what end users see (the Solution is invisible to them — criterion 16).
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import zipfile
@@ -25,9 +26,14 @@ from sqlalchemy.exc import IntegrityError
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
     Solution as SolutionDTO,
+    SolutionCaptureCandidates,
+    SolutionCaptureRequest,
+    SolutionCaptureResponse,
     SolutionConfigStatus,
     SolutionCreate,
     SolutionDeleteSummary,
+    SolutionDependencyPreview,
+    SolutionDependencyPreviewRequest,
     SolutionDeployRequest,
     SolutionDeployResponse,
     SolutionEntities,
@@ -41,6 +47,7 @@ from src.models.contracts.solutions import (
 from src.models.orm.agents import Agent
 from src.models.orm.applications import Application
 from src.models.orm.config import Config
+from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.forms import Form
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution as SolutionORM
@@ -181,19 +188,12 @@ async def get_solution_entities(
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
-    async def _summaries(model: type) -> list[SolutionEntitySummary]:
-        rows = (
-            await ctx.db.execute(
-                select(model.id, model.name).where(model.solution_id == solution_id)
-            )
-        ).all()
-        return [SolutionEntitySummary(id=id_, name=name) for id_, name in rows]
-
-    workflows = await _summaries(Workflow)
-    apps = await _summaries(Application)
-    forms = await _summaries(Form)
-    agents = await _summaries(Agent)
-    tables = await _summaries(Table)
+    workflows = await _workflow_summaries(ctx, Workflow.solution_id == solution_id)
+    apps = await _app_summaries(ctx, Application.solution_id == solution_id)
+    forms = await _form_summaries(ctx, Form.solution_id == solution_id)
+    agents = await _agent_summaries(ctx, Agent.solution_id == solution_id)
+    claims = await _claim_summaries(ctx, CustomClaim.solution_id == solution_id)
+    tables = await _table_summaries(ctx, Table.solution_id == solution_id)
 
     decls = (
         await ctx.db.execute(
@@ -230,9 +230,224 @@ async def get_solution_entities(
         apps=apps,
         forms=forms,
         agents=agents,
+        claims=claims,
         tables=tables,
         configs=configs,
         required_configs_unset=required_unset,
+    )
+
+
+def _enum_to_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(getattr(value, "value", value))
+
+
+def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
+    """Encode a binary entity logo as a data URL for list-card rendering."""
+    if not data:
+        return None
+    mime = content_type or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+async def _workflow_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
+    rows = (await ctx.db.execute(select(Workflow).where(*where).order_by(Workflow.name))).scalars().all()
+    return [
+        SolutionEntitySummary(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            organization_id=row.organization_id,
+            path=row.path,
+            function_name=row.function_name,
+            type=row.type,
+            category=row.category,
+            access_level=row.access_level,
+            is_active=row.is_active,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+async def _app_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
+    rows = (await ctx.db.execute(select(Application).where(*where).order_by(Application.name))).scalars().all()
+    return [
+        SolutionEntitySummary(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            organization_id=row.organization_id,
+            slug=row.slug,
+            path=row.repo_path,
+            access_level=row.access_level,
+            app_model=row.app_model,
+            logo=_logo_data_url(row.logo_data, row.logo_content_type),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+async def _form_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
+    rows = (await ctx.db.execute(select(Form).where(*where).order_by(Form.name))).scalars().all()
+    return [
+        SolutionEntitySummary(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            organization_id=row.organization_id,
+            access_level=_enum_to_str(row.access_level),
+            is_active=row.is_active,
+            path=row.workflow_path,
+            function_name=row.workflow_function_name,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
+    rows = (await ctx.db.execute(select(Agent).where(*where).order_by(Agent.name))).scalars().all()
+    return [
+        SolutionEntitySummary(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            organization_id=row.organization_id,
+            access_level=_enum_to_str(row.access_level),
+            is_active=row.is_active,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+async def _table_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
+    rows = (await ctx.db.execute(select(Table).where(*where).order_by(Table.name))).scalars().all()
+    return [
+        SolutionEntitySummary(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            organization_id=row.organization_id,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+async def _claim_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
+    rows = (await ctx.db.execute(select(CustomClaim).where(*where).order_by(CustomClaim.name))).scalars().all()
+    return [
+        SolutionEntitySummary(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            organization_id=row.organization_id,
+            type=row.type,
+            source_table=row.query.get("table") if isinstance(row.query, dict) else None,
+            select=row.query.get("select") if isinstance(row.query, dict) else None,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+def _same_scope(model: type, org_id: UUID | None):
+    if org_id is None:
+        return model.organization_id.is_(None)  # type: ignore[attr-defined]
+    return model.organization_id == org_id  # type: ignore[attr-defined]
+
+
+@router.get(
+    "/{solution_id}/capture/candidates",
+    response_model=SolutionCaptureCandidates,
+    summary="List loose same-scope entities capturable by an install (admin only)",
+)
+async def get_solution_capture_candidates(
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionCaptureCandidates:
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    config_rows = (
+        await ctx.db.execute(
+            select(Config).where(
+                _same_scope(Config, sol.organization_id),
+                Config.integration_id.is_(None),
+                Config.config_schema_id.is_(None),
+            ).order_by(Config.key)
+        )
+    ).scalars().all()
+
+    existing_config_keys = set(
+        (
+            await ctx.db.execute(
+                select(SolutionConfigSchema.key).where(SolutionConfigSchema.solution_id == solution_id)
+            )
+        ).scalars().all()
+    )
+
+    return SolutionCaptureCandidates(
+        workflows=await _workflow_summaries(ctx, Workflow.solution_id.is_(None), _same_scope(Workflow, sol.organization_id)),
+        apps=await _app_summaries(ctx, Application.solution_id.is_(None), _same_scope(Application, sol.organization_id)),
+        forms=await _form_summaries(ctx, Form.solution_id.is_(None), _same_scope(Form, sol.organization_id)),
+        agents=await _agent_summaries(ctx, Agent.solution_id.is_(None), _same_scope(Agent, sol.organization_id)),
+        claims=await _claim_summaries(ctx, CustomClaim.solution_id.is_(None), _same_scope(CustomClaim, sol.organization_id)),
+        tables=await _table_summaries(ctx, Table.solution_id.is_(None), _same_scope(Table, sol.organization_id)),
+        configs=[
+            SolutionConfigStatus(
+                id=row.id,
+                key=row.key,
+                type=_enum_to_str(row.config_type) or "string",
+                required=False,
+                description=row.description,
+                value_set=True,
+            )
+            for row in config_rows
+            if row.key not in existing_config_keys
+        ],
+    )
+
+
+@router.post(
+    "/{solution_id}/capture/preview",
+    response_model=SolutionDependencyPreview,
+    summary="Preview what a capture selection pulls in + outside references (admin only)",
+)
+async def preview_solution_capture(
+    solution_id: UUID,
+    body: SolutionDependencyPreviewRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> SolutionDependencyPreview:
+    """Dependency preview for a capture selection (§3.2/§3.3).
+
+    Returns the forward dependency closure the selection drags in (beyond what's
+    already selected) and reverse-reference warnings (loose entities outside the
+    selection that point at something inside it). The preview is the guard:
+    everything is deselectable in the UI; nothing is silently blocked. The scan
+    is static, so computed/dynamic refs are invisible — the UI says so.
+    """
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    from src.services.solutions.dependency_walker import SolutionDependencyWalker
+
+    return await SolutionDependencyWalker(ctx.db).preview(
+        sol,
+        workflows=body.workflows,
+        tables=body.tables,
+        apps=body.apps,
+        forms=body.forms,
+        agents=body.agents,
+        claims=body.claims,
+        configs=body.configs,
+        include_imports=body.include_imports,
     )
 
 
@@ -285,7 +500,7 @@ async def update_solution(
                 setattr(sol, key, value)
             if scope_changing:
                 # Owned entities inherit the install's org → re-stamp them all.
-                for model in (Workflow, Application, Form, Agent, Table):
+                for model in (Workflow, Application, Form, Agent, CustomClaim, Table):
                     await ctx.db.execute(
                         update(model)
                         .where(model.solution_id == solution_id)
@@ -465,6 +680,7 @@ async def delete_solution(
                 apps_deleted=len(app_ids),
                 forms_deleted=await _count(Form),
                 agents_deleted=await _count(Agent),
+                claims_deleted=await _count(CustomClaim),
                 config_declarations_deleted=len(decl_keys),
                 tables_orphaned=len(table_ids),
                 config_values_orphaned=config_values_orphaned,
@@ -553,6 +769,7 @@ async def deploy_solution(
                     apps=body.apps,
                     forms=body.forms,
                     agents=body.agents,
+                    claims=body.claims,
                     config_schemas=body.config_schemas,
                     version=body.version,
                     logo_b64=body.logo_b64,
@@ -601,6 +818,75 @@ async def deploy_solution(
         forms_deleted=result.forms_deleted,
         agents_upserted=result.agents_upserted,
         agents_deleted=result.agents_deleted,
+        claims_upserted=result.claims_upserted,
+        claims_deleted=result.claims_deleted,
+    )
+
+
+@router.post(
+    "/{solution_id}/capture",
+    response_model=SolutionCaptureResponse,
+    summary="Capture existing loose entities into an install (admin only)",
+)
+async def capture_solution_entities(
+    solution_id: UUID, body: SolutionCaptureRequest, ctx: Context, user: CurrentSuperuser
+) -> SolutionCaptureResponse:
+    """Adopt existing `_repo/` entities into this install in place.
+
+    This is the backend migration primitive for turning legacy app/table/workflow
+    clusters into a Solution. It stamps compatible loose entities with
+    ``solution_id`` and stores an export zip containing the captured definitions.
+    """
+    solution = await ctx.db.get(SolutionORM, solution_id)
+    if solution is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    from src.services.solutions.capture import (
+        SolutionCaptureConflict,
+        SolutionCaptureSelectors,
+        SolutionCaptureService,
+    )
+    from src.services.solutions.write_lock import (
+        SolutionWriteLockHeld,
+        solution_write_lock,
+    )
+
+    try:
+        async with solution_write_lock(solution_id):
+            result = await SolutionCaptureService(ctx.db).capture(
+                solution,
+                SolutionCaptureSelectors(
+                    workflows=body.workflows,
+                    tables=body.tables,
+                    apps=body.apps,
+                    forms=body.forms,
+                    agents=body.agents,
+                    claims=body.claims,
+                    configs=body.configs,
+                ),
+                include_imports=body.include_imports,
+            )
+            await ctx.db.commit()
+            from src.services.solutions.export import SolutionExportStore
+
+            await SolutionExportStore().write(solution_id, result.export_zip)
+    except SolutionWriteLockHeld as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A write is already in progress for this install; retry shortly.",
+        ) from exc
+    except SolutionCaptureConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    return SolutionCaptureResponse(
+        solution_id=solution_id,
+        workflows_captured=result.workflows_captured,
+        tables_captured=result.tables_captured,
+        apps_captured=result.apps_captured,
+        forms_captured=result.forms_captured,
+        agents_captured=result.agents_captured,
+        claims_captured=result.claims_captured,
+        config_declarations_captured=result.config_declarations_captured,
     )
 
 
@@ -706,6 +992,7 @@ async def install_preview(
             ("tables", Table),
             ("forms", Form),
             ("agents", Agent),
+            ("claims", CustomClaim),
             ("apps", Application),
         ):
             rows = (
@@ -743,6 +1030,7 @@ async def install_preview(
         apps=result.apps,
         forms=result.forms,
         agents=result.agents,
+        claims=result.claims,
         config_schemas=result.config_schemas,
         existing_install=existing_install,
         diff=diff,

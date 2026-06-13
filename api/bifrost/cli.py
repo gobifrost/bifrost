@@ -39,6 +39,9 @@ import httpx
 import bifrost.credentials as credentials
 from bifrost._workspace_lock import WorkspaceLock, WorkspaceLockError
 from bifrost.client import BifrostClient
+from bifrost.ignore_patterns import (
+    DEFAULT_IGNORE_PATTERNS as _CANONICAL_IGNORE_PATTERNS,
+)
 # Canonical platform export list. Shared with api/src/services/app_bundler.
 # A drift test (tests/unit/test_platform_names_match_runtime.py) keeps this
 # in step with the client's runtime `$` registry so new platform exports
@@ -47,37 +50,11 @@ from bifrost.platform_names import PLATFORM_EXPORT_NAMES as _PLATFORM_EXPORT_NAM
 
 logger = logging.getLogger(__name__)
 
-# Default ignore patterns applied even without a .gitignore file.
-# .bifrost/ is import/export-only and is never part of push/pull/sync/watch.
-_DEFAULT_IGNORE_PATTERNS = [
-    ".git/",
-    "__pycache__/",
-    ".ruff_cache/",
-    ".mypy_cache/",
-    ".pytest_cache/",
-    ".pyright/",
-    "node_modules/",
-    ".bifrost/",
-    ".venv/",
-    "venv/",
-    ".tox/",
-    "build/",
-    "dist/",
-    "coverage/",
-    ".coverage",
-    ".DS_Store",
-    "*.pyc",
-    # Editor atomic-write turds (e.g. foo.tsx.tmp.12345.1776000000000).
-    # Without this, watchdog sees these files and pushes them to S3; the
-    # editor then renames them to the real file and watchdog emits a 'moved'
-    # event that deliberately does NOT delete the source. Result: every save
-    # leaves a turd in S3 forever.
-    "*.tmp.*",
-    "*.swp",
-    "*.swo",
-    "*~",
-    ".#*",
-]
+# Canonical gitignore-style skip patterns applied even without a .gitignore file
+# (build output, caches, editor turds, .env secrets). Shared with server-side
+# Solution capture/export so both surfaces skip the same files. The matcher is
+# built from this list at _build_file_filter.
+_DEFAULT_IGNORE_PATTERNS = _CANONICAL_IGNORE_PATTERNS
 
 
 def _ensure_utf8_stdio() -> None:

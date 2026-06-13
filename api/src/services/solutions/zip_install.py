@@ -76,6 +76,7 @@ class PreviewResult:
     apps: list[dict[str, Any]] = field(default_factory=list)
     forms: list[dict[str, Any]] = field(default_factory=list)
     agents: list[dict[str, Any]] = field(default_factory=list)
+    claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -101,6 +102,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
     from bifrost.commands.solution import (
         _collect_agents,
         _collect_apps,
+        _collect_claims,
         _collect_config_schemas,
         _collect_forms,
         _collect_tables,
@@ -130,6 +132,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         apps=_collect_apps(workspace),
         forms=_collect_forms(workspace),
         agents=_collect_agents(workspace),
+        claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
     )
 
@@ -146,7 +149,7 @@ def preview_zip(data: bytes) -> PreviewResult:
 
 
 # Preview entity types ↔ SolutionUpgradeDiff sections (same attribute names).
-_DIFF_ENTITY_TYPES = ("workflows", "tables", "forms", "agents", "apps")
+_DIFF_ENTITY_TYPES = ("workflows", "tables", "forms", "agents", "claims", "apps")
 
 
 def compute_upgrade_diff(
@@ -239,6 +242,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
         apps=preview.apps,
         forms=preview.forms,
         agents=preview.agents,
+        claims=preview.claims,
         config_schemas=preview.config_schemas,
         version=preview.version,
         logo_b64=logo_b64,

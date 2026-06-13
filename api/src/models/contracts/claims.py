@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from src.models.contracts.policies import Expr
 
@@ -25,7 +25,7 @@ class CustomClaimBase(BaseModel):
         min_length=1,
         max_length=100,
         pattern=r"^[a-z][a-z0-9_]*$",
-        description="lower_snake; unique per org",
+        description="lower_snake; unique per org/global repo scope or per solution install",
     )
     description: str | None = None
     type: ClaimType = "list"
@@ -50,7 +50,13 @@ class CustomClaim(CustomClaimBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    organization_id: UUID
+    organization_id: UUID | None = None
+    solution_id: UUID | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_solution_managed(self) -> bool:
+        return self.solution_id is not None
 
 
 class ClaimsList(BaseModel):

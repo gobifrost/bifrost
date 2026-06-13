@@ -12,7 +12,8 @@ or cosmetic changes do NOT bump it. The tripwire in
 """
 
 #: Breaking-change counter for the CLI <-> server contract. See module docstring.
-CONTRACT_VERSION: int = 1
+# v2: claims organization_id widened to nullable for global/solution-managed claims (2026-06-13)
+CONTRACT_VERSION: int = 2
 
 
 def get_contract_version() -> int:

@@ -28,9 +28,6 @@ vi.mock("@/components/EntityLogo", () => ({ EntityLogo: () => null }));
 vi.mock("@/components/app-builder/AppInfoDialog", () => ({
 	AppInfoDialog: () => null,
 }));
-vi.mock("@/components/app-builder/CreateAppModal", () => ({
-	CreateAppModal: () => null,
-}));
 vi.mock("@/components/search/SearchBox", () => ({ SearchBox: () => null }));
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: () => null,
@@ -48,6 +45,7 @@ function makeApp(overrides: Partial<Record<string, unknown>> = {}) {
 		is_solution_managed: false,
 		solution_id: null,
 		logo: null,
+		app_model: "legacy",
 		...overrides,
 	};
 }
@@ -69,6 +67,35 @@ async function renderPage() {
 	const { Applications } = await import("./Applications");
 	return renderWithProviders(<Applications />);
 }
+
+describe("Applications — app launch behavior", () => {
+	it("does not expose the deprecated create code application action", async () => {
+		await renderPage();
+		expect(
+			screen.queryByTitle(/create application/i),
+		).not.toBeInTheDocument();
+	});
+
+	it("opens v2 apps directly without showing an Open Published hover action", async () => {
+		mockUseApplications.mockReturnValue({
+			data: {
+				applications: [
+					makeApp({
+						app_model: "standalone_v2",
+						is_published: true,
+					}),
+				],
+			},
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		await renderPage();
+		expect(
+			screen.getByRole("button", { name: /live dash/i }),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
+	});
+});
 
 describe("Applications — solution-managed badge (grid view)", () => {
 	it("shows the badge and hides Edit/Code on a managed app", async () => {

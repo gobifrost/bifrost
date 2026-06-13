@@ -37,6 +37,16 @@ def _make_workspace_zip(extra: dict[str, str] | None = None) -> bytes:
             "    description: needed\n"
             "    position: 0\n"
         ),
+        ".bifrost/claims.yaml": (
+            "claims:\n"
+            "  22222222-2222-2222-2222-222222222222:\n"
+            "    id: 22222222-2222-2222-2222-222222222222\n"
+            "    name: allowed_campus_ids\n"
+            "    type: list\n"
+            "    query:\n"
+            "      table: memberships\n"
+            "      select: campus_id\n"
+        ),
         "workflows/main.py": "def run(sdk):\n    return 'ok'\n",
     }
     if extra:
@@ -63,6 +73,9 @@ def test_preview_lists_entities_and_config_schemas() -> None:
     assert decl["key"] == "API_KEY"
     assert decl["type"] == "secret"
     assert decl["required"] is True
+
+    assert len(result.claims) == 1
+    assert result.claims[0]["name"] == "allowed_campus_ids"
 
 
 def test_preview_empty_collections_when_absent() -> None:

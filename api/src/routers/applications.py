@@ -36,6 +36,7 @@ from src.models.contracts.applications import (
     ApplicationPublishRequest,
     ApplicationReplaceRequest,
     ApplicationRollbackRequest,
+    ApplicationSwapSlugsRequest,
     ApplicationUpdate,
 )
 from src.models.orm.applications import Application
@@ -623,6 +624,45 @@ async def replace_application_endpoint(
         )
 
     return await application_to_public(application, repo)
+
+
+@router.post(
+    "/swap-slugs",
+    response_model=ApplicationListResponse,
+    summary="Atomically exchange two applications' slugs",
+)
+async def swap_application_slugs(
+    data: ApplicationSwapSlugsRequest,
+    ctx: Context,
+    user: CurrentUser,
+) -> ApplicationListResponse:
+    """Swap two apps' slugs in one transaction (v1→v2 migration cutover).
+
+    Gives the new (v2) app the live slug and parks the old (v1) app under the
+    other slug, so bookmarks/links to ``/apps/{slug}`` keep working. Holds the
+    slug advisory lock for both slugs, so it can't race a same-slug deploy or
+    leave the live slug momentarily unowned.
+    """
+    # Slug is a deploy-owned property for solution-managed apps — refuse both.
+    await assert_entity_id_not_solution_managed(ctx.db, Application, data.app_a)
+    await assert_entity_id_not_solution_managed(ctx.db, Application, data.app_b)
+    repo = ApplicationRepository(
+        ctx.db,
+        ctx.org_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    try:
+        app_a, app_b = await repo.swap_slugs(data.app_a, data.app_b)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    apps = [
+        await application_to_public(app_a, repo),
+        await application_to_public(app_b, repo),
+    ]
+    return ApplicationListResponse(applications=apps, total=len(apps))
 
 
 # =============================================================================

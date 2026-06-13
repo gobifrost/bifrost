@@ -11,7 +11,8 @@ integers agree and fails if a CLI-consumed contract changed without a decision.
 """
 
 #: Must equal shared.contract_version.CONTRACT_VERSION. See module docstring.
-CONTRACT_VERSION: int = 1
+# v2: claims organization_id widened to nullable for global/solution-managed claims (2026-06-13)
+CONTRACT_VERSION: int = 2
 
 
 def get_contract_version() -> int:

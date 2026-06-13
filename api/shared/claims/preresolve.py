@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import ValidationError
@@ -29,9 +29,10 @@ async def preresolve_for_policies(
     policies: TablePolicies | None,
     db: AsyncSession,
     org_id: UUID | None,
+    solution_id: UUID | None = None,
 ) -> None:
     """Resolve every claim referenced anywhere in ``policies`` onto user.claims."""
-    if org_id is None or policies is None or not policies.policies:
+    if policies is None or not policies.policies:
         return
 
     referenced: set[str] = set()
@@ -42,7 +43,7 @@ async def preresolve_for_policies(
     if not referenced:
         return
 
-    claims = await _load_org_claims(db, org_id)
+    claims = await _load_claims(db, org_id, solution_id)
     resolving: set[str] = set()
     for name in referenced:
         claim = claims.get(name)
@@ -50,16 +51,30 @@ async def preresolve_for_policies(
             await _resolve_claim(claim, claims, user, db, resolving)
 
 
-async def _load_org_claims(
+async def _load_claims(
     db: AsyncSession,
-    org_id: UUID,
+    org_id: UUID | None,
+    solution_id: UUID | None = None,
 ) -> dict[str, CustomClaim]:
-    rows = (
-        await db.execute(
-            select(CustomClaimORM).where(CustomClaimORM.organization_id == org_id)
+    stmt = select(CustomClaimORM).where(
+        CustomClaimORM.organization_id == org_id,
+    )
+    if solution_id is None:
+        stmt = stmt.where(CustomClaimORM.solution_id.is_(None))
+    else:
+        stmt = stmt.where(
+            or_(
+                CustomClaimORM.solution_id == solution_id,
+                CustomClaimORM.solution_id.is_(None),
+            )
         )
-    ).scalars().all()
-    return {row.name: CustomClaim.model_validate(row) for row in rows}
+    rows = (await db.execute(stmt)).scalars().all()
+    claims: dict[str, CustomClaim] = {}
+    for row in rows:
+        claim = CustomClaim.model_validate(row)
+        if claim.name not in claims or claim.solution_id == solution_id:
+            claims[claim.name] = claim
+    return claims
 
 
 async def _resolve_claim(
@@ -110,11 +125,7 @@ async def _run_claim_query(
     table_name = claim.query.table
     org_id = claim.organization_id
 
-    source = (
-        await db.execute(
-            select(Table).where(Table.organization_id == org_id, Table.name == table_name)
-        )
-    ).scalar_one_or_none()
+    source = await _resolve_claim_source_table(db, claim, table_name, org_id)
     if source is None:
         logger.warning(
             "claim %r references unknown table %r in org %s; returning []",
@@ -159,6 +170,35 @@ async def _run_claim_query(
     select_key = claim.query.select
     rows = (await db.execute(stmt)).scalars().all()
     return [{select_key: _extract(row, select_key)} for row in rows]
+
+
+async def _resolve_claim_source_table(
+    db: AsyncSession,
+    claim: CustomClaim,
+    table_name: str,
+    org_id: UUID | None,
+) -> Table | None:
+    if claim.solution_id is not None:
+        own = (
+            await db.execute(
+                select(Table).where(
+                    Table.name == table_name,
+                    Table.solution_id == claim.solution_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if own is not None:
+            return own
+
+    return (
+        await db.execute(
+            select(Table).where(
+                Table.organization_id == org_id,
+                Table.name == table_name,
+                Table.solution_id.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
 
 
 def _load_source_policies(source: Table) -> TablePolicies:

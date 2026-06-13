@@ -562,6 +562,27 @@ def _collect_config_schemas(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+def _collect_claims(workspace: pathlib.Path) -> list[dict]:
+    """Read Custom Claim definitions from .bifrost/claims.yaml (keyed by UUID)."""
+    claims_file = workspace / ".bifrost" / "claims.yaml"
+    if not claims_file.is_file():
+        return []
+    data = yaml.safe_load(claims_file.read_text()) or {}
+    raw = data.get("claims", {})
+    entries: list[dict] = []
+    for key, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        entries.append({
+            "id": body.get("id", key),
+            "name": body.get("name") or key,
+            "description": body.get("description"),
+            "type": body.get("type", "list"),
+            "query": body["query"],
+        })
+    return entries
+
+
 def _collect_manifest_entities(workspace: pathlib.Path, filename: str, key: str) -> list[dict]:
     """Pass through inline manifest entries (forms/agents) keyed by UUID.
 
@@ -786,6 +807,7 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
     apps = _collect_apps(workspace)
     forms = _collect_forms(workspace)
     agents = _collect_agents(workspace)
+    claims = _collect_claims(workspace)
     config_schemas = _collect_config_schemas(workspace)
 
     async def _run() -> int:
@@ -850,6 +872,7 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
             "apps": apps,
             "forms": forms,
             "agents": agents,
+            "claims": claims,
             "config_schemas": config_schemas,
             "version": descriptor.version,
             "logo_b64": solution_logo_b64,
@@ -868,6 +891,7 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
         click.echo(
             f"Deployed install {target_id}: "
             f"{body.get('workflows_upserted', 0)} workflow(s) upserted, "
+            f"{body.get('claims_upserted', 0)} claim(s) upserted, "
             f"{body.get('workflows_deleted', 0)} deleted."
         )
         return 0
@@ -1005,6 +1029,213 @@ def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
         asyncio.run(_serve(client, chosen, org_info, host, port, vite_port, workspace))
     finally:
         _terminate_process_group(vite_proc)
+
+
+# ── capture: adopt loose _repo/ entities into an install (migration) ─────────
+
+# Selector kinds whose values resolve by NAME against the candidates listing.
+# (Configs are keyed by their string key directly, so they need no resolution.)
+_CAPTURE_NAME_KINDS = ("workflows", "tables", "apps", "forms", "agents", "claims")
+
+
+def _resolve_capture_selectors(
+    candidates: dict, raw: dict[str, tuple[str, ...]]
+) -> dict[str, list[str]]:
+    """Map user-supplied selector values (NAME or id) to entity ids.
+
+    ``candidates`` is the ``/capture/candidates`` payload — the loose same-scope
+    universe the install can adopt. A value that already looks like one of the
+    listed ids passes through; otherwise it's matched by ``name``. Unknown values
+    raise so the migration fails loudly instead of silently capturing nothing.
+    Configs pass through verbatim (they're keyed by string key, not id).
+    """
+    resolved: dict[str, list[str]] = {}
+    for kind in _CAPTURE_NAME_KINDS:
+        rows = candidates.get(kind) or []
+        by_id = {str(r["id"]): str(r["id"]) for r in rows}
+        by_name = {r["name"]: str(r["id"]) for r in rows}
+        out: list[str] = []
+        for value in raw.get(kind, ()):  # type: ignore[arg-type]
+            if value in by_id:
+                out.append(by_id[value])
+            elif value in by_name:
+                out.append(by_name[value])
+            else:
+                raise click.ClickException(
+                    f"no loose {kind[:-1]} named or id'd '{value}' is capturable "
+                    f"by this install (not in /capture/candidates for its scope)."
+                )
+        resolved[kind] = out
+    resolved["configs"] = list(raw.get("configs", ()))
+    return resolved
+
+
+def _print_capture_preview(preview: dict) -> None:
+    """Render the dependency walker's preview for ``--dry-run``."""
+    pulled = preview.get("pulled_in") or []
+    outside = preview.get("outside_references") or []
+    if pulled:
+        click.echo("Will also pull in (forward dependency closure):")
+        for d in pulled:
+            click.echo(f"  + {d['kind']}: {d['name']}")
+    else:
+        click.echo("Nothing extra is pulled in beyond your selection.")
+    if outside:
+        click.echo("")
+        click.echo("⚠ Outside references (left loose, will point across the boundary):")
+        for r in outside:
+            click.echo(
+                f"  {r['referencer_kind']} '{r['referencer_name']}' still uses "
+                f"{r['target_kind']} '{r['target_name']}'"
+            )
+    click.echo("")
+    click.echo(
+        "Note: the dependency scan is static — computed/dynamic refs "
+        "(importlib, variable table names) are invisible. Review before applying."
+    )
+
+
+@solution_group.command(
+    name="capture",
+    help="Adopt loose _repo/ entities into an install (migration). "
+    "--dry-run previews the dependency closure + outside references first.",
+)
+@click.argument("solution_id")
+@click.option("--workflow", "workflows", multiple=True, help="Workflow name or id (repeatable).")
+@click.option("--table", "tables", multiple=True, help="Table name or id (repeatable).")
+@click.option("--app", "apps", multiple=True, help="App name or id (repeatable).")
+@click.option("--form", "forms", multiple=True, help="Form name or id (repeatable).")
+@click.option("--agent", "agents", multiple=True, help="Agent name or id (repeatable).")
+@click.option("--claim", "claims", multiple=True, help="Custom-claim name or id (repeatable).")
+@click.option("--config", "configs", multiple=True, help="Config key (repeatable).")
+@click.option(
+    "--include-imports/--no-include-imports", default=False, show_default=True,
+    help="Also bundle the transitive modules/ import closure of captured workflows.",
+)
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Preview the dependency closure + outside references; capture nothing.")
+def capture_cmd(
+    solution_id: str,
+    workflows: tuple[str, ...],
+    tables: tuple[str, ...],
+    apps: tuple[str, ...],
+    forms: tuple[str, ...],
+    agents: tuple[str, ...],
+    claims: tuple[str, ...],
+    configs: tuple[str, ...],
+    include_imports: bool,
+    dry_run: bool,
+) -> None:
+    raw = {
+        "workflows": workflows, "tables": tables, "apps": apps, "forms": forms,
+        "agents": agents, "claims": claims, "configs": configs,
+    }
+    if not any(raw.values()):
+        raise click.ClickException(
+            "no entities selected — pass at least one of "
+            "--workflow/--table/--app/--form/--agent/--claim/--config."
+        )
+
+    async def _run() -> int:
+        client = BifrostClient.get_instance(require_auth=True)
+        cand = await client.get(f"/api/solutions/{solution_id}/capture/candidates")
+        if cand.status_code != 200:
+            raise click.ClickException(
+                f"Failed to list capture candidates ({cand.status_code}): "
+                f"{cand.text[:200]}"
+            )
+        selectors = _resolve_capture_selectors(cand.json(), raw)
+        body = {**selectors, "include_imports": include_imports}
+
+        if dry_run:
+            preview = await client.post(
+                f"/api/solutions/{solution_id}/capture/preview", json=body
+            )
+            if preview.status_code != 200:
+                raise click.ClickException(
+                    f"Preview failed ({preview.status_code}): {preview.text[:200]}"
+                )
+            _print_capture_preview(preview.json())
+            click.echo("Dry run — nothing was captured.")
+            return 0
+
+        resp = await client.post(
+            f"/api/solutions/{solution_id}/capture", json=body
+        )
+        if resp.status_code not in (200, 201):
+            raise click.ClickException(
+                f"Capture failed ({resp.status_code}): {resp.text[:300]}"
+            )
+        r = resp.json()
+        click.echo(
+            f"Captured into install {solution_id}: "
+            f"{r.get('workflows_captured', 0)} workflow(s), "
+            f"{r.get('tables_captured', 0)} table(s), "
+            f"{r.get('apps_captured', 0)} app(s), "
+            f"{r.get('forms_captured', 0)} form(s), "
+            f"{r.get('agents_captured', 0)} agent(s), "
+            f"{r.get('claims_captured', 0)} claim(s), "
+            f"{r.get('config_declarations_captured', 0)} config declaration(s)."
+        )
+        return 0
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
+
+
+@solution_group.command(
+    name="swap-slugs",
+    help="Atomically exchange two apps' slugs (v1→v2 migration cutover).",
+)
+@click.argument("app_a")
+@click.argument("app_b")
+def swap_slugs_cmd(app_a: str, app_b: str) -> None:
+    """Give the v2 app the live slug and park the v1 app under the other slug.
+
+    Accepts app ids or slugs for both arguments. The swap is one transaction
+    holding the slug advisory lock, so ``/apps/{slug}`` bookmarks survive the
+    cutover with no unowned-slug window. Solution-managed apps are refused (slug
+    is a deploy-owned property for those).
+    """
+
+    async def _run() -> int:
+        client = BifrostClient.get_instance(require_auth=True)
+
+        async def _resolve(ref: str) -> str:
+            # An id passes straight through; a slug resolves via GET /{slug}.
+            try:
+                import uuid as _uuid
+
+                _uuid.UUID(ref)
+                return ref
+            except (ValueError, AttributeError):
+                pass
+            resp = await client.get(f"/api/applications/{ref}")
+            if resp.status_code != 200:
+                raise click.ClickException(
+                    f"No application '{ref}' ({resp.status_code}): {resp.text[:160]}"
+                )
+            return resp.json()["id"]
+
+        a_id = await _resolve(app_a)
+        b_id = await _resolve(app_b)
+        resp = await client.post(
+            "/api/applications/swap-slugs", json={"app_a": a_id, "app_b": b_id}
+        )
+        if resp.status_code not in (200, 201):
+            raise click.ClickException(
+                f"Slug swap failed ({resp.status_code}): {resp.text[:300]}"
+            )
+        apps = resp.json().get("applications", [])
+        for app in apps:
+            click.echo(f"  {app['name']} → /apps/{app['slug']}")
+        click.echo("Slug swap complete.")
+        return 0
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
 
 
 def _terminate_process_group(proc: "subprocess.Popen") -> None:

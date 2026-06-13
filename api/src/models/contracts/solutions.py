@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -96,10 +97,24 @@ class SolutionConfigStatus(BaseModel):
 
 
 class SolutionEntitySummary(BaseModel):
-    """Lightweight (id, name) entry for an owned entity — the detail UI links by id."""
+    """Lightweight entity row for Solution-owned/capturable entity lists."""
 
     id: UUID
     name: str
+    description: str | None = None
+    organization_id: UUID | None = None
+    slug: str | None = None
+    path: str | None = None
+    function_name: str | None = None
+    type: str | None = None
+    category: str | None = None
+    access_level: str | None = None
+    app_model: str | None = None
+    is_active: bool | None = None
+    logo: str | None = None
+    source_table: str | None = None
+    select: str | None = None
+    created_at: datetime | None = None
 
 
 class SolutionEntities(BaseModel):
@@ -110,9 +125,93 @@ class SolutionEntities(BaseModel):
     apps: list[SolutionEntitySummary] = Field(default_factory=list)
     forms: list[SolutionEntitySummary] = Field(default_factory=list)
     agents: list[SolutionEntitySummary] = Field(default_factory=list)
+    claims: list[SolutionEntitySummary] = Field(default_factory=list)
     tables: list[SolutionEntitySummary] = Field(default_factory=list)
     configs: list[SolutionConfigStatus] = Field(default_factory=list)
     required_configs_unset: list[str] = Field(default_factory=list)
+
+
+class SolutionCaptureCandidates(BaseModel):
+    """Loose same-scope entities that can be adopted into an install."""
+
+    workflows: list[SolutionEntitySummary] = Field(default_factory=list)
+    apps: list[SolutionEntitySummary] = Field(default_factory=list)
+    forms: list[SolutionEntitySummary] = Field(default_factory=list)
+    agents: list[SolutionEntitySummary] = Field(default_factory=list)
+    claims: list[SolutionEntitySummary] = Field(default_factory=list)
+    tables: list[SolutionEntitySummary] = Field(default_factory=list)
+    configs: list[SolutionConfigStatus] = Field(default_factory=list)
+
+
+# ── Dependency preview (capture + export) — §3.2/§3.3 ───────────────────────
+
+# Entity kinds the dependency walker reasons about. ``module`` is a Python file
+# under ``modules/`` (no DB row); the rest are DB entities keyed by id, except
+# ``config`` which is keyed by its string key.
+DependencyKind = Literal[
+    "workflow", "table", "config", "form", "app", "agent", "module"
+]
+
+
+class DependencyRef(BaseModel):
+    """One entity the walker pulled in or warned about.
+
+    ``ref`` is the natural handle: a UUID for DB entities, a key for configs, a
+    relative path for modules. ``name`` is the display label; ``in_selection``
+    is true when the seed selection already includes this entity (so the UI can
+    show it as "already selected" vs "will be pulled in").
+    """
+
+    kind: DependencyKind
+    ref: str
+    name: str
+    in_selection: bool = False
+
+
+class OutsideReference(BaseModel):
+    """An entity OUTSIDE the selection that references something INSIDE it.
+
+    The capture/export preview surfaces these as non-blocking warnings: the
+    referenced entity is being adopted by the install while ``referencer`` is
+    left loose and will keep pointing at it across the scope boundary.
+    """
+
+    referencer_kind: DependencyKind
+    referencer_ref: str
+    referencer_name: str
+    target_kind: DependencyKind
+    target_ref: str
+    target_name: str
+
+
+class SolutionDependencyPreview(BaseModel):
+    """What a capture/export selection actually grabs, for human review.
+
+    ``pulled_in`` is the forward dependency closure beyond the seed selection
+    (e.g. a captured workflow's ``modules/`` imports when ``include_imports`` is
+    on, the tables/configs it reads, the workflow a captured form launches).
+    ``outside_references`` are reverse-dependency warnings. The preview is the
+    guard: every item is deselectable, nothing is silently blocked.
+    """
+
+    pulled_in: list[DependencyRef] = Field(default_factory=list)
+    outside_references: list[OutsideReference] = Field(default_factory=list)
+    # True when the static scan can't see everything (dynamic imports / computed
+    # refs) — the UI nudges the human to add any missed file manually.
+    scan_is_static: bool = True
+
+
+class SolutionDependencyPreviewRequest(BaseModel):
+    """Seed selection to preview, mirroring SolutionCaptureRequest's selectors."""
+
+    workflows: list[UUID] = Field(default_factory=list)
+    tables: list[UUID] = Field(default_factory=list)
+    apps: list[UUID] = Field(default_factory=list)
+    forms: list[UUID] = Field(default_factory=list)
+    agents: list[UUID] = Field(default_factory=list)
+    claims: list[UUID] = Field(default_factory=list)
+    configs: list[str] = Field(default_factory=list)
+    include_imports: bool = False
 
 
 class SolutionEntityDiff(BaseModel):
@@ -159,6 +258,7 @@ class SolutionUpgradeDiff(BaseModel):
     forms: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
     agents: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
     apps: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
+    claims: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
     config_schemas: SolutionConfigSchemaDiff = Field(default_factory=SolutionConfigSchemaDiff)
 
 
@@ -187,6 +287,7 @@ class SolutionInstallPreview(BaseModel):
     apps: list[dict[str, Any]] = Field(default_factory=list)
     forms: list[dict[str, Any]] = Field(default_factory=list)
     agents: list[dict[str, Any]] = Field(default_factory=list)
+    claims: list[dict[str, Any]] = Field(default_factory=list)
     config_schemas: list[dict[str, Any]] = Field(default_factory=list)
     existing_install: SolutionExistingInstall | None = None
     diff: SolutionUpgradeDiff | None = None
@@ -213,6 +314,7 @@ class SolutionDeployRequest(BaseModel):
     forms: list[dict[str, Any]] = Field(default_factory=list)
     # Each agent: {id, name, system_prompt, description?, channels?, llm_model?}.
     agents: list[dict[str, Any]] = Field(default_factory=list)
+    claims: list[dict[str, Any]] = Field(default_factory=list)
     # Each config schema: {id, key, type, required, description?, default?, position}.
     # DECLARATIONS only — never a value (values are instance-owned Config rows).
     config_schemas: list[dict[str, Any]] = Field(default_factory=list)
@@ -241,6 +343,7 @@ class SolutionDeleteSummary(BaseModel):
     apps_deleted: int = 0
     forms_deleted: int = 0
     agents_deleted: int = 0
+    claims_deleted: int = 0
     config_declarations_deleted: int = 0
     tables_orphaned: int = 0
     config_values_orphaned: int = 0
@@ -258,3 +361,42 @@ class SolutionDeployResponse(BaseModel):
     forms_deleted: int = 0
     agents_upserted: int = 0
     agents_deleted: int = 0
+    claims_upserted: int = 0
+    claims_deleted: int = 0
+
+
+class SolutionCaptureRequest(BaseModel):
+    """Move existing loose entities into an install in place.
+
+    Entity ids must currently be unowned (``solution_id`` is null) and scoped
+    the same way as the install. Config keys become declarations; their values
+    stay in the install scope.
+    """
+
+    workflows: list[UUID] = Field(default_factory=list)
+    tables: list[UUID] = Field(default_factory=list)
+    apps: list[UUID] = Field(default_factory=list)
+    forms: list[UUID] = Field(default_factory=list)
+    agents: list[UUID] = Field(default_factory=list)
+    claims: list[UUID] = Field(default_factory=list)
+    configs: list[str] = Field(default_factory=list)
+    include_imports: bool = Field(
+        default=False,
+        description=(
+            "When false (default), bundle only the captured workflows' own "
+            "source files. When true, also bundle the transitive import "
+            "closure of `modules/` they reference (never the whole modules/ "
+            "tree — only what is actually imported)."
+        ),
+    )
+
+
+class SolutionCaptureResponse(BaseModel):
+    solution_id: UUID
+    workflows_captured: int = 0
+    tables_captured: int = 0
+    apps_captured: int = 0
+    forms_captured: int = 0
+    agents_captured: int = 0
+    claims_captured: int = 0
+    config_declarations_captured: int = 0

@@ -64,14 +64,15 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
     async def resolve(
         self, identifier: str, *, solution_scope: UUID | None = None
     ) -> Workflow | None:
-        """Resolve a workflow by UUID or path::function_name.
+        """Resolve a workflow by UUID, path::function_name, or scoped name.
 
         Resolution order:
         1. If identifier parses as a UUID, look up by id.
         2. If identifier contains '::', treat as path::function_name lookup.
-
-        Bare names are not supported because workflow names are not unique
-        (no DB constraint). Use UUID or path::function_name instead.
+        3. Otherwise, treat it as a workflow name. With ``solution_scope``, look
+           in the caller's own install first, then fall back to the normal
+           non-solution org/global cascade. Without ``solution_scope``, use only
+           the non-solution cascade.
 
         Args:
             identifier: A workflow UUID string or "path::function_name" ref
@@ -96,7 +97,42 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         if "::" in identifier:
             return await self._resolve_by_path_ref(identifier, solution_scope=solution_scope)
 
-        return None
+        return await self._resolve_by_name(identifier, solution_scope=solution_scope)
+
+    async def _resolve_by_name(
+        self, name: str, *, solution_scope: UUID | None = None
+    ) -> Workflow | None:
+        """Resolve a bare workflow name using solution-own-first semantics.
+
+        Workflow names are unique in three namespaces:
+        - global _repo rows: ``name`` where ``organization_id IS NULL`` and
+          ``solution_id IS NULL``
+        - org _repo rows: ``(organization_id, name)`` where
+          ``solution_id IS NULL``
+        - solution rows: ``(solution_id, name)``
+
+        The generic org cascade intentionally excludes solution rows by default,
+        so install-scoped callers need this explicit own-first lookup.
+
+        ``scalar_one_or_none`` is safe here: the partial unique index
+        ``uq_workflows_solution_name`` on ``(solution_id, name) WHERE
+        solution_id IS NOT NULL AND is_active`` guarantees at most one active
+        match per install. (The _repo/ fallback below is likewise covered by
+        ``uq_workflows_org_name`` / ``uq_workflows_global_name``.)
+        """
+        if solution_scope is not None:
+            stmt = select(Workflow).where(
+                Workflow.name == name,
+                Workflow.solution_id == solution_scope,
+                Workflow.is_active.is_(True),
+            )
+            stmt = self._apply_cascade_scope(stmt)
+            result = await self.session.execute(stmt)
+            own = result.scalar_one_or_none()
+            if own is not None:
+                return own
+
+        return await self.get(name=name, is_active=True)
 
     async def _resolve_by_path_ref(
         self, ref: str, *, solution_scope: UUID | None = None

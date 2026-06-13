@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7232,6 +7232,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/{solution_id}/capture/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List loose same-scope entities capturable by an install (admin only) */
+        get: operations["get_solution_capture_candidates_api_solutions__solution_id__capture_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/capture/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview what a capture selection pulls in + outside references (admin only)
+         * @description Dependency preview for a capture selection (§3.2/§3.3).
+         *
+         *     Returns the forward dependency closure the selection drags in (beyond what's
+         *     already selected) and reverse-reference warnings (loose entities outside the
+         *     selection that point at something inside it). The preview is the guard:
+         *     everything is deselectable in the UI; nothing is silently blocked. The scan
+         *     is static, so computed/dynamic refs are invisible — the UI says so.
+         */
+        post: operations["preview_solution_capture_api_solutions__solution_id__capture_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/{solution_id}/deploy": {
         parameters: {
             query?: never;
@@ -7243,6 +7286,30 @@ export interface paths {
         put?: never;
         /** Deploy a bundle to an install (full replace, non-interactive, admin only) */
         post: operations["deploy_solution_api_solutions__solution_id__deploy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Capture existing loose entities into an install (admin only)
+         * @description Adopt existing `_repo/` entities into this install in place.
+         *
+         *     This is the backend migration primitive for turning legacy app/table/workflow
+         *     clusters into a Solution. It stamps compatible loose entities with
+         *     ``solution_id`` and stores an export zip containing the captured definitions.
+         */
+        post: operations["capture_solution_entities_api_solutions__solution_id__capture_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11906,7 +11973,7 @@ export interface components {
         CustomClaim: {
             /**
              * Name
-             * @description lower_snake; unique per org
+             * @description lower_snake; unique per org/global repo scope or per solution install
              */
             name: string;
             /** Description */
@@ -11923,11 +11990,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /**
-             * Organization Id
-             * Format: uuid
-             */
-            organization_id: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Is Solution Managed */
+            readonly is_solution_managed: boolean;
         };
         /**
          * CustomClaimCreate
@@ -11936,7 +12004,7 @@ export interface components {
         CustomClaimCreate: {
             /**
              * Name
-             * @description lower_snake; unique per org
+             * @description lower_snake; unique per org/global repo scope or per solution install
              */
             name: string;
             /** Description */
@@ -12156,6 +12224,31 @@ export interface components {
              * @description ID of the root node
              */
             root_id: string;
+        };
+        /**
+         * DependencyRef
+         * @description One entity the walker pulled in or warned about.
+         *
+         *     ``ref`` is the natural handle: a UUID for DB entities, a key for configs, a
+         *     relative path for modules. ``name`` is the display label; ``in_selection``
+         *     is true when the seed selection already includes this entity (so the UI can
+         *     show it as "already selected" vs "will be pulled in").
+         */
+        DependencyRef: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module";
+            /** Ref */
+            ref: string;
+            /** Name */
+            name: string;
+            /**
+             * In Selection
+             * @default false
+             */
+            in_selection: boolean;
         };
         /**
          * DetailedHealthCheck
@@ -17912,6 +18005,34 @@ export interface components {
             workflows?: components["schemas"]["OrphanedWorkflowInfo"][];
         };
         /**
+         * OutsideReference
+         * @description An entity OUTSIDE the selection that references something INSIDE it.
+         *
+         *     The capture/export preview surfaces these as non-blocking warnings: the
+         *     referenced entity is being adopted by the install while ``referencer`` is
+         *     left loose and will keep pointing at it across the scope boundary.
+         */
+        OutsideReference: {
+            /**
+             * Referencer Kind
+             * @enum {string}
+             */
+            referencer_kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module";
+            /** Referencer Ref */
+            referencer_ref: string;
+            /** Referencer Name */
+            referencer_name: string;
+            /**
+             * Target Kind
+             * @enum {string}
+             */
+            target_kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module";
+            /** Target Ref */
+            target_ref: string;
+            /** Target Name */
+            target_name: string;
+        };
+        /**
          * PackageInstallResponse
          * @description Response model for package installation
          */
@@ -20237,6 +20358,99 @@ export interface components {
             readonly scope: "org" | "global";
         };
         /**
+         * SolutionCaptureCandidates
+         * @description Loose same-scope entities that can be adopted into an install.
+         */
+        SolutionCaptureCandidates: {
+            /** Workflows */
+            workflows?: components["schemas"]["SolutionEntitySummary"][];
+            /** Apps */
+            apps?: components["schemas"]["SolutionEntitySummary"][];
+            /** Forms */
+            forms?: components["schemas"]["SolutionEntitySummary"][];
+            /** Agents */
+            agents?: components["schemas"]["SolutionEntitySummary"][];
+            /** Claims */
+            claims?: components["schemas"]["SolutionEntitySummary"][];
+            /** Tables */
+            tables?: components["schemas"]["SolutionEntitySummary"][];
+            /** Configs */
+            configs?: components["schemas"]["SolutionConfigStatus"][];
+        };
+        /**
+         * SolutionCaptureRequest
+         * @description Move existing loose entities into an install in place.
+         *
+         *     Entity ids must currently be unowned (``solution_id`` is null) and scoped
+         *     the same way as the install. Config keys become declarations; their values
+         *     stay in the install scope.
+         */
+        SolutionCaptureRequest: {
+            /** Workflows */
+            workflows?: string[];
+            /** Tables */
+            tables?: string[];
+            /** Apps */
+            apps?: string[];
+            /** Forms */
+            forms?: string[];
+            /** Agents */
+            agents?: string[];
+            /** Claims */
+            claims?: string[];
+            /** Configs */
+            configs?: string[];
+            /**
+             * Include Imports
+             * @description When false (default), bundle only the captured workflows' own source files. When true, also bundle the transitive import closure of `modules/` they reference (never the whole modules/ tree — only what is actually imported).
+             * @default false
+             */
+            include_imports: boolean;
+        };
+        /** SolutionCaptureResponse */
+        SolutionCaptureResponse: {
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /**
+             * Workflows Captured
+             * @default 0
+             */
+            workflows_captured: number;
+            /**
+             * Tables Captured
+             * @default 0
+             */
+            tables_captured: number;
+            /**
+             * Apps Captured
+             * @default 0
+             */
+            apps_captured: number;
+            /**
+             * Forms Captured
+             * @default 0
+             */
+            forms_captured: number;
+            /**
+             * Agents Captured
+             * @default 0
+             */
+            agents_captured: number;
+            /**
+             * Claims Captured
+             * @default 0
+             */
+            claims_captured: number;
+            /**
+             * Config Declarations Captured
+             * @default 0
+             */
+            config_declarations_captured: number;
+        };
+        /**
          * SolutionConfigSchemaChange
          * @description One config declaration whose type/required changed between versions.
          */
@@ -20364,6 +20578,11 @@ export interface components {
              */
             agents_deleted: number;
             /**
+             * Claims Deleted
+             * @default 0
+             */
+            claims_deleted: number;
+            /**
              * Config Declarations Deleted
              * @default 0
              */
@@ -20378,6 +20597,52 @@ export interface components {
              * @default 0
              */
             config_values_orphaned: number;
+        };
+        /**
+         * SolutionDependencyPreview
+         * @description What a capture/export selection actually grabs, for human review.
+         *
+         *     ``pulled_in`` is the forward dependency closure beyond the seed selection
+         *     (e.g. a captured workflow's ``modules/`` imports when ``include_imports`` is
+         *     on, the tables/configs it reads, the workflow a captured form launches).
+         *     ``outside_references`` are reverse-dependency warnings. The preview is the
+         *     guard: every item is deselectable, nothing is silently blocked.
+         */
+        SolutionDependencyPreview: {
+            /** Pulled In */
+            pulled_in?: components["schemas"]["DependencyRef"][];
+            /** Outside References */
+            outside_references?: components["schemas"]["OutsideReference"][];
+            /**
+             * Scan Is Static
+             * @default true
+             */
+            scan_is_static: boolean;
+        };
+        /**
+         * SolutionDependencyPreviewRequest
+         * @description Seed selection to preview, mirroring SolutionCaptureRequest's selectors.
+         */
+        SolutionDependencyPreviewRequest: {
+            /** Workflows */
+            workflows?: string[];
+            /** Tables */
+            tables?: string[];
+            /** Apps */
+            apps?: string[];
+            /** Forms */
+            forms?: string[];
+            /** Agents */
+            agents?: string[];
+            /** Claims */
+            claims?: string[];
+            /** Configs */
+            configs?: string[];
+            /**
+             * Include Imports
+             * @default false
+             */
+            include_imports: boolean;
         };
         /**
          * SolutionDeployRequest
@@ -20412,6 +20677,10 @@ export interface components {
             }[];
             /** Agents */
             agents?: {
+                [key: string]: unknown;
+            }[];
+            /** Claims */
+            claims?: {
                 [key: string]: unknown;
             }[];
             /** Config Schemas */
@@ -20487,6 +20756,16 @@ export interface components {
              * @default 0
              */
             agents_deleted: number;
+            /**
+             * Claims Upserted
+             * @default 0
+             */
+            claims_upserted: number;
+            /**
+             * Claims Deleted
+             * @default 0
+             */
+            claims_deleted: number;
         };
         /**
          * SolutionEntities
@@ -20502,6 +20781,8 @@ export interface components {
             forms?: components["schemas"]["SolutionEntitySummary"][];
             /** Agents */
             agents?: components["schemas"]["SolutionEntitySummary"][];
+            /** Claims */
+            claims?: components["schemas"]["SolutionEntitySummary"][];
             /** Tables */
             tables?: components["schemas"]["SolutionEntitySummary"][];
             /** Configs */
@@ -20524,7 +20805,7 @@ export interface components {
         };
         /**
          * SolutionEntitySummary
-         * @description Lightweight (id, name) entry for an owned entity — the detail UI links by id.
+         * @description Lightweight entity row for Solution-owned/capturable entity lists.
          */
         SolutionEntitySummary: {
             /**
@@ -20534,6 +20815,34 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Description */
+            description?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Slug */
+            slug?: string | null;
+            /** Path */
+            path?: string | null;
+            /** Function Name */
+            function_name?: string | null;
+            /** Type */
+            type?: string | null;
+            /** Category */
+            category?: string | null;
+            /** Access Level */
+            access_level?: string | null;
+            /** App Model */
+            app_model?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Logo */
+            logo?: string | null;
+            /** Source Table */
+            source_table?: string | null;
+            /** Select */
+            select?: string | null;
+            /** Created At */
+            created_at?: string | null;
         };
         /**
          * SolutionExistingInstall
@@ -20588,6 +20897,10 @@ export interface components {
             agents?: {
                 [key: string]: unknown;
             }[];
+            /** Claims */
+            claims?: {
+                [key: string]: unknown;
+            }[];
             /** Config Schemas */
             config_schemas?: {
                 [key: string]: unknown;
@@ -20630,6 +20943,7 @@ export interface components {
             forms?: components["schemas"]["SolutionEntityDiff"];
             agents?: components["schemas"]["SolutionEntityDiff"];
             apps?: components["schemas"]["SolutionEntityDiff"];
+            claims?: components["schemas"]["SolutionEntityDiff"];
             config_schemas?: components["schemas"]["SolutionConfigSchemaDiff"];
         };
         /** SolutionsList */
@@ -28911,7 +29225,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -28944,7 +29258,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -28977,7 +29291,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -29010,7 +29324,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -35326,6 +35640,72 @@ export interface operations {
             };
         };
     };
+    get_solution_capture_candidates_api_solutions__solution_id__capture_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionCaptureCandidates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_solution_capture_api_solutions__solution_id__capture_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionDependencyPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDependencyPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     deploy_solution_api_solutions__solution_id__deploy_post: {
         parameters: {
             query?: never;
@@ -35348,6 +35728,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionDeployResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_solution_entities_api_solutions__solution_id__capture_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionCaptureResponse"];
                 };
             };
             /** @description Validation Error */

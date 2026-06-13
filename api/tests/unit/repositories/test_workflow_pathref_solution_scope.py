@@ -204,3 +204,145 @@ class TestPathRefSolutionScope:
         repo = WorkflowRepository(db, org_id=uuid4(), is_superuser=False)
         got = await repo.resolve("workflows/foo.py::main")
         assert got is None
+
+
+@pytest.mark.e2e
+class TestBareNameSolutionScope:
+    async def test_install_scope_resolves_own_workflow_by_name(self, db_session) -> None:
+        """A solution caller can resolve its own workflow by bare name.
+
+        Workflow name uniqueness is solution-scoped in the DB, so the resolver
+        should use the caller's install namespace before falling back to _repo.
+        """
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        own = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol.id,
+            path="workflows/own.py",
+            name="hello",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("hello", solution_scope=sol.id)
+        assert got is not None
+        assert got.id == own.id
+
+    async def test_install_scope_prefers_own_name_over_repo_name(self, db_session) -> None:
+        """When a solution workflow and a _repo workflow share a name, the
+        install-scoped caller gets the install's own workflow."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=None,
+            path="workflows/repo.py",
+            name="hello",
+        )
+        own = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol.id,
+            path="workflows/own.py",
+            name="hello",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("hello", solution_scope=sol.id)
+        assert got is not None
+        assert got.id == own.id
+
+    async def test_install_scope_falls_back_to_repo_name_when_own_absent(self, db_session) -> None:
+        """A solution caller can still execute a shared _repo workflow by name
+        when its own install does not ship that workflow."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        repo_wf = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=None,
+            path="workflows/repo.py",
+            name="shared",
+        )
+        await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol.id,
+            path="workflows/other.py",
+            name="other",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("shared", solution_scope=sol.id)
+        assert got is not None
+        assert got.id == repo_wf.id
+
+    async def test_two_solution_installs_can_share_name_and_resolve_own(self, db_session) -> None:
+        """Two installs in the same org can both ship a workflow named 'hello';
+        each caller resolves its own install."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol_a = await _add_solution(db, org)
+        sol_b = await _add_solution(db, org)
+        wf_a = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol_a.id,
+            path="workflows/a.py",
+            name="hello",
+        )
+        wf_b = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol_b.id,
+            path="workflows/b.py",
+            name="hello",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got_a = await repo.resolve("hello", solution_scope=sol_a.id)
+        got_b = await repo.resolve("hello", solution_scope=sol_b.id)
+        assert got_a is not None and got_a.id == wf_a.id
+        assert got_b is not None and got_b.id == wf_b.id
+
+    async def test_unscoped_name_never_resolves_solution_row(self, db_session) -> None:
+        """Without an install scope, bare-name resolution stays in the _repo
+        namespace and must not pick a solution row."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol.id,
+            path="workflows/own.py",
+            name="hello",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("hello")
+        assert got is None
+
+    async def test_scoped_name_never_resolves_sibling_install(self, db_session) -> None:
+        """A typo or stale name in install A must not execute install B's
+        workflow just because B has the requested name."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol_a = await _add_solution(db, org)
+        sol_b = await _add_solution(db, org)
+        await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol_b.id,
+            path="workflows/b.py",
+            name="hello",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve("hello", solution_scope=sol_a.id)
+        assert got is None

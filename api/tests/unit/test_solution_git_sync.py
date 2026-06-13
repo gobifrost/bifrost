@@ -163,6 +163,30 @@ class TestReadWorkspaceBundleConfigSchemas:
         assert bundle.config_schemas[0]["key"] == "API_KEY"
 
 
+class TestReadWorkspaceBundleClaims:
+    def test_read_workspace_bundle_collects_claims(self, tmp_path) -> None:
+        from src.models.orm.solutions import Solution
+        from src.services.solutions.git_sync import read_workspace_bundle
+
+        (tmp_path / "bifrost.solution.yaml").write_text("slug: cl\nname: CL\nscope: global\n")
+        (tmp_path / ".bifrost").mkdir()
+        (tmp_path / ".bifrost" / "claims.yaml").write_text(
+            "claims:\n"
+            "  11111111-1111-1111-1111-111111111111:\n"
+            "    id: 11111111-1111-1111-1111-111111111111\n"
+            "    name: allowed_campus_ids\n"
+            "    type: list\n"
+            "    query:\n"
+            "      table: memberships\n"
+            "      select: campus_id\n"
+        )
+
+        sol = Solution(id=uuid.uuid4(), slug="cl", name="CL", organization_id=None)
+        bundle = read_workspace_bundle(sol, tmp_path)
+        assert len(bundle.claims) == 1
+        assert bundle.claims[0]["name"] == "allowed_campus_ids"
+
+
 @pytest.mark.e2e
 class TestGitSyncRerun:
     async def test_rerun_when_trigger_arrives_mid_sync(self, db_session, monkeypatch):

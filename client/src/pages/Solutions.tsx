@@ -8,7 +8,7 @@
  * page). Uninstall lives on the individual Solution page.
  */
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -49,6 +49,7 @@ import { listSolutions, type Solution } from "@/services/solutions";
 export function Solutions() {
 	const navigate = useNavigate();
 	const dragDepth = useRef(0);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const [isDragging, setIsDragging] = useState(false);
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -109,6 +110,12 @@ export function Solutions() {
 		dragDepth.current = 0;
 		setIsDragging(false);
 		const file = e.dataTransfer?.files?.[0];
+		if (file) setDialogMode({ kind: "create", file });
+	}
+
+	function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+		const file = e.currentTarget.files?.[0];
+		e.currentTarget.value = "";
 		if (file) setDialogMode({ kind: "create", file });
 	}
 
@@ -173,6 +180,14 @@ export function Solutions() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
+					<input
+						ref={fileInputRef}
+						type="file"
+						accept=".zip,application/zip,application/x-zip-compressed"
+						className="hidden"
+						data-testid="install-file-input"
+						onChange={handleFileChange}
+					/>
 					<ToggleGroup
 						type="single"
 						value={viewMode}

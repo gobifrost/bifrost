@@ -10,6 +10,7 @@ import {
 import { toast } from "sonner";
 
 import { CustomClaimEditor } from "@/components/tables/CustomClaimEditor";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -48,7 +49,7 @@ import {
 interface EditingState {
 	claim: CustomClaim;
 	originalName: string | null;
-	scope: string;
+	scope?: string;
 }
 
 const EMPTY_CLAIM: CustomClaim = {
@@ -58,6 +59,7 @@ const EMPTY_CLAIM: CustomClaim = {
 	description: "",
 	type: "list",
 	query: { table: "", select: "" },
+	is_solution_managed: false,
 };
 
 export function TablesClaimsTab() {
@@ -81,8 +83,11 @@ export function TablesClaimsTab() {
 		return m;
 	}, [organizations]);
 
-	const getOrgName = (orgId: string): string =>
-		orgNameById.get(orgId) ?? orgId;
+	const getOrgName = (orgId?: string | null): string =>
+		orgId ? orgNameById.get(orgId) ?? orgId : "Global";
+
+	const getClaimScope = (claim: CustomClaim): string | undefined =>
+		claim.organization_id ?? undefined;
 
 	const apiScope =
 		filterOrgId === undefined || filterOrgId === null
@@ -174,7 +179,7 @@ export function TablesClaimsTab() {
 		if (!claimToDelete) return;
 		try {
 			await deleteClaim(claimToDelete.name, {
-				scope: claimToDelete.organization_id,
+				scope: getClaimScope(claimToDelete),
 			});
 			toast.success("Claim deleted");
 			setClaimToDelete(null);
@@ -284,27 +289,37 @@ export function TablesClaimsTab() {
 						</DataTableHeader>
 						<DataTableBody>
 							{filteredClaims.map((claim) => (
-								<DataTableRow
-									key={claim.id}
-									className="cursor-pointer hover:bg-muted/50"
-									onClick={() =>
-										setEditing({
-											claim,
-											originalName: claim.name,
-											scope: claim.organization_id,
-										})
-									}
-								>
-									{isPlatformAdmin && (
-										<DataTableCell className="w-0 whitespace-nowrap">
-											<Badge variant="outline" className="gap-1">
-												<Building2 className="h-3 w-3" />
-												{getOrgName(claim.organization_id)}
-											</Badge>
-										</DataTableCell>
-									)}
+									<DataTableRow
+										key={claim.id}
+										className={
+											claim.is_solution_managed
+												? "hover:bg-muted/50"
+												: "cursor-pointer hover:bg-muted/50"
+										}
+										onClick={() => {
+											if (claim.is_solution_managed) return;
+											setEditing({
+												claim,
+												originalName: claim.name,
+												scope: getClaimScope(claim),
+											});
+										}}
+									>
+										{isPlatformAdmin && (
+											<DataTableCell className="w-0 whitespace-nowrap">
+												<Badge variant="outline" className="gap-1">
+													<Building2 className="h-3 w-3" />
+													{getOrgName(claim.organization_id)}
+												</Badge>
+											</DataTableCell>
+										)}
 									<DataTableCell className="font-mono font-medium">
-										{claim.name}
+										<div className="flex items-center gap-2">
+											{claim.name}
+											<SolutionManagedBadge
+												solutionId={claim.solution_id}
+											/>
+										</div>
 									</DataTableCell>
 									<DataTableCell className="max-w-xs truncate text-muted-foreground">
 										{claim.description || "-"}
@@ -322,34 +337,36 @@ export function TablesClaimsTab() {
 										className="w-0 whitespace-nowrap text-right"
 										onClick={(e) => e.stopPropagation()}
 									>
-										<div className="flex justify-end gap-2">
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={() =>
-													setEditing({
-														claim,
-														originalName: claim.name,
-														scope: claim.organization_id,
-													})
-												}
-												title="Edit claim"
-												aria-label="Edit claim"
-											>
-												<Pencil className="h-4 w-4" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={() =>
-													setClaimToDelete(claim)
-												}
-												title="Delete claim"
-												aria-label="Delete claim"
-											>
-												<Trash2 className="h-4 w-4" />
-											</Button>
-										</div>
+										{!claim.is_solution_managed && (
+											<div className="flex justify-end gap-2">
+												<Button
+														variant="ghost"
+														size="icon"
+														onClick={() =>
+															setEditing({
+																claim,
+																originalName: claim.name,
+																scope: getClaimScope(claim),
+															})
+														}
+														title="Edit claim"
+														aria-label="Edit claim"
+												>
+													<Pencil className="h-4 w-4" />
+												</Button>
+												<Button
+													variant="ghost"
+													size="icon"
+													onClick={() =>
+														setClaimToDelete(claim)
+													}
+													title="Delete claim"
+													aria-label="Delete claim"
+												>
+													<Trash2 className="h-4 w-4" />
+												</Button>
+											</div>
+										)}
 									</DataTableCell>
 								</DataTableRow>
 							))}

@@ -68,12 +68,11 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/agents.py', 'MCPConnection.organization_id == agent_data.organization_id,', 'agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository'),
     # ApplicationRepository entries removed in phase 6 — repository relocated
     # from routers/applications.py to repositories/applications.py.
-    ('routers/claims.py', 'Table.organization_id == org_id, Table.name == table_name', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'ClaimORM.organization_id == org_id, ClaimORM.name.in_(refs)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'select(ClaimORM).where(ClaimORM.organization_id == org_id)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
+    ('routers/claims.py', 'Table.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
+    ('routers/claims.py', 'ClaimORM.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'Table.organization_id == org_id, Table.access.is_not(None)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == filter_org)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'ClaimORM.organization_id == org_id, ClaimORM.name == name', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
+    ('routers/tables.py', 'stmt = select(CustomClaimORM.name).where(CustomClaimORM.organization_id == organization_id)', 'tables custom claim cross-ref; phase 6 migrates'),
     ('routers/cli.py', 'ConfigModel.organization_id == org_uuid,', 'cli config inline; phase 5 migrates'),
     ('routers/cli.py', 'Table.organization_id == org_uuid,', 'cli_create_table exact-scope uniqueness check (NOT cascade)'),
     # cli_list_tables migrated to TableRepository.list() in phase 6.
@@ -123,7 +122,8 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/solutions.py', 'else Config.organization_id.is_(None)', 'uninstall: global-scope orphan-stamp UPDATE on config values (NOT cascade)'),
     ('routers/solutions.py', 'SolutionORM.organization_id == sol.organization_id', 'uninstall: find OTHER live installs declaring the same key in this org to skip stamping a shared value (NOT cascade)'),
     ('routers/solutions.py', 'else SolutionORM.organization_id.is_(None)', 'uninstall: global-scope variant of the same shared-key guard (NOT cascade)'),
-    ('routers/tables.py', 'CustomClaimORM.organization_id == organization_id', 'tables custom claim cross-ref; phase 6 migrates'),
+    ('routers/solutions.py', 'return model.organization_id.is_(None)  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
+    ('routers/solutions.py', 'return model.organization_id == org_id  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
     # X-Bifrost-App app-scoped solution table lookup (install-scoped, NOT org
     # cascade).
     ('routers/tables.py', 'Table.organization_id == target_org_id,', 'install-scoped solution table lookup: org arm'),
