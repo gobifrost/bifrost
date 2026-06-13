@@ -2635,7 +2635,13 @@ async def download_cli() -> Response:
                     continue
                 if file_path.name in exclude_files:
                     continue
-                if file_path.suffix not in (".py", ".toml"):
+                # Ship .py + .toml, PLUS the data files the CLI reads at runtime.
+                # lucide_icon_names.json is the snapshot `bifrost migrate-imports`
+                # uses to classify lucide icons; excluding it ships a CLI that
+                # silently leaves icon imports in "bifrost" and breaks a v1→v2
+                # app migration (battle-test 2026-06-13).
+                _data_files = {"lucide_icon_names.json"}
+                if file_path.suffix not in (".py", ".toml") and file_path.name not in _data_files:
                     continue
                 if file_path.name == "pyproject.toml":
                     continue  # Already added above

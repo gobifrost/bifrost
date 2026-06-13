@@ -352,21 +352,24 @@ root.render(
 """
     app_tsx = """\
 import { Routes, Route, Link } from "react-router-dom";
-import { BifrostHeader, useWorkflow } from "bifrost";
+import { BifrostHeader, useWorkflowMutation } from "bifrost";
 
 function Home() {
-  // Pass a workflow UUID or a portable `path::function` ref (e.g.
-  // "functions/hello.py::main", the sample shipped with this scaffold). Bare
-  // names are NOT resolvable — workflow names aren't unique, so the execute
-  // endpoint 404s on them.
-  const wf = useWorkflow<{ message: string }>("functions/hello.py::main");
+  // Workflow hooks (pick by intent — same mental model as React Query):
+  //   useWorkflowQuery(ref)    → READ: auto-runs on mount, has { data, refresh }.
+  //   useWorkflowMutation(ref) → ACTION: runs on mutate(), has { mutate }.
+  // This sample is a button (an action), so it uses the mutation hook. The ref
+  // is a workflow UUID or a portable `path::function` ref (e.g.
+  // "functions/hello.py::main", shipped with this scaffold). Bare names are NOT
+  // resolvable — names aren't unique, so the execute endpoint 404s on them.
+  const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
   return (
     <main style={{ padding: 24 }}>
       <h1>Hello from your Bifrost app</h1>
       <p>
         <Link to="/about">About</Link>
       </p>
-      <button onClick={() => wf.run({})} disabled={wf.loading}>
+      <button onClick={() => wf.mutate({})} disabled={wf.loading}>
         {wf.loading ? "Running…" : "Run workflow"}
       </button>
       {wf.error && <pre style={{ color: "crimson" }}>{wf.error.message}</pre>}

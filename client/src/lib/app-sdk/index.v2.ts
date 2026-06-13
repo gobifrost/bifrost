@@ -15,6 +15,15 @@ export type { BifrostContextValue, BifrostProviderProps } from "./provider";
 export { BifrostHeader } from "./bifrost-header";
 export type { BifrostHeaderProps } from "./bifrost-header";
 
+// Primary workflow hooks — React-Query-shaped (auto-running query + imperative
+// mutation). These are what apps should reach for; `useWorkflow` below is the
+// low-level building block they wrap.
+export { useWorkflowQuery, useWorkflowMutation } from "./use-workflow-hooks";
+export type {
+  UseWorkflowQueryState,
+  UseWorkflowMutationState,
+} from "./use-workflow-hooks";
+
 export { useWorkflow } from "./use-workflow";
 export type { UseWorkflowState } from "./use-workflow";
 

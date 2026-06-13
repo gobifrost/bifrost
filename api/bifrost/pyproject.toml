@@ -34,3 +34,10 @@ bifrost = "bifrost.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["bifrost*"]
+
+# Ship non-Python data files needed at runtime. lucide_icon_names.json is the
+# snapshot `bifrost migrate-imports` reads to classify lucide icons; without it
+# in the wheel, the installed CLI silently leaves icon imports in "bifrost" and
+# a v1→v2 migration produces an app that can't resolve them (battle-test 2026-06-13).
+[tool.setuptools.package-data]
+bifrost = ["lucide_icon_names.json"]

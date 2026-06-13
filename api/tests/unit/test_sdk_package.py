@@ -28,6 +28,7 @@ _SRC_FILES = [
     "use-infinite-table.ts",
     "ws-client.ts",
     "use-workflow.ts",
+    "use-workflow-hooks.ts",
     "bifrost-header.tsx",
 ]
 
@@ -112,7 +113,10 @@ def test_build_sdk_tarball_shape_and_exports():
         bundle_file = tar.extractfile("package/dist/index.mjs")
         assert bundle_file is not None
         bundle = bundle_file.read().decode()
-        for sym in ("BifrostProvider", "useWorkflow", "useTable", "tables", "BifrostHeader"):
+        for sym in (
+            "BifrostProvider", "useWorkflow", "useWorkflowQuery",
+            "useWorkflowMutation", "useTable", "tables", "BifrostHeader",
+        ):
             assert sym in bundle, f"{sym} missing from bundle"
         # React + lucide stay external (imported, not inlined).
         assert 'from "react"' in bundle
