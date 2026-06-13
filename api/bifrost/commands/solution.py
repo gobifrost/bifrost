@@ -100,6 +100,16 @@ def init_cmd(
               help="Instance URL the app resolves `bifrost` from (default: $BIFROST_API_URL).")
 def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     """Write a working v2 app skeleton wired for the CLI-login dev loop."""
+    app_dir = _scaffold_app(slug, path, api_url)
+    click.echo("Next: run `bifrost solution start` from the solution root — it serves the")
+    click.echo("app and runs your local workflows behind one origin (no deploy needed).")
+    click.echo("Deploy with `bifrost deploy` from the solution root.")
+    _ = app_dir
+
+
+def _scaffold_app(slug: str, path: str | None, api_url: str | None) -> pathlib.Path:
+    """Scaffold a standalone_v2 app skeleton; return its dir. Shared by
+    ``scaffold-app`` and ``migrate-app`` so the two never drift."""
     import uuid as _uuid
 
     url = api_url or os.getenv("BIFROST_API_URL") or "http://localhost:8000"
@@ -179,9 +189,7 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     click.echo(f"Registered it in {manifest} (id {app_id}).")
     if sample_dest.exists():
         click.echo(f"Sample workflow at {sample_dest} (ref {_SAMPLE_WORKFLOW_REF}).")
-    click.echo("Next: run `bifrost solution start` from the solution root — it serves the")
-    click.echo("app and runs your local workflows behind one origin (no deploy needed).")
-    click.echo("Deploy with `bifrost deploy` from the solution root.")
+    return app_dir
 
 
 def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
@@ -1387,6 +1395,175 @@ def capture_cmd(
     rc = asyncio.run(_run())
     if rc:
         raise SystemExit(rc)
+
+
+# Composed shadcn "recipe" components (not a single `add`): primitives + a small
+# vendored wrapper. migrate-app vendors the combobox wrapper from this template.
+_COMBOBOX_WRAPPER = '''\
+import { useState } from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
+
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+export interface ComboboxOption { value: string; label: string; }
+export interface ComboboxProps {
+  options: ComboboxOption[];
+  value?: string;
+  onValueChange?: (value: string) => void;
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  className?: string;
+}
+
+export function Combobox({
+  options, value, onValueChange, placeholder = "Select…",
+  searchPlaceholder = "Search…", emptyText = "No results.", className,
+}: ComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((o) => o.value === value);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" aria-expanded={open}
+          className={cn("w-full justify-between font-normal", className)}>
+          {selected ? selected.label : placeholder}
+          <ChevronsUpDown className="opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-(--radix-popover-trigger-width) p-0">
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {options.map((o) => (
+                <CommandItem key={o.value} value={o.label}
+                  onSelect={() => { onValueChange?.(o.value); setOpen(false); }}>
+                  <Check className={cn(value === o.value ? "opacity-100" : "opacity-0")} />
+                  {o.label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+'''
+
+
+@solution_group.command(
+    name="migrate-app",
+    help="Migrate a v1 inline app dir to a scaffolded standalone_v2 app: scaffold "
+    "+ port source + rewrite imports + install shadcn. STOPS before build/wire and "
+    "prints a checklist of the judgment steps left to you.",
+)
+@click.argument("source", type=click.Path(exists=True, file_okay=False))
+@click.argument("v2_slug")
+@click.option("--title", default=None, help="App display title (default: the v2 slug).")
+@click.option("--api-url", default=None, help="Instance URL the app resolves `bifrost` from.")
+def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str | None) -> None:
+    """Deterministic 80% of a v1→v2 app migration. The judgment 20% (multi-route
+    wiring, unresolved imports, no-v2-equivalent hooks, in-browser design check,
+    deploy/cutover/capture) is PRINTED as a checklist, never silently done.
+
+    SOURCE is the v1 app dir (e.g. a pulled ``_repo/apps/<slug>``). Assumes the
+    v1 layout (``pages/`` + ``components/``); anything else is reported, not
+    guessed.
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+
+    src_dir = pathlib.Path(source).resolve()
+    title = title or v2_slug
+
+    # 1. Scaffold the v2 skeleton (Tailwind v4 + radix-rhea + theme already wired).
+    app_dir = _scaffold_app(v2_slug, None, api_url)
+
+    # 2. Port v1 source. v1 layout = pages/ + components/ (+ _layout.tsx). Copy
+    #    what exists; report anything unexpected rather than guessing.
+    notes: list[str] = []
+    (app_dir / "src" / "pages").mkdir(parents=True, exist_ok=True)
+    (app_dir / "src" / "components").mkdir(parents=True, exist_ok=True)
+    ported = 0
+    for sub in ("pages", "components"):
+        srcsub = src_dir / sub
+        if srcsub.is_dir():
+            for f in srcsub.rglob("*.tsx"):
+                if ".tmp." in f.name:
+                    continue
+                rel = f.relative_to(srcsub)
+                dest = app_dir / "src" / sub / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                _shutil.copy(f, dest)
+                ported += 1
+    # Flag non-standard top-level files (e.g. app.yaml, _layout.tsx, extra dirs).
+    extras = [
+        p.name for p in src_dir.iterdir()
+        if p.name not in ("pages", "components") and not p.name.startswith(".")
+    ]
+    if extras:
+        notes.append(f"v1 app had non-standard entries not auto-ported: {extras} — review by hand.")
+
+    # 3. Deterministic import rewrite (--v2) — compute the shadcn-add list + split.
+    from bifrost.migrate_v2 import compute_shadcn_adds, is_ui_source, rewrite_v2_imports
+    from bifrost.migrate_imports import load_lucide_icon_names
+
+    lucide = frozenset(load_lucide_icon_names())
+    tsx_files = [
+        p for p in sorted((app_dir / "src").rglob("*.tsx")) if not is_ui_source(p)
+    ]
+    sources = {p: p.read_text(encoding="utf-8") for p in tsx_files}
+    adds = compute_shadcn_adds(list(sources.values()))
+    for p, srctext in sources.items():
+        new = rewrite_v2_imports(srctext, lucide)
+        if new != srctext:
+            p.write_text(new, encoding="utf-8")
+    # Collect TODO markers (unresolved v1 imports) + no-v2-equivalent hooks.
+    unresolved = [p.name for p, _ in sources.items() if "TODO(migrate)" in p.read_text()]
+    no_v2_hook = sorted({
+        h for txt in (p.read_text() for p in tsx_files)
+        for h in ("useUser", "useAppState", "RequireRole") if h in txt
+    })
+
+    # 4. Install shadcn components (real radix-rhea source) + recipe deps.
+    if adds:
+        click.echo(f"Installing shadcn components: {' '.join(adds)}")
+        _sp.run(["npm", "install"], cwd=app_dir, check=False, capture_output=True)
+        _sp.run(["npx", "shadcn@latest", "add", *adds, "--yes"],
+                cwd=app_dir, check=False, capture_output=True)
+        _sp.run(["npm", "install", "radix-ui", "sonner"],
+                cwd=app_dir, check=False, capture_output=True)
+        # Vendor the combobox recipe wrapper if the app uses it.
+        if "combobox" in adds:
+            (app_dir / "src" / "components" / "ui" / "combobox.tsx").write_text(_COMBOBOX_WRAPPER)
+
+    # 5. STOP. Print the judgment checklist — never silently build/wire/deploy.
+    click.echo("")
+    click.echo(f"✓ Ported {ported} file(s) + installed {len(adds)} shadcn component(s).")
+    click.echo("")
+    click.echo("NEXT (human judgment — migrate-app stops here ON PURPOSE):")
+    click.echo(f"  1. Wire src/App.tsx: mount the page(s) + <BifrostHeader title=\"{title}\"/> + "
+               "<Toaster/>. Multi-page v1 apps need their routes re-created here.")
+    if unresolved:
+        click.echo(f"  2. Resolve TODO(migrate) imports in: {unresolved} (no auto-mapping found).")
+    if no_v2_hook:
+        click.echo(f"  3. Port v1-only hooks with NO v2 SDK equivalent: {no_v2_hook}.")
+    click.echo("  4. Workflow refs: rewrite any UUID refs to portable path::fn (and ensure "
+               "those workflows exist in the target env).")
+    for n in notes:
+        click.echo(f"  • {n}")
+    click.echo("  5. `npm run build` (must pass), then `bifrost solution start` to review in-browser.")
+    click.echo("  6. Cutover: `bifrost solution swap-slugs <old> <new>`, then `bifrost solution "
+               "capture` LAST (capture is terminal — deploy after it wipes captures).")
+    click.echo(f"\nApp at {app_dir}")
 
 
 @solution_group.command(

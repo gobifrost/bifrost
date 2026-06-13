@@ -72,6 +72,22 @@ Do ONE app at a time, fully, before the next. Each step gates the following.
   jewel:** it answers "is anything else using this?". An outside-referenced entity is a candidate
   for the **shared-entity report** (step 9), not an automatic capture.
 
+### Fast path — `bifrost solution migrate-app` does steps 2–5 deterministically
+
+```bash
+bifrost solution migrate-app _repo/apps/<old-slug> <new-slug> --title "<Title>" --api-url <debug-url>
+```
+This scaffolds the v2 app, ports the v1 `pages/`+`components/`, runs the deterministic `--v2`
+import rewrite, installs the exact shadcn components the app uses (+ radix-ui, sonner, the combobox
+recipe), and then **STOPS and prints a judgment checklist** — it never silently wires routes,
+builds, or deploys. The checklist surfaces exactly what needs you: multi-route App.tsx wiring,
+`// TODO(migrate)` unresolved imports, v1-only hooks with no v2 equivalent (`useUser`,
+`useAppState`, `RequireRole`), workflow UUID-ref rewrites, the in-browser design check, and the
+cutover order (swap-slugs → capture LAST). Do those, then jump to step 6's wiring + step 8.
+
+The steps below explain what `migrate-app` automates (and are the manual fallback if an app's
+shape is non-standard enough that you'd rather drive each step).
+
 ### 2. Scaffold the v2 app
 
 ```bash
