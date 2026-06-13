@@ -218,6 +218,7 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
             "@vitejs/plugin-react": "^4.2.0",
             "@tailwindcss/vite": "^4.0.0",
             "tailwindcss": "^4.0.0",
+            "tw-animate-css": "^1.2.0",
             "typescript": "^5.4.0",
             "vite": "^5.2.0",
         },
@@ -441,23 +442,25 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
 
     bifrost deploy
 """
-    # Tailwind v4 + shadcn token layer. v4 is config-less (the `@theme`/`:root`
-    # tokens live in CSS); `@custom-variant dark` wires the `.dark` class the
-    # BifrostProvider toggles, so shadcn components react to the platform theme.
+    # Tailwind v4 + shadcn token layer, MIRRORING THE PLATFORM (radix-rhea style:
+    # teal brand `--primary`, the multiplicative Rhea radius scale, chart/sidebar
+    # tokens) so a migrated app looks native — not generic new-york neutral.
+    # `@custom-variant dark` wires the `.dark` class BifrostProvider toggles.
     index_css = """\
 @import "tailwindcss";
+@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --primary: oklch(0.38 0.09 220); /* Teal brand color */
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -466,9 +469,23 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.38 0.09 220);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {
@@ -478,7 +495,7 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
+  --primary: oklch(0.6 0.13 220); /* Lighter teal for dark mode */
   --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
@@ -487,16 +504,26 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.6 0.13 220);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -512,21 +539,48 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  /* Rhea radius scale: multiplicative (matches the platform), extends to 4xl. */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 @layer base {
-  * { border-color: var(--border); }
-  body { background-color: var(--background); color: var(--foreground); }
+  * { @apply border-border outline-ring/50; }
+  body { @apply bg-background text-foreground; }
 }
 """
     # shadcn CLI config so `npx shadcn add <component>` drops real, current
     # component source into src/components/ui with the right aliases.
+    # Mirror the PLATFORM's shadcn config so migrated apps look native: the
+    # `radix-rhea` style (more rounded than new-york) + neutral base + lucide.
     components_json = json.dumps({
         "$schema": "https://ui.shadcn.com/schema.json",
-        "style": "new-york",
+        "style": "radix-rhea",
+        "iconLibrary": "lucide",
+        "menuColor": "default",
+        "menuAccent": "subtle",
         "rsc": False,
         "tsx": True,
         "tailwind": {
@@ -534,8 +588,8 @@ The platform builds the app server-side and serves it at `/apps/{slug}`:
             "css": "src/index.css",
             "baseColor": "neutral",
             "cssVariables": True,
+            "prefix": "",
         },
-        "iconLibrary": "lucide",
         "aliases": {
             "components": "@/components",
             "utils": "@/lib/utils",

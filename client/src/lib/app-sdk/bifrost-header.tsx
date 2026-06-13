@@ -206,7 +206,9 @@ const menuItemStyle = (C: Palette): CSSProperties => ({
 export function BifrostHeader({ title, logo, action, className }: BifrostHeaderProps) {
   const { baseUrl, appId, authedFetch, logout, theme, toggleTheme, supportsTheme } =
     useBifrostContext();
-  const platformRoot = `${baseUrl.replace(/\/$/, "")}/`;
+  // Back link target: the platform's Apps page (where the user came from),
+  // not the bare root — "← Bifrost" / "Back to Bifrost" return to /apps.
+  const platformApps = `${baseUrl.replace(/\/$/, "")}/apps`;
   // Only a theme-aware app recolors the chrome; otherwise stay light (the app's
   // own colors are hardcoded light, so a dark header would clash).
   const dark = supportsTheme && theme === "dark";
@@ -276,7 +278,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
   return (
     <header data-bifrost-header data-bifrost-header-theme={themeKey} style={headerStyle(C)} className={className}>
       <div style={leftStyle}>
-        <a href={platformRoot} className="bfh-link" style={backLinkStyle(C)}>
+        <a href={platformApps} className="bfh-link" style={backLinkStyle(C)}>
           <ArrowLeft style={iconStyle} />
           Bifrost
         </a>
@@ -344,7 +346,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
                 </div>
               </div>
               <div style={{ height: 1, background: C.border, margin: "4px 0" }} />
-              <a href={platformRoot} className="bfh-item" role="menuitem" style={{ ...menuItemStyle(C), textDecoration: "none" }}>
+              <a href={platformApps} className="bfh-item" role="menuitem" style={{ ...menuItemStyle(C), textDecoration: "none" }}>
                 <ArrowLeft style={iconStyle} />
                 Back to Bifrost
               </a>

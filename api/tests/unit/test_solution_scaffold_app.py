@@ -102,10 +102,21 @@ def test_scaffold_ships_tailwind_v4_shadcn_and_theme() -> None:
     assert "--radius" in css           # rounded corners come from this token
     assert "custom-variant dark" in css
 
-    # components.json so `npx shadcn add <component>` drops REAL current source.
+    # components.json so `npx shadcn add <component>` drops REAL current source —
+    # and it MIRRORS THE PLATFORM (radix-rhea style, not new-york) so migrated
+    # apps look native: the rhea style is more rounded + matches the platform.
     cfg = json.loads(files["components.json"])
     assert cfg["tailwind"]["css"] == "src/index.css"
     assert cfg["aliases"]["ui"] == "@/components/ui"
+    assert cfg["style"] == "radix-rhea"
+
+    # Platform-matching tokens: teal brand primary + the Rhea (0.65rem,
+    # multiplicative) radius scale, not generic new-york neutral/0.625.
+    assert "0.65rem" in css
+    assert "Teal brand" in css
+    assert "--radius-4xl" in css       # the rhea scale extends to 4xl
+    assert '@import "tw-animate-css"' in css
+    assert "tw-animate-css" in pkg["devDependencies"]
 
     # cn() helper for shadcn components.
     assert "twMerge" in files["src/lib/utils.ts"]

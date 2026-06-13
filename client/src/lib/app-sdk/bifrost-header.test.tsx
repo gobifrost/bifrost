@@ -13,8 +13,10 @@ describe("BifrostHeader (SDK, self-contained)", () => {
       </BifrostProvider>,
     );
     expect(screen.getByText("My Dashboard")).toBeInTheDocument();
+    // Back link returns to the platform's Apps page (where the user came from),
+    // not the bare root.
     const back = screen.getByRole("link", { name: /Bifrost/i });
-    expect(back.getAttribute("href")).toBe("https://dev.example/");
+    expect(back.getAttribute("href")).toBe("https://dev.example/apps");
 
     // Log out lives inside the user-menu dropdown now — open it first.
     fireEvent.click(screen.getByRole("button", { name: /account menu/i }));
