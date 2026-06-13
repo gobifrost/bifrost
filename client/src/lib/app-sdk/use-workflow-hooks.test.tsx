@@ -62,6 +62,30 @@ describe("useWorkflowQuery (auto-running, React-Query-shaped)", () => {
     expect(body.workflow_id).toBe("wf::q");
     expect(body.input_data).toEqual({ q: "x" });
   });
+
+  it("refresh() with no args re-runs with the ORIGINAL params, not {}", async () => {
+    const bodies: Array<{ input_data: Record<string, unknown> }> = [];
+    function View() {
+      const { refresh } = useWorkflowQuery<{ ok: boolean }>("wf::q", { q: "x" });
+      return <button onClick={() => refresh()}>refresh</button>;
+    }
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="t"
+        fetchImpl={fakeFetchReturning({ ok: true }, (b) =>
+          bodies.push(b as { input_data: Record<string, unknown> }),
+        )}
+      >
+        <View />
+      </BifrostProvider>,
+    );
+    await waitFor(() => expect(bodies.length).toBe(1)); // auto-run
+    screen.getByText("refresh").click();
+    await waitFor(() => expect(bodies.length).toBe(2));
+    // The refresh kept {q:"x"} — a bare refresh button reloads the same data.
+    expect(bodies[1].input_data).toEqual({ q: "x" });
+  });
 });
 
 function QueryWithParams() {

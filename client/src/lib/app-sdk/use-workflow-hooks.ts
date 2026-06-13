@@ -17,7 +17,7 @@
  * `app_id` scoping, and stale-run guarding. `useWorkflow` remains exported as the
  * low-level escape hatch.
  */
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 
 import { useWorkflow, type UseWorkflowState } from "./use-workflow";
 
@@ -70,7 +70,17 @@ export function useWorkflowQuery<T = unknown>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run, paramsKey]);
 
-  return { data, loading, error, refresh: run };
+  // `refresh()` with no args re-runs with the query's ORIGINAL params, not `{}`
+  // (Codex) — a bare refresh button must reload the same data, not an empty
+  // query. Callers can still pass overrides explicitly.
+  const refresh = useCallback(
+    (input?: Record<string, unknown>) => run(input ?? params ?? {}),
+    // Re-bind when run or the serialized params change (same key as the effect).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run, paramsKey],
+  );
+
+  return { data, loading, error, refresh };
 }
 
 /**
