@@ -3433,10 +3433,6 @@ Arguments:
   path                  App dir or workspace containing apps/* (default: current directory)
 
 Options:
-  --v2                  v1->v2 migration: split the single `from "bifrost"` line
-                        into shadcn (@/components/ui/*), react, react-router-dom,
-                        sonner, @/lib/utils (hooks stay in bifrost). Prints the
-                        deterministic `npx shadcn add` list. Skips components/ui.
   --dry-run             Print unified diff, do not write or prompt
   --yes, -y             Apply without the confirmation prompt (diff is still printed)
   --skip-diff           Suppress diff output. Only valid with --yes (scripted runs)
@@ -3454,7 +3450,6 @@ Options:
     dry_run = False
     yes = False
     skip_diff = False
-    v2 = False
     path_arg: str | None = None
 
     for a in args:
@@ -3464,8 +3459,6 @@ Options:
             yes = True
         elif a == "--skip-diff":
             skip_diff = True
-        elif a == "--v2":
-            v2 = True
         elif a.startswith("-"):
             print(f"Unknown option: {a}", file=sys.stderr)
             return 1
@@ -3488,10 +3481,6 @@ Options:
         return 1
 
     lucide_names = load_lucide_icon_names()
-
-    if v2:
-        return _migrate_imports_v2(root, frozenset(lucide_names), dry_run, yes, skip_diff)
-
     apps = discover_apps(root)
 
     all_results = []
@@ -3542,80 +3531,6 @@ Options:
         r.path.write_text(r.updated, encoding="utf-8")
 
     print(f"Updated {len(changed)} file(s).")
-    return 0
-
-
-def _migrate_imports_v2(
-    root: pathlib.Path,
-    lucide_names: "frozenset[str]",
-    dry_run: bool,
-    yes: bool,
-    skip_diff: bool,
-) -> int:
-    """`bifrost migrate-imports --v2`: split the v1 single-`bifrost`-line imports
-    into v2 origins (shadcn @/components/ui, react, react-router-dom, sonner,
-    @/lib/utils; hooks stay). Deterministic via the fixed platform surface.
-
-    Prints the exact `npx shadcn add` list (every shadcn component the app
-    imports — feed it to shadcn before/after this rewrite), then rewrites the
-    `.tsx` under `root`, NEVER touching `components/ui/` (real shadcn source).
-    """
-    import difflib
-
-    from bifrost.migrate_v2 import (
-        compute_shadcn_adds,
-        is_ui_source,
-        rewrite_v2_imports,
-    )
-
-    files = [
-        p for p in sorted(root.rglob("*.tsx"))
-        if not is_ui_source(p) and "node_modules" not in p.as_posix()
-    ]
-    if not files:
-        print(f"No .tsx files to migrate under {root}.")
-        return 0
-
-    sources = {p: p.read_text(encoding="utf-8") for p in files}
-    adds = compute_shadcn_adds(list(sources.values()))
-    if adds:
-        print("shadcn components to install (deterministic from the imports):")
-        print(f"  npx shadcn@latest add {' '.join(adds)} --yes")
-        print()
-
-    changed: list[tuple[pathlib.Path, str, str]] = []
-    for p, src in sources.items():
-        new = rewrite_v2_imports(src, lucide_names)
-        if new != src:
-            changed.append((p, src, new))
-
-    if not changed:
-        print("No bifrost imports to rewrite.")
-        return 0
-
-    if dry_run or not skip_diff:
-        for p, old, new in changed:
-            for line in difflib.unified_diff(
-                old.splitlines(keepends=True), new.splitlines(keepends=True),
-                fromfile=f"a/{p}", tofile=f"b/{p}",
-            ):
-                print(line, end="")
-    print(f"\n{len(changed)} file(s) {'would change' if dry_run else 'will change'}.")
-    if dry_run:
-        return 0
-
-    if not yes:
-        try:
-            if input("Proceed? [y/N] ").strip().lower() != "y":
-                print("Aborted.")
-                return 1
-        except EOFError:
-            print("Aborted.")
-            return 1
-
-    for p, _, new in changed:
-        p.write_text(new, encoding="utf-8")
-    print(f"Updated {len(changed)} file(s). Now run the shadcn add line above (if any).")
     return 0
 
 

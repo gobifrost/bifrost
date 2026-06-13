@@ -9,8 +9,8 @@ Move a legacy inline (`inline_v1`) app and its non-shared backing entities into 
 installable **Solution** (`standalone_v2`), with standardized folders and renamed workflows.
 
 This skill is **judgment-heavy orchestration**, not a one-shot command. It drives existing
-primitives (`bifrost solution scaffold-app`, `bifrost migrate-imports`, `bifrost solution start`,
-`bifrost solution swap-slugs`, `bifrost solution capture`) and makes the per-app calls a
+primitives (`bifrost solution migrate-app`, `bifrost solution scaffold-app`, `bifrost solution
+start`, `bifrost solution swap-slugs`, `bifrost solution capture`) and makes the per-app calls a
 deterministic command can't: which shadcn components to add, whether layout/theme translate, what
 is safe to capture vs. irreducibly shared.
 
@@ -23,13 +23,13 @@ is safe to capture vs. irreducibly shared.
   components + React + react-router + lucide + `cn`/`format` at runtime. The v2 `bifrost` SDK
   exports only: `BifrostProvider`, `useBifrostContext`, `BifrostHeader`, `useWorkflow`, `useTable`,
   `useInfiniteTable`, `tables`. **No UI components, no React, no router.** Nearly every v1 import
-  line must be rewritten — that's what `bifrost migrate-imports` is for.
+  line must be rewritten — that's what `bifrost solution migrate-app` does (deterministically).
 
 ## Who runs what
 
 | Action | Who | Why |
 |---|---|---|
-| `bifrost solution scaffold-app`, `migrate-imports`, `solution capture --dry-run`/apply, `solution swap-slugs`, `bifrost api GET …`, `npx shadcn add`, file writes under the new app dir | **Agent** | non-interactive, scoped |
+| `bifrost solution migrate-app`, `bifrost solution scaffold-app`, `solution capture --dry-run`/apply, `solution swap-slugs`, `bifrost api GET …`, `npx shadcn add`, file writes under the new app dir | **Agent** | non-interactive, scoped |
 | `bifrost solution start` | **Agent** starts it; **user** drives the browser | long-running dev server; user confirms design |
 | `bifrost watch` / `sync` / `push` / `git push` | **User** | broad blast radius, deploy cadence |
 
@@ -77,7 +77,7 @@ Do ONE app at a time, fully, before the next. Each step gates the following.
 ```bash
 bifrost solution migrate-app _repo/apps/<old-slug> <new-slug> --title "<Title>" --api-url <debug-url>
 ```
-This scaffolds the v2 app, ports the v1 `pages/`+`components/`, runs the deterministic `--v2`
+This scaffolds the v2 app, ports the v1 `pages/`+`components/`, runs the deterministic v2
 import rewrite, installs the exact shadcn components the app uses (+ radix-ui, sonner, the combobox
 recipe), and then **STOPS and prints a judgment checklist** — it never silently wires routes,
 builds, or deploys. The checklist surfaces exactly what needs you: multi-route App.tsx wiring,
@@ -103,16 +103,11 @@ basename, reads platform boot or dev env), `App.tsx` (imports `BifrostHeader`, `
 Copy the v1 page/component TSX into the new app dir (flat `pages/` + `components/` is the v2
 shape). Don't rewrite imports by hand yet — step 4 does it.
 
-### 4 + 5. Rewrite imports + install shadcn — ONE deterministic command
+### 4 + 5. Rewrite imports + install shadcn (what `solution migrate-app` automates)
 
-`bifrost migrate-imports --v2` does the whole v1→v2 import split deterministically (the v1
-`"bifrost"` surface is a fixed, known set, so every symbol has a known v2 home):
-
-```bash
-bifrost migrate-imports apps/<new-slug>/src --v2 --dry-run   # review: shows the shadcn-add list + the diff
-bifrost migrate-imports apps/<new-slug>/src --v2 --yes
-```
-It splits the single `from "bifrost"` line by ORIGIN:
+`solution migrate-app` performs this whole step for you — it's deterministic because the v1
+`"bifrost"` surface is a fixed, known set, so every symbol has a known v2 home. It splits the
+single `from "bifrost"` line by ORIGIN:
 - shadcn UI (`Button`, `Card`, `Dialog`, `Table`, …) → `@/components/ui/<component>`
 - React (`useState`, `Fragment`, …) → `react`; router (`Link`, `useNavigate`, …) → `react-router-dom`
 - `cn`/`format` → `@/lib/utils`; `toast` → `sonner`; lucide icons → `lucide-react`
@@ -121,19 +116,17 @@ It splits the single `from "bifrost"` line by ORIGIN:
 - JS globals (`Set`, `Map`) + bare `navigate` → dropped; unknowns → kept with a `// TODO(migrate)` marker
 - **`src/components/ui/` is NEVER touched** (real shadcn source — rewriting it would corrupt it)
 
-The command PRINTS the exact deterministic install line, e.g.:
-```
-npx shadcn@latest add badge button card dialog input label select table tabs tooltip --yes
-```
-Run that (the scaffold already ships Tailwind v4 + `components.json` (radix-rhea) + `cn` +
-the `.dark` token layer, so `shadcn add` works with no setup), plus `npm i radix-ui` (the umbrella
-pkg the radix-rhea components import) and `npm i sonner` (toast — add `<Toaster/>` in App.tsx).
-
-`Combobox`/`MultiCombobox` are shadcn RECIPES, not base primitives — the add-list already includes
-their `popover`+`command` primitives; vendor a small `combobox.tsx` wrapper (Popover+Command).
+It then computes the exact shadcn-add list from those imports and installs it (the scaffold already
+ships Tailwind v4 + `components.json` (radix-rhea) + `cn` + the `.dark` token layer, so `shadcn add`
+works with no setup), plus `radix-ui` (the umbrella pkg the radix-rhea components import) and
+`sonner` (toast). `Combobox`/`MultiCombobox` are shadcn RECIPES — the add-list includes their
+`popover`+`command` primitives and `migrate-app` vendors the `combobox.tsx` wrapper.
 
 **Do not** hand-write stub UI components or add a `@bifrost/ui` package — a stub/no-Tailwind app
 renders UNSTYLED. Verify with `vite build` (step 8) AND a screenshot, not just a build.
+
+(If you're driving the steps manually instead of `migrate-app`, the same logic lives in
+`bifrost.migrate_v2` — but `migrate-app` is the supported entry point.)
 
 ### 6. Derive package.json + wire provider/theme/header/basename
 
