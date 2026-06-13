@@ -138,7 +138,10 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 #: the live fingerprint, this test fails — update this value, and bump
 #: CONTRACT_VERSION (both sides) IF the change is breaking. See module docstring.
 EXPECTED_CONTRACT_FINGERPRINT = (
-    "48f9e77baf3c40733a067ebdb8dc608ae841a9e7fa202da8a12afcf065375513"
+    # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
+    # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
+    # `apps create` to v1 against a v2-default server, so old clients are gated.
+    "101e44691a0bb1e51db5aaa2d02754616cb6f0d1ab66b94289796f8b8ea76a39"
 )
 
 

@@ -128,8 +128,11 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 		);
 	}
 
-	// Handle not published (only for non-preview mode)
-	if (!preview && !application.is_published) {
+	// Handle not published (only for non-preview mode). standalone_v2 apps have
+	// NO publish concept (created == published; deploy serves the source) — the
+	// v1 "Not Published"/"Open Editor" screen must never apply to them. The
+	// server already reports is_published=true for v2; this guards the client too.
+	if (!preview && application.app_model !== "standalone_v2" && !application.is_published) {
 		return (
 			<div className="min-h-screen flex items-center justify-center p-4">
 				<Card className="max-w-md w-full">

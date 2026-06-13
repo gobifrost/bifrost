@@ -111,7 +111,17 @@ class Application(Base):
 
     @property
     def is_published(self) -> bool:
-        """Check if the application has been published at least once."""
+        """Whether the app is live/openable.
+
+        standalone_v2 apps have NO publish concept — there is no draft→live
+        editor flow; a v2 app is source-built and served, so created == published
+        (it's "published" by existing). The publish/draft model is v1-only, so
+        is_published is unconditionally True for v2 and the v1 "Not Published"
+        gate never applies to it. For inline_v1 it stays "published at least once"
+        (a published_snapshot exists).
+        """
+        if self.app_model == "standalone_v2":
+            return True
         return self.published_snapshot is not None
 
     @property
@@ -121,6 +131,9 @@ class Application(Base):
         TODO: Compare current file_index state vs published_snapshot to detect
         actual changes. For now, always return True if published (conservative).
         """
+        # v2 has no draft/publish duality → never "unpublished changes".
+        if self.app_model == "standalone_v2":
+            return False
         if self.published_snapshot is None:
             return True  # Never published, so there are "unpublished" changes
         # Conservative: assume changes exist. A more precise check would

@@ -47,8 +47,11 @@ async def test_create_application_takes_slug_advisory_lock_first(db_session, mon
 
     repo = ApplicationRepository(db, org_id=None, user_id=None, is_superuser=True)
     with pytest.raises(ValueError, match="already exists"):
+        # inline_v1: this test is about the slug advisory lock, not the v2 bark
+        # (a bare create defaults to v2 now and would refuse before the dup check).
         await repo.create_application(
-            ApplicationCreate(name="Dup", slug=slug), created_by="dev@x"
+            ApplicationCreate(name="Dup", slug=slug, app_model="inline_v1"),
+            created_by="dev@x",
         )
 
     assert statements, "create_application executed no statements"
@@ -63,3 +66,33 @@ async def test_create_application_takes_slug_advisory_lock_first(db_session, mon
         "pg_advisory_xact_lock" not in sql and "applications" in sql.lower()
         for sql, _ in statements[1:]
     ), "duplicate-check SELECT not found after the lock"
+
+
+async def test_create_application_barks_on_v2_default(db_session):
+    """A bare `apps create` defaults to standalone_v2, but a loose (non-solution)
+    v2 app can never render (only a Solution deploy builds its dist). So
+    create_application REFUSES v2 with a message pointing at the Solution flow.
+    Solution apps are created by deploy, not this path."""
+    repo = ApplicationRepository(db_session, org_id=None, user_id=None, is_superuser=True)
+    with pytest.raises(ValueError, match="Solution"):
+        await repo.create_application(
+            ApplicationCreate(name="V2 loose", slug=f"v2-{uuid.uuid4().hex[:8]}"),
+            created_by="dev@x",
+        )
+
+
+async def test_create_application_default_is_v2():
+    """The contract default flipped to standalone_v2 (v2 is the future; v1 is the
+    explicit legacy opt-in)."""
+    assert ApplicationCreate(name="x", slug="y").app_model == "standalone_v2"
+
+
+async def test_create_application_inline_v1_still_allowed(db_session):
+    """inline_v1 is the standalone/legacy model and is still creatable here."""
+    repo = ApplicationRepository(db_session, org_id=None, user_id=None, is_superuser=True)
+    slug = f"v1-{uuid.uuid4().hex[:8]}"
+    app = await repo.create_application(
+        ApplicationCreate(name="V1", slug=slug, app_model="inline_v1"),
+        created_by="dev@x",
+    )
+    assert app.app_model == "inline_v1"

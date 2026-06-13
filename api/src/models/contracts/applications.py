@@ -52,8 +52,8 @@ class ApplicationCreate(ApplicationBase):
         description="Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles)",
     )
     app_model: str = Field(
-        default="inline_v1",
-        description="Render model: 'inline_v1' (legacy inline render) or 'standalone_v2' (own createRoot + router + real SDK)",
+        default="standalone_v2",
+        description="Render model: 'standalone_v2' (default — own createRoot + router + real SDK) or 'inline_v1' (legacy inline render). New apps default to v2; pass inline_v1 explicitly only for the legacy model.",
     )
     role_ids: list[UUID] = Field(
         default_factory=list,

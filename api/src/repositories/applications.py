@@ -170,6 +170,22 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         if existing:
             raise ValueError(f"Application with slug '{data.slug}' already exists")
 
+        # standalone_v2 apps render only from a built dist, and the ONLY thing
+        # that builds + serves that dist is a Solution deploy (deploy.py builds
+        # to _apps/{id}/). A bare `apps create` makes a LOOSE (non-solution) app
+        # — solution apps are created by deploy, not here — so a v2 app created
+        # this way could never render. Bark instead of silently making a dead
+        # app. v2 = a Solutions thing: scaffold with `bifrost solution
+        # scaffold-app` and deploy. inline_v1 is the standalone/legacy model.
+        if data.app_model == "standalone_v2":
+            raise ValueError(
+                "standalone_v2 apps live in a Solution (only a Solution deploy "
+                "builds + serves their dist). Create one with "
+                "`bifrost solution scaffold-app <slug>` inside a Solution "
+                "workspace, then `bifrost solution deploy`. To make a legacy "
+                "standalone app here, pass app_model='inline_v1' explicitly."
+            )
+
         application = Application(
             name=data.name,
             slug=data.slug,
