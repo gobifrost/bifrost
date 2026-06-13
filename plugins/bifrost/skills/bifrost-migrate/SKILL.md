@@ -185,6 +185,17 @@ Iterate on layout/theme until it matches the v1 app.
   Use `--include-imports` only if the captured workflows import shared `modules/` you want bundled
   (it pulls the transitive import closure, never the whole `modules/` tree).
 
+> **CAPTURE IS THE TERMINAL STEP — never `solution deploy` after capturing.** Deploy is
+> full-replace: it deletes any solution-owned entity NOT present in the local workspace bundle.
+> The workflows you just captured live in `_repo`/the DB, not your local v2 app workspace, so a
+> deploy-after-capture WIPES them. Order: scaffold → port → build → **deploy the app** → swap →
+> **capture last**. If you must redeploy app code after capturing, re-run capture afterward.
+
+> **Workflow UUID refs:** v1 apps often call `useWorkflow("<uuid>")`. UUIDs are env-specific — in
+> a fresh env they resolve to nothing. Rewrite them to portable `path::function` refs (the execute
+> resolver accepts those in any env) as part of the import rewrite, so the migrated app's data
+> loads after deploy.
+
 ---
 
 ## Shared-entity report (deliverable)

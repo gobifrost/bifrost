@@ -399,6 +399,37 @@ async def test_capture_default_bundles_only_workflow_own_files(db_session) -> No
     assert "modules/c.py" not in names
 
 
+async def test_capture_skips_predeployed_workflow_source_not_in_repo(db_session) -> None:
+    """Capturing into an install that ALREADY has a deployed workflow must not
+    fail because that workflow's source lives under _solutions/{id}/, not _repo/.
+
+    Regression: _python_files read every solution workflow's path from _repo/ and
+    hard-failed (409 NoSuchKey) on a pre-deployed one (e.g. the scaffold sample),
+    so any capture into a non-empty install broke. Now it skips the unreadable
+    (already-deployed) source and bundles only the loose _repo/ ones being adopted.
+    """
+    db = db_session
+    sol = await _make_solution(db)
+    # Pre-deployed workflow: solution-owned, source NOT in _repo/.
+    await _make_captured_workflow(db, sol, "functions/hello.py")
+    # A loose _repo/ workflow we're adopting now.
+    await _make_captured_workflow(db, sol, "workflows/real.py")
+
+    repo = _FakeRepo({"workflows/real.py": b"from bifrost import workflow\n"})
+    # Must NOT raise on functions/hello.py being absent from _repo/.
+    result = await SolutionCaptureService(db, repo=repo).capture(
+        sol,
+        SolutionCaptureSelectors(
+            workflows=[], tables=[], apps=[], forms=[],
+            agents=[], claims=[], configs=[],
+        ),
+    )
+    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+        names = set(zf.namelist())
+    assert "workflows/real.py" in names           # the loose one bundled
+    assert "functions/hello.py" not in names       # the pre-deployed one skipped
+
+
 async def test_capture_include_imports_bundles_transitive_closure_only(db_session) -> None:
     db = db_session
     sol = await _make_solution(db)

@@ -483,10 +483,15 @@ class SolutionCaptureService:
         for path in sorted({str(w["path"]) for w in workflows}):
             try:
                 out[path] = (await self.repo.read(path)).decode("utf-8")
-            except Exception as exc:
-                raise SolutionCaptureConflict(
-                    f"cannot read Python source '{path}' from _repo/: {exc}"
-                ) from exc
+            except Exception:
+                # A workflow whose source isn't in _repo/ is one that was ALREADY
+                # solution-deployed before this capture (its source lives under
+                # _solutions/{id}/, e.g. the scaffold's sample workflow). Capture
+                # adopts LOOSE _repo/ entities; an already-deployed one is part of
+                # the install's deployed bundle already, so skip it here rather
+                # than fail the whole capture (a capture into a non-empty install
+                # would otherwise always 409 on the pre-existing workflows).
+                continue
 
         if not include_imports:
             return out
