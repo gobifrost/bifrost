@@ -93,17 +93,27 @@ shape). Don't rewrite imports by hand yet — step 4 does it.
 bifrost migrate-imports apps/<new-slug> --dry-run     # ALWAYS review the diff first
 bifrost migrate-imports apps/<new-slug> --yes
 ```
-This rewrites `from "bifrost"`:
-- **hooks stay** in `bifrost` (`useWorkflow`/`useWorkflowQuery`/`useWorkflowMutation`/`useTable`/…),
-- React Router primitives → `react-router-dom`,
+**What `migrate-imports` DOES (only this):**
 - lucide icons → `lucide-react`,
+- React Router primitives → `react-router-dom` (then re-wraps `Link`/`navigate` back to the
+  platform's basename-aware versions in `bifrost` — that's deliberate),
 - local `components/<Name>` → relative default import,
-- everything else (the shadcn UI components) **stays in `bifrost`** — those don't exist in the v2
-  SDK, so they become the **shadcn-add list** in step 5.
+- everything else **stays in `bifrost`**.
+
+**What it does NOT do — you finish these BY HAND (battle-test confirmed):**
+- **React** (`useState`, `useEffect`, `useMemo`, `useRef`, `Fragment`, `React`) → move to `react`.
+- **shadcn UI** (`Button`, `Card`, `Dialog`, `Table`, `Tabs`, `Select`, `Badge`, …) → these are NOT
+  in the v2 SDK; `shadcn add` them (step 5) and import locally.
+- **`cn` / `format`** → local util / their npm package (step 5).
+- **Workflow hooks** STAY in `bifrost`, and the v2 SDK exports the full set: `useWorkflowQuery`
+  (READ — auto-runs on mount, `{data,loading,error,refresh}`), `useWorkflowMutation` (ACTION —
+  `{mutate,…}`), and the low-level `useWorkflow` (`{data,loading,error,run}`). v1 apps already use
+  Query/Mutation, so those call sites carry over unchanged — prefer them over `useWorkflow`
+  (which silently returns null until you call `run()`). Also `useTable`/`useInfiniteTable`/`tables`.
 
 The classifier is regex, not AST — **review the diff** for names you declared locally that happen
-to match a platform export. React itself (`useState`, `useEffect`, …) → move to `react`; `cn`/
-`format` → their own packages (see step 5).
+to match a platform export. Verify with `vite build` (step 8): a leftover `bifrost` import of a
+shadcn/React name fails the build loudly with "not exported by bifrost" — that's your to-do list.
 
 ### 5. Resolve the UI components — `shadcn add` only what's used
 
@@ -144,8 +154,15 @@ The backend `WorkflowRefRewriter` (`api/src/services/solutions/ref_rewriter.py`)
 the dependency walker already found the refs. Verify with a fresh capture `--dry-run` that nothing
 dangles.
 
-### 8. Run it + confirm the design
+### 8. Build, run, confirm the design
 
+First prove it compiles — `vite build` is the fastest, surest check that every import resolved
+(any leftover `bifrost` import of a React/shadcn name fails here with "not exported by bifrost",
+which is your remaining-rewrite to-do list):
+```bash
+cd apps/<new-slug> && npm install && npm run build   # must succeed before driving the UI
+```
+Then drive it:
 ```bash
 bifrost solution start <new-slug>     # app Vite server + local @workflow functions, one origin
 ```
