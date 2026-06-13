@@ -87,54 +87,37 @@ basename, reads platform boot or dev env), `App.tsx` (imports `BifrostHeader`, `
 Copy the v1 page/component TSX into the new app dir (flat `pages/` + `components/` is the v2
 shape). Don't rewrite imports by hand yet — step 4 does it.
 
-### 4. Rewrite the imports
+### 4 + 5. Rewrite imports + install shadcn — ONE deterministic command
+
+`bifrost migrate-imports --v2` does the whole v1→v2 import split deterministically (the v1
+`"bifrost"` surface is a fixed, known set, so every symbol has a known v2 home):
 
 ```bash
-bifrost migrate-imports apps/<new-slug> --dry-run     # ALWAYS review the diff first
-bifrost migrate-imports apps/<new-slug> --yes
+bifrost migrate-imports apps/<new-slug>/src --v2 --dry-run   # review: shows the shadcn-add list + the diff
+bifrost migrate-imports apps/<new-slug>/src --v2 --yes
 ```
-**What `migrate-imports` DOES (only this):**
-- lucide icons → `lucide-react`,
-- React Router primitives → `react-router-dom` (then re-wraps `Link`/`navigate` back to the
-  platform's basename-aware versions in `bifrost` — that's deliberate),
-- local `components/<Name>` → relative default import,
-- everything else **stays in `bifrost`**.
+It splits the single `from "bifrost"` line by ORIGIN:
+- shadcn UI (`Button`, `Card`, `Dialog`, `Table`, …) → `@/components/ui/<component>`
+- React (`useState`, `Fragment`, …) → `react`; router (`Link`, `useNavigate`, …) → `react-router-dom`
+- `cn`/`format` → `@/lib/utils`; `toast` → `sonner`; lucide icons → `lucide-react`
+- **hooks STAY in `bifrost`**: `useWorkflowQuery` (READ — auto-runs, `{data,refresh}`),
+  `useWorkflowMutation` (ACTION — `{mutate}`), `useWorkflow`, `useTable`/`useInfiniteTable`/`tables`
+- JS globals (`Set`, `Map`) + bare `navigate` → dropped; unknowns → kept with a `// TODO(migrate)` marker
+- **`src/components/ui/` is NEVER touched** (real shadcn source — rewriting it would corrupt it)
 
-**What it does NOT do — you finish these BY HAND (battle-test confirmed):**
-- **React** (`useState`, `useEffect`, `useMemo`, `useRef`, `Fragment`, `React`) → move to `react`.
-- **shadcn UI** (`Button`, `Card`, `Dialog`, `Table`, `Tabs`, `Select`, `Badge`, …) → these are NOT
-  in the v2 SDK; `shadcn add` them (step 5) and import locally.
-- **`cn` / `format`** → local util / their npm package (step 5).
-- **Workflow hooks** STAY in `bifrost`, and the v2 SDK exports the full set: `useWorkflowQuery`
-  (READ — auto-runs on mount, `{data,loading,error,refresh}`), `useWorkflowMutation` (ACTION —
-  `{mutate,…}`), and the low-level `useWorkflow` (`{data,loading,error,run}`). v1 apps already use
-  Query/Mutation, so those call sites carry over unchanged — prefer them over `useWorkflow`
-  (which silently returns null until you call `run()`). Also `useTable`/`useInfiniteTable`/`tables`.
-
-The classifier is regex, not AST — **review the diff** for names you declared locally that happen
-to match a platform export. Verify with `vite build` (step 8): a leftover `bifrost` import of a
-shadcn/React name fails the build loudly with "not exported by bifrost" — that's your to-do list.
-
-> **NEVER run `migrate-imports` over `src/components/ui/`** — those are real shadcn source files
-> (from `shadcn add`), and the classifier will inject bogus `from "bifrost"` imports into them,
-> corrupting the components. Run it only on `src/pages` + your own `src/components` (not `ui/`). If
-> you corrupt them, `npx shadcn add <comp> --overwrite` restores clean source.
-
-### 5. Resolve the UI components — `shadcn add` only what's used
-
-The scaffold ALREADY ships Tailwind v4 + `components.json` + `cn` (`src/lib/utils.ts`) + the shadcn
-`.dark` token layer (`src/index.css`), so `npx shadcn add` works immediately — no `shadcn init`,
-no Tailwind setup. For every shadcn component the app uses (the ones still importing from `bifrost`
-after the rewrite — they're not in the v2 SDK):
-```bash
-cd apps/<new-slug> && npx shadcn@latest add button card dialog select table tabs tooltip badge … --yes
+The command PRINTS the exact deterministic install line, e.g.:
 ```
-This drops REAL current shadcn source (rounded, token-based, dark-aware) into `src/components/ui/`.
-Then point the app's import sites at `@/components/ui/<component>`. `Combobox` is NOT a base
-primitive — it's the Popover+Command recipe; `shadcn add popover command` and vendor a small
-`combobox.tsx` wrapper. `toast` → `sonner` (add `<Toaster />` in App.tsx). **Do not** hand-write
-stub components and **do not** add a `@bifrost/ui` package — a stub/no-Tailwind app renders
-UNSTYLED (the exact regression this guidance prevents). Verify with a screenshot, not just a build.
+npx shadcn@latest add badge button card dialog input label select table tabs tooltip --yes
+```
+Run that (the scaffold already ships Tailwind v4 + `components.json` (radix-rhea) + `cn` +
+the `.dark` token layer, so `shadcn add` works with no setup), plus `npm i radix-ui` (the umbrella
+pkg the radix-rhea components import) and `npm i sonner` (toast — add `<Toaster/>` in App.tsx).
+
+`Combobox`/`MultiCombobox` are shadcn RECIPES, not base primitives — the add-list already includes
+their `popover`+`command` primitives; vendor a small `combobox.tsx` wrapper (Popover+Command).
+
+**Do not** hand-write stub UI components or add a `@bifrost/ui` package — a stub/no-Tailwind app
+renders UNSTYLED. Verify with `vite build` (step 8) AND a screenshot, not just a build.
 
 ### 6. Derive package.json + wire provider/theme/header/basename
 
