@@ -90,6 +90,14 @@ class Solution(Base):
         String(64), nullable=True, default=None
     )
 
+    # Setup completeness (Task 5/6). A solution is "incomplete" when it declares
+    # required configs that have no value set. Default True = nothing unset (a
+    # freshly installed solution with no required configs is immediately complete).
+    # Task 6/7 compute and flip this flag after each deploy/config change.
+    setup_complete: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+
     # Source mode (§3.9). Disconnected (default): deploy is the only writer.
     # Connected: auto-pull from git_repo_url is the only writer; deploy refused.
     git_connected: Mapped[bool] = mapped_column(
