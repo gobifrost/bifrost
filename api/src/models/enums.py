@@ -1,7 +1,5 @@
 """
 Enumeration types used across the application.
-
-These match the existing enums in shared/models.py for compatibility.
 """
 
 from enum import Enum

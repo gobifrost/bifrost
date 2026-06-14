@@ -508,11 +508,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
                         'source': 'workflow'
                     })
 
-        # Check if it's a WorkflowError
-        if isinstance(original_exc, WorkflowError):
-            status = ExecutionStatus.FAILED
-        else:
-            status = ExecutionStatus.FAILED
+        status = ExecutionStatus.FAILED
 
         # Free traceback references — already formatted above
         original_exc.__traceback__ = None

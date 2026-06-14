@@ -196,13 +196,14 @@ Entity mutations have three parallel surfaces: **CLI** (`bifrost <entity> ...`),
 ```
 api/
 ├── src/              # FastAPI application
-│   ├── handlers/     # HTTP endpoint handlers (thin layer)
-│   ├── models/       # SQLAlchemy models
-│   ├── jobs/         # Background job workers
+│   ├── routers/      # HTTP endpoint routers (FastAPI APIRouters)
+│   ├── services/     # Business logic, algorithms, domain rules
+│   ├── repositories/ # Org-scoped data access (see repositories/README.md)
+│   ├── models/       # SQLAlchemy ORM (models/orm/) + Pydantic contracts (models/contracts/)
+│   ├── jobs/         # Background job workers + schedulers
 │   └── main.py       # FastAPI app entry point
-├── shared/           # Business logic, utilities
-│   ├── models.py     # Pydantic models (source of truth)
-│   └── ...
+├── shared/           # Cross-cutting utilities (scope_resolver, file_paths, version)
+├── bifrost/          # Distributable SDK + CLI package
 ├── alembic/          # Database migrations
 └── tests/            # Unit and E2E tests
 
@@ -226,14 +227,14 @@ Summarizer-generated `AIUsage` rows roll up into `AgentStats.total_cost_7d` (the
 
 ### Backend (Python/FastAPI)
 
--   **Models**: All Pydantic models MUST be defined in `api/shared/models.py`
--   **Routing**: Create one handler file per base route (e.g., `/discovery` → `discovery_handlers.py`)
+-   **Models**: Request/response Pydantic contracts live in `api/src/models/contracts/`; SQLAlchemy ORM models live in `api/src/models/orm/`
+-   **Routing**: Create one router file per base route under `api/src/routers/` (e.g., `/discovery` → `discovery.py`)
     -   Sub-routes and related functions live in the same file
 -   **Request/Response**: Always use Pydantic Request and Response models
--   **Business Logic**: MUST live in `api/shared/`, NOT in `api/src/handlers/`
-    -   Handlers are thin HTTP handlers only
-    -   Complex logic, algorithms, business rules go in shared modules
-    -   Example: User provisioning logic lives in `shared/user_provisioning.py`
+-   **Business Logic**: MUST live in `api/src/services/` (or `api/shared/` for cross-cutting utilities), NOT inline in routers
+    -   Routers are thin HTTP handlers only
+    -   Complex logic, algorithms, business rules go in service modules
+    -   Example: agent execution logic lives in `src/services/agent_executor.py`
 
 ### Frontend (TypeScript/React)
 
@@ -314,7 +315,7 @@ cd client && npm run lint                 # Lint TypeScript
 ### Common Workflows
 
 **After adding/modifying Pydantic models:**
-1. Make changes to `api/shared/models.py`
+1. Make changes to the relevant contract in `api/src/models/contracts/`
 2. Hot reload updates API automatically
 3. Run `cd client && npm run generate:types`
 4. TypeScript types updated in `client/src/lib/v1.d.ts`
