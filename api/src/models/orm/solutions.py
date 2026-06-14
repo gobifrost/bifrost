@@ -109,6 +109,23 @@ class Solution(Base):
     )
     git_repo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
 
+    # Subfolder within the connected repo holding this solution's
+    # bifrost.solution.yaml (omni-repo: one repo, a folder per solution).
+    # None/"" => repo root (backward compatible).
+    repo_subpath: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+
+    # Git ref (branch or tag) the connected install tracks. None => the repo's
+    # default branch. Lets a consumer pin to a tag while detection still reads
+    # the descriptor version: at that ref's HEAD.
+    git_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+
+    # Newest descriptor version available at the connected repo's ref HEAD, when
+    # it is PEP-440-greater than the installed `version`. None => up to date /
+    # not git-connected / not yet checked. Written only by the update-check job.
+    update_available_version: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, default=None
+    )
+
     # Solution-level icon shown on the /solutions catalog (mirrors the app-logo
     # plumbing): declared by ``logo:`` in bifrost.solution.yaml, validated and
     # stamped by deploy (present => set, absent => cleared).
