@@ -258,8 +258,128 @@ describe("CreateEditSolution — install collision prompt", () => {
 		await user.click(installBtn);
 
 		expect(
-			await screen.findByText(/incorrect password for this solution backup/i),
+			await screen.findByText(/incorrect password.*backup password/i),
 		).toBeInTheDocument();
 		expect(screen.queryByTestId("replace-secrets-prompt")).toBeNull();
+	});
+});
+
+describe("CreateEditSolution — full-backup password prompt", () => {
+	it("shows the password field when preview.requires_password is true", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(
+			makePreview({ requires_password: true }),
+		);
+
+		const file = new File(["zip"], "backup.zip", { type: "application/zip" });
+		renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", file, organizationId: null }}
+				open
+				onClose={vi.fn()}
+				onSaved={vi.fn()}
+			/>,
+		);
+
+		// Password field appears after preview resolves.
+		const passwordInput = await screen.findByTestId("backup-password-input");
+		expect(passwordInput).toBeInTheDocument();
+		expect(passwordInput).toHaveAttribute("type", "password");
+	});
+
+	it("does NOT show the password field for a normal (non-encrypted) zip", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(
+			makePreview({ requires_password: false }),
+		);
+
+		const file = new File(["zip"], "solution.zip", { type: "application/zip" });
+		renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", file, organizationId: null }}
+				open
+				onClose={vi.fn()}
+				onSaved={vi.fn()}
+			/>,
+		);
+
+		await screen.findByTestId("confirm-install");
+		expect(screen.queryByTestId("backup-password-input")).toBeNull();
+	});
+
+	it("passes the entered password to installSolution on confirm", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(
+			makePreview({ requires_password: true }),
+		);
+		vi.mocked(installSolution).mockResolvedValue(makeSolution() as Solution);
+
+		const file = new File(["zip"], "backup.zip", { type: "application/zip" });
+		const onSaved = vi.fn();
+		const { user } = renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", file, organizationId: null }}
+				open
+				onClose={vi.fn()}
+				onSaved={onSaved}
+			/>,
+		);
+
+		// Enter the password.
+		const passwordInput = await screen.findByTestId("backup-password-input");
+		await user.type(passwordInput, "s3cr3t!");
+
+		// Click install.
+		const installBtn = await screen.findByTestId("confirm-install");
+		await waitFor(() => expect(installBtn).toBeEnabled());
+		await user.click(installBtn);
+
+		await waitFor(() => expect(installSolution).toHaveBeenCalledTimes(1));
+		expect(vi.mocked(installSolution).mock.calls[0][0]).toMatchObject({
+			password: "s3cr3t!",
+		});
+		await waitFor(() => expect(onSaved).toHaveBeenCalled());
+	});
+
+	it("shows an error and clears the password field on a 422, allowing retry", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(
+			makePreview({ requires_password: true }),
+		);
+		const wrongPwdErr = new Error("wrong password") as Error & { status: number };
+		wrongPwdErr.status = 422;
+		vi.mocked(installSolution)
+			.mockRejectedValueOnce(wrongPwdErr)
+			.mockResolvedValueOnce(makeSolution() as Solution);
+
+		const file = new File(["zip"], "backup.zip", { type: "application/zip" });
+		const onSaved = vi.fn();
+		const { user } = renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", file, organizationId: null }}
+				open
+				onClose={vi.fn()}
+				onSaved={onSaved}
+			/>,
+		);
+
+		// Enter wrong password and click install.
+		const passwordInput = await screen.findByTestId("backup-password-input");
+		await user.type(passwordInput, "wrongpass");
+		const installBtn = await screen.findByTestId("confirm-install");
+		await waitFor(() => expect(installBtn).toBeEnabled());
+		await user.click(installBtn);
+
+		// Error message shown; password field cleared.
+		expect(
+			await screen.findByText(/incorrect password.*backup password/i),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("backup-password-input")).toHaveValue("");
+
+		// Re-enter correct password and retry.
+		await user.type(screen.getByTestId("backup-password-input"), "correct!");
+		await user.click(screen.getByTestId("confirm-install"));
+
+		await waitFor(() => expect(installSolution).toHaveBeenCalledTimes(2));
+		expect(vi.mocked(installSolution).mock.calls[1][0]).toMatchObject({
+			password: "correct!",
+		});
+		await waitFor(() => expect(onSaved).toHaveBeenCalled());
 	});
 });

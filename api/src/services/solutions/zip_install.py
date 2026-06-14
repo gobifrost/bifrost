@@ -112,6 +112,10 @@ class PreviewResult:
     agents: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
+    # True when the zip contains .bifrost/secrets.enc (a full-backup export).
+    # The install endpoint requires a password to decrypt it; the preview surface
+    # this so the UI can prompt for the password BEFORE the install POST.
+    requires_password: bool = False
 
 
 def _safe_extract(data: bytes, dest: str) -> None:
@@ -155,6 +159,8 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         version = descriptor.version
         logo = descriptor.logo
 
+    requires_password = (workspace / ".bifrost" / "secrets.enc").exists()
+
     return PreviewResult(
         slug=slug,
         name=name,
@@ -168,6 +174,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         agents=_collect_agents(workspace),
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
+        requires_password=requires_password,
     )
 
 

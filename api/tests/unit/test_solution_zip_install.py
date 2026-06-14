@@ -104,3 +104,17 @@ def test_bad_zip_bytes_raise() -> None:
     """Non-zip bytes raise BadZipFile (the endpoint maps it to a 422)."""
     with pytest.raises(zipfile.BadZipFile):
         preview_zip(b"this is not a zip file")
+
+
+def test_preview_requires_password_false_for_normal_zip() -> None:
+    """A regular (shareable) zip without .bifrost/secrets.enc reports requires_password=False."""
+    result = preview_zip(_make_workspace_zip())
+    assert result.requires_password is False
+
+
+def test_preview_requires_password_true_for_full_backup_zip() -> None:
+    """A full-backup zip carrying .bifrost/secrets.enc reports requires_password=True."""
+    result = preview_zip(
+        _make_workspace_zip(extra={".bifrost/secrets.enc": "encrypted-blob-placeholder"})
+    )
+    assert result.requires_password is True

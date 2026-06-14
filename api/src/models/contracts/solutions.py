@@ -281,7 +281,11 @@ class SolutionInstallPreview(BaseModel):
 
     When an install already exists for the zip's slug at the requested scope,
     ``existing_install`` + ``diff`` describe the upgrade the install would
-    perform (Task 22) — drag-drop routes to UPGRADE, never a second install."""
+    perform (Task 22) — drag-drop routes to UPGRADE, never a second install.
+
+    ``requires_password`` is True when the zip contains ``.bifrost/secrets.enc``
+    (a full-backup export). The install endpoint requires a password to decrypt
+    it; the UI should prompt for the password before the install POST."""
 
     slug: str | None = None
     name: str | None = None
@@ -296,6 +300,7 @@ class SolutionInstallPreview(BaseModel):
     config_schemas: list[dict[str, Any]] = Field(default_factory=list)
     existing_install: SolutionExistingInstall | None = None
     diff: SolutionUpgradeDiff | None = None
+    requires_password: bool = False
 
 
 class SolutionDeployRequest(BaseModel):

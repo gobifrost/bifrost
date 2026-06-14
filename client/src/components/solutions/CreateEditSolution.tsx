@@ -432,6 +432,7 @@ function CreateBody({
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [installError, setInstallError] = useState<string | null>(null);
 	const [configValues, setConfigValues] = useState<Record<string, string>>({});
+	const [backupPassword, setBackupPassword] = useState("");
 	const [downgradeConfirm, setDowngradeConfirm] = useState(false);
 	// Colliding config-value keys parsed from a ContentCollision 409. When
 	// non-null, the replace-secrets confirmation prompt is shown; confirming
@@ -484,6 +485,7 @@ function CreateBody({
 		setInstallError(null);
 		setDowngradeConfirm(false);
 		setConfigValues({});
+		setBackupPassword("");
 		void runPreview(f, orgId);
 	}
 
@@ -506,6 +508,7 @@ function CreateBody({
 				configValues: values,
 				force,
 				replaceSecrets,
+				password: backupPassword.trim() || undefined,
 			});
 		},
 		onSuccess: async (created) => {
@@ -556,7 +559,11 @@ function CreateBody({
 			}
 			if (status === 422) {
 				// Wrong/missing password for a full-backup zip carrying secrets.
-				setInstallError("Incorrect password for this solution backup.");
+				// Clear the entered password so the user can re-type it; the
+				// password field stays visible (preview.requires_password is still
+				// true) so they can correct it and retry.
+				setBackupPassword("");
+				setInstallError("Incorrect password — please enter the backup password and try again.");
 				return;
 			}
 			setInstallError(message);
@@ -618,6 +625,7 @@ function CreateBody({
 								setPreview(null);
 								setPreviewError(null);
 								setDowngradeConfirm(false);
+								setBackupPassword("");
 								previewSeq.current++;
 								setPreviewLoading(false);
 							}}
@@ -718,6 +726,26 @@ function CreateBody({
 								</p>
 								<div className="mt-3">
 									<EntitySummary preview={preview} />
+								</div>
+							</div>
+						)}
+
+						{preview.requires_password && (
+							<div className="space-y-2 rounded-lg border p-3">
+								<p className="text-sm font-medium">Backup password required</p>
+								<p className="text-xs text-muted-foreground">
+									This is a full backup. Enter the password used when it was exported.
+								</p>
+								<div className="space-y-1">
+									<Label htmlFor="backup-password">Password</Label>
+									<Input
+										id="backup-password"
+										data-testid="backup-password-input"
+										type="password"
+										value={backupPassword}
+										onChange={(e) => setBackupPassword(e.target.value)}
+										placeholder="Export password"
+									/>
 								</div>
 							</div>
 						)}

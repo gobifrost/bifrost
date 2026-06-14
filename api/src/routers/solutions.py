@@ -1072,6 +1072,7 @@ async def install_preview(
         config_schemas=result.config_schemas,
         existing_install=existing_install,
         diff=diff,
+        requires_password=result.requires_password,
     )
 
 

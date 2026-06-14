@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7220,6 +7220,12 @@ export interface paths {
          * @description Rebuild the install's workspace bundle LIVE from the entities it
          *     currently owns, so the export always reflects present ownership (not the
          *     last capture/deploy). Directly re-installable via the zip-install path.
+         *
+         *     ``mode=shareable`` (default): portable export, no sensitive values.
+         *     ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
+         *     the config values set for this install; requires ``password``.
+         *     ``include_data=true``: include table row data in the encrypted blob.
+         *     Requires ``mode=full`` (data must be encrypted).
          */
         get: operations["export_solution_api_solutions__solution_id__export_get"];
         put?: never;
@@ -7406,6 +7412,13 @@ export interface paths {
          *     per-install write lock, and — in the same locked section after the S3 finalize
          *     — applies the provided ``config_values`` (a JSON object of key→value). A
          *     missing required config does NOT block the install (warn-not-block).
+         *
+         *     Full-backup zips carry a ``.bifrost/secrets.enc`` blob; ``password`` is
+         *     required to decrypt it.  A wrong password is refused with 422 before
+         *     anything is written.  If the blob contains values for keys that already
+         *     have a Config row in the target org, the import is refused with 409 unless
+         *     ``replace_secrets=true`` (config values) or ``replace_data=true`` (table
+         *     data, Phase 4).
          *
          *     A zip whose descriptor ``version`` is OLDER than the installed version is
          *     refused with 409 (downgrade gate, Task 20) unless ``?force=true``.
@@ -10645,6 +10658,18 @@ export interface components {
              * @default {}
              */
             config_values: string;
+            /** Password */
+            password?: string | null;
+            /**
+             * Replace Secrets
+             * @default false
+             */
+            replace_secrets: boolean;
+            /**
+             * Replace Data
+             * @default false
+             */
+            replace_data: boolean;
         };
         /** Body_login_auth_login_post */
         Body_login_auth_login_post: {
@@ -20942,6 +20967,10 @@ export interface components {
          *     When an install already exists for the zip's slug at the requested scope,
          *     ``existing_install`` + ``diff`` describe the upgrade the install would
          *     perform (Task 22) — drag-drop routes to UPGRADE, never a second install.
+         *
+         *     ``requires_password`` is True when the zip contains ``.bifrost/secrets.enc``
+         *     (a full-backup export). The install endpoint requires a password to decrypt
+         *     it; the UI should prompt for the password before the install POST.
          */
         SolutionInstallPreview: {
             /** Slug */
@@ -20982,6 +21011,11 @@ export interface components {
             }[];
             existing_install?: components["schemas"]["SolutionExistingInstall"] | null;
             diff?: components["schemas"]["SolutionUpgradeDiff"] | null;
+            /**
+             * Requires Password
+             * @default false
+             */
+            requires_password: boolean;
         };
         /**
          * SolutionSetupItem
@@ -29331,7 +29365,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -29364,7 +29398,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -29397,7 +29431,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -29430,7 +29464,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -35709,7 +35743,11 @@ export interface operations {
     };
     export_solution_api_solutions__solution_id__export_get: {
         parameters: {
-            query?: never;
+            query?: {
+                mode?: string;
+                password?: string | null;
+                include_data?: boolean;
+            };
             header?: never;
             path: {
                 solution_id: string;
