@@ -1,4 +1,4 @@
-"""E2E: GET /api/solutions/{id}/export?mode=full — encrypted secrets blob.
+"""E2E: POST /api/solutions/{id}/export?mode=full — encrypted secrets blob.
 
 Verifies that:
 - ``mode=full`` without a password returns 422.
@@ -99,13 +99,17 @@ async def test_full_export_includes_encrypted_secrets_blob(
     sol = await make_solution_with_set_config(key="api_key", value="xyz")
     headers = platform_admin.headers
 
-    # mode=full without a password must be rejected.
-    bad = e2e_client.get(f"/api/solutions/{sol.id}/export?mode=full", headers=headers)
+    # mode=full without a password must be rejected. Password rides in the body.
+    bad = e2e_client.post(
+        f"/api/solutions/{sol.id}/export?mode=full", json={}, headers=headers
+    )
     assert bad.status_code == 422
 
     # mode=full with a password must return a zip containing secrets.enc.
-    ok = e2e_client.get(
-        f"/api/solutions/{sol.id}/export?mode=full&password=pw", headers=headers
+    ok = e2e_client.post(
+        f"/api/solutions/{sol.id}/export?mode=full",
+        json={"password": "pw"},
+        headers=headers,
     )
     assert ok.status_code == 200, ok.text
     names = zipfile.ZipFile(io.BytesIO(ok.content)).namelist()
@@ -119,7 +123,7 @@ async def test_full_export_includes_encrypted_secrets_blob(
     assert content.config_values.get(sol.key) == "xyz"
 
     # Shareable export (default) must NOT include the blob.
-    sh = e2e_client.get(f"/api/solutions/{sol.id}/export", headers=headers)
+    sh = e2e_client.post(f"/api/solutions/{sol.id}/export", json={}, headers=headers)
     assert sh.status_code == 200, sh.text
     sh_names = zipfile.ZipFile(io.BytesIO(sh.content)).namelist()
     assert ".bifrost/secrets.enc" not in sh_names
@@ -141,8 +145,10 @@ async def test_full_export_decrypts_secret_typed_config(
     )
     headers = platform_admin.headers
 
-    ok = e2e_client.get(
-        f"/api/solutions/{sol.id}/export?mode=full&password=pw", headers=headers
+    ok = e2e_client.post(
+        f"/api/solutions/{sol.id}/export?mode=full",
+        json={"password": "pw"},
+        headers=headers,
     )
     assert ok.status_code == 200, ok.text
 

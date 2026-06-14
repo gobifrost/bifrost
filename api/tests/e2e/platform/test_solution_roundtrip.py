@@ -149,7 +149,7 @@ def test_shareable_export_installs_into_fresh_org(e2e_client, platform_admin):
     )
 
     # --- Export the source solution ---
-    export_r = e2e_client.get(f"/api/solutions/{src_id}/export", headers=headers)
+    export_r = e2e_client.post(f"/api/solutions/{src_id}/export", json={}, headers=headers)
     assert export_r.status_code == 200, export_r.text
     assert export_r.headers.get("content-type") == "application/zip"
     zip_bytes = export_r.content

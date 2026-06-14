@@ -60,7 +60,7 @@ async def test_export_reflects_currently_owned_app(
     assert dep.json()["apps_upserted"] == 1
 
     # 3. Export must rebuild live and include the app.
-    resp = e2e_client.get(f"/api/solutions/{sol_id}/export", headers=headers)
+    resp = e2e_client.post(f"/api/solutions/{sol_id}/export", json={}, headers=headers)
     assert resp.status_code == 200, resp.text
     names = zipfile.ZipFile(io.BytesIO(resp.content)).namelist()
     # The app is serialized into .bifrost/apps.yaml (the manifest); source files

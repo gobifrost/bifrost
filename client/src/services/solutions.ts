@@ -199,11 +199,18 @@ export async function exportSolution(
 	password?: string,
 	includeData?: boolean,
 ): Promise<{ blob: Blob; filename: string }> {
+	// POST so the full-backup password rides in the request body, not the URL
+	// query string (a query-string secret leaks into logs/proxies/history).
+	// mode + include_data are not sensitive and stay in the query.
 	const params = new URLSearchParams({ mode });
-	if (password) params.set("password", password);
 	if (includeData) params.set("include_data", "true");
 	const response = await authFetch(
 		`/api/solutions/${solutionId}/export?${params.toString()}`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(password ? { password } : {}),
+		},
 	);
 	if (!response.ok) {
 		throw new Error(

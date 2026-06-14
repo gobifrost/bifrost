@@ -225,11 +225,31 @@ describe("exportSolution", () => {
 		const { exportSolution } = await import("./solutions");
 		const out = await exportSolution("sol-1");
 
+		// POST, mode in query, body present (empty for shareable) — password
+		// must never appear in the URL.
 		expect(mockAuthFetch).toHaveBeenCalledWith(
 			"/api/solutions/sol-1/export?mode=shareable",
+			expect.objectContaining({ method: "POST", body: "{}" }),
 		);
 		expect(out.filename).toBe("rtm-portal-0.9.0.zip");
 		expect(out.blob).toBe(blob);
+	});
+
+	it("sends the full-backup password in the body, not the URL", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			blob: () => Promise.resolve(new Blob([])),
+		});
+
+		const { exportSolution } = await import("./solutions");
+		await exportSolution("sol-1", "full", "hunter2", true);
+
+		const [url, options] = mockAuthFetch.mock.calls[0];
+		expect(url).toBe("/api/solutions/sol-1/export?mode=full&include_data=true");
+		expect(url).not.toContain("hunter2");
+		expect(options.method).toBe("POST");
+		expect(JSON.parse(options.body)).toEqual({ password: "hunter2" });
 	});
 
 	it("falls back to a generic filename without a disposition header", async () => {

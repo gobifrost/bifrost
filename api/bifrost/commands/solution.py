@@ -1283,11 +1283,16 @@ def export_cmd(solution_ref: str, mode: str, password: str | None, out_path: str
             sol_slug = match.get("slug")
             sol_version = match.get("version")
 
+        # Password rides in the POST body, never the URL query (query-string
+        # secrets leak into access logs / proxies / history). mode is not secret.
         params: dict[str, str] = {"mode": mode}
+        body: dict[str, str] = {}
         if password is not None:
-            params["password"] = password
+            body["password"] = password
 
-        resp = await client.get(f"/api/solutions/{sol_id}/export", params=params)
+        resp = await client.post(
+            f"/api/solutions/{sol_id}/export", params=params, json=body
+        )
         if resp.status_code == 422:
             detail = resp.json().get("detail", resp.text)
             raise click.ClickException(f"Export rejected: {detail}")

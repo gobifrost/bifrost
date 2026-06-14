@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile, status
 from fastapi import Form as FastapiForm
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -155,7 +155,7 @@ async def solution_setup(
     return await compute_setup_status(ctx.db, sol)
 
 
-@router.get(
+@router.post(
     "/{solution_id}/export",
     summary="Download the install's workspace zip (admin only)",
     responses={
@@ -168,16 +168,21 @@ async def export_solution(
     ctx: Context,
     user: CurrentSuperuser,
     mode: str = "shareable",
-    password: str | None = None,
     include_data: bool = False,
+    password: Annotated[str | None, Body(embed=True)] = None,
 ) -> Response:
     """Rebuild the install's workspace bundle LIVE from the entities it
     currently owns, so the export always reflects present ownership (not the
     last capture/deploy). Directly re-installable via the zip-install path.
 
+    This is a POST (not GET) specifically so the full-backup ``password`` rides
+    in the request BODY rather than the URL query string — a query-string secret
+    leaks into access logs, proxies, and browser history. ``mode`` and
+    ``include_data`` stay in the query (they are not sensitive).
+
     ``mode=shareable`` (default): portable export, no sensitive values.
     ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
-    the config values set for this install; requires ``password``.
+    the config values set for this install; requires ``password`` (in the body).
     ``include_data=true``: include table row data in the encrypted blob.
     Requires ``mode=full`` (data must be encrypted).
     """

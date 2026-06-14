@@ -13,7 +13,7 @@ Contract under test:
 make_full_backup_zip builds a real full-backup zip by:
   1. Creating a source solution with a declared config + set value via the
      make_solution_with_set_config helper from test_solution_export_full.py.
-  2. GETting /export?mode=full&password=... to get real encrypted zip bytes.
+  2. POSTing /export?mode=full (password in body) to get real encrypted zip bytes.
 This is the correct approach: we exercise the real export format, not a hand-assembled
 blob, so the test proves the round-trip end to end.
 """
@@ -187,8 +187,9 @@ def make_full_backup_zip(e2e_client, platform_admin, db_session):
             await db_session.commit()
 
         # Export via the real endpoint — exercises the real blob format.
-        export_r = e2e_client.get(
-            f"/api/solutions/{sol_id}/export?mode=full&password={password}",
+        export_r = e2e_client.post(
+            f"/api/solutions/{sol_id}/export?mode=full",
+            json={"password": password},
             headers=headers,
         )
         assert export_r.status_code == 200, export_r.text

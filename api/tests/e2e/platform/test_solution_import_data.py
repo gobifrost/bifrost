@@ -12,7 +12,7 @@ Contract under test:
 make_solution_with_table_rows builds a real full-backup zip by:
   1. Creating a source solution with a deployed table.
   2. Seeding rows in that table via the documents API.
-  3. GETting /export?mode=full&password=...&include_data=true for real zip bytes.
+  3. POSTing /export?mode=full&include_data=true (password in body) for real zip bytes.
 
 This exercises the full round-trip (export → install) end to end.
 """
@@ -121,8 +121,9 @@ def make_solution_with_table_rows(e2e_client, platform_admin):
             assert dr.status_code in (200, 201), f"seed doc failed: {dr.text}"
 
         # Export with include_data=true to get the full-backup zip.
-        exp = e2e_client.get(
-            f"/api/solutions/{sol_id}/export?mode=full&password=pw&include_data=true",
+        exp = e2e_client.post(
+            f"/api/solutions/{sol_id}/export?mode=full&include_data=true",
+            json={"password": "pw"},
             headers=headers,
         )
         assert exp.status_code == 200, exp.text

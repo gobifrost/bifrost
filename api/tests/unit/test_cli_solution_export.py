@@ -1,7 +1,8 @@
-"""`bifrost solution export` — thin CLI wrapper over GET /api/solutions/{id}/export.
+"""`bifrost solution export` — thin CLI wrapper over POST /api/solutions/{id}/export.
 
-The full-without-password check must fail at Click validation time (UsageError),
-before any HTTP call — so no network or mocking is needed for that test.
+The export is a POST so the full-backup password rides in the request body, not
+the URL query string. The full-without-password check still fails at Click
+validation time (UsageError) before any HTTP call.
 
 Other tests mock ``BifrostClient.get_instance`` so no network/DB is touched.
 """
@@ -43,12 +44,17 @@ def _client(captured, *, solutions=None, zip_data=b"PK\x05\x06" + b"\x00" * 18):
         captured.setdefault("gets", []).append((path, kwargs))
         if path == "/api/solutions":
             return _resp({"solutions": sols})
+        return _resp({})
+
+    async def post(path, **kwargs):  # type: ignore[no-untyped-def]
+        captured.setdefault("posts", []).append((path, kwargs))
         if path.endswith("/export"):
             return _zip_resp(zip_data, f"{SOL_SLUG}-0.1.0.zip")
         return _resp({})
 
     c = mock.AsyncMock()
     c.get = get
+    c.post = post
     return c
 
 
@@ -73,10 +79,10 @@ def test_export_shareable_by_id(tmp_path: pathlib.Path) -> None:
             ["export", SOL_ID, "--out", str(out_file)],
         )
     assert res.exit_code == 0, res.output
-    # Should have hit the export endpoint (id passed directly — no list call needed)
-    gets = captured.get("gets", [])
-    export_paths = [p for p, _ in gets if "/export" in p]
-    assert export_paths, f"No export GET in {gets}"
+    # Should have hit the export endpoint via POST (id passed directly — no list call)
+    posts = captured.get("posts", [])
+    export_paths = [p for p, _ in posts if "/export" in p]
+    assert export_paths, f"No export POST in {posts}"
     assert out_file.read_bytes() == zip_data
 
 
@@ -97,13 +103,15 @@ def test_export_shareable_by_slug(tmp_path: pathlib.Path) -> None:
     # Must have called list to resolve slug
     list_calls = [p for p, _ in gets if p == "/api/solutions"]
     assert list_calls, f"Expected /api/solutions list call in {gets}"
-    export_calls = [p for p, _ in gets if "/export" in p]
+    posts = captured.get("posts", [])
+    export_calls = [p for p, _ in posts if "/export" in p]
     assert export_calls
     assert SOL_ID in export_calls[0]
 
 
 def test_export_full_with_password(tmp_path: pathlib.Path) -> None:
-    """--mode full + --password is accepted; password is forwarded as a query param."""
+    """--mode full + --password is accepted; password is forwarded in the POST
+    BODY (never the URL query), mode stays in the query."""
     captured: dict = {}
     out_file = tmp_path / "out.zip"
 
@@ -115,13 +123,15 @@ def test_export_full_with_password(tmp_path: pathlib.Path) -> None:
              "--out", str(out_file)],
         )
     assert res.exit_code == 0, res.output
-    gets = captured.get("gets", [])
-    export_calls = [(p, kw) for p, kw in gets if "/export" in p]
+    posts = captured.get("posts", [])
+    export_calls = [(p, kw) for p, kw in posts if "/export" in p]
     assert export_calls
     _path, kwargs = export_calls[0]
     params = kwargs.get("params", {})
+    body = kwargs.get("json", {})
     assert params.get("mode") == "full"
-    assert params.get("password") == "s3cr3t"
+    assert "password" not in params  # must NOT be in the query string
+    assert body.get("password") == "s3cr3t"
 
 
 def test_install_help_shows_new_flags() -> None:

@@ -302,7 +302,7 @@ async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admi
     sid = inst.json()["id"]
 
     # EXPORT: the stored bundle, as a workspace zip.
-    exp = e2e_client.get(f"/api/solutions/{sid}/export", headers=headers)
+    exp = e2e_client.post(f"/api/solutions/{sid}/export", json={}, headers=headers)
     assert exp.status_code == 200, exp.text
     assert exp.headers["content-type"] == "application/zip"
     assert f'filename="{slug}-1.0.0.zip"' in exp.headers.get("content-disposition", "")
@@ -356,6 +356,6 @@ async def test_export_404_before_first_deploy(e2e_client, platform_admin):
     assert create.status_code in (200, 201), create.text
     sid = create.json()["id"]
 
-    exp = e2e_client.get(f"/api/solutions/{sid}/export", headers=headers)
+    exp = e2e_client.post(f"/api/solutions/{sid}/export", json={}, headers=headers)
     assert exp.status_code == 404, exp.text
     assert "No stored bundle" in exp.json()["detail"]
