@@ -15,6 +15,8 @@ from sqlalchemy import select
 
 from src.models.orm.integrations import Integration, IntegrationConfigSchema
 from src.models.orm.oauth import OAuthProvider
+from src.models.orm.solution_connection_schema import SolutionConnectionSchema
+from src.models.orm.solutions import Solution
 from src.services.solutions.deploy import SolutionDeployer
 
 
@@ -136,6 +138,47 @@ class TestSolutionDeployShells:
             select(OAuthProvider).where(OAuthProvider.provider_name == shared)
         )).scalars().all()
         assert len(providers) == 2
+
+    async def test_connection_declarations_full_replace_removes_stale(
+        self, db_session
+    ) -> None:
+        # _upsert_connection_declarations is deploy-owned FULL-REPLACE (unlike the
+        # capture writer it mirrors, which only upserts). A re-deploy whose bundle
+        # DROPS a connection must delete the now-stale SolutionConnectionSchema row.
+        db = db_session
+        dep = SolutionDeployer(db)
+        slug = f"conn-decl-{uuid4().hex[:8]}"
+        sol = Solution(id=uuid4(), slug=slug, name=slug.upper(), organization_id=None)
+        db.add(sol)
+        await db.flush()
+
+        # First deploy: two declarations.
+        await dep._upsert_connection_declarations(sol, [
+            {"integration_name": "Keep", "position": 0,
+             "template": {"name": "Keep", "config_schema": [], "oauth": None}},
+            {"integration_name": "Drop", "position": 1,
+             "template": {"name": "Drop", "config_schema": [], "oauth": None}},
+        ])
+        await db.flush()
+        rows = (await db.execute(
+            select(SolutionConnectionSchema).where(
+                SolutionConnectionSchema.solution_id == sol.id
+            )
+        )).scalars().all()
+        assert {r.integration_name for r in rows} == {"Keep", "Drop"}
+
+        # Re-deploy with only "Keep" — "Drop" must be reconciled away.
+        await dep._upsert_connection_declarations(sol, [
+            {"integration_name": "Keep", "position": 0,
+             "template": {"name": "Keep", "config_schema": [], "oauth": None}},
+        ])
+        await db.flush()
+        rows = (await db.execute(
+            select(SolutionConnectionSchema).where(
+                SolutionConnectionSchema.solution_id == sol.id
+            )
+        )).scalars().all()
+        assert {r.integration_name for r in rows} == {"Keep"}  # Drop reconciled away
 
     async def test_no_oauth_template_creates_no_provider(self, db_session) -> None:
         db = db_session

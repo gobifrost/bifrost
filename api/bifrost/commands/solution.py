@@ -775,6 +775,39 @@ def _collect_config_schemas(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
+    """Read connection DECLARATIONS from .bifrost/connections.yaml (keyed by name).
+
+    Each entry is a secret-scrubbed {integration_name, template, position} dict
+    declaring an ``integrations.get("X")`` reference. Written by export; the
+    server's deploy pre-creates an empty integration shell and persists a
+    SolutionConnectionSchema row from each, so Setup surfaces the connection.
+    """
+    conn_file = workspace / ".bifrost" / "connections.yaml"
+    if not conn_file.is_file():
+        return []
+    data = yaml.safe_load(conn_file.read_text()) or {}
+    raw = data.get("connections", {})
+    entries: list[dict] = []
+    for name, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        entries.append({
+            "integration_name": body.get("integration_name") or name,
+            "template": body.get("template") or {},
+            "position": int(body.get("position", 0)),
+        })
+    return entries
+
+
+def _collect_readme(workspace: pathlib.Path) -> str | None:
+    """Read the repo-root ``README.md`` as UTF-8 markdown, or None if absent."""
+    path = workspace / "README.md"
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
 def _collect_claims(workspace: pathlib.Path) -> list[dict]:
     """Read Custom Claim definitions from .bifrost/claims.yaml (keyed by UUID)."""
     claims_file = workspace / ".bifrost" / "claims.yaml"
@@ -1030,6 +1063,8 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
     agents = _collect_agents(workspace)
     claims = _collect_claims(workspace)
     config_schemas = _collect_config_schemas(workspace)
+    connection_schemas = _collect_connection_schemas(workspace)
+    readme = _collect_readme(workspace)
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -1095,6 +1130,8 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
             "agents": agents,
             "claims": claims,
             "config_schemas": config_schemas,
+            "connection_schemas": connection_schemas,
+            "readme": readme,
             "version": descriptor.version,
             "logo_b64": solution_logo_b64,
             "logo_content_type": solution_logo_content_type,

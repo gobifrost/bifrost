@@ -297,6 +297,7 @@ class SolutionCaptureService:
             claims=claims,
             config_schemas=config_schemas,
             connection_schemas=connection_schemas,
+            readme=solution.readme,
             version=solution.version,
             config_values=config_values,
             table_data=table_data,

@@ -130,6 +130,25 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     "configs", {str(e["key"]): dict(e) for e in bundle.config_schemas}
                 ),
             )
+        # Connection declarations (integrations.get("X") refs) — keyed by the
+        # integration NAME (the natural key; no per-install id). Each entry is a
+        # secret-scrubbed {integration_name, template, position} dict, the same
+        # shape _upsert_integration_shells / setup_status consume on install.
+        if bundle.connection_schemas:
+            put(
+                ".bifrost/connections.yaml",
+                _manifest_yaml(
+                    "connections",
+                    {
+                        str(e["integration_name"]): dict(e)
+                        for e in bundle.connection_schemas
+                    },
+                ),
+            )
+
+        # ── Long-form README markdown at the repo root (deploy-owned) ────────
+        if bundle.readme:
+            put("README.md", bundle.readme)
 
         # ── Apps: manifest entry + source dir + logo file ────────────────────
         if bundle.apps:

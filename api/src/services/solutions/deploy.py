@@ -353,6 +353,14 @@ class SolutionDeployer:
         shells_created = await self._upsert_integration_shells(
             bundle.connection_schemas
         )
+        # Persist the connection DECLARATIONS on the install (keyed by the
+        # install's id + integration name) so /setup surfaces a connection item
+        # for an installed solution — not only a captured one. The capture writer
+        # (capture.py::_connection_entries) does this for the source install;
+        # this mirrors it for every deploy/zip-install/CLI-deploy target.
+        await self._upsert_connection_declarations(
+            solution, bundle.connection_schemas
+        )
         # Captured pre-commit: the finalize closure runs after the caller's
         # commit, when lazy-loading off the ORM row is no longer safe.
         install_org_id_str = (
@@ -1373,6 +1381,56 @@ class SolutionDeployer:
                 )
             created += 1
         return created
+
+    async def _upsert_connection_declarations(
+        self, solution: Solution, connection_schemas: list[dict[str, Any]]
+    ) -> None:
+        """Persist the install's connection DECLARATIONS as SolutionConnectionSchema
+        rows (upsert by ``(solution_id, integration_name)``), reconciling removals.
+
+        Mirrors the capture writer (capture.py::_connection_entries), but keyed to
+        the INSTALL's id so a plain deploy / zip-install / CLI-deploy surfaces the
+        connection at /setup — not only a capture-in-place. Declarations key on the
+        integration NAME (no per-install id), so this never goes through the remap.
+        Full-replace semantics: a re-deploy whose bundle drops a connection deletes
+        the now-stale row, matching the deploy-owned full-replace of every other
+        entity.
+        """
+        from src.models.orm.solution_connection_schema import SolutionConnectionSchema
+
+        existing_rows = (
+            await self.db.execute(
+                select(SolutionConnectionSchema).where(
+                    SolutionConnectionSchema.solution_id == solution.id
+                )
+            )
+        ).scalars().all()
+        existing_by_name = {r.integration_name: r for r in existing_rows}
+
+        declared_names: set[str] = set()
+        for decl in connection_schemas:
+            name = decl["integration_name"]
+            declared_names.add(name)
+            template = decl.get("template") or {}
+            position = int(decl.get("position", 0))
+            row = existing_by_name.get(name)
+            if row is None:
+                self.db.add(
+                    SolutionConnectionSchema(
+                        solution_id=solution.id,
+                        integration_name=name,
+                        template=template,
+                        position=position,
+                    )
+                )
+            else:
+                row.template = template
+                row.position = position
+
+        # Reconcile removals: drop declarations no longer in the bundle.
+        for name, row in existing_by_name.items():
+            if name not in declared_names:
+                await self.db.delete(row)
 
     async def _reattach_orphan_configs(
         self, solution: Solution, declared_keys: set[str]

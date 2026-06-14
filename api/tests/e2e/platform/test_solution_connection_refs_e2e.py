@@ -32,7 +32,9 @@ NOT duplicated here.
 """
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
 from uuid import UUID
 
 import pytest
@@ -58,6 +60,25 @@ def _create_solution(e2e_client, headers, slug: str) -> str:
     )
     assert r.status_code in (200, 201), r.text
     return r.json()["id"]
+
+
+def _assert_secret_absent(zip_bytes: bytes, *secrets: bytes | str) -> None:
+    """Decompress every member of the zip and assert no secret appears in any.
+
+    Stronger than scanning the raw (DEFLATE-compressed) zip bytes: a secret that
+    survives compression in a non-literal form would slip past a raw scan but is
+    caught here because each member is fully decompressed before scanning."""
+    needles = [s.encode() if isinstance(s, str) else s for s in secrets]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for name in zf.namelist():
+            content = zf.read(name)
+            for needle in needles:
+                assert needle not in content, f"secret leaked into zip member {name!r}"
+
+
+def _upload_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Strip Content-Type so httpx sets the multipart boundary itself."""
+    return {k: v for k, v in headers.items() if k.lower() != "content-type"}
 
 
 async def test_export_scrubs_connection_template_and_carries_no_secret(
@@ -139,9 +160,12 @@ async def test_export_scrubs_connection_template_and_carries_no_secret(
     assert exp.status_code == 200, exp.text
     zip_bytes = exp.content
 
-    # (b) No secret anywhere in the exported bundle bytes.
-    assert secret.encode() not in zip_bytes, "secret client_id leaked into export"
-    assert b"also-secret" not in zip_bytes, "secret client_secret leaked into export"
+    # (b) No secret anywhere in the exported bundle — scanned HERMETICALLY:
+    # decompress each zip member and scan its DECOMPRESSED bytes. A raw-bytes
+    # scan of the DEFLATE-compressed zip is a weak backstop (the secret could
+    # survive compression unrecognizably); decompressing proves it is truly
+    # absent from every file's content.
+    _assert_secret_absent(zip_bytes, secret, b"also-secret")
 
     # (a) The connection declaration was written and is secret-scrubbed.
     rows = (
@@ -270,3 +294,158 @@ async def test_deploy_creates_integration_shell_and_readme_round_trips(
     rd = e2e_client.get(f"/api/solutions/{sid}/readme", headers=headers)
     assert rd.status_code == 200, rd.text
     assert rd.json()["readme"] == readme_md, "README did not round-trip"
+
+
+async def test_zip_export_install_round_trip_surfaces_connection_and_readme(
+    e2e_client, platform_admin, db_session
+):
+    """TRUE distribution round-trip: export a solution to a ZIP, install the zip
+    into a FRESH scope, and prove the connection declaration + README travel.
+
+    This is the gap Task 14b closes: before the fix, the export zip carried
+    NEITHER ``.bifrost/connections.yaml`` NOR ``README.md``, the zip parser read
+    neither back, and install persisted no SolutionConnectionSchema row — so an
+    installed (not captured-in-place) solution surfaced ZERO connection items at
+    /setup and lost its README. This test would FAIL before the fix.
+
+    Steps:
+      1. Source solution (global) with a workflow referencing a GLOBAL Integration
+         + a README set via /readme.
+      2. POST /export → zip (capture writes the connection decl + serializes
+         connections.yaml + README.md into the zip).
+      3. POST /install into a FRESH ORG scope (a brand-new Solution row, distinct
+         from the source). The global integration already exists.
+      4. Assert the installed solution's /setup surfaces the connection item, its
+         /readme round-trips, and the integration shell exists.
+    """
+    headers = platform_admin.headers
+    tok = uuid.uuid4().hex[:8]
+    integ_name = f"HaloPSA-rt-{tok}"
+    slug = f"conn-rt-{tok}"
+    readme_md = f"# {slug}\n\nConnect **{integ_name}** before running.\n"
+
+    sid = _create_solution(e2e_client, headers, slug)
+
+    # Global Integration + OAuth provider + a config-schema item (a real, present
+    # integration — its shell is created, then capture scrubs the template).
+    integ = Integration(id=uuid.uuid4(), name=integ_name, entity_id_name="tenant_id")
+    db_session.add(integ)
+    await db_session.flush()
+    db_session.add(
+        IntegrationConfigSchema(
+            integration_id=integ.id, key="base_url", type="string",
+            required=True, position=0,
+        )
+    )
+    db_session.add(
+        OAuthProvider(
+            id=uuid.uuid4(),
+            provider_name=f"halopsa-rt-{tok}",
+            display_name="HaloPSA",
+            oauth_flow_type="authorization_code",
+            client_id="rt-secret-client-id",
+            encrypted_client_secret=b"rt-secret",
+            integration_id=integ.id,
+        )
+    )
+
+    # A solution-owned workflow whose source references the integration.
+    wf_path = f"workflows/rt_{tok}.py"
+    src = (
+        f'def run(sdk):\n'
+        f'    return sdk.integrations.get("{integ_name}").list()\n'
+    )
+    wr = e2e_client.put(
+        "/api/files/editor/content",
+        headers=headers,
+        json={"path": wf_path, "content": src, "encoding": "utf-8"},
+    )
+    assert wr.status_code in (200, 201), wr.text
+    wf = Workflow(
+        id=uuid.uuid4(),
+        name=f"rt-{tok}",
+        function_name="run",
+        path=wf_path,
+        type="workflow",
+        is_active=True,
+        solution_id=UUID(sid),
+    )
+    db_session.add(wf)
+    await db_session.commit()
+
+    # README on the SOURCE install — it must travel via the zip's README.md.
+    rd_put = e2e_client.put(
+        f"/api/solutions/{sid}/readme", headers=headers, json={"readme": readme_md}
+    )
+    assert rd_put.status_code == 200, rd_put.text
+
+    # (2) Export to a shareable zip — capture writes the connection decl, then
+    # build_workspace_zip serializes connections.yaml + README.md into the zip.
+    exp = e2e_client.post(
+        f"/api/solutions/{sid}/export?mode=shareable", headers=headers, json={}
+    )
+    assert exp.status_code == 200, exp.text
+    zip_bytes = exp.content
+
+    # The zip really carries both files now (the heart of the fix).
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        names = set(zf.namelist())
+        assert ".bifrost/connections.yaml" in names, f"connections.yaml missing: {names}"
+        assert "README.md" in names, f"README.md missing: {names}"
+        assert zf.read("README.md").decode("utf-8") == readme_md
+    # And no secret leaked (hermetic, decompressed scan).
+    _assert_secret_absent(zip_bytes, b"rt-secret-client-id", b"rt-secret")
+
+    # (3) Install the zip into a FRESH ORG scope → a brand-new Solution row.
+    org_resp = e2e_client.post(
+        "/api/organizations", headers=headers, json={"name": f"rt-org-{tok}"}
+    )
+    assert org_resp.status_code == 201, org_resp.text
+    org_id = org_resp.json()["id"]
+
+    inst = e2e_client.post(
+        "/api/solutions/install",
+        headers=_upload_headers(headers),
+        files={"file": (f"{slug}.zip", zip_bytes, "application/zip")},
+        data={"organization_id": org_id},
+    )
+    assert inst.status_code in (200, 201), inst.text
+    installed_id = inst.json()["id"]
+    # It is a genuinely fresh install (different row from the global source).
+    assert installed_id != sid, "install must create a fresh org-scoped row"
+
+    # (4a) The installed solution's /setup surfaces the connection item — the
+    # SolutionConnectionSchema row was persisted on install (Part D), not capture.
+    setup = e2e_client.get(f"/api/solutions/{installed_id}/setup", headers=headers)
+    assert setup.status_code == 200, setup.text
+    conn_items = [i for i in setup.json()["items"] if i.get("kind") == "connection"]
+    conn = next((i for i in conn_items if i.get("key") == integ_name), None)
+    assert conn is not None, (
+        f"installed solution surfaced NO connection item for {integ_name}: {conn_items}"
+    )
+
+    # The persisted row really exists for the installed (not source) solution.
+    inst_rows = (
+        await db_session.execute(
+            select(SolutionConnectionSchema).where(
+                SolutionConnectionSchema.solution_id == UUID(installed_id)
+            )
+        )
+    ).scalars().all()
+    assert any(r.integration_name == integ_name for r in inst_rows), (
+        f"no SolutionConnectionSchema persisted on install: {inst_rows}"
+    )
+
+    # (4b) README round-trips to the installed solution's /readme.
+    rd = e2e_client.get(f"/api/solutions/{installed_id}/readme", headers=headers)
+    assert rd.status_code == 200, rd.text
+    assert rd.json()["readme"] == readme_md, "README did not round-trip through the zip"
+
+    # (4c) The integration shell exists (it pre-existed globally; deploy never
+    # clobbers it — but it must be present for the connection to be satisfiable).
+    shell = (
+        await db_session.execute(
+            select(Integration).where(Integration.name == integ_name)
+        )
+    ).scalar_one_or_none()
+    assert shell is not None, "integration shell missing after install"
