@@ -2,9 +2,11 @@ import inspect
 from pathlib import Path
 from unittest.mock import patch
 
+from bifrost.commands.solution import _resolve_target_install
 from bifrost.solution_descriptor import SolutionDescriptor
 from src.models.orm.solutions import Solution
 from src.services.solutions import git_sync
+from src.services.solutions.update_check import compute_update_available
 
 
 def test_solution_has_marketplace_columns():
@@ -13,7 +15,9 @@ def test_solution_has_marketplace_columns():
 
 
 def test_descriptor_carries_repo_subpath_and_ref():
-    d = SolutionDescriptor(slug="s", name="S", repo_subpath="microsoft-csp", git_ref="v1.2.0")
+    d = SolutionDescriptor(
+        slug="s", name="S", repo_subpath="microsoft-csp", git_ref="v1.2.0"
+    )
     assert d.repo_subpath == "microsoft-csp"
     assert d.git_ref == "v1.2.0"
     d2 = SolutionDescriptor(slug="s", name="S")
@@ -40,9 +44,6 @@ async def test_clone_ref_set_passes_branch():
     assert kwargs.get("branch") == "v1.2.0"
 
 
-from bifrost.commands.solution import _resolve_target_install
-
-
 def test_resolve_targets_explicit_org():
     installs = [
         {"id": "a", "slug": "s", "scope": "org", "organization_id": "org-A"},
@@ -55,16 +56,16 @@ def test_resolve_targets_explicit_org():
 
 def test_deploy_cmd_has_org_option():
     from bifrost.commands.solution import deploy_cmd
+
     assert "org_ref" in {p.name for p in deploy_cmd.params}
-
-
-from src.services.solutions.update_check import compute_update_available
 
 
 def test_compute_update_available():
     assert compute_update_available(installed="1.0.0", remote="1.1.0") == "1.1.0"
     assert compute_update_available(installed="1.1.0", remote="1.1.0") is None
-    assert compute_update_available(installed="1.2.0", remote="1.1.0") is None  # remote older
+    assert (
+        compute_update_available(installed="1.2.0", remote="1.1.0") is None
+    )  # remote older
     assert compute_update_available(installed=None, remote="1.0.0") == "1.0.0"
     assert compute_update_available(installed="1.0.0", remote="not-a-version") is None
     assert compute_update_available(installed="1.0.0", remote=None) is None
@@ -74,4 +75,5 @@ def test_compute_update_available():
 
 def test_read_dto_exposes_update_available_version():
     from src.models.contracts.solutions import Solution as SolutionDTO
+
     assert "update_available_version" in SolutionDTO.model_fields
