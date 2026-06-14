@@ -1134,11 +1134,40 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
     multiple=True,
     help="Config value KEY=VALUE (repeatable). Applied atomically with the deploy.",
 )
-def install_cmd(zip_path: str, org_id: str | None, set_values: tuple[str, ...]) -> None:
+@click.option(
+    "--password",
+    default=None,
+    help="Decryption password for a full-backup zip (required when the zip carries secrets).",
+)
+@click.option(
+    "--replace-secrets",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing config values when the zip carries conflicting secret values.",
+)
+@click.option(
+    "--replace-data",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing table data when the zip carries conflicting rows.",
+)
+def install_cmd(
+    zip_path: str,
+    org_id: str | None,
+    set_values: tuple[str, ...],
+    password: str | None,
+    replace_secrets: bool,
+    replace_data: bool,
+) -> None:
     """POST a Solution workspace zip to ``/api/solutions/install``.
 
     The server unzips it, resolves-or-creates the install, deploys the bundle,
     and applies any ``--set`` config values atomically under the install lock.
+
+    Full-backup zips (exported with ``--mode full``) carry an encrypted secrets
+    blob; supply ``--password`` to decrypt it.  On a 409 collision the server
+    names the conflicting keys — re-run with ``--replace-secrets`` to overwrite.
+    A wrong password returns 422.
     """
     config_values: dict[str, str] = {}
     for pair in set_values:
@@ -1154,16 +1183,140 @@ def install_cmd(zip_path: str, org_id: str | None, set_values: tuple[str, ...]) 
         form: dict[str, str] = {"config_values": json.dumps(config_values)}
         if org_id:
             form["organization_id"] = org_id
+        if password is not None:
+            form["password"] = password
+        # FastAPI Form() parses "true"/"false" for bool fields.
+        if replace_secrets:
+            form["replace_secrets"] = "true"
+        if replace_data:
+            form["replace_data"] = "true"
         resp = await client.post(
             "/api/solutions/install",
             files={"file": (pathlib.Path(zip_path).name, zip_bytes, "application/zip")},
             data=form,
         )
+        if resp.status_code == 409:
+            detail = resp.json().get("detail", resp.text)
+            click.echo(f"Install collision: {detail}", err=True)
+            click.echo(
+                "Re-run with --replace-secrets to overwrite conflicting config values, "
+                "or --replace-data for table data.",
+                err=True,
+            )
+            return 1
+        if resp.status_code == 422:
+            detail = resp.json().get("detail", resp.text)
+            click.echo(f"Install rejected: {detail}", err=True)
+            return 1
         if resp.status_code not in (200, 201):
             click.echo(f"Install failed: {resp.status_code} {resp.text}", err=True)
             return 1
         body = resp.json()
         click.echo(f"Installed solution {body['id']} (slug={body.get('slug')}).")
+        return 0
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
+
+
+@solution_group.command(
+    name="export",
+    help="Download a Solution's workspace zip (shareable or full backup).",
+)
+@click.argument("solution_ref")
+@click.option(
+    "--mode",
+    type=click.Choice(["shareable", "full"]),
+    default="shareable",
+    show_default=True,
+    help="shareable (code+schema, no password) or full (+secrets+data, password required).",
+)
+@click.option(
+    "--password",
+    default=None,
+    help="Required for --mode full; encrypts the secrets blob.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    default=None,
+    help="Output zip path (default: <slug>-<version>.zip in the current directory).",
+)
+def export_cmd(solution_ref: str, mode: str, password: str | None, out_path: str | None) -> None:
+    """GET /api/solutions/{id}/export and write the zip to disk.
+
+    SOLUTION_REF may be a solution id (UUID) or a slug.  Slugs are resolved
+    via the solutions list endpoint.
+    """
+    if mode == "full" and not password:
+        raise click.UsageError("--mode full requires --password")
+
+    async def _run() -> int:
+        import uuid as _uuid
+
+        client = BifrostClient.get_instance(require_auth=True)
+
+        # Resolve solution_ref: if it's a valid UUID use it directly; otherwise
+        # look it up by slug via GET /api/solutions.
+        sol_id: str
+        sol_slug: str | None = None
+        sol_version: str | None = None
+        try:
+            _uuid.UUID(solution_ref)
+            sol_id = solution_ref
+        except (ValueError, AttributeError):
+            # Slug resolution.
+            list_resp = await client.get("/api/solutions")
+            if list_resp.status_code != 200:
+                raise click.ClickException(
+                    f"Failed to list solutions ({list_resp.status_code}): {list_resp.text[:200]}"
+                )
+            installs = list_resp.json().get("solutions", [])
+            match = next((s for s in installs if s.get("slug") == solution_ref), None)
+            if match is None:
+                raise click.ClickException(
+                    f"No solution with slug '{solution_ref}' found. "
+                    "Pass the solution UUID or check `bifrost solutions list`."
+                )
+            sol_id = match["id"]
+            sol_slug = match.get("slug")
+            sol_version = match.get("version")
+
+        params: dict[str, str] = {"mode": mode}
+        if password is not None:
+            params["password"] = password
+
+        resp = await client.get(f"/api/solutions/{sol_id}/export", params=params)
+        if resp.status_code == 422:
+            detail = resp.json().get("detail", resp.text)
+            raise click.ClickException(f"Export rejected: {detail}")
+        if resp.status_code != 200:
+            raise click.ClickException(
+                f"Export failed ({resp.status_code}): {resp.text[:200]}"
+            )
+
+        # Determine output filename: --out override, or parse Content-Disposition,
+        # or fall back to <slug>-<version>.zip.
+        dest: pathlib.Path
+        if out_path:
+            dest = pathlib.Path(out_path)
+        else:
+            cd = resp.headers.get("content-disposition", "")
+            filename: str | None = None
+            for part in cd.split(";"):
+                part = part.strip()
+                if part.startswith("filename="):
+                    filename = part[len("filename="):].strip('"')
+                    break
+            if not filename:
+                slug = sol_slug or solution_ref
+                version = sol_version or "unversioned"
+                filename = f"{slug}-{version}.zip"
+            dest = pathlib.Path(filename)
+
+        dest.write_bytes(resp.content)
+        click.echo(f"Exported {solution_ref} ({mode}) → {dest}")
         return 0
 
     rc = asyncio.run(_run())
