@@ -159,8 +159,9 @@ def _enum_choices(tp: Any) -> list[str]:
 
 
 def _is_list_str(tp: Any) -> bool:
+    # ``list[T]`` and ``typing.List[T]`` share the same origin (``list``).
     inner = _unwrap_optional(tp)
-    return get_origin(inner) in (list, list)  # ``list[T]`` or ``List[T]``
+    return get_origin(inner) is list
 
 
 def _is_dict(tp: Any) -> bool:
@@ -192,17 +193,14 @@ def _kebab(name: str) -> str:
     return name.replace("_", "-")
 
 
-def _ref_flag_name(field_name: str, ref_kind: str) -> str:
+def _ref_flag_name(field_name: str) -> str:
     """Derive a flag name for a ref-lookup field.
 
-    ``workflow_id → --workflow`` (strip ``_id``); when the field stem already
-    matches the ref kind nothing changes.
+    ``workflow_id → --workflow`` (strip ``_id``). The full field stem is kept so
+    paired refs like ``launch_workflow_id`` stay distinct (``--launch-workflow``
+    rather than a colliding ``--workflow``).
     """
     stem = field_name[:-3] if field_name.endswith("_id") else field_name
-    if stem == ref_kind:
-        return _kebab(stem)
-    # Disambiguate paired refs (e.g. ``launch_workflow_id``) by keeping the
-    # field stem rather than the bare kind.
     return _kebab(stem)
 
 
@@ -243,21 +241,6 @@ def load_dict_value(raw: str | None) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def _generated_flag_fields(
-    model_cls: type,
-    *,
-    exclude: set[str],
-) -> list[str]:
-    """Return the DTO field names that ``build_cli_flags`` would expose.
-
-    Used by the field-parity tests; mirrors the iteration in
-    :func:`build_cli_flags` without constructing Click decorators.
-    """
-    return [
-        name for name in model_cls.model_fields if name not in exclude
-    ]
-
-
 def build_cli_flags(
     model_cls: type,
     *,
@@ -286,7 +269,7 @@ def build_cli_flags(
 
         if name in verb_ref_lookups:
             ref_kind = verb_ref_lookups[name]
-            flag = f"--{_ref_flag_name(name, ref_kind)}"
+            flag = f"--{_ref_flag_name(name)}"
             decorators.append(
                 click.option(
                     flag,
