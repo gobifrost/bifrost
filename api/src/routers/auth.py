@@ -49,7 +49,7 @@ from src.models.contracts.passkeys import (
     SetupPasskeyVerifyResponse,
 )
 from src.config import get_settings
-from src.core.auth import CurrentActiveUser
+from src.core.auth import CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.rate_limit import auth_limiter, mfa_limiter, get_client_ip
@@ -1106,7 +1106,7 @@ class AdminRevokeRequest(BaseModel):
 @router.post("/admin/revoke-user", response_model=RevokeAllResponse)
 async def admin_revoke_user_sessions(
     revoke_data: AdminRevokeRequest,
-    current_user: CurrentActiveUser,
+    current_user: CurrentSuperuser,
     db: DbSession,
 ) -> RevokeAllResponse:
     """
@@ -1128,13 +1128,6 @@ async def admin_revoke_user_sessions(
     Raises:
         HTTPException: If not admin or user not found
     """
-    # Require platform admin
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Platform admin privileges required",
-        )
-
     # Verify target user exists
     user_repo = UserRepository(db)
     target_user = await user_repo.get_by_id(revoke_data.user_id)
