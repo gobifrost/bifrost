@@ -354,6 +354,16 @@ async def install_zip(
                 )
                 await db.commit()
 
+            # Recompute and persist setup_complete after every install so the
+            # column reflects whether all required configs have values — even
+            # when no config_values were provided (empty install of a solution
+            # with required declarations must be marked incomplete).
+            from src.services.solutions.setup_status import compute_setup_status
+
+            status_now = await compute_setup_status(db, solution)
+            solution.setup_complete = status_now.setup_complete
+            await db.commit()
+
     await db.refresh(solution)
     return solution
 

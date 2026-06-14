@@ -72,6 +72,11 @@ class Solution(BaseModel):
     # caller-settable — version rides in the BUNDLE (descriptor), not a request.
     version: str | None = None
     upgraded_from_version: str | None = None
+    # Persisted setup-completeness (Task 5/7): True when every required config
+    # declaration has a matching Config value in the install's org scope.
+    # Recomputed by install_zip after each deploy so it reflects the install's
+    # state without a separate /setup call. Defaults True (no declarations = complete).
+    setup_complete: bool = True
 
     @computed_field  # type: ignore[prop-decorator]
     @property
