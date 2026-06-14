@@ -144,6 +144,13 @@ class Solution(Base):
         cascade="all, delete-orphan",
         order_by="SolutionConnectionSchema.position",
         lazy="selectin",
+        # Rely on the DB-level ``ondelete=CASCADE`` to remove the children when the
+        # Solution is deleted, rather than emitting per-child ORM DELETEs. Otherwise
+        # the delete-orphan cascade marks each child in ``session.deleted`` and the
+        # Solutions read-only backstop rejects them (drive F3). The delete path also
+        # fetches the install with ``noload(connection_schema)`` so no children are
+        # loaded for the cascade to orphan.
+        passive_deletes=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(

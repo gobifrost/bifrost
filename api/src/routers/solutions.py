@@ -22,6 +22,7 @@ from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile, 
 from fastapi import Form as FastapiForm
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import noload
 
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
@@ -638,7 +639,18 @@ async def delete_solution(
     repo is NEVER touched — a git-connected install is deletable; only the install
     and its local artifacts go, the upstream repo is left alone.
     """
-    sol = await ctx.db.get(SolutionORM, solution_id)
+    # Load WITHOUT eager-loading ``connection_schema`` (it is ``lazy="selectin"``).
+    # If the children are loaded, the relationship's ``delete-orphan`` cascade marks
+    # them in ``session.deleted`` at flush and the Solutions read-only backstop
+    # rejects them (drive F3). With ``noload`` + ``passive_deletes=True`` the children
+    # are removed by the DB-level ``ondelete=CASCADE`` instead (like workflows/apps).
+    sol = (
+        await ctx.db.execute(
+            select(SolutionORM)
+            .where(SolutionORM.id == solution_id)
+            .options(noload(SolutionORM.connection_schema))
+        )
+    ).scalar_one_or_none()
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 

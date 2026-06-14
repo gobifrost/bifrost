@@ -239,3 +239,32 @@ async def test_sync_clears_update_available_version(e2e_client, platform_admin, 
     after = e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers)
     assert after.status_code == 200, after.text
     assert after.json()["update_available_version"] is None
+
+
+async def test_delete_git_connected_install_with_connections(e2e_client, platform_admin):
+    """Drive F3: deleting a git-connected install that declared >=1 integration
+    (so it has ``SolutionConnectionSchema`` rows) must NOT 500.
+
+    The connection_schema children carry ``solution_id``, so the relationship's
+    ``delete-orphan`` cascade used to mark them in ``session.deleted`` and the
+    Solutions read-only backstop rejected them. The fix routes them through the
+    DB-level ``ondelete=CASCADE`` instead (``passive_deletes=True`` + ``noload``
+    on the delete fetch), as workflows/apps already are.
+    """
+    slug = f"delconn-{uuid.uuid4().hex[:8]}"
+    repo_url = _make_fixture_repo(subdir="acme", slug=slug, with_connection=True)
+    inst = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": repo_url, "repo_subpath": "acme"},
+        headers=platform_admin.headers,
+    )
+    assert inst.status_code == 201, inst.text
+    sid = inst.json()["id"]
+
+    resp = e2e_client.delete(f"/api/solutions/{sid}", headers=platform_admin.headers)
+    assert resp.status_code == 200, resp.text  # MUST NOT 500 (F3)
+
+    assert (
+        e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers).status_code
+        == 404
+    )
