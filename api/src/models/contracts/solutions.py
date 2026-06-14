@@ -460,14 +460,23 @@ class SolutionCaptureResponse(BaseModel):
 
 
 class SolutionSetupItem(BaseModel):
-    """One config declaration paired with whether a value is set."""
+    """One declared requirement paired with whether it's satisfied.
 
-    key: str
-    type: str
+    For ``kind="config"``: a config declaration; ``is_set`` = a Config value
+    exists in the install scope. For ``kind="connection"``: an integration
+    declaration; ``is_set`` = a global Integration with that name exists.
+    """
+
+    key: str  # config key OR integration name
+    type: str  # config value type for kind="config"; the literal "integration" for kind="connection"
     required: bool
     is_set: bool
     description: str | None = None
     default: str | None = None
+    kind: Literal["config", "connection"] = "config"
+    # Connection-only meta (defaults for config items):
+    has_oauth: bool = False  # template carried OAuth shape — WARN-ONLY, never gates
+    connected: bool = False  # informational: a token/mapping resolves
 
 
 class SolutionSetupStatus(BaseModel):
