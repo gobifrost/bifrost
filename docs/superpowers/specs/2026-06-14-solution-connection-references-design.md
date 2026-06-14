@@ -35,8 +35,10 @@ port-tokens — Power Platform doesn't port credentials either, and neither shou
 - **Declare** the integrations a solution's code references (auto-scanned at capture).
 - **Template** the safe, portable skeleton of each referenced integration so install can
   pre-create an empty shell the admin just fills in.
-- **Surface** unmet needs (unset required configs + missing integrations) uniformly in the
-  Setup checklist with a per-item "set it up" action and a solution-level warning badge.
+- **Surface** unmet needs (unset required configs + missing integrations) through a guided
+  **Setup wizard** (stepped configs → connections, creating integration templates inline and
+  warning when OAuth still needs connecting), launched by a solution-level "Setup Required"
+  warning triangle that accurately reflects `setup_complete`.
 - **Block** at install/upgrade on missing modules / cross-solution deps (the silent-runtime
   fix) — the one class of unmet need the admin *can't* self-resolve post-install.
 - **Document** — a markdown README, sourced from the solution repo, rendered as the first
@@ -181,25 +183,45 @@ deps do (they're unresolvable post-install).
   (read + edit). Markdown.
 - If no README present, the tab shows an empty-state / "add setup instructions" prompt.
 
-### 6. Surfacing — the Setup checklist + warning badge
+### 6. Surfacing — the guided Setup wizard + warning triangle
+
+Setup is a **launched, stepped wizard**, not a passive tab. The solution-level
+**"Setup Required" yellow triangle** (shown on the detail header / list row whenever
+`setup_complete` is false) carries a **"Continue Setup"** action that opens the wizard.
+This collapses the previously-separate Setup checklist tab into the wizard — the
+`SolutionSetupChecklist` component becomes the wizard's step bodies. (The README remains its
+own separate first tab — reference doc, not part of the wizard.)
 
 Extend `setup_status.py` → the unified engine produces a `SolutionSetupStatus` whose
-`items` now include both config and connection items (a `kind` discriminator). The
-`SolutionSetupChecklist` component renders:
+`items` carry a `kind` discriminator (`config` | `connection`), plus per-connection
+template metadata (`has_oauth`, `integration_exists`, `connected`). The wizard renders two
+steps:
 
-- **config items:** unchanged (inline value input, yellow border when required+unset).
-- **connection items:** integration name + "Set up integration" button (deep-links to the
-  existing integration settings page for the pre-created shell, identified by integration
-  name/id — opens in a new tab so setup-then-return matches Jack's "open a new tab, set it
-  up, come back to a checkmark" flow) + the informational connectedness icon when
-  resolvable. Yellow border when the integration doesn't exist.
-- **`setup_complete` banner** when everything required is satisfied.
-- **Solution-level warning indicator:** a yellow-triangle badge + "Continue Setup" affordance
-  on the solution (detail header / list row) whenever `setup_complete` is false — the
-  at-a-glance "this needs attention" signal Jack described.
+- **Step 1 — Configs:** declared configs with inline value editing (the existing
+  `ConfigItem` body: yellow border when required+unset, value input, Set action). A live
+  "all required configs satisfied" indicator gates advancing-without-warning.
+- **Step 2 — Connections:** declared integrations. For each:
+  - On entering the step, the **template/shell has already been created at install** (§3);
+    the wizard shows the integration with a "Set up integration" deep-link (opens the
+    existing integration settings page in a new tab — matches "open a tab, set it up, come
+    back to a checkmark").
+  - Shows whether the integration's **required integration-config** is filled.
+  - If the template carried an **OAuth provider shape**, shows a **warning**: "this
+    integration uses OAuth — connect it (client ID/secret + authorize) in Integrations."
+    This is **warn-only**: an unconnected OAuth does **NOT** keep the triangle red.
+  - Informational **connectedness icon** when a token resolves (convenience confirmation).
 
-`module` / `solution_dep` needs don't appear here in the normal case (they blocked at
-install); if somehow present (legacy install), they render as read-only warning rows.
+**Triangle / `setup_complete` accuracy:** `setup_complete` = all *required* configs
+satisfied **AND** all declared integrations **exist** (shells get created on install, so
+this is usually true immediately — the triangle then reflects "required configs unfilled").
+OAuth connection status is **warn-only** and never feeds `setup_complete`; the wizard makes
+the warning visible so the admin isn't surprised, but existence remains the bar. Because the
+wizard walks both configs and connections and creates templates inline, the triangle becomes
+an accurate "you've been through setup and everything *required* is satisfied" signal rather
+than a naive "a config row is missing."
+
+`module` / `solution_dep` needs never appear in the wizard (they blocked at install); a
+legacy install surfacing one renders it as a read-only warning row.
 
 ## Data flow
 
@@ -223,7 +245,8 @@ INSTALL / DEPLOY (deploy.py + zip_install.py)
 VIEW (solutions router + client)
   GET /solutions/{id}/setup → unified SolutionSetupStatus (config + connection items)
   README tab (TipTap) ← Solution.readme
-  warning badge ← setup_complete
+  "Setup Required" triangle ← setup_complete; "Continue Setup" launches the wizard
+    (Step 1 configs → Step 2 connections; OAuth warn-only)
   RUNTIME backstop: integrations.get("X") on a missing integration → loud
     RequiredConnectionUnset (mirrors RequiredConfigUnset), naming the integration.
 ```
@@ -239,10 +262,10 @@ VIEW (solutions router + client)
 | `capture._connection_entries` | build connection declarations + templates | walker, DB |
 | `deploy._upsert_integration_shells` | create empty integration if absent | DB |
 | `deploy` / `zip_install` install-block | enforce module/dep unmet → error | walker.check_install |
-| `setup_status` (unified) | config + connection → `SolutionSetupStatus` | DB |
+| `setup_status` (unified) | config + connection → `SolutionSetupStatus` (kind + template meta) | DB |
 | `Solution.readme` + sync | README round-trip repo ↔ DB | git_sync, deploy |
-| `SolutionSetupChecklist` (client) | render config + connection items, actions | — |
-| README tab (client) | TipTap render/edit of `Solution.readme` | existing editor |
+| Setup wizard (client) | stepped configs → connections; warns on OAuth; launched by triangle | `SolutionSetupChecklist` bodies |
+| README tab (client) | TipTap render/edit of `Solution.readme` (separate first tab) | existing editor |
 | `RequiredConnectionUnset` (SDK/runtime) | loud error on missing integration | — |
 
 ## Error handling
@@ -276,8 +299,11 @@ VIEW (solutions router + client)
   config schema + OAuth skeleton and no secrets, (b) `setup_complete` is false with a
   connection item unmet, (c) install of a bundle with a missing module is **blocked**,
   (d) README round-trips repo → DB → tab.
-- **Client vitest:** `SolutionSetupChecklist` renders connection items + "Set up
-  integration" action + connectedness icon; warning badge shows when `setup_complete` false.
+- **Client vitest:** the Setup wizard renders the configs step (inline edit) then the
+  connections step ("Set up integration" deep-link, connectedness icon, **OAuth warn-only**
+  message when `has_oauth` and not connected — and assert it does NOT block/gate
+  completion); the "Setup Required" triangle + "Continue Setup" launch shows when
+  `setup_complete` is false and hides when true.
 - **Contract/DTO parity + contract-version tripwire** after touching contracts/DTOs.
 
 ## Migration
