@@ -2,8 +2,9 @@
 Git-connected Solution auto-pull (success-criteria §3.9, criterion 13).
 
 A git-connected install has exactly one writer: auto-pull from its repo. The
-platform clones/pulls the connected repo's ``main`` and deploys the workspace
-found there via :class:`SolutionDeployer`. ``bifrost deploy`` and the REST deploy
+platform clones the connected repo at its configured ref (or the repo's default
+branch when none is set) and deploys the workspace found there via
+:class:`SolutionDeployer`. ``bifrost deploy`` and the REST deploy
 endpoint are refused for a connected install (enforced in the deploy router), so
 the one-writer invariant holds.
 
@@ -153,14 +154,16 @@ async def deploy_from_workspace(
 
 
 async def sync(db: AsyncSession, solution: Solution) -> None:
-    """Clone the connected install's repo main and deploy the workspace.
+    """Clone the connected install's repo at its configured ref and deploy.
 
-    Called by the auto-pull trigger (webhook/poll) on a new commit to main.
+    Called by the auto-pull trigger (webhook/poll) on a new commit. The clone
+    uses the install's ``git_ref`` when set, or the repo's default branch when
+    none is configured.
 
     Serialized per-install with a Redis lock so overlapping triggers can't race —
     an older clone finishing last would otherwise full-replace the newer commit's
     deploy back to a stale state. If the lock is held, this sync is skipped (the
-    in-flight one will pick up main's latest, and a follow-up trigger can re-run).
+    in-flight one will pick up the latest, and a follow-up trigger can re-run).
     """
     if not solution.git_connected or not solution.git_repo_url:
         raise ValueError("sync() requires a git-connected solution with a repo url")
@@ -216,7 +219,7 @@ async def clone_repo_to_dir(repo_url: str, dest: Path, ref: str | None = None) -
     from git import Repo as GitRepo  # GitPython (already a dep)
 
     kwargs: dict[str, object] = {"depth": 1}
-    if ref:
+    if ref is not None:
         kwargs["branch"] = ref  # GitPython --branch accepts a tag or branch
     await asyncio.to_thread(GitRepo.clone_from, repo_url, str(dest), **kwargs)
 
@@ -232,13 +235,20 @@ async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
         # a slow clone — otherwise a long clone would block the loop, starve the
         # watchdog, and let the lock TTL expire mid-deploy.
         await clone_repo_to_dir(repo_url, work_dir, ref=solution.git_ref)
-        deploy_root = work_dir / solution.repo_subpath if solution.repo_subpath else work_dir
+        logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
+        if solution.repo_subpath:
+            deploy_root = (work_dir / solution.repo_subpath).resolve()
+            if not deploy_root.is_relative_to(work_dir.resolve()):
+                raise NotASolutionWorkspace(
+                    f"repo_subpath {solution.repo_subpath!r} escapes the repo checkout"
+                )
+        else:
+            deploy_root = work_dir
         if not (deploy_root / _DESCRIPTOR_FILENAME).is_file():
             raise NotASolutionWorkspace(
                 f"No {_DESCRIPTOR_FILENAME} at "
                 f"{solution.repo_subpath or '<repo root>'} in {repo_url}"
             )
-        logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
         result = await deploy_from_workspace(db, solution, deploy_root)
     # Commit the DB phase, THEN run S3 — a failed commit changes no running code
     # (Codex P1-c). Both happen while the per-install lock is held so a racing sync
