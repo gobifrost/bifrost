@@ -61,7 +61,10 @@ class TestLogsListEndpoint:
             headers=auth_headers(regular_user_token),
         )
         assert response.status_code == 403
-        assert "admin" in response.json().get("detail", "").lower()
+        # Gated by the declarative RequirePlatformAdmin dependency, which
+        # returns the canonical "Superuser privileges required" detail.
+        detail = response.json().get("detail", "").lower()
+        assert "superuser" in detail or "admin" in detail
 
     def test_list_logs_returns_paginated_results(
         self,
