@@ -382,6 +382,9 @@ class SolutionDeployResponse(BaseModel):
     agents_deleted: int = 0
     claims_upserted: int = 0
     claims_deleted: int = 0
+    # Empty integration shells created for declared connections that did not yet
+    # exist globally (never clobbers a configured integration).
+    integrations_shell_created: int = 0
 
 
 class SolutionCaptureRequest(BaseModel):
