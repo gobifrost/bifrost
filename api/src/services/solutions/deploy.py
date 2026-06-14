@@ -31,7 +31,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid5
 
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.agents import Agent, AgentRole
@@ -1398,14 +1398,21 @@ class SolutionDeployer:
         """
         from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 
-        existing_rows = (
-            await self.db.execute(
-                select(SolutionConnectionSchema).where(
-                    SolutionConnectionSchema.solution_id == solution.id
+        # Read just the existing NAMES — never hold managed ORM instances, so a
+        # later mutation can't land them in session.dirty and trip the always-on
+        # read-only guard. Every write below is a Core statement (insert/update/
+        # delete) that bypasses the ORM unit-of-work, matching the rest of deploy.
+        existing_names: set[str] = set(
+            (
+                await self.db.execute(
+                    select(SolutionConnectionSchema.integration_name).where(
+                        SolutionConnectionSchema.solution_id == solution.id
+                    )
                 )
             )
-        ).scalars().all()
-        existing_by_name = {r.integration_name: r for r in existing_rows}
+            .scalars()
+            .all()
+        )
 
         declared_names: set[str] = set()
         for decl in connection_schemas:
@@ -1413,24 +1420,34 @@ class SolutionDeployer:
             declared_names.add(name)
             template = decl.get("template") or {}
             position = int(decl.get("position", 0))
-            row = existing_by_name.get(name)
-            if row is None:
-                self.db.add(
-                    SolutionConnectionSchema(
+            if name in existing_names:
+                await self.db.execute(
+                    update(SolutionConnectionSchema)
+                    .where(
+                        SolutionConnectionSchema.solution_id == solution.id,
+                        SolutionConnectionSchema.integration_name == name,
+                    )
+                    .values(template=template, position=position)
+                )
+            else:
+                await self.db.execute(
+                    insert(SolutionConnectionSchema).values(
                         solution_id=solution.id,
                         integration_name=name,
                         template=template,
                         position=position,
                     )
                 )
-            else:
-                row.template = template
-                row.position = position
 
         # Reconcile removals: drop declarations no longer in the bundle.
-        for name, row in existing_by_name.items():
-            if name not in declared_names:
-                await self.db.delete(row)
+        stale_names = existing_names - declared_names
+        if stale_names:
+            await self.db.execute(
+                delete(SolutionConnectionSchema).where(
+                    SolutionConnectionSchema.solution_id == solution.id,
+                    SolutionConnectionSchema.integration_name.in_(stale_names),
+                )
+            )
 
     async def _reattach_orphan_configs(
         self, solution: Solution, declared_keys: set[str]

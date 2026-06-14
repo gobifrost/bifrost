@@ -180,6 +180,49 @@ class TestSolutionDeployShells:
         )).scalars().all()
         assert {r.integration_name for r in rows} == {"Keep"}  # Drop reconciled away
 
+    async def test_connection_declarations_reconcile_under_guard(
+        self, db_session
+    ) -> None:
+        # PRODUCTION-FAITHFUL: the read-only before_flush guard is installed at app
+        # startup, so it is ALWAYS active. _upsert_connection_declarations must
+        # UPDATE and DROP via Core statements (which bypass the ORM unit-of-work)
+        # — an ORM `row.attr = ...` or `db.delete(row)` would land in
+        # session.dirty/deleted and raise SolutionManagedWriteError (drive F5).
+        from src.services.solutions.guard import install_solution_write_guard
+
+        install_solution_write_guard()  # idempotent; mirrors app startup
+        db = db_session
+        dep = SolutionDeployer(db)
+        slug = f"conn-decl-guard-{uuid4().hex[:8]}"
+        sol = Solution(id=uuid4(), slug=slug, name=slug.upper(), organization_id=None)
+        db.add(sol)
+        await db.flush()
+
+        # Deploy two declarations.
+        await dep._upsert_connection_declarations(sol, [
+            {"integration_name": "Keep", "position": 0,
+             "template": {"name": "Keep", "config_schema": [], "oauth": None}},
+            {"integration_name": "Drop", "position": 1,
+             "template": {"name": "Drop", "config_schema": [], "oauth": None}},
+        ])
+        await db.flush()
+
+        # Re-deploy: UPDATE Keep (new template/position) + DROP Drop — both must
+        # succeed under the guard.
+        await dep._upsert_connection_declarations(sol, [
+            {"integration_name": "Keep", "position": 5,
+             "template": {"name": "Keep", "config_schema": [], "oauth": None}},
+        ])
+        await db.flush()
+
+        rows = (await db.execute(
+            select(SolutionConnectionSchema).where(
+                SolutionConnectionSchema.solution_id == sol.id
+            )
+        )).scalars().all()
+        assert {r.integration_name for r in rows} == {"Keep"}
+        assert rows[0].position == 5  # the UPDATE took effect (not just delete)
+
     async def test_no_oauth_template_creates_no_provider(self, db_session) -> None:
         db = db_session
         name = f"NoOAuth-{uuid4().hex[:8]}"
