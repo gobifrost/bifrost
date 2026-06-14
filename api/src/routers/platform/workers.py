@@ -4,9 +4,9 @@ Platform Admin Workers Router
 API endpoints for managing process pools, viewing queue status, and handling
 stuck executions. All endpoints require platform admin privileges.
 
-The new model uses ProcessPoolManager with simple states:
-- IDLE: Process ready to accept work
-- BUSY: Process currently executing
+The on-demand model uses ProcessPoolManager with one-shot workers, which
+only ever report two states in their heartbeat:
+- BUSY: Process currently executing its single workload
 - KILLED: Process was terminated (pending removal)
 """
 

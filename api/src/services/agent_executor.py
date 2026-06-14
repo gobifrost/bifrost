@@ -315,11 +315,11 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     content=(messages[0].content or "") + tool_instruction,
                 )
 
-            # 4. Get LLM client
+            # 6. Get LLM client
             async with self._db() as session:
                 llm_client = await get_llm_client(session)
 
-            # 5a. Check context size and prune if needed
+            # 7. Check context size and prune if needed
             estimated_tokens = self._estimate_tokens(messages)
 
             if estimated_tokens > CONTEXT_WARNING_TOKENS:
@@ -358,7 +358,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                         ),
                     )
 
-            # 5. Run completion loop with tool calling
+            # 8. Run completion loop with tool calling
             iteration = 0
             final_content = ""
             final_tool_calls: list[ToolCall] = []
@@ -556,7 +556,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
                 # Continue loop to get LLM response with tool results
 
-            # 6. Save final assistant message (using pre-generated ID)
+            # 9. Save final assistant message (using pre-generated ID)
             duration_ms = int((time.time() - start_time) * 1000)
             assistant_msg = await self._save_message(
                 conversation_id=conversation.id,
@@ -569,7 +569,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 message_id=assistant_message_id,
             )
 
-            # 6b. Record AI usage
+            # 9b. Record AI usage
             try:
                 await self._record_ai_usage(
                     provider=llm_client.provider_name,
@@ -585,7 +585,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             except Exception as e:
                 logger.warning(f"Failed to record AI usage: {e}")
 
-            # 7. Yield done chunk with final content (for non-streaming mode)
+            # 10. Yield done chunk with final content (for non-streaming mode)
             yield ChatStreamChunk(
                 type="done",
                 content=final_content if final_content else None,

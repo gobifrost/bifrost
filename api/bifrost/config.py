@@ -45,10 +45,14 @@ class config:
                 Pass None explicitly for global scope.
 
         Returns:
-            Any: Configuration value, or default if not found
+            Any: Configuration value, or default if the key is not set
 
         Raises:
             RuntimeError: If not authenticated
+            httpx.HTTPStatusError: On a real request failure (4xx/5xx). A
+                missing key is NOT an error — the endpoint returns 200 with a
+                null body and ``default`` is returned. Permission and server
+                errors are surfaced rather than masked as ``default``.
 
         Example:
             >>> from bifrost import config
@@ -63,17 +67,18 @@ class config:
             json={"key": key, "scope": effective_scope}
         )
 
-        if response.status_code == 200:
-            result = response.json()
-            if result is None:
-                return default
-            value = result.get("value", default)
-            if result.get("config_type") == "secret" and isinstance(value, str):
-                from ._context import register_secret
-                register_secret(value)
-            return value
-        else:
+        # A missing key comes back as 200 with a null body; anything else
+        # (permission denied, server error, transport) must surface, not be
+        # silently collapsed into the caller's default.
+        raise_for_status_with_detail(response)
+        result = response.json()
+        if result is None:
             return default
+        value = result.get("value", default)
+        if result.get("config_type") == "secret" and isinstance(value, str):
+            from ._context import register_secret
+            register_secret(value)
+        return value
 
     @staticmethod
     async def set(

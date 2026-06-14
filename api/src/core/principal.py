@@ -9,6 +9,13 @@ tests/unit/test_import_hygiene.py enforces this.
 from dataclasses import dataclass, field
 from uuid import UUID
 
+# Role names that grant platform-admin-equivalent privileges to a non-superuser
+# user. Used by the agents domain (agent_runs/agents/agent_tuning) to admit
+# role-based admins in addition to token superusers. The canonical
+# ``is_platform_admin`` property stays narrower (superuser-only) on purpose —
+# see api/src/repositories/README.md.
+PLATFORM_ADMIN_ROLE_NAMES = ("Platform Admin", "Platform Owner")
+
 
 @dataclass
 class UserPrincipal:
@@ -66,3 +73,12 @@ class UserPrincipal:
     def has_any_role(self, *roles: str) -> bool:
         """Check if user has any of the specified roles."""
         return any(role in self.roles for role in roles)
+
+    def has_platform_admin_grant(self) -> bool:
+        """True if a token superuser OR a holder of a platform-admin role.
+
+        Broader than ``is_platform_admin`` (which is superuser-only): this
+        also admits users granted a ``PLATFORM_ADMIN_ROLE_NAMES`` role. Used
+        by the agents domain for its admin gates.
+        """
+        return bool(self.is_superuser) or self.has_any_role(*PLATFORM_ADMIN_ROLE_NAMES)

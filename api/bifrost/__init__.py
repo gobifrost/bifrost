@@ -177,31 +177,47 @@ try:
         raise ImportError("Could not load enums")
     del _spec, _enums_path, _Path, _imputil
 except (ImportError, ModuleNotFoundError, OSError):
+    # Standalone-SDK fallback (no src/ on path). These MUST mirror
+    # src/models/enums.py value-for-value — diverging members/values here ship
+    # a CLI that silently produces wrong enum strings against the server.
     from enum import Enum
 
     class ExecutionStatus(str, Enum):  # type: ignore[no-redef]
         """Workflow execution status."""
-        PENDING = "pending"
-        RUNNING = "running"
-        COMPLETED = "completed"
-        FAILED = "failed"
-        CANCELLED = "cancelled"
+        SCHEDULED = "Scheduled"
+        PENDING = "Pending"
+        RUNNING = "Running"
+        SUCCESS = "Success"
+        FAILED = "Failed"
+        TIMEOUT = "Timeout"
+        STUCK = "Stuck"
+        COMPLETED_WITH_ERRORS = "CompletedWithErrors"
+        CANCELLING = "Cancelling"
+        CANCELLED = "Cancelled"
 
     class ConfigType(str, Enum):  # type: ignore[no-redef]
         """Configuration value type."""
         STRING = "string"
-        SECRET = "secret"
-        JSON = "json"
-        BOOL = "bool"
         INT = "int"
+        BOOL = "bool"
+        JSON = "json"
+        SECRET = "secret"
 
     class FormFieldType(str, Enum):  # type: ignore[no-redef]
         """Form field type."""
         TEXT = "text"
+        EMAIL = "email"
         NUMBER = "number"
         SELECT = "select"
+        MULTI_SELECT = "multi_select"
         CHECKBOX = "checkbox"
+        TEXTAREA = "textarea"
+        RADIO = "radio"
         DATE = "date"
+        DATETIME = "datetime"
+        MARKDOWN = "markdown"
+        HTML = "html"
+        FILE = "file"
 
 # Lazy-load the ai module on first access.
 # bifrost.ai imports openai + anthropic (~1,078 modules, ~100MB) which are only

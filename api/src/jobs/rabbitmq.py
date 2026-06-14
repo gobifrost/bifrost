@@ -103,84 +103,40 @@ class RabbitMQConnection:
 rabbitmq = RabbitMQConnection()
 
 
-class BaseConsumer(ABC):
+class _AbstractConsumer(ABC):
     """
-    Base class for RabbitMQ consumers.
+    Shared lifecycle for RabbitMQ consumers.
 
-    Provides:
-    - Automatic connection and channel management
-    - Message acknowledgment handling
-    - Error handling with dead letter queue support
-    - Graceful shutdown
+    Holds the connection/channel/in-flight bookkeeping and implements the
+    acknowledgment, graceful-drain, and per-message dispatch logic that is
+    identical across queue-based and broadcast consumers. Subclasses supply
+    only the topology — how the channel/queue are declared in ``start`` — and
+    the per-message ``process_message`` handler.
     """
 
-    def __init__(
-        self,
-        queue_name: str,
-        prefetch_count: int = 1,
-        dead_letter_exchange: str | None = None,
-    ):
-        """
-        Initialize consumer.
+    # Subclasses expose a human-readable name for logging:
+    # ``BaseConsumer`` via an attribute, ``BroadcastConsumer`` via a property.
+    queue_name: str
 
-        Args:
-            queue_name: Name of the queue to consume from
-            prefetch_count: Number of messages to prefetch (QoS)
-            dead_letter_exchange: Exchange for failed messages (poison queue)
-        """
-        self.queue_name = queue_name
-        self.prefetch_count = prefetch_count
-        self.dead_letter_exchange = dead_letter_exchange or f"{queue_name}-dlx"
-
+    def _init_consumer_state(self) -> None:
+        """Initialize the connection/in-flight bookkeeping shared by subclasses."""
         self._channel: AbstractRobustChannel | None = None
         self._queue: aio_pika.Queue | None = None
         self._running = False
+        # Pool.acquire() context manager; opened in start(), closed in stop().
+        self._connection_ctx: Any = None
         self._inflight: set[asyncio.Task] = set()
         self._consumer_tag: str | None = None
         self._draining: bool = False
 
+    @abstractmethod
     async def start(self) -> None:
-        """Start consuming messages."""
-        self._running = True
+        """Declare the consumer's topology and begin consuming.
 
-        # Initialize pools and get a dedicated connection for this consumer
-        await rabbitmq.init_pools()
-        # Store the context manager so it stays open
-        self._connection_ctx = rabbitmq.get_connection()
-        connection = await self._connection_ctx.__aenter__()
-        channel = await connection.channel()
-        self._channel = channel
-        await channel.set_qos(prefetch_count=self.prefetch_count)
-
-        # Declare dead letter exchange
-        dlx = await channel.declare_exchange(
-            self.dead_letter_exchange,
-            aio_pika.ExchangeType.DIRECT,
-            durable=True,
-        )
-
-        # Declare dead letter queue
-        dlq = await channel.declare_queue(
-            f"{self.queue_name}-poison",
-            durable=True,
-        )
-        await dlq.bind(dlx, routing_key=self.queue_name)
-
-        # Declare main queue with dead letter routing
-        queue = await channel.declare_queue(
-            self.queue_name,
-            durable=True,
-            arguments={
-                "x-dead-letter-exchange": self.dead_letter_exchange,
-                "x-dead-letter-routing-key": self.queue_name,
-            },
-        )
-        self._queue = queue
-
-        logger.info(f"Consumer started for queue: {self.queue_name}")
-
-        # Start consuming, capturing the consumer tag so drain() can cancel it.
-        self._consumer_tag = await queue.consume(self._on_message)
+        Implementations must populate ``self._channel``, ``self._queue`` and
+        ``self._connection_ctx``, then capture ``self._consumer_tag`` from
+        ``queue.consume(self._on_message)`` so ``drain`` can cancel it.
+        """
 
     async def stop(self) -> None:
         """Stop consuming messages (hard close — does NOT wait for in-flight).
@@ -190,9 +146,9 @@ class BaseConsumer(ABC):
         self._running = False
         if self._channel:
             await self._channel.close()
-        if hasattr(self, '_connection_ctx') and self._connection_ctx:
+        if self._connection_ctx:
             await self._connection_ctx.__aexit__(None, None, None)
-        logger.info(f"Consumer stopped for queue: {self.queue_name}")
+        logger.info(f"Consumer stopped for {self.queue_name}")
 
     async def drain(self, deadline: float = 300.0) -> None:
         """Stop new deliveries, wait on in-flight tasks, then close.
@@ -250,11 +206,11 @@ class BaseConsumer(ABC):
 
         Spawns a task to process each message concurrently, allowing
         multiple messages to be processed in parallel up to prefetch_count.
-        Tracks in-flight tasks so drain() can wait for them.
+        Tracks in-flight tasks so drain() can wait for them. While draining,
+        slipped-through messages are nacked + requeued so another worker
+        picks them up.
         """
         if self._draining:
-            # Consumer was cancelled but a message slipped through; nack to
-            # requeue so another worker picks it up.
             await message.nack(requeue=True)
             return
         task = asyncio.create_task(self._process_message_with_ack(message))
@@ -266,10 +222,12 @@ class BaseConsumer(ABC):
         Process a message with proper acknowledgment handling.
 
         This runs as a separate task to enable concurrent message processing.
+        On failure the message is left unacked with requeue=False so the
+        broker routes it to the dead-letter queue (queue consumers) or simply
+        drops it (broadcast consumers have no DLQ — each worker owns its queue).
         """
         async with message.process(requeue=False):
             try:
-                # Parse message body
                 body = json.loads(message.body.decode())
 
                 logger.info(
@@ -277,7 +235,6 @@ class BaseConsumer(ABC):
                     extra={"message_id": message.message_id},
                 )
 
-                # Process the message
                 await self.process_message(body)
 
                 logger.info(
@@ -295,13 +252,12 @@ class BaseConsumer(ABC):
                     },
                     exc_info=True,
                 )
-                # Message will be moved to DLQ due to requeue=False
                 raise
 
     @abstractmethod
     async def process_message(self, body: dict[str, Any]) -> None:
         """
-        Process a message from the queue.
+        Process a message.
 
         Must be implemented by subclasses.
 
@@ -311,7 +267,81 @@ class BaseConsumer(ABC):
         pass
 
 
-class BroadcastConsumer(ABC):
+class BaseConsumer(_AbstractConsumer):
+    """
+    Base class for queue-based RabbitMQ consumers (one worker per message).
+
+    Provides:
+    - Automatic connection and channel management
+    - Message acknowledgment handling
+    - Error handling with dead letter queue support
+    - Graceful shutdown
+    """
+
+    def __init__(
+        self,
+        queue_name: str,
+        prefetch_count: int = 1,
+        dead_letter_exchange: str | None = None,
+    ):
+        """
+        Initialize consumer.
+
+        Args:
+            queue_name: Name of the queue to consume from
+            prefetch_count: Number of messages to prefetch (QoS)
+            dead_letter_exchange: Exchange for failed messages (poison queue)
+        """
+        self._init_consumer_state()
+        self.queue_name = queue_name
+        self.prefetch_count = prefetch_count
+        self.dead_letter_exchange = dead_letter_exchange or f"{queue_name}-dlx"
+
+    async def start(self) -> None:
+        """Start consuming messages."""
+        self._running = True
+
+        # Initialize pools and get a dedicated connection for this consumer
+        await rabbitmq.init_pools()
+        # Store the context manager so it stays open
+        self._connection_ctx = rabbitmq.get_connection()
+        connection = await self._connection_ctx.__aenter__()
+        channel = await connection.channel()
+        self._channel = channel
+        await channel.set_qos(prefetch_count=self.prefetch_count)
+
+        # Declare dead letter exchange
+        dlx = await channel.declare_exchange(
+            self.dead_letter_exchange,
+            aio_pika.ExchangeType.DIRECT,
+            durable=True,
+        )
+
+        # Declare dead letter queue
+        dlq = await channel.declare_queue(
+            f"{self.queue_name}-poison",
+            durable=True,
+        )
+        await dlq.bind(dlx, routing_key=self.queue_name)
+
+        # Declare main queue with dead letter routing
+        queue = await channel.declare_queue(
+            self.queue_name,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": self.dead_letter_exchange,
+                "x-dead-letter-routing-key": self.queue_name,
+            },
+        )
+        self._queue = queue
+
+        logger.info(f"Consumer started for queue: {self.queue_name}")
+
+        # Start consuming, capturing the consumer tag so drain() can cancel it.
+        self._consumer_tag = await queue.consume(self._on_message)
+
+
+class BroadcastConsumer(_AbstractConsumer):
     """
     Base class for broadcast (fanout) consumers.
 
@@ -330,17 +360,11 @@ class BroadcastConsumer(ABC):
         Args:
             exchange_name: Name of the fanout exchange to consume from
         """
+        self._init_consumer_state()
         self.exchange_name = exchange_name
-        self._channel: AbstractRobustChannel | None = None
-        self._queue: aio_pika.Queue | None = None
-        self._running = False
-        self._connection_ctx = None
-        self._inflight: set[asyncio.Task] = set()
-        self._consumer_tag: str | None = None
-        self._draining: bool = False
 
     @property
-    def queue_name(self) -> str:
+    def queue_name(self) -> str:  # type: ignore[override]
         """Return the exchange name for logging compatibility."""
         return f"{self.exchange_name} (broadcast)"
 
@@ -381,126 +405,6 @@ class BroadcastConsumer(ABC):
 
         # Start consuming, capturing the consumer tag so drain() can cancel it.
         self._consumer_tag = await queue.consume(self._on_message)
-
-    async def stop(self) -> None:
-        """Stop consuming messages (hard close — does NOT wait for in-flight).
-
-        For graceful shutdown, call drain() instead.
-        """
-        self._running = False
-        if self._channel:
-            await self._channel.close()
-        if self._connection_ctx:
-            await self._connection_ctx.__aexit__(None, None, None)
-        logger.info(f"Broadcast consumer stopped for exchange: {self.exchange_name}")
-
-    async def drain(self, deadline: float = 300.0) -> None:
-        """Stop new deliveries, wait on in-flight tasks, then close.
-
-        Cancels the consumer tag (RabbitMQ stops sending new messages on this
-        channel) but keeps the channel open so in-flight tasks can ack their
-        work. After the deadline expires (or all tasks finish), calls stop()
-        to close the channel + connection.
-
-        Idempotent — calling twice is a no-op on the second call.
-
-        Args:
-            deadline: Max seconds to wait for in-flight tasks before giving up.
-        """
-        if self._draining:
-            return  # idempotent
-        self._draining = True
-
-        try:
-            # Cancel the consumer: stops new deliveries, keeps channel open.
-            if self._queue is not None and self._consumer_tag is not None:
-                try:
-                    await self._queue.cancel(self._consumer_tag)
-                    logger.info(f"Cancelled consumer for {self.queue_name}")
-                except Exception as e:
-                    logger.warning(f"Error cancelling consumer for {self.queue_name}: {e}")
-
-            # Snapshot is intentional: any message that races past the _draining
-            # flag gets nacked + requeued in _on_message and never enters _inflight.
-            if self._inflight:
-                pending = list(self._inflight)
-                logger.info(
-                    f"Draining {len(pending)} in-flight on {self.queue_name} "
-                    f"(deadline={deadline}s)"
-                )
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*pending, return_exceptions=True),
-                        timeout=deadline,
-                    )
-                    logger.info(f"Drain complete for {self.queue_name}")
-                except asyncio.TimeoutError:
-                    still_running = [t for t in pending if not t.done()]
-                    logger.warning(
-                        f"Drain deadline exceeded on {self.queue_name}: "
-                        f"{len(still_running)} task(s) still running"
-                    )
-        finally:
-            # Always close channel + connection, even if cancelled mid-drain.
-            await self.stop()
-
-    async def _on_message(self, message: IncomingMessage) -> None:
-        """Handle incoming message.
-
-        Tracks in-flight tasks so drain() can wait for them. While draining,
-        slipped-through messages are nacked + requeued so another worker
-        picks them up.
-        """
-        if self._draining:
-            await message.nack(requeue=True)
-            return
-        task = asyncio.create_task(self._process_message_with_ack(message))
-        self._inflight.add(task)
-        task.add_done_callback(self._inflight.discard)
-
-    async def _process_message_with_ack(self, message: IncomingMessage) -> None:
-        """Process a message with proper acknowledgment handling."""
-        async with message.process(requeue=False):
-            try:
-                body = json.loads(message.body.decode())
-
-                logger.info(
-                    f"Processing broadcast message from {self.exchange_name}",
-                    extra={"message_id": message.message_id},
-                )
-
-                await self.process_message(body)
-
-                logger.info(
-                    "Broadcast message processed successfully",
-                    extra={"message_id": message.message_id},
-                )
-
-            except Exception as e:
-                logger.error(
-                    f"Error processing broadcast message from {self.exchange_name}: {e}",
-                    extra={
-                        "message_id": message.message_id,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    },
-                    exc_info=True,
-                )
-                # For broadcast, we don't have DLQ since each worker has its own queue
-                # Just log the error and continue
-                raise
-
-    @abstractmethod
-    async def process_message(self, body: dict[str, Any]) -> None:
-        """
-        Process a broadcast message.
-
-        Must be implemented by subclasses.
-
-        Args:
-            body: Parsed message body
-        """
-        pass
 
 
 async def publish_broadcast(

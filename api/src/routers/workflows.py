@@ -519,11 +519,10 @@ async def get_workflow_usage_stats(
         elif filter_type == OrgFilterType.GLOBAL_ONLY:
             # Global entities only - doesn't make sense for usage stats, return empty
             return WorkflowUsageStats(forms=[], apps=[], agents=[])
-        elif filter_type == OrgFilterType.ORG_ONLY:
-            # Platform admin filtering by specific org - only that org (no global)
-            org_filter = filter_org
         else:
-            # ORG_PLUS_GLOBAL - shouldn't happen for superuser, but handle it
+            # ORG_ONLY (admin filtering by a specific org) or the
+            # shouldn't-happen ORG_PLUS_GLOBAL fallthrough — both scope to the
+            # resolved org.
             org_filter = filter_org
 
         # =========================================================================

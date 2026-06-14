@@ -622,38 +622,3 @@ def _convert_parameters(params: list) -> list[WorkflowParameter]:
     return result
 
 
-def get_workflow(name: str) -> tuple[Callable, WorkflowMetadata] | None:
-    """
-    Get a workflow by name.
-
-    Uses the same import logic as load_workflow() to ensure correct
-    module paths and __file__ resolution.
-
-    Args:
-        name: Workflow name
-
-    Returns:
-        Tuple of (function, metadata) or None if not found
-    """
-    # Use load_workflow which properly handles module imports
-    # This ensures __file__ and sys.path are set correctly
-    return load_workflow(name)
-
-
-def get_data_provider(name: str) -> tuple[Callable, DataProviderMetadata] | None:
-    """
-    Get a data provider by name.
-
-    Uses the same import logic as load_data_provider() to ensure correct
-    module paths and __file__ resolution.
-
-    Args:
-        name: Data provider name
-
-    Returns:
-        Tuple of (function, metadata) or None if not found
-    """
-    # Use load_data_provider which properly handles module imports
-    return load_data_provider(name)
-
-

@@ -128,7 +128,6 @@ async def test_router_invalidates_old_cache_entry_on_rename():
         patch("src.routers.config.ConfigRepository", return_value=repo),
         patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
         patch("src.routers.config.upsert_config", new=AsyncMock()) as ups,
-        patch("src.routers.config.CACHE_AVAILABLE", new=True),
     ):
         await update_config(config_id, request, ctx, user)
 
@@ -163,7 +162,6 @@ async def test_router_does_not_invalidate_when_identity_unchanged():
         patch("src.routers.config.ConfigRepository", return_value=repo),
         patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
         patch("src.routers.config.upsert_config", new=AsyncMock()),
-        patch("src.routers.config.CACHE_AVAILABLE", new=True),
     ):
         await update_config(config_id, request, ctx, user)
 
@@ -195,7 +193,6 @@ async def test_router_bumps_global_version_on_org_to_global_transition():
         patch("src.routers.config.ConfigRepository", return_value=repo),
         patch("src.routers.config.invalidate_config", new=AsyncMock()),
         patch("src.routers.config.upsert_config", new=AsyncMock()),
-        patch("src.routers.config.CACHE_AVAILABLE", new=True),
         patch("src.core.cache.get_shared_redis", return_value=fake_redis),
     ):
         await update_config(config_id, request, ctx, user)

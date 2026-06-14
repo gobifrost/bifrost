@@ -1520,7 +1520,7 @@ async def _post_result(
             },
         )
         print(f"\nExecution completed ({status})")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort result post; the local run already finished, so a failed callback only loses server-side bookkeeping and must not crash the CLI.
         print(f"\nWarning: Failed to post result: {e}", file=sys.stderr)
 
 

@@ -16,10 +16,6 @@ aiofile==3.9.0 \
     --hash=sha256:ce2f6c1571538cbdfa0143b04e16b208ecb0e9cb4148e528af8a640ed51cc8aa \
     --hash=sha256:e5ad718bb148b265b6df1b3752c4d1d83024b93da9bd599df74b9d9ffcf7919b
     # via py-key-value-aio
-aiofiles==25.1.0 \
-    --hash=sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2 \
-    --hash=sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695
-    # via bifrost-api (pyproject.toml)
 aiohappyeyeballs==2.6.1 \
     --hash=sha256:c3f9d0113123803ccadfdf3f0faa505bc78e6a72d1cc4806cbd719826e943558 \
     --hash=sha256:f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8
@@ -2213,7 +2209,6 @@ python-dateutil==2.9.0.post0 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
     # via
     #   aiobotocore
-    #   bifrost-api (pyproject.toml)
     #   botocore
     #   croniter
 python-dotenv==1.2.2 \
@@ -2225,10 +2220,6 @@ python-dotenv==1.2.2 \
     #   pydantic-settings
     #   pytest-env
     #   uvicorn
-python-json-logger==4.1.0 \
-    --hash=sha256:132994765cf75bf44554be9aa49b06ef2345d23661a96720262716438141b6b2 \
-    --hash=sha256:b396b9e3ed782b09ff9d6e4f1683d46c83ad0d35d2e407c09a9ebbf038f88195
-    # via bifrost-api (pyproject.toml)
 python-multipart==0.0.26 \
     --hash=sha256:08fadc45918cd615e26846437f50c5d6d23304da32c341f289a617127b081f17 \
     --hash=sha256:c0b169f8c4484c13b0dcf2ef0ec3a4adb255c4b7d18d8e420477d2b1dd03f185
@@ -2577,10 +2568,6 @@ starlette==1.0.0 \
     #   fastapi
     #   mcp
     #   sse-starlette
-structlog==25.5.0 \
-    --hash=sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98 \
-    --hash=sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f
-    # via bifrost-api (pyproject.toml)
 textual==8.2.4 \
     --hash=sha256:a83bd3f0cc7125ca203845af753f9d6b6be030025ecd1b05cc75ebe645b9c4ba \
     --hash=sha256:d4e2b2ddd7157191d00b228592b7c739ea080b7d792fd410f23ca75f05ea76c4

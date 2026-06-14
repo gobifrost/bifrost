@@ -133,12 +133,9 @@ class ProcessState(Enum):
     State of a worker process in the pool.
 
     Workers are one-shot — they only ever exist in BUSY (running their
-    single execution) or KILLED (terminating). IDLE is kept as a
-    no-longer-used value purely for any external consumer that may parse
-    the heartbeat shape; nothing in this module emits it.
+    single execution) or KILLED (terminating).
     """
 
-    IDLE = "idle"  # deprecated; unused since on-demand-only refactor
     BUSY = "busy"
     KILLED = "killed"
 

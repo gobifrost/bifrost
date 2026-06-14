@@ -67,13 +67,11 @@ dependencies = [
     # =========================================================================
     "httpx",  # Async HTTP client
     "aiohttp>=3.13.5",  # Closes 20 CVEs incl. CVSS 9.1
-    "aiofiles",
 
     # =========================================================================
     # Data Processing
     # =========================================================================
     "PyYAML",
-    "python-dateutil",
     "croniter",  # CRON expression parsing
     "defusedxml>=0.7.1",  # Safe XML/SVG parsing — strips scripts/event-handlers from uploads
 
@@ -101,8 +99,6 @@ dependencies = [
     # =========================================================================
     # Logging & Monitoring
     # =========================================================================
-    "python-json-logger",
-    "structlog",
     "psutil",  # Process monitoring for worker heartbeats
 
     # =========================================================================

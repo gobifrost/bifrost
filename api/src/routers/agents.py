@@ -955,10 +955,7 @@ async def get_agent_stats_endpoint(
     window_days: int = Query(7, ge=1, le=90),
 ) -> AgentStatsResponse:
     """Per-agent run stats. Reuses the same access check as ``GET /{agent_id}``."""
-    is_admin = user.is_superuser or any(
-        role in ["Platform Admin", "Platform Owner"]
-        for role in user.roles
-    )
+    is_admin = user.has_platform_admin_grant()
 
     repo = AgentRepository(
         session=db,

@@ -898,10 +898,7 @@ async def regenerate_summary(
     user: CurrentActiveUser,
 ) -> dict:
     """Reset summary state and re-enqueue a summarization job. Admin-only."""
-    is_admin = user.is_superuser or any(
-        role in ["Platform Admin", "Platform Owner"] for role in user.roles
-    )
-    if not is_admin:
+    if not _is_platform_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only platform administrators can regenerate run summaries",
@@ -1036,9 +1033,7 @@ _BACKFILL_FALLBACK_PER_RUN_COST = Decimal("0.002")
 
 
 def _is_platform_admin(user) -> bool:  # type: ignore[no-untyped-def]
-    return bool(user.is_superuser) or any(
-        role in ["Platform Admin", "Platform Owner"] for role in user.roles
-    )
+    return user.has_platform_admin_grant()
 
 
 async def _estimate_per_run_cost(db) -> tuple[Decimal, str]:  # type: ignore[no-untyped-def]

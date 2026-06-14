@@ -216,11 +216,8 @@ async def process_schedule_sources() -> dict[str, Any]:
                     queued = await processor.queue_event_deliveries(event.id)
                     results["deliveries_queued"] += queued
 
-                    # Update event status based on delivery outcomes
-                    if queued > 0:
-                        event.status = EventStatus.COMPLETED
-                    else:
-                        event.status = EventStatus.COMPLETED
+                    # Source has been processed and its deliveries queued (if any).
+                    event.status = EventStatus.COMPLETED
 
                 except Exception as source_error:
                     error_info = {
