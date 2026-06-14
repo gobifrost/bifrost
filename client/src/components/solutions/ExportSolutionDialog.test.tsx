@@ -69,6 +69,19 @@ it("Export button is disabled when Full backup selected but password is empty", 
 	expect(screen.getByRole("button", { name: /export/i })).toBeDisabled();
 });
 
+it("Export button is disabled and shows a spinner label when isPending", async () => {
+	render(
+		<ExportSolutionDialog
+			open
+			onOpenChange={() => {}}
+			onExport={() => {}}
+			isPending
+		/>,
+	);
+	const btn = screen.getByRole("button", { name: /exporting/i });
+	expect(btn).toBeDisabled();
+});
+
 it("calls onExport with full + password when Full backup is selected and password entered", async () => {
 	const onExport = vi.fn();
 	render(

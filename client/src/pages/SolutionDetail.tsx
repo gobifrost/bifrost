@@ -1287,6 +1287,7 @@ export function SolutionDetail() {
 						onExport={(mode, password) =>
 							exportMut.mutate({ mode, password })
 						}
+						isPending={exportMut.isPending}
 					/>
 
 					{/* Delete / uninstall dialog (type-to-confirm) */}

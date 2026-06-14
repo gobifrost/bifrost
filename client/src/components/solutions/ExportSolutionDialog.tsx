@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -20,6 +21,8 @@ export interface ExportSolutionDialogProps {
 		mode: "shareable" | "full",
 		password?: string,
 	) => void | Promise<void>;
+	/** When true, the Export button is disabled and shows a spinner. */
+	isPending?: boolean;
 }
 
 /**
@@ -34,6 +37,7 @@ export function ExportSolutionDialog({
 	open,
 	onOpenChange,
 	onExport,
+	isPending = false,
 }: ExportSolutionDialogProps) {
 	const [mode, setMode] = useState<"shareable" | "full">("shareable");
 	const [password, setPassword] = useState("");
@@ -150,10 +154,13 @@ export function ExportSolutionDialog({
 					</Button>
 					<Button
 						type="button"
-						disabled={exportDisabled}
+						disabled={exportDisabled || isPending}
 						onClick={handleExport}
 					>
-						Export
+						{isPending && (
+							<Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+						)}
+						{isPending ? "Exporting…" : "Export"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
