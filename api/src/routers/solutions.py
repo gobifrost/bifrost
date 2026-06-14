@@ -1186,6 +1186,94 @@ async def install_preview_repo(
 
 
 @router.post(
+    "/install/from-repo",
+    response_model=SolutionDTO,
+    status_code=status.HTTP_201_CREATED,
+    summary="Install a Solution from a git repo (git-connected, admin only)",
+)
+async def install_from_repo(
+    body: SolutionRepoPreviewRequest, ctx: Context, user: CurrentSuperuser
+) -> SolutionDTO:
+    """Create a git-connected install from a repo (+ optional subpath/ref) and
+    deploy it. git-connected from birth: deploy is refused, auto-pull is the
+    only writer. 409 if an install of the same (slug, scope) already exists."""
+    import tempfile
+    from pathlib import Path
+
+    from src.services.solutions.git_sync import (
+        NotASolutionWorkspace,
+        clone_repo_to_dir,
+        resolve_repo_subpath,
+        sync,
+    )
+    from src.services.solutions.zip_install import _parse_workspace, find_install
+
+    # Clone + parse the descriptor to learn slug/name/scope (no DB write yet).
+    with tempfile.TemporaryDirectory(prefix="bifrost-repo-install-") as tmp:
+        work = Path(tmp)
+        try:
+            await clone_repo_to_dir(body.repo_url, work, ref=body.git_ref)
+        except Exception as exc:  # GitPython errors etc.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not clone {body.repo_url}: {exc}",
+            ) from exc
+        try:
+            root = resolve_repo_subpath(work, body.repo_subpath)
+        except NotASolutionWorkspace as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        if not (root / "bifrost.solution.yaml").is_file():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No bifrost.solution.yaml at "
+                f"{body.repo_subpath or '<repo root>'} in {body.repo_url}",
+            )
+        parsed = _parse_workspace(root)
+
+    if not parsed.slug:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Repo has no valid bifrost.solution.yaml (missing slug)",
+        )
+
+    # Scope: org install lands under the caller's org; global => NULL. Scope is
+    # carried entirely by organization_id NULL-ness (no `scope` ORM column).
+    org_id: UUID | None = ctx.org_id if parsed.scope == "org" else None
+    if parsed.scope == "org" and org_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="org-scoped install requires the caller to have an organization",
+        )
+
+    existing = await find_install(ctx.db, slug=parsed.slug, organization_id=org_id)
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An install of '{parsed.slug}' already exists for this scope; "
+            f"reconnect or update it instead.",
+        )
+
+    solution = SolutionORM(
+        slug=parsed.slug,
+        name=parsed.name or parsed.slug,
+        organization_id=org_id,
+        git_connected=True,
+        git_repo_url=body.repo_url,
+        repo_subpath=body.repo_subpath,
+        git_ref=body.git_ref,
+    )
+    ctx.db.add(solution)
+    await ctx.db.commit()
+    await ctx.db.refresh(solution)
+    # Clone + full-replace deploy (sync reads repo_url/ref/subpath off the row).
+    await sync(ctx.db, solution)
+    await ctx.db.refresh(solution)
+    return SolutionDTO.model_validate(solution)
+
+
+@router.post(
     "/install",
     response_model=SolutionDTO,
     summary="Install a Solution zip (atomic deploy + config values, admin only)",

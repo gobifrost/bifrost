@@ -88,6 +88,10 @@ class Solution(BaseModel):
     global_repo_access: bool = False
     git_connected: bool = False
     git_repo_url: str | None = None
+    # Subfolder within the connected repo holding this install's descriptor, and
+    # the git ref (branch/tag) it tracks. Both None => repo root / default branch.
+    repo_subpath: str | None = None
+    git_ref: str | None = None
     # Version bookkeeping (Task 20): the deployed bundle's declared version and
     # what the last version-changing deploy replaced. Deploy-recorded, not
     # caller-settable — version rides in the BUNDLE (descriptor), not a request.

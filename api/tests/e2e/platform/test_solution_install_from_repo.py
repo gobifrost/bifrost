@@ -29,12 +29,17 @@ _SHARED_ROOT = Path("/tmp/bifrost/solution-repo-fixtures")
 _CREATED: list[Path] = []
 
 
-def _make_fixture_repo(subdir: str = "", *, with_connection: bool = False) -> str:
+def _make_fixture_repo(
+    subdir: str = "", *, with_connection: bool = False, slug: str = "fixture-sol"
+) -> str:
     """Create a git repo with a minimal solution workspace (optionally in a
     subfolder) on the shared mount and return a file:// clone URL.
 
     ``with_connection`` writes a ``.bifrost/connections.yaml`` declaring one
     connection prerequisite, so the preview's ``connection_schemas`` is non-empty.
+    ``slug`` overrides the descriptor slug (e2e DB state is session-scoped and
+    NOT reset between tests, so install tests that must start clean pass a unique
+    slug to avoid colliding with installs a sibling test already created).
     """
     _SHARED_ROOT.mkdir(parents=True, exist_ok=True)
     root = _SHARED_ROOT / f"repo-{uuid.uuid4().hex[:8]}"
@@ -42,7 +47,7 @@ def _make_fixture_repo(subdir: str = "", *, with_connection: bool = False) -> st
     sol = root / subdir if subdir else root
     sol.mkdir(parents=True)
     (sol / "bifrost.solution.yaml").write_text(
-        "slug: fixture-sol\n"
+        f"slug: {slug}\n"
         "name: Fixture Solution\n"
         "version: 1.0.0\n"
         "scope: org\n"
@@ -111,3 +116,40 @@ async def test_preview_repo_rejects_traversing_subpath(e2e_client, platform_admi
     )
     assert resp.status_code == 422, resp.text
     assert "escapes the repo checkout" in resp.text
+
+
+async def test_install_from_repo_creates_connected_install(e2e_client, platform_admin):
+    slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
+    repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
+    resp = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+        headers=platform_admin.headers,
+    )
+    assert resp.status_code in (200, 201), resp.text
+    sol = resp.json()
+    assert sol["git_connected"] is True
+    assert sol["repo_subpath"] == "microsoft-csp"
+    assert sol["slug"] == slug
+    # deploy is now refused — auto-pull is the only writer
+    dep = e2e_client.post(
+        f"/api/solutions/{sol['id']}/deploy", json={}, headers=platform_admin.headers
+    )
+    assert dep.status_code == 409, dep.text
+
+
+async def test_install_from_repo_conflicts_on_existing(e2e_client, platform_admin):
+    slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
+    repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
+    first = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+        headers=platform_admin.headers,
+    )
+    assert first.status_code in (200, 201), first.text
+    again = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+        headers=platform_admin.headers,
+    )
+    assert again.status_code == 409, again.text
