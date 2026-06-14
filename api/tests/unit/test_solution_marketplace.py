@@ -56,3 +56,17 @@ def test_resolve_targets_explicit_org():
 def test_deploy_cmd_has_org_option():
     from bifrost.commands.solution import deploy_cmd
     assert "org_ref" in {p.name for p in deploy_cmd.params}
+
+
+from src.services.solutions.update_check import compute_update_available
+
+
+def test_compute_update_available():
+    assert compute_update_available(installed="1.0.0", remote="1.1.0") == "1.1.0"
+    assert compute_update_available(installed="1.1.0", remote="1.1.0") is None
+    assert compute_update_available(installed="1.2.0", remote="1.1.0") is None  # remote older
+    assert compute_update_available(installed=None, remote="1.0.0") == "1.0.0"
+    assert compute_update_available(installed="1.0.0", remote="not-a-version") is None
+    assert compute_update_available(installed="1.0.0", remote=None) is None
+    # installed unparseable but remote parseable => signal the remote
+    assert compute_update_available(installed="weird", remote="2.0.0") == "2.0.0"
