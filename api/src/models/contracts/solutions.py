@@ -97,6 +97,11 @@ class Solution(BaseModel):
     # caller-settable — version rides in the BUNDLE (descriptor), not a request.
     version: str | None = None
     upgraded_from_version: str | None = None
+    # Newest descriptor version available at the connected repo's ref HEAD when
+    # it is PEP-440-greater than `version` (set by the update-check scheduler).
+    # None => up to date / not git-connected / not yet checked. Drives the
+    # "Update Available" badge.
+    update_available_version: str | None = None
     # Persisted setup-completeness (Task 5/7): True when every required config
     # declaration has a matching Config value in the install's org scope.
     # Recomputed by install_zip after each deploy so it reflects the install's

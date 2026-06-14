@@ -70,3 +70,8 @@ def test_compute_update_available():
     assert compute_update_available(installed="1.0.0", remote=None) is None
     # installed unparseable but remote parseable => signal the remote
     assert compute_update_available(installed="weird", remote="2.0.0") == "2.0.0"
+
+
+def test_read_dto_exposes_update_available_version():
+    from src.models.contracts.solutions import Solution as SolutionDTO
+    assert "update_available_version" in SolutionDTO.model_fields

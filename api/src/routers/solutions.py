@@ -1016,6 +1016,11 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
         # git_sync commits + runs the S3 phase itself (inside its per-install
         # lock, DB-commit-before-S3 per P1-c), so the router does not commit here.
         await git_sync(ctx.db, solution)
+        # A successful pull means the install is now at the repo HEAD — clear any
+        # pending "update available" signal so the badge disappears.
+        if solution.update_available_version is not None:
+            solution.update_available_version = None
+            await ctx.db.commit()
     except NotASolutionWorkspace as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

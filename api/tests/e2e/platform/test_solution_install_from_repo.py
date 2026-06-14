@@ -202,3 +202,40 @@ async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platfo
     )
     assert retry.status_code == 201, retry.text
     assert retry.json()["slug"] == slug
+
+
+async def test_sync_clears_update_available_version(e2e_client, platform_admin, db_session):
+    """A successful /sync (auto-pull) means the install is now at repo HEAD, so the
+    scheduler-set update_available_version signal must be cleared (drives the badge).
+    """
+    from src.models.orm.solutions import Solution as SolutionORM
+
+    slug = f"syncclear-{uuid.uuid4().hex[:8]}"
+    repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
+    inst = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+        headers=platform_admin.headers,
+    )
+    assert inst.status_code == 201, inst.text
+    sid = inst.json()["id"]
+
+    # Simulate the update-check scheduler having flagged an available update — this
+    # field is NOT caller-settable, so set it directly on the row.
+    row = await db_session.get(SolutionORM, uuid.UUID(sid))
+    assert row is not None
+    row.update_available_version = "1.1.0"
+    await db_session.commit()
+
+    # Sanity: the read DTO surfaces the signal before the pull.
+    before = e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers)
+    assert before.status_code == 200, before.text
+    assert before.json()["update_available_version"] == "1.1.0"
+
+    # Pull the connected repo — a successful sync clears the signal.
+    synced = e2e_client.post(f"/api/solutions/{sid}/sync", headers=platform_admin.headers)
+    assert synced.status_code == 202, synced.text
+
+    after = e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers)
+    assert after.status_code == 200, after.text
+    assert after.json()["update_available_version"] is None
