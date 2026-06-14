@@ -90,7 +90,7 @@ class TestHeartbeatCgroupData:
             {
                 "pid": 1234,
                 "id": "p1",
-                "state": ProcessState.IDLE,
+                "state": ProcessState.BUSY,
                 "uptime_seconds": 1.0,
                 "executions_completed": 0,
                 "current_execution": None,
@@ -130,7 +130,7 @@ class TestHeartbeatCgroupData:
             {
                 "pid": 1234,
                 "id": "p1",
-                "state": ProcessState.IDLE,
+                "state": ProcessState.BUSY,
                 "uptime_seconds": 1.0,
                 "executions_completed": 0,
                 "current_execution": None,
