@@ -10,6 +10,9 @@ const requiredUnset: SolutionSetupItem = {
 	type: "secret",
 	required: true,
 	is_set: false,
+	kind: "config",
+	has_oauth: false,
+	connected: false,
 };
 
 const optionalSet: SolutionSetupItem = {
@@ -17,6 +20,9 @@ const optionalSet: SolutionSetupItem = {
 	type: "int",
 	required: false,
 	is_set: true,
+	kind: "config",
+	has_oauth: false,
+	connected: false,
 };
 
 describe("SolutionSetupChecklist", () => {
@@ -88,7 +94,7 @@ describe("SolutionSetupChecklist", () => {
 	it("shows the default value as placeholder hint when not set", () => {
 		render(
 			<SolutionSetupChecklist
-				items={[{ key: "region", type: "string", required: false, is_set: false, default: "us-east-1" }]}
+				items={[{ key: "region", type: "string", required: false, is_set: false, default: "us-east-1", kind: "config", has_oauth: false, connected: false }]}
 				setupComplete={false}
 				onSet={() => {}}
 			/>,

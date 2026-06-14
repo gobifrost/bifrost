@@ -32,6 +32,7 @@ export type DependencyRef = components["schemas"]["DependencyRef"];
 export type OutsideReference = components["schemas"]["OutsideReference"];
 export type SolutionCaptureResponse =
 	components["schemas"]["SolutionCaptureResponse"];
+export type SolutionReadme = components["schemas"]["SolutionReadme"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
@@ -70,6 +71,37 @@ export async function getSolutionSetup(
 	);
 	if (error) {
 		throw new Error(getErrorMessage(error, "Failed to get solution setup status"));
+	}
+	return data;
+}
+
+export async function getSolutionReadme(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<SolutionReadme> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/{solution_id}/readme",
+		{ params: { path: { solution_id: solutionId } }, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to get solution readme"));
+	}
+	return data;
+}
+
+export async function putSolutionReadme(
+	solutionId: string,
+	readme: string | null,
+	options: RequestOptions = {},
+): Promise<SolutionReadme> {
+	const { signal } = options;
+	const { data, error } = await apiClient.PUT(
+		"/api/solutions/{solution_id}/readme",
+		{ params: { path: { solution_id: solutionId } }, body: { readme }, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to update solution readme"));
 	}
 	return data;
 }

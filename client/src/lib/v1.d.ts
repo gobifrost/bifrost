@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7186,6 +7186,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/{solution_id}/readme": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an install's README markdown (admin only)
+         * @description The install's long-form README markdown (repo-sourced on deploy, or
+         *     edited directly via PUT). ``null`` when none is set.
+         */
+        get: operations["get_solution_readme_api_solutions__solution_id__readme_get"];
+        /**
+         * Set an install's README markdown (admin only)
+         * @description Full-replace the install's README markdown (``readme=null`` clears it).
+         *
+         *     Normally README is repo-sourced (deploy reads README.md), but the UI can
+         *     edit it directly here on a disconnected install.
+         */
+        put: operations["put_solution_readme_api_solutions__solution_id__readme_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/{solution_id}/setup": {
         parameters: {
             query?: never;
@@ -7215,21 +7243,26 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        get?: never;
+        put?: never;
         /**
          * Download the install's workspace zip (admin only)
          * @description Rebuild the install's workspace bundle LIVE from the entities it
          *     currently owns, so the export always reflects present ownership (not the
          *     last capture/deploy). Directly re-installable via the zip-install path.
          *
+         *     This is a POST (not GET) specifically so the full-backup ``password`` rides
+         *     in the request BODY rather than the URL query string — a query-string secret
+         *     leaks into access logs, proxies, and browser history. ``mode`` and
+         *     ``include_data`` stay in the query (they are not sensitive).
+         *
          *     ``mode=shareable`` (default): portable export, no sensitive values.
          *     ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
-         *     the config values set for this install; requires ``password``.
+         *     the config values set for this install; requires ``password`` (in the body).
          *     ``include_data=true``: include table row data in the encrypted blob.
          *     Requires ``mode=full`` (data must be encrypted).
          */
-        get: operations["export_solution_api_solutions__solution_id__export_get"];
-        put?: never;
-        post?: never;
+        post: operations["export_solution_api_solutions__solution_id__export_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10568,6 +10601,11 @@ export interface components {
              */
             cost_basis: "history" | "fallback";
         };
+        /** Body_export_solution_api_solutions__solution_id__export_post */
+        Body_export_solution_api_solutions__solution_id__export_post: {
+            /** Password */
+            password?: string | null;
+        };
         /** Body_import_all_api_export_import_import_all_post */
         Body_import_all_api_export_import_import_all_post: {
             /** File */
@@ -12334,7 +12372,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module";
+            kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module" | "integration";
             /** Ref */
             ref: string;
             /** Name */
@@ -18112,7 +18150,7 @@ export interface components {
              * Referencer Kind
              * @enum {string}
              */
-            referencer_kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module";
+            referencer_kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module" | "integration";
             /** Referencer Ref */
             referencer_ref: string;
             /** Referencer Name */
@@ -18121,7 +18159,7 @@ export interface components {
              * Target Kind
              * @enum {string}
              */
-            target_kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module";
+            target_kind: "workflow" | "table" | "config" | "form" | "app" | "agent" | "module" | "integration";
             /** Target Ref */
             target_ref: string;
             /** Target Name */
@@ -19711,6 +19749,11 @@ export interface components {
              * @description Override OAuth scope for token request (e.g., 'https://outlook.office365.com/.default'). When provided, triggers fresh token fetch for client_credentials flows.
              */
             oauth_scope?: string | null;
+            /**
+             * Solution
+             * @description Solution install id (from ctx.solution_id) — when set and the named integration is missing but DECLARED by this solution, the server raises 424 instead of returning null.
+             */
+            solution?: string | null;
         };
         /**
          * SDKIntegrationsGetResponse
@@ -20787,12 +20830,18 @@ export interface components {
             config_schemas?: {
                 [key: string]: unknown;
             }[];
+            /** Connection Schemas */
+            connection_schemas?: {
+                [key: string]: unknown;
+            }[];
             /** Version */
             version?: string | null;
             /** Logo B64 */
             logo_b64?: string | null;
             /** Logo Content Type */
             logo_content_type?: string | null;
+            /** Readme */
+            readme?: string | null;
             /**
              * Force
              * @default false
@@ -20866,6 +20915,11 @@ export interface components {
              * @default 0
              */
             claims_deleted: number;
+            /**
+             * Integrations Shell Created
+             * @default 0
+             */
+            integrations_shell_created: number;
         };
         /**
          * SolutionEntities
@@ -21009,6 +21063,10 @@ export interface components {
             config_schemas?: {
                 [key: string]: unknown;
             }[];
+            /** Connection Schemas */
+            connection_schemas?: {
+                [key: string]: unknown;
+            }[];
             existing_install?: components["schemas"]["SolutionExistingInstall"] | null;
             diff?: components["schemas"]["SolutionUpgradeDiff"] | null;
             /**
@@ -21016,10 +21074,36 @@ export interface components {
              * @default false
              */
             requires_password: boolean;
+            /** Readme */
+            readme?: string | null;
+        };
+        /**
+         * SolutionReadme
+         * @description GET/PUT response shape for an install's README markdown.
+         */
+        SolutionReadme: {
+            /** Readme */
+            readme?: string | null;
+        };
+        /**
+         * SolutionReadmeUpdate
+         * @description PUT body for an install's README markdown (Task 6).
+         *
+         *     ``readme=None`` clears the README; a string sets it. The README is normally
+         *     repo-sourced (deploy reads it from the repo-root README.md), but the UI can
+         *     edit it directly on a disconnected install via this endpoint.
+         */
+        SolutionReadmeUpdate: {
+            /** Readme */
+            readme?: string | null;
         };
         /**
          * SolutionSetupItem
-         * @description One config declaration paired with whether a value is set.
+         * @description One declared requirement paired with whether it's satisfied.
+         *
+         *     For ``kind="config"``: a config declaration; ``is_set`` = a Config value
+         *     exists in the install scope. For ``kind="connection"``: an integration
+         *     declaration; ``is_set`` = a global Integration with that name exists.
          */
         SolutionSetupItem: {
             /** Key */
@@ -21034,6 +21118,22 @@ export interface components {
             description?: string | null;
             /** Default */
             default?: string | null;
+            /**
+             * Kind
+             * @default config
+             * @enum {string}
+             */
+            kind: "config" | "connection";
+            /**
+             * Has Oauth
+             * @default false
+             */
+            has_oauth: boolean;
+            /**
+             * Connected
+             * @default false
+             */
+            connected: boolean;
         };
         /**
          * SolutionSetupStatus
@@ -29365,7 +29465,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -29398,7 +29498,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -29431,7 +29531,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -29464,7 +29564,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -35710,6 +35810,72 @@ export interface operations {
             };
         };
     };
+    get_solution_readme_api_solutions__solution_id__readme_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionReadme"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_solution_readme_api_solutions__solution_id__readme_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionReadmeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionReadme"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     solution_setup_api_solutions__solution_id__setup_get: {
         parameters: {
             query?: never;
@@ -35741,11 +35907,10 @@ export interface operations {
             };
         };
     };
-    export_solution_api_solutions__solution_id__export_get: {
+    export_solution_api_solutions__solution_id__export_post: {
         parameters: {
             query?: {
                 mode?: string;
-                password?: string | null;
                 include_data?: boolean;
             };
             header?: never;
@@ -35754,7 +35919,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Body_export_solution_api_solutions__solution_id__export_post"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

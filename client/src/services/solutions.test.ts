@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockGet = vi.fn();
 const mockPatch = vi.fn();
+const mockPut = vi.fn();
 const mockDelete = vi.fn();
 const mockAuthFetch = vi.fn();
 
@@ -9,6 +10,7 @@ vi.mock("@/lib/api-client", () => ({
 	apiClient: {
 		GET: (...args: unknown[]) => mockGet(...args),
 		PATCH: (...args: unknown[]) => mockPatch(...args),
+		PUT: (...args: unknown[]) => mockPut(...args),
 		DELETE: (...args: unknown[]) => mockDelete(...args),
 	},
 	authFetch: (...args: unknown[]) => mockAuthFetch(...args),
@@ -18,15 +20,18 @@ import {
 	deleteSolution,
 	getSolution,
 	getSolutionEntities,
+	getSolutionReadme,
 	installSolution,
 	listSolutions,
 	previewInstall,
+	putSolutionReadme,
 	updateSolution,
 } from "./solutions";
 
 beforeEach(() => {
 	mockGet.mockReset();
 	mockPatch.mockReset();
+	mockPut.mockReset();
 	mockDelete.mockReset();
 	mockAuthFetch.mockReset();
 });
@@ -64,6 +69,48 @@ describe("solutions service", () => {
 			{ params: { path: { solution_id: "sol-1" } } },
 		);
 		expect(out.solution.id).toBe("sol-1");
+	});
+
+	it("gets a solution readme by id", async () => {
+		mockGet.mockResolvedValue({ data: { readme: "# Hello" } });
+
+		const out = await getSolutionReadme("sol-1");
+
+		expect(mockGet).toHaveBeenCalledWith(
+			"/api/solutions/{solution_id}/readme",
+			{ params: { path: { solution_id: "sol-1" } } },
+		);
+		expect(out.readme).toBe("# Hello");
+	});
+
+	it("puts a solution readme with the body", async () => {
+		mockPut.mockResolvedValue({ data: { readme: "# Updated" } });
+
+		const out = await putSolutionReadme("sol-1", "# Updated");
+
+		expect(mockPut).toHaveBeenCalledWith(
+			"/api/solutions/{solution_id}/readme",
+			{
+				params: { path: { solution_id: "sol-1" } },
+				body: { readme: "# Updated" },
+			},
+		);
+		expect(out.readme).toBe("# Updated");
+	});
+
+	it("clears a solution readme with null", async () => {
+		mockPut.mockResolvedValue({ data: { readme: null } });
+
+		const out = await putSolutionReadme("sol-1", null);
+
+		expect(mockPut).toHaveBeenCalledWith(
+			"/api/solutions/{solution_id}/readme",
+			{
+				params: { path: { solution_id: "sol-1" } },
+				body: { readme: null },
+			},
+		);
+		expect(out.readme).toBeNull();
 	});
 
 	it("updates a solution by id with the body", async () => {
