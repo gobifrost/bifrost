@@ -8,7 +8,8 @@ The scans are STATIC and intentionally simple:
 - Python module imports reuse the canonical AST scanner in
   ``solution_vendoring`` (workflows -> ``modules/*.py``).
 - Entity name/path references (``tables.get("x")``, ``config.get("k")``,
-  ``useWorkflow("p::f")``, ``useTable("x")``) are matched as STRING LITERALS via
+  ``useWorkflow("p::f")``, ``useTable("x")``, ``integrations.get("Name")``) are
+  matched as STRING LITERALS via
   regex. Dynamic references built from variables are invisible — which is
   exactly why the capture/export preview is a deselectable human-checked list
   (capture-design §3.3), not an automatic gate.
@@ -29,6 +30,7 @@ __all__ = [
     "scan_table_refs",
     "scan_config_refs",
     "scan_workflow_refs",
+    "scan_integration_refs",
 ]
 
 # A quoted string literal, single or double quotes, capturing the inner value.
@@ -54,6 +56,14 @@ _WORKFLOW_RE = re.compile(
 )
 
 
+# ``integrations.get("Name")`` / ``sdk.integrations.get("Name")``.
+# First arg is the integration NAME (a string literal). Dynamic refs are
+# invisible — same documented static-scan tradeoff as configs/tables.
+_INTEGRATION_RE = re.compile(
+    rf"""\bintegrations\s*\.\s*get\s*\(\s*{_STR}"""
+)
+
+
 def scan_table_refs(source: str) -> set[str]:
     """Return table NAMES referenced by ``source`` (``tables.get``/``useTable``)."""
     return set(_TABLE_RE.findall(source))
@@ -71,3 +81,8 @@ def scan_workflow_refs(source: str) -> set[str]:
     captured value is a bare name OR a ``path::fn`` ref (caller resolves both).
     """
     return set(_WORKFLOW_RE.findall(source))
+
+
+def scan_integration_refs(source: str) -> set[str]:
+    """Return integration NAMES referenced via ``integrations.get(...)``."""
+    return set(_INTEGRATION_RE.findall(source))

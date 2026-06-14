@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.services.solutions.ref_scanner import (
     scan_config_refs,
+    scan_integration_refs,
     scan_table_refs,
     scan_workflow_refs,
 )
@@ -39,6 +40,15 @@ def test_scanners_ignore_unrelated_strings() -> None:
     assert scan_table_refs(src) == set()
     assert scan_config_refs(src) == set()
     assert scan_workflow_refs(src) == set()
+
+
+def test_scan_integration_refs_matches_get_calls() -> None:
+    src = '''
+    a = await integrations.get("HaloPSA")
+    b = await sdk.integrations.get('Microsoft Partner')
+    c = await integrations.get(name)  # dynamic — invisible
+    '''
+    assert scan_integration_refs(src) == {"HaloPSA", "Microsoft Partner"}
 
 
 def test_scan_handles_single_and_double_quotes() -> None:
