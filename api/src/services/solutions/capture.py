@@ -549,11 +549,11 @@ class SolutionCaptureService:
                 continue
 
             # Decrypt SECRET-typed values so the blob carries the plaintext.
+            # SolutionConfigSchema.type is a plain str column; canonicalize case
+            # (mirrors zip_install._config_type) so a stored "SECRET" still
+            # matches and the secret is never exported still-encrypted.
             schema_type = schema.type
-            is_secret = (
-                schema_type == ConfigTypeEnum.SECRET.value
-                or schema_type == ConfigTypeEnum.SECRET
-            )
+            is_secret = bool(schema_type) and schema_type.lower() == ConfigTypeEnum.SECRET.value
             if is_secret:
                 raw = decrypt_secret(str(raw))
 
