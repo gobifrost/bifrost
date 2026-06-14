@@ -34,7 +34,6 @@ from src.models.orm.workflows import Workflow
 from src.models.orm.workflow_roles import WorkflowRole
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.deploy import SolutionBundle, solution_entity_id
-from src.services.solutions.export import build_workspace_zip
 from src.services.solutions.vendoring import vendor_shared_deps
 
 
@@ -62,7 +61,6 @@ class SolutionCaptureResult:
     agents_captured: int = 0
     claims_captured: int = 0
     config_declarations_captured: int = 0
-    export_zip: bytes = b""
 
 
 def _enum_value(value: Any) -> Any:
@@ -116,7 +114,6 @@ class SolutionCaptureService:
         await self._capture_configs(solution, selectors.configs)
         await self.db.flush()
 
-        bundle = await self.bundle_for(solution, include_imports=include_imports)
         return SolutionCaptureResult(
             workflows_captured=len(set(selectors.workflows)),
             tables_captured=len(set(selectors.tables)),
@@ -125,7 +122,6 @@ class SolutionCaptureService:
             agents_captured=len(set(selectors.agents)),
             claims_captured=len(set(selectors.claims)),
             config_declarations_captured=len(set(selectors.configs)),
-            export_zip=build_workspace_zip(bundle),
         )
 
     async def _capture_model(

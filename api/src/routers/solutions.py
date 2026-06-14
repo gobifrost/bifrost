@@ -708,9 +708,6 @@ async def delete_solution(
             builder = SolutionAppBuilder()
             for app_id in app_ids:
                 await builder.delete_dist(app_id)
-            from src.services.solutions.export import SolutionExportStore
-
-            await SolutionExportStore().delete(solution_id)
     except SolutionWriteLockHeld as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -860,9 +857,6 @@ async def capture_solution_entities(
                 include_imports=body.include_imports,
             )
             await ctx.db.commit()
-            from src.services.solutions.export import SolutionExportStore
-
-            await SolutionExportStore().write(solution_id, result.export_zip)
     except SolutionWriteLockHeld as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

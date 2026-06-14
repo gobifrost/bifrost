@@ -293,14 +293,6 @@ class SolutionDeployer:
                 f"{solution.version}; re-run with force to downgrade"
             )
 
-        # ── Export zip — serialized from the PRE-REMAP bundle (original
-        # manifest ids) so the export re-installs anywhere exactly like the
-        # original workspace. Built in memory NOW (a serialization bug fails
-        # the deploy before any write); persisted post-commit in finalize.
-        from src.services.solutions.export import SolutionExportStore, build_workspace_zip
-
-        export_zip = build_workspace_zip(bundle)
-
         # ── Per-install identity remap (criteria 9/10) ───────────────────────
         # Rewrite every entity id to uuid5(install, manifest_id) and translate
         # in-bundle cross-refs through the same map, BEFORE any upsert/reconcile.
@@ -386,10 +378,6 @@ class SolutionDeployer:
             await _retry_idempotent(
                 "sweep stale dist", sid,
                 lambda: self._delete_stale_app_dist(stale_app_dist),
-            )
-            await _retry_idempotent(
-                "write export bundle", sid,
-                lambda: SolutionExportStore().write(sid, export_zip),
             )
 
         return DeployResult(

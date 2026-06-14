@@ -1,18 +1,9 @@
 """
-Solution export — the install's workspace zip, persisted at write time.
+Solution export — rebuild the workspace zip live from owned entities.
 
-App ``src/`` is intentionally never installed onto the Solution surface
-(success-criteria §3.6), so the platform cannot *reconstruct* a full workspace
-from DB + ``_solutions/{id}/`` after the fact. Instead, every successful write
-(CLI deploy, zip install, git auto-pull — they all funnel through
-:meth:`SolutionDeployer.deploy`) serializes the PRE-REMAP bundle back into the
-workspace shape and persists it to ``_solution_exports/{solution_id}.zip``.
-``GET /api/solutions/{id}/export`` streams that zip.
-
-Pre-remap matters: the zip carries the bundle's ORIGINAL manifest ids, so
-installing the export elsewhere remaps per-install exactly like the original
-workspace would (criterion 9), and a re-deploy of the export onto the same
-install is a no-op replace.
+``GET /api/solutions/{id}/export`` calls
+:func:`build_workspace_zip` on every request so the zip always reflects
+current ownership. No zip is cached to S3; the bundle is serialized on demand.
 
 The zip is the same shape ``preview_zip``/``install_zip`` consume:
 ``bifrost.solution.yaml`` + ``.bifrost/*.yaml`` manifests + Python source +
@@ -25,19 +16,12 @@ import base64
 import io
 import re
 import zipfile
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 import yaml
 
-from src.config import Settings, get_settings
-from src.services.repo_storage import _get_shared_session
-
 if TYPE_CHECKING:
     from src.services.solutions.deploy import SolutionBundle
-
-EXPORTS_ROOT = "_solution_exports"
 
 # Reverse of the CLI's logo suffix → content-type map (deploy re-validates).
 _LOGO_EXTENSIONS = {
@@ -155,52 +139,3 @@ def build_workspace_zip(bundle: "SolutionBundle") -> bytes:
             put(".bifrost/apps.yaml", _manifest_yaml("apps", app_bodies))
 
     return buf.getvalue()
-
-
-class SolutionExportStore:
-    """S3 store for the per-install export zip (``_solution_exports/{id}.zip``).
-
-    Deliberately OUTSIDE ``_solutions/{id}/`` — that prefix is full-replace
-    swept by every deploy's Python-source reconcile, which would eat the zip.
-    """
-
-    def __init__(self, settings: Settings | None = None):
-        self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
-
-    @asynccontextmanager
-    async def _client(self):
-        session = _get_shared_session()
-        async with session.create_client(
-            "s3",
-            endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
-        ) as client:
-            yield client
-
-    @staticmethod
-    def _key(solution_id: UUID | str) -> str:
-        return f"{EXPORTS_ROOT}/{solution_id}.zip"
-
-    async def write(self, solution_id: UUID | str, data: bytes) -> None:
-        async with self._client() as client:
-            await client.put_object(
-                Bucket=self._bucket, Key=self._key(solution_id), Body=data
-            )
-
-    async def read(self, solution_id: UUID | str) -> bytes | None:
-        async with self._client() as client:
-            try:
-                resp = await client.get_object(
-                    Bucket=self._bucket, Key=self._key(solution_id)
-                )
-            except client.exceptions.NoSuchKey:
-                return None
-            async with resp["Body"] as stream:
-                return await stream.read()
-
-    async def delete(self, solution_id: UUID | str) -> None:
-        async with self._client() as client:
-            await client.delete_object(Bucket=self._bucket, Key=self._key(solution_id))

@@ -18,6 +18,7 @@ from src.services.solutions.capture import (
     SolutionCaptureService,
 )
 from src.services.solutions.deploy import SolutionBundle, SolutionDeployer
+from src.services.solutions.export import build_workspace_zip
 
 
 pytestmark = pytest.mark.e2e
@@ -86,7 +87,8 @@ async def test_capture_table_keeps_rows_and_exports_manifest(db_session) -> None
     assert (await db.get(Document, (table.id, "row-1"))) is not None
     assert result.tables_captured == 1
 
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         tables_yaml = yaml.safe_load(zf.read(".bifrost/tables.yaml"))
     exported = tables_yaml["tables"][str(table.id)]
     assert exported["name"] == "documents"
@@ -129,7 +131,8 @@ async def test_capture_config_declares_existing_value_without_copying_value(db_s
         )
     ).scalar_one()
     assert decl.value == {"value": "secret"}
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         configs_yaml = yaml.safe_load(zf.read(".bifrost/configs.yaml"))
     exported = configs_yaml["configs"]["RTM_API_KEY"]
     assert exported["key"] == "RTM_API_KEY"
@@ -218,7 +221,7 @@ async def test_capture_app_skips_secret_and_build_files(db_session) -> None:
         "apps/portal/.DS_Store": b"\x00\x01",
     })
 
-    result = await SolutionCaptureService(db, repo=repo).capture(
+    await SolutionCaptureService(db, repo=repo).capture(
         sol,
         SolutionCaptureSelectors(
             workflows=[], tables=[], apps=[app.id], forms=[],
@@ -227,7 +230,8 @@ async def test_capture_app_skips_secret_and_build_files(db_session) -> None:
     )
 
     # Export writes app source files into the zip under apps/<slug>/<rel>.
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db, repo=repo).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         names = set(zf.namelist())
         apps_yaml = yaml.safe_load(zf.read(".bifrost/apps.yaml"))
     app_dir = apps_yaml["apps"][str(app.id)]["path"]
@@ -290,7 +294,7 @@ async def test_capture_app_carries_logo_for_redeploy(db_session) -> None:
     await db.flush()
 
     repo = _FakeRepo({"apps/logoed/src/App.tsx": b"x"})
-    result = await SolutionCaptureService(db, repo=repo).capture(
+    await SolutionCaptureService(db, repo=repo).capture(
         sol,
         SolutionCaptureSelectors(
             workflows=[], tables=[], apps=[app.id], forms=[],
@@ -301,7 +305,8 @@ async def test_capture_app_carries_logo_for_redeploy(db_session) -> None:
     # Export writes the logo as a real file under the app dir, referenced by
     # the manifest body's ``logo:`` key (deploy reads it back). Without capture
     # carrying logo_b64/logo_content_type this round-trip would drop the icon.
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db, repo=repo).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         apps_yaml = yaml.safe_load(zf.read(".bifrost/apps.yaml"))
         entry = apps_yaml["apps"][str(app.id)]
         logo_rel = entry["logo"]
@@ -336,7 +341,7 @@ async def test_capture_app_exports_role_names(db_session) -> None:
     await db.flush()
 
     repo = _FakeRepo({"apps/roled/src/App.tsx": b"x"})
-    result = await SolutionCaptureService(db, repo=repo).capture(
+    await SolutionCaptureService(db, repo=repo).capture(
         sol,
         SolutionCaptureSelectors(
             workflows=[], tables=[], apps=[app.id], forms=[],
@@ -344,7 +349,8 @@ async def test_capture_app_exports_role_names(db_session) -> None:
         ),
     )
 
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db, repo=repo).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         apps_yaml = yaml.safe_load(zf.read(".bifrost/apps.yaml"))
     entry = apps_yaml["apps"][str(app.id)]
     assert entry["roles"] == [str(role.id)]
@@ -382,7 +388,7 @@ async def test_capture_default_bundles_only_workflow_own_files(db_session) -> No
         "modules/b.py": b"X = 1\n",
         "modules/c.py": b"UNRELATED = 1\n",
     })
-    result = await SolutionCaptureService(db, repo=repo).capture(
+    await SolutionCaptureService(db, repo=repo).capture(
         sol,
         SolutionCaptureSelectors(
             workflows=[], tables=[], apps=[], forms=[],
@@ -390,7 +396,8 @@ async def test_capture_default_bundles_only_workflow_own_files(db_session) -> No
         ),
     )
 
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db, repo=repo).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         names = set(zf.namelist())
     # Default: only the workflow's own file — NO modules/ at all.
     assert "workflows/main.py" in names
@@ -417,14 +424,15 @@ async def test_capture_skips_predeployed_workflow_source_not_in_repo(db_session)
 
     repo = _FakeRepo({"workflows/real.py": b"from bifrost import workflow\n"})
     # Must NOT raise on functions/hello.py being absent from _repo/.
-    result = await SolutionCaptureService(db, repo=repo).capture(
+    await SolutionCaptureService(db, repo=repo).capture(
         sol,
         SolutionCaptureSelectors(
             workflows=[], tables=[], apps=[], forms=[],
             agents=[], claims=[], configs=[],
         ),
     )
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db, repo=repo).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         names = set(zf.namelist())
     assert "workflows/real.py" in names           # the loose one bundled
     assert "functions/hello.py" not in names       # the pre-deployed one skipped
@@ -441,7 +449,7 @@ async def test_capture_include_imports_bundles_transitive_closure_only(db_sessio
         "modules/b.py": b"X = 1\n",
         "modules/c.py": b"UNRELATED = 1\n",  # imported by nothing → never bundled
     })
-    result = await SolutionCaptureService(db, repo=repo).capture(
+    await SolutionCaptureService(db, repo=repo).capture(
         sol,
         SolutionCaptureSelectors(
             workflows=[], tables=[], apps=[], forms=[],
@@ -450,7 +458,8 @@ async def test_capture_include_imports_bundles_transitive_closure_only(db_sessio
         include_imports=True,
     )
 
-    with zipfile.ZipFile(BytesIO(result.export_zip)) as zf:
+    bundle = await SolutionCaptureService(db, repo=repo).bundle_for(sol, include_imports=True)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
         names = set(zf.namelist())
     assert "workflows/main.py" in names
     assert "modules/a.py" in names  # imported directly
