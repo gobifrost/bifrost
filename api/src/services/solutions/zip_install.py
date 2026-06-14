@@ -534,26 +534,52 @@ async def _assert_no_unforced_collisions(
     colliding_tables: list[str] = []
 
     if content.table_data and not replace_data:
-        # For each table name in the blob, look up the solution-owned Table row
-        # of that name in the install's org scope.  If it exists AND has rows,
-        # that's a collision.  On a first install the tables don't exist yet →
-        # no rows → no collision (correct).  On a re-install they exist with
-        # rows → collision.
+        # For each table name in the blob, find the Table row that DEPLOY will end
+        # up owning, then check whether it already has Document rows. Two cases:
+        #
+        #   1. A table already owned by this install (solution_id == solution.id).
+        #   2. An ORPHANED table from a prior install of THIS Solution that deploy's
+        #      reattach (_upsert_tables, deploy.py ~L778) will adopt by name. After
+        #      an uninstall->reinstall, the orphan has solution_id IS NULL, so a
+        #      `solution_id == solution.id` check alone MISSES it — deploy then
+        #      reattaches it (documents flow back) and _apply_table_data with
+        #      replace_data=False inserts the blob rows ON TOP, silently merging.
+        #      So we must see the same orphan deploy is about to reattach.
         org_pred_tbl = (
             Table.organization_id == solution.organization_id
             if solution.organization_id is not None
             else Table.organization_id.is_(None)
         )
         for table_name in content.table_data:
-            # Find a solution-managed table of this name in the install's scope.
+            # (1) A table already owned by this install.
             tbl_q = select(Table.id).where(
                 Table.name == table_name,
                 Table.solution_id == solution.id,
                 org_pred_tbl,
             )
             tbl_id = (await db.execute(tbl_q)).scalar_one_or_none()
+
             if tbl_id is None:
-                # Table doesn't exist yet (first install) — no collision.
+                # (2) The orphan deploy WILL adopt. This predicate MUST stay in
+                # sync with the reattach query in SolutionDeployer._upsert_tables
+                # (deploy.py): orphaned_at NOT NULL + origin_solution_slug == slug
+                # + name + org scope, most-recently-orphaned first. If that query
+                # changes, change this one too or the collision check drifts from
+                # what deploy actually reattaches.
+                orphan_q = (
+                    select(Table.id)
+                    .where(
+                        Table.orphaned_at.is_not(None),
+                        Table.origin_solution_slug == solution.slug,
+                        Table.name == table_name,
+                        org_pred_tbl,
+                    )
+                    .order_by(Table.orphaned_at.desc())
+                )
+                tbl_id = (await db.execute(orphan_q)).scalars().first()
+
+            if tbl_id is None:
+                # Neither owned nor reattachable (first install) — no collision.
                 continue
             # Check if any Document rows exist for this table.
             has_rows_q = select(Document.id).where(Document.table_id == tbl_id).limit(1)
