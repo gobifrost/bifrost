@@ -32,10 +32,14 @@ def make_solution_with_set_config(e2e_client, platform_admin, db_session):
     """
     from types import SimpleNamespace
 
+    from src.core.security import encrypt_secret
+    from src.models.enums import ConfigType as ConfigTypeEnum
     from src.models.orm.config import Config
     from src.models.orm.solution_config_schema import SolutionConfigSchema
 
-    async def _make(key: str = "api_key", value: str = "xyz") -> SimpleNamespace:
+    async def _make(
+        key: str = "api_key", value: str = "xyz", config_type: str = "string"
+    ) -> SimpleNamespace:
         headers = platform_admin.headers
         slug = f"export-full-{uuid.uuid4().hex[:8]}"
         r = e2e_client.post(
@@ -52,7 +56,7 @@ def make_solution_with_set_config(e2e_client, platform_admin, db_session):
         decl = SolutionConfigSchema(
             solution_id=sol_id,
             key=key,
-            type="string",
+            type=config_type,
             required=False,
             description="Config for full-export test",
             default=None,
@@ -60,12 +64,18 @@ def make_solution_with_set_config(e2e_client, platform_admin, db_session):
         )
         db_session.add(decl)
 
-        # Set the config value in the solution's org scope — exact storage
-        # shape that set_config (and _config_values) uses: JSONB {"value": ...}.
+        # Set the config value in the solution's org scope — exact storage shape
+        # that set_config (and _config_values) uses: JSONB {"value": ...}. For a
+        # SECRET config the stored value is encrypted-at-rest (encrypt_secret),
+        # exactly as set_config does, so the export path must decrypt it back to
+        # plaintext before it lands in the blob.
+        is_secret = config_type == ConfigTypeEnum.SECRET.value
+        stored = encrypt_secret(value) if is_secret else value
         db_session.add(
             Config(
                 key=key,
-                value={"value": value},
+                value={"value": stored},
+                config_type=ConfigTypeEnum.SECRET if is_secret else ConfigTypeEnum.STRING,
                 organization_id=org_id,
                 updated_by="export-full-test",
             )
@@ -107,3 +117,33 @@ async def test_full_export_includes_encrypted_secrets_blob(
     assert sh.status_code == 200, sh.text
     sh_names = zipfile.ZipFile(io.BytesIO(sh.content)).namelist()
     assert ".bifrost/secrets.enc" not in sh_names
+
+
+async def test_full_export_decrypts_secret_typed_config(
+    e2e_client, platform_admin, make_solution_with_set_config
+):
+    """Security-critical path: a SECRET-typed config is stored encrypted-at-rest
+    (encrypt_secret); the full export must decrypt it so the blob carries the
+    PLAINTEXT, not the ciphertext.
+
+    This fails loudly if the is_secret/decrypt gate in _config_values regresses —
+    a still-encrypted export would make ``== "my-secret"`` compare plaintext
+    against ciphertext.
+    """
+    sol = await make_solution_with_set_config(
+        key="db_password", value="my-secret", config_type="secret"
+    )
+    headers = platform_admin.headers
+
+    ok = e2e_client.get(
+        f"/api/solutions/{sol.id}/export?mode=full&password=pw", headers=headers
+    )
+    assert ok.status_code == 200, ok.text
+
+    from src.services.solutions.secrets_blob import decode_secrets_blob
+
+    blob = zipfile.ZipFile(io.BytesIO(ok.content)).read(".bifrost/secrets.enc").decode()
+    content = decode_secrets_blob(blob, password="pw")
+    # Came out DECRYPTED — proves _config_values decrypted the at-rest ciphertext
+    # before placing it in the password blob.
+    assert content.config_values["db_password"] == "my-secret"
