@@ -14,7 +14,17 @@ def test_curated_topics_include_expected_built_ins():
         "integration.reauth_required",
         "integration.refresh_recovered",
         "event.delivery_retry_exhausted",
+        "solution.update_available",
     } <= topics
+
+
+def test_solution_update_available_registered():
+    entry = next(
+        e for e in CURATED_TOPICS if e["topic"] == "solution.update_available"
+    )
+    assert entry["description"]
+    assert entry["category"] == "Solutions"
+    assert entry["example_body"]["solution"]["available_version"] == "1.1.0"
 
 
 def test_builtin_event_bodies_share_common_envelope_keys():

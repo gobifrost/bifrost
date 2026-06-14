@@ -232,6 +232,21 @@ CURATED_TOPICS = [
         ),
     },
     {
+        "topic": "solution.update_available",
+        "description": "Fired when a git-connected Solution install detects a newer version at its repo HEAD.",
+        "category": "Solutions",
+        "emitted_by": "Solution update-check scheduler",
+        "example_body": _body(
+            actor=_SYSTEM_ACTOR,
+            solution={
+                "id": "550e8400-e29b-41d4-a716-446655440090",
+                "slug": "acme-tenant-manager",
+                "installed_version": "1.0.0",
+                "available_version": "1.1.0",
+            },
+        ),
+    },
+    {
         "topic": "event.delivery_retry_exhausted",
         "description": "Fired when an event delivery cannot be completed after retries.",
         "category": "Events",

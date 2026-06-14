@@ -341,6 +341,29 @@ async def emit_integration_refresh_recovered(
     await _emit("integration.refresh_recovered", body, organization_id=organization_id)
 
 
+async def emit_solution_update_available(
+    *,
+    solution_id: str | UUID | None,
+    slug: str,
+    organization_id: str | UUID | None,
+    installed_version: str | None,
+    available_version: str,
+) -> None:
+    """Fired when a git-connected install newly detects a newer descriptor
+    version at its repo HEAD (Task 11 scheduler). Subscribable so an operator
+    can wire a workflow/notification to 'an update is available'."""
+    body = {
+        **_base_body(organization_id=organization_id),
+        "solution": {
+            "id": str(solution_id) if solution_id else None,
+            "slug": slug,
+            "installed_version": installed_version,
+            "available_version": available_version,
+        },
+    }
+    await _emit("solution.update_available", body, organization_id=organization_id)
+
+
 async def emit_event_delivery_retry_exhausted(
     *,
     event_id: str | UUID,
