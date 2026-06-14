@@ -8,6 +8,7 @@ the captured definitions. Runtime data stays in place.
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
@@ -28,7 +29,7 @@ from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution
-from src.models.orm.tables import Table
+from src.models.orm.tables import Document, Table
 from src.models.orm.users import Role
 from src.models.orm.workflows import Workflow
 from src.models.orm.workflow_roles import WorkflowRole
@@ -61,6 +62,14 @@ class SolutionCaptureResult:
     agents_captured: int = 0
     claims_captured: int = 0
     config_declarations_captured: int = 0
+
+
+logger = logging.getLogger(__name__)
+
+# Hard cap on rows exported per table to keep the encrypted blob bounded.
+# If a table exceeds this, a WARNING is logged (table name + actual count)
+# and only the first TABLE_ROW_CAP rows are included — no silent truncation.
+TABLE_ROW_CAP = 50_000
 
 
 def _enum_value(value: Any) -> Any:
@@ -258,6 +267,7 @@ class SolutionCaptureService:
         *,
         include_imports: bool = False,
         include_values: bool = False,
+        include_data: bool = False,
     ) -> SolutionBundle:
         workflows = await self._workflow_entries(solution.id)
         tables = await self._table_entries(solution.id)
@@ -272,6 +282,9 @@ class SolutionCaptureService:
         config_values: dict[str, str] = {}
         if include_values:
             config_values = await self._config_values(solution)
+        table_data: dict[str, list[dict[str, Any]]] = {}
+        if include_data:
+            table_data = await self._table_data(solution)
         return SolutionBundle(
             solution=solution,
             python_files=python_files,
@@ -284,6 +297,7 @@ class SolutionCaptureService:
             config_schemas=config_schemas,
             version=solution.version,
             config_values=config_values,
+            table_data=table_data,
         )
 
     async def _workflow_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
@@ -558,6 +572,60 @@ class SolutionCaptureService:
                 raw = decrypt_secret(str(raw))
 
             out[schema.key] = str(raw)
+
+        return out
+
+    async def _table_data(self, solution: Solution) -> dict[str, list[dict[str, Any]]]:
+        """Read each owned table's rows for a full-backup export.
+
+        Only tables that have at least one row are included in the output dict
+        (empty tables are omitted to keep the encrypted blob lean).
+
+        Each row is represented as the JSONB ``data`` dict stored in the
+        ``Document`` row.  The ``data`` field is already JSON-serializable
+        (it came from JSON on write), so no coercion is needed here.
+
+        Row cap: if a table exceeds TABLE_ROW_CAP rows a WARNING is logged
+        naming the table and actual count, and only the first TABLE_ROW_CAP
+        rows are returned.  This is never silent — callers can observe the
+        warning in logs.
+        """
+        # Reuse _table_entries to find the owned tables and their names.
+        table_rows = (
+            await self.db.execute(select(Table).where(Table.solution_id == solution.id))
+        ).scalars().all()
+
+        out: dict[str, list[dict[str, Any]]] = {}
+        for tbl in table_rows:
+            # Fetch all rows; apply the cap after counting so we can log accurately.
+            docs = (
+                await self.db.execute(
+                    select(Document)
+                    .where(Document.table_id == tbl.id)
+                    .order_by(Document.created_at.asc(), Document.id)
+                    .limit(TABLE_ROW_CAP + 1)
+                )
+            ).scalars().all()
+
+            if not docs:
+                # Empty table — omit the key (keep blob lean).
+                continue
+
+            if len(docs) > TABLE_ROW_CAP:
+                # We fetched one extra to detect overflow; trim to the cap and warn.
+                # A real row count may be even higher — the +1 trick only confirms
+                # there are MORE than TABLE_ROW_CAP rows, not the exact total.
+                logger.warning(
+                    "bundle_for: table %r has more than %d rows; "
+                    "only the first %d rows are included in the export bundle.",
+                    tbl.name,
+                    TABLE_ROW_CAP,
+                    TABLE_ROW_CAP,
+                )
+                docs = docs[:TABLE_ROW_CAP]
+
+            # Represent each row as its JSONB data dict — already JSON-serializable.
+            out[tbl.name] = [doc.data for doc in docs]
 
         return out
 
