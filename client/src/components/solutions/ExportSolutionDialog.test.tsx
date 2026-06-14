@@ -1,7 +1,29 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { vi } from "vitest";
 import { ExportSolutionDialog } from "./ExportSolutionDialog";
+
+/**
+ * Controlled harness: lets a test drive `open` so we can exercise the
+ * reset-on-close behaviour (select Full + type a password, close, reopen,
+ * and confirm internal state was wiped back to Shareable).
+ */
+function ControlledExport({ onExport = () => {} }: { onExport?: () => void }) {
+	const [open, setOpen] = useState(true);
+	return (
+		<>
+			<button type="button" onClick={() => setOpen(true)}>
+				reopen-harness
+			</button>
+			<ExportSolutionDialog
+				open={open}
+				onOpenChange={setOpen}
+				onExport={onExport}
+			/>
+		</>
+	);
+}
 
 // Helper: get the password input by its label association (htmlFor="export-password").
 // type="password" inputs are not role="textbox", so we use getByLabelText which
@@ -73,4 +95,31 @@ it("calls onOpenChange(false) when Cancel is clicked", async () => {
 	);
 	await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
 	expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it("resets mode + password back to Shareable after close and reopen", async () => {
+	render(<ControlledExport />);
+
+	// Select Full backup and type a password.
+	await userEvent.click(screen.getByLabelText(/full backup/i));
+	await userEvent.type(getPasswordInput(), "s3cr3t");
+	expect(getPasswordInput()).toHaveValue("s3cr3t");
+
+	// Close via Cancel — the dialog unmounts its content.
+	await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+	expect(screen.queryByLabelText(/^password/i)).not.toBeInTheDocument();
+
+	// Reopen — mode must be back to Shareable: the Shareable radio is checked,
+	// the Full radio is not, and no password field is rendered (so the stale
+	// "s3cr3t" value is gone).
+	await userEvent.click(
+		screen.getByRole("button", { name: /reopen-harness/i }),
+	);
+	expect(
+		screen.getByRole("radio", { name: /shareable bundle/i }),
+	).toBeChecked();
+	expect(
+		screen.getByRole("radio", { name: /full backup/i }),
+	).not.toBeChecked();
+	expect(screen.queryByLabelText(/^password/i)).not.toBeInTheDocument();
 });

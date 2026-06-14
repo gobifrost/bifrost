@@ -8,7 +8,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
 import { waitFor } from "@testing-library/react";
 import { CreateEditSolution } from "./CreateEditSolution";
-import type { Solution } from "@/services/solutions";
+import {
+	installSolution,
+	previewInstall,
+	type Solution,
+	type SolutionInstallPreview,
+} from "@/services/solutions";
 
 vi.mock("sonner", () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
@@ -155,5 +160,106 @@ describe("CreateEditSolution — edit mode", () => {
 		).toBeInTheDocument();
 		expect(within(dialog).queryByTestId("create-repo")).toBeNull();
 		ghConfig.data = { configured: true, token_saved: true };
+	});
+});
+
+function makePreview(
+	overrides: Partial<SolutionInstallPreview> = {},
+): SolutionInstallPreview {
+	return {
+		slug: "my-solution",
+		name: "My Solution",
+		version: "1.0.0",
+		existing_install: null,
+		diff: null,
+		workflows: [],
+		apps: [],
+		forms: [],
+		agents: [],
+		tables: [],
+		claims: [],
+		config_schemas: [],
+		...overrides,
+	} as unknown as SolutionInstallPreview;
+}
+
+/** A 409 ContentCollision error shaped like installSolution throws. */
+function collisionError(message: string): Error & { status: number } {
+	const err = new Error(message) as Error & { status: number };
+	err.status = 409;
+	return err;
+}
+
+describe("CreateEditSolution — install collision prompt", () => {
+	it("prompts to replace secrets on a 409 collision, then re-installs with replaceSecrets", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(makePreview());
+		// First install attempt collides; the confirmed retry succeeds.
+		vi.mocked(installSolution)
+			.mockRejectedValueOnce(
+				collisionError(
+					"Import would overwrite existing config values: API_KEY, DB_PASSWORD. Re-run with replace to overwrite.",
+				),
+			)
+			.mockResolvedValueOnce(makeSolution() as Solution);
+
+		const onSaved = vi.fn();
+		const file = new File(["zip"], "solution.zip", { type: "application/zip" });
+		const { user } = renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", file, organizationId: null }}
+				open
+				onClose={vi.fn()}
+				onSaved={onSaved}
+			/>,
+		);
+
+		// Auto-preview fires for the prefilled file; wait for the Install button.
+		const installBtn = await screen.findByTestId("confirm-install");
+		await waitFor(() => expect(installBtn).toBeEnabled());
+		await user.click(installBtn);
+
+		// Collision prompt appears, naming the colliding keys.
+		const prompt = await screen.findByTestId("replace-secrets-prompt");
+		expect(prompt).toHaveTextContent("API_KEY, DB_PASSWORD");
+
+		await waitFor(() => expect(installSolution).toHaveBeenCalledTimes(1));
+		expect(vi.mocked(installSolution).mock.calls[0][0]).toMatchObject({
+			replaceSecrets: undefined,
+		});
+
+		// Confirm: re-posts with replaceSecrets: true.
+		await user.click(screen.getByTestId("confirm-replace-secrets"));
+
+		await waitFor(() => expect(installSolution).toHaveBeenCalledTimes(2));
+		expect(vi.mocked(installSolution).mock.calls[1][0]).toMatchObject({
+			replaceSecrets: true,
+		});
+		await waitFor(() => expect(onSaved).toHaveBeenCalled());
+	});
+
+	it("shows a wrong-password error on a 422 without prompting", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(makePreview());
+		const err = new Error("bad password") as Error & { status: number };
+		err.status = 422;
+		vi.mocked(installSolution).mockRejectedValue(err);
+
+		const file = new File(["zip"], "solution.zip", { type: "application/zip" });
+		const { user } = renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", file, organizationId: null }}
+				open
+				onClose={vi.fn()}
+				onSaved={vi.fn()}
+			/>,
+		);
+
+		const installBtn = await screen.findByTestId("confirm-install");
+		await waitFor(() => expect(installBtn).toBeEnabled());
+		await user.click(installBtn);
+
+		expect(
+			await screen.findByText(/incorrect password for this solution backup/i),
+		).toBeInTheDocument();
+		expect(screen.queryByTestId("replace-secrets-prompt")).toBeNull();
 	});
 });

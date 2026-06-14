@@ -46,6 +46,16 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import {
 	useGitHubConfig,
@@ -101,6 +111,23 @@ function asConfigSchemas(
 function isSecretType(type: string): boolean {
 	const t = type.toLowerCase();
 	return t === "secret" || t === "password";
+}
+
+/**
+ * Parse the colliding config-value keys out of the server's ContentCollision
+ * 409 detail. The backend formats it as:
+ *   "Import would overwrite existing config values: A, B[; table data: T]. Re-run with replace to overwrite."
+ * Returns the parsed keys when the message is a config-value collision, or
+ * `null` when it is not (so the caller can fall through to other 409 handling).
+ */
+function parseCollisionKeys(message: string): string[] | null {
+	if (!message.includes("Import would overwrite existing")) return null;
+	const match = /config values:\s*([^.;]+)/.exec(message);
+	if (!match) return null;
+	return match[1]
+		.split(",")
+		.map((k) => k.trim())
+		.filter((k) => k !== "");
 }
 
 /** Summary chips of what an install/preview creates. */
@@ -406,6 +433,10 @@ function CreateBody({
 	const [installError, setInstallError] = useState<string | null>(null);
 	const [configValues, setConfigValues] = useState<Record<string, string>>({});
 	const [downgradeConfirm, setDowngradeConfirm] = useState(false);
+	// Colliding config-value keys parsed from a ContentCollision 409. When
+	// non-null, the replace-secrets confirmation prompt is shown; confirming
+	// re-runs the install with replaceSecrets=true.
+	const [collisionKeys, setCollisionKeys] = useState<string[] | null>(null);
 	const [gitRepoUrl, setGitRepoUrl] = useState("");
 	const [dragging, setDragging] = useState(false);
 
@@ -457,7 +488,13 @@ function CreateBody({
 	}
 
 	const installMutation = useMutation({
-		mutationFn: ({ force }: { force: boolean }) => {
+		mutationFn: ({
+			force,
+			replaceSecrets,
+		}: {
+			force: boolean;
+			replaceSecrets?: boolean;
+		}) => {
 			if (!file) throw new Error("No file selected");
 			const values: Record<string, string> = {};
 			for (const [k, v] of Object.entries(configValues)) {
@@ -468,6 +505,7 @@ function CreateBody({
 				organizationId: orgId ?? "",
 				configValues: values,
 				force,
+				replaceSecrets,
 			});
 		},
 		onSuccess: async (created) => {
@@ -498,11 +536,27 @@ function CreateBody({
 			onSaved(result);
 		},
 		onError: (err: unknown) => {
+			const status = (err as { status?: number }).status;
 			const message = err instanceof Error ? err.message : "Failed to install";
 			if (message.includes("older than installed")) {
 				// Server's downgrade guard (409) — ask before forcing.
 				setInstallError(null);
 				setDowngradeConfirm(true);
+				return;
+			}
+			if (status === 409) {
+				const keys = parseCollisionKeys(message);
+				if (keys) {
+					// ContentCollision (409) — confirm before overwriting existing
+					// secret config values, then re-run with replaceSecrets=true.
+					setInstallError(null);
+					setCollisionKeys(keys);
+					return;
+				}
+			}
+			if (status === 422) {
+				// Wrong/missing password for a full-backup zip carrying secrets.
+				setInstallError("Incorrect password for this solution backup.");
 				return;
 			}
 			setInstallError(message);
@@ -783,6 +837,48 @@ function CreateBody({
 					</>
 				)}
 			</DialogFooter>
+
+			{/* Replace-secrets confirmation (ContentCollision 409). Confirming
+			    re-runs the install with replaceSecrets=true. */}
+			<AlertDialog
+				open={collisionKeys !== null}
+				onOpenChange={(o) => {
+					if (!o) setCollisionKeys(null);
+				}}
+			>
+				<AlertDialogContent data-testid="replace-secrets-prompt">
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							Replace existing secret values?
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							This solution already has values for:{" "}
+							<span className="font-mono font-medium">
+								{collisionKeys?.join(", ")}
+							</span>
+							. Replacing them overwrites the existing secret config values
+							with the ones from this package.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel onClick={() => setCollisionKeys(null)}>
+							Keep existing
+						</AlertDialogCancel>
+						<AlertDialogAction
+							data-testid="confirm-replace-secrets"
+							onClick={() => {
+								setCollisionKeys(null);
+								installMutation.mutate({
+									force: false,
+									replaceSecrets: true,
+								});
+							}}
+						>
+							Replace secrets
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</>
 	);
 }
