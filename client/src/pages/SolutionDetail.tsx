@@ -83,16 +83,28 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { CreateEditSolution } from "@/components/solutions/CreateEditSolution";
 import { SolutionCaptureDialog } from "@/components/solutions/SolutionCaptureDialog";
 import { SolutionActionsMenu } from "@/components/solutions/SolutionActionsMenu";
+import { ExportSolutionDialog } from "@/components/solutions/ExportSolutionDialog";
 import {
 	getSolutionEntities,
 	getSolutionSetup,
 	deleteSolution,
 	exportSolution,
 	setSolutionConfig,
+	installSolution,
 } from "@/services/solutions";
 import { SolutionSetupChecklist } from "@/components/solutions/SolutionSetupChecklist";
 import type { components } from "@/lib/v1";
@@ -901,8 +913,20 @@ export function SolutionDetail() {
 	const [editOpen, setEditOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [captureOpen, setCaptureOpen] = useState(false);
+	const [exportDialogOpen, setExportDialogOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleteConfirm, setDeleteConfirm] = useState("");
+
+	// State for the import-collision (replace_secrets) confirmation prompt.
+	// Holds the pending install params so we can re-submit with replaceSecrets:true
+	// when the user confirms. Set when installSolution returns HTTP 409.
+	const [replaceSecretsPrompt, setReplaceSecretsPrompt] = useState<{
+		file: File;
+		organizationId?: string;
+		configValues?: Record<string, unknown>;
+		force?: boolean;
+		conflictKeys: string[];
+	} | null>(null);
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["solutions", solutionId, "entities"],
@@ -930,7 +954,13 @@ export function SolutionDetail() {
 	const sol = data?.solution;
 
 	const exportMut = useMutation({
-		mutationFn: () => exportSolution(solutionId!),
+		mutationFn: ({
+			mode,
+			password,
+		}: {
+			mode: "shareable" | "full";
+			password?: string;
+		}) => exportSolution(solutionId!, mode, password),
 		onSuccess: ({ blob, filename }) => {
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
@@ -940,6 +970,7 @@ export function SolutionDetail() {
 			a.click();
 			a.remove();
 			URL.revokeObjectURL(url);
+			setExportDialogOpen(false);
 		},
 		onError: (err: unknown) => {
 			toast.error("Failed to export", {
@@ -1091,7 +1122,7 @@ export function SolutionDetail() {
 							<SolutionActionsMenu
 								exporting={exportMut.isPending}
 								onCapture={() => setCaptureOpen(true)}
-								onExport={() => exportMut.mutate()}
+								onExport={() => setExportDialogOpen(true)}
 								onEdit={() => setEditOpen(true)}
 								onDelete={() => {
 									setDeleteConfirm("");
@@ -1270,6 +1301,89 @@ export function SolutionDetail() {
 						onClose={() => setCaptureOpen(false)}
 						onCaptured={invalidate}
 					/>
+
+					{/* Export mode picker dialog */}
+					<ExportSolutionDialog
+						open={exportDialogOpen}
+						onOpenChange={setExportDialogOpen}
+						onExport={(mode, password) =>
+							exportMut.mutate({ mode, password })
+						}
+					/>
+
+					{/* Import collision prompt: fires when installSolution returns 409
+					    (existing secret config values). The user can confirm to
+					    re-post with replace_secrets=true.
+					    NOTE: A password prompt for full-backup installs is NOT yet
+					    included in the install UI (CreateEditSolution / update dialog).
+					    The server will return 422 if a full-backup zip is uploaded
+					    without the correct password. That gap needs a dedicated task to
+					    add a password field to the install/update flow when the
+					    previewInstall response indicates a full-backup zip. */}
+					<AlertDialog
+						open={replaceSecretsPrompt !== null}
+						onOpenChange={(open) => {
+							if (!open) setReplaceSecretsPrompt(null);
+						}}
+					>
+						<AlertDialogContent>
+							<AlertDialogHeader>
+								<AlertDialogTitle>
+									Replace existing secret values?
+								</AlertDialogTitle>
+								<AlertDialogDescription>
+									This Solution already has values set for:{" "}
+									<span className="font-mono font-medium">
+										{replaceSecretsPrompt?.conflictKeys.join(", ")}
+									</span>
+									. Do you want to replace them with the values from this
+									package?
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							<AlertDialogFooter>
+								<AlertDialogCancel
+									onClick={() => setReplaceSecretsPrompt(null)}
+								>
+									Keep existing
+								</AlertDialogCancel>
+								<AlertDialogAction
+									onClick={() => {
+										if (!replaceSecretsPrompt) return;
+										const { conflictKeys: _, ...installParams } =
+											replaceSecretsPrompt;
+										void installSolution(
+											{ ...installParams, replaceSecrets: true },
+											{},
+										)
+											.then(() => {
+												toast.success("Solution updated");
+												setReplaceSecretsPrompt(null);
+												invalidate();
+											})
+											.catch((err: unknown) => {
+												const status =
+													(err as Error & { status?: number }).status;
+												if (status === 422) {
+													toast.error(
+														"Incorrect password for this solution backup",
+													);
+												} else {
+													toast.error("Failed to install", {
+														description:
+															err instanceof Error
+																? err.message
+																: "Unknown error",
+													});
+												}
+												setReplaceSecretsPrompt(null);
+											});
+									}}
+								>
+									Replace secrets
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
 
 					{/* Delete / uninstall dialog (type-to-confirm) */}
 					<Dialog

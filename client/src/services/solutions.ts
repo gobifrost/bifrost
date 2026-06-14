@@ -189,14 +189,20 @@ export async function deleteSolution(
 }
 
 /**
- * Download the install's workspace zip (the exact bundle its last write
- * produced). Returns the blob + the server-chosen filename so the caller can
- * trigger a browser download.
+ * Download the install's workspace zip. Defaults to "shareable" mode (strips
+ * secrets). Pass mode="full" with a password to produce an encrypted full
+ * backup that includes secret config values.
  */
 export async function exportSolution(
 	solutionId: string,
+	mode: "shareable" | "full" = "shareable",
+	password?: string,
 ): Promise<{ blob: Blob; filename: string }> {
-	const response = await authFetch(`/api/solutions/${solutionId}/export`);
+	const params = new URLSearchParams({ mode });
+	if (password) params.set("password", password);
+	const response = await authFetch(
+		`/api/solutions/${solutionId}/export?${params.toString()}`,
+	);
 	if (!response.ok) {
 		throw new Error(
 			await parseUploadError(response, "Failed to export solution"),
@@ -256,6 +262,17 @@ export async function previewInstall(
  * (empty string installs globally), and `config_values` (JSON-encoded map).
  * Pass `force: true` to override the server's downgrade guard (409 when the
  * package version is older than the installed version).
+ *
+ * `replaceSecrets: true` — re-install overwriting existing secret config
+ *   values (send when the user confirms the collision prompt on 409).
+ * `replaceData: true` — re-install overwriting existing table data.
+ *
+ * NOTE: `password` for full-backup installs is NOT yet wired into the install
+ * UI. The server will return 422 if a full-backup zip is uploaded without the
+ * correct password field. A future task should add a password prompt to the
+ * install flow (CreateEditSolution / update dialog) when the preview response
+ * indicates a full-backup zip. For now, the gap is documented here and in the
+ * SolutionDetail import-collision handler.
  */
 export async function installSolution(
 	params: {
@@ -263,14 +280,28 @@ export async function installSolution(
 		organizationId?: string;
 		configValues?: Record<string, unknown>;
 		force?: boolean;
+		replaceSecrets?: boolean;
+		replaceData?: boolean;
+		password?: string;
 	},
 	options: RequestOptions = {},
 ): Promise<Solution> {
-	const { file, organizationId, configValues, force } = params;
+	const {
+		file,
+		organizationId,
+		configValues,
+		force,
+		replaceSecrets,
+		replaceData,
+		password,
+	} = params;
 	const formData = new FormData();
 	formData.append("file", file);
 	formData.append("organization_id", organizationId ?? "");
 	formData.append("config_values", JSON.stringify(configValues ?? {}));
+	if (replaceSecrets) formData.append("replace_secrets", "true");
+	if (replaceData) formData.append("replace_data", "true");
+	if (password) formData.append("password", password);
 
 	const url = force
 		? "/api/solutions/install?force=true"
@@ -281,12 +312,15 @@ export async function installSolution(
 		signal: options.signal,
 	});
 	if (!response.ok) {
-		throw new Error(
+		const err = new Error(
 			await parseUploadError(
 				response,
 				`Failed to install solution: ${response.statusText}`,
 			),
 		);
+		// Attach status so callers can branch on 409 / 422 without re-parsing.
+		(err as Error & { status?: number }).status = response.status;
+		throw err;
 	}
 	return response.json();
 }
