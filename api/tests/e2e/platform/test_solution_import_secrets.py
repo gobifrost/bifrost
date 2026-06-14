@@ -29,9 +29,6 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-# Stable slug prefix for collision tests — both zips need the SAME slug.
-_COLLISION_SLUG = f"import-sec-col-{uuid.uuid4().hex[:8]}"
-
 
 def _upload_headers(headers: dict[str, str]) -> dict[str, str]:
     """Strip Content-Type so httpx sets it correctly for multipart."""
@@ -236,6 +233,62 @@ async def test_full_import_fills_empty_secret_slot(
     api_key_item = next((i for i in items if i["key"] == "api_key"), None)
     assert api_key_item is not None, "api_key should be declared after install"
     assert api_key_item["is_set"] is True, "api_key should be set after full-backup import"
+
+
+async def test_full_import_ignores_integration_owned_config_with_same_key(
+    e2e_client, platform_admin, make_full_backup_zip, make_org, db_session
+):
+    """An integration-OWNED Config row (integration_id NOT NULL) sharing the key
+    must NOT trigger a collision: solution config values live in the
+    integration_id IS NULL partition, so the two rows never collide. The import
+    must fill the solution's own NULL-partition slot and succeed (200)."""
+    from src.models.enums import ConfigType as ConfigTypeEnum
+    from src.models.orm.config import Config
+    from src.models.orm.integrations import Integration
+
+    headers = platform_admin.headers
+    upload_headers = _upload_headers(headers)
+
+    zip_bytes, _, _ = await make_full_backup_zip(values={"api_key": "xyz"}, password="pw")
+    org = await make_org()
+
+    # Seed an integration-owned config for the SAME key in the TARGET org. This
+    # is the false-positive trap: a naive collision check (missing the
+    # integration_id IS NULL filter) would 409 this valid import.
+    integ = Integration(name=f"import-sec-integ-{uuid.uuid4().hex[:8]}")
+    db_session.add(integ)
+    await db_session.flush()
+    db_session.add(
+        Config(
+            key="api_key",
+            value={"value": "integration-owned-value"},
+            config_type=ConfigTypeEnum.STRING,
+            organization_id=org.id,
+            integration_id=integ.id,
+            updated_by="import-secrets-test-integ",
+        )
+    )
+    await db_session.commit()
+
+    r = e2e_client.post(
+        "/api/solutions/install",
+        headers=upload_headers,
+        files={"file": ("s.zip", zip_bytes, "application/zip")},
+        data={"organization_id": str(org.id), "password": "pw"},
+    )
+    assert r.status_code == 200, r.text
+    sol_id = r.json()["id"]
+
+    setup_r = e2e_client.get(f"/api/solutions/{sol_id}/setup", headers=headers)
+    assert setup_r.status_code == 200, setup_r.text
+    api_key_item = next(
+        (i for i in setup_r.json()["items"] if i["key"] == "api_key"), None
+    )
+    assert api_key_item is not None
+    assert api_key_item["is_set"] is True, (
+        "the solution's own (integration_id NULL) api_key slot must be filled "
+        "despite the integration-owned row sharing the key"
+    )
 
 
 # ---------------------------------------------------------------------------

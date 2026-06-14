@@ -486,7 +486,12 @@ async def _assert_no_unforced_collisions(
         existing_q = (
             select(Config.key)
             .where(org_pred)
-            .where(Config.key.in_(list(content.config_values.keys())))
+            .where(Config.key.in_(content.config_values.keys()))
+            # Solution config VALUES live in the integration_id IS NULL partition
+            # (the same space set_config writes to). An integration-owned Config
+            # row sharing this key is a DIFFERENT row that never collides — so
+            # restrict the check to the NULL partition or we 409 a valid import.
+            .where(Config.integration_id.is_(None))
             # Only consider non-orphaned rows; orphaned rows are reattached,
             # not counted as collisions.
             .where(Config.orphaned_at.is_(None))
