@@ -590,7 +590,8 @@ class SolutionCaptureService:
         rows are returned.  This is never silent — callers can observe the
         warning in logs.
         """
-        # Reuse _table_entries to find the owned tables and their names.
+        # Query owned tables directly — _table_entries returns serialized dicts,
+        # but here we need ORM Table objects for their id + name.
         table_rows = (
             await self.db.execute(select(Table).where(Table.solution_id == solution.id))
         ).scalars().all()
