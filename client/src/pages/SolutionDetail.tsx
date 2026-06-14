@@ -21,6 +21,7 @@ import {
 	Workflow,
 	AppWindow,
 	FileCode,
+	FileText,
 	Bot,
 	Database,
 	SlidersHorizontal,
@@ -91,11 +92,15 @@ import { ExportSolutionDialog } from "@/components/solutions/ExportSolutionDialo
 import {
 	getSolutionEntities,
 	getSolutionSetup,
+	getSolutionReadme,
+	putSolutionReadme,
 	deleteSolution,
 	exportSolution,
 	setSolutionConfig,
 } from "@/services/solutions";
-import { SolutionSetupChecklist } from "@/components/solutions/SolutionSetupChecklist";
+import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
+import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
+import { useAuth } from "@/contexts/AuthContext";
 import type { components } from "@/lib/v1";
 
 type EntitySummary = components["schemas"]["SolutionEntitySummary"];
@@ -103,6 +108,7 @@ type ConfigStatus = components["schemas"]["SolutionConfigStatus"];
 type ConfigType = components["schemas"]["ConfigType"];
 
 type TabKey =
+	| "readme"
 	| "workflows"
 	| "apps"
 	| "forms"
@@ -113,7 +119,7 @@ type TabKey =
 	| "setup";
 
 const ENTITY_TABS: {
-	key: Exclude<TabKey, "configs" | "setup">;
+	key: Exclude<TabKey, "configs" | "setup" | "readme">;
 	label: string;
 	Icon: typeof Workflow;
 }[] = [
@@ -128,7 +134,7 @@ const ENTITY_TABS: {
 /** Per-entity-page link target, carrying the `?from` so the entity page can
  * offer a "back to this Solution" affordance (consumed in Task 19b). */
 function entityHref(
-	kind: Exclude<TabKey, "configs" | "setup">,
+	kind: Exclude<TabKey, "configs" | "setup" | "readme">,
 	entity: EntitySummary,
 	solutionId: string,
 ): string {
@@ -163,7 +169,7 @@ function asConfigType(type: string): ConfigType {
 	return "string";
 }
 
-const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs" | "setup">, string> = {
+const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs" | "setup" | "readme">, string> = {
 	workflows: "workflows",
 	apps: "apps",
 	forms: "forms",
@@ -172,7 +178,7 @@ const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs" | "setup">, string> = {
 	claims: "custom claims",
 };
 
-const GRID_TABLE_ENTITY_TABS = new Set<Exclude<TabKey, "configs" | "setup">>([
+const GRID_TABLE_ENTITY_TABS = new Set<Exclude<TabKey, "configs" | "setup" | "readme">>([
 	"workflows",
 	"apps",
 	"forms",
@@ -244,7 +250,7 @@ function accessBadge(accessLevel: string | null | undefined) {
 	);
 }
 
-function entityStatus(entity: EntitySummary, kind: Exclude<TabKey, "configs" | "setup">) {
+function entityStatus(entity: EntitySummary, kind: Exclude<TabKey, "configs" | "setup" | "readme">) {
 	if (kind === "forms") {
 		return entity.is_active === false ? "Inactive" : "Active";
 	}
@@ -259,7 +265,7 @@ function SolutionEntityGrid({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs" | "setup">;
+	kind: Exclude<TabKey, "configs" | "setup" | "readme">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -479,7 +485,7 @@ function SolutionEntityTable({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs" | "setup">;
+	kind: Exclude<TabKey, "configs" | "setup" | "readme">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -650,7 +656,7 @@ function EntityTabContent({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs" | "setup">;
+	kind: Exclude<TabKey, "configs" | "setup" | "readme">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -897,7 +903,11 @@ export function SolutionDetail() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { data: organizations } = useOrganizations();
+	const { isPlatformAdmin } = useAuth();
 
+	// README is the first tab in ORDER, but the default selected tab stays on
+	// the entity-centric Workflows view — admins land on what the Solution does,
+	// not its prose. The README is one click left.
 	const [tab, setTab] = useState<TabKey>("workflows");
 	const [editOpen, setEditOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
@@ -922,11 +932,18 @@ export function SolutionDetail() {
 		enabled: !!solutionId,
 	});
 
+	const { data: readmeData, refetch: refetchReadme } = useQuery({
+		queryKey: ["solutions", solutionId, "readme"],
+		queryFn: () => getSolutionReadme(solutionId!),
+		enabled: !!solutionId,
+	});
+
 	const invalidate = () => {
 		void queryClient.invalidateQueries({
 			queryKey: ["solutions", solutionId, "entities"],
 		});
 		void refetchSetup();
+		void refetchReadme();
 	};
 
 	const sol = data?.solution;
@@ -985,6 +1002,7 @@ export function SolutionDetail() {
 
 	const counts = useMemo(() => {
 		return {
+			readme: 0,
 			workflows: data?.workflows?.length ?? 0,
 			apps: data?.apps?.length ?? 0,
 			forms: data?.forms?.length ?? 0,
@@ -996,7 +1014,7 @@ export function SolutionDetail() {
 		} satisfies Record<TabKey, number>;
 	}, [data, setupData]);
 
-	const itemsFor = (key: Exclude<TabKey, "configs" | "setup">): EntitySummary[] =>
+	const itemsFor = (key: Exclude<TabKey, "configs" | "setup" | "readme">): EntitySummary[] =>
 		(data?.[key] as EntitySummary[] | undefined) ?? [];
 
 	const requiredUnset = data?.required_configs_unset ?? [];
@@ -1091,6 +1109,17 @@ export function SolutionDetail() {
 							</div>
 						</div>
 						<div className="flex shrink-0 items-center justify-end gap-2">
+							{sol.setup_complete === false && (
+								<Button
+									data-testid="continue-setup"
+									variant="outline"
+									className="whitespace-nowrap border-yellow-500/60 text-yellow-700 hover:text-yellow-700 dark:text-yellow-400"
+									onClick={() => setTab("setup")}
+								>
+									<AlertTriangle className="mr-1.5 h-4 w-4" />
+									Continue Setup
+								</Button>
+							)}
 							<Button
 								data-testid="update-solution"
 								className="whitespace-nowrap"
@@ -1144,6 +1173,14 @@ export function SolutionDetail() {
 						className="flex-1 min-h-0 flex flex-col"
 					>
 						<TabsList className="self-start">
+							<TabsTrigger
+								value="readme"
+								data-testid="tab-readme"
+								className="gap-1.5"
+							>
+								<FileText className="h-4 w-4" />
+								README
+							</TabsTrigger>
 							{ENTITY_TABS.map(({ key, label, Icon }) => (
 								<TabsTrigger
 									key={key}
@@ -1182,6 +1219,18 @@ export function SolutionDetail() {
 							</TabsTrigger>
 						</TabsList>
 
+						<TabsContent value="readme" className="flex-1 min-h-0">
+							<SolutionReadmeTab
+								readme={readmeData?.readme ?? null}
+								canEdit={isPlatformAdmin}
+								onSave={async (md) => {
+									await putSolutionReadme(sol.id, md.trim() ? md : null);
+									toast.success("README saved");
+									invalidate();
+								}}
+							/>
+						</TabsContent>
+
 						{ENTITY_TABS.map(({ key }) => (
 							<TabsContent key={key} value={key} className="flex-1 min-h-0">
 								<EntityTabContent
@@ -1219,10 +1268,11 @@ export function SolutionDetail() {
 										: "Couldn't load setup status"}
 								</div>
 							) : (
-								<SolutionSetupChecklist
+								<SolutionSetupWizard
 									items={setupData?.items ?? []}
 									setupComplete={setupData?.setup_complete ?? sol.setup_complete}
-									onSet={async (key, value) => {
+									onFinish={invalidate}
+									onSetConfig={async (key, value) => {
 										try {
 											await setSolutionConfig({
 												key,
