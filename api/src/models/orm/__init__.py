@@ -41,6 +41,7 @@ from src.models.orm.mfa import MFARecoveryCode, TrustedDevice, UserMFAMethod, Us
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
 from src.models.orm.solution_config_schema import SolutionConfigSchema
+from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solutions import Solution
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.tables import Document, Table
@@ -59,6 +60,7 @@ __all__ = [
     # Solutions (installable surfaces)
     "Solution",
     "SolutionConfigSchema",
+    "SolutionConnectionSchema",
     # Applications (App Builder)
     "Application",
     "AppEmbedSecret",

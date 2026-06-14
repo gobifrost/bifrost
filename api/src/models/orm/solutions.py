@@ -22,12 +22,16 @@ is refused.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
+
+if TYPE_CHECKING:
+    from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 
 
 # Identity entity — a Solution install. Managed entities reference it by
@@ -110,6 +114,20 @@ class Solution(Base):
     # stamped by deploy (present => set, absent => cleared).
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(100), default=None)
+
+    # Long-form README markdown (Task 6). Rendered on the solution's README tab.
+    # Synced from the bundle's README file by deploy; portable, carries no secrets.
+    readme: Mapped[str | None] = mapped_column(Text, default=None, nullable=True)
+
+    # Declared integration (connection) requirements the install must satisfy
+    # (Task 2/4/5). Portable, secret-scrubbed templates — see
+    # SolutionConnectionSchema.
+    connection_schema: Mapped[list["SolutionConnectionSchema"]] = relationship(
+        "SolutionConnectionSchema",
+        cascade="all, delete-orphan",
+        order_by="SolutionConnectionSchema.position",
+        lazy="selectin",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
