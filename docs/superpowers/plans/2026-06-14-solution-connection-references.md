@@ -1322,3 +1322,182 @@ git add -A && git commit -m "fix(solutions): connection-refs live-drive fixes"
 - **Deferred-but-spec'd:** `connected` (informational icon) is implemented as a best-effort `False` default in Task 9 and the icon in Task 12 — refine the resolver only if cheap; the warn-only contract does not depend on it being accurate.
 - **Cross-solution dep blocking** (Task 7/8): the pure module-closure core ships; the DB-aware cross-solution resolver is noted as an append point. If it grows non-trivial, split into a follow-up task rather than blocking the module fix.
 - **Type consistency:** `connection_schemas` (bundle field), `SolutionConnectionSchema` (ORM), `_connection_entries` (capture), `_upsert_integration_shells` (deploy), `check_install_needs` (walker), `SolutionSetupItem.kind/has_oauth/connected`, `UnmetNeed` — names used identically across tasks.
+
+---
+
+# STATUS & NEXT STEPS TO COMPLETE (updated 2026-06-14)
+
+## ✅ Connection-references feature — BUILT, REVIEWED, VERIFIED
+
+All 15 tasks + a Task 14b gap-fix are DONE on branch **`solutions/connection-references`**
+(renamed from `desloppify/code-health`; worktree `solutions-success-criteria`, draft PR #347 —
+NOT pushed/merged/un-drafted without Jack's explicit say-so). Each task went through fresh-implementer
++ two-stage spec+quality review; every review finding was addressed. The parallel **desloppify grind**
+(strict score 22.2→81.4, 25 findings/11 commits) was adversarially reviewed (auth gates EQUIVALENT;
+behavioral commits SAFE) and **merged in** (no-ff `af5c8336`, zero file overlap). Post-merge gates:
+ruff `All checks passed`, pyright `0 errors`, tsc clean, lint 0-err, 109 unit + 63 vitest + 7
+connection-refs e2e (incl. a true zip export→install round-trip) all green.
+
+**Known leave-alone failures (NOT ours):** `client SafeHTMLRenderer.test.tsx` (DOMPurify/jsdom);
+`test_solution_entities_endpoint::...app_logo` (v2-app-gating); `test_export_404_before_first_deploy`
+(stale — export was rewritten to live-rebuild, returns 200; the 404 path no longer exists).
+
+**One behavior change to changelog:** SDK `config.get()` now RAISES on real 4xx/5xx instead of
+returning the caller default (a missing key still returns the default) — net-positive bug fix from
+the grind (commit 90fd0bfe).
+
+---
+
+## Phase 7 — Finish desloppify (the intentionally-skipped items)
+
+The grind deliberately deferred items in two buckets. Resolve these to call the code-health pass
+complete. Run from a worktree on `solutions/connection-references` (or a child branch); use
+`/tmp/desloppify-venv/bin/desloppify`. Monorepo rule: scan `api/` and `client/` SEPARATELY.
+
+### Task 16: Scan client/ (TypeScript) — NEVER SCANNED
+- [ ] `desloppify --lang typescript scan --path client` (exclude `client/node_modules`, `client/dist`,
+      `client/src/lib/v1.d.ts`). Run the blind-review → triage → grind loop as for api/. This is the
+      single clean, contained "deslop the skipped" win that actually exists — client/ has had zero
+      coverage. Expect naming/dup/dead-code findings; fix the contained ones, defer big refactors.
+
+### Task 17: The big-judgment api/ refactors the grind deferred (each is its own arc)
+These were deferred because they are high-blast-radius and/or need a contract-version bump. Sequence
+deliberately; do NOT batch. For each, write a focused spec/plan, implement behind tests, review.
+- [ ] **`sdk_get_404_contract_split` / `sdk_delete_return_split`** — breaking SDK return-shape changes
+      (raise-vs-None / bool-vs-None) across every workflow/app consumer. Needs a `CONTRACT_VERSION`
+      bump and coordinates with the v2 SDK work. (Note: the grind's 90fd0bfe already fixed the
+      *config.get* error-swallow; these are the *get/delete* return-shape cousins.)
+- [ ] **`version0_legacy_field_still_serialized`** (applications) — removing a fingerprinted contract
+      field; needs a contract-version bump.
+- [ ] **`test_deps_in_runtime`** — both Dockerfiles install the full `requirements.lock`; moving
+      pytest/ruff to a dev-only extra needs a multi-stage build / separate dev-lock, not just a
+      pyproject edit.
+- [ ] **`dual_redis_singletons`** — the two redis modules are intentionally distinct (the cache
+      helper's per-call connections avoid a documented cross-event-loop bug); merging risks
+      reintroducing it. Decide: document the split as intentional, or unify carefully with a
+      regression test for the event-loop bug.
+- [ ] **`can_access_not_boolean`** — renaming a method on the canonical `OrgScopedRepository`; a
+      cross-cutting rename in the org-scoping spine. Read `api/src/repositories/README.md` first.
+- [ ] **`services_flat_clusters` / `uneven_services_decomposition` / `cli_dual_parsing_paradigm`** —
+      large directory reorg / CLI-to-Click migration. Big; only if Jack wants it.
+- [ ] **`dual_sdk_error_modules`** — `src/sdk/errors.py` vs `error_handling.py`: the engine catches one
+      variant, the SDK exports the other, so user-raised typed errors fall through to generic
+      handling. A REAL behavioral bug — give it a focused fix + tests (NOT just a dedup).
+- [ ] **`manifest_import.py` god-module split** (~2,949 lines) — decompose into focused modules. Use a
+      Plan-agent; behavior-preserving, test-anchored.
+- [ ] **`service_imports_router_private` / `bifrost_src_bidirectional_dependency` /
+      `mcp_boundary_dual_idiom`** — the layering smells (services importing `_`-prefixed router fns;
+      MCP tool dual-pattern). See `docs/plans/2026-04-18-mcp-router-reconciliation.md`. Several of
+      these were touched by the connection-refs arc already; re-scan to see what remains.
+
+---
+
+## Phase 8 — Solutions GitHub-story / end-to-end UX review (Jack's priority discussion)
+
+This is a DESIGN + DRIVE review, not just code. Jack wants to walk the whole experience as a real
+user and decide what "complete" means for the Git install/update/publish/DR story. We did NOT have
+time to discuss this during the connection-refs build. Run it as: (1) inventory what exists today
+against each question below, (2) DRIVE it end-to-end on the debug stack (install a fully-kitted
+solution from scratch — the Microsoft CSP app is the bar: multiple shared modules, TWO integrations,
+in-depth setup), (3) write findings + a spec for the gaps. See memory
+[[project_solutions_github_story_review]] and [[feedback_drive_dont_just_test]].
+
+### What we know exists TODAY (grounding — verify before designing)
+- **Git connect**: `Solution.git_connected` + `git_repo_url`; `git_sync.sync()` clones the repo and
+  deploys. `POST /solutions/{id}/pull` (router ~995) triggers a sync. **No subfolder/path concept** —
+  it clones the WHOLE repo, so "install from a folder in an omni-repo" is NOT supported today (open Q).
+- **Apps build from SOURCE on deploy**: `deploy._compile_app_dists` runs npm install + vite build
+  server-side; a disconnected fast-path accepts prebuilt `dist_files`/`bin_dist_files`. So the platform
+  DOES handle source (it doesn't only expect a dist) — but the exact source-vs-dist expectations across
+  the git path vs zip path vs `bifrost solution deploy` need to be mapped explicitly.
+- **Versioning**: the bundle/descriptor carries a `version`; install records it; downgrade is gated
+  (force overrides). But there is **no surfaced "a new version is available" signal** for a
+  git-connected install — sync is pull-triggered, not notification-driven (open Q).
+- **CLI surface**: `bifrost solution init / scaffold-app / deploy / install / export / start / capture
+  / migrate-app / swap-slugs`. There is NO `bifrost solution connect <repo-url>` command surfaced — how
+  git_connected gets SET (UI? create body? — `solutions.py:90` reads it from the create body) needs
+  confirming as a first-class user flow.
+
+### Open questions to answer (each becomes a finding + possibly a task)
+- [ ] **Install from Git — the happy path.** What does it look like end to end? Can a user easily
+      connect to a repo (is there a clear `connect`/UI flow, or only a create-body flag)? Does it spark
+      joy / follow patterns a user expects? Where does the platform itself add friction?
+- [ ] **Install from a folder in a repo (omni-repo).** Is it possible? Should it be the NORMAL/advised
+      shape (one repo, a folder per solution)? Today there's no subdir concept in git_sync — adding a
+      `repo_subpath` to the Solution + threading it through clone/deploy is the likely task. Decide if
+      omni-repo is the recommended pattern and design for it.
+- [ ] **Updates.** What does an update look like for a git-connected install? How does the user KNOW a
+      new version is available (poll? webhook? a "check for updates" button? a version badge)? Is there
+      an additive "Update" mode (vs the current full-replace deploy)? (The competitive review flagged
+      "no additive Update mode" as a P2 gap.)
+- [ ] **Source vs dist & the developer round-trip.** Does the platform handle source code, or expect a
+      dist? (Today: builds source server-side, but verify across ALL paths.) If a dist is ever
+      expected: how does a developer commit changes → push → have the platform pull from GitHub and
+      rebuild? Map the full edit→commit→push→pull→rebuild loop and confirm there are no dead ends.
+- [ ] **Deploy blocking on git-connected installs.** "If we're installed from Git (or connected in
+      general), are we blocking deploy somehow?" — clarify: does git-connection put the install into a
+      read-only/managed state that blocks local `bifrost solution deploy`? (router ~830 branches on
+      `git_connected`.) Is that the intended guard, and is it surfaced clearly to the user?
+- [ ] **Publishing your own repo.** How does a developer publish their repo AS a solution others can
+      install? Is there a clear authoring → publish → list-on-a-site flow? What does the hosted
+      "site listing solutions with links to repos" look like, and what does it need from the platform
+      (a manifest format, a discovery endpoint)?
+- [ ] **Fully-kitted from scratch (the CSP-app bar).** Can a solution with multiple shared modules, TWO
+      integrations, and in-depth setup instructions be installed from scratch WITHOUT the platform being
+      the reason it's hard? Drive it. The connection-refs feature (declare integrations + template
+      shells + Setup wizard + README + install-time dep blocking) is central here — does it actually
+      make the CSP app installable-from-scratch, or are there remaining gaps?
+- [ ] **Full-data backup & DR.** Does a full backup come with everything as expected (encrypted secrets
+      + table data round-trip — already built in the export/import arc; re-verify in the DR context)?
+      Do the CLI commands support a user setting up their own DR (export full backup → install into a
+      clean instance → everything materializes)? Can the same be driven via the API reasonably? Map the
+      DR runbook end to end.
+
+### Deliverable for Phase 8
+A findings doc (`docs/plans/2026-06-XX-solutions-github-story-findings.md`) answering each question
+with: what exists today, where it breaks / adds friction, and a recommendation. Then a spec for the
+prioritized gaps (likely: omni-repo subpath install, an Update mode + new-version signal, the
+publish/discovery flow, the DR runbook). Surface genuine product decisions to Jack via AskUserQuestion
+rather than guessing.
+
+---
+
+## Handoff prompt (next session)
+
+> Fresh session on Bifrost Solutions, worktree
+> `/home/jack/GitHub/bifrost/.claude/worktrees/solutions-success-criteria`, branch
+> **`solutions/connection-references`** (renamed from `desloppify/code-health`; draft PR #347 — do NOT
+> push/merge/un-draft without Jack's explicit say-so). Read repo CLAUDE.md + AGENTS.md, then memory
+> [[project_solutions_connection_references]], [[project_desloppify]],
+> [[project_solutions_github_story_review]], and the "STATUS & NEXT STEPS TO COMPLETE" section at the
+> bottom of `docs/superpowers/plans/2026-06-14-solution-connection-references.md` (this file).
+>
+> **Connection references is BUILT + reviewed + verified + the desloppify grind is merged in.** One
+> keeper worktree (this one) with the live debug stack `bifrost-debug-75bc0d9c` + data; the original
+> `worktree-solutions-success-criteria` branch is a harmless contained-ancestor tombstone.
+>
+> Two arcs remain, in Jack's expected order:
+>
+> **Phase 7 — finish the intentionally-skipped desloppify (START HERE).** Jack expects to start by
+> desloppifying what was skipped. The one clean contained win is **Task 16: scan client/ (TypeScript),
+> never scanned** — run the desloppify blind-review→grind loop on `client/` (separate from api/;
+> exclude node_modules/dist/v1.d.ts). Then **Task 17**: the big-judgment api/ refactors the grind
+> deferred (each its own arc, several need a CONTRACT_VERSION bump — do NOT batch; the
+> `dual_sdk_error_modules` one is a real behavioral bug worth a focused fix). Full list + rationale in
+> the Phase 7 section. Run from this branch (or a child); `/tmp/desloppify-venv/bin/desloppify`;
+> scan api/ and client/ SEPARATELY.
+>
+> **Phase 8 — the Solutions GitHub-story / UX review (Jack's discussion priority).** A DESIGN+DRIVE
+> review of the whole Git install/update/publish/DR experience — we never had time to discuss it. The
+> open questions (install-from-Git happy path; install-from-a-folder/omni-repo; what updates look like
+> + how you know a new version exists; source-vs-dist & the dev commit→push→pull→rebuild loop; whether
+> git-connection blocks deploy; publishing your own repo + the hosted listing site; fully-kitted
+> CSP-app-from-scratch; full-data backup + CLI/API-driven DR) are enumerated in the Phase 8 section,
+> each with what-exists-today grounding. Inventory → DRIVE end-to-end on the debug stack (CSP app is
+> the bar) → findings doc → spec for the prioritized gaps. Surface product decisions via
+> AskUserQuestion. Brainstorm WITH Jack before specing — he wants to shape this.
+>
+> Constraints: ./test.sh for tests (never 2 concurrent in one worktree); full pre-completion
+> verification before claiming done; never write to prod; mock secrets + dummy clients; no client
+> specifics in the public repo; draft PR #347 stays draft. The 3 known pre-existing test failures
+> (SafeHTMLRenderer, app_logo, export_404) are NOT yours — leave them.
