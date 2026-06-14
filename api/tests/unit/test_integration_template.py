@@ -5,21 +5,36 @@ from src.services.solutions.integration_template import (
 
 
 class _Prov:
-    provider_name = "halo"; display_name = "HaloPSA"; oauth_flow_type = "authorization_code"
-    authorization_url = "https://auth"; token_url = "https://token"; audience = None
-    token_url_defaults = {}; entity_id_source = None; scopes = ["all"]; redirect_uri = None
-    client_id = "SECRET-CLIENT"; encrypted_client_secret = b"SECRET"
+    provider_name = "halo"
+    display_name = "HaloPSA"
+    oauth_flow_type = "authorization_code"
+    authorization_url = "https://auth"
+    token_url = "https://token"
+    audience = None
+    token_url_defaults = {}
+    entity_id_source = None
+    scopes = ["all"]
+    redirect_uri = None
+    client_id = "SECRET-CLIENT"
+    encrypted_client_secret = b"SECRET"
 
 
 class _Schema:
-    key = "url"; type = "string"; required = True; description = None
-    options = None; position = 0
+    key = "url"
+    type = "string"
+    required = True
+    description = None
+    options = None
+    position = 0
 
 
 class _Integration:
-    name = "HaloPSA"; entity_id_name = "tenant"; default_entity_id = None
+    name = "HaloPSA"
+    entity_id_name = "tenant"
+    default_entity_id = None
     list_entities_data_provider_id = None
-    config_schema = [_Schema()]; oauth_provider = _Prov()
+    config_schema = [_Schema()]
+    oauth_provider = _Prov()
 
 
 def test_template_carries_safe_fields_and_scrubs_secrets():
@@ -39,8 +54,12 @@ def test_template_carries_safe_fields_and_scrubs_secrets():
 
 def test_template_no_oauth_when_provider_absent():
     class _NoOauth:
-        name = "ApiKeyInteg"; entity_id_name = None; default_entity_id = None
-        list_entities_data_provider_id = None; config_schema = []; oauth_provider = None
+        name = "ApiKeyInteg"
+        entity_id_name = None
+        default_entity_id = None
+        list_entities_data_provider_id = None
+        config_schema = []
+        oauth_provider = None
     t = build_integration_template(_NoOauth())
     assert t["oauth"] is None
     assert t["name"] == "ApiKeyInteg"
