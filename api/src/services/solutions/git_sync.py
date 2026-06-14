@@ -218,10 +218,12 @@ async def clone_repo_to_dir(repo_url: str, dest: Path, ref: str | None = None) -
     HEAD); a branch or tag name otherwise."""
     from git import Repo as GitRepo  # GitPython (already a dep)
 
-    kwargs: dict[str, object] = {"depth": 1}
+    # Explicit args (not a **kwargs splat) so the call stays fully typed.
+    # ``branch`` accepts a tag or a branch name (GitPython --branch).
     if ref is not None:
-        kwargs["branch"] = ref  # GitPython --branch accepts a tag or branch
-    await asyncio.to_thread(GitRepo.clone_from, repo_url, str(dest), **kwargs)
+        await asyncio.to_thread(GitRepo.clone_from, repo_url, str(dest), depth=1, branch=ref)
+    else:
+        await asyncio.to_thread(GitRepo.clone_from, repo_url, str(dest), depth=1)
 
 
 async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
