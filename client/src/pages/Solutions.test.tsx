@@ -10,12 +10,19 @@ import { renderWithProviders, screen, within } from "@/test-utils";
 import { waitFor } from "@testing-library/react";
 
 const mockNavigate = vi.fn();
+const mockSetSearchParams = vi.fn();
+let mockSearchParams = new URLSearchParams();
 vi.mock("react-router-dom", async () => {
 	const actual =
 		await vi.importActual<typeof import("react-router-dom")>(
 			"react-router-dom",
 		);
-	return { ...actual, useNavigate: () => mockNavigate };
+	return {
+		...actual,
+		useNavigate: () => mockNavigate,
+		useSearchParams: () =>
+			[mockSearchParams, mockSetSearchParams] as const,
+	};
 });
 
 vi.mock("sonner", () => ({
@@ -44,11 +51,17 @@ const mockListSolutions = vi.fn();
 const mockPreviewInstall = vi.fn();
 const mockInstallSolution = vi.fn();
 const mockUpdateSolution = vi.fn();
+const mockPreviewSolutionFromRepo = vi.fn();
+const mockInstallSolutionFromRepo = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	listSolutions: (...a: unknown[]) => mockListSolutions(...a),
 	previewInstall: (...a: unknown[]) => mockPreviewInstall(...a),
 	installSolution: (...a: unknown[]) => mockInstallSolution(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
+	previewSolutionFromRepo: (...a: unknown[]) =>
+		mockPreviewSolutionFromRepo(...a),
+	installSolutionFromRepo: (...a: unknown[]) =>
+		mockInstallSolutionFromRepo(...a),
 }));
 
 function makeSolution(overrides: Record<string, unknown> = {}) {
@@ -68,6 +81,7 @@ function makeSolution(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockListSolutions.mockResolvedValue({ solutions: [] });
+	mockSearchParams = new URLSearchParams();
 });
 
 async function renderPage() {
@@ -75,13 +89,17 @@ async function renderPage() {
 	return renderWithProviders(<Solutions />);
 }
 
-/** Open the install dialog via the + button and upload a file through it. */
+/**
+ * Open the install dialog via the + button, choose the From-zip source, and
+ * upload a file through the dropzone's file input.
+ */
 async function uploadThroughDialog(
 	user: ReturnType<typeof renderWithProviders>["user"],
 	file: File,
 ) {
 	await user.click(screen.getByTestId("open-install"));
 	const dialog = await screen.findByTestId("solution-dialog");
+	await user.click(within(dialog).getByTestId("source-zip"));
 	await user.upload(
 		within(dialog).getByTestId("install-file-input") as HTMLInputElement,
 		file,
@@ -555,5 +573,58 @@ describe("Solutions — page dropzone", () => {
 				organizationId: "",
 			}),
 		);
+	});
+});
+
+describe("Solutions — source picker", () => {
+	it("opens a From-repo / From-zip picker from the + button (no empty-shell create)", async () => {
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		await user.click(screen.getByTestId("open-install"));
+		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByTestId("source-picker")).toBeInTheDocument();
+		expect(within(dialog).getByTestId("source-repo")).toBeInTheDocument();
+		expect(within(dialog).getByTestId("source-zip")).toBeInTheDocument();
+		// No blank-create form: no name input, no immediate install button.
+		expect(within(dialog).queryByTestId("confirm-install")).toBeNull();
+	});
+
+	it("the empty state opens the source picker too", async () => {
+		const { user } = await renderPage();
+		await user.click(
+			await screen.findByText(/no solutions installed yet/i),
+		);
+		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByTestId("source-picker")).toBeInTheDocument();
+	});
+});
+
+describe("Solutions — repo deep link", () => {
+	it("opens the From-repository form pre-filled from ?repo=&path=&ref=", async () => {
+		mockSearchParams = new URLSearchParams({
+			repo: "https://github.com/acme/solutions",
+			path: "microsoft-csp",
+			ref: "main",
+		});
+		await renderPage();
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByTestId("repo-url")).toHaveValue(
+			"https://github.com/acme/solutions",
+		);
+		expect(within(dialog).getByTestId("repo-subpath")).toHaveValue(
+			"microsoft-csp",
+		);
+		expect(within(dialog).getByTestId("repo-ref")).toHaveValue("main");
+
+		// The deep-link params are consumed (stripped) so a refresh won't re-open.
+		await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled());
+	});
+
+	it("does not open a dialog when there is no ?repo param", async () => {
+		await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+		expect(screen.queryByTestId("solution-dialog")).toBeNull();
 	});
 });

@@ -4,12 +4,14 @@
  * Operator home for managing Solution installs. Mirrors the Applications page
  * conventions: grid/table view toggle, search, and the standard Organization
  * filter at the top. Installing goes through the CreateEditSolution dialog
- * (opened by the + button, or prefilled by dropping a .zip anywhere on the
- * page). Uninstall lives on the individual Solution page.
+ * (opened by the + button → a From-repo / From-zip source picker, prefilled by
+ * dropping a .zip anywhere on the page, or deep-linked into the From-repo form
+ * via `?repo=<url>&path=<subpath>&ref=<ref>`). Uninstall lives on the
+ * individual Solution page.
  */
 
-import { useRef, useState, type ChangeEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Boxes,
@@ -48,6 +50,7 @@ import { listSolutions, type Solution } from "@/services/solutions";
 
 export function Solutions() {
 	const navigate = useNavigate();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const dragDepth = useRef(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -58,9 +61,34 @@ export function Solutions() {
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
+	// Deep link: `?repo=<url>&path=<subpath>&ref=<ref>` opens the install dialog
+	// in From-repository mode with the fields pre-filled. The dialog mode is
+	// seeded from the URL on first render; the params are then stripped (in an
+	// effect, an external-system update) so a refresh/back doesn't re-open it.
 	const [dialogMode, setDialogMode] = useState<CreateEditSolutionMode | null>(
-		null,
+		() => {
+			const repo = searchParams.get("repo");
+			if (!repo) return null;
+			return {
+				kind: "create",
+				source: "repo",
+				repo: {
+					url: repo,
+					subpath: searchParams.get("path"),
+					ref: searchParams.get("ref"),
+				},
+			};
+		},
 	);
+
+	useEffect(() => {
+		if (!searchParams.has("repo")) return;
+		const next = new URLSearchParams(searchParams);
+		next.delete("repo");
+		next.delete("path");
+		next.delete("ref");
+		setSearchParams(next, { replace: true });
+	}, [searchParams, setSearchParams]);
 
 	const { data: organizations } = useOrganizations();
 
@@ -259,8 +287,8 @@ export function Solutions() {
 							No Solutions installed yet
 						</h3>
 						<p className="mt-2 max-w-sm text-sm text-muted-foreground">
-							Drag a Solution .zip anywhere on this page, or click to
-							choose a file to install.
+							Install from a repository or a .zip — click to choose a
+							source, or drag a Solution .zip anywhere on this page.
 						</p>
 					</button>
 				) : filtered.length === 0 ? (

@@ -1,13 +1,21 @@
 /**
- * CreateEditSolution — the single, state-driven dialog for both installing a
+ * CreateEditSolution — the single, state-driven dialog for installing a
  * Solution (create) and editing an existing install (edit).
  *
- * Create mode: a dropzone (or a prefilled file when the operator dropped one
- * on the page), the standard Organization selector at the top, the package
- * preview (entity summary / upgrade diff / downgrade confirm), declared
- * config values, and an optional git-connect section.
+ * Create mode offers TWO install sources, both routed through the same
+ * preview → confirm → install machinery:
+ *   - "From a repository": a repo URL + optional subfolder + ref; previews via
+ *     `previewSolutionFromRepo` and installs via `installSolutionFromRepo`.
+ *   - "From a zip": a dropzone (or a prefilled file from a page drop) that
+ *     previews via `previewInstall` and installs via `installSolution`.
+ * When neither source is pre-selected, a small source picker is shown first.
+ * There is NO empty-shell "create with no content" path — content always
+ * lands via a zip or a repo.
  *
- * Edit mode: name + Organization + global repo access + the same git section.
+ * Both sources share the read-only confirmation card (`PreviewConfirmation`):
+ * the entity summary / upgrade diff / declared config values.
+ *
+ * Edit mode: name + Organization + global repo access + the git section.
  *
  * Git connection is driven by GitHub being configured in Settings (a saved
  * token) — there is no manual "git connected" toggle. An install is
@@ -22,6 +30,7 @@ import { toast } from "sonner";
 import {
 	AppWindow,
 	Bot,
+	ChevronRight,
 	Database,
 	FileArchive,
 	FileCode,
@@ -63,19 +72,37 @@ import {
 } from "@/hooks/useGitHub";
 import {
 	installSolution,
+	installSolutionFromRepo,
 	previewInstall,
+	previewSolutionFromRepo,
 	updateSolution,
 	type Solution,
 	type SolutionInstallPreview,
+	type SolutionRepoPreviewRequest,
 	type SolutionUpdate,
 	type SolutionUpgradeDiff,
 } from "@/services/solutions";
 import type { components } from "@/lib/v1";
 
+/** Pre-filled From-repository fields (e.g. from a `?repo=` deep link). */
+export interface RepoPrefill {
+	url: string;
+	subpath?: string | null;
+	ref?: string | null;
+}
+
 export type CreateEditSolutionMode =
 	| {
 			kind: "create";
+			/**
+			 * Which install source to show. When omitted (and no `file`/`repo`
+			 * prefill is present), the source picker is shown first.
+			 */
+			source?: "repo" | "zip";
+			/** Prefilled zip (a page drop) — implies the zip source. */
 			file?: File;
+			/** Prefilled repo fields (a deep link) — implies the repo source. */
+			repo?: RepoPrefill;
 			organizationId?: string | null;
 			intent?: "install" | "update";
 	  }
@@ -391,20 +418,271 @@ export function CreateEditSolution({
 				data-testid="solution-dialog"
 			>
 				{mode.kind === "create" ? (
-					<CreateBody
-						initialFile={mode.file ?? null}
-						initialOrgId={mode.organizationId ?? null}
-						lockOrganization={mode.organizationId !== undefined}
-						intent={mode.intent ?? "install"}
-						onClose={onClose}
-						onSaved={onSaved}
-					/>
+					<CreateDispatch mode={mode} onClose={onClose} onSaved={onSaved} />
 				) : (
 					<EditBody solution={mode.solution} onClose={onClose} onSaved={onSaved} />
 				)}
 			</DialogContent>
 		</Dialog>
 	);
+}
+
+/**
+ * Decides which create surface to show: the source picker, the From-repository
+ * form, or the From-zip dropzone. A prefilled `file`/`repo` (or an explicit
+ * `source`) skips the picker.
+ */
+function CreateDispatch({
+	mode,
+	onClose,
+	onSaved,
+}: {
+	mode: Extract<CreateEditSolutionMode, { kind: "create" }>;
+	onClose: () => void;
+	onSaved: (solution: Solution) => void;
+}) {
+	const initialSource: "repo" | "zip" | null =
+		mode.source ?? (mode.repo ? "repo" : mode.file ? "zip" : null);
+	const [source, setSource] = useState<"repo" | "zip" | null>(initialSource);
+
+	const orgId = mode.organizationId ?? null;
+	const lockOrganization = mode.organizationId !== undefined;
+	const intent = mode.intent ?? "install";
+
+	if (source === null) {
+		return <SourcePicker intent={intent} onPick={setSource} />;
+	}
+	if (source === "repo") {
+		return (
+			<RepoBody
+				initialRepo={mode.repo ?? null}
+				intent={intent}
+				onClose={onClose}
+				onSaved={onSaved}
+			/>
+		);
+	}
+	return (
+		<CreateBody
+			initialFile={mode.file ?? null}
+			initialOrgId={orgId}
+			lockOrganization={lockOrganization}
+			intent={intent}
+			onClose={onClose}
+			onSaved={onSaved}
+		/>
+	);
+}
+
+/** The two install sources — a repository (marketplace) or a local zip. */
+function SourcePicker({
+	intent,
+	onPick,
+}: {
+	intent: "install" | "update";
+	onPick: (s: "repo" | "zip") => void;
+}) {
+	const options: {
+		source: "repo" | "zip";
+		icon: typeof GitBranch;
+		title: string;
+		description: string;
+		testid: string;
+	}[] = [
+		{
+			source: "repo",
+			icon: GitBranch,
+			title: "From a repository",
+			description: "Install from a GitHub repository — the marketplace path.",
+			testid: "source-repo",
+		},
+		{
+			source: "zip",
+			icon: FileArchive,
+			title: "From a zip",
+			description: "Install from an exported Solution .zip on your machine.",
+			testid: "source-zip",
+		},
+	];
+	return (
+		<>
+			<DialogHeader>
+				<DialogTitle>
+					{intent === "update" ? "Update Solution" : "Install Solution"}
+				</DialogTitle>
+				<DialogDescription>
+					Choose where this Solution comes from.
+				</DialogDescription>
+			</DialogHeader>
+			<div className="space-y-3" data-testid="source-picker">
+				{options.map(({ source, icon: Icon, title, description, testid }) => (
+					<button
+						key={source}
+						type="button"
+						data-testid={testid}
+						onClick={() => onPick(source)}
+						className="flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					>
+						<Icon className="h-6 w-6 shrink-0 text-muted-foreground" />
+						<div className="min-w-0 flex-1">
+							<p className="text-sm font-semibold">{title}</p>
+							<p className="text-xs text-muted-foreground">{description}</p>
+						</div>
+						<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+					</button>
+				))}
+			</div>
+		</>
+	);
+}
+
+/**
+ * The read-only confirmation card shared by the zip and repo install paths:
+ * entity summary (fresh) or upgrade diff, then the declared configuration.
+ *
+ * `configMode` controls the configuration section:
+ *   - "edit" (zip path): editable config-value inputs + the full-backup
+ *     password prompt, since the zip install carries values and a password.
+ *   - "declare" (repo path): a read-only list of declared config keys. The
+ *     from-repo install doesn't take values up front — they're set afterward
+ *     from the install's Setup/Details — so showing inputs here would be a lie.
+ */
+function PreviewConfirmation({
+	preview,
+	configMode,
+	configValues,
+	onConfigChange,
+	backupPassword,
+	onBackupPasswordChange,
+}: {
+	preview: SolutionInstallPreview;
+	configMode: "edit" | "declare";
+	configValues?: Record<string, string>;
+	onConfigChange?: (key: string, value: string) => void;
+	backupPassword?: string;
+	onBackupPasswordChange?: (value: string) => void;
+}) {
+	const declaredConfigs = asConfigSchemas(preview.config_schemas);
+	const isUpgrade = (preview.existing_install ?? null) !== null;
+	return (
+		<>
+			{isUpgrade ? (
+				<UpgradeDiffView diff={preview.diff ?? {}} />
+			) : (
+				<div>
+					<p className="text-sm">
+						This will install{" "}
+						<span className="font-semibold">
+							{preview.name ?? "this Solution"}
+						</span>
+						{preview.slug ? (
+							<span className="text-muted-foreground"> ({preview.slug})</span>
+						) : null}
+						.
+					</p>
+					<div className="mt-3">
+						<EntitySummary preview={preview} />
+					</div>
+				</div>
+			)}
+
+			{configMode === "edit" && preview.requires_password && (
+				<div className="space-y-2 rounded-lg border p-3">
+					<p className="text-sm font-medium">Backup password required</p>
+					<p className="text-xs text-muted-foreground">
+						This is a full backup. Enter the password used when it was exported.
+					</p>
+					<div className="space-y-1">
+						<Label htmlFor="backup-password">Password</Label>
+						<Input
+							id="backup-password"
+							data-testid="backup-password-input"
+							type="password"
+							value={backupPassword ?? ""}
+							onChange={(e) => onBackupPasswordChange?.(e.target.value)}
+							placeholder="Export password"
+						/>
+					</div>
+				</div>
+			)}
+
+			{declaredConfigs.length > 0 && (
+				<div className="space-y-3" data-testid="config-section">
+					<p className="text-sm font-medium">Configuration</p>
+					{configMode === "declare" ? (
+						<div className="space-y-2">
+							{declaredConfigs.map((cfg) => (
+								<div key={cfg.key} className="text-sm">
+									<span className="font-mono font-medium">{cfg.key}</span>
+									{cfg.required && (
+										<span className="ml-1 text-destructive" aria-hidden>
+											*
+										</span>
+									)}
+									{cfg.description && (
+										<p className="text-xs text-muted-foreground">
+											{cfg.description}
+										</p>
+									)}
+								</div>
+							))}
+							<p className="text-xs text-muted-foreground">
+								Set these values after installing, from the install's
+								configuration.
+							</p>
+						</div>
+					) : (
+						declaredConfigs.map((cfg) => {
+							const value = configValues?.[cfg.key] ?? "";
+							const missing = cfg.required && value.trim() === "";
+							return (
+								<div key={cfg.key} className="space-y-1">
+									<Label
+										htmlFor={`cfg-${cfg.key}`}
+										className="flex items-center gap-1"
+									>
+										{cfg.key}
+										{cfg.required && (
+											<span className="text-destructive" aria-hidden>
+												*
+											</span>
+										)}
+									</Label>
+									{cfg.description && (
+										<p className="text-xs text-muted-foreground">
+											{cfg.description}
+										</p>
+									)}
+									<Input
+										id={`cfg-${cfg.key}`}
+										type={isSecretType(cfg.type) ? "password" : "text"}
+										value={value}
+										onChange={(e) => onConfigChange?.(cfg.key, e.target.value)}
+									/>
+									{missing && (
+										<p className="text-xs text-yellow-600 dark:text-yellow-500">
+											Required — you can still install and set this later.
+										</p>
+									)}
+								</div>
+							);
+						})
+					)}
+				</div>
+			)}
+		</>
+	);
+}
+
+/** Build the install-time config-value map, dropping blank entries. */
+function nonBlankConfigValues(
+	configValues: Record<string, string>,
+): Record<string, string> {
+	const values: Record<string, string> = {};
+	for (const [k, v] of Object.entries(configValues)) {
+		if (v.trim() !== "") values[k] = v;
+	}
+	return values;
 }
 
 function CreateBody({
@@ -498,14 +776,10 @@ function CreateBody({
 			replaceSecrets?: boolean;
 		}) => {
 			if (!file) throw new Error("No file selected");
-			const values: Record<string, string> = {};
-			for (const [k, v] of Object.entries(configValues)) {
-				if (v.trim() !== "") values[k] = v;
-			}
 			return installSolution({
 				file,
 				organizationId: orgId ?? "",
-				configValues: values,
+				configValues: nonBlankConfigValues(configValues),
 				force,
 				replaceSecrets,
 				password: backupPassword.trim() || undefined,
@@ -570,7 +844,6 @@ function CreateBody({
 		},
 	});
 
-	const declaredConfigs = preview ? asConfigSchemas(preview.config_schemas) : [];
 	const existingInstall = preview?.existing_install ?? null;
 	const isUpgrade = existingInstall !== null;
 
@@ -707,102 +980,16 @@ function CreateBody({
 					</div>
 				) : preview ? (
 					<>
-						{isUpgrade ? (
-							<UpgradeDiffView diff={preview.diff ?? {}} />
-						) : (
-							<div>
-								<p className="text-sm">
-									This will install{" "}
-									<span className="font-semibold">
-										{preview.name ?? "this Solution"}
-									</span>
-									{preview.slug ? (
-										<span className="text-muted-foreground">
-											{" "}
-											({preview.slug})
-										</span>
-									) : null}
-									.
-								</p>
-								<div className="mt-3">
-									<EntitySummary preview={preview} />
-								</div>
-							</div>
-						)}
-
-						{preview.requires_password && (
-							<div className="space-y-2 rounded-lg border p-3">
-								<p className="text-sm font-medium">Backup password required</p>
-								<p className="text-xs text-muted-foreground">
-									This is a full backup. Enter the password used when it was exported.
-								</p>
-								<div className="space-y-1">
-									<Label htmlFor="backup-password">Password</Label>
-									<Input
-										id="backup-password"
-										data-testid="backup-password-input"
-										type="password"
-										value={backupPassword}
-										onChange={(e) => setBackupPassword(e.target.value)}
-										placeholder="Export password"
-									/>
-								</div>
-							</div>
-						)}
-
-						{declaredConfigs.length > 0 && (
-							<div className="space-y-3">
-								<p className="text-sm font-medium">Configuration</p>
-								{declaredConfigs.map((cfg) => {
-									const value = configValues[cfg.key] ?? "";
-									const missing = cfg.required && value.trim() === "";
-									return (
-										<div key={cfg.key} className="space-y-1">
-											<Label
-												htmlFor={`cfg-${cfg.key}`}
-												className="flex items-center gap-1"
-											>
-												{cfg.key}
-												{cfg.required && (
-													<span
-														className="text-destructive"
-														aria-hidden
-													>
-														*
-													</span>
-												)}
-											</Label>
-											{cfg.description && (
-												<p className="text-xs text-muted-foreground">
-													{cfg.description}
-												</p>
-											)}
-											<Input
-												id={`cfg-${cfg.key}`}
-												type={
-													isSecretType(cfg.type)
-														? "password"
-														: "text"
-												}
-												value={value}
-												onChange={(e) =>
-													setConfigValues((prev) => ({
-														...prev,
-														[cfg.key]: e.target.value,
-													}))
-												}
-											/>
-											{missing && (
-												<p className="text-xs text-yellow-600 dark:text-yellow-500">
-													Required — you can still install and
-													set this later.
-												</p>
-											)}
-										</div>
-									);
-								})}
-							</div>
-						)}
+						<PreviewConfirmation
+							preview={preview}
+							configMode="edit"
+							configValues={configValues}
+							onConfigChange={(key, value) =>
+								setConfigValues((prev) => ({ ...prev, [key]: value }))
+							}
+							backupPassword={backupPassword}
+							onBackupPasswordChange={setBackupPassword}
+						/>
 
 						{!isUpgrade && (
 							<GitRepoSection
@@ -907,6 +1094,206 @@ function CreateBody({
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
+		</>
+	);
+}
+
+/**
+ * From-repository install: a repo URL + optional subfolder + ref, a Resolve
+ * action that previews via `previewSolutionFromRepo`, the shared read-only
+ * confirmation, and an Install action that installs via
+ * `installSolutionFromRepo`. Same preview → confirm → install shape as the zip
+ * path; the install is git-connected from birth on the server.
+ */
+function RepoBody({
+	initialRepo,
+	intent,
+	onClose,
+	onSaved,
+}: {
+	initialRepo: RepoPrefill | null;
+	intent: "install" | "update";
+	onClose: () => void;
+	onSaved: (solution: Solution) => void;
+}) {
+	const queryClient = useQueryClient();
+
+	const [repoUrl, setRepoUrl] = useState(initialRepo?.url ?? "");
+	const [subpath, setSubpath] = useState(initialRepo?.subpath ?? "");
+	const [gitRef, setGitRef] = useState(initialRepo?.ref ?? "");
+	const [preview, setPreview] = useState<SolutionInstallPreview | null>(null);
+	const [previewError, setPreviewError] = useState<string | null>(null);
+	const [installError, setInstallError] = useState<string | null>(null);
+
+	// Editing any repo field invalidates a resolved preview — re-resolve before
+	// installing into a stale plan.
+	function clearPreview() {
+		setPreview(null);
+		setPreviewError(null);
+		setInstallError(null);
+	}
+
+	function buildBody(): SolutionRepoPreviewRequest {
+		const body: SolutionRepoPreviewRequest = { repo_url: repoUrl.trim() };
+		const sub = subpath.trim();
+		const ref = gitRef.trim();
+		if (sub) body.repo_subpath = sub;
+		if (ref) body.git_ref = ref;
+		return body;
+	}
+
+	const previewMutation = useMutation({
+		mutationFn: () => previewSolutionFromRepo(buildBody()),
+		onSuccess: (data) => {
+			setPreview(data);
+			setPreviewError(null);
+		},
+		onError: (err: unknown) => {
+			setPreview(null);
+			setPreviewError(
+				err instanceof Error ? err.message : "Failed to resolve repository",
+			);
+		},
+	});
+
+	const installMutation = useMutation({
+		mutationFn: () => installSolutionFromRepo(buildBody()),
+		onSuccess: (created) => {
+			queryClient.invalidateQueries({ queryKey: ["solutions"] });
+			toast.success(
+				preview?.existing_install
+					? `Upgraded ${created.name}`
+					: `Installed ${created.name}`,
+			);
+			onSaved(created);
+		},
+		onError: (err: unknown) => {
+			setInstallError(
+				err instanceof Error ? err.message : "Failed to install from repository",
+			);
+		},
+	});
+
+	const isUpgrade = (preview?.existing_install ?? null) !== null;
+	const canResolve = repoUrl.trim() !== "";
+
+	return (
+		<>
+			<DialogHeader>
+				<DialogTitle>
+					{isUpgrade && preview?.existing_install
+						? `Upgrade ${preview.existing_install.name} v${preview.existing_install.version ?? "?"} → v${preview?.version ?? "?"}`
+						: intent === "update"
+							? "Update from repository"
+							: "Install from a repository"}
+				</DialogTitle>
+				<DialogDescription>
+					Point at a GitHub repository, resolve what it installs, and install.
+				</DialogDescription>
+			</DialogHeader>
+
+			<div className="space-y-5">
+				<div className="space-y-3">
+					<div className="space-y-1.5">
+						<Label htmlFor="repo-url">
+							Repository URL
+							<span className="ml-1 text-destructive" aria-hidden>
+								*
+							</span>
+						</Label>
+						<Input
+							id="repo-url"
+							data-testid="repo-url"
+							value={repoUrl}
+							placeholder="https://github.com/org/repo"
+							onChange={(e) => {
+								setRepoUrl(e.target.value);
+								clearPreview();
+							}}
+						/>
+					</div>
+					<div className="grid grid-cols-2 gap-3">
+						<div className="space-y-1.5">
+							<Label htmlFor="repo-subpath">Subfolder</Label>
+							<Input
+								id="repo-subpath"
+								data-testid="repo-subpath"
+								value={subpath ?? ""}
+								placeholder="microsoft-csp"
+								onChange={(e) => {
+									setSubpath(e.target.value);
+									clearPreview();
+								}}
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="repo-ref">Ref / branch / tag</Label>
+							<Input
+								id="repo-ref"
+								data-testid="repo-ref"
+								value={gitRef ?? ""}
+								placeholder="main"
+								onChange={(e) => {
+									setGitRef(e.target.value);
+									clearPreview();
+								}}
+							/>
+						</div>
+					</div>
+					{!preview && (
+						<Button
+							type="button"
+							variant="outline"
+							data-testid="resolve-repo"
+							disabled={!canResolve || previewMutation.isPending}
+							onClick={() => previewMutation.mutate()}
+						>
+							{previewMutation.isPending && (
+								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+							)}
+							Resolve
+						</Button>
+					)}
+				</div>
+
+				{previewMutation.isPending ? (
+					<div className="flex items-center gap-2 py-4 text-muted-foreground">
+						<Loader2 className="h-4 w-4 animate-spin" />
+						Resolving repository…
+					</div>
+				) : previewError ? (
+					<p className="text-sm text-destructive" data-testid="repo-preview-error">
+						{previewError}
+					</p>
+				) : preview ? (
+					<>
+						<PreviewConfirmation preview={preview} configMode="declare" />
+						{installError && (
+							<p className="text-sm text-destructive">{installError}</p>
+						)}
+					</>
+				) : null}
+			</div>
+
+			<DialogFooter>
+				<Button
+					variant="outline"
+					onClick={onClose}
+					disabled={installMutation.isPending}
+				>
+					Cancel
+				</Button>
+				<Button
+					data-testid="confirm-install-repo"
+					onClick={() => installMutation.mutate()}
+					disabled={!preview || installMutation.isPending}
+				>
+					{installMutation.isPending && (
+						<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+					)}
+					{isUpgrade ? "Upgrade" : "Install"}
+				</Button>
+			</DialogFooter>
 		</>
 	);
 }

@@ -10,7 +10,9 @@ import { waitFor } from "@testing-library/react";
 import { CreateEditSolution } from "./CreateEditSolution";
 import {
 	installSolution,
+	installSolutionFromRepo,
 	previewInstall,
+	previewSolutionFromRepo,
 	type Solution,
 	type SolutionInstallPreview,
 } from "@/services/solutions";
@@ -39,6 +41,8 @@ const mockUpdateSolution = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	installSolution: vi.fn(),
 	previewInstall: vi.fn(),
+	installSolutionFromRepo: vi.fn(),
+	previewSolutionFromRepo: vi.fn(),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 }));
 
@@ -381,5 +385,164 @@ describe("CreateEditSolution — full-backup password prompt", () => {
 			password: "correct!",
 		});
 		await waitFor(() => expect(onSaved).toHaveBeenCalled());
+	});
+});
+
+describe("CreateEditSolution — source picker", () => {
+	function renderCreate(
+		mode: Parameters<typeof CreateEditSolution>[0]["mode"],
+	) {
+		const onSaved = vi.fn();
+		const onClose = vi.fn();
+		const utils = renderWithProviders(
+			<CreateEditSolution
+				mode={mode}
+				open
+				onClose={onClose}
+				onSaved={onSaved}
+			/>,
+		);
+		return { ...utils, onSaved, onClose };
+	}
+
+	it("offers From-repository and From-zip when no source is chosen", async () => {
+		renderCreate({ kind: "create" });
+
+		const picker = await screen.findByTestId("source-picker");
+		expect(within(picker).getByTestId("source-repo")).toHaveTextContent(
+			/from a repository/i,
+		);
+		expect(within(picker).getByTestId("source-zip")).toHaveTextContent(
+			/from a zip/i,
+		);
+		// No empty-shell create form — no name field, no install button yet.
+		expect(screen.queryByTestId("confirm-install")).toBeNull();
+		expect(screen.queryByTestId("confirm-install-repo")).toBeNull();
+	});
+
+	it("picking From-zip shows the dropzone (zip path)", async () => {
+		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("source-zip"));
+		expect(await screen.findByTestId("dialog-dropzone")).toBeInTheDocument();
+	});
+
+	it("picking From-repository shows the repo form", async () => {
+		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("source-repo"));
+		expect(await screen.findByTestId("repo-url")).toBeInTheDocument();
+		expect(screen.getByTestId("repo-subpath")).toBeInTheDocument();
+		expect(screen.getByTestId("repo-ref")).toBeInTheDocument();
+	});
+});
+
+describe("CreateEditSolution — repo install path", () => {
+	it("resolves a repo URL, renders the confirmation, then installs from repo", async () => {
+		vi.mocked(previewSolutionFromRepo).mockResolvedValue(
+			makePreview({
+				name: "CSP",
+				slug: "microsoft-csp",
+				config_schemas: [
+					{
+						key: "TENANT_ID",
+						type: "string",
+						required: true,
+						description: null,
+					},
+				],
+			} as Partial<SolutionInstallPreview>),
+		);
+		vi.mocked(installSolutionFromRepo).mockResolvedValue(
+			makeSolution({ id: "repo-install-1", name: "CSP" }) as Solution,
+		);
+
+		const onSaved = vi.fn();
+		const { user } = renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", source: "repo" }}
+				open
+				onClose={vi.fn()}
+				onSaved={onSaved}
+			/>,
+		);
+
+		await user.type(
+			await screen.findByTestId("repo-url"),
+			"https://github.com/acme/solutions",
+		);
+		await user.type(screen.getByTestId("repo-subpath"), "microsoft-csp");
+		await user.type(screen.getByTestId("repo-ref"), "main");
+		await user.click(screen.getByTestId("resolve-repo"));
+
+		await waitFor(() =>
+			expect(previewSolutionFromRepo).toHaveBeenCalledWith({
+				repo_url: "https://github.com/acme/solutions",
+				repo_subpath: "microsoft-csp",
+				git_ref: "main",
+			}),
+		);
+
+		// Shared confirmation: entity summary + declared config keys.
+		expect(await screen.findByTestId("preview-summary")).toBeInTheDocument();
+		expect(screen.getByTestId("config-section")).toHaveTextContent("TENANT_ID");
+
+		await user.click(screen.getByTestId("confirm-install-repo"));
+
+		await waitFor(() =>
+			expect(installSolutionFromRepo).toHaveBeenCalledWith({
+				repo_url: "https://github.com/acme/solutions",
+				repo_subpath: "microsoft-csp",
+				git_ref: "main",
+			}),
+		);
+		await waitFor(() => expect(onSaved).toHaveBeenCalled());
+	});
+
+	it("pre-fills the repo fields from the repo prefill (deep link)", async () => {
+		renderWithProviders(
+			<CreateEditSolution
+				mode={{
+					kind: "create",
+					source: "repo",
+					repo: {
+						url: "https://github.com/acme/solutions",
+						subpath: "microsoft-csp",
+						ref: "v2",
+					},
+				}}
+				open
+				onClose={vi.fn()}
+				onSaved={vi.fn()}
+			/>,
+		);
+
+		expect(await screen.findByTestId("repo-url")).toHaveValue(
+			"https://github.com/acme/solutions",
+		);
+		expect(screen.getByTestId("repo-subpath")).toHaveValue("microsoft-csp");
+		expect(screen.getByTestId("repo-ref")).toHaveValue("v2");
+	});
+
+	it("omits blank subpath/ref from the request body", async () => {
+		vi.mocked(previewSolutionFromRepo).mockResolvedValue(makePreview());
+		const { user } = renderWithProviders(
+			<CreateEditSolution
+				mode={{ kind: "create", source: "repo" }}
+				open
+				onClose={vi.fn()}
+				onSaved={vi.fn()}
+			/>,
+		);
+
+		await user.type(
+			await screen.findByTestId("repo-url"),
+			"https://github.com/acme/solutions",
+		);
+		await user.click(screen.getByTestId("resolve-repo"));
+
+		await waitFor(() =>
+			expect(previewSolutionFromRepo).toHaveBeenCalledWith({
+				repo_url: "https://github.com/acme/solutions",
+			}),
+		);
 	});
 });
