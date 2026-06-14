@@ -338,19 +338,6 @@ def decrypt_with_key(encrypted: str, secret_key: str) -> str:
     return f.decrypt(encrypted_bytes).decode()
 
 
-def encrypt_with_key(plaintext: str, secret_key: str) -> str:
-    """Encrypt with an explicit password-derived key (mirror of decrypt_with_key).
-
-    Used to build a portable, password-protected Solution export. The inverse of
-    decrypt_with_key: derive a Fernet key from the password via HKDF, Fernet-encrypt,
-    then urlsafe-base64 the token so decrypt_with_key's base64-decode round-trips.
-    """
-    key = derive_fernet_key(secret_key)
-    f = Fernet(key)
-    encrypted = f.encrypt(plaintext.encode())
-    return base64.urlsafe_b64encode(encrypted).decode()
-
-
 def encrypt_secret(plaintext: str) -> str:
     """
     Encrypt a secret value for storage in the database.
