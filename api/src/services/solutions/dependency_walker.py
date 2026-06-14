@@ -45,6 +45,7 @@ from src.services.repo_storage import RepoStorage
 from src.services.solutions.ref_scanner import (
     scan_config_refs,
     scan_imported_modules,
+    scan_integration_refs,
     scan_table_refs,
     scan_workflow_refs,
 )
@@ -177,6 +178,12 @@ class SolutionDependencyWalker:
             for key in scan_config_refs(src):
                 if key in cfg_by_key:
                     _add_pulled("config", key, key, key in seed.configs)
+            # Integration refs are surfaced unconditionally — unlike tables/
+            # configs (matched against the loose universe), a referenced
+            # integration is a declaration the install must provide, even if no
+            # Integration row exists yet in this environment.
+            for iname in scan_integration_refs(src):
+                _add_pulled("integration", iname, iname, False)
 
         for rel in seen_modules:
             _add_pulled("module", rel, rel, False)

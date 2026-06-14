@@ -276,6 +276,7 @@ class SolutionCaptureService:
         agents = await self._agent_entries(solution.id)
         claims = await self._claim_entries(solution.id)
         config_schemas = await self._config_entries(solution.id)
+        connection_schemas = await self._connection_entries(solution.id)
         python_files = await self._python_files(
             workflows, include_imports=include_imports
         )
@@ -295,6 +296,7 @@ class SolutionCaptureService:
             agents=agents,
             claims=claims,
             config_schemas=config_schemas,
+            connection_schemas=connection_schemas,
             version=solution.version,
             config_values=config_values,
             table_data=table_data,
@@ -512,6 +514,68 @@ class SolutionCaptureService:
             })
             for c in rows
         ]
+
+    async def _connection_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        """Scan the install's workflow sources for ``integrations.get("X")`` refs,
+        resolve each to a global Integration, build a scrubbed template, and
+        upsert SolutionConnectionSchema rows (by name). Returns declarations."""
+        from src.models.orm.integrations import Integration
+        from src.models.orm.solution_connection_schema import SolutionConnectionSchema
+        from src.services.solutions.integration_template import (
+            build_integration_template,
+        )
+        from src.services.solutions.ref_scanner import scan_integration_refs
+
+        wfs = (
+            await self.db.execute(
+                select(Workflow).where(Workflow.solution_id == solution_id)
+            )
+        ).scalars().all()
+        names: set[str] = set()
+        for wf in wfs:
+            if not wf.path:
+                continue
+            try:
+                src = (await self.repo.read(wf.path)).decode("utf-8")
+            except Exception:
+                # Source not in _repo/ (already-deployed under _solutions/) —
+                # mirror _python_files: skip rather than fail the capture.
+                continue
+            names |= scan_integration_refs(src)
+
+        entries: list[dict[str, Any]] = []
+        for pos, name in enumerate(sorted(names)):
+            integ = (
+                await self.db.execute(
+                    select(Integration).where(Integration.name == name)
+                )
+            ).scalar_one_or_none()
+            if integ is None:
+                template: dict[str, Any] = {
+                    "name": name, "config_schema": [], "oauth": None,
+                }
+            else:
+                template = build_integration_template(integ)
+            entries.append(
+                {"integration_name": name, "template": template, "position": pos}
+            )
+            existing = (
+                await self.db.execute(
+                    select(SolutionConnectionSchema).where(
+                        SolutionConnectionSchema.solution_id == solution_id,
+                        SolutionConnectionSchema.integration_name == name,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                self.db.add(SolutionConnectionSchema(
+                    solution_id=solution_id, integration_name=name,
+                    template=template, position=pos,
+                ))
+            else:
+                existing.template = template
+                existing.position = pos
+        return entries
 
     async def _config_values(self, solution: Solution) -> dict[str, str]:
         """Read the plaintext value for each declared config key that has a value set.

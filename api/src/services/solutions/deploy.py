@@ -251,6 +251,9 @@ class SolutionBundle:
     agents: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
+    # Each: {integration_name, template, position}. Secret-scrubbed skeletons
+    # (no client_id/secret). Declared from integrations.get("X") refs.
+    connection_schemas: list[dict[str, Any]] = field(default_factory=list)
     # The bundle's declared version (bifrost.solution.yaml ``version:``).
     # Recorded on the install by deploy; gates downgrades (Task 20).
     version: str | None = None

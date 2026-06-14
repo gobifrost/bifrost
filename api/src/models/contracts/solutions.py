@@ -154,7 +154,7 @@ class SolutionCaptureCandidates(BaseModel):
 # under ``modules/`` (no DB row); the rest are DB entities keyed by id, except
 # ``config`` which is keyed by its string key.
 DependencyKind = Literal[
-    "workflow", "table", "config", "form", "app", "agent", "module"
+    "workflow", "table", "config", "form", "app", "agent", "module", "integration"
 ]
 
 
@@ -298,6 +298,9 @@ class SolutionInstallPreview(BaseModel):
     agents: list[dict[str, Any]] = Field(default_factory=list)
     claims: list[dict[str, Any]] = Field(default_factory=list)
     config_schemas: list[dict[str, Any]] = Field(default_factory=list)
+    # Each: {integration_name, template, position}. Secret-scrubbed skeletons
+    # (no client_id/secret). Declared from integrations.get("X") refs.
+    connection_schemas: list[dict[str, Any]] = Field(default_factory=list)
     existing_install: SolutionExistingInstall | None = None
     diff: SolutionUpgradeDiff | None = None
     requires_password: bool = False
@@ -331,6 +334,9 @@ class SolutionDeployRequest(BaseModel):
     # Each config schema: {id, key, type, required, description?, default?, position}.
     # DECLARATIONS only — never a value (values are instance-owned Config rows).
     config_schemas: list[dict[str, Any]] = Field(default_factory=list)
+    # Each: {integration_name, template, position}. Secret-scrubbed skeletons
+    # (no client_id/secret). Declared from integrations.get("X") refs.
+    connection_schemas: list[dict[str, Any]] = Field(default_factory=list)
     # The bundle's declared version (bifrost.solution.yaml ``version:``).
     # Recorded on the install; an older version than installed is refused
     # unless ``force`` is set (Task 20 downgrade gate).
