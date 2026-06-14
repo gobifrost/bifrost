@@ -307,8 +307,11 @@ class SolutionDeployRequest(BaseModel):
     workflows: list[dict[str, Any]] = Field(default_factory=list)
     tables: list[dict[str, Any]] = Field(default_factory=list)
     # Each app: {id, slug, name, app_model, dependencies, access_level,
-    # src_files: {rel: text} | dist_files: {rel: text}}. dist_files is the
-    # disconnected fast-path (skip the server build).
+    # src_files: {rel: text} | dist_files: {rel: text},
+    # bin_dist_files: {rel: base64}}. dist_files/bin_dist_files are the
+    # disconnected fast-path (skip the server build); bin_dist_files carries
+    # non-UTF-8 dist assets (images/fonts/wasm) base64-encoded so they survive
+    # the round-trip unmangled.
     apps: list[dict[str, Any]] = Field(default_factory=list)
     # Each form: {id, name, description?, workflow_id?, fields: [...]}.
     forms: list[dict[str, Any]] = Field(default_factory=list)

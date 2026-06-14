@@ -1022,7 +1022,11 @@ class SolutionDeployer:
                 # Non-text assets (png/fonts/public/) carried as base64 by the
                 # CLI/git collectors — decoded into the build input (P2-j/R4).
                 "bin": mapp.get("bin_files") or {},
+                # Prebuilt fast-path: UTF-8 dist text + non-UTF-8 dist binaries
+                # (base64). Kept separate so the binaries are base64-decoded, not
+                # UTF-8-encoded (which would corrupt them).
                 "dist": mapp.get("dist_files"),
+                "bin_dist": mapp.get("bin_dist_files"),
                 "dependencies": mapp.get("dependencies") or {},
             })
         return builds
@@ -1048,11 +1052,19 @@ class SolutionDeployer:
         out: list[tuple[UUID, dict[str, bytes]]] = []
         for b in builds:
             prebuilt = b["dist"]
-            prebuilt_bytes = (
-                {k: v.encode("utf-8") if isinstance(v, str) else v for k, v in prebuilt.items()}
-                if prebuilt
-                else None
-            )
+            bin_prebuilt = b.get("bin_dist")
+            prebuilt_bytes: dict[str, bytes] | None = None
+            if prebuilt or bin_prebuilt:
+                prebuilt_bytes = {}
+                # UTF-8 dist text → raw bytes.
+                for k, v in (prebuilt or {}).items():
+                    prebuilt_bytes[k] = v.encode("utf-8") if isinstance(v, str) else v
+                # Non-UTF-8 dist assets travel as base64 — decode to the original
+                # bytes so images/fonts/wasm round-trip byte-for-byte (a plain
+                # .encode("utf-8") on the base64 string would write the base64
+                # TEXT to S3, corrupting the asset).
+                for k, v in (bin_prebuilt or {}).items():
+                    prebuilt_bytes[k] = _b64.b64decode(v) if isinstance(v, str) else v
             src_bytes = {
                 k: v.encode("utf-8") if isinstance(v, str) else v
                 for k, v in b["src"].items()

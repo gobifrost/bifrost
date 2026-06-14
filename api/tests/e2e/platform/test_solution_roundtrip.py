@@ -19,11 +19,26 @@ Design notes:
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import uuid
 
 import pytest
 
 pytestmark = pytest.mark.e2e
+
+
+# A tiny but real 1x1 PNG (8-byte signature + IHDR + IDAT + IEND). Its bytes are
+# deliberately NOT valid UTF-8 (0x89, 0xC4, etc.) so it exercises the binary
+# (bin_dist_files) round-trip path, not the UTF-8 text path.
+TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\rIDATx\x9cc\xfa\xcf\x00\x00\x00\x02\x00\x01\xe5'\xde\xfc"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+ASSET_REL = "assets/logo.png"
 
 
 def _upload_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -36,11 +51,13 @@ def _create_solution_with_app_and_workflow(
 ) -> str:
     """Deploy an org-scoped solution that owns one standalone_v2 app + one workflow.
 
-    Returns the solution id.  Uses ``dist_files`` (pre-built HTML) to avoid
-    a Vite build in the test stack.  The solution is org-scoped so that a second
-    install of the SAME zip into a DIFFERENT org does not collide (two purely
-    cross-org apps for different orgs are not visible to each other — deploy
-    collision only fires when one of them is global/NULL-scoped).
+    Returns the solution id.  Uses ``dist_files`` (pre-built HTML) + a binary
+    ``dist_files`` asset (a PNG, base64-encoded) to avoid a Vite build in the
+    test stack while still exercising the non-UTF-8 dist asset path.  The
+    solution is org-scoped so that a second install of the SAME zip into a
+    DIFFERENT org does not collide (two purely cross-org apps for different orgs
+    are not visible to each other — deploy collision only fires when one of them
+    is global/NULL-scoped).
     """
     slug = f"rt-src-{uuid.uuid4().hex[:8]}"
     app_slug = f"rt-app-{uuid.uuid4().hex[:8]}"
@@ -65,7 +82,15 @@ def _create_solution_with_app_and_workflow(
                     "name": "Round-Trip App",
                     "app_model": "standalone_v2",
                     "dependencies": {},
+                    # Text dist entry (HTML) + a binary dist asset. The deploy
+                    # request accepts both under dist_files; the deployer encodes
+                    # str values to UTF-8. A binary PNG cannot ride dist_files as
+                    # raw text, so it is carried base64 under bin_dist_files —
+                    # the path this test is proving round-trips correctly.
                     "dist_files": {"index.html": "<html><body>roundtrip</body></html>"},
+                    "bin_dist_files": {
+                        ASSET_REL: base64.b64encode(TINY_PNG).decode("ascii")
+                    },
                 }
             ],
             "workflows": [
@@ -163,4 +188,23 @@ def test_shareable_export_installs_into_fresh_org(e2e_client, platform_admin):
     )
     assert len(entities["workflows"]) >= 1, (
         f"installed solution has no workflows; entities: {entities}"
+    )
+
+    # --- The binary dist asset must round-trip BYTE-FOR-BYTE ---
+    # Read the installed app's dist asset straight from S3 (the same store the
+    # platform serves the standalone app from) and compare to the original PNG.
+    # If bin_dist_files were folded into dist_files, the deployer would have
+    # UTF-8-encoded the base64 TEXT and written that to S3, so these bytes would
+    # NOT equal TINY_PNG — this assertion fails before the bin_dist_files fix.
+    installed_app_id = entities["apps"][0]["id"]
+
+    async def _read_installed_asset() -> bytes:
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        return await SolutionAppBuilder().read_dist(installed_app_id, ASSET_REL)
+
+    stored = asyncio.run(_read_installed_asset())
+    assert stored == TINY_PNG, (
+        "binary dist asset was corrupted on round-trip: "
+        f"stored {len(stored)} bytes, expected {len(TINY_PNG)}"
     )

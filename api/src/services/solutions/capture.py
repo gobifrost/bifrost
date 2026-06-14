@@ -359,33 +359,33 @@ class SolutionCaptureService:
             # (dist_files-only fast path), src_files and bin_files are both empty.
             # The export strips dist_files (build output) from the zip manifest, so
             # a plain re-install would receive an app with nothing to build — the
-            # Vite step fails on an empty workdir. Carry the dist from S3 as
-            # dist_files so the deployer can use the prebuilt fast-path on
-            # re-install without requiring a Vite rebuild.
+            # Vite step fails on an empty workdir. Carry the dist from S3 so the
+            # deployer can use the prebuilt fast-path on re-install without a Vite
+            # rebuild. Mirror the src/bin split: UTF-8 text → dist_files (raw),
+            # non-UTF-8 binary (images/fonts/wasm) → bin_dist_files (base64). They
+            # MUST stay in separate keys — the deployer .encode("utf-8")s a
+            # dist_files value verbatim, which would corrupt a base64-of-binary
+            # string into the base64 text bytes instead of the original asset.
             dist_files: dict[str, str] | None = None
+            bin_dist_files: dict[str, str] | None = None
             if not src_files and not bin_files:
                 from src.services.solutions.app_build import SolutionAppBuilder
 
                 builder = SolutionAppBuilder()
                 rels = await builder.list_dist(app.id)
                 if rels:
-                    raw: dict[str, str] = {}
+                    text_dist: dict[str, str] = {}
+                    binary_dist: dict[str, str] = {}
                     for rel in rels:
                         data = await builder.read_dist(app.id, rel)
                         try:
-                            raw[rel] = data.decode("utf-8")
+                            text_dist[rel] = data.decode("utf-8")
                         except UnicodeDecodeError:
-                            # Binary dist assets (images, fonts): encode as data-URI
-                            # so the deployer can store them verbatim. The deployer
-                            # accepts str values (encoding them to bytes); non-UTF-8
-                            # content must travel as base64. Use the same data-URI
-                            # scheme the browser understands so a shipped image
-                            # inside the dist round-trips correctly. The deployer
-                            # treats every dist_files value as a string — callers
-                            # are responsible for choosing an appropriate encoding.
-                            raw[rel] = base64.b64encode(data).decode("ascii")
-                    if raw:
-                        dist_files = raw
+                            binary_dist[rel] = base64.b64encode(data).decode("ascii")
+                    if text_dist:
+                        dist_files = text_dist
+                    if binary_dist:
+                        bin_dist_files = binary_dist
             roles = await self._role_ids(AppRole, "app_id", app.id)
             out.append(_drop_none({
                 "id": str(app.id),
@@ -403,6 +403,7 @@ class SolutionCaptureService:
                 "src_files": src_files,
                 "bin_files": bin_files,
                 "dist_files": dist_files,
+                "bin_dist_files": bin_dist_files,
             }))
         return out
 
