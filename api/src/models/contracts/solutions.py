@@ -253,6 +253,15 @@ class SolutionDependencyPreviewRequest(BaseModel):
     include_imports: bool = False
 
 
+class SolutionRepoPreviewRequest(BaseModel):
+    """Resolve an install plan from a git repo (+ optional subfolder/ref).
+    Parse-only — no DB write, no S3, no build."""
+
+    repo_url: str = Field(min_length=1, max_length=1024)
+    repo_subpath: str | None = None
+    git_ref: str | None = None
+
+
 class SolutionEntityDiff(BaseModel):
     """Added/removed display names for ONE entity type in an upgrade preview.
 

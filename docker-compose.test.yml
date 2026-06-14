@@ -166,6 +166,10 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - test-mounts:/mounts  # File storage for uploads, branding, etc.
+      # Same per-worktree host dir the test-runner mounts, so an e2e test can
+      # stage a file:// git fixture the API container clones server-side
+      # (install/preview-repo). Host bind => writable by the test-runner uid.
+      - ${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost
     depends_on:
       pgbouncer:
         condition: service_healthy

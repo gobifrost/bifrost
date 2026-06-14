@@ -15,7 +15,7 @@ import json
 import logging
 import zipfile
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile, status
@@ -42,6 +42,7 @@ from src.models.contracts.solutions import (
     SolutionInstallPreview,
     SolutionReadme,
     SolutionReadmeUpdate,
+    SolutionRepoPreviewRequest,
     SolutionSetupStatus,
     SolutionsList,
     SolutionUpdate,
@@ -63,6 +64,9 @@ from src.services.solutions.deploy import (
     SolutionDowngradeBlocked,
     SolutionFinalizeIncomplete,
 )
+
+if TYPE_CHECKING:
+    from src.services.solutions.zip_install import PreviewResult
 
 logger = logging.getLogger(__name__)
 
@@ -1019,51 +1023,13 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
     return {"solution_id": str(solution_id), "status": "synced"}
 
 
-@router.post(
-    "/install/preview",
-    response_model=SolutionInstallPreview,
-    summary="Preview a Solution install zip (parse-only, admin only)",
-)
-async def install_preview(
-    file: Annotated[UploadFile, File(description="Solution workspace zip")],
-    ctx: Context,
-    user: CurrentSuperuser,
-    organization_id: Annotated[str | None, FastapiForm()] = None,
+async def _preview_to_dto(
+    ctx: Context, result: "PreviewResult", org_id: UUID | None
 ) -> SolutionInstallPreview:
-    """Unzip + parse a Solution workspace zip and report what it would create.
-
-    Parse-only: no DB write, no S3, no build. The drag-and-drop UI calls this to
-    show the install plan + declared configs before committing.
-
-    When an install already exists for the zip's slug at the requested scope
-    (``organization_id`` resolved exactly as the install endpoint does:
-    empty/absent → global NULL), the response also carries ``existing_install``
-    + ``diff`` so the UI routes to UPGRADE instead of a second install (Task 22).
-    """
-    from src.services.solutions.zip_install import (
-        compute_upgrade_diff,
-        find_install,
-        preview_zip,
-    )
-
-    org_id: UUID | None = None
-    if organization_id:
-        try:
-            org_id = UUID(organization_id)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid organization_id: {organization_id}",
-            ) from exc
-
-    data = await file.read()
-    try:
-        result = preview_zip(data)
-    except (ValueError, zipfile.BadZipFile) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid solution zip: {exc}",
-        ) from exc
+    """Assemble the install-plan DTO from a parsed workspace: detect an existing
+    install for upgrade routing, then return the SolutionInstallPreview. Shared
+    by the zip-upload and git-repo preview endpoints (no DB write)."""
+    from src.services.solutions.zip_install import compute_upgrade_diff, find_install
 
     existing_install: SolutionExistingInstall | None = None
     diff: SolutionUpgradeDiff | None = None
@@ -1126,6 +1092,95 @@ async def install_preview(
         requires_password=result.requires_password,
         readme=result.readme,
     )
+
+
+@router.post(
+    "/install/preview",
+    response_model=SolutionInstallPreview,
+    summary="Preview a Solution install zip (parse-only, admin only)",
+)
+async def install_preview(
+    file: Annotated[UploadFile, File(description="Solution workspace zip")],
+    ctx: Context,
+    user: CurrentSuperuser,
+    organization_id: Annotated[str | None, FastapiForm()] = None,
+) -> SolutionInstallPreview:
+    """Unzip + parse a Solution workspace zip and report what it would create.
+
+    Parse-only: no DB write, no S3, no build. The drag-and-drop UI calls this to
+    show the install plan + declared configs before committing.
+
+    When an install already exists for the zip's slug at the requested scope
+    (``organization_id`` resolved exactly as the install endpoint does:
+    empty/absent → global NULL), the response also carries ``existing_install``
+    + ``diff`` so the UI routes to UPGRADE instead of a second install (Task 22).
+    """
+    from src.services.solutions.zip_install import preview_zip
+
+    org_id: UUID | None = None
+    if organization_id:
+        try:
+            org_id = UUID(organization_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid organization_id: {organization_id}",
+            ) from exc
+
+    data = await file.read()
+    try:
+        result = preview_zip(data)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid solution zip: {exc}",
+        ) from exc
+
+    return await _preview_to_dto(ctx, result, org_id)
+
+
+@router.post(
+    "/install/preview-repo",
+    response_model=SolutionInstallPreview,
+    summary="Preview a Solution install from a git repo (parse-only, admin only)",
+)
+async def install_preview_repo(
+    body: SolutionRepoPreviewRequest, ctx: Context, user: CurrentSuperuser
+) -> SolutionInstallPreview:
+    """Clone the repo (+ optional subpath/ref), parse the workspace, and report
+    the install plan — the same plan the zip preview returns. No DB write."""
+    import tempfile
+    from pathlib import Path
+
+    from src.services.solutions.git_sync import clone_repo_to_dir
+    from src.services.solutions.zip_install import _parse_workspace
+
+    with tempfile.TemporaryDirectory(prefix="bifrost-repo-preview-") as tmp:
+        work = Path(tmp)
+        try:
+            await clone_repo_to_dir(body.repo_url, work, ref=body.git_ref)
+        except Exception as exc:  # GitPython GitCommandError etc.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not clone {body.repo_url}: {exc}",
+            ) from exc
+        if body.repo_subpath:
+            root = (work / body.repo_subpath).resolve()
+            if not root.is_relative_to(work.resolve()):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"repo_subpath {body.repo_subpath!r} escapes the repo checkout",
+                )
+        else:
+            root = work
+        if not (root / "bifrost.solution.yaml").is_file():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No bifrost.solution.yaml at "
+                f"{body.repo_subpath or '<repo root>'} in {body.repo_url}",
+            )
+        result = _parse_workspace(root)
+    return await _preview_to_dto(ctx, result, None)
 
 
 @router.post(
