@@ -12,9 +12,14 @@ import logging
 
 from .client import get_client
 from .models import IntegrationData, IntegrationMappingResponse
-from ._context import resolve_scope
+from ._context import resolve_scope, _execution_context
 
 logger = logging.getLogger(__name__)
+
+
+def _current_context():
+    """Return the active ExecutionContext, or None if not in a workflow execution."""
+    return _execution_context.get()
 
 
 class integrations:
@@ -89,6 +94,13 @@ class integrations:
         request_data = {"name": name, "scope": effective_scope}
         if oauth_scope:
             request_data["oauth_scope"] = oauth_scope
+        # Carry the solution install id (F2 pattern, mirrors tables.py): when this
+        # execution belongs to a solution that DECLARED this integration, the server
+        # escalates a missing integration to a 424 instead of a silent None.
+        ctx = _current_context()
+        solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+        if solution_id:
+            request_data["solution"] = str(solution_id)
         response = await client.post(
             "/api/sdk/integrations/get",
             json=request_data

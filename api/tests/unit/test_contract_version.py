@@ -141,7 +141,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
     # `apps create` to v1 against a v2-default server, so old clients are gated.
-    "101e44691a0bb1e51db5aaa2d02754616cb6f0d1ab66b94289796f8b8ea76a39"
+    #
+    # SDKIntegrationsGetRequest gained optional `solution` (2026-06-14,
+    # RequiredConnectionUnset escalation). ADDITIVE — an old CLI simply omits the
+    # field and keeps silent-None behavior, so no CONTRACT_VERSION bump; fingerprint
+    # refreshed only.
+    "a1a2c7ef31c5dabb5b3be5256f1f49e756c8ba3252596fc8efa8e045fcfee16d"
 )
 
 

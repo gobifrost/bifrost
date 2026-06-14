@@ -619,6 +619,26 @@ async def cli_delete_config(
 # =============================================================================
 
 
+async def _connection_is_declared(db: AsyncSession, solution_id: str, name: str) -> bool:
+    """True if ``solution_id`` declares an integration named ``name`` via a
+    SolutionConnectionSchema row. Drives the RequiredConnectionUnset 424."""
+    from src.models.orm.solution_connection_schema import SolutionConnectionSchema
+
+    try:
+        sid = UUID(str(solution_id))
+    except (ValueError, TypeError):
+        return False
+    row = (
+        await db.execute(
+            select(SolutionConnectionSchema.id).where(
+                SolutionConnectionSchema.solution_id == sid,
+                SolutionConnectionSchema.integration_name == name,
+            )
+        )
+    ).first()
+    return row is not None
+
+
 @router.post(
     "/integrations/get",
     response_model=SDKIntegrationsGetResponse | None,
@@ -700,6 +720,21 @@ async def sdk_integrations_get(
         # Fall back to integration defaults
         integration = await repo.get_integration_by_name(request.name)
         if not integration:
+            # RequiredConnectionUnset: if the missing integration was DECLARED by
+            # the calling solution, escalate to a loud 424 (mirrors
+            # RequiredConfigUnset) instead of a silent None. Loose (non-solution
+            # or non-declared) calls keep the silent-None behavior.
+            if request.solution and await _connection_is_declared(
+                db, request.solution, request.name
+            ):
+                raise HTTPException(
+                    status_code=424,
+                    detail=(
+                        f"Required integration '{request.name}' is not set up. "
+                        f"Set it up in the Integrations settings, or in the "
+                        f"solution's Setup tab."
+                    ),
+                )
             logger.debug(f"SDK integrations.get('{log_safe(request.name)}'): integration not found")
             return None
 
