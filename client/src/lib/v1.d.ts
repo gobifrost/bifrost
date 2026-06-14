@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7186,6 +7186,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/{solution_id}/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Required-config setup status (admin only)
+         * @description Return all config declarations for the install paired with whether each
+         *     has a matching Config value in the install's org scope.  ``setup_complete``
+         *     is True only when every required declaration is satisfied.
+         */
+        get: operations["solution_setup_api_solutions__solution_id__setup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/{solution_id}/export": {
         parameters: {
             query?: never;
@@ -7195,11 +7217,9 @@ export interface paths {
         };
         /**
          * Download the install's workspace zip (admin only)
-         * @description The exact workspace bundle the install's last write produced — the same
-         *     shape ``bifrost solution deploy`` / the zip install consume, so the export
-         *     is directly re-installable (or re-deployable from a local checkout). Every
-         *     writer persists it post-commit; an install last written before export
-         *     support has no stored bundle until its next deploy/sync.
+         * @description Rebuild the install's workspace bundle LIVE from the entities it
+         *     currently owns, so the export always reflects present ownership (not the
+         *     last capture/deploy). Directly re-installable via the zip-install path.
          */
         get: operations["export_solution_api_solutions__solution_id__export_get"];
         put?: never;
@@ -7752,6 +7772,31 @@ export interface paths {
          *     source files under it. ``force: true`` bypasses all three checks.
          */
         post: operations["replace_application_endpoint_api_applications__app_id__replace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/swap-slugs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Atomically exchange two applications' slugs
+         * @description Swap two apps' slugs in one transaction (v1→v2 migration cutover).
+         *
+         *     Gives the new (v2) app the live slug and parks the old (v1) app under the
+         *     other slug, so bookmarks/links to ``/apps/{slug}`` keep working. Holds the
+         *     slug advisory lock for both slugs, so it can't race a same-slug deploy or
+         *     leave the live slug momentarily unowned.
+         */
+        post: operations["swap_application_slugs_api_applications_swap_slugs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9905,8 +9950,8 @@ export interface components {
             access_level: string;
             /**
              * App Model
-             * @description Render model: 'inline_v1' (legacy inline render) or 'standalone_v2' (own createRoot + router + real SDK)
-             * @default inline_v1
+             * @description Render model: 'standalone_v2' (default — own createRoot + router + real SDK) or 'inline_v1' (legacy inline render). New apps default to v2; pass inline_v1 explicitly only for the legacy model.
+             * @default standalone_v2
              */
             app_model: string;
             /**
@@ -10085,6 +10130,31 @@ export interface components {
              * @description UUID of the version to rollback to
              */
             version_id: string;
+        };
+        /**
+         * ApplicationSwapSlugsRequest
+         * @description Atomically exchange two applications' slugs (v1→v2 migration cutover).
+         *
+         *     The slug is the public URL handle (``/apps/{slug}``). A migration scaffolds
+         *     the v2 app under a temporary slug, then this swap gives it the v1 app's slug
+         *     (so bookmarks/links survive) and parks the v1 app under the temp slug — both
+         *     in ONE transaction holding the slug advisory lock, so there is no observable
+         *     window where the live slug is unowned and no race with a same-slug deploy.
+         *     See ``POST /api/applications/swap-slugs``.
+         */
+        ApplicationSwapSlugsRequest: {
+            /**
+             * App A
+             * Format: uuid
+             * @description First application id.
+             */
+            app_a: string;
+            /**
+             * App B
+             * Format: uuid
+             * @description Second application id; its slug is exchanged with app_a's.
+             */
+            app_b: string;
         };
         /**
          * ApplicationUpdate
@@ -20352,6 +20422,11 @@ export interface components {
             /** Upgraded From Version */
             upgraded_from_version?: string | null;
             /**
+             * Setup Complete
+             * @default true
+             */
+            setup_complete: boolean;
+            /**
              * Scope
              * @enum {string}
              */
@@ -20907,6 +20982,37 @@ export interface components {
             }[];
             existing_install?: components["schemas"]["SolutionExistingInstall"] | null;
             diff?: components["schemas"]["SolutionUpgradeDiff"] | null;
+        };
+        /**
+         * SolutionSetupItem
+         * @description One config declaration paired with whether a value is set.
+         */
+        SolutionSetupItem: {
+            /** Key */
+            key: string;
+            /** Type */
+            type: string;
+            /** Required */
+            required: boolean;
+            /** Is Set */
+            is_set: boolean;
+            /** Description */
+            description?: string | null;
+            /** Default */
+            default?: string | null;
+        };
+        /**
+         * SolutionSetupStatus
+         * @description Required-config setup status for a Solution install.
+         *
+         *     ``setup_complete`` is True when every required declaration has a matching
+         *     Config value in the install's org scope.
+         */
+        SolutionSetupStatus: {
+            /** Setup Complete */
+            setup_complete: boolean;
+            /** Items */
+            items: components["schemas"]["SolutionSetupItem"][];
         };
         /**
          * SolutionUpdate
@@ -29225,7 +29331,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29258,7 +29364,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29291,7 +29397,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29324,7 +29430,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -35570,6 +35676,37 @@ export interface operations {
             };
         };
     };
+    solution_setup_api_solutions__solution_id__setup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionSetupStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     export_solution_api_solutions__solution_id__export_get: {
         parameters: {
             query?: never;
@@ -36680,6 +36817,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    swap_application_slugs_api_applications_swap_slugs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationSwapSlugsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationListResponse"];
                 };
             };
             /** @description Validation Error */

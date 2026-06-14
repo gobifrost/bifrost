@@ -89,10 +89,12 @@ import { SolutionCaptureDialog } from "@/components/solutions/SolutionCaptureDia
 import { SolutionActionsMenu } from "@/components/solutions/SolutionActionsMenu";
 import {
 	getSolutionEntities,
+	getSolutionSetup,
 	deleteSolution,
 	exportSolution,
 	setSolutionConfig,
 } from "@/services/solutions";
+import { SolutionSetupChecklist } from "@/components/solutions/SolutionSetupChecklist";
 import type { components } from "@/lib/v1";
 
 type EntitySummary = components["schemas"]["SolutionEntitySummary"];
@@ -106,10 +108,11 @@ type TabKey =
 	| "agents"
 	| "tables"
 	| "claims"
-	| "configs";
+	| "configs"
+	| "setup";
 
 const ENTITY_TABS: {
-	key: Exclude<TabKey, "configs">;
+	key: Exclude<TabKey, "configs" | "setup">;
 	label: string;
 	Icon: typeof Workflow;
 }[] = [
@@ -124,7 +127,7 @@ const ENTITY_TABS: {
 /** Per-entity-page link target, carrying the `?from` so the entity page can
  * offer a "back to this Solution" affordance (consumed in Task 19b). */
 function entityHref(
-	kind: Exclude<TabKey, "configs">,
+	kind: Exclude<TabKey, "configs" | "setup">,
 	entity: EntitySummary,
 	solutionId: string,
 ): string {
@@ -159,7 +162,7 @@ function asConfigType(type: string): ConfigType {
 	return "string";
 }
 
-const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs">, string> = {
+const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs" | "setup">, string> = {
 	workflows: "workflows",
 	apps: "apps",
 	forms: "forms",
@@ -168,7 +171,7 @@ const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs">, string> = {
 	claims: "custom claims",
 };
 
-const GRID_TABLE_ENTITY_TABS = new Set<Exclude<TabKey, "configs">>([
+const GRID_TABLE_ENTITY_TABS = new Set<Exclude<TabKey, "configs" | "setup">>([
 	"workflows",
 	"apps",
 	"forms",
@@ -240,7 +243,7 @@ function accessBadge(accessLevel: string | null | undefined) {
 	);
 }
 
-function entityStatus(entity: EntitySummary, kind: Exclude<TabKey, "configs">) {
+function entityStatus(entity: EntitySummary, kind: Exclude<TabKey, "configs" | "setup">) {
 	if (kind === "forms") {
 		return entity.is_active === false ? "Inactive" : "Active";
 	}
@@ -255,7 +258,7 @@ function SolutionEntityGrid({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs">;
+	kind: Exclude<TabKey, "configs" | "setup">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -475,7 +478,7 @@ function SolutionEntityTable({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs">;
+	kind: Exclude<TabKey, "configs" | "setup">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -646,7 +649,7 @@ function EntityTabContent({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs">;
+	kind: Exclude<TabKey, "configs" | "setup">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -907,10 +910,21 @@ export function SolutionDetail() {
 		enabled: !!solutionId,
 	});
 
-	const invalidate = () =>
-		queryClient.invalidateQueries({
+	const {
+		data: setupData,
+		refetch: refetchSetup,
+	} = useQuery({
+		queryKey: ["solutions", solutionId, "setup"],
+		queryFn: () => getSolutionSetup(solutionId!),
+		enabled: !!solutionId,
+	});
+
+	const invalidate = () => {
+		void queryClient.invalidateQueries({
 			queryKey: ["solutions", solutionId, "entities"],
 		});
+		void refetchSetup();
+	};
 
 	const sol = data?.solution;
 
@@ -966,10 +980,11 @@ export function SolutionDetail() {
 			tables: data?.tables?.length ?? 0,
 			claims: data?.claims?.length ?? 0,
 			configs: data?.configs?.length ?? 0,
+			setup: setupData?.items?.length ?? 0,
 		} satisfies Record<TabKey, number>;
-	}, [data]);
+	}, [data, setupData]);
 
-	const itemsFor = (key: Exclude<TabKey, "configs">): EntitySummary[] =>
+	const itemsFor = (key: Exclude<TabKey, "configs" | "setup">): EntitySummary[] =>
 		(data?.[key] as EntitySummary[] | undefined) ?? [];
 
 	const requiredUnset = data?.required_configs_unset ?? [];
@@ -1015,9 +1030,21 @@ export function SolutionDetail() {
 					{/* Header */}
 					<div className="flex items-start justify-between gap-4">
 						<div className="min-w-0 flex-1">
-							<h1 className="text-3xl font-extrabold tracking-tight">
-								{sol.name}
-							</h1>
+							<div className="flex items-center gap-3">
+								<h1 className="text-3xl font-extrabold tracking-tight">
+									{sol.name}
+								</h1>
+								{sol.setup_complete === false && (
+									<Badge
+										data-testid="incomplete-badge"
+										variant="outline"
+										className="gap-1 border-yellow-500/60 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400"
+									>
+										<AlertTriangle className="h-3 w-3" />
+										Incomplete
+									</Badge>
+								)}
+							</div>
 							<p className="mt-1 text-sm text-muted-foreground">
 								{sol.slug}
 								{sol.upgraded_from_version && (
@@ -1130,6 +1157,17 @@ export function SolutionDetail() {
 									{counts.configs}
 								</span>
 							</TabsTrigger>
+							<TabsTrigger
+								value="setup"
+								data-testid="tab-setup"
+								className="gap-1.5"
+							>
+								<CheckCircle2 className="h-4 w-4" />
+								Setup
+								{sol.setup_complete === false && (
+									<AlertTriangle className="ml-0.5 h-3.5 w-3.5 text-yellow-500" />
+								)}
+							</TabsTrigger>
 						</TabsList>
 
 						{ENTITY_TABS.map(({ key }) => (
@@ -1159,6 +1197,24 @@ export function SolutionDetail() {
 									This Solution declares no configuration.
 								</div>
 							)}
+						</TabsContent>
+
+						<TabsContent value="setup" className="flex-1 min-h-0">
+							<SolutionSetupChecklist
+								items={setupData?.items ?? []}
+								setupComplete={setupData?.setup_complete ?? sol.setup_complete}
+								onSet={async (key, value) => {
+									await setSolutionConfig({
+										key,
+										value,
+										type: asConfigType(
+											setupData?.items.find((i) => i.key === key)?.type ?? "string",
+										),
+										organizationId: sol.organization_id ?? null,
+									});
+									invalidate();
+								}}
+							/>
 						</TabsContent>
 					</Tabs>
 

@@ -18,6 +18,8 @@ export type SolutionUpgradeDiff =
 export type SolutionDeleteSummary =
 	components["schemas"]["SolutionDeleteSummary"];
 export type SolutionUpdate = components["schemas"]["SolutionUpdate"];
+export type SolutionSetupStatus = components["schemas"]["SolutionSetupStatus"];
+export type SolutionSetupItem = components["schemas"]["SolutionSetupItem"];
 export type SolutionCaptureCandidates =
 	components["schemas"]["SolutionCaptureCandidates"];
 export type SolutionCaptureRequest =
@@ -54,6 +56,21 @@ export async function getSolution(
 		signal,
 	});
 	if (error) throw new Error(getErrorMessage(error, "Failed to get solution"));
+	return data;
+}
+
+export async function getSolutionSetup(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<SolutionSetupStatus> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/{solution_id}/setup",
+		{ params: { path: { solution_id: solutionId } }, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to get solution setup status"));
+	}
 	return data;
 }
 
