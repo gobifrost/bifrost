@@ -103,6 +103,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         _collect_apps,
         _collect_claims,
         _collect_config_schemas,
+        _collect_connection_schemas,
     )
     from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
 
@@ -122,6 +123,11 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         agents=agents,
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
+        # Declared integrations (connection refs): a git-connected deploy must
+        # create the same integration shells + SolutionConnectionSchema rows the
+        # zip path does, else a git-installed solution silently drops its
+        # integrations and Setup never surfaces them (drive F1).
+        connection_schemas=_collect_connection_schemas(workspace),
         version=version,
         # README.md at the repo root → Solution.readme (deploy-owned full-replace;
         # absent => cleared). Read straight off the checkout dir, same mechanism as

@@ -65,9 +65,58 @@ solution in the same repo to exercise `repo_subpath` selection.
 
 ---
 
-## Drive 1 — install-from-repo + server-side source build (RISK GATE)
+## Drive 1 — install-from-repo + server-side source build (RISK GATE) — PASSED
 
-_(to be filled by Task 8)_
+Driven against the live debug stack (`bifrost-debug-75bc0d9c`, port mode
+`http://localhost:37791`), superuser `dev@gobifrost.com`, fixture cloned into the
+API container at `file:///tmp/bifrost-omnirepo`.
+
+### What worked
+- **`POST /install/preview-repo`** resolved the read-only plan from the `acme-tenant-manager`
+  subfolder of the omni-repo: slug/name/version/scope, the source-only app (`src_files`
+  present, `dist_files: null`), and **both `connection_schemas`** (`cloud_directory` oauth2,
+  `ticketing` api_key). This is the "resolve + prefill read-only confirmation" UX.
+- **`POST /install/from-repo`** created a git-connected install (`git_connected: true`,
+  `repo_subpath: acme-tenant-manager`, version 1.0.0) under the caller's org. Deploy is then
+  refused (one-writer). The omni-repo subpath selection works — the second solution
+  (`quick-report`) sits in the same repo untouched.
+- **Server-side source build / serve CONFIRMED (the "biggest gap").** The standalone_v2 app
+  installed with **no committed `dist/`** and renders server-side: the app shell returns 200
+  with an importmap, and the npm dependency **`/__bifrost_modules/lucide-react.js` resolves
+  to a 296 KB module server-side**. The v2 model serves source via a Vite-dev-style transform +
+  importmap (`/__bifrost_modules/*`, `/@vite/client`) rather than a one-shot prebuilt dist — so
+  a source-only repo is fully installable. **Committed dist is NOT required.** This answers the
+  spec's §7 risk gate: the platform handles source.
+
+### F1 — REAL BUG FOUND + FIXED: git-connected install dropped declared integrations
+On the FIRST install, `solution_connection_schema` had **zero rows** and the Setup tab showed
+`items: []` — the two declared integrations silently vanished, even though they appeared
+correctly in the *preview*. Root cause: `read_workspace_bundle` in `git_sync.py` (the
+git/connected deploy path) did **not** call `_collect_connection_schemas`, so the
+`SolutionBundle` carried `connection_schemas=[]` and `deploy`'s integration-shell +
+`SolutionConnectionSchema` creation never ran. The **zip-install path collected them**
+(`zip_install.py:192`), so this was a git-path-only divergence — exactly the class of bug the
+connection-refs feature exists to prevent, and it breaks the CSP-from-scratch story (install
+declares integrations → Setup surfaces them).
+
+**Fix (this branch):** added `_collect_connection_schemas(workspace)` to `read_workspace_bundle`'s
+`SolutionBundle(...)`, mirroring the zip path. **Re-drive confirmed:** after the fix, both
+`solution_connection_schema` rows persist (`cloud_directory|0`, `ticketing|1`) and the Setup tab
+surfaces both as `kind: connection`, `required: true` items (`connected: false` until the admin
+connects them — the warn-only contract; `setup_complete` stays true because declared-but-unconnected
+does not block). Needs a regression test (added in the fix commit).
+
+### F2 — fixture gap (NOT a platform bug): workflow needs a manifest entry
+The fixture's `functions/tenant_overview.py` did not register as a Workflow (`workflows: 0`).
+Correct platform behavior: solution workflows are collected from `.bifrost/workflows.yaml`
+(UUID-keyed manifest), not bare `functions/*.py`. The Python source IS bundled (layout-agnostic
+`_collect_python_files`), but a registered Workflow needs a manifest entry. Fixture to be
+corrected before the Task 16 drives (add a `.bifrost/workflows.yaml` entry for `tenant_overview`).
+
+### Harness notes
+- The API process runs as **uid 1000**; cloning the copied-in fixture required `chown -R 1000:1000`
+  + a uid-1000 `git config --global --add safe.directory '*'` inside the container (F-PREP-2).
+  A real `https://github.com/...` URL avoids all of this.
 
 ## Drive 2 — upgrade + update-available signal
 

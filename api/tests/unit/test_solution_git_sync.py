@@ -187,6 +187,38 @@ class TestReadWorkspaceBundleClaims:
         assert bundle.claims[0]["name"] == "allowed_campus_ids"
 
 
+class TestReadWorkspaceBundleConnectionSchemas:
+    """read_workspace_bundle must collect connection declarations from
+    .bifrost/connections.yaml — else a git-connected install silently drops its
+    declared integrations (no shells, no Setup items), diverging from the zip
+    path. Drive finding F1 (2026-06-14)."""
+
+    def test_read_workspace_bundle_collects_connection_schemas(self, tmp_path) -> None:
+        from src.models.orm.solutions import Solution
+        from src.services.solutions.git_sync import read_workspace_bundle
+
+        (tmp_path / "bifrost.solution.yaml").write_text("slug: co\nname: CO\nscope: global\n")
+        (tmp_path / ".bifrost").mkdir()
+        (tmp_path / ".bifrost" / "connections.yaml").write_text(
+            "connections:\n"
+            "  cloud_directory:\n"
+            "    integration_name: cloud_directory\n"
+            "    position: 0\n"
+            "    template:\n"
+            "      auth_type: oauth2\n"
+            "  ticketing:\n"
+            "    integration_name: ticketing\n"
+            "    position: 1\n"
+            "    template:\n"
+            "      auth_type: api_key\n"
+        )
+
+        sol = Solution(id=uuid.uuid4(), slug="co", name="CO", organization_id=None)
+        bundle = read_workspace_bundle(sol, tmp_path)
+        names = sorted(c["integration_name"] for c in bundle.connection_schemas)
+        assert names == ["cloud_directory", "ticketing"]
+
+
 @pytest.mark.e2e
 class TestGitSyncRerun:
     async def test_rerun_when_trigger_arrives_mid_sync(self, db_session, monkeypatch):
