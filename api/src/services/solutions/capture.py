@@ -517,15 +517,44 @@ class SolutionCaptureService:
         ]
 
     async def _connection_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
-        """Scan the install's workflow sources for ``integrations.get("X")`` refs,
-        resolve each to a global Integration, build a scrubbed template, and
-        upsert SolutionConnectionSchema rows (by name). Returns declarations."""
+        """Return the install's integration declarations.
+
+        Source of truth is the persisted ``SolutionConnectionSchema`` rows
+        (created by deploy / a prior capture). When they exist — the
+        export / DR path for an installed or deployed solution — return them
+        directly: they already carry the scrubbed template + position, and the
+        workflow source is unreadable for a deployed install (it lives under
+        ``_solutions/`` not ``_repo/``), so a re-scan would silently drop them.
+
+        Only when NO persisted rows exist (a fresh capture from a ``_repo/``
+        workspace that was never deployed) do we fall back to scanning each
+        workflow's source for ``integrations.get("X")`` refs, resolving each to
+        a global Integration, building a scrubbed template, and upserting
+        ``SolutionConnectionSchema`` rows (by name) as a side-effect.
+        """
         from src.models.orm.integrations import Integration
         from src.models.orm.solution_connection_schema import SolutionConnectionSchema
         from src.services.solutions.integration_template import (
             build_integration_template,
         )
         from src.services.solutions.ref_scanner import scan_integration_refs
+
+        persisted = (
+            await self.db.execute(
+                select(SolutionConnectionSchema)
+                .where(SolutionConnectionSchema.solution_id == solution_id)
+                .order_by(SolutionConnectionSchema.position)
+            )
+        ).scalars().all()
+        if persisted:
+            return [
+                {
+                    "integration_name": r.integration_name,
+                    "template": r.template,
+                    "position": r.position,
+                }
+                for r in persisted
+            ]
 
         wfs = (
             await self.db.execute(

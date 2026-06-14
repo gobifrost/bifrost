@@ -104,6 +104,58 @@ async def test_capture_declares_referenced_integration(db_session) -> None:
     assert "client_id" not in (rows[0].template.get("oauth") or {})
 
 
+async def test_connection_entries_prefers_persisted_rows(db_session) -> None:
+    """Drive F4: export/DR of an installed solution must read the persisted
+    SolutionConnectionSchema rows, NOT re-scan workflow source.
+
+    For a deployed install the source lives under _solutions/ (unreadable via
+    repo.read of the _repo/ path), so the scan path would silently drop every
+    declaration. With persisted rows present, _connection_entries returns them
+    directly — carrying integration_name + template + position — without needing
+    the repo at all.
+    """
+    db = db_session
+    sol = await _make_solution(db)
+
+    # A workflow whose source is NOT in the repo (simulating a deployed install).
+    wf = Workflow(
+        id=uuid.uuid4(),
+        name=f"wf-{uuid.uuid4().hex[:8]}",
+        function_name="main",
+        path="workflows/sync.py",
+        type="workflow",
+        is_active=True,
+        solution_id=sol.id,
+    )
+    db.add(wf)
+
+    # Persisted rows created by deploy (out of order to prove position is carried).
+    db.add(SolutionConnectionSchema(
+        solution_id=sol.id,
+        integration_name="Microsoft365",
+        template={"name": "Microsoft365", "config_schema": [], "oauth": None},
+        position=1,
+    ))
+    db.add(SolutionConnectionSchema(
+        solution_id=sol.id,
+        integration_name="HaloPSA",
+        template={"name": "HaloPSA", "config_schema": [], "oauth": None},
+        position=0,
+    ))
+    await db.flush()
+
+    # Empty repo: a re-scan would find nothing. Persisted rows must win.
+    repo = _FakeRepo({})
+    svc = SolutionCaptureService(db, repo=repo)
+    entries = await svc._connection_entries(sol.id)
+
+    # Both declarations carried, ordered by position, with templates intact.
+    assert [e["integration_name"] for e in entries] == ["HaloPSA", "Microsoft365"]
+    assert [e["position"] for e in entries] == [0, 1]
+    assert entries[0]["template"]["name"] == "HaloPSA"
+    assert entries[1]["template"]["name"] == "Microsoft365"
+
+
 async def test_connection_entries_idempotent_upsert(db_session) -> None:
     """Re-running capture updates the same row (no unique-constraint blowup)."""
     db = db_session

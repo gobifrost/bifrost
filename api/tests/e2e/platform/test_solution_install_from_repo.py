@@ -268,3 +268,50 @@ async def test_delete_git_connected_install_with_connections(e2e_client, platfor
         e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers).status_code
         == 404
     )
+
+
+async def test_export_carries_connection_declarations(e2e_client, platform_admin):
+    """Drive F4: exporting an installed solution must carry its declared
+    integrations into the zip (a DR backup must restore the Setup integrations).
+
+    The export rebuilds the bundle LIVE from owned entities. For a deployed
+    install the workflow source lives under ``_solutions/`` (unreadable via the
+    ``_repo/`` path), so the source-scan re-derivation silently dropped every
+    declaration — the zip had no ``connections.yaml`` and restore-preview showed
+    ``connection_schemas: []``. The fix reads the persisted
+    ``SolutionConnectionSchema`` rows (the deploy-time source of truth). A
+    restore-preview of the exported zip is the cleanest end-to-end assertion.
+    """
+    slug = f"exportconn-{uuid.uuid4().hex[:8]}"
+    repo_url = _make_fixture_repo(subdir="acme", slug=slug, with_connection=True)
+    inst = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": repo_url, "repo_subpath": "acme"},
+        headers=platform_admin.headers,
+    )
+    assert inst.status_code == 201, inst.text
+    sid = inst.json()["id"]
+
+    # Shareable export (no values/password needed).
+    exp = e2e_client.post(
+        f"/api/solutions/{sid}/export?mode=shareable",
+        headers=platform_admin.headers,
+    )
+    assert exp.status_code == 200, exp.text
+
+    # The exported zip must declare the connection(s) — restore-preview surfaces them.
+    # httpx sets the multipart Content-Type itself; strip the auth headers'
+    # application/json Content-Type so it doesn't override the boundary.
+    upload_headers = {
+        k: v for k, v in platform_admin.headers.items() if k.lower() != "content-type"
+    }
+    files = {"file": ("backup.zip", exp.content, "application/zip")}
+    prev = e2e_client.post(
+        "/api/solutions/install/preview", files=files, headers=upload_headers
+    )
+    assert prev.status_code == 200, prev.text
+    names = [
+        c["integration_name"] for c in (prev.json().get("connection_schemas") or [])
+    ]
+    assert names, f"export dropped connection declarations: {prev.json()}"
+    assert "microsoft" in names, prev.json()
