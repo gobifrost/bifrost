@@ -41,6 +41,12 @@ def make_solution_with_set_config(e2e_client, platform_admin, db_session):
         key: str = "api_key", value: str = "xyz", config_type: str = "string"
     ) -> SimpleNamespace:
         headers = platform_admin.headers
+        # Make the config key unique per invocation. The solution is org-scoped to
+        # the (shared, session-scoped) platform-admin org, and Config rows are unique
+        # on (integration_id, organization_id, key). Two tests reusing the same key
+        # in that org would collide on ix_configs_integration_org_key. The caller
+        # reads the real key off the returned namespace.
+        key = f"{key}_{uuid.uuid4().hex[:8]}"
         slug = f"export-full-{uuid.uuid4().hex[:8]}"
         r = e2e_client.post(
             "/api/solutions",
@@ -82,7 +88,7 @@ def make_solution_with_set_config(e2e_client, platform_admin, db_session):
         )
         await db_session.commit()
 
-        return SimpleNamespace(id=str(sol_id), organization_id=org_id)
+        return SimpleNamespace(id=str(sol_id), organization_id=org_id, key=key)
 
     return _make
 
@@ -110,7 +116,7 @@ async def test_full_export_includes_encrypted_secrets_blob(
 
     blob = zipfile.ZipFile(io.BytesIO(ok.content)).read(".bifrost/secrets.enc").decode()
     content = decode_secrets_blob(blob, password="pw")
-    assert content.config_values.get("api_key") == "xyz"
+    assert content.config_values.get(sol.key) == "xyz"
 
     # Shareable export (default) must NOT include the blob.
     sh = e2e_client.get(f"/api/solutions/{sol.id}/export", headers=headers)
@@ -146,4 +152,4 @@ async def test_full_export_decrypts_secret_typed_config(
     content = decode_secrets_blob(blob, password="pw")
     # Came out DECRYPTED — proves _config_values decrypted the at-rest ciphertext
     # before placing it in the password blob.
-    assert content.config_values["db_password"] == "my-secret"
+    assert content.config_values[sol.key] == "my-secret"
