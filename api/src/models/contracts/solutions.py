@@ -190,6 +190,19 @@ class DependencyRef(BaseModel):
     in_selection: bool = False
 
 
+class UnmetNeed(BaseModel):
+    """One thing a solution needs that isn't satisfied in the install target.
+
+    ``kind`` is "module" (a modules/*.py import not present in the bundle) or
+    "solution_dep" (a cross-solution reference not installed). Surfaced at
+    install/upgrade so the install can BLOCK rather than fail at runtime.
+    """
+
+    kind: Literal["module", "solution_dep"]
+    ref: str
+    detail: str | None = None
+
+
 class OutsideReference(BaseModel):
     """An entity OUTSIDE the selection that references something INSIDE it.
 

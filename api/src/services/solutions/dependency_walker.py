@@ -33,6 +33,7 @@ from src.models.contracts.solutions import (
     DependencyRef,
     OutsideReference,
     SolutionDependencyPreview,
+    UnmetNeed,
 )
 from src.models.orm.agents import Agent, AgentTool
 from src.models.orm.applications import Application
@@ -49,6 +50,47 @@ from src.services.solutions.ref_scanner import (
     scan_table_refs,
     scan_workflow_refs,
 )
+
+
+def check_install_needs(python_files: dict[str, str]) -> list[UnmetNeed]:
+    """Module-closure check over a bundle's python_files. Every ``modules.x``
+    import in the bundle must resolve to a file present in the bundle. Returns
+    the unmet needs (empty => satisfied). This is the pure module-class core;
+    the DB-aware cross-solution-dependency check is layered on by the caller.
+    """
+    present = set(python_files.keys())
+
+    def _resolves(module: str) -> bool:
+        # ``scan_imported_modules`` over-generates: ``from modules.helpers
+        # import x`` yields both ``modules.helpers`` and the speculative
+        # submodule ``modules.helpers.x``. A module is satisfied if it OR any
+        # dotted prefix of it resolves to a bundled file (mirrors vendoring).
+        parts = module.split(".")
+        for i in range(len(parts), 0, -1):
+            base = "/".join(parts[:i])
+            if f"{base}.py" in present or f"{base}/__init__.py" in present:
+                return True
+        return False
+
+    needs: list[UnmetNeed] = []
+    seen: set[str] = set()
+    for path, src in python_files.items():
+        modules = {m for m in scan_imported_modules(src) if m.split(".")[0] == "modules"}
+        for module in modules:
+            if module in seen or _resolves(module):
+                continue
+            # Drop the speculative submodule form (``modules.helpers.x``) when
+            # its parent (``modules.helpers``) is also an unresolved import here
+            # — one real missing module, surfaced once.
+            parent = module.rsplit(".", 1)[0]
+            if parent != module and parent in modules and not _resolves(parent):
+                continue
+            seen.add(module)
+            needs.append(UnmetNeed(
+                kind="module", ref=module,
+                detail=f"imported by {path} but not present in the bundle",
+            ))
+    return needs
 
 
 @dataclass
