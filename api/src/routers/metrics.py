@@ -65,6 +65,11 @@ async def get_metrics(
     Uses the pre-computed platform_metrics_snapshot table for instant response.
     Falls back to direct queries if snapshot is not available.
 
+    Authorization note: this is the universal landing dashboard and is
+    deliberately available to any active user (CurrentActiveUser), unlike the
+    admin-only detail/snapshot siblings below (RequirePlatformAdmin). The
+    exposed aggregates are intentionally non-sensitive platform-wide counts.
+
     Returns:
         Dashboard metrics including workflow/form counts, execution stats, etc.
     """
