@@ -69,7 +69,7 @@ export function SolutionActionsMenu({
 					) : (
 						<Download className="mr-2 h-4 w-4" />
 					)}
-					Export Workspace
+					Export Solution
 				</DropdownMenuItem>
 				<DropdownMenuItem
 					onClick={onEdit}
