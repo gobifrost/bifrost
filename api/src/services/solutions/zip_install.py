@@ -450,6 +450,26 @@ async def install_zip(
                 )
                 await db.commit()
 
+            # If this install applied ANY config values (form-supplied or from the
+            # decrypted blob), invalidate the Redis config cache for the install's
+            # org scope. set_config writes the DB row but does NOT touch the cache
+            # (invalidation lives in the config router / delete_solution / deploy's
+            # reattach), so without this merged_for_sdk keeps serving the OLD cached
+            # value (for a SECRET, the old ciphertext) until TTL — workflows would
+            # run against stale config right after a "successful" install. Mirrors
+            # delete_solution's invalidation (routers/solutions.py).
+            applied_config = bool(config_values) or (
+                content is not None and bool(content.config_values)
+            )
+            if applied_config:
+                from src.core.cache import invalidate_all_config
+
+                await invalidate_all_config(
+                    str(solution.organization_id)
+                    if solution.organization_id is not None
+                    else None
+                )
+
             # Recompute and persist setup_complete after every install so the
             # column reflects whether all required configs have values — even
             # when no config_values were provided (empty install of a solution
