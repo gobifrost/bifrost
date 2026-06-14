@@ -912,6 +912,7 @@ export function SolutionDetail() {
 
 	const {
 		data: setupData,
+		error: setupError,
 		refetch: refetchSetup,
 	} = useQuery({
 		queryKey: ["solutions", solutionId, "setup"],
@@ -1200,21 +1201,38 @@ export function SolutionDetail() {
 						</TabsContent>
 
 						<TabsContent value="setup" className="flex-1 min-h-0">
-							<SolutionSetupChecklist
-								items={setupData?.items ?? []}
-								setupComplete={setupData?.setup_complete ?? sol.setup_complete}
-								onSet={async (key, value) => {
-									await setSolutionConfig({
-										key,
-										value,
-										type: asConfigType(
-											setupData?.items.find((i) => i.key === key)?.type ?? "string",
-										),
-										organizationId: sol.organization_id ?? null,
-									});
-									invalidate();
-								}}
-							/>
+							{setupError ? (
+								<div className="rounded-lg border border-destructive/40 bg-destructive/5 py-12 text-center text-sm text-destructive">
+									{setupError instanceof Error
+										? setupError.message
+										: "Couldn't load setup status"}
+								</div>
+							) : (
+								<SolutionSetupChecklist
+									items={setupData?.items ?? []}
+									setupComplete={setupData?.setup_complete ?? sol.setup_complete}
+									onSet={async (key, value) => {
+										try {
+											await setSolutionConfig({
+												key,
+												value,
+												type: asConfigType(
+													setupData?.items.find((i) => i.key === key)?.type ??
+														"string",
+												),
+												organizationId: sol.organization_id ?? null,
+											});
+											toast.success(`Set ${key}`);
+											invalidate();
+										} catch (err: unknown) {
+											toast.error(`Failed to set ${key}`, {
+												description:
+													err instanceof Error ? err.message : undefined,
+											});
+										}
+									}}
+								/>
+							)}
 						</TabsContent>
 					</Tabs>
 

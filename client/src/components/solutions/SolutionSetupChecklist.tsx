@@ -112,6 +112,7 @@ function ConfigItem({
 				/>
 				{(value.trim() || requiredUnset) && (
 					<Button
+						aria-label={`Set ${item.key}`}
 						disabled={!value.trim() || pending}
 						onClick={() => void handleSet()}
 					>
