@@ -471,9 +471,14 @@ async def _assert_no_unforced_collisions(
     org scope is a collision.  If any collide and replace_secrets is False,
     raise ContentCollision naming all of them so the caller can report them.
 
-    Table data: Phase 4 — threaded through but not implemented here.
+    For table data: a table that ALREADY has Document rows in the target org
+    is a collision.  Checked BEFORE deploy so a first-install (tables don't
+    exist yet) is always clear.  On re-install the tables exist with rows →
+    collision.  If any collide and replace_data is False, raise ContentCollision
+    naming all colliding table names.
     """
     from src.models.orm.config import Config
+    from src.models.orm.tables import Document, Table
 
     colliding_keys: list[str] = []
 
@@ -499,11 +504,38 @@ async def _assert_no_unforced_collisions(
         existing_keys = set((await db.execute(existing_q)).scalars().all())
         colliding_keys = [k for k in content.config_values if k in existing_keys]
 
-    # Table data collision: Phase 4 — skip for now, replace_data threaded.
-    # TODO(Phase 4): check table_data collisions when replace_data is False.
+    colliding_tables: list[str] = []
 
-    if colliding_keys:
-        raise ContentCollision(keys=colliding_keys)
+    if content.table_data and not replace_data:
+        # For each table name in the blob, look up the solution-owned Table row
+        # of that name in the install's org scope.  If it exists AND has rows,
+        # that's a collision.  On a first install the tables don't exist yet →
+        # no rows → no collision (correct).  On a re-install they exist with
+        # rows → collision.
+        org_pred_tbl = (
+            Table.organization_id == solution.organization_id
+            if solution.organization_id is not None
+            else Table.organization_id.is_(None)
+        )
+        for table_name in content.table_data:
+            # Find a solution-managed table of this name in the install's scope.
+            tbl_q = select(Table.id).where(
+                Table.name == table_name,
+                Table.solution_id == solution.id,
+                org_pred_tbl,
+            )
+            tbl_id = (await db.execute(tbl_q)).scalar_one_or_none()
+            if tbl_id is None:
+                # Table doesn't exist yet (first install) — no collision.
+                continue
+            # Check if any Document rows exist for this table.
+            has_rows_q = select(Document.id).where(Document.table_id == tbl_id).limit(1)
+            has_rows = (await db.execute(has_rows_q)).scalar_one_or_none()
+            if has_rows is not None:
+                colliding_tables.append(table_name)
+
+    if colliding_keys or colliding_tables:
+        raise ContentCollision(keys=colliding_keys, tables=colliding_tables)
 
 
 async def _apply_content(
@@ -515,7 +547,7 @@ async def _apply_content(
     replace_data: bool,
     deployer_email: str,
 ) -> None:
-    """Apply decrypted content (config values) from a full-backup zip.
+    """Apply decrypted content (config values + table rows) from a full-backup zip.
 
     Config values arrive as DECRYPTED plaintext from the blob; _apply_config_values
     will re-encrypt secrets at rest when the declaration type is SECRET.
@@ -525,7 +557,12 @@ async def _apply_content(
     With replace_secrets=False, only empty slots are filled — but that check
     already passed in _assert_no_unforced_collisions, so all keys are safe.
 
-    Table data: Phase 4 — not implemented here.
+    Table data: per-table WHOLESALE replace.
+    - If the table is empty, rows are inserted silently.
+    - If the table has rows and replace_data=True (collision check already
+      passed), existing rows are DELETED then the blob rows are inserted fresh.
+    - Tables that aren't in content.table_data are untouched.
+    This runs AFTER deploy so the tables exist (deploy created/upserted them).
     """
     if content.config_values:
         # All values in content.config_values are either new (no existing row)
@@ -538,10 +575,73 @@ async def _apply_content(
             deployer_email=deployer_email,
         )
 
-    # Table data: Phase 4 — threaded through, not implemented.
-    if content.table_data and replace_data:
-        # TODO(Phase 4): write table rows when replace_data is True.
-        pass
+    if content.table_data:
+        await _apply_table_data(
+            db,
+            solution=solution,
+            table_data=content.table_data,
+            replace_data=replace_data,
+            deployer_email=deployer_email,
+        )
+
+
+async def _apply_table_data(
+    db: AsyncSession,
+    *,
+    solution: Solution,
+    table_data: dict[str, list[dict]],
+    replace_data: bool,
+    deployer_email: str,
+) -> None:
+    """Write table rows from the decrypted blob.
+
+    This runs AFTER deploy, so solution-owned tables exist.  For each table
+    name in ``table_data``:
+    1. Find the just-deployed Table row (by name + solution_id).
+    2. If replace_data, DELETE all existing Document rows for that table first.
+    3. Insert the blob rows using DocumentRepository.insert() (the real insert
+       path — fresh ids, fresh timestamps, no ids carried from the source).
+
+    Tables in the solution that are NOT in table_data are untouched.
+    """
+    from sqlalchemy import delete as sa_delete
+
+    from src.models.orm.tables import Document, Table
+    from src.routers.tables import DocumentRepository
+
+    org_pred = (
+        Table.organization_id == solution.organization_id
+        if solution.organization_id is not None
+        else Table.organization_id.is_(None)
+    )
+
+    for table_name, rows in table_data.items():
+        if not rows:
+            continue
+
+        # Look up the solution-owned Table row by name.
+        tbl_q = select(Table).where(
+            Table.name == table_name,
+            Table.solution_id == solution.id,
+            org_pred,
+        )
+        tbl = (await db.execute(tbl_q)).scalar_one_or_none()
+        if tbl is None:
+            logger.warning(
+                "_apply_table_data: table %r not found in solution %s after deploy; skipping",
+                table_name,
+                solution.id,
+            )
+            continue
+
+        if replace_data:
+            # Wholesale clear: delete all existing rows before inserting.
+            await db.execute(sa_delete(Document).where(Document.table_id == tbl.id))
+
+        # Insert each row as a fresh Document (no source ids — data only).
+        repo = DocumentRepository(db, tbl)
+        for row_data in rows:
+            await repo.insert(data=row_data, created_by=deployer_email)
 
 
 async def _apply_config_values(

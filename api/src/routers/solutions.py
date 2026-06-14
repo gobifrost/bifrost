@@ -169,6 +169,7 @@ async def export_solution(
     user: CurrentSuperuser,
     mode: str = "shareable",
     password: str | None = None,
+    include_data: bool = False,
 ) -> Response:
     """Rebuild the install's workspace bundle LIVE from the entities it
     currently owns, so the export always reflects present ownership (not the
@@ -177,6 +178,8 @@ async def export_solution(
     ``mode=shareable`` (default): portable export, no sensitive values.
     ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
     the config values set for this install; requires ``password``.
+    ``include_data=true``: include table row data in the encrypted blob.
+    Requires ``mode=full`` (data must be encrypted).
     """
     if mode not in ("shareable", "full"):
         raise HTTPException(
@@ -188,6 +191,11 @@ async def export_solution(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="full export requires a password",
         )
+    if include_data and mode != "full":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="include_data requires mode=full (data must be encrypted)",
+        )
 
     from src.services.solutions.capture import SolutionCaptureService
     from src.services.solutions.export import build_workspace_zip
@@ -198,7 +206,7 @@ async def export_solution(
 
     include_values = mode == "full"
     bundle = await SolutionCaptureService(ctx.db).bundle_for(
-        sol, include_imports=True, include_values=include_values
+        sol, include_imports=True, include_values=include_values, include_data=include_data
     )
     data = build_workspace_zip(bundle, password=password if include_values else None)
     filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
