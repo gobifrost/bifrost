@@ -54,7 +54,7 @@ it("calls onExport with shareable + no password by default", async () => {
 		/>,
 	);
 	await userEvent.click(screen.getByRole("button", { name: /export/i }));
-	expect(onExport).toHaveBeenCalledWith("shareable", undefined);
+	expect(onExport).toHaveBeenCalledWith("shareable", undefined, undefined);
 });
 
 it("Export button is disabled when Full backup selected but password is empty", async () => {
@@ -94,7 +94,7 @@ it("calls onExport with full + password when Full backup is selected and passwor
 	await userEvent.click(screen.getByLabelText(/full backup/i));
 	await userEvent.type(getPasswordInput(), "s3cr3t");
 	await userEvent.click(screen.getByRole("button", { name: /export/i }));
-	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t");
+	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t", false);
 });
 
 it("calls onOpenChange(false) when Cancel is clicked", async () => {
@@ -108,6 +108,13 @@ it("calls onOpenChange(false) when Cancel is clicked", async () => {
 	);
 	await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
 	expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it("offers Include table data only in Full backup mode", async () => {
+	render(<ExportSolutionDialog open onOpenChange={() => {}} onExport={() => {}} />);
+	expect(screen.queryByLabelText(/include table data/i)).toBeNull();
+	await userEvent.click(screen.getByLabelText(/full backup/i));
+	expect(screen.getByLabelText(/include table data/i)).toBeInTheDocument();
 });
 
 it("resets mode + password back to Shareable after close and reopen", async () => {

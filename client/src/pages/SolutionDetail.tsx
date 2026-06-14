@@ -935,10 +935,12 @@ export function SolutionDetail() {
 		mutationFn: ({
 			mode,
 			password,
+			includeData,
 		}: {
 			mode: "shareable" | "full";
 			password?: string;
-		}) => exportSolution(solutionId!, mode, password),
+			includeData?: boolean;
+		}) => exportSolution(solutionId!, mode, password, includeData),
 		onSuccess: ({ blob, filename }) => {
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
@@ -1284,8 +1286,8 @@ export function SolutionDetail() {
 					<ExportSolutionDialog
 						open={exportDialogOpen}
 						onOpenChange={setExportDialogOpen}
-						onExport={(mode, password) =>
-							exportMut.mutate({ mode, password })
+						onExport={(mode, password, includeData) =>
+							exportMut.mutate({ mode, password, includeData })
 						}
 						isPending={exportMut.isPending}
 					/>

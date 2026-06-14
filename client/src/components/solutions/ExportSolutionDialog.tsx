@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -20,6 +21,7 @@ export interface ExportSolutionDialogProps {
 	onExport: (
 		mode: "shareable" | "full",
 		password?: string,
+		includeData?: boolean,
 	) => void | Promise<void>;
 	/** When true, the Export button is disabled and shows a spinner. */
 	isPending?: boolean;
@@ -41,11 +43,16 @@ export function ExportSolutionDialog({
 }: ExportSolutionDialogProps) {
 	const [mode, setMode] = useState<"shareable" | "full">("shareable");
 	const [password, setPassword] = useState("");
+	const [includeData, setIncludeData] = useState(false);
 
 	const exportDisabled = mode === "full" && password.trim() === "";
 
 	function handleExport() {
-		void onExport(mode, mode === "full" ? password : undefined);
+		void onExport(
+			mode,
+			mode === "full" ? password : undefined,
+			mode === "full" ? includeData : undefined,
+		);
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -53,6 +60,7 @@ export function ExportSolutionDialog({
 			// Reset state when closing
 			setMode("shareable");
 			setPassword("");
+			setIncludeData(false);
 		}
 		onOpenChange(next);
 	}
@@ -74,7 +82,10 @@ export function ExportSolutionDialog({
 						value={mode}
 						onValueChange={(v) => {
 							setMode(v as "shareable" | "full");
-							if (v === "shareable") setPassword("");
+							if (v === "shareable") {
+								setPassword("");
+								setIncludeData(false);
+							}
 						}}
 						className="gap-3"
 					>
@@ -120,27 +131,52 @@ export function ExportSolutionDialog({
 					</RadioGroup>
 
 					{mode === "full" && (
-						<div className="space-y-1.5">
-							<Label htmlFor="export-password">
-								Password{" "}
-								<span className="text-destructive" aria-hidden>
-									*
-								</span>
-							</Label>
-							<Input
-								id="export-password"
-								type="password"
-								required
-								value={password}
-								onChange={(e) => setPassword(e.target.value)}
-								placeholder="Set a password for this backup"
-								autoComplete="new-password"
-							/>
-							<p className="text-xs text-muted-foreground">
-								You will need this password when installing the backup on
-								another instance.
-							</p>
-						</div>
+						<>
+							<div className="space-y-1.5">
+								<Label htmlFor="export-password">
+									Password{" "}
+									<span className="text-destructive" aria-hidden>
+										*
+									</span>
+								</Label>
+								<Input
+									id="export-password"
+									type="password"
+									required
+									value={password}
+									onChange={(e) => setPassword(e.target.value)}
+									placeholder="Set a password for this backup"
+									autoComplete="new-password"
+								/>
+								<p className="text-xs text-muted-foreground">
+									You will need this password when installing the backup on
+									another instance.
+								</p>
+							</div>
+
+							<div className="flex items-start gap-3 rounded-lg border p-3">
+								<Checkbox
+									id="export-include-data"
+									checked={includeData}
+									onCheckedChange={(checked) =>
+										setIncludeData(checked === true)
+									}
+									className="mt-0.5 shrink-0"
+								/>
+								<div className="min-w-0 space-y-0.5">
+									<label
+										htmlFor="export-include-data"
+										className="cursor-pointer text-sm font-medium leading-none"
+									>
+										Include table data
+									</label>
+									<p className="text-xs text-muted-foreground">
+										Exports table rows, which may contain sensitive records.
+										Encrypted with your password.
+									</p>
+								</div>
+							</div>
+						</>
 					)}
 				</div>
 

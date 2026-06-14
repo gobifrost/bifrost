@@ -197,9 +197,11 @@ export async function exportSolution(
 	solutionId: string,
 	mode: "shareable" | "full" = "shareable",
 	password?: string,
+	includeData?: boolean,
 ): Promise<{ blob: Blob; filename: string }> {
 	const params = new URLSearchParams({ mode });
 	if (password) params.set("password", password);
+	if (includeData) params.set("include_data", "true");
 	const response = await authFetch(
 		`/api/solutions/${solutionId}/export?${params.toString()}`,
 	);
