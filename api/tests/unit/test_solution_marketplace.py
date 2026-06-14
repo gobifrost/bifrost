@@ -15,3 +15,14 @@ def test_descriptor_carries_repo_subpath_and_ref():
     assert d.git_ref == "v1.2.0"
     d2 = SolutionDescriptor(slug="s", name="S")
     assert d2.repo_subpath is None and d2.git_ref is None
+
+
+import inspect
+from src.services.solutions import git_sync
+
+
+def test_clone_helper_exists_with_ref_param():
+    fn = getattr(git_sync, "clone_repo_to_dir", None)
+    assert fn is not None, "clone_repo_to_dir helper missing"
+    params = inspect.signature(fn).parameters
+    assert {"repo_url", "dest", "ref"} <= set(params)

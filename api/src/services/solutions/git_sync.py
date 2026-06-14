@@ -209,10 +209,20 @@ async def sync(db: AsyncSession, solution: Solution) -> None:
         return
 
 
-async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
-    """One clone + deploy + commit + finalize, under the caller's held lock."""
+async def clone_repo_to_dir(repo_url: str, dest: Path, ref: str | None = None) -> None:
+    """Shallow-clone ``repo_url`` (optionally at ``ref``) into ``dest``, off the
+    event loop. ``ref`` None => the remote's default branch (GitPython resolves
+    HEAD); a branch or tag name otherwise."""
     from git import Repo as GitRepo  # GitPython (already a dep)
 
+    kwargs: dict[str, object] = {"depth": 1}
+    if ref:
+        kwargs["branch"] = ref  # GitPython --branch accepts a tag or branch
+    await asyncio.to_thread(GitRepo.clone_from, repo_url, str(dest), **kwargs)
+
+
+async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
+    """One clone + deploy + commit + finalize, under the caller's held lock."""
     repo_url = solution.git_repo_url
     assert repo_url is not None  # sync() validated git_connected + git_repo_url
     with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
@@ -221,15 +231,15 @@ async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
         # write-lock's renewal watchdog (and everything else) keeps running during
         # a slow clone — otherwise a long clone would block the loop, starve the
         # watchdog, and let the lock TTL expire mid-deploy.
-        await asyncio.to_thread(
-            GitRepo.clone_from,
-            repo_url,
-            str(work_dir),
-            branch="main",
-            depth=1,
-        )
+        await clone_repo_to_dir(repo_url, work_dir, ref=solution.git_ref)
+        deploy_root = work_dir / solution.repo_subpath if solution.repo_subpath else work_dir
+        if not (deploy_root / _DESCRIPTOR_FILENAME).is_file():
+            raise NotASolutionWorkspace(
+                f"No {_DESCRIPTOR_FILENAME} at "
+                f"{solution.repo_subpath or '<repo root>'} in {repo_url}"
+            )
         logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
-        result = await deploy_from_workspace(db, solution, work_dir)
+        result = await deploy_from_workspace(db, solution, deploy_root)
     # Commit the DB phase, THEN run S3 — a failed commit changes no running code
     # (Codex P1-c). Both happen while the per-install lock is held so a racing sync
     # can't interleave. The bundle is in-memory, so finalizing after the checkout
