@@ -24,6 +24,22 @@ from src.repositories.org_scoped import OrgScopedRepository
 logger = logging.getLogger(__name__)
 
 
+class RequiredConfigUnset(RuntimeError):
+    """Raised when a required config key has no value set.
+
+    Provides an actionable message naming the key and telling the operator how
+    to fix it.  Call ``repo.require(key)`` instead of ``repo.get_config(key)``
+    wherever a missing value should be a hard failure rather than a silent None.
+    """
+
+    def __init__(self, key: str) -> None:
+        super().__init__(
+            f"Required config '{key}' is not set. "
+            f"Set it with `bifrost configs set {key} --value <value>` "
+            f"or in the solution's Setup tab."
+        )
+
+
 class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-var]
     """Repository for configuration values."""
 
@@ -117,6 +133,18 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
     async def get_config(self, key: str) -> ConfigModel | None:
         """Get config by key with cascade scoping: org-specific > global."""
         return await self.get(key=key)
+
+    async def require(self, key: str) -> ConfigModel:
+        """Get a config by key, raising RequiredConfigUnset when it is absent.
+
+        Use this wherever a missing value should be a hard, actionable failure
+        rather than a silent None.  The existing ``get_config`` method is
+        unchanged so callers that tolerate None are unaffected.
+        """
+        config = await self.get_config(key)
+        if config is None:
+            raise RequiredConfigUnset(key)
+        return config
 
     async def merged_for_sdk(self, *, external: bool | None = None) -> dict[str, Any]:
         """Return the full merged config dict for this scope.
