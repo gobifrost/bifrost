@@ -928,6 +928,10 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             "logo_content_type": logo_content_type,
             "src_files": src_files,
             "bin_files": bin_files,
+            # Prebuilt-only apps carry their dist in the manifest body (no source
+            # dir files). Pass it through so the deployer uses the fast-path and
+            # does not attempt a Vite build on an empty workdir.
+            "dist_files": body.get("dist_files"),
         })
     return entries
 

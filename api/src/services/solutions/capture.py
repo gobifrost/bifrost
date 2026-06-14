@@ -355,6 +355,37 @@ class SolutionCaptureService:
                 if app.logo_data
                 else None
             )
+            # When an app was deployed with a prebuilt dist and no source files
+            # (dist_files-only fast path), src_files and bin_files are both empty.
+            # The export strips dist_files (build output) from the zip manifest, so
+            # a plain re-install would receive an app with nothing to build — the
+            # Vite step fails on an empty workdir. Carry the dist from S3 as
+            # dist_files so the deployer can use the prebuilt fast-path on
+            # re-install without requiring a Vite rebuild.
+            dist_files: dict[str, str] | None = None
+            if not src_files and not bin_files:
+                from src.services.solutions.app_build import SolutionAppBuilder
+
+                builder = SolutionAppBuilder()
+                rels = await builder.list_dist(app.id)
+                if rels:
+                    raw: dict[str, str] = {}
+                    for rel in rels:
+                        data = await builder.read_dist(app.id, rel)
+                        try:
+                            raw[rel] = data.decode("utf-8")
+                        except UnicodeDecodeError:
+                            # Binary dist assets (images, fonts): encode as data-URI
+                            # so the deployer can store them verbatim. The deployer
+                            # accepts str values (encoding them to bytes); non-UTF-8
+                            # content must travel as base64. Use the same data-URI
+                            # scheme the browser understands so a shipped image
+                            # inside the dist round-trips correctly. The deployer
+                            # treats every dist_files value as a string — callers
+                            # are responsible for choosing an appropriate encoding.
+                            raw[rel] = base64.b64encode(data).decode("ascii")
+                    if raw:
+                        dist_files = raw
             roles = await self._role_ids(AppRole, "app_id", app.id)
             out.append(_drop_none({
                 "id": str(app.id),
@@ -371,6 +402,7 @@ class SolutionCaptureService:
                 "logo_content_type": app.logo_content_type,
                 "src_files": src_files,
                 "bin_files": bin_files,
+                "dist_files": dist_files,
             }))
         return out
 

@@ -125,6 +125,7 @@ def build_workspace_zip(bundle: "SolutionBundle") -> bytes:
                 body = {k: v for k, v in app.items() if k not in _APP_TRANSPORT_FIELDS}
                 app_dir = f"apps/{_safe_dir(str(app.get('slug') or app['id']))}"
                 body["path"] = app_dir
+                has_src = bool(app.get("src_files") or app.get("bin_files"))
                 for rel, text in sorted((app.get("src_files") or {}).items()):
                     put(f"{app_dir}/{rel}", text)
                 for rel, b64 in sorted((app.get("bin_files") or {}).items()):
@@ -135,6 +136,16 @@ def build_workspace_zip(bundle: "SolutionBundle") -> bytes:
                     logo_rel = f"app-logo{_LOGO_EXTENSIONS[logo_ct]}"
                     body["logo"] = logo_rel
                     put(f"{app_dir}/{logo_rel}", base64.b64decode(logo_b64))
+                # Prebuilt-only apps (no src or bin files) were deployed via the
+                # dist_files fast-path. The standard export strips dist_files (build
+                # output) from the manifest, but when there is no source the dist IS
+                # the only representation — carry it in the manifest body so the
+                # deployer can use the prebuilt fast-path on re-install without
+                # triggering a Vite build on an empty workdir.
+                if not has_src:
+                    dist = app.get("dist_files")
+                    if dist:
+                        body["dist_files"] = dist
                 app_bodies[str(app["id"])] = body
             put(".bifrost/apps.yaml", _manifest_yaml("apps", app_bodies))
 
