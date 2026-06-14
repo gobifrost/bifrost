@@ -246,6 +246,28 @@ The full GitHub-marketplace story works end-to-end on the live stack:
 The throughline: the connection-schema declarations weren't threaded through every path (deploy, delete,
 export). The drive forced each path and the three platform fixes (F1/F3/F4) close the divergences.
 
+## F5 — REAL latent bug (found by the Task 17 full-suite run): deploy can't reconcile connection declarations under the active guard
+
+`SolutionDeployer._upsert_connection_declarations` (deploy.py ~1386) persists the install's connection
+declarations using **ORM** ops: `self.db.add(...)` for new, `row.template = ...` for updates, and
+`await self.db.delete(row)` for stale removals. The Solutions read-only `before_flush` backstop is
+installed at **app startup** (`core/database.py:136`) — so it is ALWAYS active in production — and it
+rejects any solution-managed row in `session.dirty` (updates) or `session.deleted` (removals). So a
+**re-deploy that updates or drops a connection declaration raises `SolutionManagedWriteError`** in the
+real app. (The unit test `test_connection_declarations_full_replace_removes_stale` only passed in
+isolation because the unit session doesn't install the startup guard; the full suite installs it via a
+sibling test and the test fails — surfacing the production bug.)
+
+This is the same class as F1/F4 (a connection-schema path not matching the deploy-via-Core convention)
+and was LATENT until connection declarations were exercised under the guard. The deploy convention is
+that all deploy mutations use Core `insert()/update()/delete()` (which never enter the ORM unit-of-work,
+so the guard is exempt) — `_upsert_connection_declarations` is the one place that still uses ORM.
+
+**Fix:** rewrite `_upsert_connection_declarations` to use Core statements (insert new / update existing /
+delete stale via `sqlalchemy.insert/update/delete`), matching the rest of deploy. Regression test:
+re-deploy that (a) updates an existing declaration and (b) drops one, WITH the guard installed in the
+test session, must succeed. Status: dispatched as a focused fix.
+
 ## Recommendations / deferred (product decisions, not built this arc)
 
 - **Hosted catalog** stays a static list of `{name, repo, path, version}` → install-from-link URLs (per Jack);
