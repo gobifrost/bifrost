@@ -327,19 +327,9 @@ class OAuthService:
                 raw_data=data,
             )
 
-        elif provider == "google":
-            return OAuthUserInfo(
-                provider=provider,
-                provider_user_id=data.get("sub", ""),
-                email=data.get("email", ""),
-                name=data.get("name"),
-                picture=data.get("picture"),
-                email_verified=data.get("email_verified", False),
-                raw_data=data,
-            )
-
         else:
-            # Generic OIDC
+            # Google and any other standard OIDC provider both use the
+            # canonical sub/email/name/picture/email_verified claims.
             return OAuthUserInfo(
                 provider=provider,
                 provider_user_id=data.get("sub", ""),

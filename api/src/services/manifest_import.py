@@ -1427,7 +1427,6 @@ class ManifestResolver:
 
         # Check prefetch cache for existing workflow
         existing_by_natural = cache["wf_by_natural"].get((mwf.path, mwf.function_name))
-        existing_by_id = wf_id if wf_id in cache["wf_ids"] else None
 
         wf_values = {
             "name": manifest_name,
@@ -1459,16 +1458,9 @@ class ManifestResolver:
                 values={"id": wf_id, **wf_values},
                 match_on="id",
             ))
-        elif existing_by_id is not None:
-            # Same ID but path/function changed (rename) — update
-            ops.append(Upsert(
-                model=Workflow,
-                id=wf_id,
-                values=wf_values,
-                match_on="id",
-            ))
         else:
-            # New workflow — insert
+            # Same ID with a path/function rename, or a brand-new workflow —
+            # both upsert by id with the same values.
             ops.append(Upsert(
                 model=Workflow,
                 id=wf_id,
