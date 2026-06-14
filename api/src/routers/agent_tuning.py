@@ -52,9 +52,7 @@ async def _load_agent_with_access(
     Org users can only tune agents in their own org (or global agents,
     where ``organization_id is None``). Platform admins can tune any.
     """
-    is_admin = user.is_superuser or any(
-        role in ["Platform Admin", "Platform Owner"] for role in user.roles
-    )
+    is_admin = user.has_platform_admin_grant()
 
     agent = (
         await db.execute(select(Agent).where(Agent.id == agent_id))
