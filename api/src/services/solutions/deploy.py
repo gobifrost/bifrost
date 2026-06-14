@@ -262,6 +262,9 @@ class SolutionBundle:
     # Deploy-owned: present => stamped on the install, absent => cleared.
     logo_b64: str | None = None
     logo_content_type: str | None = None
+    # Long-form README markdown sourced from the repo-root README.md. Deploy-owned
+    # and full-replaces exactly like the logo: present => set, absent => cleared.
+    readme: str | None = None
     # Sensitive export tier — only populated when include_values=True (full mode).
     # Travels as password-encrypted .bifrost/secrets.enc; never in plaintext export.
     config_values: dict[str, str] = field(default_factory=dict)
@@ -360,6 +363,10 @@ class SolutionDeployer:
         solution.logo_data = sol_logo
         solution.logo_content_type = sol_logo_ct
 
+        # ── README — repo-sourced markdown, deploy-owned full-replace (absent
+        # => cleared), same lifecycle as the logo above.
+        self._apply_readme(solution, bundle)
+
         # ── COMPILE app dists to memory NOW (pre-commit) — a vite/npm failure
         #    raises here and rolls back the whole deploy, no S3 touched. ───────
         compiled = await self._compile_app_dists(builds)
@@ -411,6 +418,12 @@ class SolutionDeployer:
             integrations_shell_created=shells_created,
             finalize_s3=_finalize_s3,
         )
+
+    @staticmethod
+    def _apply_readme(solution: Solution, bundle: Any) -> None:
+        """README is repo-sourced and full-replaces (absent => cleared) — same
+        lifecycle as the logo."""
+        solution.readme = getattr(bundle, "readme", None)
 
     # ── Per-install identity remap ───────────────────────────────────────────
     async def _remapped_bundle(self, bundle: "SolutionBundle") -> "SolutionBundle":
@@ -496,6 +509,7 @@ class SolutionDeployer:
             claims=claims,
             config_schemas=config_schemas,
             version=bundle.version,
+            readme=bundle.readme,
         )
 
     @staticmethod

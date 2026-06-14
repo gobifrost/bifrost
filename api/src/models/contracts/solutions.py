@@ -51,6 +51,23 @@ class SolutionUpdate(BaseModel):
     git_repo_url: str | None = None
 
 
+class SolutionReadmeUpdate(BaseModel):
+    """PUT body for an install's README markdown (Task 6).
+
+    ``readme=None`` clears the README; a string sets it. The README is normally
+    repo-sourced (deploy reads it from the repo-root README.md), but the UI can
+    edit it directly on a disconnected install via this endpoint.
+    """
+
+    readme: str | None = None
+
+
+class SolutionReadme(BaseModel):
+    """GET/PUT response shape for an install's README markdown."""
+
+    readme: str | None = None
+
+
 class Solution(BaseModel):
     """Read-shape returned by REST.
 
@@ -304,6 +321,8 @@ class SolutionInstallPreview(BaseModel):
     existing_install: SolutionExistingInstall | None = None
     diff: SolutionUpgradeDiff | None = None
     requires_password: bool = False
+    # Long-form README markdown read from the zip's repo-root README.md (Task 6).
+    readme: str | None = None
 
 
 class SolutionDeployRequest(BaseModel):
@@ -346,6 +365,9 @@ class SolutionDeployRequest(BaseModel):
     # (absent => cleared).
     logo_b64: str | None = None
     logo_content_type: str | None = None
+    # Long-form README markdown sourced from the repo-root README.md (Task 6).
+    # Deploy-owned full-replace: present => set, absent => cleared.
+    readme: str | None = None
     force: bool = False
 
 

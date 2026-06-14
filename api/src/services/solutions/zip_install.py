@@ -112,6 +112,8 @@ class PreviewResult:
     agents: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
+    # Long-form README markdown read from the repo-root README.md (Task 6).
+    readme: str | None = None
     # True when the zip contains .bifrost/secrets.enc (a full-backup export).
     # The install endpoint requires a password to decrypt it; the preview surface
     # this so the UI can prompt for the password BEFORE the install POST.
@@ -174,8 +176,17 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         agents=_collect_agents(workspace),
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
+        readme=_read_readme(workspace),
         requires_password=requires_password,
     )
+
+
+def _read_readme(workspace: Path) -> str | None:
+    """Read the repo-root ``README.md`` as UTF-8 markdown, or None if absent."""
+    path = workspace / "README.md"
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
 
 
 def preview_zip(data: bytes) -> PreviewResult:
@@ -288,6 +299,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
         version=preview.version,
         logo_b64=logo_b64,
         logo_content_type=logo_content_type,
+        readme=preview.readme,
     )
 
 

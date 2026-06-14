@@ -40,6 +40,8 @@ from src.models.contracts.solutions import (
     SolutionEntitySummary,
     SolutionExistingInstall,
     SolutionInstallPreview,
+    SolutionReadme,
+    SolutionReadmeUpdate,
     SolutionSetupStatus,
     SolutionsList,
     SolutionUpdate,
@@ -134,6 +136,45 @@ async def get_solution_logo(
         content=row.logo_data,
         media_type=row.logo_content_type or "application/octet-stream",
     )
+
+
+@router.get(
+    "/{solution_id}/readme",
+    response_model=SolutionReadme,
+    summary="Get an install's README markdown (admin only)",
+)
+async def get_solution_readme(
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionReadme:
+    """The install's long-form README markdown (repo-sourced on deploy, or
+    edited directly via PUT). ``null`` when none is set."""
+    row = await ctx.db.get(SolutionORM, solution_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    return SolutionReadme(readme=row.readme)
+
+
+@router.put(
+    "/{solution_id}/readme",
+    response_model=SolutionReadme,
+    summary="Set an install's README markdown (admin only)",
+)
+async def put_solution_readme(
+    solution_id: UUID,
+    body: SolutionReadmeUpdate,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> SolutionReadme:
+    """Full-replace the install's README markdown (``readme=null`` clears it).
+
+    Normally README is repo-sourced (deploy reads README.md), but the UI can
+    edit it directly here on a disconnected install."""
+    row = await ctx.db.get(SolutionORM, solution_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    row.readme = body.readme
+    await ctx.db.commit()
+    return SolutionReadme(readme=row.readme)
 
 
 @router.get(
@@ -820,6 +861,7 @@ async def deploy_solution(
                     version=body.version,
                     logo_b64=body.logo_b64,
                     logo_content_type=body.logo_content_type,
+                    readme=body.readme,
                 ),
                 force=body.force,
             )
@@ -1079,6 +1121,7 @@ async def install_preview(
         existing_install=existing_install,
         diff=diff,
         requires_password=result.requires_password,
+        readme=result.readme,
     )
 
 

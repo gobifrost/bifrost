@@ -108,7 +108,19 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
         version=version,
+        # README.md at the repo root → Solution.readme (deploy-owned full-replace;
+        # absent => cleared). Read straight off the checkout dir, same mechanism as
+        # the manifest collectors above.
+        readme=_read_readme(workspace),
     )
+
+
+def _read_readme(workspace: Path) -> str | None:
+    """Read the repo-root ``README.md`` as UTF-8 markdown, or None if absent."""
+    path = workspace / "README.md"
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
 
 
 async def deploy_from_workspace(
