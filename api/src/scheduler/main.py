@@ -206,6 +206,22 @@ class Scheduler:
         except ImportError:
             logger.warning("Webhook renewal job not available")
 
+        # Solution update check - every 6 hours (run immediately at startup)
+        try:
+            from src.jobs.schedulers.solution_update_check import check_solution_updates
+            scheduler.add_job(
+                check_solution_updates,
+                IntervalTrigger(hours=6),
+                id="solution_update_check",
+                name="Check git-connected Solution installs for updates",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
+                **misfire_options,
+            )
+            logger.info("Solution update check job scheduled (every 6 hours)")
+        except ImportError:
+            logger.warning("Solution update check job not available")
+
         # Event cleanup - daily at 3:00 AM UTC (30-day retention)
         try:
             from src.jobs.schedulers.event_cleanup import cleanup_old_events
