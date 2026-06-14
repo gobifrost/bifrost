@@ -7427,6 +7427,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/install/preview-repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a Solution install from a git repo (parse-only, admin only)
+         * @description Clone the repo (+ optional subpath/ref), parse the workspace, and report
+         *     the install plan — the same plan the zip preview returns. No DB write.
+         */
+        post: operations["install_preview_repo_api_solutions_install_preview_repo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/install/from-repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a Solution from a git repo (git-connected, admin only)
+         * @description Create a git-connected install from a repo (+ optional subpath/ref) and
+         *     deploy it. git-connected from birth: deploy is refused, auto-pull is the
+         *     only writer. 409 if an install of the same (slug, scope) already exists.
+         */
+        post: operations["install_from_repo_api_solutions_install_from_repo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/install": {
         parameters: {
             query?: never;
@@ -20485,10 +20528,16 @@ export interface components {
             git_connected: boolean;
             /** Git Repo Url */
             git_repo_url?: string | null;
+            /** Repo Subpath */
+            repo_subpath?: string | null;
+            /** Git Ref */
+            git_ref?: string | null;
             /** Version */
             version?: string | null;
             /** Upgraded From Version */
             upgraded_from_version?: string | null;
+            /** Update Available Version */
+            update_available_version?: string | null;
             /**
              * Setup Complete
              * @default true
@@ -20682,6 +20731,10 @@ export interface components {
             git_connected: boolean;
             /** Git Repo Url */
             git_repo_url?: string | null;
+            /** Repo Subpath */
+            repo_subpath?: string | null;
+            /** Git Ref */
+            git_ref?: string | null;
             /** Organization Id */
             organization_id?: string | null;
         };
@@ -21098,6 +21151,19 @@ export interface components {
             readme?: string | null;
         };
         /**
+         * SolutionRepoPreviewRequest
+         * @description Resolve an install plan from a git repo (+ optional subfolder/ref).
+         *     Parse-only — no DB write, no S3, no build.
+         */
+        SolutionRepoPreviewRequest: {
+            /** Repo Url */
+            repo_url: string;
+            /** Repo Subpath */
+            repo_subpath?: string | null;
+            /** Git Ref */
+            git_ref?: string | null;
+        };
+        /**
          * SolutionSetupItem
          * @description One declared requirement paired with whether it's satisfied.
          *
@@ -21172,6 +21238,10 @@ export interface components {
             git_connected?: boolean | null;
             /** Git Repo Url */
             git_repo_url?: string | null;
+            /** Repo Subpath */
+            repo_subpath?: string | null;
+            /** Git Ref */
+            git_ref?: string | null;
         };
         /**
          * SolutionUpgradeDiff
@@ -36173,6 +36243,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionInstallPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_preview_repo_api_solutions_install_preview_repo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionRepoPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionInstallPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_from_repo_api_solutions_install_from_repo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionRepoPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Solution"];
                 };
             };
             /** @description Validation Error */

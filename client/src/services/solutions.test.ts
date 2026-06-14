@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockGet = vi.fn();
+const mockPost = vi.fn();
 const mockPatch = vi.fn();
 const mockPut = vi.fn();
 const mockDelete = vi.fn();
@@ -9,6 +10,7 @@ const mockAuthFetch = vi.fn();
 vi.mock("@/lib/api-client", () => ({
 	apiClient: {
 		GET: (...args: unknown[]) => mockGet(...args),
+		POST: (...args: unknown[]) => mockPost(...args),
 		PATCH: (...args: unknown[]) => mockPatch(...args),
 		PUT: (...args: unknown[]) => mockPut(...args),
 		DELETE: (...args: unknown[]) => mockDelete(...args),
@@ -22,14 +24,18 @@ import {
 	getSolutionEntities,
 	getSolutionReadme,
 	installSolution,
+	installSolutionFromRepo,
 	listSolutions,
 	previewInstall,
+	previewSolutionFromRepo,
 	putSolutionReadme,
+	syncSolution,
 	updateSolution,
 } from "./solutions";
 
 beforeEach(() => {
 	mockGet.mockReset();
+	mockPost.mockReset();
 	mockPatch.mockReset();
 	mockPut.mockReset();
 	mockDelete.mockReset();
@@ -150,6 +156,85 @@ describe("solutions service", () => {
 		mockGet.mockResolvedValue({ error: { detail: "boom" } });
 
 		await expect(listSolutions()).rejects.toThrow(/boom/);
+	});
+
+	it("syncs a solution by id", async () => {
+		mockPost.mockResolvedValue({ data: undefined });
+
+		await syncSolution("sol-1");
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/{solution_id}/sync", {
+			params: { path: { solution_id: "sol-1" } },
+		});
+	});
+
+	it("throws when sync fails", async () => {
+		mockPost.mockResolvedValue({ error: { detail: "no remote" } });
+
+		await expect(syncSolution("sol-1")).rejects.toThrow(/no remote/);
+	});
+
+	it("previews a solution from a repo with the body", async () => {
+		mockPost.mockResolvedValue({ data: { slug: "demo", tables: [] } });
+
+		const body = {
+			repo_url: "https://github.com/acme/demo",
+			git_ref: "main",
+			repo_subpath: "solutions/demo",
+		};
+		const out = await previewSolutionFromRepo(body);
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/install/preview-repo",
+			{ body },
+		);
+		expect(out.slug).toBe("demo");
+	});
+
+	it("throws when repo preview fails", async () => {
+		mockPost.mockResolvedValue({ error: { detail: "clone failed" } });
+
+		await expect(
+			previewSolutionFromRepo({ repo_url: "https://x" }),
+		).rejects.toThrow(/clone failed/);
+	});
+
+	it("installs a solution from a repo with the body", async () => {
+		mockPost.mockResolvedValue({ data: { id: "sol-9", slug: "demo" } });
+
+		const body = {
+			repo_url: "https://github.com/acme/demo",
+			git_ref: "v1.0.0",
+		};
+		const out = await installSolutionFromRepo(body);
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/install/from-repo", {
+			body,
+		});
+		expect(out.id).toBe("sol-9");
+	});
+
+	it("throws when repo install fails", async () => {
+		mockPost.mockResolvedValue({ error: { detail: "bad subpath" } });
+
+		await expect(
+			installSolutionFromRepo({ repo_url: "https://x" }),
+		).rejects.toThrow(/bad subpath/);
+	});
+
+	it("forwards an AbortSignal to repo preview", async () => {
+		mockPost.mockResolvedValue({ data: { slug: "demo" } });
+		const controller = new AbortController();
+
+		await previewSolutionFromRepo(
+			{ repo_url: "https://x" },
+			{ signal: controller.signal },
+		);
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/install/preview-repo",
+			{ body: { repo_url: "https://x" }, signal: controller.signal },
+		);
 	});
 
 	it("previews an install with a multipart file", async () => {

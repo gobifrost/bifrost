@@ -33,6 +33,8 @@ export type OutsideReference = components["schemas"]["OutsideReference"];
 export type SolutionCaptureResponse =
 	components["schemas"]["SolutionCaptureResponse"];
 export type SolutionReadme = components["schemas"]["SolutionReadme"];
+export type SolutionRepoPreviewRequest =
+	components["schemas"]["SolutionRepoPreviewRequest"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
@@ -132,6 +134,62 @@ export async function updateSolution(
 		{ params: { path: { solution_id: solutionId } }, body: update, signal },
 	);
 	if (error) throw new Error(getErrorMessage(error, "Failed to update solution"));
+	return data;
+}
+
+/**
+ * Trigger a pull/sync of a git-connected install (the "Update now" action).
+ * Pulls the latest commit at the install's configured ref and re-applies the
+ * solution.
+ */
+export async function syncSolution(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<void> {
+	const { signal } = options;
+	const { error } = await apiClient.POST("/api/solutions/{solution_id}/sync", {
+		params: { path: { solution_id: solutionId } },
+		signal,
+	});
+	if (error) throw new Error(getErrorMessage(error, "Failed to sync solution"));
+}
+
+/**
+ * Preview a Solution install sourced from a git repository (parse-only). The
+ * server clones the repo at the given ref/subpath and returns the same
+ * `SolutionInstallPreview` shape as the zip-based `previewInstall`.
+ */
+export async function previewSolutionFromRepo(
+	body: SolutionRepoPreviewRequest,
+	options: RequestOptions = {},
+): Promise<SolutionInstallPreview> {
+	const { signal } = options;
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/install/preview-repo",
+		{ body, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to preview repository"));
+	}
+	return data;
+}
+
+/**
+ * Install a Solution sourced from a git repository. The server clones the repo
+ * at the given ref/subpath and installs it, returning the created `Solution`.
+ */
+export async function installSolutionFromRepo(
+	body: SolutionRepoPreviewRequest,
+	options: RequestOptions = {},
+): Promise<Solution> {
+	const { signal } = options;
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/install/from-repo",
+		{ body, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to install from repository"));
+	}
 	return data;
 }
 
