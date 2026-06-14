@@ -642,8 +642,12 @@ async def delete_solution(
     # Load WITHOUT eager-loading ``connection_schema`` (it is ``lazy="selectin"``).
     # If the children are loaded, the relationship's ``delete-orphan`` cascade marks
     # them in ``session.deleted`` at flush and the Solutions read-only backstop
-    # rejects them (drive F3). With ``noload`` + ``passive_deletes=True`` the children
-    # are removed by the DB-level ``ondelete=CASCADE`` instead (like workflows/apps).
+    # rejects them (drive F3). With ``noload`` the children are never loaded, so the
+    # cascade has nothing to orphan and the DB-level ``ondelete=CASCADE`` removes
+    # them when the install row goes (exactly like workflows/apps). NOTE: do NOT add
+    # ``passive_deletes`` to the relationship to "help" here — it breaks deploy's
+    # full-replace stale-removal (``_upsert_connection_declarations`` ORM-deletes a
+    # dropped declaration); ``noload`` on this query is the whole fix.
     sol = (
         await ctx.db.execute(
             select(SolutionORM)
