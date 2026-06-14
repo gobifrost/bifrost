@@ -8,7 +8,7 @@
  */
 
 import { useState } from "react";
-import { CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,18 @@ export interface SolutionSetupChecklistProps {
 	setupComplete: boolean;
 	/** Called when the user submits a value for a config key. */
 	onSet: (key: string, value: string) => void | Promise<void>;
+	/**
+	 * Supplies the href for a connection item's "Set up integration" link.
+	 * Defaults to the global Integrations page (opened in a new tab so the
+	 * admin keeps the setup context). The integration name is passed in case a
+	 * caller wants to deep-link.
+	 */
+	integrationHref?: (name: string) => string;
+}
+
+/** Default link target for connection items: the global Integrations page. */
+export function defaultIntegrationHref(): string {
+	return "/integrations";
 }
 
 function isSecretType(type: string): boolean {
@@ -26,7 +38,7 @@ function isSecretType(type: string): boolean {
 	return t === "secret" || t === "password";
 }
 
-function ConfigItem({
+export function ConfigItem({
 	item,
 	onSet,
 }: {
@@ -125,10 +137,93 @@ function ConfigItem({
 	);
 }
 
+export function ConnectionItem({
+	item,
+	integrationHref = defaultIntegrationHref,
+}: {
+	item: SolutionSetupItem;
+	integrationHref?: (name: string) => string;
+}) {
+	// `is_set` for a connection means the global Integration shell exists. A
+	// missing shell is the blocking case; OAuth is a warn-only nudge handled
+	// separately below.
+	const requiredUnset = item.required && !item.is_set;
+	// Warn-only: the connection's template carried an OAuth shape but no token
+	// resolves yet. This must NOT gate the wizard — it's a reminder, not a block.
+	const showOauthWarning = item.has_oauth && !item.connected;
+
+	return (
+		<div
+			className={
+				"rounded-lg border p-4 " +
+				(requiredUnset ? "border-amber-500/60 bg-amber-500/5" : "")
+			}
+		>
+			{/* Name + meta row */}
+			<div className="flex items-center justify-between gap-3">
+				<div className="flex min-w-0 items-center gap-2">
+					<span className="truncate text-sm font-medium">{item.key}</span>
+					<Badge variant="outline" className="shrink-0 text-[10px]">
+						integration
+					</Badge>
+					{item.required && (
+						<span className="shrink-0 text-xs text-destructive">required</span>
+					)}
+				</div>
+				<span
+					className={
+						"flex shrink-0 items-center gap-1 text-xs font-medium " +
+						(item.connected
+							? "text-green-600 dark:text-green-500"
+							: "text-muted-foreground")
+					}
+				>
+					{item.connected ? (
+						<CheckCircle2 className="h-3.5 w-3.5" />
+					) : (
+						<Circle className="h-3.5 w-3.5" />
+					)}
+					{item.connected ? "Connected" : item.is_set ? "Not connected" : "Missing"}
+				</span>
+			</div>
+
+			{item.description && (
+				<p className="mt-1 text-xs text-muted-foreground">{item.description}</p>
+			)}
+
+			{showOauthWarning && (
+				<div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+					<AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+					<span>
+						This integration uses OAuth — connect it (client ID/secret +
+						authorize) in Integrations. You can still finish setup; this is a
+						reminder, not a blocker.
+					</span>
+				</div>
+			)}
+
+			{/* External link to the global Integrations page (new tab). */}
+			<div className="mt-3">
+				<Button asChild variant="outline" size="sm">
+					<a
+						href={integrationHref(item.key)}
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						<ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+						Set up integration
+					</a>
+				</Button>
+			</div>
+		</div>
+	);
+}
+
 export function SolutionSetupChecklist({
 	items,
 	setupComplete,
 	onSet,
+	integrationHref,
 }: SolutionSetupChecklistProps) {
 	if (items.length === 0) {
 		return (
@@ -149,9 +244,17 @@ export function SolutionSetupChecklist({
 					All required configs are set — this Solution is ready to run.
 				</div>
 			)}
-			{items.map((item) => (
-				<ConfigItem key={item.key} item={item} onSet={onSet} />
-			))}
+			{items.map((item) =>
+				item.kind === "connection" ? (
+					<ConnectionItem
+						key={`connection:${item.key}`}
+						item={item}
+						integrationHref={integrationHref}
+					/>
+				) : (
+					<ConfigItem key={`config:${item.key}`} item={item} onSet={onSet} />
+				),
+			)}
 		</div>
 	);
 }
