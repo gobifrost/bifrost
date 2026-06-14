@@ -1030,9 +1030,11 @@ def _resolve_target_install(
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
+@click.option("--org", "org_ref", default=None,
+              help="Target org (UUID or name) to resolve-or-create the install in (default: your org).")
 @click.option("--force", is_flag=True, default=False,
               help="Apply even if the bundle version is older than the installed version (downgrade).")
-def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
+def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: bool) -> None:
     workspace = pathlib.Path(path).resolve()
     if not is_solution_workspace(workspace):
         raise click.ClickException(
@@ -1078,8 +1080,16 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
                     f"Failed to list installs ({resp.status_code}): {resp.text[:200]}"
                 )
             installs = resp.json().get("solutions", [])
-            org = client.organization or {}
-            deployer_org_id = org.get("id")
+            if org_ref:
+                from bifrost.refs import RefResolver
+                resolver = RefResolver(client)
+                try:
+                    deployer_org_id = await resolver.resolve("org", org_ref)
+                except Exception as exc:  # RefResolver raises on unknown/ambiguous ref
+                    raise click.ClickException(f"Could not resolve --org '{org_ref}': {exc}")
+            else:
+                org = client.organization or {}
+                deployer_org_id = org.get("id")
             try:
                 target_id = _resolve_target_install(
                     installs, descriptor.slug, descriptor.scope, deployer_org_id
@@ -1092,6 +1102,7 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
                     "slug": descriptor.slug,
                     "name": descriptor.name,
                     "scope": descriptor.scope,
+                    "organization_id": deployer_org_id,
                     "global_repo_access": descriptor.global_repo_access,
                     "git_connected": descriptor.git_connected,
                     "git_repo_url": descriptor.git_repo_url,
