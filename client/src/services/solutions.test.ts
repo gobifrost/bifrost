@@ -225,7 +225,9 @@ describe("exportSolution", () => {
 		const { exportSolution } = await import("./solutions");
 		const out = await exportSolution("sol-1");
 
-		expect(mockAuthFetch).toHaveBeenCalledWith("/api/solutions/sol-1/export");
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/solutions/sol-1/export?mode=shareable",
+		);
 		expect(out.filename).toBe("rtm-portal-0.9.0.zip");
 		expect(out.blob).toBe(blob);
 	});
