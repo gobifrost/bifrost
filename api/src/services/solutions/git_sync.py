@@ -45,6 +45,20 @@ class NotASolutionWorkspace(Exception):
     """The checkout has no bifrost.solution.yaml — refuse the full-replace sync."""
 
 
+def resolve_repo_subpath(checkout_root: Path, repo_subpath: str | None) -> Path:
+    """Resolve ``repo_subpath`` under ``checkout_root``, guarding against
+    traversal (``..``/absolute) escapes. Returns the checkout root when
+    ``repo_subpath`` is empty. Raises NotASolutionWorkspace if it escapes."""
+    if not repo_subpath:
+        return checkout_root
+    root = (checkout_root / repo_subpath).resolve()
+    if not root.is_relative_to(checkout_root.resolve()):
+        raise NotASolutionWorkspace(
+            f"repo_subpath {repo_subpath!r} escapes the repo checkout"
+        )
+    return root
+
+
 def _collect_python_files(workspace: Path) -> dict[str, str]:
     # Reuse the CLI's canonical, layout-agnostic collector so the git-connected
     # deploy path bundles the SAME files as `bifrost deploy` — a divergent
@@ -238,14 +252,7 @@ async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
         # watchdog, and let the lock TTL expire mid-deploy.
         await clone_repo_to_dir(repo_url, work_dir, ref=solution.git_ref)
         logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
-        if solution.repo_subpath:
-            deploy_root = (work_dir / solution.repo_subpath).resolve()
-            if not deploy_root.is_relative_to(work_dir.resolve()):
-                raise NotASolutionWorkspace(
-                    f"repo_subpath {solution.repo_subpath!r} escapes the repo checkout"
-                )
-        else:
-            deploy_root = work_dir
+        deploy_root = resolve_repo_subpath(work_dir, solution.repo_subpath)
         if not (deploy_root / _DESCRIPTOR_FILENAME).is_file():
             raise NotASolutionWorkspace(
                 f"No {_DESCRIPTOR_FILENAME} at "

@@ -1087,6 +1087,7 @@ async def _preview_to_dto(
         agents=result.agents,
         claims=result.claims,
         config_schemas=result.config_schemas,
+        connection_schemas=result.connection_schemas,
         existing_install=existing_install,
         diff=diff,
         requires_password=result.requires_password,
@@ -1152,7 +1153,11 @@ async def install_preview_repo(
     import tempfile
     from pathlib import Path
 
-    from src.services.solutions.git_sync import clone_repo_to_dir
+    from src.services.solutions.git_sync import (
+        NotASolutionWorkspace,
+        clone_repo_to_dir,
+        resolve_repo_subpath,
+    )
     from src.services.solutions.zip_install import _parse_workspace
 
     with tempfile.TemporaryDirectory(prefix="bifrost-repo-preview-") as tmp:
@@ -1164,15 +1169,12 @@ async def install_preview_repo(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Could not clone {body.repo_url}: {exc}",
             ) from exc
-        if body.repo_subpath:
-            root = (work / body.repo_subpath).resolve()
-            if not root.is_relative_to(work.resolve()):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"repo_subpath {body.repo_subpath!r} escapes the repo checkout",
-                )
-        else:
-            root = work
+        try:
+            root = resolve_repo_subpath(work, body.repo_subpath)
+        except NotASolutionWorkspace as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
         if not (root / "bifrost.solution.yaml").is_file():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
