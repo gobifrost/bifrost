@@ -1169,6 +1169,7 @@ async def install_solution(
         BadExportPassword,
         ContentCollision,
         GitConnectedInstallError,
+        UnmetDependency,
         install_zip,
     )
 
@@ -1208,6 +1209,13 @@ async def install_solution(
             replace_secrets=replace_secrets,
             replace_data=replace_data,
         )
+    except UnmetDependency as exc:
+        # A bundle imports a modules.X that isn't shipped — refuse before
+        # anything lands, naming the missing module.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except BadExportPassword as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

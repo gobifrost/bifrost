@@ -295,6 +295,23 @@ class SolutionDeployer:
         solution = bundle.solution
         sid = solution.id
 
+        # ── Module-closure backstop — before ANY writes ──────────────────────
+        # Primary gate is in zip_install (returns a clean 422). This backstop
+        # covers the OTHER deploy callers (the direct /deploy endpoint and
+        # git-sync auto-pull): a bundle whose ``modules.X`` import isn't shipped
+        # would otherwise install and fail at runtime with ModuleNotFoundError.
+        # Raised as SolutionDeployConflict so it rolls back with no side effects.
+        from src.services.solutions.dependency_walker import check_install_needs
+
+        needs = check_install_needs(bundle.python_files)
+        if needs:
+            items = ", ".join(
+                f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
+            )
+            raise SolutionDeployConflict(
+                f"Solution has unmet dependencies: {items}"
+            )
+
         # ── Downgrade gate (Task 20) — before ANY writes ─────────────────────
         # An older bundle (both versions PEP 440-ordered) is refused unless
         # forced. Unparseable/absent versions are unordered and never block.

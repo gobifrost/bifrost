@@ -64,6 +64,14 @@ class GitConnectedInstallError(Exception):
     Mapped to 409 by the endpoint, mirroring ``deploy_solution``'s refusal."""
 
 
+class UnmetDependency(ValueError):
+    """A bundle imports a ``modules.X`` that isn't present in the bundle.
+
+    A missing module is otherwise a silent runtime ModuleNotFoundError once the
+    install is live; raising here turns it into a clean pre-install refusal so
+    NOTHING lands. Mapped to 422 by the endpoint, naming what's missing."""
+
+
 class BadExportPassword(ValueError):
     """Wrong or missing password for a full-backup zip that carries secrets.enc.
 
@@ -398,6 +406,20 @@ async def install_zip(
         # Build the bundle while the temp dir still exists (it reads Python +
         # app source fully into memory, so finalize_s3 is safe after teardown).
         bundle = _build_bundle(solution, preview, workspace)
+
+        # Module-closure gate: every ``modules.X`` import in the bundle must
+        # resolve to a file in the bundle. Run BEFORE the write lock / any DB or
+        # S3 write, so an unmet dependency refuses the install atomically —
+        # nothing lands (mirrors the wrong-password discipline). Otherwise a
+        # missing module is a silent runtime ModuleNotFoundError post-install.
+        from src.services.solutions.dependency_walker import check_install_needs
+
+        needs = check_install_needs(bundle.python_files)
+        if needs:
+            items = ", ".join(
+                f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
+            )
+            raise UnmetDependency(f"Solution has unmet dependencies: {items}")
 
         async with solution_write_lock(solution.id):
             # Decrypt + collision-check BEFORE deploy so a bad password or
