@@ -163,6 +163,33 @@ describe("Solutions — list", () => {
 		expect(screen.getByText("v1.2.3")).toBeInTheDocument();
 	});
 
+	it("shows an 'Update available' badge only when update_available_version is set", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({
+					id: "stale",
+					name: "Stale Install",
+					slug: "stale",
+					version: "1.0.0",
+					update_available_version: "1.1.0",
+				}),
+				makeSolution({
+					id: "current",
+					name: "Current Install",
+					slug: "current",
+					version: "1.1.0",
+					update_available_version: null,
+				}),
+			],
+		});
+		await renderPage();
+		await screen.findByText("Stale Install");
+
+		const badges = screen.getAllByTestId("update-available-badge");
+		expect(badges).toHaveLength(1);
+		expect(badges[0]).toHaveTextContent("v1.1.0");
+	});
+
 	it("switches to a table view with one row per install", async () => {
 		mockListSolutions.mockResolvedValue({
 			solutions: [
@@ -313,6 +340,8 @@ describe("Solutions — install flow (CreateEditSolution)", () => {
 			expect(mockUpdateSolution).toHaveBeenCalledWith("installed-1", {
 				git_repo_url: "https://github.com/acme/solution-new-sol-abc123",
 				git_connected: true,
+				repo_subpath: null,
+				git_ref: null,
 			}),
 		);
 	});

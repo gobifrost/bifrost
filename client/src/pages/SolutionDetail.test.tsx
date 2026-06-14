@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen } from "@/test-utils";
+import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -41,12 +41,14 @@ const mockSetSolutionConfig = vi.fn();
 const mockExportSolution = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
+const mockSyncSolution = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	getSolutionEntities: (...a: unknown[]) => mockGetSolutionEntities(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
 	setSolutionConfig: (...a: unknown[]) => mockSetSolutionConfig(...a),
 	exportSolution: (...a: unknown[]) => mockExportSolution(...a),
+	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
 	captureSolutionEntities: (...a: unknown[]) => mockCaptureSolutionEntities(...a),
@@ -367,5 +369,68 @@ describe("SolutionDetail", () => {
 			type: "secret",
 			organizationId: "org-1",
 		});
+	});
+
+	it("shows the zip 'Update' action when not git-connected", async () => {
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(screen.getByTestId("update-solution")).toBeInTheDocument();
+		expect(screen.queryByTestId("update-now")).not.toBeInTheDocument();
+		expect(
+			screen.queryByTestId("update-available-badge"),
+		).not.toBeInTheDocument();
+	});
+
+	it("surfaces 'Update now' + an Update-available badge for a git-connected install with an available update", async () => {
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			version: "1.0.0",
+			update_available_version: "1.1.0",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(screen.getByTestId("update-available-badge")).toHaveTextContent(
+			"v1.1.0",
+		);
+		// The git-connected pull action replaces the zip re-upload action.
+		expect(screen.getByTestId("update-now")).toBeInTheDocument();
+		expect(screen.queryByTestId("update-solution")).not.toBeInTheDocument();
+	});
+
+	it("'Update now' confirms then calls syncSolution and invalidates", async () => {
+		mockSyncSolution.mockResolvedValue(undefined);
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			version: "1.0.0",
+			update_available_version: "1.1.0",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("update-now"));
+		// Confirm dialog before the destructive pull/replace.
+		await screen.findByTestId("update-now-dialog");
+		await user.click(screen.getByTestId("confirm-update-now"));
+
+		await waitFor(() =>
+			expect(mockSyncSolution).toHaveBeenCalledWith("sol-1"),
+		);
+		// On success the entities query refetches (clears the badge once the
+		// backend drops update_available_version).
+		await waitFor(() =>
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(1),
+		);
 	});
 });

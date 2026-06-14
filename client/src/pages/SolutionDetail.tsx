@@ -38,6 +38,8 @@ import {
 	Shield,
 	Users,
 	Unlink,
+	ArrowUp,
+	RefreshCw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,6 +86,16 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { CreateEditSolution } from "@/components/solutions/CreateEditSolution";
 import { SolutionCaptureDialog } from "@/components/solutions/SolutionCaptureDialog";
@@ -97,6 +109,7 @@ import {
 	deleteSolution,
 	exportSolution,
 	setSolutionConfig,
+	syncSolution,
 } from "@/services/solutions";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
@@ -911,6 +924,7 @@ export function SolutionDetail() {
 	const [tab, setTab] = useState<TabKey>("workflows");
 	const [editOpen, setEditOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
+	const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
 	const [captureOpen, setCaptureOpen] = useState(false);
 	const [exportDialogOpen, setExportDialogOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
@@ -987,6 +1001,25 @@ export function SolutionDetail() {
 		},
 		onError: (err: unknown) => {
 			toast.error("Failed to uninstall", {
+				description: err instanceof Error ? err.message : "Unknown error",
+			});
+		},
+	});
+
+	// "Update now" for a git-connected install with an available update: pull the
+	// repo at its configured ref and full-replace the installed content. The
+	// backend clears `update_available_version` on success, so invalidating the
+	// solution query clears the badge.
+	const syncMut = useMutation({
+		mutationFn: () => syncSolution(solutionId!),
+		onSuccess: () => {
+			toast.success("Solution updated from repository");
+			setSyncConfirmOpen(false);
+			void queryClient.invalidateQueries({ queryKey: ["solutions"] });
+			invalidate();
+		},
+		onError: (err: unknown) => {
+			toast.error("Failed to update", {
 				description: err instanceof Error ? err.message : "Unknown error",
 			});
 		},
@@ -1106,6 +1139,16 @@ export function SolutionDetail() {
 									)}
 									{sol.git_connected ? "Git-connected" : "Manual"}
 								</Badge>
+								{sol.update_available_version && (
+									<Badge
+										variant="default"
+										className="gap-1"
+										data-testid="update-available-badge"
+									>
+										<ArrowUp className="h-3 w-3" />
+										Update available · v{sol.update_available_version}
+									</Badge>
+								)}
 							</div>
 						</div>
 						<div className="flex shrink-0 items-center justify-end gap-2">
@@ -1120,14 +1163,30 @@ export function SolutionDetail() {
 									Continue Setup
 								</Button>
 							)}
-							<Button
-								data-testid="update-solution"
-								className="whitespace-nowrap"
-								onClick={() => setUpdateOpen(true)}
-							>
-								<Upload className="mr-1.5 h-4 w-4" />
-								Update
-							</Button>
+							{sol.git_connected && sol.update_available_version ? (
+								<Button
+									data-testid="update-now"
+									className="whitespace-nowrap"
+									disabled={syncMut.isPending}
+									onClick={() => setSyncConfirmOpen(true)}
+								>
+									{syncMut.isPending ? (
+										<Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+									) : (
+										<ArrowUp className="mr-1.5 h-4 w-4" />
+									)}
+									Update now
+								</Button>
+							) : (
+								<Button
+									data-testid="update-solution"
+									className="whitespace-nowrap"
+									onClick={() => setUpdateOpen(true)}
+								>
+									<Upload className="mr-1.5 h-4 w-4" />
+									Update
+								</Button>
+							)}
 							<SolutionActionsMenu
 								exporting={exportMut.isPending}
 								onCapture={() => setCaptureOpen(true)}
@@ -1324,6 +1383,48 @@ export function SolutionDetail() {
 							}}
 						/>
 					)}
+
+					{/* "Update now" confirm (git-connected pull + full-replace) */}
+					<AlertDialog
+						open={syncConfirmOpen}
+						onOpenChange={(o) => !syncMut.isPending && setSyncConfirmOpen(o)}
+					>
+						<AlertDialogContent data-testid="update-now-dialog">
+							<AlertDialogHeader>
+								<AlertDialogTitle>
+									Update {sol.name}
+									{sol.update_available_version
+										? ` to v${sol.update_available_version}`
+										: ""}
+									?
+								</AlertDialogTitle>
+								<AlertDialogDescription>
+									Pull and redeploy this install from its repository. This
+									replaces the installed content with the repo's current
+									version.
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							<AlertDialogFooter>
+								<AlertDialogCancel disabled={syncMut.isPending}>
+									Cancel
+								</AlertDialogCancel>
+								<AlertDialogAction
+									data-testid="confirm-update-now"
+									disabled={syncMut.isPending}
+									onClick={(e) => {
+										e.preventDefault();
+										syncMut.mutate();
+									}}
+								>
+									{syncMut.isPending && (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									)}
+									<RefreshCw className="mr-1.5 h-4 w-4" />
+									Update now
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
 
 					<SolutionCaptureDialog
 						open={captureOpen}

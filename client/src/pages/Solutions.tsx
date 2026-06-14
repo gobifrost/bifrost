@@ -14,6 +14,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
+	ArrowUp,
 	Boxes,
 	Building2,
 	GitBranch,
@@ -156,6 +157,20 @@ export function Solutions() {
 					<HardDriveUpload className="h-3 w-3" />
 				)}
 				{sol.git_connected ? "Git" : "Manual"}
+			</Badge>
+		);
+	}
+
+	function updateBadge(sol: Solution) {
+		if (!sol.update_available_version) return null;
+		return (
+			<Badge
+				variant="default"
+				className="gap-1"
+				data-testid="update-available-badge"
+			>
+				<ArrowUp className="h-3 w-3" />
+				v{sol.update_available_version}
 			</Badge>
 		);
 	}
@@ -339,6 +354,7 @@ export function Solutions() {
 									{sol.version && (
 										<Badge variant="outline">v{sol.version}</Badge>
 									)}
+									{updateBadge(sol)}
 								</div>
 							</div>
 						))}
@@ -382,7 +398,10 @@ export function Solutions() {
 									<DataTableCell>{orgBadge(sol)}</DataTableCell>
 									<DataTableCell>{sourceBadge(sol)}</DataTableCell>
 									<DataTableCell className="text-muted-foreground">
-										{sol.version ? `v${sol.version}` : "—"}
+										<span className="flex items-center gap-2">
+											{sol.version ? `v${sol.version}` : "—"}
+											{updateBadge(sol)}
+										</span>
 									</DataTableCell>
 								</DataTableRow>
 							))}

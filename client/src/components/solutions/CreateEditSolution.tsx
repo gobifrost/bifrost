@@ -302,17 +302,36 @@ function repoSuffix(): string {
 }
 
 /**
- * Git connection for an install. Connection state is derived: GitHub must be
- * configured in Settings (saved token), and the install must have a repo URL.
+ * Repository connection for an install (Edit dialog). GitHub must be configured
+ * in Settings (a saved token) to back an install with a repo.
+ *
+ * Connecting: enter a repo URL (+ optional subfolder / ref) and save. Saving a
+ * URL on a disconnected install marks it git-connected.
+ *
+ * Disconnecting: the "Disconnect" action clears the URL and flips the install
+ * back to manual (CLI-writable / deploy-allowed). Reconnecting is just editing
+ * the URL/subpath/ref of an already-connected install — the normal save.
  */
 function GitRepoSection({
 	slug,
+	connected,
 	repoUrl,
+	subpath,
+	gitRef,
 	onRepoUrlChange,
+	onSubpathChange,
+	onRefChange,
+	onDisconnect,
 }: {
 	slug: string | null;
+	connected: boolean;
 	repoUrl: string;
+	subpath: string;
+	gitRef: string;
 	onRepoUrlChange: (url: string) => void;
+	onSubpathChange: (subpath: string) => void;
+	onRefChange: (gitRef: string) => void;
+	onDisconnect: () => void;
 }) {
 	const { data: ghConfig, isLoading } = useGitHubConfig();
 	const createRepo = useCreateGitHubRepository();
@@ -325,7 +344,7 @@ function GitRepoSection({
 			<div className="rounded-lg border p-3" data-testid="git-section">
 				<div className="flex items-center gap-2 text-sm font-medium">
 					<GitBranch className="h-4 w-4 text-muted-foreground" />
-					Git repository
+					Repository connection
 				</div>
 				<p className="mt-1 text-xs text-muted-foreground">
 					GitHub isn't configured.{" "}
@@ -345,56 +364,106 @@ function GitRepoSection({
 			<div className="flex items-center justify-between gap-2">
 				<div className="flex items-center gap-2 text-sm font-medium">
 					<GitBranch className="h-4 w-4 text-muted-foreground" />
-					Git repository
+					Repository connection
 				</div>
-				<Badge variant={repoUrl ? "default" : "secondary"}>
-					{repoUrl ? "Connected" : "Not connected"}
+				<Badge variant={connected ? "default" : "secondary"}>
+					{connected ? "Connected" : "Not connected"}
 				</Badge>
 			</div>
+			{connected ? (
+				<p className="text-xs text-muted-foreground">
+					This install pulls its content from a repository. Disconnect to make
+					it manual (CLI-writable) again.
+				</p>
+			) : (
+				<p className="text-xs text-muted-foreground">
+					Enter a repository URL and save to connect this install to git.
+				</p>
+			)}
 			<Input
 				data-testid="git-repo-url"
 				value={repoUrl}
 				placeholder="https://github.com/org/repo"
 				onChange={(e) => onRepoUrlChange(e.target.value)}
 			/>
-			<Button
-				type="button"
-				variant="outline"
-				size="sm"
-				data-testid="create-repo"
-				disabled={createRepo.isPending}
-				onClick={() =>
-					createRepo.mutate(
-						{
-							body: {
-								name: suggestedName,
-								description: `Bifrost Solution ${slug ?? ""}`.trim(),
-								private: true,
+			<div className="grid grid-cols-2 gap-2">
+				<div className="space-y-1">
+					<Label htmlFor="git-subpath" className="text-xs">
+						Subfolder
+					</Label>
+					<Input
+						id="git-subpath"
+						data-testid="git-repo-subpath"
+						value={subpath}
+						placeholder="solutions/my-solution"
+						onChange={(e) => onSubpathChange(e.target.value)}
+					/>
+				</div>
+				<div className="space-y-1">
+					<Label htmlFor="git-ref" className="text-xs">
+						Ref
+					</Label>
+					<Input
+						id="git-ref"
+						data-testid="git-repo-ref"
+						value={gitRef}
+						placeholder="main"
+						onChange={(e) => onRefChange(e.target.value)}
+					/>
+				</div>
+			</div>
+			<div className="flex items-center gap-2">
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					data-testid="create-repo"
+					disabled={createRepo.isPending}
+					onClick={() =>
+						createRepo.mutate(
+							{
+								body: {
+									name: suggestedName,
+									description: `Bifrost Solution ${slug ?? ""}`.trim(),
+									private: true,
+								},
 							},
-						},
-						{
-							onSuccess: (repo) => {
-								onRepoUrlChange(repo.url);
-								toast.success(`Created ${repo.full_name}`);
+							{
+								onSuccess: (repo) => {
+									onRepoUrlChange(repo.url);
+									toast.success(`Created ${repo.full_name}`);
+								},
+								onError: (err: unknown) => {
+									toast.error(
+										err instanceof Error
+											? err.message
+											: "Failed to create repository",
+									);
+								},
 							},
-							onError: (err: unknown) => {
-								toast.error(
-									err instanceof Error
-										? err.message
-										: "Failed to create repository",
-								);
-							},
-						},
-					)
-				}
-			>
-				{createRepo.isPending ? (
-					<Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-				) : (
-					<Plus className="mr-1.5 h-3.5 w-3.5" />
+						)
+					}
+				>
+					{createRepo.isPending ? (
+						<Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+					) : (
+						<Plus className="mr-1.5 h-3.5 w-3.5" />
+					)}
+					Create {suggestedName}
+				</Button>
+				{connected && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						data-testid="git-disconnect"
+						className="text-destructive hover:text-destructive"
+						onClick={onDisconnect}
+					>
+						Disconnect
+					</Button>
 				)}
-				Create {suggestedName}
-			</Button>
+			</div>
 		</div>
 	);
 }
@@ -717,6 +786,8 @@ function CreateBody({
 	// re-runs the install with replaceSecrets=true.
 	const [collisionKeys, setCollisionKeys] = useState<string[] | null>(null);
 	const [gitRepoUrl, setGitRepoUrl] = useState("");
+	const [gitSubpath, setGitSubpath] = useState("");
+	const [gitRef, setGitRef] = useState("");
 	const [dragging, setDragging] = useState(false);
 
 	// Monotonic guard so a stale preview response (scope changed while one was
@@ -795,6 +866,8 @@ function CreateBody({
 					result = await updateSolution(created.id, {
 						git_repo_url: url,
 						git_connected: true,
+						repo_subpath: gitSubpath.trim() || null,
+						git_ref: gitRef.trim() || null,
 					} as SolutionUpdate);
 				} catch (err: unknown) {
 					toast.error(
@@ -994,8 +1067,18 @@ function CreateBody({
 						{!isUpgrade && (
 							<GitRepoSection
 								slug={preview.slug ?? null}
+								connected={gitRepoUrl.trim() !== ""}
 								repoUrl={gitRepoUrl}
+								subpath={gitSubpath}
+								gitRef={gitRef}
 								onRepoUrlChange={setGitRepoUrl}
+								onSubpathChange={setGitSubpath}
+								onRefChange={setGitRef}
+								onDisconnect={() => {
+									setGitRepoUrl("");
+									setGitSubpath("");
+									setGitRef("");
+								}}
 							/>
 						)}
 
@@ -1315,6 +1398,13 @@ function EditBody({
 		solution.global_repo_access,
 	);
 	const [gitRepoUrl, setGitRepoUrl] = useState(solution.git_repo_url ?? "");
+	const [gitSubpath, setGitSubpath] = useState(solution.repo_subpath ?? "");
+	const [gitRef, setGitRef] = useState(solution.git_ref ?? "");
+	// Explicit connection intent. Seeded from the install's current state; the
+	// Disconnect action flips it off (and clears the URL/subpath/ref), and
+	// typing a URL back in flips it on. A connected install with an edited URL
+	// is a "reconnect" — the same save, no separate control.
+	const [connected, setConnected] = useState(solution.git_connected);
 
 	const saveMut = useMutation({
 		mutationFn: () => {
@@ -1324,12 +1414,31 @@ function EditBody({
 				update.organization_id = orgId;
 			if (globalRepoAccess !== solution.global_repo_access)
 				update.global_repo_access = globalRepoAccess;
-			const nextUrl = gitRepoUrl.trim() === "" ? null : gitRepoUrl.trim();
-			if (nextUrl !== (solution.git_repo_url ?? null)) {
+
+			const trimmedUrl = gitRepoUrl.trim();
+			// Connect when there's a URL and the user hasn't disconnected;
+			// disconnect otherwise. A disconnected install clears its repo coords.
+			const nextConnected = connected && trimmedUrl !== "";
+			const nextUrl = nextConnected ? trimmedUrl : null;
+			const nextSubpath = nextConnected
+				? gitSubpath.trim() === ""
+					? null
+					: gitSubpath.trim()
+				: null;
+			const nextRef = nextConnected
+				? gitRef.trim() === ""
+					? null
+					: gitRef.trim()
+				: null;
+
+			if (nextConnected !== solution.git_connected)
+				update.git_connected = nextConnected;
+			if (nextUrl !== (solution.git_repo_url ?? null))
 				update.git_repo_url = nextUrl;
-				// Connection state is derived from the repo URL — no toggle.
-				update.git_connected = nextUrl !== null;
-			}
+			if (nextSubpath !== (solution.repo_subpath ?? null))
+				update.repo_subpath = nextSubpath;
+			if (nextRef !== (solution.git_ref ?? null)) update.git_ref = nextRef;
+
 			return updateSolution(solution.id, update);
 		},
 		onSuccess: (updated) => {
@@ -1388,8 +1497,23 @@ function EditBody({
 
 				<GitRepoSection
 					slug={solution.slug}
+					connected={connected && gitRepoUrl.trim() !== ""}
 					repoUrl={gitRepoUrl}
-					onRepoUrlChange={setGitRepoUrl}
+					subpath={gitSubpath}
+					gitRef={gitRef}
+					onRepoUrlChange={(url) => {
+						setGitRepoUrl(url);
+						// Typing a URL on a disconnected install re-arms the connection.
+						if (url.trim() !== "") setConnected(true);
+					}}
+					onSubpathChange={setGitSubpath}
+					onRefChange={setGitRef}
+					onDisconnect={() => {
+						setConnected(false);
+						setGitRepoUrl("");
+						setGitSubpath("");
+						setGitRef("");
+					}}
 				/>
 			</div>
 

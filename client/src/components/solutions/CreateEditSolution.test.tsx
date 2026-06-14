@@ -135,6 +135,95 @@ describe("CreateEditSolution — edit mode", () => {
 		);
 	});
 
+	it("exposes Subfolder and Ref inputs and PATCHes them when connecting", async () => {
+		mockUpdateSolution.mockResolvedValue(makeSolution());
+		const { user } = renderEdit(makeSolution());
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		await user.type(
+			within(dialog).getByTestId("git-repo-url"),
+			"https://github.com/acme/repo",
+		);
+		await user.type(
+			within(dialog).getByTestId("git-repo-subpath"),
+			"solutions/mine",
+		);
+		await user.type(within(dialog).getByTestId("git-repo-ref"), "release");
+		await user.click(
+			within(dialog).getByRole("button", { name: /save changes/i }),
+		);
+
+		await waitFor(() =>
+			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
+				git_repo_url: "https://github.com/acme/repo",
+				git_connected: true,
+				repo_subpath: "solutions/mine",
+				git_ref: "release",
+			}),
+		);
+	});
+
+	it("prefills Subfolder and Ref from the install and reconnect-edits them", async () => {
+		mockUpdateSolution.mockResolvedValue(makeSolution());
+		const { user } = renderEdit(
+			makeSolution({
+				git_connected: true,
+				git_repo_url: "https://github.com/acme/repo",
+				repo_subpath: "old/path",
+				git_ref: "main",
+			} as Partial<Solution>),
+		);
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByTestId("git-repo-subpath")).toHaveValue(
+			"old/path",
+		);
+		expect(within(dialog).getByTestId("git-repo-ref")).toHaveValue("main");
+
+		await user.clear(within(dialog).getByTestId("git-repo-subpath"));
+		await user.type(
+			within(dialog).getByTestId("git-repo-subpath"),
+			"new/path",
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: /save changes/i }),
+		);
+
+		await waitFor(() =>
+			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
+				repo_subpath: "new/path",
+			}),
+		);
+	});
+
+	it("explicit Disconnect flips git_connected off and clears the repo coords", async () => {
+		mockUpdateSolution.mockResolvedValue(makeSolution());
+		const { user } = renderEdit(
+			makeSolution({
+				git_connected: true,
+				git_repo_url: "https://github.com/acme/repo",
+				repo_subpath: "p",
+				git_ref: "main",
+			} as Partial<Solution>),
+		);
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		await user.click(within(dialog).getByTestId("git-disconnect"));
+		expect(within(dialog).getByText("Not connected")).toBeInTheDocument();
+		await user.click(
+			within(dialog).getByRole("button", { name: /save changes/i }),
+		);
+
+		await waitFor(() =>
+			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
+				git_connected: false,
+				git_repo_url: null,
+				repo_subpath: null,
+				git_ref: null,
+			}),
+		);
+	});
+
 	it("offers to create a solution-slug-named repository", async () => {
 		const { user } = renderEdit(makeSolution());
 
