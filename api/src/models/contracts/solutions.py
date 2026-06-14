@@ -403,3 +403,24 @@ class SolutionCaptureResponse(BaseModel):
     agents_captured: int = 0
     claims_captured: int = 0
     config_declarations_captured: int = 0
+
+
+class SolutionSetupItem(BaseModel):
+    """One config declaration paired with whether a value is set."""
+
+    key: str
+    type: str
+    required: bool
+    is_set: bool
+    description: str | None = None
+
+
+class SolutionSetupStatus(BaseModel):
+    """Required-config setup status for a Solution install.
+
+    ``setup_complete`` is True when every required declaration has a matching
+    Config value in the install's org scope.
+    """
+
+    setup_complete: bool
+    items: list[SolutionSetupItem]

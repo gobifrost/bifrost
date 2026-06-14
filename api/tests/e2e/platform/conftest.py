@@ -22,6 +22,8 @@ import asyncio
 import logging
 import pathlib
 import sys
+import uuid
+from typing import Any
 
 import pytest
 
@@ -104,3 +106,39 @@ def isolate_s3_sync() -> None:
     async ``isolate_s3`` fixture from tests/conftest.py.
     """
     _clear_s3_bifrost_sync()
+
+
+@pytest.fixture
+def make_solution_with_required_config(e2e_client, platform_admin, db_session):
+    """Factory: create a Solution via REST then insert a SolutionConfigSchema
+    declaration row directly into the DB.  Returns a coroutine that accepts
+    ``key`` and ``required`` kwargs and returns the solution dict.
+
+    The Config value is intentionally NOT created so the declaration reads as
+    unset (is_set=False) from the setup-status endpoint.
+    """
+    from src.models.orm.solution_config_schema import SolutionConfigSchema
+
+    async def _make(key: str = "api_key", required: bool = True) -> dict[str, Any]:
+        headers = platform_admin.headers
+        slug = f"setup-status-{uuid.uuid4().hex[:8]}"
+        r = e2e_client.post("/api/solutions", headers=headers, json={
+            "slug": slug, "name": slug.upper(), "scope": "org",
+        })
+        assert r.status_code in (200, 201), r.text
+        sol = r.json()
+        sol_id = uuid.UUID(sol["id"])
+
+        decl = SolutionConfigSchema(
+            solution_id=sol_id,
+            key=key,
+            type="string",
+            required=required,
+            description="Required config for setup-status test",
+        )
+        db_session.add(decl)
+        await db_session.commit()
+
+        return sol
+
+    return _make

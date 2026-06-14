@@ -40,6 +40,7 @@ from src.models.contracts.solutions import (
     SolutionEntitySummary,
     SolutionExistingInstall,
     SolutionInstallPreview,
+    SolutionSetupStatus,
     SolutionsList,
     SolutionUpdate,
     SolutionUpgradeDiff,
@@ -133,6 +134,25 @@ async def get_solution_logo(
         content=row.logo_data,
         media_type=row.logo_content_type or "application/octet-stream",
     )
+
+
+@router.get(
+    "/{solution_id}/setup",
+    response_model=SolutionSetupStatus,
+    summary="Required-config setup status (admin only)",
+)
+async def solution_setup(
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionSetupStatus:
+    """Return all config declarations for the install paired with whether each
+    has a matching Config value in the install's org scope.  ``setup_complete``
+    is True only when every required declaration is satisfied."""
+    from src.services.solutions.setup_status import compute_setup_status
+
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    return await compute_setup_status(ctx.db, sol)
 
 
 @router.get(
