@@ -89,6 +89,8 @@ async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuper
         global_repo_access=body.global_repo_access,
         git_connected=body.git_connected,
         git_repo_url=body.git_repo_url,
+        repo_subpath=body.repo_subpath,
+        git_ref=body.git_ref,
     )
     ctx.db.add(row)
     try:

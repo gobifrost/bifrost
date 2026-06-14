@@ -1095,6 +1095,8 @@ def deploy_cmd(path: str, solution_id: str | None, force: bool) -> None:
                     "global_repo_access": descriptor.global_repo_access,
                     "git_connected": descriptor.git_connected,
                     "git_repo_url": descriptor.git_repo_url,
+                    "repo_subpath": descriptor.repo_subpath,
+                    "git_ref": descriptor.git_ref,
                 })
                 if create.status_code not in (200, 201):
                     click.echo(f"Failed to create install: {create.status_code} {create.text}", err=True)

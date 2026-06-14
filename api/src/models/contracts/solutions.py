@@ -18,6 +18,8 @@ class SolutionBase(BaseModel):
     global_repo_access: bool = False
     git_connected: bool = False
     git_repo_url: str | None = None
+    repo_subpath: str | None = None
+    git_ref: str | None = None
 
 
 class SolutionCreate(SolutionBase):
@@ -49,6 +51,8 @@ class SolutionUpdate(BaseModel):
     global_repo_access: bool | None = None
     git_connected: bool | None = None
     git_repo_url: str | None = None
+    repo_subpath: str | None = None
+    git_ref: str | None = None
 
 
 class SolutionReadmeUpdate(BaseModel):

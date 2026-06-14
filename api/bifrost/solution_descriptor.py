@@ -42,6 +42,11 @@ class SolutionDescriptor(BaseModel):
     global_repo_access: bool = False
     git_connected: bool = False
     git_repo_url: str | None = None
+    # Subfolder of the connected repo holding this descriptor (omni-repo).
+    # None => repo root. Set on the install at create/deploy/connect time.
+    repo_subpath: str | None = None
+    # Git ref (branch/tag) the install tracks. None => default branch.
+    git_ref: str | None = None
     # Path to a solution icon image (png/jpeg/svg) relative to the workspace
     # root, e.g. "assets/icon.svg". Shown on the /solutions catalog cards.
     logo: str | None = None
