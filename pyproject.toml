@@ -31,7 +31,6 @@ dependencies = [
     # =========================================================================
     "sqlalchemy[asyncio]",
     "asyncpg>=0.31.0",  # Async PostgreSQL driver (CVE-2024-25737 RCE fixed in 0.29.0)
-    "psycopg2-binary",  # Sync PostgreSQL driver (for SDK/workflow threads)
     "alembic",  # Database migrations
     "greenlet",  # Required by SQLAlchemy async
 
@@ -77,7 +76,6 @@ dependencies = [
     "python-dateutil",
     "croniter",  # CRON expression parsing
     "defusedxml>=0.7.1",  # Safe XML/SVG parsing — strips scripts/event-handlers from uploads
-    "jmespath",
 
     # =========================================================================
     # Code Transformation
@@ -92,7 +90,6 @@ dependencies = [
     # =========================================================================
     # Git Integration
     # =========================================================================
-    "dulwich",
     "PyGithub",
     "GitPython>=3.1.47",  # Closes 5 CVEs incl. CVSS 9.8 RCE
 

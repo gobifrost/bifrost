@@ -10,6 +10,19 @@ if TYPE_CHECKING:
     pass
 
 
+def _validate_hex_color(v: str | None) -> str | None:
+    """Validate a ``#RGB`` / ``#RRGGBB`` hex color, or pass through ``None``."""
+    if v is None:
+        return v
+    if not v.startswith("#") or len(v) not in (4, 7):
+        raise ValueError("Primary color must be a valid hex color (e.g., #FFF or #FF5733)")
+    try:
+        int(v[1:], 16)
+    except ValueError:
+        raise ValueError("Primary color must be a valid hex color")
+    return v
+
+
 # ==================== ERROR MODELS ====================
 
 
@@ -49,16 +62,7 @@ class BrandingSettings(BaseModel):
     @field_validator('primary_color')
     @classmethod
     def validate_hex_color(cls, v):
-        """Validate hex color format"""
-        if v is None:
-            return v
-        if not v.startswith('#') or len(v) not in [4, 7]:
-            raise ValueError("Primary color must be a valid hex color (e.g., #FFF or #FF5733)")
-        try:
-            int(v[1:], 16)
-        except ValueError:
-            raise ValueError("Primary color must be a valid hex color")
-        return v
+        return _validate_hex_color(v)
 
 
 class BrandingUpdateRequest(BaseModel):
@@ -72,16 +76,7 @@ class BrandingUpdateRequest(BaseModel):
     @field_validator('primary_color')
     @classmethod
     def validate_hex_color(cls, v):
-        """Validate hex color format"""
-        if v is None:
-            return v
-        if not v.startswith('#') or len(v) not in [4, 7]:
-            raise ValueError("Primary color must be a valid hex color (e.g., #FFF or #FF5733)")
-        try:
-            int(v[1:], 16)
-        except ValueError:
-            raise ValueError("Primary color must be a valid hex color")
-        return v
+        return _validate_hex_color(v)
 
 
 # ==================== FILE UPLOAD MODELS ====================
