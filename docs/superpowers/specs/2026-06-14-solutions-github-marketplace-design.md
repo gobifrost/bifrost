@@ -87,7 +87,18 @@ Add `--org <id-or-slug>` to `deploy_cmd`. When resolving-or-creating the install
 
 Git-connected installs build apps from source on deploy via the existing `_compile_app_dists`. Committing `dist/` stays an **optional fast-path**, not a requirement. The deliverable here is **verification in the drive**: a *source-only* CSP repo (no committed `dist/`) installs cleanly from a repo link, building apps server-side. If the drive surfaces a real gap (e.g. build needs a dep the platform lacks, or the fast-path/source-path branch is mis-wired for the repo source), fix it; otherwise this item is "proven + documented."
 
-### 8. The drive + findings doc
+### 8. Update-available signal (scheduled check → badge/event → one-click update)
+
+For a git-connected install, updates arrive via pull — but the user must *learn an update exists*. This fits three existing patterns: a periodic scheduler job (cf. `oauth_token_refresh.py`), the PEP-440 version compare already in `deploy.py` (`_is_downgrade` / version parse), and a builtin event (cf. `emit_integration_refresh_failed`).
+
+**Version source — descriptor `version:`, not git tags.** The check reads the `version:` field from `<repo_subpath>/bifrost.solution.yaml` at the configured `ref`'s HEAD (a shallow fetch / single-file read — no full clone). This is the single source of truth and works **identically for single-repo and omni-repo subfolders**: a repo-wide git tag cannot version N solutions in subfolders, so we deliberately do **not** depend on releases/tags. Authors just bump `version:` — no release ceremony. Git tags remain *supported for pinning* via the install's `ref`, but are not required for detection.
+
+- **Scheduler job** `solution_update_check` (engine): for each git-connected install, fetch the descriptor version at the ref's HEAD, compare PEP-440 to the installed `version`, and persist `Solution.update_available_version: str | None` (cleared when up to date).
+- **Surface:** the stored `update_available_version` renders an "Update Available" badge on the `/solutions` catalog card + Details view, wherever cheap.
+- **Event:** emit a builtin `solution.update_available` when an install **newly** flips to having an update — subscribable in the event system (wire a workflow/notification to it).
+- **Apply:** a one-click **"Update now"** (with confirm) in Details / on the badge triggers the existing git pull → full-replace deploy. No new apply semantics. Auto-apply is deferred (an author who really wants it can call the pull API from a workflow subscribed to the event).
+
+### 9. The drive + findings doc
 
 Build a local **omni-repo fixture** with `microsoft-csp/` as a folder: a fully-kitted solution with **two integrations** (declared connection refs → template shells → Setup wizard), **multiple shared modules**, a README + in-depth setup, and **no committed dist** (forces the server-side build). Source material: the v1 `apps/microsoft-csp` in `../bifrost-workspace` (migrate/adapt) and the shape of the existing `solutions/rtm-portal`. All names/secrets generic — nothing client-specific lands in the public repo.
 
@@ -96,8 +107,9 @@ Drive end-to-end on the debug stack, documenting every friction point in `docs/p
 1. Install-from-repo via deep link → preview confirmation → server-side source build → install.
 2. Setup wizard satisfies the two connection refs.
 3. Reinstall / upgrade (same slug, newer version) → upgrade routing via the preview diff.
-4. Connect-later: a CLI-deployed install → Connect repository → subsequent pull.
-5. DR: full backup export (encrypted secrets + table data) → install into a clean instance → everything materializes. Re-verify the export/import arc holds in the DR framing; map the CLI/API-driven DR runbook.
+4. Update signal: bump the descriptor `version:` in the fixture repo → scheduled check flips `update_available_version` → badge + `solution.update_available` event → one-click "Update now" → pull + full-replace.
+5. Connect-later: a CLI-deployed install → Connect repository → subsequent pull.
+6. DR: full backup export (encrypted secrets + table data) → install into a clean instance → everything materializes. Re-verify the export/import arc holds in the DR framing; map the CLI/API-driven DR runbook.
 
 Findings the build doesn't close (e.g. additive-update mode, update-available signal) are recorded as recommendations, not built.
 
@@ -105,12 +117,14 @@ Findings the build doesn't close (e.g. additive-update mode, update-available si
 
 ## Scope boundary (YAGNI)
 
-**In:** `repo_subpath` (column + threading + descriptor + create); install-from-repo preview (refactor `preview_zip` → `preview_workspace` + clone front-end); New-install UI = From-repo + From-zip, empty-shell create dropped; install-from-link deep link + static-catalog convention; Details view with Connect/Reconnect/Disconnect; `deploy --org`; server-side-build verification for source-only repos; the CSP omni-repo drive + findings doc.
+**In:** `repo_subpath` (column + threading + descriptor + create); install-from-repo preview (refactor `preview_zip` → `preview_workspace` + clone front-end); New-install UI = From-repo + From-zip, empty-shell create dropped; install-from-link deep link + static-catalog convention; Details view with Connect/Reconnect/Disconnect; `deploy --org`; server-side-build verification for source-only repos; the update-available signal (scheduled descriptor-version check + badge + `solution.update_available` event + one-click Update now); the CSP omni-repo drive + findings doc.
 
 **Out (this phase — recorded as findings, not built):**
 - Platform discovery API / registry DB (catalog stays static).
-- Webhook / poll "a new version is available" signal (sync stays pull-triggered; a cheap "check for updates" affordance only if it falls out for free).
+- Webhook-driven (push) update detection — the check is a scheduled poll of the descriptor version.
+- Auto-apply of updates (Update now is one-click-with-confirm; auto-apply via a workflow on the event is the escape hatch).
 - Additive non-replace "Update" mode (deploy stays full-replace).
+- A separate manual "Check for updates" button (the scheduled check + the persisted badge cover it).
 
 ---
 
@@ -120,17 +134,17 @@ Backbone first, drive early, polish last — so the drive catches gaps before th
 
 1. **Backbone:** `repo_subpath` (1) + `preview_workspace` refactor and `preview-repo` endpoint (2). Everything hangs off these.
 2. **CLI:** `deploy --org` (6) — small, independent.
-3. **Drive prep + first drive:** build the CSP omni-repo fixture and drive install-from-repo + the server-side build (7, 8 steps 1-2). **This is the risk gate** — a real 2-integration source-only solution is what proves the backbone and the server-side build actually hold. Fix what it surfaces before building UI polish.
-4. **UI:** New-install reshape (3), deep link (4), Details/Connect-Disconnect (5).
-5. **Remaining drive:** upgrade, connect-later, DR (8 steps 3-5) → findings doc.
+3. **Drive prep + first drive:** build the CSP omni-repo fixture and drive install-from-repo + the server-side build (7, 9 steps 1-2). **This is the risk gate** — a real 2-integration source-only solution is what proves the backbone and the server-side build actually hold. Fix what it surfaces before building UI polish.
+4. **UI + signal:** New-install reshape (3), deep link (4), Details/Connect-Disconnect (5), update-available check + badge + event + Update now (8).
+5. **Remaining drive:** upgrade, update-signal, connect-later, DR (9 steps 3-6) → findings doc.
 
 ## Testing
 
-- Unit: `repo_subpath` descriptor round-trip; `preview_workspace` parity with `preview_zip`; `deploy --org` scope resolution; connect/disconnect state transitions on `update_solution`.
-- E2E: install-from-repo round-trip (a local fixture repo → preview → install → entities present); git-connected deploy-refused invariant preserved with a subpath; connect-later flips the writer.
-- Vitest: New-install source picker; Details connect/disconnect actions; the read-only confirmation card.
-- Drive (manual, on the debug stack): the 5-step CSP arc above — the real proof.
+- Unit: `repo_subpath` descriptor round-trip; `preview_workspace` parity with `preview_zip`; `deploy --org` scope resolution; connect/disconnect state transitions on `update_solution`; the update-check version compare (descriptor newer / equal / older / unparseable → correct `update_available_version` + event-flip-once).
+- E2E: install-from-repo round-trip (a local fixture repo → preview → install → entities present); git-connected deploy-refused invariant preserved with a subpath; connect-later flips the writer; update check against a fixture whose descriptor version was bumped → badge + event.
+- Vitest: New-install source picker; Details connect/disconnect actions; the read-only confirmation card; the Update Available badge + Update now action.
+- Drive (manual, on the debug stack): the 6-step CSP arc above — the real proof.
 
 ## Naming (used identically across the plan)
 
-`repo_subpath` (column / descriptor / create field); `preview_workspace(dir)` (the shared plan core) vs `preview_zip(data)` (front-end); `POST /api/solutions/install/preview-repo`; `SolutionInstallPreview` (unchanged response); "From a repository" / "From a zip" (the two New-install sources); "Details" (the renamed Edit view); "Connect repository" / "Reconnect" / "Disconnect" (the lifecycle actions); `deploy --org`.
+`repo_subpath` (column / descriptor / create field); `ref` (install's pin — branch/tag, default = repo default branch HEAD); `preview_workspace(dir)` (the shared plan core) vs `preview_zip(data)` (front-end); `POST /api/solutions/install/preview-repo`; `SolutionInstallPreview` (unchanged response); "From a repository" / "From a zip" (the two New-install sources); "Details" (the renamed Edit view); "Connect repository" / "Reconnect" / "Disconnect" (the lifecycle actions); `deploy --org`; `solution_update_check` (scheduler job); `Solution.update_available_version` (stored signal); `solution.update_available` (builtin event); "Update now" (one-click pull + full-replace).
