@@ -70,19 +70,11 @@ from shared.role_cache import invalidate_role as invalidate_user_role_cache_for_
 from shared.role_cache import invalidate_user as invalidate_user_role_cache
 
 # Import cache invalidation
-try:
-    from src.core.cache import (
-        invalidate_role,
-        invalidate_role_users,
-        invalidate_role_forms,
-    )
-
-    CACHE_INVALIDATION_AVAILABLE = True
-except ImportError:
-    CACHE_INVALIDATION_AVAILABLE = False
-    invalidate_role = None  # type: ignore
-    invalidate_role_users = None  # type: ignore
-    invalidate_role_forms = None  # type: ignore
+from src.core.cache import (
+    invalidate_role,
+    invalidate_role_users,
+    invalidate_role_forms,
+)
 
 # Agent cache invalidation (optional, may not exist yet)
 try:
@@ -177,8 +169,7 @@ async def create_role(
     logger.info(f"Created role {role.id}: {log_safe(role.name)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role:
-        await invalidate_role(None, str(role.id))
+    await invalidate_role(None, str(role.id))
 
     await emit_audit(
         db,
@@ -251,8 +242,7 @@ async def update_role(
     logger.info(f"Updated role {log_safe(role_id)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role:
-        await invalidate_role(None, str(role_id))
+    await invalidate_role(None, str(role_id))
 
     # Per-user role cache: a rename changes role_names for every user holding
     # this role, so sweep all entries containing role_id.
@@ -320,8 +310,7 @@ async def delete_role(
     logger.info(f"Deleted role {log_safe(role_id)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role:
-        await invalidate_role(None, str(role_id))
+    await invalidate_role(None, str(role_id))
 
     # Per-user role cache: deleting a role means every user holding it loses
     # the membership; clear all entries containing role_id.
@@ -414,8 +403,7 @@ async def assign_users_to_role(
     logger.info(f"Assigned users to role {log_safe(role_id)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role_users:
-        await invalidate_role_users(None, str(role_id))
+    await invalidate_role_users(None, str(role_id))
 
     # Per-user role cache: drop entries for each newly-assigned user so the
     # next read sees the new role membership.
@@ -471,8 +459,7 @@ async def remove_user_from_role(
     logger.info(f"Removed user {log_safe(user_id)} from role {log_safe(role_id)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role_users:
-        await invalidate_role_users(None, str(role_id))
+    await invalidate_role_users(None, str(role_id))
 
     # Per-user role cache: drop this user's entry so the next read sees the
     # post-unassignment membership.
@@ -563,8 +550,7 @@ async def assign_forms_to_role(
     logger.info(f"Assigned forms to role {log_safe(role_id)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role_forms:
-        await invalidate_role_forms(None, str(role_id))
+    await invalidate_role_forms(None, str(role_id))
 
 
 @router.delete(
@@ -597,8 +583,7 @@ async def remove_form_from_role(
     logger.info(f"Removed form {log_safe(form_id)} from role {log_safe(role_id)}")
 
     # Invalidate cache (roles are global, no org_id needed)
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role_forms:
-        await invalidate_role_forms(None, str(role_id))
+    await invalidate_role_forms(None, str(role_id))
 
 
 # =============================================================================
@@ -756,8 +741,7 @@ async def bulk_unassign_users(
     await db.flush()
     logger.info(f"Bulk unassigned {len(uuids)} users from role {log_safe(role_id)}")
 
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role_users:
-        await invalidate_role_users(None, str(role_id))
+    await invalidate_role_users(None, str(role_id))
     for uid_u in uuids:
         await invalidate_user_role_cache(uid_u)
 
@@ -794,8 +778,7 @@ async def bulk_unassign_forms(
     await db.flush()
     logger.info(f"Bulk unassigned {len(uuids)} forms from role {log_safe(role_id)}")
 
-    if CACHE_INVALIDATION_AVAILABLE and invalidate_role_forms:
-        await invalidate_role_forms(None, str(role_id))
+    await invalidate_role_forms(None, str(role_id))
 
     await emit_audit(
         db,

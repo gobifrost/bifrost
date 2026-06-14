@@ -22,14 +22,7 @@ from src.core.auth import Context, CurrentSuperuser
 from src.core.org_filter import resolve_org_filter
 from src.repositories.config import ConfigRepository
 
-# Import cache functions
-try:
-    from src.core.cache import invalidate_config, upsert_config
-    CACHE_AVAILABLE = True
-except ImportError:
-    CACHE_AVAILABLE = False
-    invalidate_config = None  # type: ignore
-    upsert_config = None  # type: ignore
+from src.core.cache import invalidate_config, upsert_config
 
 logger = logging.getLogger(__name__)
 
@@ -109,12 +102,11 @@ async def set_config(
         result = await repo.set_config(request, updated_by=user.email)
 
         # Upsert to cache after successful write (dual-write pattern)
-        if CACHE_AVAILABLE and upsert_config:
-            org_id_str = str(target_org_id) if target_org_id else None
-            config_type_str = request.type.value if request.type else "string"
-            # Note: For secrets, stored_value is already encrypted by the repository
-            stored_value = result.value
-            await upsert_config(org_id_str, request.key, stored_value, config_type_str)
+        org_id_str = str(target_org_id) if target_org_id else None
+        config_type_str = request.type.value if request.type else "string"
+        # Note: For secrets, stored_value is already encrypted by the repository
+        stored_value = result.value
+        await upsert_config(org_id_str, request.key, stored_value, config_type_str)
 
         return result
     except Exception as e:
@@ -157,34 +149,33 @@ async def update_config(
 
     result, old_org_id, old_key = update
 
-    if CACHE_AVAILABLE and upsert_config and invalidate_config:
-        new_org_id_str = str(result.org_id) if result.org_id else None
-        old_org_id_str = str(old_org_id) if old_org_id else None
+    new_org_id_str = str(result.org_id) if result.org_id else None
+    old_org_id_str = str(old_org_id) if old_org_id else None
 
-        # If the row's identity changed (rename or org-move), the old
-        # cache entry would otherwise survive until TTL with stale —
-        # possibly secret — data. Drop the old (old_org, old_key)
-        # entry before writing the new one. ``invalidate_config`` also
-        # bumps CONFIG_GLOBAL_VERSION_KEY when ``old_org`` was global,
-        # so org-merged caches re-fetch.
-        if old_org_id_str != new_org_id_str or old_key != result.key:
-            await invalidate_config(old_org_id_str, old_key)
+    # If the row's identity changed (rename or org-move), the old
+    # cache entry would otherwise survive until TTL with stale —
+    # possibly secret — data. Drop the old (old_org, old_key)
+    # entry before writing the new one. ``invalidate_config`` also
+    # bumps CONFIG_GLOBAL_VERSION_KEY when ``old_org`` was global,
+    # so org-merged caches re-fetch.
+    if old_org_id_str != new_org_id_str or old_key != result.key:
+        await invalidate_config(old_org_id_str, old_key)
 
-        # If this update crosses the global↔org boundary, bump the
-        # global version so org caches that merged the old global
-        # value re-fetch even though the new write is org-scoped.
-        if (old_org_id is None) != (result.org_id is None):
-            from src.core.cache import get_shared_redis
-            from src.core.cache.keys import CONFIG_GLOBAL_VERSION_KEY
-            try:
-                r = await get_shared_redis()
-                await r.incr(CONFIG_GLOBAL_VERSION_KEY)
-            except Exception as e:
-                logger.warning(f"Failed to bump global config version on transition: {e}")
+    # If this update crosses the global↔org boundary, bump the
+    # global version so org caches that merged the old global
+    # value re-fetch even though the new write is org-scoped.
+    if (old_org_id is None) != (result.org_id is None):
+        from src.core.cache import get_shared_redis
+        from src.core.cache.keys import CONFIG_GLOBAL_VERSION_KEY
+        try:
+            r = await get_shared_redis()
+            await r.incr(CONFIG_GLOBAL_VERSION_KEY)
+        except Exception as e:
+            logger.warning(f"Failed to bump global config version on transition: {e}")
 
-        config_type_str = result.type.value if result.type else "string"
-        stored_value = result.value
-        await upsert_config(new_org_id_str, result.key, stored_value, config_type_str)
+    config_type_str = result.type.value if result.type else "string"
+    stored_value = result.value
+    await upsert_config(new_org_id_str, result.key, stored_value, config_type_str)
 
     return result
 
@@ -212,6 +203,5 @@ async def delete_config(
         )
 
     # Invalidate cache after successful delete
-    if CACHE_AVAILABLE and invalidate_config:
-        org_id_str = str(deleted.organization_id) if deleted.organization_id else None
-        await invalidate_config(org_id_str, deleted.key)
+    org_id_str = str(deleted.organization_id) if deleted.organization_id else None
+    await invalidate_config(org_id_str, deleted.key)

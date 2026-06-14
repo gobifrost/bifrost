@@ -67,10 +67,6 @@ except ImportError:
     set_write_buffer = None  # type: ignore
     clear_write_buffer = None  # type: ignore
 
-# Data provider cache is now available via import at top
-DATA_PROVIDER_CACHE_AVAILABLE = True
-
-
 @dataclass
 class ExecutionRequest:
     """Request to execute code or a function"""
@@ -327,7 +323,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
     try:
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             # Check Redis cache for data providers
-            if is_data_provider and not request.no_cache and DATA_PROVIDER_CACHE_AVAILABLE and get_cached_data_provider:
+            if is_data_provider and not request.no_cache:
                 org_id = request.organization.id if request.organization else None
                 cached_result = await get_cached_data_provider(
                     org_id,
@@ -360,12 +356,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             )
 
             # Cache result to Redis if data provider
-            if (
-                is_data_provider
-                and request.cache_ttl_seconds > 0
-                and DATA_PROVIDER_CACHE_AVAILABLE
-                and cache_data_provider_result
-            ):
+            if is_data_provider and request.cache_ttl_seconds > 0:
                 org_id = request.organization.id if request.organization else None
                 expires_at = await cache_data_provider_result(
                     org_id,
