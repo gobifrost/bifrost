@@ -1492,28 +1492,46 @@ def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str |
     notes: list[str] = []
     (app_dir / "src" / "pages").mkdir(parents=True, exist_ok=True)
     (app_dir / "src" / "components").mkdir(parents=True, exist_ok=True)
+    # Port ALL source files under pages/ + components/ — not just .tsx. A page or
+    # component routinely imports a sibling .ts helper (e.g. metricDefinitions.ts),
+    # a .css, or a .tsx that's a util; dropping those silently breaks the build.
     ported = 0
+    _SRC_EXT = {".tsx", ".ts", ".jsx", ".js", ".css", ".json"}
     for sub in ("pages", "components"):
         srcsub = src_dir / sub
         if srcsub.is_dir():
-            for f in srcsub.rglob("*.tsx"):
-                if ".tmp." in f.name:
+            for f in srcsub.rglob("*"):
+                if not f.is_file() or ".tmp." in f.name or f.suffix not in _SRC_EXT:
                     continue
                 rel = f.relative_to(srcsub)
                 dest = app_dir / "src" / sub / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 _shutil.copy(f, dest)
                 ported += 1
-    # Flag non-standard top-level files (e.g. app.yaml, _layout.tsx, extra dirs).
+    # The v1 _layout.tsx defines the app's shared nav chrome (NavLink sections +
+    # <Outlet/>). It's NOT auto-wired — port it next to the pages so it's visible,
+    # and the checklist tells the human to turn it into the v2 RootLayout.
+    layout_src = src_dir / "_layout.tsx"
+    has_layout = layout_src.is_file()
+    if has_layout:
+        _shutil.copy(layout_src, app_dir / "src" / "_layout.tsx")
+        ported += 1
+    # Flag non-standard top-level files (e.g. app.yaml, extra dirs) NOT ported.
     extras = [
         p.name for p in src_dir.iterdir()
-        if p.name not in ("pages", "components") and not p.name.startswith(".")
+        if p.name not in ("pages", "components", "_layout.tsx")
+        and not p.name.startswith(".")
     ]
     if extras:
-        notes.append(f"v1 app had non-standard entries not auto-ported: {extras} — review by hand.")
+        notes.append(f"v1 app had non-standard top-level entries not auto-ported: {extras} — review by hand.")
 
     # 3. Deterministic import rewrite (--v2) — compute the shadcn-add list + split.
-    from bifrost.migrate_v2 import compute_shadcn_adds, is_ui_source, rewrite_v2_imports
+    from bifrost.migrate_v2 import (
+        compute_shadcn_adds,
+        is_ui_source,
+        rewrite_v2_imports,
+        scan_third_party_deps,
+    )
     from bifrost.migrate_imports import load_lucide_icon_names
 
     lucide = frozenset(load_lucide_icon_names())
@@ -1526,6 +1544,14 @@ def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str |
         new = rewrite_v2_imports(srctext, lucide)
         if new != srctext:
             p.write_text(new, encoding="utf-8")
+    # Third-party deps the v1 app imports DIRECTLY (not from bifrost) — the rewrite
+    # leaves these alone, so they must be npm-installed or the build breaks on e.g.
+    # recharts. Scan the post-rewrite sources (so our own @/ + sonner additions
+    # don't count) across ALL ported source, not just tsx.
+    all_src = [p.read_text() for p in (app_dir / "src").rglob("*")
+               if p.is_file() and p.suffix in {".tsx", ".ts", ".jsx", ".js"}
+               and not is_ui_source(p)]
+    third_party = scan_third_party_deps(all_src)
     # Collect TODO markers (unresolved v1 imports) + no-v2-equivalent hooks.
     unresolved = [p.name for p, _ in sources.items() if "TODO(migrate)" in p.read_text()]
     no_v2_hook = sorted({
@@ -1533,10 +1559,11 @@ def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str |
         for h in ("useUser", "useAppState", "RequireRole") if h in txt
     })
 
-    # 4. Install shadcn components (real radix-rhea source) + recipe deps.
+    # 4. Install shadcn components (real radix-rhea source) + recipe + third-party.
+    click.echo("Installing dependencies …")
+    _sp.run(["npm", "install"], cwd=app_dir, check=False, capture_output=True)
     if adds:
-        click.echo(f"Installing shadcn components: {' '.join(adds)}")
-        _sp.run(["npm", "install"], cwd=app_dir, check=False, capture_output=True)
+        click.echo(f"shadcn components: {' '.join(adds)}")
         _sp.run(["npx", "shadcn@latest", "add", *adds, "--yes"],
                 cwd=app_dir, check=False, capture_output=True)
         _sp.run(["npm", "install", "radix-ui", "sonner"],
@@ -1544,23 +1571,39 @@ def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str |
         # Vendor the combobox recipe wrapper if the app uses it.
         if "combobox" in adds:
             (app_dir / "src" / "components" / "ui" / "combobox.tsx").write_text(_COMBOBOX_WRAPPER)
+    if third_party:
+        click.echo(f"third-party deps (direct v1 imports): {' '.join(third_party)}")
+        _sp.run(["npm", "install", *third_party], cwd=app_dir, check=False, capture_output=True)
 
     # 5. STOP. Print the judgment checklist — never silently build/wire/deploy.
     click.echo("")
-    click.echo(f"✓ Ported {ported} file(s) + installed {len(adds)} shadcn component(s).")
+    click.echo(f"✓ Ported {ported} file(s), {len(adds)} shadcn component(s), "
+               f"{len(third_party)} third-party dep(s).")
     click.echo("")
     click.echo("NEXT (human judgment — migrate-app stops here ON PURPOSE):")
-    click.echo(f"  1. Wire src/App.tsx: mount the page(s) + <BifrostHeader title=\"{title}\"/> + "
-               "<Toaster/>. Multi-page v1 apps need their routes re-created here.")
+    # Route wiring — the load-bearing step. v1 used FILE-BASED routing
+    # (pages/<path>.tsx → /<path>, [id].tsx → :id, _layout.tsx = shared chrome).
+    # v2 uses plain react-router, so the routes must be authored explicitly.
+    click.echo("  1. Wire src/App.tsx routes from the ported pages. v1 used FILE-BASED routing;")
+    click.echo("     recreate it with react-router: pages/foo.tsx → <Route path=\"foo\">, ")
+    click.echo("     pages/a/b.tsx → path=\"a/b\", pages/x/[id].tsx → path=\"x/:id\" (useParams()).")
+    click.echo(f"     Add <BifrostHeader title=\"{title}\"/> + <Toaster/> at the top.")
+    if has_layout:
+        click.echo("     src/_layout.tsx is the v1 shared nav chrome — make it the RootLayout: a")
+        click.echo("     parent <Route element={<RootLayout/>}> whose RootLayout renders the nav +")
+        click.echo("     <Outlet/>; nest the section pages under it. (It already uses <Outlet/>.)")
     if unresolved:
         click.echo(f"  2. Resolve TODO(migrate) imports in: {unresolved} (no auto-mapping found).")
     if no_v2_hook:
-        click.echo(f"  3. Port v1-only hooks with NO v2 SDK equivalent: {no_v2_hook}.")
+        click.echo(f"  3. Port v1-only hooks (NO v2 SDK equivalent): {no_v2_hook}. There is no")
+        click.echo("     useUser in v2 — use `useBifrostContext()` from \"bifrost\" for token/org/")
+        click.echo("     logout/theme; decode the JWT in ctx.token if you need the user's email.")
     click.echo("  4. Workflow refs: rewrite any UUID refs to portable path::fn (and ensure "
                "those workflows exist in the target env).")
     for n in notes:
         click.echo(f"  • {n}")
-    click.echo("  5. `npm run build` (must pass), then `bifrost solution start` to review in-browser.")
+    click.echo("  5. `npm run build` (must pass — a build error names the missing import), then")
+    click.echo("     `bifrost solution start` AND screenshot at least 2 routes (render ≠ build).")
     click.echo("  6. Cutover: `bifrost solution swap-slugs <old> <new>`, then `bifrost solution "
                "capture` LAST (capture is terminal — deploy after it wipes captures).")
     click.echo(f"\nApp at {app_dir}")

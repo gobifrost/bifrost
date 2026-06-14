@@ -29,6 +29,16 @@ def _v1_app(tmp: pathlib.Path) -> pathlib.Path:
         'import { Dialog, DialogContent, useUser } from "bifrost";\n'
         'export const Dlg = () => null;\n'
     )
+    # A non-.tsx helper a page imports — must be ported (regression: was dropped).
+    (app / "components" / "metricDefs.ts").write_text("export const M = 1;\n")
+    # A v1 _layout.tsx (shared nav chrome) — ported + flagged for RootLayout wiring.
+    (app / "_layout.tsx").write_text(
+        'import { Outlet } from "react-router-dom";\nexport default () => <Outlet/>;\n'
+    )
+    # A page importing a direct third-party dep (not from bifrost) — must install.
+    (app / "pages" / "chart.tsx").write_text(
+        'import { LineChart } from "recharts";\nexport default () => null;\n'
+    )
     (app / "app.yaml").write_text("name: v1\n")  # non-standard entry → reported
     return app
 
@@ -69,13 +79,22 @@ def test_migrate_app_ports_rewrites_and_prints_checklist(tmp_path):
     # hooks stay in bifrost
     assert 'useWorkflowQuery } from "bifrost"' in idx
 
+    # Non-.tsx helper ported (regression: was silently dropped → build break).
+    assert (app / "src" / "components" / "metricDefs.ts").is_file()
+    # v1 _layout.tsx ported for RootLayout wiring.
+    assert (app / "src" / "_layout.tsx").is_file()
+
     # Checklist surfaced the judgment items, not hidden:
     out = result.output
     assert "migrate-app stops here" in out.lower() or "stops here" in out.lower()
-    assert "useUser" in out                 # no-v2-equivalent hook flagged
+    assert "useUser" in out and "useBifrostContext" in out  # hook + its replacement
+    assert ":id" in out                     # dynamic-route mapping guidance
+    assert "RootLayout" in out              # _layout → RootLayout recipe
     assert "swap-slugs" in out              # cutover step
     assert "capture is terminal" in out     # the ordering trap
     assert "app.yaml" in out or "non-standard" in out  # unexpected entry reported
+    # Third-party dep detected + installed (recharts), not silently dropped.
+    assert "recharts" in out
 
 
 def test_migrate_app_never_touches_components_ui(tmp_path):

@@ -13,6 +13,7 @@ from bifrost.migrate_v2 import (
     compute_shadcn_adds,
     is_ui_source,
     rewrite_v2_imports,
+    scan_third_party_deps,
     _unmapped_ui_symbols,
 )
 
@@ -107,3 +108,21 @@ def test_is_ui_source_protects_shadcn_files() -> None:
 def test_no_op_when_no_bifrost_import() -> None:
     src = 'import { useState } from "react";\nexport const x = 1;\n'
     assert rewrite_v2_imports(src, LUCIDE) == src
+
+
+def test_scan_third_party_deps_finds_direct_non_bifrost_imports() -> None:
+    srcs = [
+        'import { LineChart } from "recharts";\nimport { format } from "date-fns";',
+        'import { Button } from "bifrost";\nimport X from "./local";\n'
+        'import { cn } from "@/lib/utils";\nimport React from "react";',
+        'import { z } from "@scope/pkg";',
+    ]
+    deps = scan_third_party_deps(srcs)
+    # recharts + date-fns + the scoped pkg; NOT bifrost/react/relative/@/.
+    assert deps == ["@scope/pkg", "date-fns", "recharts"]
+
+
+def test_scan_third_party_excludes_scaffold_provided_packages() -> None:
+    srcs = ['import { toast } from "sonner";\nimport { clsx } from "clsx";\n'
+            'import { Slot } from "radix-ui";\nimport { Icon } from "lucide-react";']
+    assert scan_third_party_deps(srcs) == []  # all scaffold-provided

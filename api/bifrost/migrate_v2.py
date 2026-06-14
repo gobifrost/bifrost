@@ -266,6 +266,44 @@ def is_ui_source(path: pathlib.Path) -> bool:
     return "components/ui" in path.as_posix()
 
 
+# Bare module specifiers already provided by the scaffold / SDK / shadcn — NOT
+# extra npm installs. Everything else a v1 page imports directly (e.g. recharts,
+# date-fns) is a third-party dep migrate-app must `npm install` or the build
+# breaks (the v2 rewrite only handles `from "bifrost"`).
+_PROVIDED_PACKAGES = frozenset({
+    "bifrost", "react", "react-dom", "react-router-dom", "lucide-react",
+    "sonner", "clsx", "tailwind-merge", "class-variance-authority", "radix-ui",
+})
+_BARE_IMPORT_RE = re.compile(
+    r'(?:import[^;]*?from|export[^;]*?from|import)\s*["\']([^."\'/][^"\']*)["\']'
+)
+
+
+def _package_root(spec: str) -> str:
+    """Top-level npm package name from an import specifier (handles @scope/pkg)."""
+    parts = spec.split("/")
+    return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
+
+
+def scan_third_party_deps(sources: list[str]) -> list[str]:
+    """Third-party npm packages a set of source files import DIRECTLY (not from
+    ``bifrost``, not relative, not `@/`, not already provided by the scaffold).
+
+    These are silently dropped by the v2 import rewrite (which only touches
+    ``bifrost`` imports), so migrate-app must install them or the build fails on
+    e.g. ``recharts``. Subpath imports (``radix-ui/react-foo``) collapse to root.
+    """
+    found: set[str] = set()
+    for src in sources:
+        for spec in _BARE_IMPORT_RE.findall(src):
+            if spec.startswith("@/"):
+                continue  # the src alias, not a package
+            root = _package_root(spec)
+            if root and root not in _PROVIDED_PACKAGES:
+                found.add(root)
+    return sorted(found)
+
+
 # Completeness guard (used by the drift test): every platform UI symbol must map
 # to a component file, so no shadcn import is ever misrouted to lucide.
 def _unmapped_ui_symbols() -> set[str]:
