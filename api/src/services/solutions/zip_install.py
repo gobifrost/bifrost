@@ -29,8 +29,11 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from src.services.solutions.secrets_blob import SolutionContent
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +62,37 @@ class GitConnectedInstallError(Exception):
     A git-connected install has exactly one writer (auto-pull from its repo); a
     zip install would full-replace it out of band and violate that invariant.
     Mapped to 409 by the endpoint, mirroring ``deploy_solution``'s refusal."""
+
+
+class BadExportPassword(ValueError):
+    """Wrong or missing password for a full-backup zip that carries secrets.enc.
+
+    Mapped to 422 by the endpoint: the caller must supply the correct password
+    before the import can proceed. Nothing is written on this path."""
+
+
+class ContentCollision(ValueError):
+    """Import would overwrite existing config values or table data.
+
+    Raised when a full-backup zip contains values for keys that already have
+    a Config row in the target org and the caller has not set replace_secrets
+    (for config values) or replace_data (for table data).  Named so the caller
+    can report exactly which keys collide.
+    """
+
+    def __init__(self, keys: list[str], tables: list[str] | None = None) -> None:
+        self.keys = keys
+        self.tables = tables or []
+        parts: list[str] = []
+        if keys:
+            parts.append("config values: " + ", ".join(sorted(keys)))
+        if self.tables:
+            parts.append("table data: " + ", ".join(sorted(self.tables)))
+        super().__init__(
+            "Import would overwrite existing "
+            + "; ".join(parts)
+            + ". Re-run with replace to overwrite."
+        )
 
 
 @dataclass
@@ -295,6 +329,9 @@ async def install_zip(
     config_values: dict[str, Any],
     deployer_email: str,
     force: bool = False,
+    password: str | None = None,
+    replace_secrets: bool = False,
+    replace_data: bool = False,
 ) -> Solution:
     """Atomically install a Solution zip: deploy the bundle, then apply config
     VALUES — all under the per-install write lock.
@@ -303,6 +340,15 @@ async def install_zip(
     finalize_s3 (S3 only after the DB is durable; still inside the lock). The
     provided config values are written AFTER finalize but BEFORE the lock is
     released, so the install never exists without its just-entered secrets.
+
+    Full-backup zips carry a ``.bifrost/secrets.enc`` blob.  Decryption and
+    collision checking happen INSIDE the write lock, BEFORE deploy, so a bad
+    password or collision refuses the import atomically — nothing lands.
+
+    Raises:
+        BadExportPassword: wrong/missing password for a secrets blob.
+        ContentCollision: blob values collide with existing Config rows and the
+            replace flag is not set.  Caller maps this to 409.
     Re-raises the deploy exceptions for the endpoint to map.
     """
     from src.services.solutions.write_lock import solution_write_lock
@@ -335,6 +381,36 @@ async def install_zip(
         bundle = _build_bundle(solution, preview, workspace)
 
         async with solution_write_lock(solution.id):
+            # Decrypt + collision-check BEFORE deploy so a bad password or
+            # collision refuses the entire import atomically — nothing lands.
+            content = None
+            secrets_path = workspace / ".bifrost" / "secrets.enc"
+            if secrets_path.exists():
+                if not password:
+                    raise BadExportPassword(
+                        "this bundle carries secrets — a password is required"
+                    )
+                from cryptography.fernet import InvalidToken
+
+                from src.services.solutions.secrets_blob import decode_secrets_blob
+
+                try:
+                    content = decode_secrets_blob(
+                        secrets_path.read_text(), password=password
+                    )
+                except InvalidToken as exc:
+                    raise BadExportPassword(
+                        "wrong password for this bundle"
+                    ) from exc
+
+                await _assert_no_unforced_collisions(
+                    db,
+                    solution=solution,
+                    content=content,
+                    replace_secrets=replace_secrets,
+                    replace_data=replace_data,
+                )
+
             deployer = SolutionDeployer(db)
             result = await deployer.deploy(bundle, force=force)
             await db.commit()
@@ -354,6 +430,19 @@ async def install_zip(
                 )
                 await db.commit()
 
+            # Apply the decrypted content from the secrets blob (config values
+            # only — table data apply is Phase 4).
+            if content is not None:
+                await _apply_content(
+                    db,
+                    solution=solution,
+                    content=content,
+                    replace_secrets=replace_secrets,
+                    replace_data=replace_data,
+                    deployer_email=deployer_email,
+                )
+                await db.commit()
+
             # Recompute and persist setup_complete after every install so the
             # column reflects whether all required configs have values — even
             # when no config_values were provided (empty install of a solution
@@ -366,6 +455,88 @@ async def install_zip(
 
     await db.refresh(solution)
     return solution
+
+
+async def _assert_no_unforced_collisions(
+    db: AsyncSession,
+    *,
+    solution: Solution,
+    content: SolutionContent,
+    replace_secrets: bool,
+    replace_data: bool,
+) -> None:
+    """Pure collision check — no writes.
+
+    For config values: a key that ALREADY has a Config row in the solution's
+    org scope is a collision.  If any collide and replace_secrets is False,
+    raise ContentCollision naming all of them so the caller can report them.
+
+    Table data: Phase 4 — threaded through but not implemented here.
+    """
+    from src.models.orm.config import Config
+
+    colliding_keys: list[str] = []
+
+    if content.config_values and not replace_secrets:
+        org_pred = (
+            Config.organization_id == solution.organization_id
+            if solution.organization_id is not None
+            else Config.organization_id.is_(None)
+        )
+        existing_q = (
+            select(Config.key)
+            .where(org_pred)
+            .where(Config.key.in_(list(content.config_values.keys())))
+            # Only consider non-orphaned rows; orphaned rows are reattached,
+            # not counted as collisions.
+            .where(Config.orphaned_at.is_(None))
+        )
+        existing_keys = set((await db.execute(existing_q)).scalars().all())
+        colliding_keys = [k for k in content.config_values if k in existing_keys]
+
+    # Table data collision: Phase 4 — skip for now, replace_data threaded.
+    # TODO(Phase 4): check table_data collisions when replace_data is False.
+
+    if colliding_keys:
+        raise ContentCollision(keys=colliding_keys)
+
+
+async def _apply_content(
+    db: AsyncSession,
+    *,
+    solution: Solution,
+    content: SolutionContent,
+    replace_secrets: bool,
+    replace_data: bool,
+    deployer_email: str,
+) -> None:
+    """Apply decrypted content (config values) from a full-backup zip.
+
+    Config values arrive as DECRYPTED plaintext from the blob; _apply_config_values
+    will re-encrypt secrets at rest when the declaration type is SECRET.
+
+    Collision contract: _assert_no_unforced_collisions already ran and passed.
+    With replace_secrets=True, existing values are overwritten (set_config upserts).
+    With replace_secrets=False, only empty slots are filled — but that check
+    already passed in _assert_no_unforced_collisions, so all keys are safe.
+
+    Table data: Phase 4 — not implemented here.
+    """
+    if content.config_values:
+        # All values in content.config_values are either new (no existing row)
+        # or allowed to overwrite (replace_secrets=True).  _apply_config_values
+        # upserts unconditionally, which is correct for both cases.
+        await _apply_config_values(
+            db,
+            solution=solution,
+            config_values=dict(content.config_values),
+            deployer_email=deployer_email,
+        )
+
+    # Table data: Phase 4 — threaded through, not implemented.
+    if content.table_data and replace_data:
+        # TODO(Phase 4): write table rows when replace_data is True.
+        pass
 
 
 async def _apply_config_values(

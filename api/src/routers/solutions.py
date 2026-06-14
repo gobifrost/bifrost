@@ -1078,6 +1078,9 @@ async def install_solution(
     user: CurrentSuperuser,
     organization_id: Annotated[str | None, FastapiForm()] = None,
     config_values: Annotated[str, FastapiForm()] = "{}",
+    password: Annotated[str | None, FastapiForm()] = None,
+    replace_secrets: Annotated[bool, FastapiForm()] = False,
+    replace_data: Annotated[bool, FastapiForm()] = False,
     force: bool = False,
 ) -> SolutionDTO:
     """Atomically install a Solution from a workspace zip.
@@ -1087,6 +1090,13 @@ async def install_solution(
     per-install write lock, and — in the same locked section after the S3 finalize
     — applies the provided ``config_values`` (a JSON object of key→value). A
     missing required config does NOT block the install (warn-not-block).
+
+    Full-backup zips carry a ``.bifrost/secrets.enc`` blob; ``password`` is
+    required to decrypt it.  A wrong password is refused with 422 before
+    anything is written.  If the blob contains values for keys that already
+    have a Config row in the target org, the import is refused with 409 unless
+    ``replace_secrets=true`` (config values) or ``replace_data=true`` (table
+    data, Phase 4).
 
     A zip whose descriptor ``version`` is OLDER than the installed version is
     refused with 409 (downgrade gate, Task 20) unless ``?force=true``.
@@ -1098,6 +1108,8 @@ async def install_solution(
     )
     from src.services.solutions.write_lock import SolutionWriteLockHeld
     from src.services.solutions.zip_install import (
+        BadExportPassword,
+        ContentCollision,
         GitConnectedInstallError,
         install_zip,
     )
@@ -1134,7 +1146,20 @@ async def install_solution(
             config_values=values,
             deployer_email=user.email,
             force=force,
+            password=password,
+            replace_secrets=replace_secrets,
+            replace_data=replace_data,
         )
+    except BadExportPassword as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except ContentCollision as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except GitConnectedInstallError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SolutionDowngradeBlocked as exc:
