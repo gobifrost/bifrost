@@ -837,3 +837,72 @@ git commit -m "docs(solutions): drive findings — upgrade, update signal, conne
 - **No client specifics in the public repo** — the CSP fixture uses generic names only.
 - **Draft PR #347 stays draft** — do not push/merge/un-draft without explicit say-so.
 - **Thin-wrapper + manifest sync:** if any DTO field should round-trip in portable exports, update `api/bifrost/manifest.py` + `portable.py` scrub rules and `docs/llm.txt` (the connection-state fields here are install-local, likely excluded — confirm against `test_dto_flags`).
+
+---
+
+# STATUS & NEXT STEPS (updated 2026-06-14, end of session)
+
+## ✅ ALL 17 TASKS COMPLETE — built, reviewed, verified
+
+Branch **`solutions/connection-references`** (worktree `solutions-success-criteria`), 26 commits,
+working tree clean, **draft PR #347 NOT pushed/merged** (stays draft until Jack says so). Every task
+went fresh-implementer → spec review → (quality review where warranted); all review findings addressed.
+
+**Shipped (9 components):** `repo_subpath`/`git_ref` columns; `clone_repo_to_dir` + `resolve_repo_subpath`
+(traversal-guarded); `install/preview-repo` + `install/from-repo` (git-connected, single-clone, rollback,
+409-on-existing) reusing the zip preview pipeline (`_preview_to_dto`); New-install **From-repo/From-zip**
+source picker (empty-shell create dropped) + deep link + **Details** view (Connect/Reconnect/Disconnect) +
+**Update Available** badge + **Update now** (`/sync`); `deploy --org`; the update signal
+(`update_check.py` + `solution_update_check` scheduler @6h + `solution.update_available` event +
+`update_available_version` on the DTO, cleared on sync).
+
+**Design decisions (Jack):** descriptor `version:` is the update source of truth (NOT git tags — solves
+omni-repo subfolders); static catalog (no platform registry); server-side source build IS the path
+(committed dist optional — verified live); install-from-repo stays git-connected.
+
+## The drive (Tasks 8 + 16) caught 5 REAL bugs — all fixed + regression-tested
+
+All the same family — connection-schema declarations weren't threaded through every path via the
+deploy-Core convention (see memory [[project_solution_managed_guard_deploy_core]]):
+- **F1** — git-connected deploy dropped declared connection_schemas (`read_workspace_bundle`).
+- **F3** — couldn't DELETE a git-connected install with integrations (read-only guard vs delete-orphan
+  cascade). Fix: `noload(connection_schema)` on the delete query. (Do NOT use `passive_deletes` — it broke
+  deploy stale-removal; that over-reach was itself caught + reverted.)
+- **F4** — export/DR dropped integrations (`_connection_entries` re-derived from unreadable deployed
+  source). Fix: prefer persisted `SolutionConnectionSchema` rows.
+- **F5** — REAL PROD BUG (full-suite-only): deploy's `_upsert_connection_declarations` used ORM
+  add/update/delete that the always-on guard rejects → re-deploy dropping a connection 500'd (confirmed
+  live). Fix: Core insert/update/delete.
+- **F2** — fixture gap (not platform): a workflow needs a `.bifrost/workflows.yaml` manifest entry.
+
+## Verification (Task 17) — green except 3 known pre-existing leave-alones
+
+pyright 0 · ruff clean · tsc 0 · lint clean · **backend unit 4598 passed** · all solution e2e files pass
+(install_from_repo 9, connection_refs 3, delete 6, git_connected 4, export_full 2, patch 3, zip_install
+5+1-leave-alone) · client vitest solutions all pass. Leave-alone failures (NOT ours): SafeHTMLRenderer
+(DOMPurify/jsdom), app_logo (v2-app-gating), export_404 (stale — export now live-rebuilds, returns 200).
+The full `./test.sh e2e` suite couldn't complete in-window due to the worktree's `api-exit(0)` flake +
+slow boot — ran solution e2e files individually instead (authoritative for our changes).
+
+## Open follow-ups (recorded, NOT built — product decisions for Jack)
+
+- Platform discovery API / in-app catalog browse (catalog stays static this arc).
+- Webhook/push update detection (poll-only @6h now).
+- Auto-apply of updates (Update-now is one-click-with-confirm; a workflow on `solution.update_available`
+  can call `/sync`).
+- Additive non-replace Update mode (deploy/sync stay full-replace).
+- **Org scope + up-front config values on install-from-repo** — `SolutionRepoPreviewRequest` + the endpoint
+  would need `organization_id`/`config_values` (today: caller's default org, read-only config declarations,
+  values set post-install via Setup). Small follow-up.
+- **Private-repo install** — clone is server-side, so private repos need server-side creds (token-in-URL or
+  deploy key). Unspecified — design pass before recommending community publishing of private repos.
+- **e2e harness robustness** — `_make_fixture_repo` stages on a shared host path + an api-container bind
+  mount; the install_from_repo tests ERROR (not fail) when co-run with `test_git_sync_local.py` (pass alone).
+  CI runs files in separate processes so it's not a CI blocker, but worth hardening (per-test temp + a
+  cleaner container-reachable clone source).
+
+## Phase 7 (from the PRIOR handoff) still outstanding — desloppify the skipped items
+
+Independent of this arc; now well-positioned (would review freshly-written code). Task 16 = scan `client/`
+(TypeScript, never scanned); Task 17 = the deferred big-judgment api/ refactors. Full list in the prior
+plan `docs/superpowers/plans/2026-06-14-solution-connection-references.md` ("STATUS & NEXT STEPS" → Phase 7).
