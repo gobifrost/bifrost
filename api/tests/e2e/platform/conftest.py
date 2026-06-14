@@ -112,14 +112,18 @@ def isolate_s3_sync() -> None:
 def make_solution_with_required_config(e2e_client, platform_admin, db_session):
     """Factory: create a Solution via REST then insert a SolutionConfigSchema
     declaration row directly into the DB.  Returns a coroutine that accepts
-    ``key`` and ``required`` kwargs and returns the solution dict.
+    ``key``, ``required`` and ``set_value`` kwargs and returns the solution dict.
 
-    The Config value is intentionally NOT created so the declaration reads as
-    unset (is_set=False) from the setup-status endpoint.
+    When ``set_value`` is False (default) no Config value is created, so the
+    declaration reads as unset (is_set=False).  When True, a matching Config
+    row is inserted in the install's org scope so the declaration reads as set.
     """
+    from src.models.orm.config import Config
     from src.models.orm.solution_config_schema import SolutionConfigSchema
 
-    async def _make(key: str = "api_key", required: bool = True) -> dict[str, Any]:
+    async def _make(
+        key: str = "api_key", required: bool = True, set_value: bool = False
+    ) -> dict[str, Any]:
         headers = platform_admin.headers
         slug = f"setup-status-{uuid.uuid4().hex[:8]}"
         r = e2e_client.post("/api/solutions", headers=headers, json={
@@ -128,6 +132,7 @@ def make_solution_with_required_config(e2e_client, platform_admin, db_session):
         assert r.status_code in (200, 201), r.text
         sol = r.json()
         sol_id = uuid.UUID(sol["id"])
+        org_id = uuid.UUID(sol["organization_id"]) if sol.get("organization_id") else None
 
         decl = SolutionConfigSchema(
             solution_id=sol_id,
@@ -135,10 +140,38 @@ def make_solution_with_required_config(e2e_client, platform_admin, db_session):
             type="string",
             required=required,
             description="Required config for setup-status test",
+            default="a-default",
         )
         db_session.add(decl)
+        if set_value:
+            db_session.add(Config(
+                key=key,
+                value="a-value",
+                organization_id=org_id,
+                updated_by="setup-status-test",
+            ))
         await db_session.commit()
 
         return sol
+
+    return _make
+
+
+@pytest.fixture
+def make_solution_without_configs(e2e_client, platform_admin):
+    """Factory: create a Solution via REST with NO config declarations at all.
+
+    Used to assert the vacuous-true guard: setup_complete must be True when
+    there are no required configs to satisfy.
+    """
+
+    async def _make() -> dict[str, Any]:
+        headers = platform_admin.headers
+        slug = f"setup-empty-{uuid.uuid4().hex[:8]}"
+        r = e2e_client.post("/api/solutions", headers=headers, json={
+            "slug": slug, "name": slug.upper(), "scope": "org",
+        })
+        assert r.status_code in (200, 201), r.text
+        return r.json()
 
     return _make

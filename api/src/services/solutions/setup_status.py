@@ -25,12 +25,22 @@ async def compute_setup_status(db: AsyncSession, solution: Solution) -> Solution
     ).scalars().all()
 
     # Mirror the pattern used in the /entities endpoint: match Config rows by
-    # key in the install's org scope (NULL org == global install).
-    if solution.organization_id is not None:
-        set_keys_q = select(Config.key).where(Config.organization_id == solution.organization_id)
-    else:
-        set_keys_q = select(Config.key).where(Config.organization_id.is_(None))
-    set_keys = set((await db.execute(set_keys_q)).scalars().all())
+    # key in the install's org scope (NULL org == global install). Scope the
+    # query to only the declared keys — cheaper and semantically tighter on the
+    # install write path.
+    set_keys: set[str] = set()
+    if decls:
+        org_pred = (
+            Config.organization_id == solution.organization_id
+            if solution.organization_id is not None
+            else Config.organization_id.is_(None)
+        )
+        set_keys_q = (
+            select(Config.key)
+            .where(org_pred)
+            .where(Config.key.in_([d.key for d in decls]))
+        )
+        set_keys = set((await db.execute(set_keys_q)).scalars().all())
 
     items = [
         SolutionSetupItem(
@@ -39,6 +49,7 @@ async def compute_setup_status(db: AsyncSession, solution: Solution) -> Solution
             required=d.required,
             is_set=d.key in set_keys,
             description=d.description,
+            default=d.default,
         )
         for d in decls
     ]

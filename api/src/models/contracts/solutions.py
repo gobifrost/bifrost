@@ -413,6 +413,7 @@ class SolutionSetupItem(BaseModel):
     required: bool
     is_set: bool
     description: str | None = None
+    default: str | None = None
 
 
 class SolutionSetupStatus(BaseModel):
