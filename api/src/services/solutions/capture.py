@@ -253,7 +253,11 @@ class SolutionCaptureService:
                 )
 
     async def bundle_for(
-        self, solution: Solution, *, include_imports: bool = False
+        self,
+        solution: Solution,
+        *,
+        include_imports: bool = False,
+        include_values: bool = False,
     ) -> SolutionBundle:
         workflows = await self._workflow_entries(solution.id)
         tables = await self._table_entries(solution.id)
@@ -265,6 +269,9 @@ class SolutionCaptureService:
         python_files = await self._python_files(
             workflows, include_imports=include_imports
         )
+        config_values: dict[str, str] = {}
+        if include_values:
+            config_values = await self._config_values(solution)
         return SolutionBundle(
             solution=solution,
             python_files=python_files,
@@ -276,6 +283,7 @@ class SolutionCaptureService:
             claims=claims,
             config_schemas=config_schemas,
             version=solution.version,
+            config_values=config_values,
         )
 
     async def _workflow_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
@@ -490,6 +498,68 @@ class SolutionCaptureService:
             })
             for c in rows
         ]
+
+    async def _config_values(self, solution: Solution) -> dict[str, str]:
+        """Read the plaintext value for each declared config key that has a value set.
+
+        Config.value is stored as JSONB ``{"value": <stored_value>}``.  For
+        STRING configs the stored value IS the plaintext.  For SECRET configs
+        the stored value is encrypted (via ``encrypt_secret``); we decrypt it
+        here with ``decrypt_secret`` so the blob carries the original plaintext.
+
+        Only keys that actually have a Config row in scope are included — keys
+        with no set value are silently skipped (they will require manual entry
+        after install on the target environment).
+        """
+        from src.core.security import decrypt_secret
+        from src.models.enums import ConfigType as ConfigTypeEnum
+
+        # Get all declared keys and their types from SolutionConfigSchema.
+        schema_rows = (
+            await self.db.execute(
+                select(SolutionConfigSchema)
+                .where(SolutionConfigSchema.solution_id == solution.id)
+                .order_by(SolutionConfigSchema.position)
+            )
+        ).scalars().all()
+
+        out: dict[str, str] = {}
+        for schema in schema_rows:
+            # Look up the Config value in the solution's org scope (no cascade
+            # — we want the value actually set for this install's org, not a
+            # global fallback that might belong to a different install).
+            q = select(Config).where(
+                Config.key == schema.key,
+                Config.organization_id == solution.organization_id
+                if solution.organization_id is not None
+                else Config.organization_id.is_(None),
+                Config.orphaned_at.is_(None),
+            )
+            config = (await self.db.execute(q)).scalar_one_or_none()
+            if config is None:
+                continue  # Not set — skip; install target must supply this key.
+
+            # Extract the scalar from the JSONB envelope {"value": ...}.
+            raw = (
+                config.value.get("value")
+                if isinstance(config.value, dict)
+                else config.value
+            )
+            if raw is None:
+                continue
+
+            # Decrypt SECRET-typed values so the blob carries the plaintext.
+            schema_type = schema.type
+            is_secret = (
+                schema_type == ConfigTypeEnum.SECRET.value
+                or schema_type == ConfigTypeEnum.SECRET
+            )
+            if is_secret:
+                raw = decrypt_secret(str(raw))
+
+            out[schema.key] = str(raw)
+
+        return out
 
     async def _python_files(
         self, workflows: list[dict[str, Any]], *, include_imports: bool = False

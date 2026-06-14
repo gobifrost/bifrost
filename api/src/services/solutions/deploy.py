@@ -258,6 +258,10 @@ class SolutionBundle:
     # Deploy-owned: present => stamped on the install, absent => cleared.
     logo_b64: str | None = None
     logo_content_type: str | None = None
+    # Sensitive export tier — only populated when include_values=True (full mode).
+    # Travels as password-encrypted .bifrost/secrets.enc; never in plaintext export.
+    config_values: dict[str, str] = field(default_factory=dict)
+    table_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 class SolutionDeployer:

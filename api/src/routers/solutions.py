@@ -164,11 +164,31 @@ async def solution_setup(
     },
 )
 async def export_solution(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+    mode: str = "shareable",
+    password: str | None = None,
 ) -> Response:
     """Rebuild the install's workspace bundle LIVE from the entities it
     currently owns, so the export always reflects present ownership (not the
-    last capture/deploy). Directly re-installable via the zip-install path."""
+    last capture/deploy). Directly re-installable via the zip-install path.
+
+    ``mode=shareable`` (default): portable export, no sensitive values.
+    ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
+    the config values set for this install; requires ``password``.
+    """
+    if mode not in ("shareable", "full"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="mode must be 'shareable' or 'full'",
+        )
+    if mode == "full" and not password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="full export requires a password",
+        )
+
     from src.services.solutions.capture import SolutionCaptureService
     from src.services.solutions.export import build_workspace_zip
 
@@ -176,8 +196,11 @@ async def export_solution(
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
-    bundle = await SolutionCaptureService(ctx.db).bundle_for(sol, include_imports=True)
-    data = build_workspace_zip(bundle)
+    include_values = mode == "full"
+    bundle = await SolutionCaptureService(ctx.db).bundle_for(
+        sol, include_imports=True, include_values=include_values
+    )
+    data = build_workspace_zip(bundle, password=password if include_values else None)
     filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
     return Response(
         content=data,

@@ -58,8 +58,13 @@ def _manifest_yaml(root_key: str, bodies: dict[str, dict[str, Any]]) -> str:
     return yaml.safe_dump({root_key: bodies}, sort_keys=False, allow_unicode=True)
 
 
-def build_workspace_zip(bundle: "SolutionBundle") -> bytes:
-    """Serialize a (pre-remap) bundle into the installable workspace-zip shape."""
+def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None) -> bytes:
+    """Serialize a (pre-remap) bundle into the installable workspace-zip shape.
+
+    When ``password`` is provided and the bundle carries sensitive values
+    (config_values or table_data), they are encrypted into ``.bifrost/secrets.enc``
+    using the password.  Shareable exports (no password) never include the blob.
+    """
     solution = bundle.solution
     buf = io.BytesIO()
 
@@ -159,5 +164,23 @@ def build_workspace_zip(bundle: "SolutionBundle") -> bytes:
                         body["bin_dist_files"] = bin_dist
                 app_bodies[str(app["id"])] = body
             put(".bifrost/apps.yaml", _manifest_yaml("apps", app_bodies))
+
+        # ── Encrypted secrets blob (full-mode export only) ───────────────────
+        if password and (bundle.config_values or bundle.table_data):
+            from src.services.solutions.secrets_blob import (
+                SolutionContent,
+                encode_secrets_blob,
+            )
+
+            put(
+                ".bifrost/secrets.enc",
+                encode_secrets_blob(
+                    SolutionContent(
+                        config_values=bundle.config_values,
+                        table_data=bundle.table_data,
+                    ),
+                    password=password,
+                ),
+            )
 
     return buf.getvalue()
