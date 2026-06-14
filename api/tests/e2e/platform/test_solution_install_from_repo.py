@@ -30,7 +30,11 @@ _CREATED: list[Path] = []
 
 
 def _make_fixture_repo(
-    subdir: str = "", *, with_connection: bool = False, slug: str = "fixture-sol"
+    subdir: str = "",
+    *,
+    with_connection: bool = False,
+    slug: str = "fixture-sol",
+    broken_manifest: bool = False,
 ) -> str:
     """Create a git repo with a minimal solution workspace (optionally in a
     subfolder) on the shared mount and return a file:// clone URL.
@@ -40,6 +44,11 @@ def _make_fixture_repo(
     ``slug`` overrides the descriptor slug (e2e DB state is session-scoped and
     NOT reset between tests, so install tests that must start clean pass a unique
     slug to avoid colliding with installs a sibling test already created).
+    ``broken_manifest`` writes a ``.bifrost/tables.yaml`` whose YAML is VALID (so
+    clone + descriptor parse + flush all succeed) but whose table ``policies`` AST
+    is malformed, so ``deploy_from_workspace`` raises during the DB phase — this
+    is what exercises the rollback branch (a broken-YAML manifest would instead
+    fail earlier, inside the parse step, before any row is created).
     """
     _SHARED_ROOT.mkdir(parents=True, exist_ok=True)
     root = _SHARED_ROOT / f"repo-{uuid.uuid4().hex[:8]}"
@@ -52,9 +61,24 @@ def _make_fixture_repo(
         "version: 1.0.0\n"
         "scope: org\n"
     )
+    if broken_manifest:
+        bifrost_dir = sol / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        # Valid YAML, but a table whose `policies` is a string (not a list[Policy]).
+        # _parse_workspace collects tables WITHOUT validating policies, so clone +
+        # descriptor parse + flush all succeed; deploy validates the policy AST and
+        # raises, so the rollback branch must undo the just-created install row.
+        (bifrost_dir / "tables.yaml").write_text(
+            "tables:\n"
+            "  11111111-1111-1111-1111-111111111111:\n"
+            "    id: 11111111-1111-1111-1111-111111111111\n"
+            "    name: broken_table\n"
+            "    columns: []\n"
+            "    policies: not-a-valid-policy-list\n"
+        )
     if with_connection:
         bifrost_dir = sol / ".bifrost"
-        bifrost_dir.mkdir()
+        bifrost_dir.mkdir(exist_ok=True)
         (bifrost_dir / "connections.yaml").write_text(
             "connections:\n"
             "  microsoft:\n"
@@ -126,7 +150,7 @@ async def test_install_from_repo_creates_connected_install(e2e_client, platform_
         json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
         headers=platform_admin.headers,
     )
-    assert resp.status_code in (200, 201), resp.text
+    assert resp.status_code == 201, resp.text
     sol = resp.json()
     assert sol["git_connected"] is True
     assert sol["repo_subpath"] == "microsoft-csp"
@@ -153,3 +177,28 @@ async def test_install_from_repo_conflicts_on_existing(e2e_client, platform_admi
         headers=platform_admin.headers,
     )
     assert again.status_code == 409, again.text
+
+
+async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platform_admin):
+    slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
+    # First repo: descriptor is valid (clone/parse/flush succeed) but a malformed
+    # .bifrost/forms.yaml makes the bundle read inside deploy_from_workspace raise.
+    bad = _make_fixture_repo(slug=slug, broken_manifest=True)
+    resp = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": bad},
+        headers=platform_admin.headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "deploy failed" in resp.text
+
+    # The failed install must NOT have persisted: a later, VALID install of the
+    # SAME slug succeeds (201) instead of 409'ing — proving no orphan row exists.
+    good = _make_fixture_repo(slug=slug)
+    retry = e2e_client.post(
+        "/api/solutions/install/from-repo",
+        json={"repo_url": good},
+        headers=platform_admin.headers,
+    )
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["slug"] == slug

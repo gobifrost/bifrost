@@ -1203,17 +1203,24 @@ async def install_from_repo(
     from src.services.solutions.git_sync import (
         NotASolutionWorkspace,
         clone_repo_to_dir,
+        deploy_from_workspace,
         resolve_repo_subpath,
-        sync,
     )
     from src.services.solutions.zip_install import _parse_workspace, find_install
 
-    # Clone + parse the descriptor to learn slug/name/scope (no DB write yet).
+    # ONE clone: read the descriptor AND deploy from the same checkout (no second
+    # clone, no TOCTOU window where slug comes from one clone and deploy another).
+    # The initial create-deploy is single-writer by construction — nothing else
+    # can sync a row that did not exist until this request — so it does NOT need
+    # sync()'s per-install Redis lock (that guards the ongoing auto-pull path).
     with tempfile.TemporaryDirectory(prefix="bifrost-repo-install-") as tmp:
         work = Path(tmp)
         try:
             await clone_repo_to_dir(body.repo_url, work, ref=body.git_ref)
-        except Exception as exc:  # GitPython errors etc.
+        except Exception as exc:
+            # GitPython raises various exc subtypes (GitCommandError,
+            # InvalidGitRepositoryError, ...) — catch-all intentional for a
+            # user-supplied URL.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Could not clone {body.repo_url}: {exc}",
@@ -1231,44 +1238,66 @@ async def install_from_repo(
                 f"{body.repo_subpath or '<repo root>'} in {body.repo_url}",
             )
         parsed = _parse_workspace(root)
+        if not parsed.slug:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Repo has no valid bifrost.solution.yaml (missing slug)",
+            )
 
-    if not parsed.slug:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Repo has no valid bifrost.solution.yaml (missing slug)",
+        # Scope: org install lands under the caller's org; global => NULL. Scope
+        # is carried entirely by organization_id NULL-ness (no `scope` column).
+        org_id: UUID | None = ctx.org_id if parsed.scope == "org" else None
+        if parsed.scope == "org" and org_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="org-scoped install requires the caller to have an organization",
+            )
+
+        # Fast-path 409 with a clear message for the common sequential case; the
+        # flush() catch below covers the concurrent race on the unique index.
+        existing = await find_install(ctx.db, slug=parsed.slug, organization_id=org_id)
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An install of '{parsed.slug}' already exists for this scope; "
+                f"reconnect or update it instead.",
+            )
+
+        solution = SolutionORM(
+            slug=parsed.slug,
+            name=parsed.name or parsed.slug,
+            organization_id=org_id,
+            git_connected=True,
+            git_repo_url=body.repo_url,
+            repo_subpath=body.repo_subpath,
+            git_ref=body.git_ref,
         )
+        ctx.db.add(solution)
+        try:
+            await ctx.db.flush()  # surfaces the unique (slug, org) violation now
+        except IntegrityError as exc:
+            await ctx.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An install of '{parsed.slug}' already exists for this scope.",
+            ) from exc
 
-    # Scope: org install lands under the caller's org; global => NULL. Scope is
-    # carried entirely by organization_id NULL-ness (no `scope` ORM column).
-    org_id: UUID | None = ctx.org_id if parsed.scope == "org" else None
-    if parsed.scope == "org" and org_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="org-scoped install requires the caller to have an organization",
-        )
-
-    existing = await find_install(ctx.db, slug=parsed.slug, organization_id=org_id)
-    if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"An install of '{parsed.slug}' already exists for this scope; "
-            f"reconnect or update it instead.",
-        )
-
-    solution = SolutionORM(
-        slug=parsed.slug,
-        name=parsed.name or parsed.slug,
-        organization_id=org_id,
-        git_connected=True,
-        git_repo_url=body.repo_url,
-        repo_subpath=body.repo_subpath,
-        git_ref=body.git_ref,
-    )
-    ctx.db.add(solution)
-    await ctx.db.commit()
-    await ctx.db.refresh(solution)
-    # Clone + full-replace deploy (sync reads repo_url/ref/subpath off the row).
-    await sync(ctx.db, solution)
+        # Deploy from THE SAME checkout we just cloned (no second clone). Commit
+        # the DB phase, THEN finalize S3 — matches _run_sync_once's order.
+        try:
+            result = await deploy_from_workspace(ctx.db, solution, root)
+            await ctx.db.commit()
+        except Exception as exc:
+            # A brand-new install whose first deploy failed must not persist as an
+            # empty git_connected orphan — roll it back and surface the error.
+            await ctx.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Install cloned but deploy failed: {exc}",
+            ) from exc
+    # Temp dir is gone now; the bundle is in-memory so finalize_s3 is safe (same
+    # as _run_sync_once).
+    await result.finalize_s3()
     await ctx.db.refresh(solution)
     return SolutionDTO.model_validate(solution)
 
