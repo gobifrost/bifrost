@@ -116,7 +116,7 @@ class SolutionCaptureService:
         await self._capture_configs(solution, selectors.configs)
         await self.db.flush()
 
-        bundle = await self._bundle_for(solution, include_imports=include_imports)
+        bundle = await self.bundle_for(solution, include_imports=include_imports)
         return SolutionCaptureResult(
             workflows_captured=len(set(selectors.workflows)),
             tables_captured=len(set(selectors.tables)),
@@ -256,7 +256,7 @@ class SolutionCaptureService:
                     .values(**values)
                 )
 
-    async def _bundle_for(
+    async def bundle_for(
         self, solution: Solution, *, include_imports: bool = False
     ) -> SolutionBundle:
         workflows = await self._workflow_entries(solution.id)

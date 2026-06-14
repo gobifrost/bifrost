@@ -146,25 +146,18 @@ async def get_solution_logo(
 async def export_solution(
     solution_id: UUID, ctx: Context, user: CurrentSuperuser
 ) -> Response:
-    """The exact workspace bundle the install's last write produced — the same
-    shape ``bifrost solution deploy`` / the zip install consume, so the export
-    is directly re-installable (or re-deployable from a local checkout). Every
-    writer persists it post-commit; an install last written before export
-    support has no stored bundle until its next deploy/sync."""
-    from src.services.solutions.export import SolutionExportStore
+    """Rebuild the install's workspace bundle LIVE from the entities it
+    currently owns, so the export always reflects present ownership (not the
+    last capture/deploy). Directly re-installable via the zip-install path."""
+    from src.services.solutions.capture import SolutionCaptureService
+    from src.services.solutions.export import build_workspace_zip
 
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
-    data = await SolutionExportStore().read(solution_id)
-    if data is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "No stored bundle for this install — it was last written before "
-                "export support. Deploy or sync it once to produce one."
-            ),
-        )
+
+    bundle = await SolutionCaptureService(ctx.db).bundle_for(sol, include_imports=True)
+    data = build_workspace_zip(bundle)
     filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
     return Response(
         content=data,
