@@ -68,6 +68,19 @@ def test_combobox_expands_to_its_recipe_primitives() -> None:
     assert "combobox" in adds and "popover" in adds and "command" in adds
 
 
+def test_react_is_emitted_as_default_import_not_named() -> None:
+    # `React` is a DEFAULT export — `import { React } from "react"` is invalid TS.
+    out = rewrite_v2_imports('import { React, useState, useEffect } from "bifrost";', LUCIDE)
+    assert 'import React, { useEffect, useState } from "react";' in out
+    assert "{ React" not in out  # never named
+
+
+def test_react_alone_is_a_bare_default_import() -> None:
+    out = rewrite_v2_imports('import { React, Button } from "bifrost";', LUCIDE)
+    assert 'import React from "react";' in out
+    assert 'from "@/components/ui/button"' in out
+
+
 def test_react_and_cn_and_toast_route_correctly() -> None:
     src = 'import { cn, toast, useState, Fragment } from "bifrost";'
     out = rewrite_v2_imports(src, LUCIDE)

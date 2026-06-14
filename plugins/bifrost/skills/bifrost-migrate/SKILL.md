@@ -74,10 +74,18 @@ Do ONE app at a time, fully, before the next. Each step gates the following.
 
 ### Fast path — `bifrost solution migrate-app` does steps 2–5 deterministically
 
+`migrate-app` (and `scaffold-app`) MUST run from inside a Solution workspace — so create one
+FIRST with `solution init`, then run `migrate-app` from that dir. The SOURCE argument is a real
+filesystem path to the v1 app's source (pull it locally first with `bifrost pull`, or point at a
+local checkout) — NOT a `_repo/...` URL.
+
 ```bash
-bifrost solution migrate-app _repo/apps/<old-slug> <new-slug> --title "<Title>" --api-url <debug-url>
+mkdir <new-slug>-workspace && cd <new-slug>-workspace
+bifrost solution init . --slug <solution-slug> --name "<Title>" --scope org
+bifrost solution migrate-app /path/to/v1/apps/<old-slug> <new-slug> --title "<Title>" --api-url <debug-url>
 ```
-This scaffolds the v2 app, ports the v1 `pages/`+`components/`, runs the deterministic v2
+This scaffolds the v2 app, ports the v1 `pages/`+`components/` (all source files, incl. `.ts`
+helpers + `_layout.tsx`), runs the deterministic v2
 import rewrite, installs the exact shadcn components the app uses (+ radix-ui, sonner, the combobox
 recipe), and then **STOPS and prints a judgment checklist** — it never silently wires routes,
 builds, or deploys. The checklist surfaces exactly what needs you: multi-route App.tsx wiring,

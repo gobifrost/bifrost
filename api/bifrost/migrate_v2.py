@@ -239,7 +239,17 @@ def rewrite_v2_imports(source: str, lucide_names: frozenset[str]) -> str:
 
     lines: list[str] = []
     if buckets["react"]:
-        lines.append(f'import {{ {", ".join(sorted(buckets["react"]))} }} from "react";')
+        # `React` is a DEFAULT export, not named — `import { React }` is invalid.
+        # Emit it as the default import and keep the rest named:
+        #   { React, useState } -> import React, { useState } from "react"
+        react_named = sorted(n for n in buckets["react"] if n.split(" as ")[0].strip() != "React")
+        has_react_default = any(n.split(" as ")[0].strip() == "React" for n in buckets["react"])
+        if has_react_default and react_named:
+            lines.append(f'import React, {{ {", ".join(react_named)} }} from "react";')
+        elif has_react_default:
+            lines.append('import React from "react";')
+        else:
+            lines.append(f'import {{ {", ".join(react_named)} }} from "react";')
     if buckets["router"]:
         lines.append(f'import {{ {", ".join(sorted(buckets["router"]))} }} from "react-router-dom";')
     if buckets["lucide"]:
