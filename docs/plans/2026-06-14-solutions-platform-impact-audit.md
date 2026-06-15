@@ -23,6 +23,27 @@ impacted, plus a user-perspective completeness/coverage/UX pass. Four lenses:
 
 ---
 
+## Resolution status (2026-06-14, autonomous fix run)
+
+Fixed this run (before desloppify, so desloppify reviews final code). All TDD, all green:
+- **H1** — git-sync sweep now spares `solution_id IS NOT NULL` centrally in `_bulk_delete`/`_bulk_deactivate`. Verified by unit test + 81 git-sync e2e. (commit e5b57f30)
+- **U1** — managed-table Edit/Delete gated + 409 translated in Tables.tsx. (ad841494)
+- **F1/F2** — `bifrost run` + `solution start` resolve the install id into the ExecutionContext (`resolve_install_id_for_workspace`, defensively None). **Verified LIVE**: `bifrost run` of a deployed solution's workflow read its own table (total:1) where the pre-fix path 404s. (22abb239)
+- **F3** — CORRECTION: not a bug. Solution config *values* are instance-owned (key,org) rows resolved by the normal cascade; they carry `origin_solution_id`, NOT `solution_id`. There is no install-scoped config row for own-first to prefer (unlike tables). The tables/config asymmetry is by design. No change.
+- **M-MCP** — early `is_solution_managed` guard on delete_agent, update_table, delete_table, update_app, update_app_dependencies (clean 409 not backstop 500). (ea8e2324)
+- **M-ROLE** — role-delete 409 now names the owning install(s); block scope unchanged (correct). (df6c8dfc)
+- **U-prev / U-prov / CM3** — install-preview integrations badge, repo provenance line, diff in git Update-now dialog. (c6a8551d)
+- **Knowledge coverage (partial)** — install preview now surfaces bundled agents' knowledge namespaces as a non-blocking note (no backend change). Events/schedules NOT surfaced — no bundle signal exists (their triggers aren't captured at all); needs full H4. (1830ab06)
+
+Also CORRECTED from the original audit: Config does NOT carry a `solution_id` column
+(the earlier agent grep false-matched `origin_solution_id`). The entities with a real
+`solution_id`: workflows, forms, agents, applications, tables, custom_claims.
+
+Still DEFERRED as product/design work (NOT built): H2 (knowledge corpus deploy),
+H3 (file-upload storage), H4 (event/schedule trigger plane), H5 (private-repo auth),
+H6 (rollback), H7 (publish/discovery), CM2/CM4 (provenance author field, per-solution
+integration reconnect), X-AUTH (non-admin operator access).
+
 ## TL;DR — ranked
 
 | # | Lens | Sev | One-liner |
