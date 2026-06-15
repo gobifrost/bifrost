@@ -290,7 +290,7 @@ Commands: `solution init / scaffold-app / start / deploy / install`
 ```bash
 bifrost solution init --slug my-solution --name "My Solution" --scope org
 bifrost solution scaffold-app my-app
-bifrost solution start my-app --org <ref>
+bifrost solution start [APP_SLUG]          # APP_SLUG is a positional (the apps/ dir name); optional --org <ref> / --port
 bifrost solution deploy
 bifrost solution install solution.zip --org acme
 ```
