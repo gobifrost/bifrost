@@ -8,7 +8,15 @@
 
 ## The arc in one paragraph
 
-We rebuilt the `bifrost:build` skill (Tasks 0–10, all DONE + reviewed + committed). The empirical validation loop (Task 11) then discovered that the **Solution capture→deploy round-trip was broken at the platform level** — `solution capture` flips `solution_id` server-side but wrote no manifest, so the next full-replace deploy DELETED captured entities. Jack chose to **fix the platform bug** before finishing the validation loop. **That fix is now BUILT (Tasks 1–7 of `2026-06-15-solution-capture-roundtrip.md`, committed, all green).** Remaining work: **the Sonnet validation loop (Tasks 8–9 of that same plan = Tasks 11–12 of the build-skill rebuild).**
+We rebuilt the `bifrost:build` skill (Tasks 0–10, all DONE + reviewed + committed). The empirical validation loop (Task 11) then discovered that the **Solution capture→deploy round-trip was broken at the platform level** — fixed and BUILT (Tasks 1–7 of `2026-06-15-solution-capture-roundtrip.md`, committed, all green). The validation loop then ran **Track A runs A2–A6**, each confirming the fix works live and producing skill-doc fixes (all applied; see `2026-06-15-build-skill-validation-log.md`). **The loop is now PAUSED** (run A7 stopped) for a Jack-requested cross-cutting CLI change: **the unified `--org` standard** (spec + plan written, see below). Build that, THEN resume the validation loop against the corrected docs.
+
+## CURRENT PRIORITY — unified `--org` CLI standard (spec+plan DONE, build NOT started)
+
+**Spec:** `docs/superpowers/specs/2026-06-15-cli-org-standard.md` · **Plan:** `docs/superpowers/plans/2026-06-15-cli-org-standard.md` (11 TDD tasks). Locked decisions: one `--org <id|name|none|global>` + `--global` everywhere; omit = caller's HOME org; `--organization`/`--scope` are permanent synonyms (additive CLI); **remove `scope` from `bifrost.solution.yaml` + `solution init`** (install kind = deploy-time choice; server already derives it from `organization_id`). `solution install` omit→home. Contract bump 3→4 (descriptor/`SolutionCreate` change is breaking). **Start at Task 1.** This SUPERSEDES the `--org`/scope sections in `references/solutions.md` written during A4–A6 — Task 10 rewrites them.
+
+## THEN — resume the validation loop (Track A to 3-clean, then Track B)
+
+Track A streak is at 0 (A6 was clean-scorecard with 1 ordering fix applied). After the `--org` build lands + docs are rewritten, resume per the validation log: fresh Sonnet runs reading the WORKTREE skill files directly (NOT the `Skill` tool — installed plugin is stale), to 3 consecutive clean runs, then Track B (repo/global). Dispatch template + done-bar in `2026-06-15-build-skill-validation-log.md`.
 
 ## DONE — capture round-trip fix (committed, not pushed) — 2026-06-15
 
