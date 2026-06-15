@@ -1,4 +1,15 @@
-# Plan — Solutions knowledge own-first resolution (NOT YET BUILT)
+# Plan — Solutions knowledge own-first resolution (SHELVED — superseded)
+
+> ⚠️ **SHELVED 2026-06-15.** Do NOT execute this as written. Investigation showed knowledge deploys
+> ZERO documents, so own-first has no rows to resolve — it's not a V1 gap. V1 knowledge is already
+> complete (the agent's namespace binding travels; the operator populates; the install-preview note
+> warns). The real feature (ship + isolate + back up a corpus) is **V2** and hinges on embedding
+> portability. See the decision record: `docs/superpowers/specs/2026-06-15-solutions-knowledge-decision.md`.
+> The technical notes below remain accurate (route-threading is trivial, agent path is in-process) and
+> feed the V2 spec — but the framing ("V1 own-first") is wrong.
+
+---
+
 
 **Date:** 2026-06-14
 **Design:** `docs/superpowers/specs/2026-06-14-solutions-v1-coverage-design.md` (§1)
