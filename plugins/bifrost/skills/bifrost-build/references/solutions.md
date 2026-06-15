@@ -22,7 +22,7 @@ Creates `bifrost.solution.yaml` in the current directory. The hub uses this file
 bifrost solution scaffold-app my-app
 ```
 
-Scaffolds a `standalone_v2` React app under `apps/my-app/` with `package.json`, `vite.config.ts`, `main.tsx`, and `App.tsx`. The `bifrost` SDK is resolved from the running instance (not npm), so no `npm install bifrost` is needed.
+Scaffolds a `standalone_v2` React app under `apps/my-app/`. Config files sit at the app root (`package.json`, `vite.config.ts`, `tsconfig.json`, `components.json`, `index.html`); **source files live under `apps/my-app/src/`** (`main.tsx`, `App.tsx`, `index.css`, `lib/utils.ts`). The `bifrost` SDK is resolved from the running instance (not npm), so no `npm install bifrost` is needed.
 
 > The scaffold wires up Tailwind (`@tailwindcss/vite` + shadcn theme tokens in `src/index.css`) but the generated `App.tsx` uses minimal **inline styles** (`style={{ padding: 24 }}`) as a plain starting point. Replace them with Tailwind classes (`className="p-6 ..."`) before building — the infrastructure is ready. See `references/apps.md` for v2 styling patterns.
 
@@ -79,11 +79,13 @@ A solution owns these entities the same way it owns apps and workflows: deploy w
 
 ```bash
 bifrost solution capture <solution-id> --table <id> --form <id> --agent <id> --config <KEY>
-bifrost solution pull          # bring the captured entities into source .bifrost/
-bifrost solution deploy        # ship them
+bifrost solution pull --org "Target Org"     # bring captured entities into source .bifrost/
+bifrost solution deploy --org "Target Org"   # ship them
 ```
 
 The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `--config`, `--claim`, `--workflow`, `--app` (each takes a name or id; `--config` takes a key).
+
+**`--org` must match across deploy and pull.** `pull` and `deploy` resolve *which install* by `(slug, scope, org)` — defaulting to your **own** org. If the install lives in another org (you deployed with `--org "Target Org"`), you MUST pass the **same `--org`** to `pull` too — otherwise `pull` resolves a *different* install (or your default-org one), downloads the wrong state, and the real install's deploy keeps 409-blocking even though you "pulled". Omit `--org` only when the install is in your own org. (Pass `--solution <install-id>` to target an install by id directly and sidestep org resolution.)
 
 **Scope and capture.** Capture adopts a loose entity into the install. If the entity is in a **different scope**, capture re-stamps it to the install's scope rather than refusing:
 

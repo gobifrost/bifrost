@@ -2,7 +2,7 @@
 
 This file documents the CLI mutation surface for each entity group. The canonical per-command flag reference is always the live `--help` output for each command — flags are generated from `XxxCreate` / `XxxUpdate` Pydantic DTOs at runtime and cannot drift. This file documents commands, non-obvious semantics, and cross-entity relationships only.
 
-**Core rule:** `.bifrost/` is export-only. Never read it for entity discovery — use the `list` and `get` subcommands for each entity group. All CLI commands accept `--json` for machine-readable output. Refs resolve by UUID, name, or portable ref (e.g. `path::function` for workflows, slug for apps).
+**Core rule (global `_repo` workspace):** `.bifrost/` is export-only. Never read it for entity discovery — use the `list` and `get` subcommands for each entity group. All CLI commands accept `--json` for machine-readable output. Refs resolve by UUID, name, or portable ref (e.g. `path::function` for workflows, slug for apps). (**Solution workspaces differ** — there `.bifrost/*.yaml` is the deploy-read manifest and editing entity *content fields* there is the documented update path; see `references/solutions.md`.)
 
 For the exact generated flag list, see `generated/cli-reference.md`. For the REST passthrough escape hatch, see `references/rest-api.md`.
 
@@ -312,7 +312,7 @@ For raw workspace movement, use the git subcommands (the commit and push operati
 
 ## Do NOT
 
-- Edit `.bifrost/*.yaml` by hand to mutate entities. That is export-only.
+- Edit `.bifrost/*.yaml` by hand to mutate entities **in the global `_repo` workspace** — there it is export-only. (In a **Solution** workspace this rule is reversed: editing entity content fields in `.bifrost/*.yaml` + redeploy is the correct update path — see `references/solutions.md`.)
 - Use the removed granular agent endpoints `/api/agents/{id}/tools` or `/delegations`.
 - Add direct ORM access to new MCP tools. Thin HTTP wrappers only (enforced by `api/tests/unit/test_mcp_thin_wrapper.py`).
 - Duplicate flag lists here. Trust `--help` — it is generated from the DTO.

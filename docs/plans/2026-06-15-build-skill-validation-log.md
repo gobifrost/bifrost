@@ -53,6 +53,18 @@ form/config into the solution → `solution start` + drive → update an entity 
 | A1 | PARTIAL | Tailwind configured, sample uses inline styles | workflows round-trip; table/form/agent/config **captured then DELETED by next deploy** | yes (workflow) | workflows+app clean; **captured entities destroyed** | ✓ 409 on solution-managed update | see below — **blocked on platform bug** | 0 |
 | A2 | INVALID (wrong skill) | yes | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | tested the STALE installed plugin, not the rebuilt worktree skill — see note | 0 |
 | A3 | NEEDS-FIX (valid) | yes (manual Tailwind) | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | 4 real doc fixes (below) → applied, streak reset | 0 |
+| A4 | NEEDS-FIX (valid) | yes (styling callout WORKED) | **all 4 round-trip + survive** ✓ | yes ✓ (.bifrost edit path) | clean ✓ | ✓ 409 | 3 fixes: pull `--org`, entities.md `.bifrost` contradiction, scaffold `src/` tree → applied | 0 |
+
+### A4 — A3's styling fix verified clean; 3 new fixes applied (+ the scope-rule correction from the Jack exchange)
+
+A4 confirmed A3's fix #3 landed ("the skill correctly documents that scaffold generates inline styles and says to replace with Tailwind"). Round-trip + 409 guard + read-only invariant + the `.bifrost` update path all ✓. Three new valid fixes, all applied (streak stays 0):
+1. **solutions.md Path A** — `bifrost solution pull` needs the **same `--org`** as deploy when the install is in a non-default org; without it pull resolves the WRONG install, downloads stale state, and deploy keeps 409-ing. → Added `--org` to the pull/deploy examples + a "`--org` must match across deploy and pull" note (and the `--solution <id>` escape hatch). VERIFIED against `pull_cmd`'s `_resolve_target_install(slug, scope, deployer_org_id)`.
+2. **entities.md `.bifrost/` is export-only** (lines 5 + 315) flatly contradicted solutions.md's update path. → Scoped both to the global `_repo` workspace with an explicit Solution-workspace carve-out pointing to solutions.md.
+3. **solutions.md scaffold file tree** listed `main.tsx`/`App.tsx` at the app root; they're under `apps/<app>/src/`. → Corrected to show config-at-root, source-under-`src/`. VERIFIED against the scaffold's file-writing dict.
+
+Plus the **capture scope-rule correction** (from the Jack exchange, committed separately `…e7bbf2f`-prior): capture **re-stamps** a different-scope entity to the install's scope (global→org migration), only cross-tenant is refused; the candidate-list-vs-capture-by-id wrinkle is documented. (Earlier A3 over-generalized "global isn't capturable".)
+
+Claims lint 0, mirror synced, verified_at_sha bumped. **Platform candidate-vs-action note (for the platform side, NOT a skill bug):** `/capture/candidates` hides global entities from an org install, but `capture()` accepts+re-stamps them by id — the list under-reports what the action allows.
 
 ### A3 — first VALID run (read the worktree skill directly). Platform fix re-confirmed; 4 doc fixes applied.
 
