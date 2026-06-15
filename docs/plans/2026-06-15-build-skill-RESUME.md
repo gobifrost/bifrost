@@ -8,7 +8,20 @@
 
 ## The arc in one paragraph
 
-We rebuilt the `bifrost:build` skill (Tasks 0–10, all DONE + reviewed + committed). The empirical validation loop (Task 11) then discovered that the **Solution capture→deploy round-trip is broken at the platform level** — `solution capture` flips `solution_id` server-side but writes no manifest, so the next full-replace deploy DELETES captured entities. Jack chose to **fix the platform bug** (designed below) before finishing the validation loop. So: **build the capture round-trip fix next, then resume the Sonnet validation loop (Tasks 11–12).**
+We rebuilt the `bifrost:build` skill (Tasks 0–10, all DONE + reviewed + committed). The empirical validation loop (Task 11) then discovered that the **Solution capture→deploy round-trip was broken at the platform level** — `solution capture` flips `solution_id` server-side but wrote no manifest, so the next full-replace deploy DELETED captured entities. Jack chose to **fix the platform bug** before finishing the validation loop. **That fix is now BUILT (Tasks 1–7 of `2026-06-15-solution-capture-roundtrip.md`, committed, all green).** Remaining work: **the Sonnet validation loop (Tasks 8–9 of that same plan = Tasks 11–12 of the build-skill rebuild).**
+
+## DONE — capture round-trip fix (committed, not pushed) — 2026-06-15
+
+`pending_captures` queue table closes the round-trip. Tasks 1–7 of `docs/superpowers/plans/2026-06-15-solution-capture-roundtrip.md` all complete + green:
+- **T1** `pending_captures` ORM + migration `20260615_pending_captures` (FK→solutions, unique on solution+type+id).
+- **T2** capture enqueues one row per table/form/agent/config/event/claim (Core upsert, idempotent); router threads `captured_by`.
+- **T3** deploy guard: pure `unpulled_blockers` helper + wired into `deploy_solution` → **409** when a pending entity is absent from the manifest; `force=True` bypasses; absent + no pending row = genuine delete (unchanged).
+- **T4** `POST /{id}/pull/ack` server-authoritative clear; `PullAck*` DTOs in contracts.
+- **T5** `bifrost solution pull` CLI — `POST /export?mode=shareable` → unzip only `.bifrost/*.yaml` → ack/clear. Agent-runnable.
+- **T6** e2e `test_capture_roundtrip.py`: capture→409(+entities survive)→export/ack→deploy→genuine-delete. PASSES on a fresh clone.
+- **T7** `solutions.md` rewritten with the real flow; appendices regenerated (new `solution pull` cmd + `pull/ack`); mirror synced; sources.yaml bumped.
+
+Verified: pyright 0, ruff clean, 112 solutions/contract/DTO/MCP unit tests pass, generate.py --check fresh, claims lint 0, mirror in sync. Commits `…772ac58b` and earlier (see git log).
 
 ---
 
