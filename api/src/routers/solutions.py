@@ -180,10 +180,22 @@ async def put_solution_readme(
     """Full-replace the install's README markdown (``readme=null`` clears it).
 
     Normally README is repo-sourced (deploy reads README.md), but the UI can
-    edit it directly here on a disconnected install."""
+    edit it directly here on a **disconnected** install. For a git-connected
+    install the next auto-pull would clobber any hand edit, so editing the
+    README here is refused (409) — the repo owns it. The UI hides the edit
+    affordance for connected installs to match."""
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    if row.git_connected:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This install is git-connected — its README is owned by the "
+                "repository and is refreshed on every pull. Edit README.md in "
+                "the repo, or disconnect the install to annotate it here."
+            ),
+        )
     row.readme = body.readme
     await ctx.db.commit()
     return SolutionReadme(readme=row.readme)
