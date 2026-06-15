@@ -122,19 +122,27 @@ type EntitySummary = components["schemas"]["SolutionEntitySummary"];
 type ConfigStatus = components["schemas"]["SolutionConfigStatus"];
 type ConfigType = components["schemas"]["ConfigType"];
 
-type TabKey =
-	| "readme"
+/** The three top-level tabs (down from 9). README leads Overview (it's the
+ * description, not a section); the 6 entity inventories collapse into Contents
+ * (type chips); config VALUES + integration connections live in Configuration;
+ * Setup is no longer a tab — it's a STATE surfaced as an Overview banner + a
+ * Configuration badge. */
+type TabKey = "overview" | "contents" | "configuration";
+
+/** The entity kinds shown inside the Contents tab (the old per-entity tabs). */
+type EntityKind =
 	| "workflows"
 	| "apps"
 	| "forms"
 	| "agents"
 	| "tables"
-	| "claims"
-	| "configs"
-	| "setup";
+	| "claims";
+
+/** Contents type-chip selection: a specific kind or the combined summary. */
+type ContentsFilter = "all" | EntityKind;
 
 const ENTITY_TABS: {
-	key: Exclude<TabKey, "configs" | "setup" | "readme">;
+	key: EntityKind;
 	label: string;
 	Icon: typeof Workflow;
 }[] = [
@@ -149,7 +157,7 @@ const ENTITY_TABS: {
 /** Per-entity-page link target, carrying the `?from` so the entity page can
  * offer a "back to this Solution" affordance (consumed in Task 19b). */
 function entityHref(
-	kind: Exclude<TabKey, "configs" | "setup" | "readme">,
+	kind: EntityKind,
 	entity: EntitySummary,
 	solutionId: string,
 ): string {
@@ -184,7 +192,7 @@ function asConfigType(type: string): ConfigType {
 	return "string";
 }
 
-const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs" | "setup" | "readme">, string> = {
+const ENTITY_TAB_LABEL: Record<EntityKind, string> = {
 	workflows: "workflows",
 	apps: "apps",
 	forms: "forms",
@@ -193,7 +201,7 @@ const ENTITY_TAB_LABEL: Record<Exclude<TabKey, "configs" | "setup" | "readme">, 
 	claims: "custom claims",
 };
 
-const GRID_TABLE_ENTITY_TABS = new Set<Exclude<TabKey, "configs" | "setup" | "readme">>([
+const GRID_TABLE_ENTITY_TABS = new Set<EntityKind>([
 	"workflows",
 	"apps",
 	"forms",
@@ -265,7 +273,7 @@ function accessBadge(accessLevel: string | null | undefined) {
 	);
 }
 
-function entityStatus(entity: EntitySummary, kind: Exclude<TabKey, "configs" | "setup" | "readme">) {
+function entityStatus(entity: EntitySummary, kind: EntityKind) {
 	if (kind === "forms") {
 		return entity.is_active === false ? "Inactive" : "Active";
 	}
@@ -280,7 +288,7 @@ function SolutionEntityGrid({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs" | "setup" | "readme">;
+	kind: EntityKind;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -500,7 +508,7 @@ function SolutionEntityTable({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs" | "setup" | "readme">;
+	kind: EntityKind;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -671,7 +679,7 @@ function EntityTabContent({
 	items,
 	solutionId,
 }: {
-	kind: Exclude<TabKey, "configs" | "setup" | "readme">;
+	kind: EntityKind;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -913,6 +921,209 @@ function ConfigRow({
 	);
 }
 
+/** Tailwind classes for a Contents type-chip (selected vs not). */
+function chipClass(active: boolean): string {
+	return [
+		"inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors",
+		active
+			? "border-primary bg-primary text-primary-foreground"
+			: "border-border bg-background text-muted-foreground hover:bg-muted",
+	].join(" ");
+}
+
+/** Overview = the install's description (README, rendered GitHub-style) leading
+ * a status/contents summary so the tab is never empty. README editing is only
+ * offered for disconnected installs (a git-connected install's README is repo-
+ * owned — the PUT 409s, so we hide the affordance). */
+function OverviewTab({
+	readme,
+	canEditReadme,
+	onSaveReadme,
+	entityCounts,
+	configsCount,
+	version,
+	gitConnected,
+	orgName,
+	onGoToContents,
+}: {
+	readme: string | null;
+	canEditReadme: boolean;
+	onSaveReadme: (markdown: string) => void | Promise<void>;
+	entityCounts: Record<EntityKind, number>;
+	configsCount: number;
+	version: string | null;
+	gitConnected: boolean;
+	orgName: string;
+	onGoToContents: () => void;
+}) {
+	const total = Object.values(entityCounts).reduce((a, b) => a + b, 0);
+	return (
+		<div className="flex h-full min-h-0 flex-col gap-6 overflow-auto">
+			{/* Status summary — always present, so Overview never reads as empty. */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-base">At a glance</CardTitle>
+					<CardDescription>
+						{version ? `Version ${version} · ` : ""}
+						{orgName} · {gitConnected ? "Git-connected" : "Manual install"}
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<div className="flex flex-wrap gap-4 text-sm">
+						{ENTITY_TABS.map(({ key, label, Icon }) => (
+							<button
+								type="button"
+								key={key}
+								onClick={onGoToContents}
+								className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+							>
+								<Icon className="h-4 w-4" />
+								<span className="font-medium text-foreground">
+									{entityCounts[key]}
+								</span>
+								{label}
+							</button>
+						))}
+						<span className="flex items-center gap-1.5 text-muted-foreground">
+							<SlidersHorizontal className="h-4 w-4" />
+							<span className="font-medium text-foreground">
+								{configsCount}
+							</span>
+							configs
+						</span>
+					</div>
+					{total === 0 && (
+						<p className="mt-3 text-sm text-muted-foreground">
+							This Solution deploys no entities yet.
+						</p>
+					)}
+				</CardContent>
+			</Card>
+
+			{/* README — the description. Read-only render with an Edit affordance
+			    only for disconnected installs. */}
+			<div className="min-h-0 flex-1">
+				<SolutionReadmeTab
+					readme={readme}
+					canEdit={canEditReadme}
+					onSave={onSaveReadme}
+				/>
+			</div>
+		</div>
+	);
+}
+
+/** The "All" view of Contents — a compact per-type grid that jumps to a chip. */
+function ContentsSummary({
+	entityCounts,
+	onPick,
+}: {
+	entityCounts: Record<EntityKind, number>;
+	onPick: (kind: EntityKind) => void;
+}) {
+	const total = Object.values(entityCounts).reduce((a, b) => a + b, 0);
+	if (total === 0) {
+		return (
+			<div className="rounded-2xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+				This Solution deploys no entities.
+			</div>
+		);
+	}
+	return (
+		<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+			{ENTITY_TABS.filter(({ key }) => entityCounts[key] > 0).map(
+				({ key, label, Icon }) => (
+					<button
+						type="button"
+						key={key}
+						data-testid={`summary-${key}`}
+						onClick={() => onPick(key)}
+						className="flex items-center gap-3 rounded-xl border p-4 text-left hover:bg-muted"
+					>
+						<Icon className="h-5 w-5 text-muted-foreground" />
+						<div>
+							<div className="text-lg font-semibold">{entityCounts[key]}</div>
+							<div className="text-xs text-muted-foreground">{label}</div>
+						</div>
+					</button>
+				),
+			)}
+		</div>
+	);
+}
+
+/** Configuration = config VALUES (re-key over the install's life) + integration
+ * connections (reconnect expired OAuth). This is the permanent home of what was
+ * the one-time Setup wizard — revisited, not a wizard. */
+function ConfigurationTab({
+	configs,
+	orgId,
+	setupItems,
+	setupComplete,
+	setupError,
+	onInvalidate,
+	onSetConfig,
+}: {
+	configs: ConfigStatus[];
+	orgId: string | null;
+	setupItems: components["schemas"]["SolutionSetupItem"][];
+	setupComplete: boolean;
+	setupError: unknown;
+	onInvalidate: () => void;
+	onSetConfig: (key: string, value: string) => void | Promise<void>;
+}) {
+	const hasConnections = setupItems.some((i) => i.kind === "connection");
+	return (
+		<div className="flex flex-col gap-6">
+			{/* Integration connections (if the solution declares any). */}
+			{setupError ? (
+				<div className="rounded-lg border border-destructive/40 bg-destructive/5 py-6 text-center text-sm text-destructive">
+					{setupError instanceof Error
+						? setupError.message
+						: "Couldn't load setup status"}
+				</div>
+			) : (
+				hasConnections && (
+					<section data-testid="config-connections">
+						<h3 className="mb-2 text-sm font-semibold">Connections</h3>
+						<SolutionSetupWizard
+							items={setupItems}
+							setupComplete={setupComplete}
+							onFinish={onInvalidate}
+							onSetConfig={onSetConfig}
+						/>
+					</section>
+				)
+			)}
+
+			{/* Config values. */}
+			<section data-testid="config-values">
+				{hasConnections && (
+					<h3 className="mb-2 text-sm font-semibold">Config values</h3>
+				)}
+				{configs.length > 0 ? (
+					<div className="space-y-3">
+						{configs.map((cfg) => (
+							<ConfigRow
+								key={cfg.id}
+								config={cfg}
+								orgId={orgId}
+								onSaved={onInvalidate}
+							/>
+						))}
+					</div>
+				) : (
+					!hasConnections && (
+						<div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
+							This Solution declares no configuration.
+						</div>
+					)
+				)}
+			</section>
+		</div>
+	);
+}
+
 export function SolutionDetail() {
 	const { solutionId } = useParams<{ solutionId: string }>();
 	const navigate = useNavigate();
@@ -920,10 +1131,9 @@ export function SolutionDetail() {
 	const { data: organizations } = useOrganizations();
 	const { isPlatformAdmin } = useAuth();
 
-	// README is the first tab in ORDER, but the default selected tab stays on
-	// the entity-centric Workflows view — admins land on what the Solution does,
-	// not its prose. The README is one click left.
-	const [tab, setTab] = useState<TabKey>("workflows");
+	// Land on Overview — the install's description + at-a-glance status. Contents
+	// (entities) and Configuration are one click away.
+	const [tab, setTab] = useState<TabKey>("overview");
 	const [editOpen, setEditOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
@@ -1051,24 +1261,34 @@ export function SolutionDetail() {
 		);
 	}, [sol, organizations]);
 
-	const counts = useMemo(() => {
+	const entityCounts = useMemo(() => {
 		return {
-			readme: 0,
 			workflows: data?.workflows?.length ?? 0,
 			apps: data?.apps?.length ?? 0,
 			forms: data?.forms?.length ?? 0,
 			agents: data?.agents?.length ?? 0,
 			tables: data?.tables?.length ?? 0,
 			claims: data?.claims?.length ?? 0,
-			configs: data?.configs?.length ?? 0,
-			setup: setupData?.items?.length ?? 0,
-		} satisfies Record<TabKey, number>;
-	}, [data, setupData]);
+		} satisfies Record<EntityKind, number>;
+	}, [data]);
 
-	const itemsFor = (key: Exclude<TabKey, "configs" | "setup" | "readme">): EntitySummary[] =>
+	const totalContents = useMemo(
+		() => Object.values(entityCounts).reduce((a, b) => a + b, 0),
+		[entityCounts],
+	);
+	const configsCount = data?.configs?.length ?? 0;
+
+	const itemsFor = (key: EntityKind): EntitySummary[] =>
 		(data?.[key] as EntitySummary[] | undefined) ?? [];
 
 	const requiredUnset = data?.required_configs_unset ?? [];
+	// Contents tab: "All" shows a combined per-type summary; a specific chip
+	// renders that kind's full surface (with its specialized actions — workflow
+	// execute, form launch, app open — which a merged column list would lose).
+	const [contentsFilter, setContentsFilter] =
+		useState<ContentsFilter>("all");
+	const activeKind: EntityKind | null =
+		contentsFilter === "all" ? null : contentsFilter;
 
 	return (
 		<div
@@ -1188,7 +1408,7 @@ export function SolutionDetail() {
 									data-testid="continue-setup"
 									variant="outline"
 									className="whitespace-nowrap border-yellow-500/60 text-yellow-700 hover:text-yellow-700 dark:text-yellow-400"
-									onClick={() => setTab("setup")}
+									onClick={() => setTab("configuration")}
 								>
 									<AlertTriangle className="mr-1.5 h-4 w-4" />
 									Continue Setup
@@ -1231,7 +1451,8 @@ export function SolutionDetail() {
 						</div>
 					</div>
 
-					{/* Required-config warning banner */}
+					{/* Setup-incomplete banner (Setup is a STATE, not a tab) — deep-links
+					    to Configuration where the required values are entered. */}
 					{requiredUnset.length > 0 && (
 						<div
 							data-testid="required-config-warning"
@@ -1240,7 +1461,7 @@ export function SolutionDetail() {
 							<div className="flex items-center gap-2 text-sm">
 								<AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
 								<span>
-									{requiredUnset.length} required config
+									Setup incomplete — {requiredUnset.length} required config
 									{requiredUnset.length === 1 ? "" : "s"} need
 									{requiredUnset.length === 1 ? "s" : ""} a value
 									before this Solution can run.
@@ -1249,14 +1470,14 @@ export function SolutionDetail() {
 							<Button
 								size="sm"
 								variant="outline"
-								onClick={() => setTab("configs")}
+								onClick={() => setTab("configuration")}
 							>
-								Set values
+								Fix
 							</Button>
 						</div>
 					)}
 
-					{/* Tabs */}
+					{/* Tabs (3): Overview · Contents · Configuration */}
 					<Tabs
 						value={tab}
 						onValueChange={(v) => setTab(v as TabKey)}
@@ -1264,126 +1485,146 @@ export function SolutionDetail() {
 					>
 						<TabsList className="self-start">
 							<TabsTrigger
-								value="readme"
-								data-testid="tab-readme"
+								value="overview"
+								data-testid="tab-overview"
 								className="gap-1.5"
 							>
 								<FileText className="h-4 w-4" />
-								README
+								Overview
 							</TabsTrigger>
-							{ENTITY_TABS.map(({ key, label, Icon }) => (
-								<TabsTrigger
-									key={key}
-									value={key}
-									data-testid={`tab-${key}`}
-									className="gap-1.5"
-								>
-									<Icon className="h-4 w-4" />
-									{label}
-									<span className="ml-1 text-xs text-muted-foreground">
-										{counts[key]}
-									</span>
-								</TabsTrigger>
-							))}
 							<TabsTrigger
-								value="configs"
-								data-testid="tab-configs"
+								value="contents"
+								data-testid="tab-contents"
 								className="gap-1.5"
 							>
-								<SlidersHorizontal className="h-4 w-4" />
-								Configs
+								<LayoutGrid className="h-4 w-4" />
+								Contents
 								<span className="ml-1 text-xs text-muted-foreground">
-									{counts.configs}
+									{totalContents}
 								</span>
 							</TabsTrigger>
 							<TabsTrigger
-								value="setup"
-								data-testid="tab-setup"
+								value="configuration"
+								data-testid="tab-configuration"
 								className="gap-1.5"
 							>
-								<CheckCircle2 className="h-4 w-4" />
-								Setup
-								{sol.setup_complete === false && (
-									<AlertTriangle className="ml-0.5 h-3.5 w-3.5 text-yellow-500" />
+								<SlidersHorizontal className="h-4 w-4" />
+								Configuration
+								{sol.setup_complete === false ? (
+									<AlertTriangle
+										data-testid="config-tab-warning"
+										className="ml-0.5 h-3.5 w-3.5 text-yellow-500"
+									/>
+								) : (
+									configsCount > 0 && (
+										<span className="ml-1 text-xs text-muted-foreground">
+											{configsCount}
+										</span>
+									)
 								)}
 							</TabsTrigger>
 						</TabsList>
 
-						<TabsContent value="readme" className="flex-1 min-h-0">
-							<SolutionReadmeTab
+						{/* OVERVIEW — README leads (it's the description, not a section),
+						    with a status/contents summary so it's never empty. */}
+						<TabsContent value="overview" className="flex-1 min-h-0">
+							<OverviewTab
 								readme={readmeData?.readme ?? null}
-								canEdit={isPlatformAdmin}
-								onSave={async (md) => {
+								canEditReadme={isPlatformAdmin && !sol.git_connected}
+								onSaveReadme={async (md) => {
 									await putSolutionReadme(sol.id, md.trim() ? md : null);
 									toast.success("README saved");
 									invalidate();
 								}}
+								entityCounts={entityCounts}
+								configsCount={configsCount}
+								version={sol.version ?? null}
+								gitConnected={sol.git_connected}
+								orgName={orgName}
+								onGoToContents={() => setTab("contents")}
 							/>
 						</TabsContent>
 
-						{ENTITY_TABS.map(({ key }) => (
-							<TabsContent key={key} value={key} className="flex-1 min-h-0">
-								<EntityTabContent
-									kind={key}
-									items={itemsFor(key)}
-									solutionId={sol.id}
-								/>
-							</TabsContent>
-						))}
-
-						<TabsContent value="configs" className="flex-1 min-h-0">
-							{data.configs && data.configs.length > 0 ? (
-								<div className="space-y-3">
-									{data.configs.map((cfg) => (
-										<ConfigRow
-											key={cfg.id}
-											config={cfg}
-											orgId={sol.organization_id ?? null}
-											onSaved={invalidate}
-										/>
-									))}
-								</div>
-							) : (
-								<div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
-									This Solution declares no configuration.
-								</div>
-							)}
+						{/* CONTENTS — the 6 entity inventories as one tab with type chips. */}
+						<TabsContent value="contents" className="flex-1 min-h-0 flex flex-col">
+							<div className="mb-3 flex flex-wrap gap-2" data-testid="contents-chips">
+								<button
+									type="button"
+									data-testid="chip-all"
+									onClick={() => setContentsFilter("all")}
+									className={chipClass(contentsFilter === "all")}
+								>
+									All
+									<span className="ml-1.5 text-xs opacity-70">
+										{totalContents}
+									</span>
+								</button>
+								{ENTITY_TABS.map(({ key, label, Icon }) => (
+									<button
+										type="button"
+										key={key}
+										data-testid={`chip-${key}`}
+										onClick={() => setContentsFilter(key)}
+										className={chipClass(contentsFilter === key)}
+									>
+										<Icon className="h-3.5 w-3.5" />
+										{label}
+										<span className="ml-1.5 text-xs opacity-70">
+											{entityCounts[key]}
+										</span>
+									</button>
+								))}
+							</div>
+							<div className="flex-1 min-h-0 overflow-auto">
+								{activeKind ? (
+									<EntityTabContent
+										kind={activeKind}
+										items={itemsFor(activeKind)}
+										solutionId={sol.id}
+									/>
+								) : (
+									<ContentsSummary
+										entityCounts={entityCounts}
+										onPick={(k) => setContentsFilter(k)}
+									/>
+								)}
+							</div>
 						</TabsContent>
 
-						<TabsContent value="setup" className="flex-1 min-h-0">
-							{setupError ? (
-								<div className="rounded-lg border border-destructive/40 bg-destructive/5 py-12 text-center text-sm text-destructive">
-									{setupError instanceof Error
-										? setupError.message
-										: "Couldn't load setup status"}
-								</div>
-							) : (
-								<SolutionSetupWizard
-									items={setupData?.items ?? []}
-									setupComplete={setupData?.setup_complete ?? sol.setup_complete}
-									onFinish={invalidate}
-									onSetConfig={async (key, value) => {
-										try {
-											await setSolutionConfig({
-												key,
-												value,
-												type: asConfigType(
-													setupData?.items.find((i) => i.key === key)?.type ??
-														"string",
-												),
-												organizationId: sol.organization_id ?? null,
-											});
-											toast.success(`Set ${key}`);
-											invalidate();
-										} catch (err: unknown) {
-											toast.error(`Failed to set ${key}`, {
-												description:
-													err instanceof Error ? err.message : undefined,
-											});
-										}
-									}}
-								/>
-							)}
+						{/* CONFIGURATION — config VALUES + integration connections; the
+						    permanent home of what was the one-time Setup wizard. */}
+						<TabsContent
+							value="configuration"
+							className="flex-1 min-h-0 overflow-auto"
+						>
+							<ConfigurationTab
+								configs={data.configs ?? []}
+								orgId={sol.organization_id ?? null}
+								setupItems={setupData?.items ?? []}
+								setupComplete={setupData?.setup_complete ?? sol.setup_complete}
+								setupError={setupError}
+								onInvalidate={invalidate}
+								onSetConfig={async (key, value) => {
+									try {
+										await setSolutionConfig({
+											key,
+											value,
+											type: asConfigType(
+												setupData?.items.find((i) => i.key === key)?.type ??
+													"string",
+											),
+											organizationId: sol.organization_id ?? null,
+										});
+										toast.success(`Set ${key}`);
+										invalidate();
+									} catch (err: unknown) {
+										toast.error(`Failed to set ${key}`, {
+											description:
+												err instanceof Error ? err.message : undefined,
+										});
+									}
+								}}
+							/>
 						</TabsContent>
 					</Tabs>
 

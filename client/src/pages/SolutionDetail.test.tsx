@@ -188,25 +188,36 @@ describe("SolutionDetail", () => {
 		expect(screen.getByText(/upgraded from v2\.0\.0/i)).toBeInTheDocument();
 	});
 
-	it("renders tabs with counts", async () => {
+	it("renders the 3 top-level tabs with Contents total + Configuration count", async () => {
 		await renderPage();
 		await screen.findByTestId("solution-detail");
 
-		const tables = screen.getByTestId("tab-tables");
+		expect(screen.getByTestId("tab-overview")).toHaveTextContent("Overview");
+
+		// Contents collapses the 6 entity inventories; its count is the total
+		// (1 workflow + 1 app + 1 form + 0 agents + 1 table + 1 claim = 5 in the
+		// fixture).
+		const contents = screen.getByTestId("tab-contents");
+		expect(contents).toHaveTextContent("Contents");
+		expect(contents).toHaveTextContent("5");
+
+		const configuration = screen.getByTestId("tab-configuration");
+		expect(configuration).toHaveTextContent("Configuration");
+		expect(configuration).toHaveTextContent("2");
+	});
+
+	it("shows the per-type chips inside Contents", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-contents"));
+		const tables = screen.getByTestId("chip-tables");
 		expect(tables).toHaveTextContent("Tables");
 		expect(tables).toHaveTextContent("1");
-
-		const workflows = screen.getByTestId("tab-workflows");
+		const workflows = screen.getByTestId("chip-workflows");
 		expect(workflows).toHaveTextContent("Workflows");
 		expect(workflows).toHaveTextContent("1");
-
-		const configs = screen.getByTestId("tab-configs");
-		expect(configs).toHaveTextContent("Configs");
-		expect(configs).toHaveTextContent("2");
-
-		const claims = screen.getByTestId("tab-claims");
-		expect(claims).toHaveTextContent("Custom Claims");
-		expect(claims).toHaveTextContent("1");
+		expect(screen.getByTestId("chip-claims")).toHaveTextContent("Custom Claims");
 	});
 
 	it("renders the update action and the overflow menu in the header", async () => {
@@ -247,13 +258,13 @@ describe("SolutionDetail", () => {
 		expect(await screen.findByLabelText(/capture orders/i)).toBeInTheDocument();
 	});
 
-		it("shows the required-unset config warning banner", async () => {
+		it("shows the setup-incomplete banner", async () => {
 			await renderPage();
 			expect(
 				await screen.findByTestId("required-config-warning"),
 			).toBeInTheDocument();
 			expect(
-				screen.getByText(/1 required config needs a value/i),
+				screen.getByText(/setup incomplete .* 1 required config needs a value/i),
 			).toBeInTheDocument();
 		});
 
@@ -261,6 +272,8 @@ describe("SolutionDetail", () => {
 			const { user } = await renderPage();
 			await screen.findByTestId("solution-detail");
 
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-workflows"));
 			const execute = screen.getByRole("button", { name: /execute workflow/i });
 			await user.click(execute);
 
@@ -273,7 +286,8 @@ describe("SolutionDetail", () => {
 			const { user } = await renderPage();
 			await screen.findByTestId("solution-detail");
 
-			await user.click(screen.getByTestId("tab-forms"));
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-forms"));
 			expect(screen.getByText("Ticket Intake")).toBeInTheDocument();
 			expect(
 				screen.queryByRole("button", { name: /edit form/i }),
@@ -289,7 +303,8 @@ describe("SolutionDetail", () => {
 			const { user } = await renderPage();
 			await screen.findByTestId("solution-detail");
 
-			await user.click(screen.getByTestId("tab-apps"));
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-apps"));
 			expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
 			expect(screen.getByTestId("entity-logo")).toHaveAttribute(
 				"src",
@@ -306,8 +321,9 @@ describe("SolutionDetail", () => {
 			const { user } = await renderPage();
 			await screen.findByTestId("solution-detail");
 
-		await user.click(screen.getByTestId("tab-tables"));
-		// Entity tabs render the shared DataTable (Roles paradigm): rows are
+		await user.click(screen.getByTestId("tab-contents"));
+		await user.click(screen.getByTestId("chip-tables"));
+		// Entity surfaces render the shared DataTable (Roles paradigm): rows are
 		// clickable and navigate, carrying the from=solution backlink.
 		await user.click(screen.getByRole("row", { name: /customers/i }));
 		expect(mockNavigate).toHaveBeenCalledWith(
@@ -319,7 +335,8 @@ describe("SolutionDetail", () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
-		await user.click(screen.getByTestId("tab-tables"));
+		await user.click(screen.getByTestId("tab-contents"));
+		await user.click(screen.getByTestId("chip-tables"));
 		expect(screen.getByRole("row", { name: /customers/i })).toBeInTheDocument();
 
 		await user.type(
@@ -333,11 +350,11 @@ describe("SolutionDetail", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("shows Set/Not set status and config inputs on the Configs tab", async () => {
+	it("shows Set/Not set status and config inputs on the Configuration tab", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
-		await user.click(screen.getByTestId("tab-configs"));
+		await user.click(screen.getByTestId("tab-configuration"));
 
 		expect(screen.getByTestId("config-status-api_token")).toHaveTextContent(
 			"Not set",
@@ -356,7 +373,7 @@ describe("SolutionDetail", () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
-		await user.click(screen.getByTestId("tab-configs"));
+		await user.click(screen.getByTestId("tab-configuration"));
 		await user.type(
 			screen.getByTestId("config-value-input-api_token"),
 			"sekret",
