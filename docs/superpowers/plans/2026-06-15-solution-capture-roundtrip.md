@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the capture→deploy round-trip so entities captured into a Solution (via UI or CLI) survive deploy: capture enqueues a pending row, `bifrost solution pull` materializes captured entities into the source `.bifrost/` manifest, and deploy 409-BLOCKS (never silently deletes) when an un-pulled capture is absent from the manifest.
+**Goal:** Close the capture→deploy round-trip so entities captured into a Solution (via UI or CLI) survive deploy: capture enqueues a pending row, `bifrost solution pull` materializes captured entities into the source `.bifrost/` manifest, and deploy 409-BLOCKS (never silently deletes) when an un-pulled capture is absent from the manifest. **Then (Tasks 8–9) validate the rebuilt `bifrost:build` skill empirically** with fresh Sonnet builds across both modes to a 3-consecutive-clean streak — the platform fix (Tasks 1–7) unblocks the solution track. This single plan runs the whole arc end-to-end.
 
 **Architecture:** A new `pending_captures` queue table is the single source of truth for "captured but not yet pulled to source." Capture inserts rows; `pull` (a new CLI command) reuses the EXISTING `/export` endpoint to fetch a live-rebuilt `.bifrost/` bundle and unzips only its manifest files into the workspace, then clears the queue rows it materialized; deploy checks the queue before its reconcile sweep and 409s on any pending entity absent from the incoming manifest. Entities absent with NO queue row remain genuine deletes (unchanged behavior).
 
@@ -656,9 +656,73 @@ git commit -m "docs(build-skill): solutions.md documents the real capture→pull
 
 ---
 
-## After this plan: resume the Sonnet validation loop
+## Task 8: Sonnet validation loop — Track A (solution build)
 
-With the round-trip working, resume Tasks 11–12 of the build-skill rebuild (`docs/plans/2026-06-15-build-skill-RESUME.md`): re-run Track A from scratch (now capture→pull→deploy works) to a 3-consecutive-clean streak, then Track B, then the full pre-completion closeout.
+> **Orchestration, not TDD.** This is the centerpiece from the build-skill rebuild (its Tasks 11–12 are folded in here so this plan runs end-to-end). It runs ONLY after Tasks 1–7 above make the capture→pull→deploy round-trip work. Done bar: **3 consecutive clean runs with no skill-doc edits between them.** Each run's misleading-moment fix resets the streak to 0. Log: `docs/plans/2026-06-15-build-skill-validation-log.md` (run A1 already recorded as blocked-on-the-now-fixed bug).
+
+**Prerequisite — debug stack in PORT mode** (Chrome can't drive netbird Vite):
+```bash
+./debug.sh status | grep -q "Mode:     port" || BIFROST_FORCE_PORT=1 ./debug.sh up
+./debug.sh status   # capture the URL, e.g. http://localhost:37791
+```
+
+- [ ] **Step 1: Build the SDK-surface coverage checklist**
+
+From `.claude/skills/bifrost-build/generated/python-sdk-signatures.md` (71 methods) and `generated/web-sdk-surface.md` (22 exports), enumerate every public Python SDK method + web export into a checklist in the validation log. The union of Track A + Track B must tick every box; gaps logged with a reason.
+
+- [ ] **Step 2: Dispatch a fresh Sonnet run (skill-only guidance)**
+
+Dispatch a `general-purpose` subagent on `model: sonnet`, in a clean scratch dir (`/tmp/bifrost-val-A<n>`), pointed at the port-mode stack. Instruct it to follow ONLY the `bifrost:build` skill (start at SKILL.md, no reading platform source) and build a complete solution from scratch: `bifrost solution init` → scaffold a **Tailwind-styled** app → get a **table + form + agent + config** into the solution via the **capture → `bifrost solution pull` → `bifrost solution deploy`** flow (now working) → `bifrost solution start` + drive every page → update an entity → `bifrost solution deploy`. It must exercise as much of the SDK surface as the build touches and report: a scorecard (styled? entities round-tripped? update? deploy clean? read-only invariant respected?), every misleading skill moment (quoting the file + text), and which SDK methods/exports it used. (Reuse the run-A1 dispatch prompt in this session's history as the template; it's thorough.)
+
+- [ ] **Step 3: Score, log, fix, repeat**
+
+Record the run in the Track A table of the validation log; tick the coverage checklist. For each misleading moment → fix the relevant `.claude/skills/bifrost-build/references/*.md` (or SKILL.md), re-lint (`lint_claims.py`, 0 findings), re-sync the Codex mirror (`./scripts/sync-codex-skills.sh`), bump the touched file's `verified_at_sha` in `sources.yaml`, and **reset the consecutive-clean counter to 0**. Apply the queued A1 skill-doc findings here (org-scoping-for-capture, `solution start [APP_SLUG]` positional, the capture→pull→deploy doc now that it's real — much of this is Task 7 above). Loop Steps 2–3 until **3 consecutive clean runs** (no doc edits between them).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/plans/2026-06-15-build-skill-validation-log.md .claude/skills/bifrost-build/ plugins/bifrost/skills/bifrost-build/
+git commit -m "validate(build-skill): Track A (solution) — 3-clean streak + SDK coverage"
+```
+
+---
+
+## Task 9: Sonnet validation loop — Track B (repo/global) + closeout
+
+> Orchestration. Covers SDK surface Track A didn't reach, so the union drives the whole SDK. Same done bar (3 consecutive clean, no doc edits between).
+
+- [ ] **Step 1: Dispatch a fresh Sonnet repo-mode run**
+
+Dispatch a fresh `sonnet` subagent in a clean scratch dir, skill-only guidance, in a **non-solution** (global `_repo`) workspace (no `bifrost.solution.yaml` → the dispatcher routes it to `repo.md`): author a workflow `.py`, create entities via live `bifrost <entity> create|update` (correct in repo mode), execute the workflow, iterate. Target the coverage-checklist boxes Track A left unticked. If cheap, also exercise the MCP-only variant (repo-only concept, `mcp-mode.md`).
+
+- [ ] **Step 2: Score, log, fix, loop to the bar**
+
+Same scorecard + coverage ticks + doc-fix-resets-streak discipline as Task 8. Loop to **3 consecutive clean runs, no doc edits between**.
+
+- [ ] **Step 3: Coverage closeout**
+
+Confirm every box on the SDK-surface checklist is ticked by Track A ∪ Track B. Any still-unreached op is a logged gap with a reason (`log()` it — never silently drop). Bump `verified_at_sha` for every reference file whose claims were driven this session.
+
+- [ ] **Step 4: Full pre-completion verification**
+
+```bash
+cd api && pyright && ruff check .
+cd ../client && npm run tsc && npm run lint
+cd .. && docker compose -p bifrost-test-75bc0d9c -f docker-compose.test.yml --profile test run --rm --no-deps test-runner pytest tests/unit -v
+# skill-accuracy gates:
+docker compose -p bifrost-test-75bc0d9c -f docker-compose.test.yml --profile test run --rm --no-deps test-runner python /app/scripts/skill-truth/generate.py --check
+./scripts/sync-codex-skills.sh && git diff --exit-code -- plugins/bifrost/skills .codex/skills
+```
+Expected: pyright 0, ruff/eslint/tsc clean, tests green, generate.py --check clean, mirror diff clean.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/plans/2026-06-15-build-skill-validation-log.md .claude/skills/bifrost-build/ plugins/bifrost/skills/bifrost-build/
+git commit -m "validate(build-skill): Track B (repo) — 3-clean streak + full SDK coverage closeout"
+```
+
+This completes the entire arc: build-skill rebuild (done) → capture round-trip fix (Tasks 1–7) → empirical validation to a clean streak across both modes (Tasks 8–9). At this point the skill is proven, the platform round-trip works, and Tasks 11–12 of the build-skill rebuild plan are satisfied.
 
 ---
 

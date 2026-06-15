@@ -54,15 +54,14 @@ All reference docs lint 0; appendix + claims + mirror + freshness tests green; m
 
 ---
 
-## THEN — resume the Sonnet validation loop (Tasks 11–12)
+## THEN — Sonnet validation loop (now Tasks 8–9 of the SAME plan)
 
-Log: `docs/plans/2026-06-15-build-skill-validation-log.md` (Track A run 1 recorded, BLOCKED on the platform bug).
+**The validation loop is folded into the capture-roundtrip plan as Tasks 8–9** — so the one plan file (`2026-06-15-solution-capture-roundtrip.md`) runs end-to-end: fix the platform bug (Tasks 1–7) → Track A loop (Task 8) → Track B loop + closeout (Task 9). No separate doc to stitch in.
 
-Once the capture round-trip works:
-- **Track A (solution):** re-run fresh Sonnet from scratch: `solution init` → Tailwind app → get table+form+agent+config in via **capture→pull→deploy** (now working) → `start` → update → `deploy`. Loop to **3 consecutive clean runs, no skill-doc edits between**. Each run's misleading-moments → fix `references/*.md` → reset streak.
-- **Track B (repo/global):** workflow `.py` + live entity create/update → execute → iterate. Loop to 3 clean. Cover SDK surface Track A didn't (union must hit the 71 Python methods + 22 web exports from `generated/`).
-- **Skill-doc findings already queued from A1** (apply during the loop, NOT before — they may shift once the fix lands): solutions.md should document the capture→pull→deploy round-trip (replace the "TBD open question" section once real); the org-scoping requirement for capture (global `organization_id: null` entities aren't capturable); `solution start [APP_SLUG]` positional with multiple apps; "adding a 2nd workflow" guidance (currently `.bifrost/workflows.yaml` UUID entry — should be reconciled with how pull/deploy work after the fix).
-- Final closeout: full pre-completion verification (`pyright`, `ruff`, `npm run tsc`, `npm run lint`, `./test.sh all`, client unit), all `skill-accuracy` gates green, mark Tasks 11–12 done.
+- **Task 8 (Track A, solution):** fresh Sonnet from scratch, capture→pull→deploy (now working), to a 3-consecutive-clean streak. Applies the queued A1 skill-doc findings.
+- **Task 9 (Track B, repo/global) + closeout:** live entity mutation flow to 3 clean; union of A+B covers the 71 Python methods + 22 web exports; full pre-completion verification + all skill-accuracy gates green.
+
+Log: `docs/plans/2026-06-15-build-skill-validation-log.md` (run A1 recorded, was blocked on the now-fixed bug). Done bar both tracks: **3 consecutive clean runs, no skill-doc edits between** (a fix resets the streak). This satisfies Tasks 11–12 of the original build-skill rebuild plan.
 
 ---
 
