@@ -16,6 +16,10 @@ import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import click
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -48,7 +52,7 @@ class Finding:
     message: str
 
 
-def _load_groups() -> dict[str, "click.Group"]:  # type: ignore[name-defined]
+def _load_groups() -> dict[str, "click.Group"]:
     from bifrost.commands import ENTITY_GROUPS
     from bifrost.commands.solution import solution_group
 
