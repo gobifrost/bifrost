@@ -15,8 +15,8 @@
 ## File Structure
 
 **Created:**
-- `scripts/skill-truth/generate.py` — regenerates all `generated/*.md` from source (CLI walk + Python `inspect` + OpenAPI digest).
-- `scripts/skill-truth/lint_claims.py` — extracts + validates every `bifrost …` invocation in `skills/**/*.md`; mode-conditional bans.
+- `api/scripts/skill-truth/generate.py` — regenerates all `generated/*.md` from source (CLI walk + Python `inspect` + OpenAPI digest).
+- `api/scripts/skill-truth/lint_claims.py` — extracts + validates every `bifrost …` invocation in `skills/**/*.md`; mode-conditional bans.
 - `client/scripts/dump-app-sdk-surface.mjs` — dumps `index.v2.ts` export signatures for `generated/web-sdk-surface.md`.
 - `scripts/sync-codex-skills.sh` — rsyncs `.claude/skills/bifrost-*` into the two Codex roots.
 - `.claude/skills/bifrost-build/references/{solutions,repo,tables,workflows-python,web-sdk-v2,python-sdk,entities,apps,rest-api,mcp-mode}.md` — curated docs.
@@ -51,7 +51,7 @@
 ## Task 0: Ground-truth generator — CLI reference
 
 **Files:**
-- Create: `scripts/skill-truth/generate.py`
+- Create: `api/scripts/skill-truth/generate.py`
 - Create: `.claude/skills/bifrost-build/generated/cli-reference.md`
 - Test: `api/tests/unit/test_skill_appendix_fresh.py`
 
@@ -71,7 +71,7 @@ def _run_generator():
     # generate.py writes generated/*.md; --check leaves the tree unchanged and
     # exits 0 only if a fresh regen would produce zero diff.
     return subprocess.run(
-        [sys.executable, str(REPO / "scripts/skill-truth/generate.py"), "--check"],
+        [sys.executable, str(REPO / "api/scripts/skill-truth/generate.py"), "--check"],
         capture_output=True, text=True,
     )
 
@@ -79,7 +79,7 @@ def _run_generator():
 def test_cli_reference_is_fresh():
     result = _run_generator()
     assert result.returncode == 0, (
-        f"generated/* is stale — run scripts/skill-truth/generate.py.\n{result.stdout}\n{result.stderr}"
+        f"generated/* is stale — run api/scripts/skill-truth/generate.py.\n{result.stdout}\n{result.stderr}"
     )
     assert (GEN / "cli-reference.md").exists()
 ```
@@ -92,7 +92,7 @@ Expected: FAIL — `generate.py` does not exist (FileNotFoundError / non-zero re
 - [ ] **Step 3: Write the CLI-walk generator**
 
 ```python
-# scripts/skill-truth/generate.py
+# api/scripts/skill-truth/generate.py
 """Regenerate .claude/skills/bifrost-build/generated/*.md from source.
 
 Deterministic: sorted iteration, no timestamps. `--check` writes to a temp
@@ -133,7 +133,7 @@ def gen_cli_reference() -> str:
     from bifrost.commands.solution import solution_group
 
     lines: list[str] = ["# CLI Reference (generated — do not edit)\n"]
-    lines.append("> Regenerate: `python scripts/skill-truth/generate.py`. CI enforces freshness.\n")
+    lines.append("> Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.\n")
     groups = {**ENTITY_GROUPS, "solution": solution_group}
     for name in sorted(groups):
         _walk_group(name, groups[name], lines)
@@ -170,7 +170,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Generate the committed appendix**
 
-Run: `cd api && PYTHONPATH=. python ../scripts/skill-truth/generate.py`
+Run: `cd api && PYTHONPATH=. python ../api/scripts/skill-truth/generate.py`
 (Run from `api/` so `bifrost` imports resolve; if `bifrost` is only importable via the package, use the test stack's interpreter. Verify the file landed: `ls -la .claude/skills/bifrost-build/generated/cli-reference.md`.)
 
 - [ ] **Step 5: Run test to verify it passes**
@@ -181,7 +181,7 @@ Expected: PASS (double-run produces zero diff).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/skill-truth/generate.py .claude/skills/bifrost-build/generated/cli-reference.md api/tests/unit/test_skill_appendix_fresh.py
+git add api/scripts/skill-truth/generate.py .claude/skills/bifrost-build/generated/cli-reference.md api/tests/unit/test_skill_appendix_fresh.py
 git commit -m "feat(skill-truth): deterministic CLI-reference generator + freshness test"
 ```
 
@@ -190,7 +190,7 @@ git commit -m "feat(skill-truth): deterministic CLI-reference generator + freshn
 ## Task 1: Ground-truth generator — Python SDK signatures + OpenAPI digest + web-SDK surface
 
 **Files:**
-- Modify: `scripts/skill-truth/generate.py`
+- Modify: `api/scripts/skill-truth/generate.py`
 - Create: `client/scripts/dump-app-sdk-surface.mjs`
 - Create: `.claude/skills/bifrost-build/generated/{python-sdk-signatures,openapi-digest,web-sdk-surface}.md`
 - Test: `api/tests/unit/test_skill_appendix_fresh.py` (extend)
@@ -221,7 +221,7 @@ Expected: FAIL — the three files do not exist yet / `--check` reports STALE.
 - [ ] **Step 3: Add the Python-SDK + OpenAPI generators (reuse existing introspection)**
 
 ```python
-# add to scripts/skill-truth/generate.py
+# add to api/scripts/skill-truth/generate.py
 
 def gen_python_sdk_signatures() -> str:
     # Reuse the introspection already used by the served llms.txt.
@@ -300,7 +300,7 @@ process.stdout.write(lines.join("\n") + "\n");
 
 - [ ] **Step 4: Generate the three appendices**
 
-Run (in the test stack's API interpreter so `src` + `bifrost` import): `python scripts/skill-truth/generate.py`
+Run (in the test stack's API interpreter so `src` + `bifrost` import): `python api/scripts/skill-truth/generate.py`
 Then: `cd client && node scripts/dump-app-sdk-surface.mjs | head` to sanity-check.
 Verify all four `generated/*.md` exist.
 
@@ -312,7 +312,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/skill-truth/generate.py client/scripts/dump-app-sdk-surface.mjs client/package.json client/package-lock.json .claude/skills/bifrost-build/generated/ api/tests/unit/test_skill_appendix_fresh.py
+git add api/scripts/skill-truth/generate.py client/scripts/dump-app-sdk-surface.mjs client/package.json client/package-lock.json .claude/skills/bifrost-build/generated/ api/tests/unit/test_skill_appendix_fresh.py
 git commit -m "feat(skill-truth): python-sdk, openapi, web-sdk surface generators"
 ```
 
@@ -321,7 +321,7 @@ git commit -m "feat(skill-truth): python-sdk, openapi, web-sdk surface generator
 ## Task 2: Claims linter (red against current skill) + mode-conditional bans
 
 **Files:**
-- Create: `scripts/skill-truth/lint_claims.py`
+- Create: `api/scripts/skill-truth/lint_claims.py`
 - Test: `api/tests/unit/test_skill_cli_claims.py`
 
 - [ ] **Step 1: Write the failing test (must flag the CURRENT skill's bad commands)**
@@ -369,7 +369,7 @@ Expected: FAIL — `lint_claims` module missing.
 - [ ] **Step 3: Write the linter**
 
 ```python
-# scripts/skill-truth/lint_claims.py
+# api/scripts/skill-truth/lint_claims.py
 """Validate every `bifrost ...` invocation in skill markdown against the real
 Click tree. Globally-banned commands always fail; live entity mutation fails
 only in solution context (file == solutions.md or a ```bash solution block)."""
@@ -497,7 +497,7 @@ Expected: non-zero findings, including `bifrost watch` / `export` style bans (pr
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/skill-truth/lint_claims.py api/tests/unit/test_skill_cli_claims.py
+git add api/scripts/skill-truth/lint_claims.py api/tests/unit/test_skill_cli_claims.py
 git commit -m "feat(skill-truth): CLI-claims linter with mode-conditional bans"
 ```
 
@@ -576,7 +576,7 @@ git commit -m "feat(skill-truth): Codex mirror sync (both roots) + symlink norma
 
 Add a `skill-accuracy` job to `.github/workflows/ci.yml`, path-filtered to `skills/**, .claude/skills/**, plugins/bifrost/**, .codex/skills/**, api/bifrost/**, client/src/lib/app-sdk/**, api/src/routers/**`, always-on for release tags. Steps:
 1. Boot the test stack (or use the DB-free path if `app.openapi()` imports without a DB — verify; fallback: piggyback the stack-booting job).
-2. `python scripts/skill-truth/generate.py --check` (Gate 1).
+2. `python api/scripts/skill-truth/generate.py --check` (Gate 1).
 3. `./test.sh tests/unit/test_skill_cli_claims.py tests/unit/test_skill_appendix_fresh.py tests/unit/test_skill_reference_freshness.py` (Gate 2 + freshness).
 4. `./scripts/sync-codex-skills.sh && git diff --exit-code plugins/bifrost/skills .codex/skills` (Gate 3).
 
@@ -690,7 +690,7 @@ git commit -m "feat(build-skill): solutions.md (light) + repo.md entry docs"
 ```bash
 git rm docs/llm.txt
 ```
-Edit `CLAUDE.md` and `AGENTS.md`: replace the `docs/llm.txt` references with "change a command → regenerate via `scripts/skill-truth/generate.py`; CI enforces freshness."
+Edit `CLAUDE.md` and `AGENTS.md`: replace the `docs/llm.txt` references with "change a command → regenerate via `api/scripts/skill-truth/generate.py`; CI enforces freshness."
 
 - [ ] **Step 3: Lint all new references + run appendix freshness**
 
