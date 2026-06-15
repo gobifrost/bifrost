@@ -46,7 +46,80 @@ def gen_cli_reference() -> str:
     return "\n".join(lines) + "\n"
 
 
-GENERATORS = {"cli-reference.md": gen_cli_reference}
+def gen_python_sdk_signatures() -> str:
+    import importlib
+    import inspect
+
+    from src.services.mcp_server.tools import sdk as sdk_tools
+
+    lines: list[str] = ["# Python SDK Signatures (generated — do not edit)\n"]
+    lines.append("> Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.\n")
+
+    sdk_modules = [
+        "agents", "ai", "config", "events", "executions", "files", "forms",
+        "integrations", "knowledge", "organizations", "roles", "tables",
+        "users", "workflows",
+    ]
+    for mod_name in sorted(sdk_modules):
+        try:
+            mod = importlib.import_module(f"bifrost.{mod_name}")
+        except ImportError:
+            continue
+        # Each SDK module exposes a class with the same name as the module.
+        cls = getattr(mod, mod_name, None)
+        if cls is None or not inspect.isclass(cls):
+            continue
+        doc = sdk_tools._generate_module_docs(mod_name, cls)
+        if doc:
+            lines.append(doc)
+
+    return "\n".join(lines) + "\n"
+
+
+def gen_openapi_digest() -> str:
+    from src.main import app
+
+    spec = app.openapi()
+    lines: list[str] = [
+        "# OpenAPI Digest (generated — do not edit)\n",
+        "> Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.\n",
+        "",
+        "| Method | Path |",
+        "|---|---|",
+    ]
+    rows: list[tuple[str, str]] = []
+    for path, methods in spec.get("paths", {}).items():
+        for method in methods:
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            rows.append((method.upper(), path))
+    # Sort by (path, method) for deterministic output.
+    # operationId is intentionally excluded: FastAPI assigns non-deterministic
+    # suffixes to duplicate handler names across process restarts.
+    for m, p in sorted(rows, key=lambda r: (r[1], r[0])):
+        lines.append(f"| {m} | `{p}` |")
+    return "\n".join(lines) + "\n"
+
+
+def gen_web_sdk_surface() -> str:
+    import subprocess
+
+    script = Path(__file__).resolve().parent / "dump-app-sdk-surface.mjs"
+    result = subprocess.run(
+        ["node", str(script)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+GENERATORS = {
+    "cli-reference.md": gen_cli_reference,
+    "openapi-digest.md": gen_openapi_digest,
+    "python-sdk-signatures.md": gen_python_sdk_signatures,
+    "web-sdk-surface.md": gen_web_sdk_surface,
+}
 
 
 def main() -> int:
