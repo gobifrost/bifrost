@@ -151,12 +151,13 @@ App Builder applications — TSX/TypeScript source + npm dependencies. See `refe
 Commands: `apps list / get / create / update / set-deps / replace / delete`
 
 ```bash
-bifrost apps create --name dashboard --slug dashboard --deps @package.json
+bifrost apps create --name dashboard --slug dashboard --deps @package.json --app-model inline_v1
 bifrost apps update <ref> --name "Operations Dashboard"
 bifrost apps set-deps <ref> --deps '{"recharts": "^2.12.0"}'
 ```
 
 Non-obvious:
+- **`--app-model inline_v1` is required in the `_repo` workspace.** `create` defaults to `standalone_v2`, which only lives inside a Solution (a `solution deploy` builds + serves its `dist/`) — a bare `apps create` here returns `409: standalone_v2 apps live in a Solution`. Use `inline_v1` for a classic `_repo` app; build v2 apps in a Solution via `solution scaffold-app`.
 - `create --deps` is a two-call orchestration (POST app, then PUT dependencies). If the deps call fails the app remains created.
 - `get` accepts slug, UUID, or name.
 - `update` is a patch (no staging step) — metadata changes apply to the live app.

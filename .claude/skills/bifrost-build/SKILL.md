@@ -63,7 +63,7 @@ This is mode-agnostic — always do it before creating anything.
    Example — Finance app for Org A, role-restricted to `finance`:
    ```bash
    bifrost apps create --name "Finance" --slug finance --organization "Org A" \
-     --access-level role_based --role-ids finance
+     --access-level role_based --role-ids finance --app-model inline_v1
    bifrost forms create --name "Submit Invoice" --workflow <uuid> \
      --organization "Org A" --access-level role_based --role-ids finance
    bifrost workflows register --path workflows/finance.py --function-name process_invoice \

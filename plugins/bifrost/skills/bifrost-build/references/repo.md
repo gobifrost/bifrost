@@ -80,8 +80,11 @@ Create the app record BEFORE writing files. Watch ignores files under `apps/{slu
 
 ```bash
 bifrost apps create --name "Finance Dashboard" --slug finance-dashboard \
-  --organization "Org A" --access-level role_based --role-ids finance
+  --organization "Org A" --access-level role_based --role-ids finance \
+  --app-model inline_v1
 ```
+
+`--app-model inline_v1` is **required** for an app in the `_repo` workspace. `apps create` defaults to `standalone_v2`, and a v2 app **only lives inside a Solution** (only a `solution deploy` builds + serves its `dist/`) — so a bare `apps create` here returns `409: standalone_v2 apps live in a Solution`. Pass `inline_v1` for the classic `_repo` app (esbuild-built, watch-synced). To build a v2 app, do it in a Solution workspace via `solution scaffold-app <slug>` (see `references/solutions.md`).
 
 Then write files into `apps/finance-dashboard/`. Watch syncs and triggers esbuild rebuild + validation after each push.
 
