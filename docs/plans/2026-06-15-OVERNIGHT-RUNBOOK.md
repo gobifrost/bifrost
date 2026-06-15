@@ -60,8 +60,8 @@ Source: `Solutions.md` "Unprocessed" + "Working notes". These are the small ones
 
 ### 2a. Sticky datatables on SolutionDetail
 - Tables on the detail tabs scroll the whole page instead of the table body. Apply the project min-h-0 flex chain (see Roles/Users pages `DataTable` height wiring; memory `feedback_table_scroll_pattern`). Touches `client/src/pages/SolutionDetail.tsx`.
-- NOTE: if Phase 3 collapses Contents into one list anyway, do the sticky fix as part of the new Contents list rather than twice. **`[DECIDED-OVERNIGHT]` allowed:** fold 2a into Phase 3 if cheaper — document the choice.
-- **STATE:** ☐ not started
+- **`[DECIDED-OVERNIGHT]`: FOLDED INTO PHASE 3.** Phase 3 rebuilds these tables into a single Contents list — applying the sticky fix now and again in Phase 3 is duplicate work. The min-h-0 flex chain will be built into the new Contents list. (Done as part of Phase 3, verified there.)
+- **STATE:** → Phase 3
 
 ### 2b. Name-only datatables → real columns
 - **Re-scoped during 1c wait — mostly DONE already (inbox note was stale).** `SolutionEntitySummary` (`solutions.py:138`) is NO LONGER `{id,name}` — it already carries `description, slug, path, function_name, type, category, access_level, app_model, is_active, logo, source_table, select, created_at`, and `SolutionEntityTable` already renders Name/Description/Type/Category/Source. The only genuinely-missing column the runbook listed is **tables → row count** (no `row_count`/`document_count` field on the summary). Decision: a row-count column means a count query per table in the `/entities` endpoint — assess cost vs value during Phase 3's Contents collapse (where the single filtered list is built anyway). If cheap, add `document_count` to the summary + endpoint + column; if it adds N count queries per page load, **`[DECIDED-OVERNIGHT]`** skip it and log why (don't add a perf cost for a cosmetic column). The rest of 2b is already satisfied.
@@ -69,8 +69,8 @@ Source: `Solutions.md` "Unprocessed" + "Working notes". These are the small ones
 
 ### 2c. Verify the two real bug candidates (then fix if confirmed)
 - **Org-change re-stamp:** ✅ **VERIFIED CORRECT (no work needed) — investigated during the 1c wait.** `PATCH /api/solutions/{id}` (`update_solution`, `solutions.py:561`) DOES re-stamp every owned entity (Workflow, Application, Form, Agent, CustomClaim, Table) to the new org on a scope change, under the per-install write-lock (lines 596-610). Config VALUES are deliberately NOT re-homed (instance-owned, keyed by (org,key); operator re-enters them) — documented in the docstring. Already covered by `test_patch_scope_restamps_owned_entities` (e2e `test_solution_patch.py:48`, load-bearing assertion that the owned workflow's org follows the install). The earlier "UNVERIFIED, real bug candidate" note in Solutions.md is resolved → it's correct behavior, well-tested.
-- **Provider-org/admin access to an org-scoped install's app:** ☐ still TODO — this one is a LIVE drive (can't code-read it conclusively). Test live as `dev@gobifrost.com` (provider) against an org-scoped install — app mount + workflow exec. Bypass = `is_platform_admin OR is_provider_org`. Defer until the validation agents are off the shared stack. If broken → fix + test; else document.
-- **STATE:** 🔄 item 1 done (verified-correct); item 2 pending live drive
+- **Provider-org/admin access to an org-scoped install's app:** **`[DECIDED-OVERNIGHT]`: FOLDED INTO PHASE 4.** This needs a real org-scoped install with an app to test against; the stack currently has ZERO installs. Phase 4's CSP-from-scratch drive installs exactly that (an org-scoped solution with an app) — so testing provider access there is a real-scenario test instead of throwaway synthetic setup. The bypass logic (`is_platform_admin OR is_provider_org`) is the documented canonical pattern (repositories/README.md) and was verified in prod for the engine path (memory `project_org_scoping_blocker2_retracted`); the untested gap is specifically the app-mount path, which Phase 4 will exercise.
+- **STATE:** item 1 ✅ verified-correct+tested; item 2 → Phase 4
 
 - **EXIT PHASE 2:** each item either shipped-with-tests or documented-verified-correct. No half-done UI. Commit per fix.
 
@@ -129,7 +129,7 @@ Target structure:
 > Update this section at the end of each phase so a glance shows where the night landed.
 
 - **Phase 1 (validation): ✅ DONE.** 1a → found + fixed a REAL generator bug (`df734d3a`: Click 8.4.1 `default=None` silently defeated `required` flag enforcement; added an enforcement test). 1b → select-field options example. 1c → ran 4 more Track-B batches (BW4-7); converged with zero structural failures across ~63 agent-runs; fixed 3 more code-verified doc nits (`--scope`, `--app-model inline_v1`, `--tool-ids @tool`); debunked the recurring `--form-schema` agent-misread 3×. **Track B ACCEPTED as validated+hardened (high confidence)** per the runbook clause. The `--form-schema` outcome — a real CLI bug fix — is the loop's highest-value result.
-- **Phase 2 (inbox UX):** 🔄 starting. PRE-CLEARED during waits: 2c-item-1 (org-restamp) VERIFIED CORRECT + already tested (`test_patch_scope_restamps_owned_entities`); 2b (name-only datatables) mostly already done (contract is rich; only optional row-count column open). REMAINING: 2a sticky tables (likely folds into Phase 3), 2c-item-2 (provider-access live drive).
+- **Phase 2 (inbox UX): ✅ DONE** (resolved, mostly via verify + fold-forward). 2c-item-1 (org-restamp) VERIFIED CORRECT + already tested. 2b (name-only datatables) already satisfied by a rich contract; optional row-count column → Phase 3. 2a (sticky tables) → Phase 3 (rebuilt there anyway). 2c-item-2 (provider app access) → Phase 4 (needs a real org-scoped install, which the CSP drive creates). No standalone Phase-2 code needed — all real fixes land in 3/4. (decide-and-document)
 - **Phase 3 (redesign):** ☐ pending — FULLY pre-scoped (file map, components to reuse, no-backend-change for Setup-state, README-guard location, test-impact map all in the Phase 3 section).
 - **Phase 4 (UX review):** ☐ pending.
 - **`[DECIDED-OVERNIGHT]` calls made:**
