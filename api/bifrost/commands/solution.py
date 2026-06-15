@@ -1070,6 +1070,147 @@ def resolve_install_id_for_workspace(client, solution_root) -> str | None:
         return None
 
 
+# Map a pending-capture entity_type to its `.bifrost/*.yaml` manifest file and the
+# file's top-level key. The dict under that key is keyed by the entity id (for
+# config, the config key) — matching what capture enqueued and the deploy guard
+# checks. Keep these strings byte-identical across enqueue/guard/ack/parse.
+_PULL_MANIFEST_FILES: dict[str, tuple[str, str]] = {
+    "table": (".bifrost/tables.yaml", "tables"),
+    "form": (".bifrost/forms.yaml", "forms"),
+    "agent": (".bifrost/agents.yaml", "agents"),
+    "config": (".bifrost/configs.yaml", "configs"),
+    "event": (".bifrost/events.yaml", "events"),
+    "claim": (".bifrost/claims.yaml", "claims"),
+}
+
+
+def _entities_in_manifest(workspace: pathlib.Path) -> list[dict[str, str]]:
+    """Read the just-written ``.bifrost/*.yaml`` files and return every entity
+    present as ``{entity_type, entity_id}`` — the set the server should clear
+    from ``pending_captures``. Each manifest file is a top-level key mapping to a
+    dict keyed by entity id (config by key)."""
+    out: list[dict[str, str]] = []
+    for entity_type, (rel, top_key) in _PULL_MANIFEST_FILES.items():
+        path = workspace / rel
+        if not path.is_file():
+            continue
+        loaded = yaml.safe_load(path.read_text()) or {}
+        entries = loaded.get(top_key) or {}
+        for entity_id in entries:
+            out.append({"entity_type": entity_type, "entity_id": str(entity_id)})
+    return out
+
+
+@solution_group.command(
+    name="pull",
+    help="Pull captured entities into the local .bifrost/ manifest (does not touch source code).",
+)
+@click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
+@click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
+@click.option("--org", "org_ref", default=None,
+              help="Target org (UUID or name) to resolve the install in (default: your org).")
+def pull_cmd(path: str, solution_id: str | None, org_ref: str | None) -> None:
+    """Materialize captured-but-unpulled entities into source ``.bifrost/``.
+
+    Deploy 409-blocks when an entity was captured (UI/CLI) but is absent from the
+    source manifest. ``pull`` fetches the install's live-rebuilt bundle from the
+    server (``POST /export?mode=shareable`` — no secret values) and unzips ONLY
+    its ``.bifrost/*.yaml`` manifest into the workspace, never touching ``apps/``,
+    ``functions/``, or any hand-authored source. It then tells the server which
+    entities it materialized so the matching ``pending_captures`` rows clear.
+    Safe for an agent to run (it only rewrites the generated manifest).
+    """
+    import io
+    import zipfile
+
+    workspace = pathlib.Path(path).resolve()
+    if not is_solution_workspace(workspace):
+        raise click.ClickException(
+            f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
+            f"Run `bifrost solution init` first."
+        )
+    descriptor = load_descriptor(workspace)
+
+    async def _run() -> int:
+        client = BifrostClient.get_instance(require_auth=True)
+
+        target_id = solution_id
+        if target_id is None:
+            resp = await client.get("/api/solutions")
+            if resp.status_code != 200:
+                raise click.ClickException(
+                    f"Failed to list installs ({resp.status_code}): {resp.text[:200]}"
+                )
+            installs = resp.json().get("solutions", [])
+            if org_ref:
+                from bifrost.refs import RefResolver
+                resolver = RefResolver(client)
+                try:
+                    deployer_org_id = await resolver.resolve("org", org_ref)
+                except Exception as exc:
+                    raise click.ClickException(f"Could not resolve --org '{org_ref}': {exc}")
+            else:
+                org = client.organization or {}
+                deployer_org_id = org.get("id")
+            try:
+                target_id = _resolve_target_install(
+                    installs, descriptor.slug, descriptor.scope, deployer_org_id
+                )
+            except _AmbiguousInstall as e:
+                click.echo(str(e), err=True)
+                return 1
+            if target_id is None:
+                raise click.ClickException(
+                    f"No install found for slug '{descriptor.slug}' in this scope. "
+                    f"Deploy it first, or pass --solution."
+                )
+
+        # Fetch the live-rebuilt bundle (shareable = no secret values).
+        export = await client.post(f"/api/solutions/{target_id}/export?mode=shareable")
+        if export.status_code != 200:
+            click.echo(f"Pull failed: {export.status_code} {export.text}", err=True)
+            return 1
+
+        # Unzip ONLY .bifrost/*.yaml entries — never apps/, functions/, or source.
+        written = 0
+        with zipfile.ZipFile(io.BytesIO(export.content)) as zf:
+            for name in zf.namelist():
+                if name.startswith(".bifrost/") and name.endswith((".yaml", ".yml")):
+                    target = workspace / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(zf.read(name))
+                    written += 1
+
+        # Tell the server which entities are now in source so it clears their
+        # pending_captures rows (server-authoritative).
+        materialized = _entities_in_manifest(workspace)
+        if materialized:
+            ack = await client.post(
+                f"/api/solutions/{target_id}/pull/ack",
+                json={"entities": materialized},
+            )
+            if ack.status_code != 200:
+                click.echo(
+                    f"Pulled manifests but failed to clear the capture queue "
+                    f"({ack.status_code}): {ack.text[:200]}",
+                    err=True,
+                )
+                return 1
+            cleared = ack.json().get("cleared", 0)
+        else:
+            cleared = 0
+
+        click.echo(
+            f"Pulled {written} manifest file(s) into {workspace}/.bifrost/ "
+            f"({len(materialized)} entity(ies), {cleared} capture(s) cleared)."
+        )
+        return 0
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
