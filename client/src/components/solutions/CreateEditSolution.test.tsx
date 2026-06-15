@@ -538,6 +538,12 @@ describe("CreateEditSolution — repo install path", () => {
 						description: null,
 					},
 				],
+				connection_schemas: [
+					{
+						integration_name: "microsoft",
+						display_name: "Microsoft",
+					},
+				],
 			} as Partial<SolutionInstallPreview>),
 		);
 		vi.mocked(installSolutionFromRepo).mockResolvedValue(
@@ -573,6 +579,8 @@ describe("CreateEditSolution — repo install path", () => {
 		// Shared confirmation: entity summary + declared config keys.
 		expect(await screen.findByTestId("preview-summary")).toBeInTheDocument();
 		expect(screen.getByTestId("config-section")).toHaveTextContent("TENANT_ID");
+		// Declared integrations are surfaced in the preview summary (audit U-prev).
+		expect(screen.getByTestId("preview-summary")).toHaveTextContent("integrations");
 
 		await user.click(screen.getByTestId("confirm-install-repo"));
 

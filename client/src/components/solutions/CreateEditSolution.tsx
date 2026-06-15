@@ -36,6 +36,7 @@ import {
 	FileCode,
 	GitBranch,
 	Loader2,
+	Plug,
 	Plus,
 	SlidersHorizontal,
 	Upload,
@@ -170,6 +171,11 @@ function EntitySummary({ preview }: { preview: SolutionInstallPreview }) {
 			label: "configs",
 			count: preview.config_schemas?.length ?? 0,
 		},
+		{
+			icon: Plug,
+			label: "integrations",
+			count: preview.connection_schemas?.length ?? 0,
+		},
 	];
 	const present = items.filter((i) => i.count > 0);
 	if (present.length === 0) {
@@ -235,7 +241,7 @@ function describeConfigChange(
 }
 
 /** What an upgrade changes, per entity type plus config declarations. */
-function UpgradeDiffView({ diff }: { diff: SolutionUpgradeDiff }) {
+export function UpgradeDiffView({ diff }: { diff: SolutionUpgradeDiff }) {
 	const entitySections: { label: string; key: keyof SolutionUpgradeDiff }[] = [
 		{ label: "Workflows", key: "workflows" },
 		{ label: "Apps", key: "apps" },

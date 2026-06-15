@@ -110,7 +110,9 @@ import {
 	exportSolution,
 	setSolutionConfig,
 	syncSolution,
+	previewSolutionFromRepo,
 } from "@/services/solutions";
+import { UpgradeDiffView } from "@/components/solutions/CreateEditSolution";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1025,6 +1027,22 @@ export function SolutionDetail() {
 		},
 	});
 
+	// Lazily preview the connected repo when the Update-now dialog opens, so the
+	// operator sees WHAT the full-replace will change (added/removed/changed
+	// entities + config) before confirming — the git update path previously gave
+	// no diff (audit CM3/M2). Reuses the from-repo preview endpoint.
+	const updateDiffQuery = useQuery({
+		queryKey: ["solution-update-diff", solutionId, sol?.git_ref, sol?.repo_subpath],
+		enabled: syncConfirmOpen && !!sol?.git_connected && !!sol?.git_repo_url,
+		queryFn: () =>
+			previewSolutionFromRepo({
+				repo_url: sol!.git_repo_url!,
+				...(sol!.repo_subpath ? { repo_subpath: sol!.repo_subpath } : {}),
+				...(sol!.git_ref ? { git_ref: sol!.git_ref } : {}),
+			}),
+		staleTime: 0,
+	});
+
 	const orgName = useMemo(() => {
 		if (!sol?.organization_id) return "Global";
 		return (
@@ -1150,6 +1168,19 @@ export function SolutionDetail() {
 									</Badge>
 								)}
 							</div>
+							{sol.git_connected && sol.git_repo_url && (
+								<p
+									className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+									data-testid="git-provenance"
+								>
+									<GitBranch className="h-3 w-3 shrink-0" />
+									<span className="font-mono break-all">
+										{sol.git_repo_url}
+										{sol.repo_subpath ? ` /${sol.repo_subpath}` : ""}
+										{sol.git_ref ? ` @ ${sol.git_ref}` : ""}
+									</span>
+								</p>
+							)}
 						</div>
 						<div className="flex shrink-0 items-center justify-end gap-2">
 							{sol.setup_complete === false && (
@@ -1404,6 +1435,21 @@ export function SolutionDetail() {
 									version.
 								</AlertDialogDescription>
 							</AlertDialogHeader>
+							<div className="max-h-[40vh] overflow-y-auto" data-testid="update-diff">
+								{updateDiffQuery.isLoading ? (
+									<p className="flex items-center gap-2 text-sm text-muted-foreground">
+										<Loader2 className="h-4 w-4 animate-spin" />
+										Computing what will change…
+									</p>
+								) : updateDiffQuery.isError ? (
+									<p className="text-sm text-muted-foreground">
+										Could not preview changes; the update will still apply
+										the repo's current version.
+									</p>
+								) : updateDiffQuery.data?.diff ? (
+									<UpgradeDiffView diff={updateDiffQuery.data.diff} />
+								) : null}
+							</div>
 							<AlertDialogFooter>
 								<AlertDialogCancel disabled={syncMut.isPending}>
 									Cancel
