@@ -208,4 +208,23 @@ def test_delete_role_bound_to_managed_entity_is_refused(e2e_client, platform_adm
     # Deleting the role now would cascade-remove the managed binding → refuse.
     resp = e2e_client.delete(f"/api/roles/{role_id}", headers=headers)
     assert resp.status_code == 409, f"{resp.status_code} {resp.text}"
-    assert "solution-managed" in resp.json()["detail"].lower()
+    detail = resp.json()["detail"].lower()
+    # The error must explain it's solution-managed AND name the owning install so
+    # the operator knows which to redeploy (audit M-ROLE).
+    assert "solution install" in detail, detail
+    assert "redeploy" in detail, detail
+
+
+def test_delete_role_used_only_by_unmanaged_entities_succeeds(e2e_client, platform_admin):
+    """The block must not over-fire: a role bound ONLY to ad-hoc (_repo/)
+    entities — or to nothing — deletes normally (audit M-ROLE: don't over-block
+    shared/ordinary roles)."""
+    headers = platform_admin.headers
+    role_name = f"r-{uuid.uuid4().hex[:6]}"
+    r = e2e_client.post("/api/roles", headers=headers, json={"name": role_name})
+    assert r.status_code in (200, 201), r.text
+    role_id = r.json()["id"]
+
+    # No managed binding exists for this role → delete is allowed.
+    resp = e2e_client.delete(f"/api/roles/{role_id}", headers=headers)
+    assert resp.status_code in (200, 204), f"{resp.status_code} {resp.text}"

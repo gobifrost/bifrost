@@ -115,13 +115,20 @@ async def assert_role_not_bound_to_solution_managed(
     assignment endpoints are read-only for them. But ``DELETE /api/roles/{id}``
     cascades through the ``*_roles`` junctions via FK ON DELETE CASCADE, which
     would silently strip a managed entity's deploy-owned bindings OUTSIDE the
-    deploy path (Codex R4). Block the delete while any such binding exists; the
-    operator must redeploy the solution without the role first.
+    deploy path (Codex R4). Block the delete while any such binding exists.
+
+    The block is correct even when the role is ALSO used by ad-hoc ``_repo/``
+    entities (a shared "Technician" role): deleting it would still strip the
+    managed bindings via cascade. To make the block actionable (audit M-ROLE),
+    the error NAMES the owning solution install(s) so the operator knows exactly
+    which to redeploy without the role — rather than a generic "redeploy the
+    solution".
     """
     from src.models.orm.agents import Agent, AgentRole
     from src.models.orm.app_roles import AppRole
     from src.models.orm.applications import Application
     from src.models.orm.forms import Form, FormRole
+    from src.models.orm.solutions import Solution
     from src.models.orm.workflow_roles import WorkflowRole
     from src.models.orm.workflows import Workflow
 
@@ -131,23 +138,45 @@ async def assert_role_not_bound_to_solution_managed(
         (AppRole, AppRole.app_id, Application),
         (WorkflowRole, WorkflowRole.workflow_id, Workflow),
     ]
+    # Collect the distinct owning install ids across every entity type bound to
+    # this role. We need the full set (not a single hit) so the error can list
+    # every solution the operator must redeploy.
+    bound_solution_ids: set[UUID] = set()
     for junction, fk_col, entity in junctions:
-        bound = (
+        rows = (
             await db.execute(
-                select(entity.id)
+                select(entity.solution_id)  # type: ignore[attr-defined]
                 .join(junction, fk_col == entity.id)
                 .where(
                     junction.role_id == role_id,
                     entity.solution_id.is_not(None),  # type: ignore[attr-defined]
                 )
-                .limit(1)
+                .distinct()
             )
-        ).first()
-        if bound is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "This role is assigned to one or more solution-managed "
-                    "entities; redeploy the solution without it before deleting."
-                ),
-            )
+        ).scalars().all()
+        bound_solution_ids.update(r for r in rows if r is not None)
+
+    if not bound_solution_ids:
+        return
+
+    names = (
+        await db.execute(
+            select(Solution.name, Solution.slug)
+            .where(Solution.id.in_(bound_solution_ids))
+            .order_by(Solution.name)
+        )
+    ).all()
+    # Solution rows may be absent in pathological states; fall back to ids.
+    if names:
+        listed = ", ".join(f"{name} ({slug})" for name, slug in names)
+    else:
+        listed = ", ".join(str(sid) for sid in sorted(bound_solution_ids, key=str))
+    plural = "s" if len(bound_solution_ids) > 1 else ""
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"This role is assigned to entities managed by the following "
+            f"solution install{plural}: {listed}. Redeploy "
+            f"{'each' if plural else 'it'} without the role before deleting it."
+        ),
+    )
