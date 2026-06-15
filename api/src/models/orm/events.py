@@ -66,6 +66,16 @@ class EventSource(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), default=None
     )
 
+    # Solution ownership: NULL = ad-hoc/_repo trigger (existing lifecycle);
+    # non-NULL = deploy-managed by a Solution install, read-only outside deploy.
+    # Child schedule_sources/webhook_sources are owned transitively via cascade.
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[str | None] = mapped_column(Text, default=None)
 
@@ -243,6 +253,14 @@ class EventSubscription(Base):
     )
     target_type: Mapped[str] = mapped_column(String(50), nullable=False, default="workflow")
     agent_id: Mapped[UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), default=None)
+
+    # Solution ownership: NULL = ad-hoc trigger; non-NULL = deploy-managed.
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
 
     # Optional filtering
     event_type: Mapped[str | None] = mapped_column(
