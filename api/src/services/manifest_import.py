@@ -1686,6 +1686,19 @@ class ManifestResolver:
         entity_changes: list[EntityChange] = []
         now = datetime.now(timezone.utc)
 
+        # Solution-managed rows (solution_id IS NOT NULL) have exactly one
+        # writer: the deploy / git-connected-pull path. They are intentionally
+        # excluded from the committed _repo/ manifest (manifest_generator skips
+        # them), so they never appear in present_*_uuids — without this guard the
+        # stale-entity sweep would match them all and hard-delete them via Core,
+        # bypassing the before_flush backstop and wiping every installed
+        # solution's entities on the next _repo/ git-sync. Exclude them centrally
+        # so no per-entity caller can forget. (See platform-impact audit H1.)
+        def _spare_solution_managed(model: type, q):
+            if "solution_id" in model.__table__.columns:  # type: ignore[attr-defined]
+                return q.where(model.solution_id.is_(None))  # type: ignore[attr-defined]
+            return q
+
         # Helper: query stale IDs (+ names when available) and bulk-delete
         async def _bulk_delete(model: type, base_filter: list, present: list[UUID], entity_type: str) -> int:
             """Find IDs not in present list and delete them. Returns count."""
@@ -1694,6 +1707,7 @@ class ManifestResolver:
                 q = select(model.id, model.name).where(*base_filter)  # type: ignore[attr-defined]
             else:
                 q = select(model.id).where(*base_filter)  # type: ignore[attr-defined]
+            q = _spare_solution_managed(model, q)
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
             result = await self.db.execute(q)
@@ -1724,6 +1738,7 @@ class ManifestResolver:
                 q = select(model.id, model.name).where(*base_filter)  # type: ignore[attr-defined]
             else:
                 q = select(model.id).where(*base_filter)  # type: ignore[attr-defined]
+            q = _spare_solution_managed(model, q)
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
             result = await self.db.execute(q)

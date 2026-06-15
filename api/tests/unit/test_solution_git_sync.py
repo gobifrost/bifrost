@@ -278,3 +278,117 @@ class TestGitSyncRerun:
         monkeypatch.setattr(gs, "_run_sync_once", _fake_run_once)
         await gs.sync(db_session, sol)
         assert calls["n"] == 1  # no pending flag → single run
+
+
+@pytest.mark.e2e
+class TestDeletionSweepSparesSolutionManaged:
+    """H1 (platform-impact audit): the git-sync stale-entity sweep
+    (``ManifestImporter._resolve_deletions``) must NOT delete solution-managed
+    entities.
+
+    ``generate_manifest`` excludes solution-managed rows from the committed
+    ``.bifrost/`` manifest, so they are never in ``present_*_uuids``. Before the
+    fix, every base filter matched them as "stale" and hard-deleted them via Core
+    ``sa_delete``, which bypasses the before_flush guard — silently wiping every
+    installed solution's workflows/forms/agents/apps/claims on the next sync of a
+    git-connected ``_repo/`` workspace. The sweep must spare
+    ``solution_id IS NOT NULL`` rows while still reaping unmanaged ``_repo/`` ones.
+
+    (Config values are NOT solution-managed — they carry ``origin_solution_id``
+    for orphan-reattach, not ``solution_id`` — so they keep their normal git-sync
+    lifecycle and are out of scope here.)
+    """
+
+    async def test_sweep_spares_managed_entities(self, db_session) -> None:
+        from sqlalchemy import select
+
+        from bifrost.manifest import Manifest
+        from src.models.orm.agents import Agent
+        from src.models.orm.applications import Application
+        from src.models.orm.custom_claims import CustomClaim
+        from src.models.orm.forms import Form
+        from src.models.orm.workflows import Workflow
+        from src.services.manifest_import import ManifestResolver
+
+        db = db_session
+        sol = Solution(
+            id=uuid.uuid4(), slug=f"sweep-{uuid.uuid4().hex[:8]}", name="S",
+            organization_id=None,
+        )
+        db.add(sol)
+        await db.flush()
+
+        # One solution-managed + one unmanaged _repo/ row per swept entity type.
+        managed = {
+            "wf": Workflow(
+                id=uuid.uuid4(), name="managed_wf", function_name="run",
+                path="workflows/managed.py", type="workflow",
+                organization_id=None, solution_id=sol.id,
+            ),
+            "form": Form(
+                id=uuid.uuid4(), name="managed_form", created_by="test",
+                organization_id=None, solution_id=sol.id,
+            ),
+            "agent": Agent(
+                id=uuid.uuid4(), name="managed_agent", system_prompt="hi",
+                created_by="test", organization_id=None, solution_id=sol.id,
+            ),
+            "app": Application(
+                id=uuid.uuid4(), name="Managed App", slug="managed-app",
+                repo_path="apps/managed", organization_id=None, solution_id=sol.id,
+            ),
+            "claim": CustomClaim(
+                id=uuid.uuid4(), name="managed_claim", query={"q": 1},
+                organization_id=None, solution_id=sol.id,
+            ),
+        }
+        repo = {
+            "wf": Workflow(
+                id=uuid.uuid4(), name="repo_wf", function_name="run",
+                path="workflows/repo.py", type="workflow",
+                organization_id=None, solution_id=None,
+            ),
+            "form": Form(
+                id=uuid.uuid4(), name="repo_form", created_by="test",
+                organization_id=None, solution_id=None,
+            ),
+            "agent": Agent(
+                id=uuid.uuid4(), name="repo_agent", system_prompt="hi",
+                created_by="test", organization_id=None, solution_id=None,
+            ),
+            "app": Application(
+                id=uuid.uuid4(), name="Repo App", slug="repo-app",
+                repo_path="apps/repo", organization_id=None, solution_id=None,
+            ),
+            "claim": CustomClaim(
+                id=uuid.uuid4(), name="repo_claim", query={"q": 2},
+                organization_id=None, solution_id=None,
+            ),
+        }
+        db.add_all([*managed.values(), *repo.values()])
+        await db.flush()
+
+        # Empty manifest => nothing is "present" => everything looks stale.
+        resolver = ManifestResolver(db)
+        await resolver._resolve_deletions(manifest=Manifest(), dry_run=False)
+        await db.flush()
+
+        wf_names = set((await db.execute(select(Workflow.name))).scalars().all())
+        form_names = set((await db.execute(select(Form.name))).scalars().all())
+        agent_names = set((await db.execute(select(Agent.name))).scalars().all())
+        app_slugs = set((await db.execute(select(Application.slug))).scalars().all())
+        claim_names = set((await db.execute(select(CustomClaim.name))).scalars().all())
+
+        # Managed entities survived…
+        assert "managed_wf" in wf_names, "managed workflow deleted by sweep"
+        assert "managed_form" in form_names, "managed form deleted by sweep"
+        assert "managed_agent" in agent_names, "managed agent deleted by sweep"
+        assert "managed-app" in app_slugs, "managed app deleted by sweep"
+        assert "managed_claim" in claim_names, "managed claim deleted by sweep"
+
+        # …while unmanaged _repo/ entities were correctly swept.
+        assert "repo_wf" not in wf_names, "unmanaged workflow should be swept"
+        assert "repo_form" not in form_names, "unmanaged form should be swept"
+        assert "repo_agent" not in agent_names, "unmanaged agent should be swept"
+        assert "repo-app" not in app_slugs, "unmanaged app should be swept"
+        assert "repo_claim" not in claim_names, "unmanaged claim should be swept"
