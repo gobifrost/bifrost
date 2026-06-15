@@ -40,6 +40,7 @@ from src.models.orm.metrics import ExecutionMetricsDaily, KnowledgeStorageDaily,
 from src.models.orm.mfa import MFARecoveryCode, TrustedDevice, UserMFAMethod, UserOAuthAccount
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
+from src.models.orm.pending_capture import PendingCaptureORM
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solutions import Solution
@@ -61,6 +62,7 @@ __all__ = [
     "Solution",
     "SolutionConfigSchema",
     "SolutionConnectionSchema",
+    "PendingCaptureORM",
     # Applications (App Builder)
     "Application",
     "AppEmbedSecret",
