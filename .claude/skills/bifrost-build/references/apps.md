@@ -30,20 +30,32 @@ my-solution/
   bifrost.solution.yaml   # Solution descriptor
 ```
 
-The app's `main.tsx` wraps the tree in `<BifrostProvider>`:
+The app's `main.tsx` wraps the tree in `<BifrostProvider>`. **Use the `main.tsx` that `bifrost solution scaffold-app` writes — do not hand-roll it.** It reads a per-viewer bootstrap (base URL, token, org scope, mount element) the platform injects at runtime, keyed by this entry's nonce so multiple apps on one page don't read each other's bootstrap, and falls back to Vite env vars for local dev:
 
 ```tsx
 import { BifrostProvider } from "bifrost";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 
-const root = document.getElementById("root")!;
-createRoot(root).render(
-  <BifrostProvider baseUrl={window.__BIFROST_API_URL__} token={window.__BIFROST_TOKEN__}>
+// The platform injects a per-viewer bootstrap; main.tsx reads THIS entry's
+// nonce so co-mounted apps don't cross-read. Locally, Vite env vars fill in.
+const __m = (document.currentScript as HTMLScriptElement | null)?.dataset?.m;
+const boot =
+  (__m && window.__BIFROST_APPS__ && window.__BIFROST_APPS__[__m]) ||
+  window.__BIFROST_APP__;
+const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
+const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
+const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
+const mountEl = boot?.mountEl ?? document.getElementById("root")!;
+
+createRoot(mountEl).render(
+  <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope}>
     <App />
   </BifrostProvider>
 );
 ```
+
+(The old `window.__BIFROST_API_URL__` / `window.__BIFROST_TOKEN__` globals are a stale single-app pattern — the current boot protocol is the nonce-keyed registry above. Just keep the scaffolded `main.tsx`.)
 
 Imports in a **v2 standalone app** (this is NOT the v1 surface — see the warning below):
 - **SDK hooks/providers ONLY come from `"bifrost"`**: `import { BifrostProvider, BifrostHeader, useWorkflowQuery, useWorkflowMutation, useWorkflow, useTable, useInfiniteTable, tables } from "bifrost"`. That export list is the whole SDK — see `references/web-sdk-v2.md` / `generated/web-sdk-surface.md`. Nothing else lives in `"bifrost"`.
