@@ -367,6 +367,14 @@ async def create_form(
 
     now = datetime.now(timezone.utc)
 
+    # Org targeting follows the unified --org standard: an OMITTED
+    # organization_id (HOME) defaults to the caller's org, so a bare create
+    # never silently writes a global row. Explicit null still means global.
+    if "organization_id" in request.model_fields_set:
+        target_org_id = request.organization_id
+    else:
+        target_org_id = ctx.org_id
+
     # Create form record
     form = FormORM(
         name=request.name,
@@ -376,7 +384,7 @@ async def create_form(
         default_launch_params=request.default_launch_params,
         allowed_query_params=request.allowed_query_params,
         access_level=request.access_level,
-        organization_id=request.organization_id,
+        organization_id=target_org_id,
         is_active=True,
         created_by=ctx.user.email,
         created_at=now,

@@ -215,3 +215,115 @@ def test_workflows_register_org_via_name(monkeypatch):
     assert res.exit_code == 0
     _, body, _ = sent["post"]
     assert body["organization_id"] == "uuid-acme"
+
+
+# ── tables / forms / agents / events (the entity --org standard) ────────────
+
+
+def test_tables_create_omit_is_home(monkeypatch):
+    from bifrost.commands.tables import tables_group
+
+    sent, res = _run(monkeypatch, tables_group, ["create", "--name", "t1"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert "organization_id" not in body
+
+
+def test_tables_create_global(monkeypatch):
+    from bifrost.commands.tables import tables_group
+
+    sent, res = _run(monkeypatch, tables_group, ["create", "--name", "t2", "--global"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body.get("organization_id", "MISSING") is None
+
+
+def test_tables_create_org_via_name(monkeypatch):
+    from bifrost.commands.tables import tables_group
+
+    sent, res = _run(monkeypatch, tables_group, ["create", "--name", "t3", "--org", "acme"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body["organization_id"] == "uuid-acme"
+
+
+def test_tables_create_org_none_is_global(monkeypatch):
+    from bifrost.commands.tables import tables_group
+
+    sent, res = _run(monkeypatch, tables_group, ["create", "--name", "t4", "--org", "none"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body.get("organization_id", "MISSING") is None
+
+
+def test_forms_create_org_forms(monkeypatch):
+    from bifrost.commands.forms import forms_group
+
+    # omit -> home
+    sent, res = _run(monkeypatch, forms_group, ["create", "--name", "f1"])
+    assert res.exit_code == 0
+    assert "organization_id" not in sent["post"][1]
+    # --global -> null
+    sent, res = _run(monkeypatch, forms_group, ["create", "--name", "f2", "--global"])
+    assert res.exit_code == 0
+    assert sent["post"][1].get("organization_id", "MISSING") is None
+    # --org acme -> uuid
+    sent, res = _run(monkeypatch, forms_group, ["create", "--name", "f3", "--org", "acme"])
+    assert res.exit_code == 0
+    assert sent["post"][1]["organization_id"] == "uuid-acme"
+
+
+def test_agents_create_org_forms(monkeypatch):
+    from bifrost.commands.agents import agents_group
+
+    sent, res = _run(
+        monkeypatch, agents_group, ["create", "--name", "a1", "--system-prompt", "hi"]
+    )
+    assert res.exit_code == 0
+    assert "organization_id" not in sent["post"][1]
+    sent, res = _run(
+        monkeypatch,
+        agents_group,
+        ["create", "--name", "a2", "--system-prompt", "hi", "--global"],
+    )
+    assert res.exit_code == 0
+    assert sent["post"][1].get("organization_id", "MISSING") is None
+    sent, res = _run(
+        monkeypatch,
+        agents_group,
+        ["create", "--name", "a3", "--system-prompt", "hi", "--org", "acme"],
+    )
+    assert res.exit_code == 0
+    assert sent["post"][1]["organization_id"] == "uuid-acme"
+
+
+def test_events_create_source_org_forms(monkeypatch):
+    from bifrost.commands.events import events_group
+
+    sent, res = _run(
+        monkeypatch,
+        events_group,
+        ["create-source", "--name", "e1", "--source-type", "topic", "--event-type", "x.y"],
+    )
+    assert res.exit_code == 0
+    assert "organization_id" not in sent["post"][1]
+    sent, res = _run(
+        monkeypatch,
+        events_group,
+        [
+            "create-source", "--name", "e2", "--source-type", "topic",
+            "--event-type", "x.y", "--global",
+        ],
+    )
+    assert res.exit_code == 0
+    assert sent["post"][1].get("organization_id", "MISSING") is None
+    sent, res = _run(
+        monkeypatch,
+        events_group,
+        [
+            "create-source", "--name", "e3", "--source-type", "topic",
+            "--event-type", "x.y", "--org", "acme",
+        ],
+    )
+    assert res.exit_code == 0
+    assert sent["post"][1]["organization_id"] == "uuid-acme"

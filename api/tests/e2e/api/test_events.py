@@ -71,6 +71,10 @@ def event_source(e2e_client, platform_admin):
         json={
             "name": source_name,
             "source_type": "webhook",
+            # Explicit global: omitting organization_id now defaults to the
+            # caller's org (unified --org standard), so a global source must
+            # send an explicit null.
+            "organization_id": None,
             "webhook": {
                 "adapter_name": "generic",
                 "config": {},

@@ -154,16 +154,17 @@ async def test_config_create_renames_config_type_to_type() -> None:
                 "key": "MY_KEY",
                 "value": '{"raw": 1}',
                 "config_type": "string",
-                "organization_id": "Acme",
             },
         ),
         resolver=resolver,  # type: ignore[arg-type]
     )
     assert body["type"] == "string"
     assert "config_type" not in body
-    assert body["organization_id"] == ORG_UUID
     assert body["key"] == "MY_KEY"
     assert DTO_FIELD_ALIASES["ConfigCreate"] == {"config_type": "type"}
+    # organization_id is no longer resolved by assemble_body — org targeting is
+    # handled by the unified --org standard (org_option / resolve_org_target).
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("ConfigCreate", {})
 
 
 @pytest.mark.asyncio
@@ -195,7 +196,7 @@ async def test_per_call_field_aliases_merge_with_registry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_form_create_resolves_workflow_and_org() -> None:
+async def test_form_create_resolves_workflows() -> None:
     resolver = _resolver()
     body = await assemble_body(
         FormCreate,
@@ -205,7 +206,6 @@ async def test_form_create_resolves_workflow_and_org() -> None:
                 "name": "Onboarding",
                 "workflow_id": "MyWorkflow",
                 "launch_workflow_id": "Launcher",
-                "organization_id": "Acme",
                 "form_schema": '{"fields":[]}',
             },
         ),
@@ -213,10 +213,13 @@ async def test_form_create_resolves_workflow_and_org() -> None:
     )
     assert body["workflow_id"] == WORKFLOW_UUID
     assert body["launch_workflow_id"] == LAUNCH_WORKFLOW_UUID
-    assert body["organization_id"] == ORG_UUID
     assert body["form_schema"] == {"fields": []}
     assert ("workflow", "MyWorkflow") in resolver.calls
     assert ("workflow", "Launcher") in resolver.calls
+    # organization_id is NOT resolved by assemble_body — org targeting is the
+    # unified --org standard's job (resolve_org_target in the command), so the
+    # form DTO no longer carries an org ref-lookup.
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("FormCreate", {})
 
 
 @pytest.mark.asyncio
@@ -493,15 +496,17 @@ async def test_integration_mapping_create_resolves_org() -> None:
 
 
 @pytest.mark.asyncio
-async def test_table_create_resolves_org() -> None:
+async def test_table_create_does_not_resolve_org() -> None:
     resolver = _resolver()
     body = await assemble_body(
         TableCreate,
-        _parsed(TableCreate, {"name": "tickets", "organization_id": "Acme"}),
+        _parsed(TableCreate, {"name": "tickets"}),
         resolver=resolver,  # type: ignore[arg-type]
     )
-    assert body["organization_id"] == ORG_UUID
     assert body["name"] == "tickets"
+    # org targeting is handled by the unified --org standard (resolve_org_target
+    # in the command), not by assemble_body, so TableCreate has no org ref-lookup.
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("TableCreate", {})
 
 
 @pytest.mark.asyncio
@@ -514,11 +519,11 @@ async def test_event_source_create_round_trip() -> None:
             {
                 "name": "Schedule",
                 "source_type": "schedule",
-                "organization_id": "Acme",
             },
         ),
         resolver=resolver,  # type: ignore[arg-type]
     )
     assert body["name"] == "Schedule"
-    assert body["organization_id"] == ORG_UUID
     assert body["source_type"] == "schedule"
+    # org targeting handled by the unified --org standard, not assemble_body.
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("EventSourceCreate", {})

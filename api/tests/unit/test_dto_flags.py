@@ -165,5 +165,7 @@ def test_ref_lookup_flag_naming() -> None:
     assert flag_to_dest.get("--workflow") == "workflow_id"
     # Paired ref keeps the field stem so the two flags don't collide.
     assert flag_to_dest.get("--launch-workflow") == "launch_workflow_id"
-    # Org ref strips ``_id`` cleanly.
-    assert flag_to_dest.get("--organization") == "organization_id"
+    # organization_id is NOT a DTO-generated flag — org targeting is handled by
+    # the unified --org standard (org_option), so the generator must not emit
+    # an --organization flag for it.
+    assert "organization_id" not in flag_to_dest.values()

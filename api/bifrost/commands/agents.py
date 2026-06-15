@@ -41,6 +41,7 @@ from bifrost.dto_flags import (
     assemble_body,
     build_cli_flags,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import AgentCreate, AgentUpdate
 
@@ -168,11 +169,14 @@ async def get_agent(
 
 @agents_group.command("create")
 @_apply_flags(_CREATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def create_agent(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -183,12 +187,20 @@ async def create_agent(
     ``--system-prompt @file.md`` loads the prompt from disk. ``--tool-ids``
     and ``--delegated-agent-ids`` resolve each entry via the ref resolver
     before the body is sent.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+    agent to the caller's org, ``--global`` makes it global, ``--org
+    <id|name>`` scopes it to that org. (Non-admins may only create private
+    agents in their own org regardless.)
     """
     # Load @file prompt before DTO assembly so validation sees the real text.
     if "system_prompt" in fields:
         fields["system_prompt"] = _load_str_file(fields.get("system_prompt"))
 
     body = await assemble_body(AgentCreate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
 
     tool_ids = body.get("tool_ids")
     if isinstance(tool_ids, list):
@@ -208,12 +220,15 @@ async def create_agent(
 @agents_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def update_agent(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -224,6 +239,9 @@ async def update_agent(
     ``REF`` is a UUID or agent name. Names are resolved via
     :class:`RefResolver`; ambiguous names fail loudly with the candidate
     list. The verb is **PUT** per the cli-mutation-surface audit correction.
+
+    Passing ``--org``/``--global`` re-scopes the agent (HOME leaves the scope
+    unchanged, since omitting org sends no ``organization_id``).
     """
     agent_uuid = await resolver.resolve("agent", ref)
 
@@ -231,6 +249,9 @@ async def update_agent(
         fields["system_prompt"] = _load_str_file(fields.get("system_prompt"))
 
     body = await assemble_body(AgentUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
 
     tool_ids = body.get("tool_ids")
     if isinstance(tool_ids, list):

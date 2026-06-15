@@ -398,12 +398,20 @@ async def create_source(
                 detail=str(exc),
             )
 
+    # Org targeting follows the unified --org standard: an OMITTED
+    # organization_id (HOME) defaults to the caller's org, so a bare create
+    # never silently writes a global row. Explicit null still means global.
+    if "organization_id" in request.model_fields_set:
+        target_org_id = request.organization_id
+    else:
+        target_org_id = ctx.org_id
+
     # Create base event source
     source = EventSource(
         name=request.name,
         source_type=request.source_type,
         event_type=request.event_type if request.source_type == EventSourceType.TOPIC else None,
-        organization_id=request.organization_id,
+        organization_id=target_org_id,
         is_active=True,
         created_by=ctx.user.email,
         created_at=now,

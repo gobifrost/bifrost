@@ -34,6 +34,7 @@ from bifrost.dto_flags import (
     assemble_body,
     build_cli_flags,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import FormCreate, FormUpdate
 
@@ -92,11 +93,14 @@ async def get_form(
 
 @forms_group.command("create")
 @_apply_flags(_CREATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def create_form(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -107,8 +111,15 @@ async def create_form(
     ``--workflow`` / ``--launch-workflow`` accept a UUID, name, or
     ``path::func`` ref. ``--form-schema`` accepts a JSON literal or
     ``@path/to/schema.yaml`` — the file is loaded and embedded as a dict.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+    form to the caller's org, ``--global`` makes it global, ``--org
+    <id|name>`` scopes it to that org.
     """
     body = await assemble_body(FormCreate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     response = await client.post("/api/forms", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -117,12 +128,15 @@ async def create_form(
 @forms_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def update_form(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -134,9 +148,15 @@ async def update_form(
     :class:`RefResolver`; ambiguous names fail loudly with the candidate
     list. Unset flags are omitted from the payload so only the supplied
     fields are patched.
+
+    Passing ``--org``/``--global`` re-scopes the form (HOME leaves the scope
+    unchanged, since omitting org sends no ``organization_id``).
     """
     form_uuid = await resolver.resolve("form", ref)
     body = await assemble_body(FormUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     response = await client.patch(f"/api/forms/{form_uuid}", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)

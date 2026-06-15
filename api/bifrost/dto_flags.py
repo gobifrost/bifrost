@@ -61,6 +61,11 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # Org targeting via the unified --org/--global standard (org_option), not
     # the DTO flag generator. See _ORG_TARGET_EXCLUDE above.
     "ConfigCreate": set(_ORG_TARGET_EXCLUDE),
+    "TableCreate": set(_ORG_TARGET_EXCLUDE),
+    "FormCreate": set(_ORG_TARGET_EXCLUDE),
+    "FormUpdate": set(_ORG_TARGET_EXCLUDE),
+    "AgentCreate": set(_ORG_TARGET_EXCLUDE),
+    "AgentUpdate": set(_ORG_TARGET_EXCLUDE),
     # Organizations: ``domain`` is auto-provisioning policy; ``settings`` is a
     # UI-managed JSON blob; ``is_provider`` is immutable post-create.
     "OrganizationCreate": {"domain", "settings", "is_provider"},
@@ -96,8 +101,10 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # ``--webhook-config`` collapse into ``webhook``). Excluded here so the
     # DTO-driven generator doesn't produce opaque ``--webhook`` / ``--schedule``
     # JSON-object flags alongside the flat ones.
-    "EventSourceCreate": {"webhook", "schedule"},
-    "EventSourceUpdate": {"webhook", "schedule"},
+    # ``organization_id`` also excluded here — org targeting via the unified
+    # --org standard (org_option), not the DTO flag generator.
+    "EventSourceCreate": {"webhook", "schedule"} | _ORG_TARGET_EXCLUDE,
+    "EventSourceUpdate": {"webhook", "schedule"} | _ORG_TARGET_EXCLUDE,
 }
 
 #: Per-DTO field renames applied to the assembled body.
@@ -112,30 +119,30 @@ DTO_FIELD_ALIASES: dict[str, dict[str, str]] = {
 #: Fields listed here become flags named after the kind (without ``_id``)
 #: and are resolved to a UUID by :class:`RefResolver` before assembly.
 DTO_REF_LOOKUPS: dict[str, dict[str, str]] = {
+    # organization_id is intentionally NOT a ref-lookup on the entity DTOs
+    # below — org targeting is handled by the unified --org standard
+    # (org_option / resolve_org_target), so it is excluded from the DTO flag
+    # generator. See _ORG_TARGET_EXCLUDE.
     "FormCreate": {
         "workflow_id": "workflow",
         "launch_workflow_id": "workflow",
-        "organization_id": "org",
     },
     "FormUpdate": {
         "workflow_id": "workflow",
         "launch_workflow_id": "workflow",
-        "organization_id": "org",
     },
-    "AgentCreate": {"organization_id": "org"},
-    "AgentUpdate": {"organization_id": "org"},
+    "AgentCreate": {},
+    "AgentUpdate": {},
     "ApplicationCreate": {"organization_id": "org"},
     "ApplicationUpdate": {},  # ``scope`` is free-form, not a ref
-    # ConfigCreate.organization_id is handled by the unified --org standard
-    # (org_option), so it is excluded from the DTO flag generator.
     "ConfigCreate": {},
     "CustomClaimCreate": {},
     "CustomClaimUpdate": {},
-    "TableCreate": {"organization_id": "org"},
+    "TableCreate": {},
     "IntegrationUpdate": {"list_entities_data_provider_id": "workflow"},
     "IntegrationMappingCreate": {"organization_id": "org"},
-    "EventSourceCreate": {"organization_id": "org"},
-    "EventSourceUpdate": {"organization_id": "org"},
+    "EventSourceCreate": {},
+    "EventSourceUpdate": {},
     "EventSubscriptionCreate": {"workflow_id": "workflow", "agent_id": "agent"},
 }
 

@@ -349,6 +349,13 @@ async def create_agent(
     """
     is_admin = user.is_platform_admin
 
+    # Org targeting follows the unified --org standard: an OMITTED
+    # organization_id (HOME) defaults to the caller's org, so a bare create
+    # never silently writes a global row. Explicit null still means global.
+    # (Non-admins are forced to their own org below regardless.)
+    if is_admin and "organization_id" not in agent_data.model_fields_set:
+        agent_data.organization_id = user.organization_id
+
     if not is_admin:
         # Non-admin: enforce private-only creation
         if agent_data.access_level != AgentAccessLevel.PRIVATE:

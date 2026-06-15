@@ -38,6 +38,7 @@ from bifrost.dto_flags import (
     assemble_body,
     build_cli_flags,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import TableCreate, TableUpdate
 
@@ -96,11 +97,14 @@ async def get_table(
 
 @tables_group.command("create")
 @_apply_flags(_CREATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def create_table(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -112,8 +116,15 @@ async def create_table(
     file is loaded and embedded as the table schema dict. ``--policies``
     accepts the same shape and embeds row-level access policies; see
     ``docs/superpowers/specs/2026-04-30-table-policies-design.md``.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+    table to the caller's org, ``--global`` makes it global, ``--org
+    <id|name>`` scopes it to that org.
     """
     body = await assemble_body(TableCreate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     response = await client.post("/api/tables", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)

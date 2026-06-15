@@ -68,6 +68,7 @@ from bifrost.dto_flags import (
     build_cli_flags,
     load_dict_value,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import (
     EventSourceCreate,
@@ -356,11 +357,14 @@ async def get_subscription(
 @_apply_flags(_SOURCE_CREATE_FLAGS)
 @_schedule_flags
 @_webhook_flags
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def create_source(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -373,11 +377,18 @@ async def create_source(
     ``--webhook-integration`` / ``--webhook-config`` collapse into the webhook
     config. At least one of each group is required when ``--source-type`` is
     ``schedule`` or ``webhook``, respectively — the API validates the shape.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+    source to the caller's org, ``--global`` makes it global, ``--org
+    <id|name>`` scopes it to that org.
     """
     cron, tz, enabled = _pop_schedule_fields(fields)
     adapter, integration_ref, webhook_config_raw = _pop_webhook_fields(fields)
 
     body = await assemble_body(EventSourceCreate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
 
     schedule = await _build_schedule_config(cron=cron, timezone=tz, enabled=enabled)
     if schedule is not None:
@@ -402,12 +413,15 @@ async def create_source(
 @_apply_flags(_SOURCE_UPDATE_FLAGS)
 @_schedule_flags
 @_webhook_flags
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def update_source(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -418,6 +432,9 @@ async def update_source(
     ``REF`` is a UUID or event source name. Flat-to-nested flags behave the
     same as on ``create-source`` — if any flat schedule / webhook flag is
     supplied, the corresponding nested object is rebuilt and patched.
+
+    Passing ``--org``/``--global`` re-scopes the source (HOME leaves the scope
+    unchanged, since omitting org sends no ``organization_id``).
     """
     source_uuid = await resolver.resolve("event_source", ref)
 
@@ -425,6 +442,9 @@ async def update_source(
     adapter, integration_ref, webhook_config_raw = _pop_webhook_fields(fields)
 
     body = await assemble_body(EventSourceUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
 
     schedule = await _build_schedule_config(cron=cron, timezone=tz, enabled=enabled)
     if schedule is not None:
