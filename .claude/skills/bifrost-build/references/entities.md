@@ -97,7 +97,7 @@ bifrost forms update <ref> --name "Onboarding" --workflow new-wf-uuid
 ```
 
 Non-obvious:
-- `--form-schema` is **required** (create 422s `form_schema: Field required` without it). Accepts YAML/JSON inline or `@path/to/schema.yaml`. Schema shape: `{fields: [...]}`.
+- `--form-schema` is **required** (the CLI now errors `Missing option '--form-schema'` if omitted; `cli-reference.md` marks it `[required]`). Accepts YAML/JSON inline or `@path/to/schema.yaml`. Schema shape: `{fields: [...]}`.
 - `--workflow` / `--launch-workflow` accept portable refs (UUID, name, or `path::func`).
 
 ---

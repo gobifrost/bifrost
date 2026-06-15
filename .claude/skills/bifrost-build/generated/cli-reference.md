@@ -38,9 +38,9 @@ Usage: agents create [OPTIONS]
   own org regardless.)
 
 Options:
-  --name TEXT                     name
+  --name TEXT                     name  [required]
   --description TEXT              description
-  --system-prompt TEXT            system_prompt
+  --system-prompt TEXT            system_prompt  [required]
   --channels TEXT                 channels (repeat for multiple).
   --access-level [authenticated|everyone|role_based|private]
                                   access_level
@@ -196,9 +196,9 @@ Usage: apps create [OPTIONS]
   in place — there is no rollback.
 
 Options:
-  --name TEXT          name
+  --name TEXT          name  [required]
   --description TEXT   description
-  --slug TEXT          slug
+  --slug TEXT          slug  [required]
   --access-level TEXT  access_level
   --app-model TEXT     app_model
   --role-ids TEXT      role_ids (repeat for multiple; comma-split also
@@ -354,11 +354,11 @@ Usage: claims create [OPTIONS]
   Create a custom claim.
 
 Options:
-  --name TEXT                     name
+  --name TEXT                     name  [required]
   --description TEXT              description
   --type TEXT                     type
   --query TEXT                    query as JSON literal or @path to a
-                                  YAML/JSON file.
+                                  YAML/JSON file.  [required]
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -473,9 +473,9 @@ Usage: configs create [OPTIONS]
   Create a new configuration value.
 
 Options:
-  --key TEXT                      key
+  --key TEXT                      key  [required]
   --value TEXT                    value as JSON literal or @path to a
-                                  YAML/JSON file.
+                                  YAML/JSON file.  [required]
   --config-type [string|int|bool|json|secret]
                                   config_type
   --description TEXT              description
@@ -632,9 +632,9 @@ Usage: events create-source [OPTIONS]
   <id|name>`` scopes it to that org.
 
 Options:
-  --name TEXT                     name
+  --name TEXT                     name  [required]
   --source-type [webhook|schedule|topic]
-                                  source_type
+                                  source_type  [required]
   --event-type TEXT               event_type
   --cron TEXT                     Cron expression, e.g. '*/5 * * * *'
                                   (collapses into schedule config).
@@ -966,7 +966,7 @@ Usage: forms create [OPTIONS]
   scopes it to that org.
 
 Options:
-  --name TEXT                     name
+  --name TEXT                     name  [required]
   --description TEXT              description
   --workflow TEXT                 workflow ref (UUID or name) for workflow_id.
   --launch-workflow TEXT          workflow ref (UUID or name) for
@@ -975,7 +975,7 @@ Options:
                                   @path to a YAML/JSON file.
   --allowed-query-params TEXT     allowed_query_params (repeat for multiple).
   --form-schema TEXT              form_schema as JSON literal or @path to a
-                                  YAML/JSON file.
+                                  YAML/JSON file.  [required]
   --access-level [authenticated|everyone|role_based]
                                   access_level
   --role-ids TEXT                 role_ids (repeat for multiple; comma-split
@@ -1109,7 +1109,8 @@ Usage: integrations add-mapping [OPTIONS] INTEGRATION_REF
 
 Options:
   --organization TEXT    org ref (UUID or name) for organization_id.
-  --entity-id TEXT       entity_id
+                         [required]
+  --entity-id TEXT       entity_id  [required]
   --entity-name TEXT     entity_name
   --config TEXT          config as JSON literal or @path to a YAML/JSON file.
   --oauth-token-id TEXT  OAuth token UUID (opt-in; empty means leave unset).
@@ -1129,7 +1130,7 @@ Usage: integrations create [OPTIONS]
   ``config_schema`` / ``items`` list.
 
 Options:
-  --name TEXT               name
+  --name TEXT               name  [required]
   --config-schema TEXT      config_schema (repeat for multiple).
   --entity-id TEXT          entity_id
   --entity-id-name TEXT     entity_id_name
@@ -1243,7 +1244,7 @@ Usage: orgs create [OPTIONS]
   Create a new organization.
 
 Options:
-  --name TEXT                   name
+  --name TEXT                   name  [required]
   --is-active / --no-is-active  is_active (tri-state; omit to leave
                                 unchanged).
   --json                        Emit JSON instead of human-readable output.
@@ -1393,7 +1394,7 @@ Usage: roles create [OPTIONS]
   Create a new role.
 
 Options:
-  --name TEXT         name
+  --name TEXT         name  [required]
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
@@ -1701,7 +1702,7 @@ Usage: tables create [OPTIONS]
   scopes it to that org.
 
 Options:
-  --name TEXT                     name
+  --name TEXT                     name  [required]
   --description TEXT              description
   --schema TEXT                   schema as JSON literal or @path to a
                                   YAML/JSON file.

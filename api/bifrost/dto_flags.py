@@ -286,6 +286,12 @@ def build_cli_flags(
         if name in exclude:
             continue
         annotation = field.annotation
+        # A DTO field with no default is REQUIRED — surface that on the CLI flag
+        # so the command fails fast ("Missing option --X") instead of letting the
+        # server 422 on a missing field, and so --help / cli-reference.md show
+        # [required]. Create DTOs carry real required fields; Update DTOs make
+        # everything optional, so is_required() is correct for both shapes.
+        required = bool(field.is_required())
 
         if name in verb_ref_lookups:
             ref_kind = verb_ref_lookups[name]
@@ -296,6 +302,7 @@ def build_cli_flags(
                     name,
                     type=str,
                     default=None,
+                    required=required,
                     help=f"{ref_kind} ref (UUID or name) for {name}.",
                 )
             )
@@ -303,6 +310,8 @@ def build_cli_flags(
 
         if _is_bool(annotation):
             kebab = _kebab(name)
+            # Bools stay tri-state (omit = unchanged); a required bool flag is a
+            # contradiction, so never mark these required.
             decorators.append(
                 click.option(
                     f"--{kebab}/--no-{kebab}",
@@ -325,6 +334,7 @@ def build_cli_flags(
                     name,
                     type=str if inner_type is not int else int,
                     multiple=multiple,
+                    required=required,
                     help=(
                         f"{name} (repeat for multiple"
                         f"{'; comma-split also accepted' if comma_split else ''})."
@@ -340,6 +350,7 @@ def build_cli_flags(
                     name,
                     type=str,
                     default=None,
+                    required=required,
                     help=(
                         f"{name} as JSON literal or @path to a YAML/JSON file."
                     ),
@@ -354,6 +365,7 @@ def build_cli_flags(
                     name,
                     type=click.Choice(_enum_choices(annotation)),
                     default=None,
+                    required=required,
                     help=name,
                 )
             )
@@ -366,6 +378,7 @@ def build_cli_flags(
                     name,
                     type=int,
                     default=None,
+                    required=required,
                     help=name,
                 )
             )
@@ -378,6 +391,7 @@ def build_cli_flags(
                     name,
                     type=float,
                     default=None,
+                    required=required,
                     help=name,
                 )
             )
@@ -390,6 +404,7 @@ def build_cli_flags(
                     name,
                     type=str,
                     default=None,
+                    required=required,
                     help=f"{name} (UUID).",
                 )
             )
@@ -402,6 +417,7 @@ def build_cli_flags(
                 name,
                 type=str,
                 default=None,
+                required=required,
                 help=name,
             )
         )

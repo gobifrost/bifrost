@@ -169,3 +169,50 @@ def test_ref_lookup_flag_naming() -> None:
     # the unified --org standard (org_option), so the generator must not emit
     # an --organization flag for it.
     assert "organization_id" not in flag_to_dest.values()
+
+
+def _required_flag_dests(model_cls: type) -> set[str]:
+    """Return the dest names of generated flags marked ``required=True``."""
+    excludes = DTO_EXCLUDES.get(model_cls.__name__, set())
+    refs = DTO_REF_LOOKUPS.get(model_cls.__name__, {})
+    decorators = build_cli_flags(model_cls, exclude=excludes, verb_ref_lookups=refs)
+
+    @decorators[0]  # type: ignore[misc]
+    def _stub() -> None:  # pragma: no cover - introspection helper
+        return None
+
+    fn = _stub
+    for dec in decorators[1:]:
+        fn = dec(fn)
+    return {
+        p.name  # type: ignore[attr-defined]
+        for p in fn.__click_params__  # type: ignore[attr-defined]
+        if getattr(p, "required", False)
+    }
+
+
+def test_required_dto_fields_become_required_flags() -> None:
+    """A DTO field with no default surfaces as a ``required`` CLI flag, so the
+    command fails fast ('Missing option') instead of letting the server 422 —
+    and ``cli-reference.md`` / ``--help`` show ``[required]``."""
+    from src.models.contracts.forms import FormCreate
+    from src.models.contracts.tables import TableCreate
+    from src.models.contracts.agents import AgentCreate
+    from src.models.contracts.config import ConfigCreate
+
+    assert _required_flag_dests(FormCreate) == {"name", "form_schema"}
+    assert _required_flag_dests(TableCreate) == {"name"}
+    assert _required_flag_dests(AgentCreate) == {"name", "system_prompt"}
+    assert _required_flag_dests(ConfigCreate) == {"key", "value"}
+
+
+def test_update_dtos_force_no_required_flags() -> None:
+    """Update DTOs make every field optional (partial update), so the generator
+    must NOT mark any field flag required."""
+    from src.models.contracts.forms import FormUpdate
+    from src.models.contracts.tables import TableUpdate
+    from src.models.contracts.agents import AgentUpdate
+
+    assert _required_flag_dests(FormUpdate) == set()
+    assert _required_flag_dests(TableUpdate) == set()
+    assert _required_flag_dests(AgentUpdate) == set()
