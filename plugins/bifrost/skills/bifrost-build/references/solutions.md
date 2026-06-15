@@ -37,9 +37,11 @@ Python workflows live in `functions/` (e.g. `functions/hello.py`). Reference the
 from bifrost import workflow
 
 @workflow
-def main(ctx):
+async def main():
     return {"greeting": "hello"}
 ```
+
+A workflow takes its inputs as **parameters** (e.g. `async def add_task(title: str, priority: str = "low")`) — there is **no `ctx` parameter**. The SDK is reached through top-level module imports, not a context object: `from bifrost import tables` then `tables.query(...)` / `tables.insert(...)` (see `references/python-sdk.md` and `references/workflows-python.md`). Prefer `async def`.
 
 In a form, agent, or app, reference this as `functions/hello.py::main`. The platform resolves the portable ref at deploy time.
 
@@ -57,7 +59,7 @@ In a form, agent, or app, reference this as `functions/hello.py::main`. The plat
 >    ```
 > 3. `bifrost solution deploy` → the row is created from the manifest entry and the source ships in the install bundle. Verified: a hand-added entry + deploy reports the extra workflow upserted and it executes.
 >
-> This is the one place you DO add a `.bifrost/` entry by hand — adding a NEW workflow row is exactly what the scaffold does programmatically, and there is no CLI command for it. (The "don't hand-edit `.bifrost/`" guidance is about not corrupting an EXISTING managed entity's identity/UUID, not about adding a new workflow.) The capture→pull→deploy road below is for adopting a workflow that already exists as a loose `_repo/` entity — overkill for one you're authoring fresh in the solution.
+> This is the one place you DO add a `.bifrost/` entry by hand — adding a NEW workflow row is exactly what the scaffold does programmatically, and there is no CLI command for it. (The "don't hand-edit `.bifrost/`" guidance is about not corrupting an EXISTING managed entity's identity/UUID, not about adding a new workflow.) The UUID you write is provisional — a later `bifrost solution pull` rewrites `.bifrost/workflows.yaml` with the server's canonical UUID, which is expected; don't be surprised when your hand-typed id changes. The capture→pull→deploy road below is for adopting a workflow that already exists as a loose `_repo/` entity — overkill for one you're authoring fresh in the solution.
 
 ### 4. Local dev
 

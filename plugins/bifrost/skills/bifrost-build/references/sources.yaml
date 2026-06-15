@@ -58,7 +58,7 @@ references:
   - file: references/solutions.md
     source_globs:
       - api/bifrost/commands/solution.py
-    verified_at_sha: 6b5a081d0059a9115c8f960f0fc90f01f88f5488
+    verified_at_sha: 81e8beeea732905e96e62eeab374e98fec76ca37
 
   - file: references/tables.md
     source_globs:

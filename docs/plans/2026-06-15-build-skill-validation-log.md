@@ -95,6 +95,16 @@ A9 re-confirmed `--org` reads true (init no `--scope`; deploy `--help` shows `--
 
 **Platform gap (NEW — for the platform side, NOT a skill bug):** there is **no CLI command to add a new workflow to a solution's `.bifrost/workflows.yaml`** — the scaffold writes the sample entry programmatically, but a builder authoring a 2nd+ workflow must hand-edit the manifest (or take the awkward push→register→capture road). A `bifrost solution add-workflow <path::fn>` (or having `pull` discover decorated functions in `functions/`) would close this. This is the recurring friction A6/A7/A8/A9 all circled.
 
+| A10 | NEEDS-FIX (1) | yes (Tailwind, curl) | table+form+**custom workflow** round-trip + survive + **execute** ✓ | yes (.bifrost edit) ✓ | clean ✓ | ✓ 409 (forms+tables) | the A9 manifest-entry flow WORKED zero-surprise ✓; 1 fix: solutions.md `def main(ctx)` example is wrong (no ctx) → corrected | 0 |
+
+### A10 — the A9 manifest-entry flow WORKED; 1 unrelated fix (`ctx` in the workflow example)
+
+**A9's fix held perfectly:** A10 followed "write the function → add a `.bifrost/workflows.yaml` entry → deploy" verbatim → **"3 workflow(s) upserted"**, both custom workflows registered, solution-managed, and **executed** (`status: Success`, rows confirmed in the table). No `register`/`push`/capture, zero surprises. The recurring new-workflow friction is finally documented correctly. (A10 noted `pull` rewrites the hand-typed UUID with the server's canonical one — expected; added a one-line heads-up so it's not surprising.)
+
+The one finding is an **unrelated, pre-existing** error in the §3 code example: it showed `@workflow def main(ctx):` — a SYNC function with a bogus `ctx` positional param. Following it literally, A10 wrote `def create_task_a10(ctx, title, priority)` and the platform called it `create_task_a10(title=…, priority=…)` → `missing 1 required positional argument: 'ctx'`. VERIFIED against three sources: the scaffold's real sample (`solution.py:49` `async def main():`), `workflows-python.md` (`async def greet_user(name, count=1)` — params are inputs, no ctx), and the module-level SDK (`from bifrost import tables`). → Corrected the example to `async def main():` + added a line that workflows take inputs as parameters, no `ctx`, SDK via top-level imports. Lint 0, mirror synced.
+
+A10 re-confirmed `--org` reads true (init no `--scope`/`--org`; deploy synonyms present; home/org/global as documented), table+form+workflow survived + executed, read-only 409 held on forms+tables.
+
 ### A6 — full clean scorecard (incl. real browser drive); 1 ordering fix
 
 A6 confirmed A3/A4/A5 fixes ALL held, and for the first time the **browser drive succeeded** (localhost:4000, Tailwind classes rendered). Its one finding is a real lifecycle-ordering gap: a form's `workflow_id` must resolve to a **registered** workflow UUID (verified `forms.py` router validates `workflow_id` exists in WorkflowORM), but a fresh solution's `functions/*.py` workflow isn't registered until its first deploy. → Added an "Ordering for a form/agent that references a workflow" note to Path A (deploy once to register → create form/agent → capture → pull → deploy) + the ambiguous-bare-name caveat.
