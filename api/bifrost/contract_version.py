@@ -12,7 +12,10 @@ integers agree and fails if a CLI-consumed contract changed without a decision.
 
 #: Must equal shared.contract_version.CONTRACT_VERSION. See module docstring.
 # v2: claims organization_id widened to nullable for global/solution-managed claims (2026-06-13)
-CONTRACT_VERSION: int = 3
+# v4: unified --org standard — SolutionCreate/SolutionBase drop `scope` (install
+#     kind is derived from organization_id); SolutionRepoPreviewRequest gains
+#     organization_id; descriptor no longer carries scope (2026-06-15)
+CONTRACT_VERSION: int = 4
 
 
 def get_contract_version() -> int:

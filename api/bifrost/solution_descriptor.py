@@ -16,10 +16,9 @@ Stateless — no DB or S3 dependency.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
 
@@ -27,14 +26,23 @@ DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
 class SolutionDescriptor(BaseModel):
     """Parsed ``bifrost.solution.yaml``.
 
-    ``scope`` is the install scope (``org`` or ``global``) — visibility of the
-    deployed entities. ``global_repo_access`` is orthogonal: whether the
-    Solution's code may import shared modules from ``_repo/`` (§3.3/§3.5).
+    The descriptor is pure definition — it does NOT carry an install *scope*
+    (org vs global). Install kind is the installer's deploy-time choice, set via
+    the unified ``--org``/``--global`` standard on ``deploy``/``install``; the
+    server derives it from ``organization_id`` (NULL == global). Legacy
+    descriptors that still carry a ``scope:`` key load fine — it is ignored
+    (``extra="ignore"``).
+
+    ``global_repo_access`` is unrelated to install scope: it controls whether
+    the Solution's code may import shared modules from ``_repo/`` (§3.3/§3.5).
     """
+
+    # Ignore unknown/legacy keys (e.g. a pre-standard ``scope:``) so old
+    # descriptors keep loading after scope was removed from the schema.
+    model_config = ConfigDict(extra="ignore")
 
     slug: str
     name: str
-    scope: Literal["org", "global"] = "org"
     # Declared bundle version, recorded on the install at deploy time. Optional
     # and free-form; PEP 440 ordering is only attempted by the server's
     # downgrade gate (unordered versions never block).
@@ -86,7 +94,7 @@ def load_descriptor(path: Path | str) -> SolutionDescriptor:
     """Load + validate the descriptor at ``path`` (a workspace dir or the file).
 
     Raises FileNotFoundError if absent, and pydantic ValidationError on a bad
-    schema (unknown scope, missing slug/name, etc.).
+    schema (missing slug/name, etc.). A legacy ``scope:`` key is ignored.
     """
     descriptor_file = _descriptor_path(path)
     if not descriptor_file.is_file():

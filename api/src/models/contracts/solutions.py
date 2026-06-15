@@ -14,7 +14,6 @@ SolutionScope = Literal["org", "global"]
 class SolutionBase(BaseModel):
     slug: str = Field(min_length=1, max_length=255, description="Definition identity (shared across installs)")
     name: str = Field(min_length=1, max_length=255)
-    scope: SolutionScope = "org"
     global_repo_access: bool = False
     git_connected: bool = False
     git_repo_url: str | None = None
@@ -25,9 +24,14 @@ class SolutionBase(BaseModel):
 class SolutionCreate(SolutionBase):
     """Create-shape for an install.
 
-    For ``scope=org`` the install's org is taken from the caller's context (or
-    an explicit ``organization_id`` for cross-org admins); ``scope=global``
-    means ``organization_id IS NULL``.
+    Install kind is DERIVED from ``organization_id``, per the unified --org
+    standard — there is no ``scope`` input:
+
+    - ``organization_id`` absent (HOME) => the caller's own org.
+    - ``organization_id`` explicit null  => global (org NULL).
+    - ``organization_id`` a UUID         => that org (cross-org admins).
+
+    ``model_fields_set`` distinguishes absent (HOME) from explicit null (global).
     """
 
     organization_id: UUID | None = None
@@ -269,6 +273,13 @@ class SolutionRepoPreviewRequest(BaseModel):
     repo_url: str = Field(min_length=1, max_length=1024)
     repo_subpath: str | None = None
     git_ref: str | None = None
+    # Install kind for install-from-repo, per the unified --org standard:
+    # absent => the caller's own org (HOME); explicit null => global; a UUID =>
+    # that org. The descriptor no longer carries scope.
+    organization_id: UUID | None = Field(
+        default=None,
+        description="Target org for the install (absent => caller's org, null => global).",
+    )
 
 
 class SolutionEntityDiff(BaseModel):

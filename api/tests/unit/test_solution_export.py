@@ -95,7 +95,9 @@ def test_export_round_trips_through_preview() -> None:
 
     assert result.slug == "exp-demo"
     assert result.name == "Export Demo"
-    assert result.scope == "global"
+    # The exported descriptor carries no install scope — kind is the installer's
+    # deploy-time choice (--org/--global), derived from organization_id.
+    assert result.scope is None
     assert result.version == "1.2.3"
     assert result.logo  # descriptor points at a real logo file in the zip
 
@@ -154,11 +156,23 @@ def test_export_is_deterministic() -> None:
     assert build_workspace_zip(_bundle()) == build_workspace_zip(_bundle())
 
 
-def test_export_org_scope_descriptor() -> None:
+def test_export_descriptor_omits_scope_regardless_of_org() -> None:
+    """The exported descriptor never carries scope — not for an org install nor
+    a global one. Install kind is the installer's deploy-time choice, derived
+    from organization_id, so it must not be baked into the portable definition."""
     import uuid
 
     b = _bundle()
     b.solution.organization_id = uuid.uuid4()
     b.solution.global_repo_access = False
     result = preview_zip(build_workspace_zip(b))
-    assert result.scope == "org"
+    assert result.scope is None
+    # And the raw descriptor in the zip has no scope: key.
+    import io
+    import zipfile
+
+    import yaml
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(b))) as z:
+        descriptor = yaml.safe_load(z.read("bifrost.solution.yaml"))
+    assert "scope" not in descriptor

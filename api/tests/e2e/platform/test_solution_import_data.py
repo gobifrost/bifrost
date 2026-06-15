@@ -80,8 +80,7 @@ def make_solution_with_table_rows(e2e_client, platform_admin):
             json={
                 "slug": actual_slug,
                 "name": actual_slug.upper(),
-                "scope": "org",
-                "organization_id": src_org_id,
+                "organization_id": src_org_id,  # org install (kind derives from org_id)
             },
         )
         assert r.status_code in (200, 201), r.text

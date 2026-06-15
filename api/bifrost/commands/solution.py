@@ -65,11 +65,16 @@ def solution_group() -> None:
 @click.option("--name", default=None, help="Display name (defaults to slug).")
 @click.option("--version", "version", default="0.1.0", show_default=True,
               help="Bundle version recorded on the install at deploy time.")
-@click.option("--scope", type=click.Choice(["org", "global"]), default="org", show_default=True)
 @click.option("--global-repo-access/--no-global-repo-access", default=False, show_default=True)
 def init_cmd(
-    path: str, slug: str, name: str | None, version: str, scope: str, global_repo_access: bool
+    path: str, slug: str, name: str | None, version: str, global_repo_access: bool
 ) -> None:
+    """Scaffold a ``bifrost.solution.yaml`` descriptor.
+
+    The descriptor carries no install *scope* — install kind (org vs global) is
+    the installer's deploy-time choice via ``--org``/``--global`` on
+    ``deploy``/``install``.
+    """
     workspace = pathlib.Path(path)
     workspace.mkdir(parents=True, exist_ok=True)
     descriptor = workspace / DESCRIPTOR_FILENAME
@@ -81,7 +86,6 @@ def init_cmd(
                 "slug": slug,
                 "name": name or slug,
                 "version": version,
-                "scope": scope,
                 "global_repo_access": global_repo_access,
             },
             sort_keys=False,

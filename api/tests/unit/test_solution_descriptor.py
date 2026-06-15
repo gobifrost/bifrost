@@ -26,42 +26,51 @@ def _write(tmp_path: pathlib.Path, text: str) -> pathlib.Path:
 
 
 def test_load_minimal(tmp_path: pathlib.Path) -> None:
-    _write(tmp_path, "slug: mna\nname: MNA\nscope: org\nglobal_repo_access: false\n")
+    _write(tmp_path, "slug: mna\nname: MNA\nglobal_repo_access: false\n")
     d = load_descriptor(tmp_path)
     assert isinstance(d, SolutionDescriptor)
     assert d.slug == "mna"
     assert d.name == "MNA"
-    assert d.scope == "org"
     assert d.global_repo_access is False
     assert is_solution_workspace(tmp_path) is True
 
 
 def test_defaults(tmp_path: pathlib.Path) -> None:
-    """global_repo_access and git_connected default off; scope defaults to org."""
+    """global_repo_access and git_connected default off."""
     _write(tmp_path, "slug: braytel\nname: Braytel\n")
     d = load_descriptor(tmp_path)
-    assert d.scope == "org"
     assert d.global_repo_access is False
     assert d.git_connected is False
     assert d.git_repo_url is None
 
 
-def test_global_scope_and_git(tmp_path: pathlib.Path) -> None:
+def test_no_scope_field() -> None:
+    """The descriptor carries no install scope — install kind is the deploy-time
+    --org/--global choice, derived server-side from organization_id."""
+    assert "scope" not in SolutionDescriptor.model_fields
+
+
+def test_legacy_scope_key_is_ignored(tmp_path: pathlib.Path) -> None:
+    """A pre-standard descriptor that still carries scope: must keep loading —
+    the key is ignored (extra='ignore'), never a validation error."""
+    _write(tmp_path, "slug: x\nname: X\nscope: org\n")
+    d = load_descriptor(tmp_path)
+    assert d.slug == "x"
+    assert not hasattr(d, "scope")
+    # An otherwise-invalid scope value is ALSO ignored (no longer rejected).
+    _write(tmp_path, "slug: y\nname: Y\nscope: tenant\n")
+    assert load_descriptor(tmp_path).slug == "y"
+
+
+def test_git_fields_load(tmp_path: pathlib.Path) -> None:
     _write(
         tmp_path,
-        "slug: halo\nname: Halo\nscope: global\n"
+        "slug: halo\nname: Halo\n"
         "git_connected: true\ngit_repo_url: https://github.com/x/halo\n",
     )
     d = load_descriptor(tmp_path)
-    assert d.scope == "global"
     assert d.git_connected is True
     assert d.git_repo_url == "https://github.com/x/halo"
-
-
-def test_invalid_scope_rejected(tmp_path: pathlib.Path) -> None:
-    _write(tmp_path, "slug: x\nname: X\nscope: tenant\n")
-    with pytest.raises(Exception):
-        load_descriptor(tmp_path)
 
 
 def test_missing_required_field_rejected(tmp_path: pathlib.Path) -> None:
@@ -121,8 +130,8 @@ def test_version_defaults_to_none(tmp_path: pathlib.Path) -> None:
 
 def test_init_writes_version(tmp_path: pathlib.Path) -> None:
     """`bifrost solution init` writes the version (default 0.1.0) into the
-    descriptor, ordered after name and before scope for readability, and
-    load_descriptor round-trips it."""
+    descriptor, ordered after name, and load_descriptor round-trips it. The
+    descriptor carries no scope: key (install kind is a deploy-time choice)."""
     from click.testing import CliRunner
 
     from bifrost.commands.solution import solution_group
@@ -132,7 +141,21 @@ def test_init_writes_version(tmp_path: pathlib.Path) -> None:
     assert result.exit_code == 0, result.output
     assert load_descriptor(ws).version == "0.1.0"
     text = (ws / DESCRIPTOR_FILENAME).read_text()
-    assert text.index("name:") < text.index("version:") < text.index("scope:")
+    assert text.index("name:") < text.index("version:")
+    assert "scope:" not in text
+
+
+def test_init_rejects_scope_flag(tmp_path: pathlib.Path) -> None:
+    """`--scope` was removed from init — passing it is a usage error."""
+    from click.testing import CliRunner
+
+    from bifrost.commands.solution import solution_group
+
+    ws = tmp_path / "ws"
+    result = CliRunner().invoke(
+        solution_group, ["init", str(ws), "--slug", "mna", "--scope", "global"]
+    )
+    assert result.exit_code != 0
 
 
 def test_init_writes_explicit_version(tmp_path: pathlib.Path) -> None:

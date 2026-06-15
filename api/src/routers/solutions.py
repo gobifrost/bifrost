@@ -78,15 +78,18 @@ router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
 
 @router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)")
 async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
-    # Scope: global → org NULL; org → explicit organization_id or caller's org.
-    if body.scope == "global":
-        org_id: UUID | None = None
+    # Install kind is DERIVED from organization_id (unified --org standard) —
+    # there is no `scope` input. HOME (organization_id absent) => the caller's
+    # own org; explicit null => global (org NULL); a UUID => that org.
+    if "organization_id" in body.model_fields_set:
+        org_id: UUID | None = body.organization_id  # explicit (null == global)
     else:
-        org_id = body.organization_id or ctx.org_id
+        org_id = ctx.org_id  # HOME — the caller's own org
         if org_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="org-scoped install requires an organization_id",
+                detail="install requires an organization (caller has no org; "
+                "pass organization_id, or null for a global install)",
             )
 
     row = SolutionORM(
@@ -1345,14 +1348,19 @@ async def install_from_repo(
                 detail="Repo has no valid bifrost.solution.yaml (missing slug)",
             )
 
-        # Scope: org install lands under the caller's org; global => NULL. Scope
-        # is carried entirely by organization_id NULL-ness (no `scope` column).
-        org_id: UUID | None = ctx.org_id if parsed.scope == "org" else None
-        if parsed.scope == "org" and org_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="org-scoped install requires the caller to have an organization",
-            )
+        # Install kind comes from the REQUEST (unified --org standard), not the
+        # descriptor: HOME (organization_id absent) => the caller's own org;
+        # explicit null => global; a UUID => that org.
+        if "organization_id" in body.model_fields_set:
+            org_id: UUID | None = body.organization_id
+        else:
+            org_id = ctx.org_id
+            if org_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="install requires an organization (caller has no org; "
+                    "pass organization_id, or null for a global install)",
+                )
 
         # Fast-path 409 with a clear message for the common sequential case; the
         # flush() catch below covers the concurrent race on the unique index.

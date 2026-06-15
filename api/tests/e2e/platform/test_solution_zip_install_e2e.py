@@ -139,7 +139,7 @@ async def test_zip_install_refused_into_git_connected_install(e2e_client, platfo
     create = e2e_client.post("/api/solutions", headers=headers, json={
         "slug": slug,
         "name": slug.upper(),
-        "scope": "global",
+        "organization_id": None,  # explicit global (kind derives from org_id)
         "git_connected": True,
         "git_repo_url": "https://example.com/repo.git",
     })
@@ -351,7 +351,7 @@ async def test_export_404_before_first_deploy(e2e_client, platform_admin):
     create = e2e_client.post("/api/solutions", headers=headers, json={
         "slug": slug,
         "name": slug.upper(),
-        "scope": "global",
+        "organization_id": None,  # explicit global (kind derives from org_id)
     })
     assert create.status_code in (200, 201), create.text
     sid = create.json()["id"]

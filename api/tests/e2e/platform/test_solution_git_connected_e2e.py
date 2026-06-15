@@ -15,7 +15,7 @@ def test_connected_install_refuses_deploy(e2e_client, platform_admin):
     slug = f"gitconn-{uuid.uuid4().hex[:8]}"
 
     r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "scope": "global",
+        "slug": slug, "name": slug.upper(), "organization_id": None,
         "git_connected": True, "git_repo_url": "https://example.com/x.git",
     })
     assert r.status_code in (200, 201), r.text
@@ -33,7 +33,7 @@ def test_disconnected_install_allows_deploy(e2e_client, platform_admin):
     headers = platform_admin.headers
     slug = f"disc-{uuid.uuid4().hex[:8]}"
     r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "scope": "global",
+        "slug": slug, "name": slug.upper(), "organization_id": None,
     })
     assert r.status_code in (200, 201), r.text
     sid = r.json()["id"]
@@ -55,7 +55,7 @@ async def test_concurrent_deploy_to_same_install_is_refused(e2e_client, platform
     headers = platform_admin.headers
     slug = f"conc-{uuid.uuid4().hex[:8]}"
     r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "scope": "global",
+        "slug": slug, "name": slug.upper(), "organization_id": None,
     })
     assert r.status_code in (200, 201), r.text
     sid = r.json()["id"]
@@ -82,7 +82,7 @@ def test_invalid_bundle_returns_409_not_500(e2e_client, platform_admin):
     headers = platform_admin.headers
     slug = f"badbundle-{uuid.uuid4().hex[:8]}"
     r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "scope": "global",
+        "slug": slug, "name": slug.upper(), "organization_id": None,
     })
     assert r.status_code in (200, 201), r.text
     sid = r.json()["id"]

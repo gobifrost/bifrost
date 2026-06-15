@@ -169,12 +169,15 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
 
     slug: str | None = None
     name: str | None = None
+    # The descriptor carries no install scope anymore — install kind is the
+    # installer's deploy-time choice (organization_id), not a descriptor field.
+    # Kept as a None preview field for response-shape stability.
     scope: str | None = None
     version: str | None = None
     logo: str | None = None
     if is_solution_workspace(workspace):
         descriptor = load_descriptor(workspace)
-        slug, name, scope = descriptor.slug, descriptor.name, descriptor.scope
+        slug, name = descriptor.slug, descriptor.name
         version = descriptor.version
         logo = descriptor.logo
 
