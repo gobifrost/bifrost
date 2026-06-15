@@ -105,6 +105,14 @@ The one finding is an **unrelated, pre-existing** error in the §3 code example:
 
 A10 re-confirmed `--org` reads true (init no `--scope`/`--org`; deploy synonyms present; home/org/global as documented), table+form+workflow survived + executed, read-only 409 held on forms+tables.
 
+| A11 | NEEDS-FIX (1) | yes (Tailwind v4, curl) | table+form+**custom workflow** round-trip + survive + **execute w/ working SDK** ✓ | yes (.bifrost edit) ✓ | clean ✓ | ✓ 409 (forms+tables) | wrote the workflow FROM the docs ✓; 1 fix: python-sdk.md `doc["id"]` subscript crashes (DocumentData is attribute-access) → corrected | 0 |
+
+### A11 — wrote the workflow from the docs (not the scaffold); 1 fix (DocumentData subscript)
+
+A11 authored its workflow signature FROM `workflows-python.md` (`async def add_task_a11(title: str, priority: str = "medium") -> dict`, typed params, no `ctx` — A10's fix held) and registered it via the manifest-entry flow (A9's fix held: add `.bifrost/workflows.yaml` entry → deploy → upserted + executed). Both workflows ran `status: Success` with working `tables.insert`/`tables.query` calls. Table+form+workflow survived deploy, `.bifrost`-edit update redeployed, read-only 409 held on forms+tables. `--org` reads true (init no `--scope`).
+
+The one finding is an **isolated, pre-existing** error in `python-sdk.md`: its tables examples used **subscript access** (`doc["id"]`, `doc["data"]`), but `DocumentData` is a pydantic model (`api/bifrost/models.py:283`) — subscript raises `'DocumentData' object is not subscriptable` at runtime (A11's first workflow `Failed`). The correct access is attribute (`doc.id`, `doc.data`, `results.documents`/`.total`). VERIFIED against the model def. → Rewrote the `python-sdk.md` tables block to attribute access + added an explicit "not subscriptable" note + showed reading query results via `.documents` / `.data`. (Note: `references/tables.md` — the dedicated table reference the skill points to for the full model — was already CORRECT, `result.documents[n].data`; only the `python-sdk.md` quick-ref was stale.) Lint 0, mirror synced.
+
 ### A6 — full clean scorecard (incl. real browser drive); 1 ordering fix
 
 A6 confirmed A3/A4/A5 fixes ALL held, and for the first time the **browser drive succeeded** (localhost:4000, Tailwind classes rendered). Its one finding is a real lifecycle-ordering gap: a form's `workflow_id` must resolve to a **registered** workflow UUID (verified `forms.py` router validates `workflow_id` exists in WorkflowORM), but a fresh solution's `functions/*.py` workflow isn't registered until its first deploy. → Added an "Ordering for a form/agent that references a workflow" note to Path A (deploy once to register → create form/agent → capture → pull → deploy) + the ambiguous-bare-name caveat.

@@ -13,24 +13,33 @@ Read, write, and query JSON document rows in Bifrost tables.
 ```python
 from bifrost import tables
 
-# Insert a row
+# Insert a row -> returns a DocumentData
 doc = await tables.insert("clients", {"name": "Acme", "status": "active"})
 
-# Query with a filter
+# DocumentData is a model: read it by ATTRIBUTE, never by subscript.
+# doc.id (str), doc.data (dict), doc.created_at / updated_at / created_by (str|None).
+client_id = doc.id
+name = doc.data.get("name")          # the row fields live under .data
+
+# Query with a filter -> returns a DocumentList
 results = await tables.query("clients", where={"status": "active"}, limit=50)
+for row in results.documents:        # .documents is the list; .total the count
+    print(row.id, row.data.get("name"))
 
 # Get a single row by id
-row = await tables.get("clients", doc_id=doc["id"])
+row = await tables.get("clients", doc_id=doc.id)
 
 # Update a row
-await tables.update("clients", doc["id"], {"status": "churned"})
+await tables.update("clients", doc.id, {"status": "churned"})
 
 # Upsert (update-or-insert) by id
 await tables.upsert("clients", id="known-uuid", data={"name": "Acme"})
 
 # Delete a row
-await tables.delete_document("clients", doc["id"])
+await tables.delete_document("clients", doc.id)
 ```
+
+**`DocumentData` / `DocumentList` use attribute access, not subscript** — `doc["id"]` raises `'DocumentData' object is not subscriptable`. Use `doc.id`, `doc.data` (the dict of row fields), and `results.documents` / `results.total` for queries.
 
 The `scope` parameter on most calls targets a specific org (pass an org UUID); omit to use the workflow's own execution org. See `references/tables.md` for the full table data model, filter DSL, and policy rules.
 
