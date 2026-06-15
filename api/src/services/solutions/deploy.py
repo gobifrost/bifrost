@@ -29,12 +29,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.agents import Agent, AgentRole
+from src.models.orm.events import (
+    EventSource,
+    EventSubscription,
+    ScheduleSource,
+    WebhookSource,
+)
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.custom_claims import CustomClaim
@@ -344,6 +350,7 @@ class SolutionDeployer:
         builds = await self._upsert_apps(solution, rb.apps)
         await self._upsert_forms(solution, rb.forms)
         await self._upsert_agents(solution, rb.agents)
+        await self._upsert_events(solution, rb.events)
         await self._upsert_config_schemas(solution, rb.config_schemas)
         # Un-orphan this install's config VALUES that match the re-declared keys
         # (Task 14c) so the operator doesn't re-enter them on reinstall.
@@ -492,6 +499,7 @@ class SolutionDeployer:
         agents = [copy.deepcopy(e) for e in bundle.agents]
         claims = [copy.deepcopy(e) for e in bundle.claims]
         config_schemas = [copy.deepcopy(e) for e in bundle.config_schemas]
+        events = [copy.deepcopy(e) for e in bundle.events]
 
         typed_entries: list[tuple[type, dict[str, Any]]] = [
             *[(Workflow, e) for e in workflows],
@@ -501,6 +509,7 @@ class SolutionDeployer:
             *[(Agent, e) for e in agents],
             *[(CustomClaim, e) for e in claims],
             *[(SolutionConfigSchema, e) for e in config_schemas],
+            *[(EventSource, e) for e in events],
         ]
 
         # Pass 1: remap each entity's own id.
@@ -526,6 +535,18 @@ class SolutionDeployer:
                 vals = magent.get(fld)
                 if isinstance(vals, list):
                     magent[fld] = [_remap_ref(v, id_map) for v in vals]
+        # Event subscriptions reference the workflow/agent they trigger by UUID.
+        # When that target is in this bundle, its id was remapped in pass 1, so
+        # rewrite the subscription refs through id_map — else a fresh install's
+        # triggers point at the wrong (or no) workflow. Refs outside the bundle
+        # are left untouched (resolve by scope at runtime), same rule as forms.
+        for mevent in events:
+            for msub in mevent.get("subscriptions") or []:
+                if not isinstance(msub, dict):
+                    continue
+                for fld in ("workflow_id", "agent_id"):
+                    if msub.get(fld) is not None:
+                        msub[fld] = _remap_ref(msub[fld], id_map)
 
         return SolutionBundle(
             solution=bundle.solution,
@@ -537,6 +558,7 @@ class SolutionDeployer:
             agents=agents,
             claims=claims,
             config_schemas=config_schemas,
+            events=events,
             version=bundle.version,
             readme=bundle.readme,
         )
@@ -1453,6 +1475,126 @@ class SolutionDeployer:
                 )
             )
 
+    async def _upsert_events(
+        self, solution: Solution, events: list[dict[str, Any]]
+    ) -> None:
+        """Deploy event/schedule triggers (full-replace per EventSource).
+
+        Each entry is a ManifestEventSource-shaped dict (flat schedule/webhook
+        config + nested ``subscriptions``). For each: guard ownership, full-replace
+        the source row + its child schedule/webhook row + its subscriptions, all
+        via Core statements (the always-on read-only guard rejects ORM-object
+        mutation of managed rows — Core insert/update/delete is the contract).
+        Subscription ``workflow_id``/``agent_id`` were already remapped by
+        ``_remapped_bundle``; webhook instance secrets are absent (capture scrubs
+        them) so the install starts the webhook from a clean, unauthenticated
+        shell the operator re-establishes.
+        """
+        from src.models.enums import ScheduleOverlapPolicy
+
+        sid = solution.id
+        for mevent in events:
+            source_id = UUID(str(mevent["id"]))
+            await self._guard_owner(EventSource, source_id, sid)
+
+            # Full-replace children + subs for a clean idempotent redeploy.
+            await self.db.execute(
+                delete(EventSubscription).where(
+                    EventSubscription.event_source_id == source_id
+                )
+            )
+            await self.db.execute(
+                delete(ScheduleSource).where(
+                    ScheduleSource.event_source_id == source_id
+                )
+            )
+            await self.db.execute(
+                delete(WebhookSource).where(
+                    WebhookSource.event_source_id == source_id
+                )
+            )
+
+            source_values: dict[str, Any] = {
+                "name": mevent.get("name") or "",
+                "source_type": mevent["source_type"],
+                "event_type": mevent.get("event_type"),
+                "is_active": mevent.get("is_active", True),
+                "organization_id": solution.organization_id,
+                "solution_id": sid,
+                "created_by": "solution-deploy",
+            }
+            existing = (
+                await self.db.execute(
+                    select(EventSource.id).where(EventSource.id == source_id)
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                await self.db.execute(
+                    insert(EventSource).values(id=source_id, **source_values)
+                )
+            else:
+                # created_by is immutable audit — don't overwrite on redeploy.
+                source_values.pop("created_by", None)
+                await self.db.execute(
+                    update(EventSource)
+                    .where(EventSource.id == source_id)
+                    .values(**source_values)
+                )
+
+            # Child config: schedule OR webhook, by source_type.
+            if mevent.get("source_type") == "schedule" and mevent.get("cron_expression"):
+                overlap = mevent.get("overlap_policy")
+                await self.db.execute(
+                    insert(ScheduleSource).values(
+                        event_source_id=source_id,
+                        cron_expression=mevent["cron_expression"],
+                        timezone=mevent.get("timezone") or "UTC",
+                        enabled=mevent.get("schedule_enabled", True),
+                        overlap_policy=(
+                            ScheduleOverlapPolicy(overlap)
+                            if overlap
+                            else ScheduleOverlapPolicy.SKIP
+                        ),
+                    )
+                )
+            elif mevent.get("source_type") == "webhook":
+                # Webhook shell: portable adapter/config only. external_id/state/
+                # expires_at are instance secrets (scrubbed at capture); the
+                # operator re-establishes the external subscription post-install.
+                await self.db.execute(
+                    insert(WebhookSource).values(
+                        event_source_id=source_id,
+                        adapter_name=mevent.get("adapter_name"),
+                        integration_id=None,
+                        config=mevent.get("webhook_config") or {},
+                        rate_limit_per_minute=mevent.get("rate_limit_per_minute", 60),
+                        rate_limit_window_seconds=mevent.get(
+                            "rate_limit_window_seconds", 60
+                        ),
+                        rate_limit_enabled=mevent.get("rate_limit_enabled", True),
+                    )
+                )
+
+            # Subscriptions (refs already remapped).
+            for msub in mevent.get("subscriptions") or []:
+                sub_workflow = msub.get("workflow_id")
+                sub_agent = msub.get("agent_id")
+                await self.db.execute(
+                    insert(EventSubscription).values(
+                        id=UUID(str(msub["id"])) if msub.get("id") else uuid4(),
+                        event_source_id=source_id,
+                        workflow_id=UUID(str(sub_workflow)) if sub_workflow else None,
+                        agent_id=UUID(str(sub_agent)) if sub_agent else None,
+                        target_type=msub.get("target_type", "workflow"),
+                        event_type=msub.get("event_type"),
+                        filter_expression=msub.get("filter_expression"),
+                        input_mapping=msub.get("input_mapping"),
+                        is_active=msub.get("is_active", True),
+                        solution_id=sid,
+                        created_by="solution-deploy",
+                    )
+                )
+
     async def _reattach_orphan_configs(
         self, solution: Solution, declared_keys: set[str]
     ) -> int:
@@ -1562,6 +1704,13 @@ class SolutionDeployer:
         # consumer needs a config-deleted tally — so the return value is dropped.
         _ = await self._reconcile_one(
             SolutionConfigSchema, sid, {UUID(c["id"]) for c in bundle.config_schemas}
+        )
+        # Triggers: sweep stale EventSources for this install. Child
+        # schedule/webhook rows AND subscriptions cascade via the EventSource FK
+        # (ondelete=CASCADE), so sweeping the source row is sufficient — no
+        # separate subscription sweep needed. Count not surfaced.
+        _ = await self._reconcile_one(
+            EventSource, sid, {UUID(e["id"]) for e in bundle.events}
         )
         return (
             wf_deleted, tbl_deleted, len(stale_app_dist), form_deleted, agent_deleted,
