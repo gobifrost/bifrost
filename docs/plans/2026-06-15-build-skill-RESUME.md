@@ -34,6 +34,7 @@ All reference docs lint 0; appendix + claims + mirror + freshness tests green; m
 ## NEXT — fix the capture round-trip (designed, NOT built)
 
 **Spec (APPROVED in design, awaiting Jack's spec review):** `docs/superpowers/specs/2026-06-15-solution-capture-roundtrip-design.md`.
+**Plan (ready to execute):** `docs/superpowers/plans/2026-06-15-solution-capture-roundtrip.md` — 7 bite-sized TDD tasks. **A new session can start at Task 1 directly** (subagent-driven, same cadence as the build-skill rebuild). Key shortcut baked in: `bifrost solution pull` reuses the EXISTING `POST /export` endpoint (which already live-rebuilds a `.bifrost/`-complete bundle), so the only new server code is the queue table + enqueue + deploy guard + a clear-queue endpoint.
 
 **The fix in brief — a `pending_captures` queue table:**
 1. New `pending_captures` table (the ONLY schema change — no columns on the entity tables). Row per captured-but-unpulled entity: `(solution_id, entity_type, entity_id, captured_at, captured_by)`, unique on `(solution_id, entity_type, entity_id)`.
