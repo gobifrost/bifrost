@@ -26,6 +26,7 @@ import click
 import yaml
 
 from bifrost.client import BifrostClient
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.solution_descriptor import (
     DESCRIPTOR_FILENAME,
     find_solution_root,
@@ -982,19 +983,45 @@ class _AmbiguousInstall(Exception):
     """More than one existing install matches (slug, scope); deploy can't pick."""
 
 
+async def _resolve_install_org(client, org_ref: str | None, is_global: bool) -> str | None:
+    """Resolve the unified ``--org`` standard to a concrete install org id.
+
+    Maps the three states to the install kind chosen at deploy time:
+
+    - HOME (omit both)        -> the caller's own org id (``client.organization``).
+    - GLOBAL (--global/none)  -> ``None`` (the org-NULL / global install).
+    - ORG (--org <id|name>)   -> that org's resolved UUID.
+
+    Unlike the entity commands (where HOME means "send nothing, server fills the
+    caller's org"), an install needs a CONCRETE org to match/create against, so
+    HOME is resolved to the caller's own org id here.
+    """
+    from bifrost.refs import RefResolver
+
+    target = await resolve_org_target(org_ref, is_global, RefResolver(client))
+    if not target.is_set:  # HOME
+        org = client.organization or {}
+        return org.get("id")
+    return target.organization_id  # GLOBAL (None) or ORG (uuid)
+
+
 def _resolve_target_install(
-    installs: list[dict], slug: str, scope: str, deployer_org_id: str | None
+    installs: list[dict], slug: str, target_org_id: str | None
 ) -> str | None:
     """Resolve which existing install a disconnected deploy targets.
 
-    Matches by (slug, scope). For ``global`` scope an install is one with
-    ``organization_id is None``; for ``org`` scope, the install's
-    ``organization_id`` must equal the deployer's own org (``deployer_org_id``) —
-    NOT merely "any org-scoped install with this slug". Without that filter a
-    developer in org-B running ``bifrost deploy`` of a slug that org-A already
-    installed would full-replace org-A's install (Codex R6-P1-b). Each org's
-    install of a slug is independent (success-criteria §3.4 / criterion 9), so
-    the caller only ever resolves to (or creates) an install in their own org.
+    Matches by ``(slug, organization_id)`` against the resolved target org.
+    ``target_org_id is None`` means the GLOBAL install (``organization_id is
+    None``); a concrete UUID means the install in that org — NOT merely "any
+    org-scoped install with this slug". Without that filter a developer in org-B
+    running ``bifrost deploy`` of a slug that org-A already installed would
+    full-replace org-A's install (Codex R6-P1-b). Each org's install of a slug
+    is independent (success-criteria §3.4 / criterion 9), so the caller only ever
+    resolves to (or creates) an install in the resolved target org.
+
+    ``target_org_id`` is the install kind chosen at deploy time via the unified
+    ``--org`` standard: HOME → the caller's own org id, GLOBAL → ``None``, ORG →
+    that org's id. The kind is no longer read from the descriptor.
 
     Returns the install id if exactly one matches, ``None`` if none match (the
     caller creates a fresh install). Raises :class:`_AmbiguousInstall` if MORE
@@ -1004,29 +1031,18 @@ def _resolve_target_install(
     """
     matches = [
         s for s in installs
-        if s.get("slug") == slug and (
-            (scope == "global" and s.get("organization_id") is None)
-            or (
-                scope == "org"
-                # Require a real deployer org BEFORE the equality: a None
-                # deployer org must not match a GLOBAL install (organization_id
-                # is also None), which `None == None` would otherwise allow — an
-                # org-scoped deploy could then full-replace the global install
-                # (R7-P1-a). No deployer org → no org-scope match → fresh install.
-                and deployer_org_id is not None
-                and s.get("organization_id") == deployer_org_id
-            )
-        )
+        if s.get("slug") == slug and s.get("organization_id") == target_org_id
     ]
     if not matches:
         return None
     if len(matches) == 1:
         return matches[0]["id"]
+    scope_label = "global" if target_org_id is None else f"org {target_org_id}"
     listing = "\n".join(
         f"  --solution {m['id']}  (org={m.get('organization_id')})" for m in matches
     )
     raise _AmbiguousInstall(
-        f"{len(matches)} installs of '{slug}' exist for scope '{scope}'. "
+        f"{len(matches)} installs of '{slug}' exist for {scope_label}. "
         f"Deploy would full-replace one of them — refusing to guess.\n"
         f"Re-run with an explicit target:\n{listing}"
     )
@@ -1061,9 +1077,17 @@ def resolve_install_id_for_workspace(client, solution_root) -> str | None:
         org = client.organization or {}
         deployer_org_id = org.get("id")
         try:
-            return _resolve_target_install(
-                installs, descriptor.slug, descriptor.scope, deployer_org_id
+            # Offline best-effort: resolve the caller's OWN install (own-first),
+            # falling back to a global install of the same slug. There are no
+            # --org flags here — this is "my install of this solution".
+            own = (
+                _resolve_target_install(installs, descriptor.slug, deployer_org_id)
+                if deployer_org_id is not None
+                else None
             )
+            if own is not None:
+                return own
+            return _resolve_target_install(installs, descriptor.slug, None)
         except _AmbiguousInstall:
             return None
     except Exception:  # noqa: BLE001 — best-effort; never break the local run loop over install resolution
@@ -1107,9 +1131,8 @@ def _entities_in_manifest(workspace: pathlib.Path) -> list[dict[str, str]]:
 )
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
-@click.option("--org", "org_ref", default=None,
-              help="Target org (UUID or name) to resolve the install in (default: your org).")
-def pull_cmd(path: str, solution_id: str | None, org_ref: str | None) -> None:
+@org_option
+def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: bool) -> None:
     """Materialize captured-but-unpulled entities into source ``.bifrost/``.
 
     Deploy 409-blocks when an entity was captured (UI/CLI) but is absent from the
@@ -1142,19 +1165,10 @@ def pull_cmd(path: str, solution_id: str | None, org_ref: str | None) -> None:
                     f"Failed to list installs ({resp.status_code}): {resp.text[:200]}"
                 )
             installs = resp.json().get("solutions", [])
-            if org_ref:
-                from bifrost.refs import RefResolver
-                resolver = RefResolver(client)
-                try:
-                    deployer_org_id = await resolver.resolve("org", org_ref)
-                except Exception as exc:
-                    raise click.ClickException(f"Could not resolve --org '{org_ref}': {exc}")
-            else:
-                org = client.organization or {}
-                deployer_org_id = org.get("id")
+            target_org_id = await _resolve_install_org(client, org, is_global)
             try:
                 target_id = _resolve_target_install(
-                    installs, descriptor.slug, descriptor.scope, deployer_org_id
+                    installs, descriptor.slug, target_org_id
                 )
             except _AmbiguousInstall as e:
                 click.echo(str(e), err=True)
@@ -1214,11 +1228,12 @@ def pull_cmd(path: str, solution_id: str | None, org_ref: str | None) -> None:
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
-@click.option("--org", "org_ref", default=None,
-              help="Target org (UUID or name) to resolve-or-create the install in (default: your org).")
+@org_option
 @click.option("--force", is_flag=True, default=False,
               help="Apply even if the bundle version is older than the installed version (downgrade).")
-def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: bool) -> None:
+def deploy_cmd(
+    path: str, solution_id: str | None, org: str | None, is_global: bool, force: bool
+) -> None:
     workspace = pathlib.Path(path).resolve()
     if not is_solution_workspace(workspace):
         raise click.ClickException(
@@ -1265,29 +1280,21 @@ def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: b
                     f"Failed to list installs ({resp.status_code}): {resp.text[:200]}"
                 )
             installs = resp.json().get("solutions", [])
-            if org_ref:
-                from bifrost.refs import RefResolver
-                resolver = RefResolver(client)
-                try:
-                    deployer_org_id = await resolver.resolve("org", org_ref)
-                except Exception as exc:  # RefResolver raises on unknown/ambiguous ref
-                    raise click.ClickException(f"Could not resolve --org '{org_ref}': {exc}")
-            else:
-                org = client.organization or {}
-                deployer_org_id = org.get("id")
+            target_org_id = await _resolve_install_org(client, org, is_global)
             try:
                 target_id = _resolve_target_install(
-                    installs, descriptor.slug, descriptor.scope, deployer_org_id
+                    installs, descriptor.slug, target_org_id
                 )
             except _AmbiguousInstall as e:
                 click.echo(str(e), err=True)
                 return 1
             if target_id is None:
+                # Install kind is the deploy-time choice: organization_id None ==
+                # global, a UUID == that org. The server derives scope from it.
                 create = await client.post("/api/solutions", json={
                     "slug": descriptor.slug,
                     "name": descriptor.name,
-                    "scope": descriptor.scope,
-                    "organization_id": deployer_org_id,
+                    "organization_id": target_org_id,
                     "global_repo_access": descriptor.global_repo_access,
                     "git_connected": descriptor.git_connected,
                     "git_repo_url": descriptor.git_repo_url,
@@ -1363,7 +1370,7 @@ def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: b
     help="Install a Solution from a workspace zip (drag-and-drop equivalent).",
 )
 @click.argument("zip_path", type=click.Path(exists=True, dir_okay=False))
-@click.option("--org", "org_id", default=None, help="Target org id (omit for a global install).")
+@org_option
 @click.option(
     "--set",
     "set_values",
@@ -1389,7 +1396,8 @@ def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: b
 )
 def install_cmd(
     zip_path: str,
-    org_id: str | None,
+    org: str | None,
+    is_global: bool,
     set_values: tuple[str, ...],
     password: str | None,
     replace_secrets: bool,
@@ -1399,6 +1407,11 @@ def install_cmd(
 
     The server unzips it, resolves-or-creates the install, deploys the bundle,
     and applies any ``--set`` config values atomically under the install lock.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) installs
+    into the caller's own org, ``--global`` (or ``--org none|global``) installs
+    globally, and ``--org <id|name>`` installs into that org. This is a behavior
+    change — a bare ``install`` is no longer a global install.
 
     Full-backup zips (exported with ``--mode full``) carry an encrypted secrets
     blob; supply ``--password`` to decrypt it.  On a 409 collision the server
@@ -1417,8 +1430,12 @@ def install_cmd(
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
         form: dict[str, str] = {"config_values": json.dumps(config_values)}
-        if org_id:
-            form["organization_id"] = org_id
+        # HOME/ORG resolve to a concrete org id (sent as organization_id);
+        # GLOBAL resolves to None and the field is omitted (the install endpoint
+        # treats an absent organization_id as a global install).
+        target_org_id = await _resolve_install_org(client, org, is_global)
+        if target_org_id is not None:
+            form["organization_id"] = target_org_id
         if password is not None:
             form["password"] = password
         # FastAPI Form() parses "true"/"false" for bool fields.
@@ -1567,9 +1584,9 @@ def export_cmd(solution_ref: str, mode: str, password: str | None, out_path: str
 
 @solution_group.command(name="start", help="Run the app's dev server + local workflows (one origin).")
 @click.argument("app_slug", required=False)
-@click.option("--org", "org_ref", default=None, help="Org ref (UUID or name) to run under (superuser).")
+@org_option
 @click.option("--port", default=3000, show_default=True, type=int, help="Local origin port.")
-def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
+def start_cmd(app_slug: str | None, org: str | None, is_global: bool, port: int) -> None:
     import shutil
 
     from bifrost.client import BifrostClient
@@ -1585,16 +1602,20 @@ def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
 
     client = BifrostClient.get_instance(require_auth=True)
 
+    # Unified --org standard: HOME (omit both) runs under the caller's own org
+    # context (no override); --org <id|name> / --global override the execution
+    # org context (superuser-gated). Only fetch the override when a flag was
+    # actually given — HOME leaves the caller's own context untouched.
     org_info = client.organization
-    if org_ref:
-        from bifrost.refs import RefResolver
-        resolver = RefResolver(client)
-        org_id = asyncio.run(resolver.resolve("org", org_ref))
-        resp = client._sync_http.get("/api/sdk/context", params={"org_id": org_id})
+    if org is not None or is_global:
+        target = asyncio.run(_resolve_install_org(client, org, is_global))
+        resp = client._sync_http.get("/api/sdk/context", params={"org_id": target})
         if resp.status_code == 403:
-            raise click.ClickException("--org requires superuser privileges.")
+            raise click.ClickException("--org/--global requires superuser privileges.")
         if resp.status_code >= 400:
-            raise click.ClickException(f"Could not resolve org '{org_ref}': HTTP {resp.status_code}")
+            raise click.ClickException(
+                f"Could not resolve org context: HTTP {resp.status_code}"
+            )
         org_info = resp.json().get("organization", org_info)
 
     try:

@@ -46,18 +46,21 @@ async def test_clone_ref_set_passes_branch():
 
 def test_resolve_targets_explicit_org():
     installs = [
-        {"id": "a", "slug": "s", "scope": "org", "organization_id": "org-A"},
-        {"id": "b", "slug": "s", "scope": "org", "organization_id": "org-B"},
+        {"id": "a", "slug": "s", "organization_id": "org-A"},
+        {"id": "b", "slug": "s", "organization_id": "org-B"},
     ]
-    # Feeding a specific deployer_org_id (as --org would) targets that org's install.
-    assert _resolve_target_install(installs, "s", "org", "org-B") == "b"
-    assert _resolve_target_install(installs, "s", "org", "org-A") == "a"
+    # A resolved org target (as --org <id> produces) targets that org's install.
+    assert _resolve_target_install(installs, "s", "org-B") == "b"
+    assert _resolve_target_install(installs, "s", "org-A") == "a"
 
 
 def test_deploy_cmd_has_org_option():
     from bifrost.commands.solution import deploy_cmd
 
-    assert "org_ref" in {p.name for p in deploy_cmd.params}
+    # deploy now uses the unified --org standard (org + is_global params).
+    names = {p.name for p in deploy_cmd.params}
+    assert "org" in names
+    assert "is_global" in names
 
 
 def test_compute_update_available():

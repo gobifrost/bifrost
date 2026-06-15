@@ -297,6 +297,78 @@ def test_agents_create_org_forms(monkeypatch):
     assert sent["post"][1]["organization_id"] == "uuid-acme"
 
 
+# ── solution install/deploy org resolution (the standard → concrete org id) ──
+
+
+class _SolFakeClient:
+    """Minimal client for exercising _resolve_install_org directly."""
+
+    organization = {"id": "home-org"}
+
+
+def _patch_solution_resolver(monkeypatch):
+    import bifrost.refs as rf
+
+    async def _resolve(self, kind, value):
+        return f"uuid-{value}"
+
+    monkeypatch.setattr(rf.RefResolver, "resolve", _resolve)
+
+
+def test_resolve_install_org_home(monkeypatch):
+    import asyncio
+
+    from bifrost.commands.solution import _resolve_install_org
+
+    _patch_solution_resolver(monkeypatch)
+    # HOME (omit both) -> caller's own org id.
+    got = asyncio.run(_resolve_install_org(_SolFakeClient(), None, False))
+    assert got == "home-org"
+
+
+def test_resolve_install_org_global(monkeypatch):
+    import asyncio
+
+    from bifrost.commands.solution import _resolve_install_org
+
+    _patch_solution_resolver(monkeypatch)
+    # --global -> None (the global install).
+    assert asyncio.run(_resolve_install_org(_SolFakeClient(), None, True)) is None
+    # --org none / --org global -> None too.
+    assert asyncio.run(_resolve_install_org(_SolFakeClient(), "none", False)) is None
+    assert asyncio.run(_resolve_install_org(_SolFakeClient(), "global", False)) is None
+
+
+def test_resolve_install_org_org(monkeypatch):
+    import asyncio
+
+    from bifrost.commands.solution import _resolve_install_org
+
+    _patch_solution_resolver(monkeypatch)
+    # --org acme -> resolved uuid.
+    got = asyncio.run(_resolve_install_org(_SolFakeClient(), "acme", False))
+    assert got == "uuid-acme"
+
+
+def test_resolve_target_install_matches_by_org():
+    from bifrost.commands.solution import _resolve_target_install
+
+    installs = [
+        {"id": "g", "slug": "demo", "organization_id": None},
+        {"id": "a", "slug": "demo", "organization_id": "org-a"},
+        {"id": "b", "slug": "demo", "organization_id": "org-b"},
+    ]
+    # GLOBAL target (None) -> the global install.
+    assert _resolve_target_install(installs, "demo", None) == "g"
+    # ORG target -> that org's install, never another org's.
+    assert _resolve_target_install(installs, "demo", "org-a") == "a"
+    assert _resolve_target_install(installs, "demo", "org-b") == "b"
+    # No install in the target org -> None (caller creates a fresh one).
+    assert _resolve_target_install(installs, "demo", "org-c") is None
+    # Unknown slug -> None.
+    assert _resolve_target_install(installs, "other", None) is None
+
+
 def test_events_create_source_org_forms(monkeypatch):
     from bifrost.commands.events import events_group
 
