@@ -43,6 +43,8 @@ def main(ctx):
 
 In a form, agent, or app, reference this as `functions/hello.py::main`. The platform resolves the portable ref at deploy time.
 
+> **Deploy registers a workflow only if it has a `.bifrost/workflows.yaml` entry.** Deploy bundles *all* `functions/*.py` source, but it creates a workflow **row** only for functions listed in the manifest — it does **not** auto-scan `functions/` and register new files. The scaffold pre-registers its sample (`functions/hello.py::main`), so the sample works on first deploy. For a workflow you add *yourself*, register it then capture it into the install (same capture→pull→deploy road as tables/forms/agents — see below): `bifrost workflows register --path functions/tasks.py --function-name my_func`, then `bifrost solution capture <id> --workflow my_func`, then `pull` + `deploy`. (Don't hand-write UUID-keyed manifest entries — `pull` materializes them for you, and the server assigns the canonical UUID regardless of what you'd type.)
+
 ### 4. Local dev
 
 ```bash
@@ -117,7 +119,7 @@ bifrost solution deploy --org "Target Org"   # ship them
 
 The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `--config`, `--claim`, `--workflow`, `--app` (each takes a name or id; `--config` takes a key).
 
-> **Ordering for a form/agent that references a workflow:** a form's `workflow_id` (and an agent's tool refs) must resolve to a **registered** workflow UUID, and a `functions/*.py` workflow in a brand-new solution isn't registered until its **first `bifrost solution deploy`**. So for a fresh solution, the order is: write the workflow in `functions/` → **deploy once** (registers it, gives it a UUID) → create the form/agent referencing that workflow → capture → pull → deploy again. (If you reference the workflow by portable `path::function` ref, it must be unambiguous — a bare name like `hello` can collide with other workflows; prefer the full `functions/hello.py::main` ref or the UUID.)
+> **Ordering for a form/agent that references a workflow:** a form's `workflow_id` (and an agent's tool refs) must resolve to a **registered** workflow UUID. A workflow is registered when it has a row — the scaffold's sample (`functions/hello.py::main`) is pre-registered (it ships with a `.bifrost/workflows.yaml` entry), so it's available after the **first `bifrost solution deploy`**. A workflow you write *yourself* is NOT registered just by writing the file or deploying — you must `bifrost workflows register --path functions/<f>.py --function-name <fn>` first (see "Write workflows in `functions/`" above). So for a fresh solution the order is: write the workflow → **register it** (or, for the scaffold sample, deploy once) → create the form/agent referencing it → capture (`--workflow` + `--form`/`--agent`) → pull → deploy. (Reference the workflow by portable `path::function` ref; a bare name like `hello` can collide, so prefer the full `functions/hello.py::main` ref or the UUID.)
 
 **Which org target to use on `pull`/`deploy`.** `pull` and `deploy` resolve *which install* by `(slug, org)`, where the org comes from the unified `--org` standard (omit = your own org; `--org <uuid|name>` = that org; `--global` = the global install). So:
 
