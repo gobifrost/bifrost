@@ -6,12 +6,14 @@ This file documents the CLI mutation surface for each entity group. The canonica
 
 For the exact generated flag list, see `generated/cli-reference.md`. For the REST passthrough escape hatch, see `references/rest-api.md`.
 
-**Unified `--org` standard (org targeting).** Every org-targeting command — `tables`, `forms`, `agents`, `configs`, `claims`, `workflows`, `events`, and the `solution` subcommands — takes the same flag:
+**Unified `--org` standard (org targeting).** Every org-targeting **write** command — the `create` / `update` / `set` / `register` verbs of `tables`, `forms`, `agents`, `configs`, `claims`, `workflows`, `events`, and the `solution` subcommands — takes the same flag:
 
 - **Omit it** → your own org ("home"). A bare command never writes a global entity by accident.
 - **`--org <uuid|name>`** → that org.
 - **`--global`** (or `--org none` / `--org global`) → global scope (`organization_id` NULL).
 - **`--organization` and `--scope`** are permanent synonyms for `--org`.
+
+**Read commands (`list` / `get`) do NOT take `--org`/`--global`.** They return the caller's full combined visibility (own org + global cascade). Passing `--org` to a `list`/`get` (e.g. `forms list --org ...`) errors `No such option`. To see a specific scope, read everything and filter the output (e.g. by `organization_id` in `--json`).
 
 (`claims` are always org-scoped: `--global` is rejected. `apps` and integration `add-mapping`/`update-mapping` predate the standard and keep their own `--organization`/`--scope` flags.)
 

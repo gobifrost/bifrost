@@ -232,6 +232,17 @@ Two doc fixes (both verified at code level):
 
 **Platform note (not skill):** `bifrost push <file.py>` errors "is not a valid directory" — push only takes directory paths (consistent with `--help`; not a doc claim). `tables list --json` is `{"tables":[...],"total":N}` wrapped vs bare arrays elsewhere (re-confirmed from Track A).
 
+### BW-batch 1 — 3 Sonnet in PARALLEL (Workflow `build-skill-validation-batch-trackb`); 0/3, 2 fixes
+
+All 3 agents had **fully green scorecards** (workflow register+execute, table/form/agent/config created live, live update NO 409, discovery, `--org` write states all correct) and `org_ok: true`. NOT clean — 2 doc findings, the first verified by **2 of 3 agents independently**:
+
+1. **The `--org` standard note was OVER-BROAD (MY error from Task 10).** entities.md + solutions.md said "**every** org-targeting command takes `--org`/`--global`" — but `list`/`get` (READ) commands do NOT (`forms list --org X` → `No such option`); only the WRITE verbs (`create`/`update`/`set`/`register`) carry `@org_option`. VERIFIED: `list_tables`/`get_table`/`list_configs`/`get_config` have no `@org_option` (tables.py/configs.py). Hit by agents 2 AND 3 independently. → Scoped both notes to write commands + added "read commands don't take `--org`; they return the caller's full combined visibility — filter the `--json` output instead."
+2. **repo.md File Sync had no `push` fallback for when watch can't run** (agent 1). The skill said "wait for the user to start watch" with no alternative; the platform's `workflows register --help` documents `bifrost push <dir>/` as the sync mechanism. A fresh workspace (CI/remote/one-off) with no watch had no documented recourse. → Added: if the user can't run a long-lived watch, have them run a one-time directory **push** (a directory, not a file); described as user-driven (the agent never runs push/watch itself — repo.md's deliberate design).
+
+**NOT documented (single-agent claim, contradicted by code — logged for the platform side instead):** agent 1 reported `agents update --json` returns PRE-update state (the update applies; `agents get` confirms). But the server PUT **reloads and returns fresh state** (agents.py:824-835 reloads after flush) — so this is either a CLI display quirk or an agent misread, NOT the simple "API returns stale" story. Did not bake an unverified claim into the docs; flagged as an open platform question. (Discipline: don't doc a single-agent claim the code contradicts — `feedback_org_scoping_blocker2_retracted`.)
+
+Streak 0; next batch tests these fixes. Broad SDK/CLI coverage this batch: tables (insert/query attr-access at runtime ✓), config.get-in-workflow (cascade ✓), `bifrost run` local exec, configs/agents/forms/workflows/tables/orgs/roles/events/integrations CLI + REST executions.
+
 ---
 
 ## Platform design questions surfaced during validation (NOT skill bugs — for the platform side)

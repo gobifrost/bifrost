@@ -18,9 +18,9 @@ Before writing any code files, check whether the watch daemon is already running
 pgrep -f 'bifrost watch' > /dev/null 2>&1 && echo "RUNNING" || echo "NOT RUNNING"
 ```
 
-If not running: tell the user "Please start the watch daemon in your terminal before I write files." Wait for confirmation.
+If not running: tell the user "Please start the watch daemon in your terminal before I write files." Wait for confirmation. **If the user can't run a long-lived watch** (CI, a remote/one-off session), tell them to run a one-time directory push in their terminal instead — the `push` command takes a **directory** (e.g. the `workflows/` dir), not a single file, and uploads it to the platform; `workflows register --help` documents push as the sync mechanism. As with watch, **you describe push but never run it unsolicited** (it's user-driven, broad blast radius).
 
-The watch daemon is **workspace-specific** — it syncs the directory it was started in. A `pgrep` hit only means *some* watch is running, NOT that it's watching *this* workspace. If you're in a fresh or different directory, confirm with the user that watch is running **against this directory** (or have them restart it here). A file watch hasn't synced isn't on the platform yet, so the next step (`workflows register`) will 404 with `File not found`.
+The watch daemon is **workspace-specific** — it syncs the directory it was started in. A `pgrep` hit only means *some* watch is running, NOT that it's watching *this* workspace. If you're in a fresh or different directory, confirm with the user that watch is running **against this directory** (or have them restart it / run a one-time push here). A file watch hasn't synced isn't on the platform yet, so the next step (`workflows register`) will 404 with `File not found`.
 
 Once watch is confirmed running **against this workspace**, write files to `workflows/` and `apps/` — watch picks them up automatically and syncs on save.
 

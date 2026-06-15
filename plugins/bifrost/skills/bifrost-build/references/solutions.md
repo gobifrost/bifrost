@@ -93,14 +93,14 @@ Installs a packaged solution (drag-and-drop equivalent). Use `--set KEY=VALUE` t
 
 ### The unified `--org` standard
 
-Every org-targeting command takes the same flag:
+Every org-targeting **write** command (`create`/`update`/`set`/`register`, and the `solution` subcommands) takes the same flag:
 
 - **Omit it** → your own org ("home"). A bare command never writes a global entity by accident.
 - **`--org <uuid|name>`** → that org.
 - **`--global`** (or `--org none` / `--org global`) → global scope (organization_id NULL).
 - **`--organization` and `--scope`** are permanent synonyms for `--org`.
 
-This applies to the `solution` subcommands (`deploy`, `pull`, `start`, `install`) and to entity commands in the `_repo` workspace (`tables`, `forms`, `agents`, `configs`, `claims`, `workflows`, `events`). Install **kind** (org vs global) is purely this deploy-time choice — it is **not** stored in the descriptor; the server derives it from `organization_id` (NULL == global).
+This applies to the `solution` subcommands (`deploy`, `pull`, `start`, `install`) and to the write verbs of the `_repo`-workspace entity commands (`tables`, `forms`, `agents`, `configs`, `claims`, `workflows`, `events`). **Read commands (`list`/`get`) do NOT take `--org`/`--global`** — they return the caller's full combined visibility. Install **kind** (org vs global) is purely this deploy-time choice — it is **not** stored in the descriptor; the server derives it from `organization_id` (NULL == global).
 
 ---
 
