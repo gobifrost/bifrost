@@ -20887,6 +20887,10 @@ export interface components {
             connection_schemas?: {
                 [key: string]: unknown;
             }[];
+            /** Events */
+            events?: {
+                [key: string]: unknown;
+            }[];
             /** Version */
             version?: string | null;
             /** Logo B64 */

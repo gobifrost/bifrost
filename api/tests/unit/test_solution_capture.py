@@ -541,3 +541,171 @@ async def test_capture_global_into_global_solution_keeps_org_null(db_session) ->
     assert captured is not None
     assert captured.solution_id == sol.id
     assert captured.organization_id is None
+
+
+# ── Event/schedule triggers (manifest section) ──────────────────────────────
+
+
+async def _make_schedule_trigger(db, sol, *, wf, managed=True):
+    """A schedule EventSource + ScheduleSource + one EventSubscription→wf."""
+    from src.models.orm.events import (
+        EventSource,
+        EventSubscription,
+        ScheduleSource,
+    )
+
+    es = EventSource(
+        id=uuid.uuid4(),
+        name=f"nightly-{uuid.uuid4().hex[:6]}",
+        source_type="schedule",
+        organization_id=sol.organization_id if managed else None,
+        solution_id=sol.id if managed else None,
+        created_by="test",
+    )
+    db.add(es)
+    await db.flush()
+    db.add(ScheduleSource(
+        id=uuid.uuid4(), event_source_id=es.id,
+        cron_expression="0 9 * * *", timezone="UTC",
+    ))
+    db.add(EventSubscription(
+        id=uuid.uuid4(), event_source_id=es.id, workflow_id=wf.id,
+        target_type="workflow", solution_id=sol.id if managed else None,
+        created_by="test",
+    ))
+    await db.flush()
+    return es
+
+
+async def test_capture_schedule_trigger_stamps_solution_and_exports(db_session) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    wf = await _make_captured_workflow(db, sol, "workflows/sync.py")
+    es = await _make_schedule_trigger(db, sol, wf=wf, managed=False)
+
+    result = await SolutionCaptureService(db).capture(
+        sol,
+        SolutionCaptureSelectors(
+            workflows=[], tables=[], apps=[], forms=[], agents=[], claims=[],
+            configs=[], events=[es.id],
+        ),
+    )
+    await db.flush()
+
+    from src.models.orm.events import EventSource, EventSubscription
+
+    captured = await db.get(EventSource, es.id)
+    assert captured is not None and captured.solution_id == sol.id
+    sub = (await db.execute(
+        select(EventSubscription).where(EventSubscription.event_source_id == es.id)
+    )).scalar_one()
+    assert sub.solution_id == sol.id  # subscriptions are managed too
+    assert result.events_captured == 1
+
+    bundle = await SolutionCaptureService(db).bundle_for(sol)
+    with zipfile.ZipFile(BytesIO(build_workspace_zip(bundle))) as zf:
+        events_yaml = yaml.safe_load(zf.read(".bifrost/events.yaml"))
+    exported = events_yaml["events"][str(es.id)]
+    assert exported["source_type"] == "schedule"
+    assert exported["cron_expression"] == "0 9 * * *"
+    assert exported["subscriptions"][0]["workflow_id"] == str(wf.id)
+
+
+async def test_capture_webhook_trigger_scrubs_instance_secrets(db_session) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    from src.models.orm.events import EventSource, WebhookSource
+
+    es = EventSource(
+        id=uuid.uuid4(), name="hook", source_type="webhook",
+        organization_id=None, solution_id=None, created_by="test",
+    )
+    db.add(es)
+    await db.flush()
+    db.add(WebhookSource(
+        id=uuid.uuid4(), event_source_id=es.id, adapter_name="generic",
+        config={"path": "/in"}, external_id="ext-123",
+        state={"secret": "TOPSECRET", "token": "abc"},
+    ))
+    await db.flush()
+
+    await SolutionCaptureService(db).capture(
+        sol,
+        SolutionCaptureSelectors(
+            workflows=[], tables=[], apps=[], forms=[], agents=[], claims=[],
+            configs=[], events=[es.id],
+        ),
+    )
+    await db.flush()
+
+    bundle = await SolutionCaptureService(db).bundle_for(sol)
+    blob = str(bundle.events)
+    # Portable config travels; instance secrets/state do NOT.
+    assert "generic" in blob
+    assert "TOPSECRET" not in blob and "ext-123" not in blob
+
+
+async def test_deploy_schedule_trigger_under_guard(db_session) -> None:
+    """End-to-end: a captured schedule trigger deploys (Core stmts) under the
+    always-on read-only guard, with the subscription's workflow_id remapped."""
+    from src.services.solutions.guard import install_solution_write_guard
+
+    install_solution_write_guard()  # prod-faithful: catch ORM-object writes
+
+    db = db_session
+    sol = await _make_solution(db)
+    wf = await _make_captured_workflow(db, sol, "workflows/sync.py")
+    es = await _make_schedule_trigger(db, sol, wf=wf, managed=False)
+
+    bundle = await SolutionCaptureService(db).capture(
+        sol,
+        SolutionCaptureSelectors(
+            workflows=[], tables=[], apps=[], forms=[], agents=[], claims=[],
+            configs=[], events=[es.id],
+        ),
+    ) and await SolutionCaptureService(db).bundle_for(sol)
+    await db.flush()
+
+    # Re-deploy the captured bundle (idempotent full-replace) — must not raise
+    # under the guard, and the schedule + subscription survive.
+    await SolutionDeployer(db).deploy(bundle)
+    await db.flush()
+
+    from src.models.orm.events import (
+        EventSource,
+        EventSubscription,
+        ScheduleSource,
+    )
+
+    src = (await db.execute(
+        select(EventSource).where(EventSource.solution_id == sol.id)
+    )).scalar_one()
+    sched = (await db.execute(
+        select(ScheduleSource).where(ScheduleSource.event_source_id == src.id)
+    )).scalar_one()
+    assert sched.cron_expression == "0 9 * * *"
+    sub = (await db.execute(
+        select(EventSubscription).where(EventSubscription.event_source_id == src.id)
+    )).scalar_one()
+    assert sub.workflow_id == wf.id  # same-install identity preserved
+
+
+async def test_deploy_reconcile_sweeps_stale_trigger(db_session) -> None:
+    """A managed EventSource absent from the new bundle is swept (and its subs
+    cascade), scoped to this install."""
+    db = db_session
+    sol = await _make_solution(db)
+    wf = await _make_captured_workflow(db, sol, "workflows/sync.py")
+    stale = await _make_schedule_trigger(db, sol, wf=wf, managed=True)
+
+    # Deploy a bundle with NO events → the stale managed source is reconciled away.
+    await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, events=[]))
+    await db.flush()
+
+    from src.models.orm.events import EventSource, EventSubscription
+
+    assert (await db.get(EventSource, stale.id)) is None
+    remaining_subs = (await db.execute(
+        select(EventSubscription).where(EventSubscription.event_source_id == stale.id)
+    )).scalars().all()
+    assert remaining_subs == []  # cascaded with the source

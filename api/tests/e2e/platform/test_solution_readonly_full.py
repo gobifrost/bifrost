@@ -52,6 +52,42 @@ def _deploy_workflow_and_app(e2e_client, headers, sid: str):
     return real_wf, real_app
 
 
+def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
+    """A deployed schedule trigger (EventSource) is read-only: PATCH/DELETE on
+    the source must 409 (deploy is the only writer; uninstall removes it)."""
+    headers = platform_admin.headers
+    sid = _solution(e2e_client, headers, f"rofull-evt-{uuid.uuid4().hex[:8]}")
+    wf_id = str(uuid.uuid4())
+    es_id = str(uuid.uuid4())
+    slug = uuid.uuid4().hex[:8]
+    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
+        "python_files": {"workflows/w.py": "from bifrost import workflow\n@workflow\nasync def w():\n    return {}\n"},
+        "workflows": [{
+            "id": wf_id, "name": f"w_{slug}", "function_name": "w",
+            "path": "workflows/w.py", "type": "workflow",
+        }],
+        "events": [{
+            "id": es_id, "name": f"nightly_{slug}", "source_type": "schedule",
+            "cron_expression": "0 9 * * *", "timezone": "UTC",
+            "subscriptions": [{
+                "id": str(uuid.uuid4()), "target_type": "workflow",
+                "workflow_id": wf_id,
+            }],
+        }],
+    })
+    assert dep.status_code in (200, 201), dep.text
+    real_es = str(solution_entity_id(UUID(sid), UUID(es_id)))
+
+    patch = e2e_client.patch(
+        f"/api/events/sources/{real_es}", headers=headers, json={"name": "hijack"}
+    )
+    assert patch.status_code == 409, f"{patch.status_code} {patch.text}"
+    assert _MSG in patch.json()["detail"]
+
+    delete = e2e_client.delete(f"/api/events/sources/{real_es}", headers=headers)
+    assert delete.status_code == 409, f"{delete.status_code} {delete.text}"
+
+
 def test_workflow_secondary_mutations_are_locked(e2e_client, platform_admin):
     headers = platform_admin.headers
     sid = _solution(e2e_client, headers, f"rofull-wf-{uuid.uuid4().hex[:8]}")

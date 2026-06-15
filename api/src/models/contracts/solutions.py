@@ -391,6 +391,10 @@ class SolutionDeployRequest(BaseModel):
     # Each: {integration_name, template, position}. Secret-scrubbed skeletons
     # (no client_id/secret). Declared from integrations.get("X") refs.
     connection_schemas: list[dict[str, Any]] = Field(default_factory=list)
+    # Each event/schedule trigger: a ManifestEventSource-shaped dict (source +
+    # schedule/webhook config + nested subscriptions). Webhook instance secrets
+    # are scrubbed; the instance re-establishes external state after install.
+    events: list[dict[str, Any]] = Field(default_factory=list)
     # The bundle's declared version (bifrost.solution.yaml ``version:``).
     # Recorded on the install; an older version than installed is refused
     # unless ``force`` is set (Task 20 downgrade gate).

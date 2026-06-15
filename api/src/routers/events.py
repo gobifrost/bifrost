@@ -562,6 +562,13 @@ async def update_source(
             detail="Event source not found",
         )
 
+    # Solution-managed triggers are deploy-owned and read-only on the platform
+    # (the deploy path is the only writer). Refuse with a clean 409 before
+    # mutating, rather than letting the before_flush backstop raise a 500.
+    from src.services.solutions.guard import assert_not_solution_managed
+
+    assert_not_solution_managed(source)
+
     # Update basic fields
     if request.name is not None:
         source.name = request.name
@@ -655,6 +662,13 @@ async def delete_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+
+    # Solution-managed triggers are deploy-owned — uninstall removes them, not
+    # this endpoint. Refuse with a clean 409 (the DELETE cascade would otherwise
+    # strip a managed source's deploy-owned rows outside deploy).
+    from src.services.solutions.guard import assert_not_solution_managed
+
+    assert_not_solution_managed(source)
 
     # Call adapter unsubscribe for webhooks
     if source.source_type == EventSourceType.WEBHOOK and source.webhook_source:
@@ -827,6 +841,11 @@ async def update_subscription(
             detail="Subscription not found",
         )
 
+    # Solution-managed subscriptions are deploy-owned, read-only here.
+    from src.services.solutions.guard import assert_not_solution_managed
+
+    assert_not_solution_managed(subscription)
+
     # Update fields - use model_fields_set to distinguish "not provided" from "set to null"
     if "event_type" in request.model_fields_set:
         subscription.event_type = request.event_type
@@ -884,6 +903,11 @@ async def delete_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subscription not found",
         )
+
+    # Solution-managed subscriptions are deploy-owned, read-only here.
+    from src.services.solutions.guard import assert_not_solution_managed
+
+    assert_not_solution_managed(subscription)
 
     await db.delete(subscription)
     await db.flush()

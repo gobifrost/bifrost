@@ -1109,6 +1109,7 @@ def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: b
     claims = _collect_claims(workspace)
     config_schemas = _collect_config_schemas(workspace)
     connection_schemas = _collect_connection_schemas(workspace)
+    events = _collect_events(workspace)
     readme = _collect_readme(workspace)
 
     async def _run() -> int:
@@ -1187,6 +1188,7 @@ def deploy_cmd(path: str, solution_id: str | None, org_ref: str | None, force: b
             "claims": claims,
             "config_schemas": config_schemas,
             "connection_schemas": connection_schemas,
+            "events": events,
             "readme": readme,
             "version": descriptor.version,
             "logo_b64": solution_logo_b64,

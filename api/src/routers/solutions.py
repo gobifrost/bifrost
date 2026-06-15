@@ -881,6 +881,7 @@ async def deploy_solution(
                     claims=body.claims,
                     config_schemas=body.config_schemas,
                     connection_schemas=body.connection_schemas,
+                    events=body.events,
                     version=body.version,
                     logo_b64=body.logo_b64,
                     logo_content_type=body.logo_content_type,
