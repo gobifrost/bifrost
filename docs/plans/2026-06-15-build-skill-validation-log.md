@@ -137,6 +137,20 @@ Other agent-3 platform notes (NOT skill fixes, logged for the platform side): `s
 
 Streak resets to 0; next batch tests the workflows-python.md scope callout + the structure-diagram fixes. (2/3 clean is the high-water mark — the remaining gaps are doc cross-reference + diagram accuracy, not flows.)
 
+### W-batch 3 — 3 Sonnet in PARALLEL; **3/3 CLEAN — TRACK A DONE** ✅
+
+All three agents built the complete solution end-to-end following ONLY the corrected docs with **zero misleading moments** (`misleading_moments: []` for all 3): styled, table+form+custom-workflow survive + execute w/ working SDK, update, deploy clean, read-only 409, `--org` true. Per the confirmed bar (3 concurrent CLEAN against one doc state = "3 consecutive, no edits between"), **Track A meets the done-bar.** Convergence: W-batch 1 (0/3) → W-batch 2 (2/3) → W-batch 3 (3/3). The workflows-python.md scope callout + the `src/` structure-diagram fixes held.
+
+This batch's only findings were `platform_notes` (NOT skill faults, logged for the platform side):
+- `solution deploy` summary line counts only "N workflow(s)/claim(s) upserted" — it OMITS tables and forms even when they deployed (entities are correctly solution-managed; just the printout is incomplete → users may think their table/form changes didn't ship).
+- `scaffold-app` completion message prints "Deploy with `bifrost deploy`" but the command is `bifrost solution deploy` (CLI output bug; the docs are correct everywhere).
+- `tables list --json` returns `{"tables":[...]}` (wrapped) while other entity `list --json` return bare arrays — an API inconsistency.
+- Chrome MCP denies localhost site-permission on this host (every run; env, not skill — curl + `workflows execute` are the working drive).
+
+## TRACK A: COMPLETE (3 consecutive clean, parallel batch W3, no doc edits between)
+
+Cumulative Track-A doc fixes that got here (A1→A11 serial + W1→W3 parallel): capture→pull→deploy is the real entity road; capture scope-rule (author in the install's scope first); `solution start [APP_SLUG]` positional; `.bifrost` update path vs "don't hand-edit"; styling-callout; `src/` file layout; the unified `--org` standard (init no `--scope`; home/global/org; synonyms); new-workflow registration = `.bifrost/workflows.yaml` entry + deploy (NOT register/push/capture, which are `_repo`-only); `async def` no-`ctx` workflow signature; `DocumentData` attribute access not subscript; `data.oauth` not `oauth_token`; v2 error-class import from `"bifrost"`; `tables create --name`; the real scaffold `main.tsx` nonce protocol; workflows-python lifecycle commands are `_repo`-only. Plus the permanent **example-drift CI gate** (`lint_examples.py`) so these don't regress.
+
 ### A6 — full clean scorecard (incl. real browser drive); 1 ordering fix
 
 A6 confirmed A3/A4/A5 fixes ALL held, and for the first time the **browser drive succeeded** (localhost:4000, Tailwind classes rendered). Its one finding is a real lifecycle-ordering gap: a form's `workflow_id` must resolve to a **registered** workflow UUID (verified `forms.py` router validates `workflow_id` exists in WorkflowORM), but a fresh solution's `functions/*.py` workflow isn't registered until its first deploy. → Added an "Ordering for a form/agent that references a workflow" note to Path A (deploy once to register → create form/agent → capture → pull → deploy) + the ambiguous-bare-name caveat.
