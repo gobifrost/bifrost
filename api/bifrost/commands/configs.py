@@ -37,6 +37,7 @@ from bifrost.dto_flags import (
     DTO_REF_LOOKUPS,
     build_cli_flags,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import ConfigCreate, ConfigType, ConfigUpdate
 
@@ -114,7 +115,8 @@ async def _build_create_body(
     value: Any,
     config_type: Any,
     description: Any,
-    organization: Any,
+    org: str | None,
+    is_global: bool,
 ) -> dict[str, Any]:
     """Build a POST /api/config body for ``create`` / ``set``.
 
@@ -122,6 +124,10 @@ async def _build_create_body(
     ``SetConfigRequest.value: str``, so ``assemble_body(ConfigCreate, ...)``
     would mangle the plain-string value. This helper mirrors the wire
     shape directly.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) sends no
+    ``organization_id`` (the server uses the caller's org), GLOBAL sends an
+    explicit null, and ``--org <id|name>`` sends the resolved UUID.
     """
     if not key:
         raise click.UsageError("--key is required")
@@ -134,18 +140,22 @@ async def _build_create_body(
     }
     if description is not None:
         body["description"] = description
-    if organization is not None:
-        body["organization_id"] = await resolver.resolve("org", str(organization))
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     return body
 
 
 @configs_group.command("create")
 @_apply_flags(_CREATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def create_config(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -158,7 +168,8 @@ async def create_config(
         value=fields.get("value"),
         config_type=fields.get("config_type"),
         description=fields.get("description"),
-        organization=fields.get("organization_id"),
+        org=org,
+        is_global=is_global,
     )
     response = await client.post("/api/config", json=body)
     response.raise_for_status()
@@ -250,12 +261,7 @@ async def delete_config(
 @configs_group.command("set")
 @click.argument("key")
 @click.option("--value", required=True, help="Config value (plain string).")
-@click.option(
-    "--organization",
-    "organization",
-    default=None,
-    help="Organization ref (UUID or name). Omit for global scope.",
-)
+@org_option
 @click.option(
     "--type",
     "config_type",
@@ -278,7 +284,8 @@ async def set_config(
     ctx: click.Context,
     key: str,
     value: str,
-    organization: str | None,
+    org: str | None,
+    is_global: bool,
     config_type: str | None,
     description: str | None,
     *,
@@ -292,10 +299,16 @@ async def set_config(
     ``key`` query parameter, so filtering happens in the CLI. PUTs the
     existing row if found; POSTs otherwise. The result is idempotent from
     the caller's perspective.
+
+    Org targeting follows the unified ``--org`` standard: HOME (omit) targets
+    the caller's org, ``--global`` targets global, ``--org <id|name>`` targets
+    that org. The scope filter only narrows the upsert to an explicit scope
+    when one was given (GLOBAL or ORG); HOME falls back to key-only matching.
     """
-    org_uuid: str | None = None
-    if organization is not None:
-        org_uuid = await resolver.resolve("org", organization)
+    target = await resolve_org_target(org, is_global, resolver)
+    # Explicit scope (GLOBAL or ORG) narrows the upsert match by organization_id.
+    # HOME (unset) matches by key alone and lets the server resolve the scope.
+    org_uuid = target.organization_id if target.is_set else None
 
     list_response = await client.get("/api/config")
     list_response.raise_for_status()
@@ -303,7 +316,7 @@ async def set_config(
         list_response.json(),
         key,
         org_uuid,
-        scope_filter=organization is not None,
+        scope_filter=target.is_set,
     )
 
     if existing is not None:
@@ -323,8 +336,8 @@ async def set_config(
         }
         if description is not None:
             create_body["description"] = description
-        if org_uuid is not None:
-            create_body["organization_id"] = org_uuid
+        if target.is_set:
+            create_body["organization_id"] = target.organization_id
         response = await client.post("/api/config", json=create_body)
 
     response.raise_for_status()

@@ -52,6 +52,7 @@ from bifrost.dto_flags import (
     assemble_body,
     build_cli_flags,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import WorkflowUpdateRequest
 
@@ -134,13 +135,7 @@ async def get_workflow(
     type=str,
     help="Name of the decorated function to register.",
 )
-@click.option(
-    "--org",
-    "organization_id",
-    type=str,
-    default=None,
-    help="Organization ref (UUID or name) to scope the workflow to; omit for global.",
-)
+@org_option
 @click.option(
     "--access-level",
     "access_level",
@@ -163,12 +158,13 @@ async def get_workflow(
 @run_async
 async def register_workflow(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
     path: str,
     function_name: str,
-    organization_id: str | None,
     access_level: str | None,
     role_ids: tuple[str, ...],
 ) -> None:
@@ -178,13 +174,18 @@ async def register_workflow(
     or the file editor). This command indexes a ``@workflow`` / ``@tool`` /
     ``@data_provider`` function so it becomes executable via the API.
 
+    Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+    workflow to the caller's org, ``--global`` makes it global, ``--org
+    <id|name>`` scopes it to that org.
+
     ``--access-level`` and ``--role-ids`` set the workflow's access controls at
     registration time, mirroring the create-time surface for forms and apps.
     Role refs accept names or UUIDs and are resolved before the request.
     """
     body: dict[str, Any] = {"path": path, "function_name": function_name}
-    if organization_id is not None:
-        body["organization_id"] = await resolver.resolve("org", organization_id)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     if access_level is not None:
         body["access_level"] = access_level
 

@@ -1268,8 +1268,14 @@ async def register_workflow(
         "tool" if target_decorator_type == "tool" else "workflow"
     )
 
-    # Parse organization_id if provided
-    org_uuid = UUID(request.organization_id) if request.organization_id else None
+    # Org targeting follows the unified --org standard (mirrors config's
+    # set_config): if organization_id was explicitly provided (even as null),
+    # honor it — null means global. If it was OMITTED, default to the caller's
+    # own org (HOME) so a bare `register` never silently writes a global row.
+    if "organization_id" in (request.model_fields_set or set()):
+        org_uuid = UUID(request.organization_id) if request.organization_id else None
+    else:
+        org_uuid = user.organization_id
 
     # Validate access_level early so we don't half-register on a typo
     if request.access_level is not None and request.access_level not in ("authenticated", "everyone", "role_based"):

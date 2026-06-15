@@ -48,8 +48,19 @@ from bifrost.refs import RefKind, RefResolver
 # exposed as flags or explicitly excluded with a documented reason.
 # ---------------------------------------------------------------------------
 
+#: Org targeting is handled uniformly by the shared ``org_option`` /
+#: ``resolve_org_target`` machinery (the ``--org``/``--global`` standard), NOT by
+#: the per-DTO flag generator. Any DTO carrying ``organization_id`` excludes it
+#: here so the generator does not also emit an ``--organization`` flag that would
+#: collide with — and diverge from — the unified three-state (home/global/org)
+#: resolver. See ``bifrost/org_target.py``.
+_ORG_TARGET_EXCLUDE = {"organization_id"}
+
 #: Per-DTO field exclusions, keyed by ``model_cls.__name__``.
 DTO_EXCLUDES: dict[str, set[str]] = {
+    # Org targeting via the unified --org/--global standard (org_option), not
+    # the DTO flag generator. See _ORG_TARGET_EXCLUDE above.
+    "ConfigCreate": set(_ORG_TARGET_EXCLUDE),
     # Organizations: ``domain`` is auto-provisioning policy; ``settings`` is a
     # UI-managed JSON blob; ``is_provider`` is immutable post-create.
     "OrganizationCreate": {"domain", "settings", "is_provider"},
@@ -115,7 +126,9 @@ DTO_REF_LOOKUPS: dict[str, dict[str, str]] = {
     "AgentUpdate": {"organization_id": "org"},
     "ApplicationCreate": {"organization_id": "org"},
     "ApplicationUpdate": {},  # ``scope`` is free-form, not a ref
-    "ConfigCreate": {"organization_id": "org"},
+    # ConfigCreate.organization_id is handled by the unified --org standard
+    # (org_option), so it is excluded from the DTO flag generator.
+    "ConfigCreate": {},
     "CustomClaimCreate": {},
     "CustomClaimUpdate": {},
     "TableCreate": {"organization_id": "org"},

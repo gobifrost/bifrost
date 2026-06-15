@@ -101,3 +101,117 @@ def test_claims_global_rejected(monkeypatch):
     _, res = _run(monkeypatch, claims_group, ["list", "--global"])
     assert res.exit_code != 0
     assert "always org-scoped" in res.output
+
+
+# ── configs (omit=home / --global=null / --org=uuid) ────────────────────────
+
+
+def test_configs_omit_is_home(monkeypatch):
+    """Omit -> HOME: no organization_id key (server uses caller org)."""
+    from bifrost.commands.configs import configs_group
+
+    sent, res = _run(monkeypatch, configs_group, ["create", "--key", "K", "--value", "v"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert "organization_id" not in body
+
+
+def test_configs_global_via_flag(monkeypatch):
+    """--global -> explicit organization_id: null (global)."""
+    from bifrost.commands.configs import configs_group
+
+    sent, res = _run(
+        monkeypatch, configs_group, ["create", "--key", "K", "--value", "v", "--global"]
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert "organization_id" in body
+    assert body["organization_id"] is None
+
+
+def test_configs_org_via_name(monkeypatch):
+    """--org acme -> resolved uuid."""
+    from bifrost.commands.configs import configs_group
+
+    sent, res = _run(
+        monkeypatch, configs_group, ["create", "--key", "K", "--value", "v", "--org", "acme"]
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body["organization_id"] == "uuid-acme"
+
+
+def test_configs_organization_synonym(monkeypatch):
+    """--organization stays a synonym for --org."""
+    from bifrost.commands.configs import configs_group
+
+    sent, res = _run(
+        monkeypatch,
+        configs_group,
+        ["create", "--key", "K", "--value", "v", "--organization", "beta"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body["organization_id"] == "uuid-beta"
+
+
+def test_configs_set_omit_is_home(monkeypatch):
+    """`set` upsert: omit -> HOME (no organization_id on the POST body)."""
+    from bifrost.commands.configs import configs_group
+
+    sent, res = _run(monkeypatch, configs_group, ["set", "K", "--value", "v"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert "organization_id" not in body
+
+
+def test_configs_set_global(monkeypatch):
+    from bifrost.commands.configs import configs_group
+
+    sent, res = _run(monkeypatch, configs_group, ["set", "K", "--value", "v", "--global"])
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body.get("organization_id", "MISSING") is None
+
+
+# ── workflows register (omit=home / --global=null / --org=uuid) ─────────────
+
+
+def test_workflows_register_omit_is_home(monkeypatch):
+    """Omit -> HOME: no organization_id key (server fills caller org)."""
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["register", "--path", "functions/x.py", "--function-name", "main"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert "organization_id" not in body
+
+
+def test_workflows_register_global(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["register", "--path", "functions/x.py", "--function-name", "main", "--global"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body.get("organization_id", "MISSING") is None
+
+
+def test_workflows_register_org_via_name(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["register", "--path", "functions/x.py", "--function-name", "main", "--org", "acme"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["post"]
+    assert body["organization_id"] == "uuid-acme"
