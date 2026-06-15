@@ -254,6 +254,20 @@ Streak 0; next batch tests these fixes. Broad SDK/CLI coverage this batch: table
 
 Streak 0; next batch tests the list-shape + form-schema-required notes.
 
+### Generator root-cause fix (post-BW2): DTO-required → CLI-required (commit `a571040e`)
+
+Per Jack's "fix it deterministically": `build_cli_flags` now sets `required=True` when a DTO field has no default (`field.is_required()`). Create cmds get real required flags (FormCreate: name+form_schema; AgentCreate: name+system_prompt; TableCreate: name; ConfigCreate: key+value); Update cmds force none (partial). CLI fails fast + `cli-reference.md`/`--help` show `[required]` (10→28). No contract bump (CLI metadata). 2 lock-in tests added. Verified: `forms create --help` on the freshly-downloaded CLI shows `--form-schema [required]`. (The "8 failed" full-suite scare was DB-pollution from validation-run entity names like `orphan` — all 5 non-env failures pass on a fresh DB clone.)
+
+### BW-batch 3 — 3 Sonnet in PARALLEL; **1/3 CLEAN** (improving: 0/3→0/3→1/3); 1 real fix + 1 OPEN question
+
+Agent 3 fully CLEAN (and independently re-confirmed `agents update` returns fresh state — the BW2 debunk holds). All 3 green scorecards + `org_ok`. Findings:
+
+1. **Form-schema `select` field `options` shape is undocumented** (agent 1, REAL). The skill shows `{fields: [...]}` but never shows a select field's `options` — a builder writes `options: ["low","high"]` (strings) and gets 422 `Input should be a valid dictionary`; the correct shape is `[{value, label}, ...]`. → **TODO (next session):** add a select-field schema example (with `{value,label}` options) to entities.md/forms or tables.md. NOT yet applied (context limit).
+
+2. **OPEN QUESTION — is `--form-schema` CLI-required or only server-422?** Agent 2 claimed `forms create --name X --workflow <uuid>` (no `--form-schema`) gets NO CLI "Missing option" — the server 422s — and that `--help` does NOT show `[required]`, implying it's only *conditionally* required. This **contradicts** my verification: `FormCreate.form_schema.is_required()` is **True** (default `PydanticUndefined`), the generator marks it `required=True`, and the freshly-downloaded CLI's `forms create --help` DOES show `--form-schema ... [required]`. Likely agent 2 tested a stale/cached CLI or misattributed (my own re-check `/tmp/cli-freshcheck` errored on a LOST LOGIN before Click's required-validation could fire — inconclusive there). **NEXT SESSION must reproduce cleanly: fresh CLI download + logged in, run `forms create --name x --workflow <real-uuid>` (no --form-schema), and confirm whether Click errors "Missing option" (my fix correct) or the server 422s (fix ineffective / conditionally-required).** Do NOT change docs/code until this is empirically settled — the generator commit `a571040e` may be correct OR may need the entities.md note softened to "server-validated."
+
+All structural flows green every agent across BW1–BW3 (register/execute, live create, live update no-409, full --org write coverage, push-then-register, `bifrost run`, SDK attr-access). Track-B convergence stalled at 1/3 by 2 doc-precision items, one of which is an open empirical question.
+
 ---
 
 ## Platform design questions surfaced during validation (NOT skill bugs — for the platform side)
