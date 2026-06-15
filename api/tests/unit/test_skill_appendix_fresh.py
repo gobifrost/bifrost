@@ -2,11 +2,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 _API = Path(__file__).resolve().parents[2]   # api/ on host; /app in container
 _REPO = Path(__file__).resolve().parents[3]  # repo root on host; / in container
 GEN = _REPO / ".claude/skills/bifrost-build/generated"
+
+# Every committed appendix the generator owns. `--check` already proves each is
+# byte-fresh; this list also guards against a generator silently dropping a file.
+EXPECTED_APPENDICES = [
+    "cli-reference.md",
+    "openapi-digest.md",
+    "python-sdk-signatures.md",
+    "web-sdk-surface.md",
+]
 
 
 def _run_generator():
@@ -16,20 +23,14 @@ def _run_generator():
     )
 
 
-def test_cli_reference_is_fresh():
+def test_appendices_are_fresh_and_present():
+    # One generator run (it regenerates all appendices in-process) covers the
+    # whole set — re-running per-file would re-boot app.openapi() + the node
+    # subprocess for no extra coverage.
     result = _run_generator()
     assert result.returncode == 0, (
-        f"generated/* is stale — run scripts/skill-truth/generate.py.\n{result.stdout}\n{result.stderr}"
+        f"generated/* is stale — run api/scripts/skill-truth/generate.py.\n"
+        f"{result.stdout}\n{result.stderr}"
     )
-    assert (GEN / "cli-reference.md").exists()
-
-
-@pytest.mark.parametrize("fname", [
-    "python-sdk-signatures.md",
-    "openapi-digest.md",
-    "web-sdk-surface.md",
-])
-def test_appendix_present_and_fresh(fname):
-    result = _run_generator()
-    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-    assert (GEN / fname).exists()
+    for fname in EXPECTED_APPENDICES:
+        assert (GEN / fname).exists(), f"missing generated appendix: {fname}"

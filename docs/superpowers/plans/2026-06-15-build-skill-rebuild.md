@@ -17,7 +17,7 @@
 **Created:**
 - `api/scripts/skill-truth/generate.py` — regenerates all `generated/*.md` from source (CLI walk + Python `inspect` + OpenAPI digest).
 - `api/scripts/skill-truth/lint_claims.py` — extracts + validates every `bifrost …` invocation in `skills/**/*.md`; mode-conditional bans.
-- `client/scripts/dump-app-sdk-surface.mjs` — dumps `index.v2.ts` export signatures for `generated/web-sdk-surface.md`.
+- `api/scripts/skill-truth/dump-app-sdk-surface.mjs` — dumps `index.v2.ts` export signatures for `generated/web-sdk-surface.md` (colocated with the generator; dependency-free regex parse).
 - `scripts/sync-codex-skills.sh` — rsyncs `.claude/skills/bifrost-*` into the two Codex roots.
 - `.claude/skills/bifrost-build/references/{solutions,repo,tables,workflows-python,web-sdk-v2,python-sdk,entities,apps,rest-api,mcp-mode}.md` — curated docs.
 - `.claude/skills/bifrost-build/references/sources.yaml` — reference-freshness manifest.
