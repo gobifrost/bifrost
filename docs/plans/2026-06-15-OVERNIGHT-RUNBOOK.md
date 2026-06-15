@@ -64,13 +64,13 @@ Source: `Solutions.md` "Unprocessed" + "Working notes". These are the small ones
 - **STATE:** ☐ not started
 
 ### 2b. Name-only datatables → real columns
-- `SolutionEntitySummary` is just `{id, name}`. Add per-type columns to the contract (`api/src/models/contracts/solutions.py`) + the `/entities` endpoint, then surface them: workflows → path/function; apps → slug/model; tables → row count; forms → linked workflow. `npm run generate:types` after. Backend test + vitest.
-- **STATE:** ☐ not started
+- **Re-scoped during 1c wait — mostly DONE already (inbox note was stale).** `SolutionEntitySummary` (`solutions.py:138`) is NO LONGER `{id,name}` — it already carries `description, slug, path, function_name, type, category, access_level, app_model, is_active, logo, source_table, select, created_at`, and `SolutionEntityTable` already renders Name/Description/Type/Category/Source. The only genuinely-missing column the runbook listed is **tables → row count** (no `row_count`/`document_count` field on the summary). Decision: a row-count column means a count query per table in the `/entities` endpoint — assess cost vs value during Phase 3's Contents collapse (where the single filtered list is built anyway). If cheap, add `document_count` to the summary + endpoint + column; if it adds N count queries per page load, **`[DECIDED-OVERNIGHT]`** skip it and log why (don't add a perf cost for a cosmetic column). The rest of 2b is already satisfied.
+- **STATE:** ✅ mostly pre-satisfied; only the optional row-count column is open (folded into Phase 3 Contents)
 
 ### 2c. Verify the two real bug candidates (then fix if confirmed)
-- **Org-change re-stamp:** does `PATCH /api/solutions/{id}` (org change) re-stamp `organization_id` on owned entities, or strand them until next deploy? Check `solutions.py` update endpoint + `_upsert_*` in `services/solutions/deploy.py`. Reproduce live. If broken → fix + test. If fine → document "verified correct."
-- **Provider-org/admin access to an org-scoped install's app:** test live as `dev@gobifrost.com` (provider) against an RTM-org install — app mount + workflow exec. Bypass = `is_platform_admin OR is_provider_org`. If broken → fix + test; else document.
-- **STATE:** ☐ not started
+- **Org-change re-stamp:** ✅ **VERIFIED CORRECT (no work needed) — investigated during the 1c wait.** `PATCH /api/solutions/{id}` (`update_solution`, `solutions.py:561`) DOES re-stamp every owned entity (Workflow, Application, Form, Agent, CustomClaim, Table) to the new org on a scope change, under the per-install write-lock (lines 596-610). Config VALUES are deliberately NOT re-homed (instance-owned, keyed by (org,key); operator re-enters them) — documented in the docstring. Already covered by `test_patch_scope_restamps_owned_entities` (e2e `test_solution_patch.py:48`, load-bearing assertion that the owned workflow's org follows the install). The earlier "UNVERIFIED, real bug candidate" note in Solutions.md is resolved → it's correct behavior, well-tested.
+- **Provider-org/admin access to an org-scoped install's app:** ☐ still TODO — this one is a LIVE drive (can't code-read it conclusively). Test live as `dev@gobifrost.com` (provider) against an org-scoped install — app mount + workflow exec. Bypass = `is_platform_admin OR is_provider_org`. Defer until the validation agents are off the shared stack. If broken → fix + test; else document.
+- **STATE:** 🔄 item 1 done (verified-correct); item 2 pending live drive
 
 - **EXIT PHASE 2:** each item either shipped-with-tests or documented-verified-correct. No half-done UI. Commit per fix.
 
@@ -96,6 +96,14 @@ Target structure:
 
 - **EXIT PHASE 3:** 3-tab SolutionDetail renders + driven live (screenshots in `/tmp/`), Setup-as-state works (banner + badge appear/clear off the real signal), README guard 409s on a git-connected install, all checks green. Commit. **`[DECIDED-OVERNIGHT]`:** record any layout/interaction judgment calls here for Jack to override.
 
+### Phase 3 — pre-scoped during the 1c wait (read-only investigation, no edits yet)
+- **File:** `client/src/pages/SolutionDetail.tsx` (1571 lines). `TabKey` union = readme | workflows | apps | forms | agents | tables | claims | configs | setup (9). `ENTITY_TABS` = the 6 entity tabs, all rendered through the shared `SolutionEntityTable` (already has Name/Description/Type/Category/Source columns — so the "name-only datatables" inbox item 2b is PARTLY done already; verify per-type columns when collapsing).
+- **Components to reuse:** `SolutionReadmeTab` (`components/solutions/SolutionReadmeTab.tsx`) → folds into Overview; `SolutionSetupWizard` (`components/solutions/SolutionSetupWizard.tsx`, 170 lines) already splits `config` items vs `connection` items with `onSetConfig` + integration links — reuse its innards for the **Configuration** tab, dropping the multi-step "wizard" framing for a persistent panel.
+- **Setup-as-state needs NO backend work:** the signal already exists — `setup_complete: bool` + `required_configs_unset: list[str]` on `SolutionResponse`, computed in `api/src/services/solutions/setup_status.py` (`setup_complete = all required configs set AND all declared integrations exist`), persisted on install (`zip_install.py:530`). Just resurface it: Overview banner + Configuration tab ⚠ badge, both keyed off the same field.
+- **README guard (bundled fix):** `put_solution_readme` at `api/src/routers/solutions.py:174` — currently NO git_connected guard (the docstring even says "the UI can edit it directly here on a disconnected install" but nothing enforces it). `solution.git_connected` is already a field (checked at lines 857, 1100). Add: if `row.git_connected` → 409. ~5 lines + an e2e test. README edit affordance in the UI stays only when `!git_connected`.
+- **Collapse mapping:** Overview ← readme + status summary + setup banner; Contents ← the 6 ENTITY_TABS as one filtered list (type chips); Configuration ← configs tab + setup-state (values + connections).
+- **Test-impact map** (`client/src/pages/SolutionDetail.test.tsx`, ~436 lines, ~20 tests + Playwright `client/e2e/solutions.admin.spec.ts`). Tests to UPDATE for new tab names: "renders tabs with counts" (was Tables/Workflows tabs). Behaviors to PRESERVE (relocate, don't delete): required-unset config warning banner (→ Overview banner), workflow-list execute action / forms-list launch / apps-list open / table-row nav (→ Contents), entity search box (→ Contents type-filter), Configs Set/Not-set + save-config-value (→ Configuration). Tests largely UNAFFECTED: breadcrumb, version subtext, header update action + overflow menu, scoped-update dialog, capture picker, zip-Update vs git-Update-now badge. Component tests that stay: SolutionSetupWizard, SolutionReadmeTab, SolutionActionsMenu, etc. — reuse the components, update their host.
+
 ---
 
 ## PHASE 4 — GitHub-story UX experience review
@@ -120,11 +128,14 @@ Target structure:
 
 > Update this section at the end of each phase so a glance shows where the night landed.
 
-- **Phase 1 (validation):** ☐ pending
-- **Phase 2 (inbox UX):** ☐ pending
-- **Phase 3 (redesign):** ☐ pending
-- **Phase 4 (UX review):** ☐ pending
-- **`[DECIDED-OVERNIGHT]` calls made:** _(list, with one-line WHY each)_
-- **`[BLOCKED-ON-JACK]` items:** _(list, with options)_
-- **Commits added overnight:** _(range)_
+- **Phase 1 (validation): ✅ DONE.** 1a → found + fixed a REAL generator bug (`df734d3a`: Click 8.4.1 `default=None` silently defeated `required` flag enforcement; added an enforcement test). 1b → select-field options example. 1c → ran 4 more Track-B batches (BW4-7); converged with zero structural failures across ~63 agent-runs; fixed 3 more code-verified doc nits (`--scope`, `--app-model inline_v1`, `--tool-ids @tool`); debunked the recurring `--form-schema` agent-misread 3×. **Track B ACCEPTED as validated+hardened (high confidence)** per the runbook clause. The `--form-schema` outcome — a real CLI bug fix — is the loop's highest-value result.
+- **Phase 2 (inbox UX):** 🔄 starting. PRE-CLEARED during waits: 2c-item-1 (org-restamp) VERIFIED CORRECT + already tested (`test_patch_scope_restamps_owned_entities`); 2b (name-only datatables) mostly already done (contract is rich; only optional row-count column open). REMAINING: 2a sticky tables (likely folds into Phase 3), 2c-item-2 (provider-access live drive).
+- **Phase 3 (redesign):** ☐ pending — FULLY pre-scoped (file map, components to reuse, no-backend-change for Setup-state, README-guard location, test-impact map all in the Phase 3 section).
+- **Phase 4 (UX review):** ☐ pending.
+- **`[DECIDED-OVERNIGHT]` calls made:**
+  - `verified_at_sha` bumps tracked HEAD at each verification (df734d3a → 2b8e5585 → 0b7959fd → 5b6c5cc0 for entities.md as fixes landed).
+  - **Accepted Track B at high confidence instead of forcing a literal 3/3 batch** — 7 batches, zero structural failures, only non-recurring doc nits (all fixed) + a thrice-debunked agent misread; further batches = diminishing returns + test-DB pollution. (Runbook-sanctioned.)
+  - **Did NOT change the `--form-schema` entities.md note** despite 2 agents flagging it — reproduced 3× that the CLI enforces it correctly; the agents misread a line-wrapped `[required]`. Discipline: reproduce-before-fix.
+- **`[BLOCKED-ON-JACK]` items:** none.
+- **Commits added overnight (oldest→newest):** `24c64811` (runbook) → `df734d3a` (required-flag enforcement FIX + test) → `2b8e5585` (select-field options) → `0b7959fd` (apps/integrations --org-only) → `5b6c5cc0` (apps --app-model inline_v1) → `0f9a3c40` (--tool-ids @tool) → `7d6d1980` (Track B accept).
 - **Anything pushed?** NO (policy) — confirm at close.
