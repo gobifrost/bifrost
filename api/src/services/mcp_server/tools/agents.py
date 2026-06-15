@@ -661,6 +661,17 @@ async def delete_agent(
             if not agent:
                 return error_result(f"Agent '{agent_id}' not found. Use list_agents to see available agents.")
 
+            # Solution-managed agents are read-only (criterion 6). Refuse BEFORE
+            # mutating so the caller gets the clean locked message instead of the
+            # before_flush backstop raising a 500 (audit M-MCP).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(agent):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
+
             # Check access for non-admins
             if not context.is_platform_admin:
                 if agent.organization_id:

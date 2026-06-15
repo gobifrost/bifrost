@@ -368,6 +368,17 @@ async def update_app(
             if not app:
                 return error_result(f"Application not found: {app_id}")
 
+            # Solution-managed apps are read-only (criterion 6) — refuse before
+            # mutating so the caller gets the clean locked message, not a 500 from
+            # the before_flush backstop (audit M-MCP).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(app):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
+
             updates_made = []
 
             if name is not None:
@@ -1136,6 +1147,17 @@ async def update_app_dependencies(
             app = result.scalar_one_or_none()
             if not app:
                 return error_result(f"Application not found: {app_id}")
+
+            # Solution-managed apps are read-only (criterion 6) — refuse before
+            # mutating so the caller gets the clean locked message, not a 500 from
+            # the before_flush backstop (audit M-MCP).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(app):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
 
             app.dependencies = dependencies if dependencies else None
             await db.commit()

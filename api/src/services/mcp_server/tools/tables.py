@@ -340,6 +340,17 @@ async def update_table(
             if not table:
                 return error_result(f"Table not found: {table_id}")
 
+            # Solution-managed tables are read-only (criterion 6) — refuse before
+            # mutating so the caller gets the clean locked message, not a 500 from
+            # the before_flush backstop (audit M-MCP).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(table):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
+
             updates_made = []
 
             if name is not None:
@@ -434,6 +445,17 @@ async def delete_table(
 
             if not table:
                 return error_result(f"Table not found: {table_id}")
+
+            # Solution-managed tables are read-only (criterion 6) — refuse before
+            # the delete so the caller gets the clean locked message, not a 500
+            # from the before_flush backstop (audit M-MCP).
+            from src.services.solutions.guard import (
+                SOLUTION_MANAGED_MESSAGE,
+                is_solution_managed,
+            )
+
+            if is_solution_managed(table):
+                return error_result(SOLUTION_MANAGED_MESSAGE)
 
             table_name = table.name
             await db.delete(table)

@@ -561,3 +561,111 @@ async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_sessio
         select(func.count()).select_from(FormField).where(FormField.form_id == fid)
     )).scalar()
     assert count == 1
+
+
+# ── audit M-MCP: legacy tools that lacked the EARLY guard ────────────────────
+# These returned the locked message only via the before_flush backstop (a raised
+# SolutionManagedWriteError wrapped into error_result — but a 500-shaped path
+# that leaves the shared session dirty). An explicit early guard makes them
+# refuse cleanly BEFORE mutating. The tests assert the locked message AND that
+# the entity was not mutated.
+
+
+async def test_mcp_delete_agent_refuses_managed(db_session, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from sqlalchemy import select
+
+    from src.models.orm.agents import Agent
+    from src.services.mcp_server.tools import agents as mcp_agents
+
+    aid, _wf = await _managed_agent_with_tool(db_session)
+
+    @asynccontextmanager
+    async def _fake_tool_db(_context):
+        yield db_session
+
+    monkeypatch.setattr(mcp_agents, "get_tool_db", _fake_tool_db)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_agents.delete_agent(context, agent_id=str(aid))
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    # The agent is still active — the soft-delete never ran.
+    is_active = (await db_session.execute(
+        select(Agent.is_active).where(Agent.id == aid)
+    )).scalar_one()
+    assert is_active is True
+
+
+async def test_mcp_delete_table_refuses_managed(db_session, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from sqlalchemy import select
+
+    from src.models.orm.tables import Table
+    from src.services.mcp_server.tools import tables as mcp_tables
+
+    tid = await _managed_table(db_session)
+
+    @asynccontextmanager
+    async def _fake_tool_db(_context):
+        yield db_session
+
+    monkeypatch.setattr(mcp_tables, "get_tool_db", _fake_tool_db)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_tables.delete_table(context, table_id=str(tid))
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    # The table still exists — the delete never ran.
+    still = (await db_session.execute(
+        select(Table.id).where(Table.id == tid)
+    )).scalar_one_or_none()
+    assert still == tid
+
+
+async def test_mcp_update_app_refuses_managed(db_session, monkeypatch):
+    from sqlalchemy import select
+
+    from src.models.orm.applications import Application
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    aid = await _managed_app(db_session, repo_path="apps/managed-upd")
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.update_app(context, app_id=str(aid), name="hijacked")
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    name = (await db_session.execute(
+        select(Application.name).where(Application.id == aid)
+    )).scalar_one()
+    assert name != "hijacked"
+
+
+async def test_mcp_update_app_dependencies_refuses_managed(db_session, monkeypatch):
+    from sqlalchemy import select
+
+    from src.models.orm.applications import Application
+    from src.services.mcp_server.tools import apps as mcp_apps
+
+    aid = await _managed_app(db_session, repo_path="apps/managed-deps")
+
+    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_apps.update_app_dependencies(
+        context, app_id=str(aid), dependencies={"left-pad": "1.0.0"}
+    )
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    deps = (await db_session.execute(
+        select(Application.dependencies).where(Application.id == aid)
+    )).scalar_one()
+    assert deps != {"left-pad": "1.0.0"}
