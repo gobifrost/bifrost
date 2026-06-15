@@ -1,5 +1,10 @@
 # RESUME — `--org` standard (DONE) + build-skill validation loop (Track A done, Track B at 1/3) + Solutions UX review (queued)
 
+> **▶ OVERNIGHT RUN: the ordered goal-line is now `docs/plans/2026-06-15-OVERNIGHT-RUNBOOK.md`.**
+> That file is the execution order (Phase 1 validation → 2 inbox UX → 3 SolutionDetail redesign →
+> 4 GitHub-story UX review), with hard EXIT criteria and a decide-and-document policy. This RESUME
+> doc is the detailed state behind Phases 1 + 4; the runbook is what to actually work down.
+
 **Date:** 2026-06-15
 **Branch:** `solutions/connection-references` · worktree `solutions-success-criteria` · part of draft **PR #347** — do NOT push / un-draft / merge without Jack's explicit say-so. **Nothing has been pushed all session.**
 **Context note:** the prior session ended near 1M tokens. This file + the validation log are the handoff.
