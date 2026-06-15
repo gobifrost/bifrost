@@ -20,7 +20,9 @@ pgrep -f 'bifrost watch' > /dev/null 2>&1 && echo "RUNNING" || echo "NOT RUNNING
 
 If not running: tell the user "Please start the watch daemon in your terminal before I write files." Wait for confirmation.
 
-Once watch is confirmed running, write files to `workflows/` and `apps/` — watch picks them up automatically and syncs on save.
+The watch daemon is **workspace-specific** — it syncs the directory it was started in. A `pgrep` hit only means *some* watch is running, NOT that it's watching *this* workspace. If you're in a fresh or different directory, confirm with the user that watch is running **against this directory** (or have them restart it here). A file watch hasn't synced isn't on the platform yet, so the next step (`workflows register`) will 404 with `File not found`.
+
+Once watch is confirmed running **against this workspace**, write files to `workflows/` and `apps/` — watch picks them up automatically and syncs on save.
 
 ---
 
@@ -28,13 +30,13 @@ Once watch is confirmed running, write files to `workflows/` and `apps/` — wat
 
 ### Code entities (workflows and apps)
 
-Write the file into the workspace first; watch syncs it. Then register:
+Write the file into the workspace first; **watch syncs it to the platform** (see "File Sync" above — confirm watch is running against THIS workspace, else the file isn't on the platform and the next step 404s). Then register:
 
 ```bash
 bifrost workflows register --path workflows/foo.py --function-name foo
 ```
 
-The server assigns the UUID and returns it. Capture it — forms, agents, and apps reference workflows by UUID (or portable `path::function` refs).
+`register` reads the file from the platform (where watch put it), not from local disk — so "File not found" means watch hasn't synced this workspace yet. The server assigns the UUID and returns it. Capture it — forms, agents, and apps reference workflows by UUID (or portable `path::function` refs).
 
 **Renaming or moving a workflow:** do NOT re-register — that mints a new UUID and breaks all references. Instead, write the new file, then repoint the existing UUID:
 
@@ -51,7 +53,8 @@ Use the entity's create command — the server assigns the UUID:
 
 ```bash
 bifrost forms create --name "Submit Invoice" --workflow <uuid> \
-  --organization "Org A" --access-level role_based --role-ids finance
+  --form-schema @schema.yaml \
+  --org "Org A" --access-level role_based --role-ids finance
 
 bifrost agents create --name "Support Bot" --system-prompt @prompt.md \
   --organization "Org A" --access-level authenticated

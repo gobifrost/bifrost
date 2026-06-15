@@ -48,7 +48,7 @@ references:
     source_globs:
       - api/bifrost/cli.py
       - api/bifrost/commands/*.py
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+    verified_at_sha: 2bb9eb0cc063f968808bc4807d0bd96832ad3f21
 
   - file: references/rest-api.md
     source_globs:

@@ -220,7 +220,17 @@ iterate. Cover SDK surface Track A didn't reach.
 
 | Run | Result | UI/exec | Entities | Update | Execute | Invariant | Misleading moments → fix | Streak |
 |-----|--------|---------|----------|--------|---------|-----------|--------------------------|--------|
-| _pending_ | | | | | | | | |
+| B1 | NEEDS-FIX (1) | exec ✓ (workflows execute + bifrost run) | wf+table+form+agent+config all created LIVE ✓ | live update ✓ (no 409 — repo isolated from solution guard) | ✓ | live update succeeds (confirms repo≠solution) | 2 fixes: watch is workspace-specific (register 404s if file unsynced); forms create example missing required --form-schema | 0 |
+
+### B1 — scout run; the whole repo live-mutation surface works; 2 doc fixes
+
+First Track-B run (single scout). The entire repo/global live-mutation surface works as documented: workflow registered + executed (`workflows execute` + `bifrost run`), table/form/agent/config all created LIVE via CLI, live `tables/forms/agents/configs/workflows update` ALL succeeded with **no 409** (confirming the read-only guard is solution-only — repo isolation verified), discovery (list/get) across all entity groups, and the **`--org` standard fully exercised** (omit/`--global`/`--org none`/`--org global`/`--org name`/`--org uuid`/`--organization`/`--scope` — all routed correctly, confirmed via `org_id` in responses). Broad SDK/CLI coverage Track A didn't reach: configs, agents, forms, orgs/roles/events/integrations list, executions via REST, `bifrost run` local exec, `config.get` from a workflow.
+
+Two doc fixes (both verified at code level):
+1. **repo.md "Creation Flow" assumed watch is syncing THIS workspace.** B1 wrote a `.py` in a fresh scratch dir, saw a `pgrep -f 'bifrost watch'` hit (the user's OTHER watch), and ran `workflows register` → **404 "File not found"** (register reads from the platform; watch hadn't synced the scratch dir). repo.md's watch-check `pgrep` passes for *any* watch, not one watching *this* dir. → Added: watch is workspace-specific; a pgrep hit ≠ watching this workspace; an unsynced file 404s on register. Cross-referenced at the register step too. (The agent still never runs watch/push itself — repo.md's deliberate design, line 13 — it asks the user; the fix is making the workspace-specificity explicit.)
+2. **repo.md `forms create` example omitted the required `--form-schema`** (FormCreate.form_schema has no default → 422). entities.md had it; repo.md didn't. → Added `--form-schema @schema.yaml`.
+
+**Platform note (not skill):** `bifrost push <file.py>` errors "is not a valid directory" — push only takes directory paths (consistent with `--help`; not a doc claim). `tables list --json` is `{"tables":[...],"total":N}` wrapped vs bare arrays elsewhere (re-confirmed from Track A).
 
 ---
 
