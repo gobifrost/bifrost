@@ -978,6 +978,7 @@ async def capture_solution_entities(
                     configs=body.configs,
                 ),
                 include_imports=body.include_imports,
+                captured_by=user.user_id,
             )
             await ctx.db.commit()
     except SolutionWriteLockHeld as exc:

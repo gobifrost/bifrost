@@ -10,9 +10,10 @@ from __future__ import annotations
 import base64
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,6 +114,7 @@ class SolutionCaptureService:
         selectors: SolutionCaptureSelectors,
         *,
         include_imports: bool = False,
+        captured_by: UUID | None = None,
     ) -> SolutionCaptureResult:
         """Validate candidates, stamp ownership, and build the stored export.
 
@@ -120,6 +122,9 @@ class SolutionCaptureService:
         only the captured workflows' own source files; True also bundles the
         transitive import closure of ``modules/`` they reference (never the
         whole ``modules/`` tree).
+
+        ``captured_by`` is the acting user, recorded on each ``pending_captures``
+        queue row so a deploy can name who captured an un-pulled entity.
         """
         await self._reject_inline_apps(selectors.apps)
         await self._capture_model(Workflow, solution, selectors.workflows)
@@ -130,6 +135,7 @@ class SolutionCaptureService:
         await self._capture_model(CustomClaim, solution, selectors.claims)
         await self._capture_configs(solution, selectors.configs)
         await self._capture_events(solution, selectors.events)
+        await self._enqueue_pending(solution, selectors, captured_by)
         await self.db.flush()
 
         return SolutionCaptureResult(
@@ -142,6 +148,48 @@ class SolutionCaptureService:
             config_declarations_captured=len(set(selectors.configs)),
             events_captured=len(set(selectors.events)),
         )
+
+    async def _enqueue_pending(
+        self,
+        solution: Solution,
+        selectors: SolutionCaptureSelectors,
+        captured_by: UUID | None,
+    ) -> None:
+        """Insert a ``pending_captures`` row per captured entity that deploy's
+        full-replace reconcile could silently delete (table/form/agent/config/
+        event/claim). Idempotent via the UNIQUE constraint — re-capture is a
+        no-op. Workflows round-trip through ``.bifrost/workflows.yaml`` and apps
+        are file-source, so neither is at risk and neither is enqueued.
+
+        Uses a Core upsert (not ORM add) to stay consistent with the
+        solution-managed write discipline.
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.models.orm.pending_capture import PendingCaptureORM
+
+        queued: list[tuple[str, str]] = []
+        queued += [("table", str(i)) for i in dict.fromkeys(selectors.tables)]
+        queued += [("form", str(i)) for i in dict.fromkeys(selectors.forms)]
+        queued += [("agent", str(i)) for i in dict.fromkeys(selectors.agents)]
+        queued += [("config", str(k)) for k in dict.fromkeys(selectors.configs)]
+        queued += [("event", str(i)) for i in dict.fromkeys(selectors.events)]
+        queued += [("claim", str(i)) for i in dict.fromkeys(selectors.claims)]
+
+        for entity_type, entity_id in queued:
+            stmt = (
+                pg_insert(PendingCaptureORM.__table__)
+                .values(
+                    id=uuid4(),
+                    solution_id=solution.id,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    captured_at=datetime.now(timezone.utc),
+                    captured_by=captured_by,
+                )
+                .on_conflict_do_nothing(constraint="uq_pending_capture_entity")
+            )
+            await self.db.execute(stmt)
 
     async def _capture_events(self, solution: Solution, ids: list[UUID]) -> None:
         """Adopt EventSources (+ their subscriptions) into the install.
