@@ -83,6 +83,19 @@ jobs:
       - name: Check GitHub Action pins
         run: python3 api/scripts/check_github_action_pins.py
 
+      # Codex skill mirrors (plugins/bifrost/skills/, .codex/skills/) are
+      # generated from the canonical .claude/skills/ source. Regenerate and fail
+      # if the committed mirrors drift. NOTE: ci.yml paths-ignore skips CI for
+      # skill-only/.md-only PRs (they route to ci-noop.yml), so this gate fires
+      # when non-ignored source changes — which is when a mirror regen is most
+      # likely needed anyway.
+      - name: Codex skill mirrors in sync
+        run: |
+          chmod +x scripts/sync-codex-skills.sh
+          ./scripts/sync-codex-skills.sh
+          git diff --exit-code -- plugins/bifrost/skills .codex/skills \
+            || { echo "::error::Codex skill mirrors are stale — run scripts/sync-codex-skills.sh and commit."; exit 1; }
+
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
