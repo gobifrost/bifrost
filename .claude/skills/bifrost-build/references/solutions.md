@@ -97,7 +97,12 @@ bifrost solution deploy --org "Target Org"   # ship them
 
 The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `--config`, `--claim`, `--workflow`, `--app` (each takes a name or id; `--config` takes a key).
 
-**`--org` must match across deploy and pull.** `pull` and `deploy` resolve *which install* by `(slug, scope, org)` — defaulting to your **own** org. If the install lives in another org (you deployed with `--org "Target Org"`), you MUST pass the **same `--org`** to `pull` too — otherwise `pull` resolves a *different* install (or your default-org one), downloads the wrong state, and the real install's deploy keeps 409-blocking even though you "pulled". Omit `--org` only when the install is in your own org. (Pass `--solution <install-id>` to target an install by id directly and sidestep org resolution.)
+**When `--org` is needed (and when it isn't).** `pull` and `deploy` resolve *which install* by `(slug, scope, org)`. The descriptor fixes `slug` and `scope`; the org defaults to **your own** org. So:
+
+- **Global install** (`scope: global`) or **install in your own org** → `--org` is **not needed**; resolution is unambiguous.
+- **Install in a *different* org** (you deployed it with `--org "Target Org"`) → you must pass the **same `--org`** to `pull` and `deploy`, because resolution only looks in your own org by default. Without it, `pull`/`deploy` won't find that install (and may resolve a stale same-slug install in your default org instead), so a deploy can keep 409-blocking even after you "pulled".
+
+`--org` is really about **targeting**: pick it once (commonly when first deploying a fresh install into a customer's org) and use the same value for that install's `pull`/`deploy`. To skip org resolution entirely, pass **`--solution <install-id>`** to target an install by id.
 
 **Scope and capture — author the entity in the install's scope first.** `bifrost solution capture` only adopts loose entities **already in the install's own scope**: an org-scoped install captures that org's entities; a global install captures global (`organization_id: null`) entities. The CLI resolves your `--table/--form/...` selectors against the install's **candidate list** (`/capture/candidates`) and refuses anything outside its scope — including by id — with "not in /capture/candidates for its scope". A concrete org-A entity is likewise never capturable into an org-B install (cross-tenant).
 
