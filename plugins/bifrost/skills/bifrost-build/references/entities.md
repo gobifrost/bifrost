@@ -130,6 +130,7 @@ LLM-backed conversational entities with configurable tools, delegations, knowled
 Commands: `agents list / get / create / update / delete`
 
 ```bash
+# wf1/wf2 must be @tool-decorated workflows (see note below), not plain @workflow
 bifrost agents create --name support --system-prompt @prompt.md --tool-ids wf1,wf2
 bifrost agents update <ref> --system-prompt @new_prompt.md
 ```
@@ -137,7 +138,8 @@ bifrost agents update <ref> --system-prompt @new_prompt.md
 Non-obvious:
 - `update` uses PUT (full replacement of `tool_ids` / `delegated_agent_ids` / `knowledge_sources` lists — not merge). Always pass the complete list.
 - `--system-prompt @file.md` loads a multi-line prompt from disk.
-- `--tool-ids`, `--delegated-agent-ids`, `--role-ids` accept comma-separated refs. Resolved: workflows for tools, agents for delegations, roles by name.
+- **`--tool-ids` only accepts `@tool`-decorated workflows** (`type == "tool"`). Passing a plain `@workflow` UUID is rejected server-side with `422 tool_id '<id>' references a workflow, not a tool`. Decorate the function with `@tool` (alias for `@workflow(is_tool=True)`; see `references/workflows-python.md`) and register it before referencing its UUID here.
+- `--tool-ids`, `--delegated-agent-ids`, `--role-ids` accept comma-separated refs. Resolved: tool-workflows for tools, agents for delegations, roles by name.
 - `--clear-roles` wipes all role assignments.
 
 Do NOT use the removed granular endpoints `/api/agents/{id}/tools` or `/delegations`. Use `update` with the full lists.
