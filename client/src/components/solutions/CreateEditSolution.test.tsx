@@ -544,6 +544,9 @@ describe("CreateEditSolution — repo install path", () => {
 						display_name: "Microsoft",
 					},
 				],
+				agents: [
+					{ name: "Support", knowledge_sources: ["support_kb"] },
+				],
 			} as Partial<SolutionInstallPreview>),
 		);
 		vi.mocked(installSolutionFromRepo).mockResolvedValue(
@@ -581,6 +584,10 @@ describe("CreateEditSolution — repo install path", () => {
 		expect(screen.getByTestId("config-section")).toHaveTextContent("TENANT_ID");
 		// Declared integrations are surfaced in the preview summary (audit U-prev).
 		expect(screen.getByTestId("preview-summary")).toHaveTextContent("integrations");
+		// Agents' knowledge namespaces are surfaced as a non-blocking note so the
+		// install doesn't look self-contained when a corpus must be populated.
+		const kbNote = screen.getByTestId("knowledge-namespace-note");
+		expect(kbNote).toHaveTextContent("support_kb");
 
 		await user.click(screen.getByTestId("confirm-install-repo"));
 

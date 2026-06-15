@@ -142,6 +142,26 @@ function isSecretType(type: string): boolean {
 }
 
 /**
+ * Distinct knowledge namespaces referenced by the bundle's agents. A Solution
+ * ships its agents but NOT their knowledge corpus (the documents live outside
+ * the portable bundle), so a RAG-backed agent installs pointing at a namespace
+ * that must be populated separately. We surface these so the install doesn't
+ * LOOK complete-and-self-contained when it isn't (audit: knowledge coverage gap).
+ */
+function referencedKnowledgeNamespaces(
+	agents: SolutionInstallPreview["agents"],
+): string[] {
+	const out = new Set<string>();
+	for (const agent of agents ?? []) {
+		const ns = (agent as { knowledge_sources?: unknown }).knowledge_sources;
+		if (Array.isArray(ns)) {
+			for (const n of ns) if (typeof n === "string" && n) out.add(n);
+		}
+	}
+	return Array.from(out).sort();
+}
+
+/**
  * Parse the colliding config-value keys out of the server's ContentCollision
  * 409 detail. The backend formats it as:
  *   "Import would overwrite existing config values: A, B[; table data: T]. Re-run with replace to overwrite."
@@ -194,6 +214,39 @@ function EntitySummary({ preview }: { preview: SolutionInstallPreview }) {
 					<span className="text-muted-foreground">{label}</span>
 				</Badge>
 			))}
+		</div>
+	);
+}
+
+/**
+ * Non-blocking note when bundled agents reference knowledge namespaces. The
+ * corpus itself isn't carried by the bundle, so the operator must populate these
+ * after install or the agents retrieve from an empty store (audit: knowledge gap).
+ */
+function KnowledgeNamespaceNote({
+	preview,
+}: {
+	preview: SolutionInstallPreview;
+}) {
+	const namespaces = referencedKnowledgeNamespaces(preview.agents);
+	if (namespaces.length === 0) return null;
+	return (
+		<div
+			className="mt-3 flex gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-xs"
+			data-testid="knowledge-namespace-note"
+		>
+			<Plug className="mt-0.5 h-3.5 w-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" />
+			<div>
+				<p className="font-medium">Knowledge required after install</p>
+				<p className="mt-0.5 text-muted-foreground">
+					This solution's agents use knowledge namespace
+					{namespaces.length > 1 ? "s" : ""}{" "}
+					<span className="font-mono">{namespaces.join(", ")}</span>. The
+					documents aren't part of the bundle — populate{" "}
+					{namespaces.length > 1 ? "them" : "it"} after install or the agents
+					will retrieve from an empty corpus.
+				</p>
+			</div>
 		</div>
 	);
 }
@@ -658,6 +711,7 @@ function PreviewConfirmation({
 					<div className="mt-3">
 						<EntitySummary preview={preview} />
 					</div>
+					<KnowledgeNamespaceNote preview={preview} />
 				</div>
 			)}
 
