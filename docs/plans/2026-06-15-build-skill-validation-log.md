@@ -54,6 +54,13 @@ form/config into the solution → `solution start` + drive → update an entity 
 | A2 | INVALID (wrong skill) | yes | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | tested the STALE installed plugin, not the rebuilt worktree skill — see note | 0 |
 | A3 | NEEDS-FIX (valid) | yes (manual Tailwind) | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | 4 real doc fixes (below) → applied, streak reset | 0 |
 | A4 | NEEDS-FIX (valid) | yes (styling callout WORKED) | **all 4 round-trip + survive** ✓ | yes ✓ (.bifrost edit path) | clean ✓ | ✓ 409 | 3 fixes: pull `--org`, entities.md `.bifrost` contradiction, scaffold `src/` tree → applied | 0 |
+| A5 | NEEDS-FIX (1, self-inflicted) | yes (styling + file layout matched) | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | 1 fix: the "capture by id re-stamps global" claim was FALSE → corrected | 0 |
+
+### A5 — cleanest run yet; the only finding was my own scope-rule error
+
+A5 verified A4's fixes ALL landed (styling guidance matched, file layout `src/` matched, `.bifrost` update path worked, 409 guard + read-only invariant ✓). Its single finding corrected an error **I** introduced during the Jack scope-rule exchange: I wrote that capturing a global entity by id into an org-scoped install "succeeds with a re-stamp." A5 proved empirically it FAILS with the same candidate-gate error as by-name. Root cause (verified in `capture_cmd`, solution.py:1764): the CLI fetches `/capture/candidates` and resolves selectors against that list BEFORE calling capture — so the service's latent global→org re-stamp path is **unreachable via the CLI**. → Rewrote the "Scope and capture" section to the accurate rule: author the entity in the install's scope first; capture won't fix scope for you. Lint 0, mirror synced.
+
+**This means A5 is effectively a clean run against the skill as it stood before MY edit polluted it** — the loop's own fixes (A3/A4) held. The next run (A6) tests the corrected scope section; barring new findings, the streak begins.
 
 ### A4 — A3's styling fix verified clean; 3 new fixes applied (+ the scope-rule correction from the Jack exchange)
 

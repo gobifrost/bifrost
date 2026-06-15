@@ -87,13 +87,14 @@ The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `
 
 **`--org` must match across deploy and pull.** `pull` and `deploy` resolve *which install* by `(slug, scope, org)` — defaulting to your **own** org. If the install lives in another org (you deployed with `--org "Target Org"`), you MUST pass the **same `--org`** to `pull` too — otherwise `pull` resolves a *different* install (or your default-org one), downloads the wrong state, and the real install's deploy keeps 409-blocking even though you "pulled". Omit `--org` only when the install is in your own org. (Pass `--solution <install-id>` to target an install by id directly and sidestep org resolution.)
 
-**Scope and capture.** Capture adopts a loose entity into the install. If the entity is in a **different scope**, capture re-stamps it to the install's scope rather than refusing:
+**Scope and capture — author the entity in the install's scope first.** `bifrost solution capture` only adopts loose entities **already in the install's own scope**: an org-scoped install captures that org's entities; a global install captures global (`organization_id: null`) entities. The CLI resolves your `--table/--form/...` selectors against the install's **candidate list** (`/capture/candidates`) and refuses anything outside its scope — including by id — with "not in /capture/candidates for its scope". A concrete org-A entity is likewise never capturable into an org-B install (cross-tenant).
 
-- **Same scope** (entity already in the install's org, or both global) → adopted in place.
-- **Global entity → org-scoped install** → adopted AND re-stamped down to the install's org (the common migration case: a loose global `_repo` entity that really belonged to one org).
-- **Concrete org-A entity → org-B install** → **refused** (cross-tenant is never allowed). Move it to the right org first.
+So the rule is simply: **if the entity is in a different scope, change its scope before capturing** — give it the install's org when you author it:
 
-One wrinkle: the **candidate list** (`/capture/candidates`, what the UI and a name-based capture browse) only shows loose entities **already in the install's own scope** — so a global entity won't *appear* there for an org-scoped install, even though capturing it **by id** succeeds (with the re-stamp above). If you author the entity knowing its target install, the friction-free path is to give it the install's scope up front: `--organization <uuid>` matching the install's org (`bifrost orgs list`), or leave it global for a global install.
+- **Org-scoped install:** create the entity with `--organization <uuid>` matching the install's org (`bifrost orgs list` to find it).
+- **Global install:** leave the entity global (no `--organization`).
+
+(The server-side capture service has a latent global→org re-stamp path, but the CLI's candidate gate makes it unreachable today — so don't rely on capture to fix scope for you; set it up front.)
 
 Capture stamps ownership server-side but does **not** write source. `bifrost solution pull` materializes the captured entities into the workspace `.bifrost/*.yaml` manifest (it touches only `.bifrost/`, never your `apps/` or `functions/` source — safe to run any time). Then deploy ships them.
 
