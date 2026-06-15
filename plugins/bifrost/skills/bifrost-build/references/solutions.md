@@ -85,7 +85,13 @@ bifrost solution deploy        # ship them
 
 The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `--config`, `--claim`, `--workflow`, `--app` (each takes a name or id; `--config` takes a key).
 
-**Org scope is load-bearing.** Capture only adopts entities in the **same org as the install**. A loose entity authored without an org lands in **global** scope (`organization_id: null`) and is **NOT** in an org-scoped install's capture-candidate pool — `capture` rejects it with "not in /capture/candidates for its scope". When you author the loose entity (in the `_repo` workspace, per `references/repo.md`), give it the `--organization <uuid>` matching the install's org (list orgs with `bifrost orgs list`). A global install captures global entities; an org-scoped install captures that org's entities.
+**Scope and capture.** Capture adopts a loose entity into the install. If the entity is in a **different scope**, capture re-stamps it to the install's scope rather than refusing:
+
+- **Same scope** (entity already in the install's org, or both global) → adopted in place.
+- **Global entity → org-scoped install** → adopted AND re-stamped down to the install's org (the common migration case: a loose global `_repo` entity that really belonged to one org).
+- **Concrete org-A entity → org-B install** → **refused** (cross-tenant is never allowed). Move it to the right org first.
+
+One wrinkle: the **candidate list** (`/capture/candidates`, what the UI and a name-based capture browse) only shows loose entities **already in the install's own scope** — so a global entity won't *appear* there for an org-scoped install, even though capturing it **by id** succeeds (with the re-stamp above). If you author the entity knowing its target install, the friction-free path is to give it the install's scope up front: `--organization <uuid>` matching the install's org (`bifrost orgs list`), or leave it global for a global install.
 
 Capture stamps ownership server-side but does **not** write source. `bifrost solution pull` materializes the captured entities into the workspace `.bifrost/*.yaml` manifest (it touches only `.bifrost/`, never your `apps/` or `functions/` source — safe to run any time). Then deploy ships them.
 
