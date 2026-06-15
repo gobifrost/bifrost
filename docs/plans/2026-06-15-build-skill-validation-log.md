@@ -125,6 +125,18 @@ First parallel batch (bar = 3 concurrent CLEAN against one doc state = "3 consec
 
 Drive: all 3 curl (Chrome MCP denied localhost site-permission — env, not skill). Streak resets to 0; next batch tests these fixes.
 
+### W-batch 2 — 3 Sonnet in PARALLEL; **2 CLEAN, 1 NEEDS-FIX**; 1 fix (+ 1 borderline)
+
+Closest yet: **agents 1 and 2 both fully CLEAN** (every structural check green, `--org` true, workflow executed). Agent 3 → NEEDS-FIX on 1 verified finding:
+
+- **`workflows-python.md` "Lifecycle Commands" (`register`/`replace`/`remap`/`delete`) lacked a workspace-scope qualifier.** SKILL.md routes "write/debug a Python workflow" here, so a solution-workspace builder reading the Register section would run `bifrost workflows register` — which mints a loose `_repo` row that collides with the deploy-owned manifest row and breaks subsequent deploys. The correct solution flow (manifest entry + deploy, "no register/push/capture") is in solutions.md but not cross-referenced from workflows-python.md. → Added a callout at the top of "Lifecycle Commands": in a Solution workspace, register a workflow via a `.bifrost/workflows.yaml` entry + `solution deploy`; the `register/replace/remap/delete` commands are `_repo`-only. VERIFIED the gap (no qualifier existed).
+
+Plus a **borderline finding agent 1 raised as a platform note but is really a doc error** (fixed proactively): the `apps.md` AND `web-sdk-v2.md` app-structure diagrams showed `main.tsx`/`App.tsx` at the app root, but the scaffold writes them under `src/` (`solution.py:648-650`: `src/main.tsx`, `src/App.tsx`, `src/index.css`, `src/lib/utils.ts`; `package.json`/`vite.config.ts`/`index.html` at root). Agent 1 didn't take a wrong action (it read solutions.md + used the scaffold), but the diagrams were factually wrong. → Corrected both diagrams to the real `src/`-based layout.
+
+Other agent-3 platform notes (NOT skill fixes, logged for the platform side): `solution start` crashes with a raw aiohttp OSError (not a friendly "port in use") when port N **or** N+1 is taken — surfaced by parallel agents sharing the host; `solution pull` overwrites `.bifrost/apps.yaml` `repo_path` to match the app slug, so a manual slug rename without renaming the `apps/<slug>` dir → `solution start` FileNotFoundError on next pull. Form-schema select `options` shape (`[{value,label}]` not `['a','b']`) is undocumented (agent 1; their wrong attempt was their own assumption, not skill text — a gap, not a misleading moment).
+
+Streak resets to 0; next batch tests the workflows-python.md scope callout + the structure-diagram fixes. (2/3 clean is the high-water mark — the remaining gaps are doc cross-reference + diagram accuracy, not flows.)
+
 ### A6 — full clean scorecard (incl. real browser drive); 1 ordering fix
 
 A6 confirmed A3/A4/A5 fixes ALL held, and for the first time the **browser drive succeeded** (localhost:4000, Tailwind classes rendered). Its one finding is a real lifecycle-ordering gap: a form's `workflow_id` must resolve to a **registered** workflow UUID (verified `forms.py` router validates `workflow_id` exists in WorkflowORM), but a fresh solution's `functions/*.py` workflow isn't registered until its first deploy. → Added an "Ordering for a form/agent that references a workflow" note to Path A (deploy once to register → create form/agent → capture → pull → deploy) + the ambiguous-bare-name caveat.

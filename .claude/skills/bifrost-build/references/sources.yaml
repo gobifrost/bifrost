@@ -15,7 +15,7 @@ references:
       - api/bifrost/commands/apps.py
       - client/src/lib/app-sdk/*.ts
       - client/src/lib/app-sdk/*.tsx
-    verified_at_sha: 3b0c41622c2ec7c1a6ca3412793fa76ae3288fdb
+    verified_at_sha: 42e04a10b751778c9f628dc040afa6eb9cdab863
 
   - file: references/entities.md
     source_globs:
@@ -74,11 +74,11 @@ references:
       - client/src/lib/app-sdk/use-workflow*.ts
       - client/src/lib/app-sdk/provider.tsx
       - client/src/lib/app-sdk/bifrost-header.tsx
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+    verified_at_sha: 42e04a10b751778c9f628dc040afa6eb9cdab863
 
   - file: references/workflows-python.md
     source_globs:
       - api/bifrost/decorators.py
       - api/bifrost/commands/workflows.py
       - api/bifrost/commands/requirements.py
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+    verified_at_sha: 42e04a10b751778c9f628dc040afa6eb9cdab863

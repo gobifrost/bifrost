@@ -12,21 +12,20 @@ A `standalone_v2` app is a normal React project that mounts at `/apps/{slug}`. I
 
 ```
 my-solution/
-  apps/my-app/
-    main.tsx              # createRoot + <BifrostProvider>
-    App.tsx               # <BrowserRouter> + <Routes>
-    _layout.tsx           # optional top-level layout with <Outlet>
-    pages/
-      index.tsx           # default page (default export)
-      clients/
-        index.tsx
-        [id].tsx
-    components/
-      ClientCard.tsx      # app-specific components
-    styles.css
-    tailwind.config.ts    # optional per-app Tailwind config
+  apps/my-app/            # what `bifrost solution scaffold-app` writes
+    package.json          # vite + react deps (root of the app)
+    vite.config.ts        # Tailwind v4 via @tailwindcss/vite
+    tsconfig.json
+    index.html            # loads /src/main.tsx
+    src/                  # ALL app source lives under src/
+      main.tsx            # createRoot + <BifrostProvider> (keep as scaffolded)
+      App.tsx             # <BrowserRouter> + <Routes>
+      index.css           # @import "tailwindcss" + shadcn token layer
+      lib/utils.ts        # cn() helper
+      components/         # your app components (e.g. ui/* shadcn components)
+      pages/              # your route pages
   functions/
-    hello.py              # @workflow decorated function
+    hello.py              # @workflow decorated function (solution root, not under the app)
   bifrost.solution.yaml   # Solution descriptor
 ```
 

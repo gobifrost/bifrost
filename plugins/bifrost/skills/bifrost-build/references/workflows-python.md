@@ -83,9 +83,11 @@ This runs the decorated function in-process using the local code. Use it to iter
 
 ## Lifecycle Commands
 
+> **Workspace scope:** the lifecycle commands below (`register`, `replace`, `remap`, `delete`) are for the **global `_repo` workspace**. In a **Solution workspace**, do NOT run `bifrost workflows register` — a new workflow is registered by adding an entry to `.bifrost/workflows.yaml` and running `bifrost solution deploy` (the deploy creates the row from the manifest). Running `register` inside a solution mints a loose `_repo` row that collides with the deploy-owned row and breaks subsequent deploys. See `references/solutions.md` ("Write workflows in `functions/`") for the solution flow.
+
 ### Register
 
-After writing a `.py` file, register the function so it becomes executable on the platform:
+After writing a `.py` file (in the `_repo` workspace), register the function so it becomes executable on the platform:
 
 ```bash
 bifrost workflows register --path workflows/onboard.py --function-name onboard_user

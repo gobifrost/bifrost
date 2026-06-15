@@ -171,13 +171,15 @@ A `scaffold-app` skeleton gives:
 ```
 my-solution/
   apps/my-app/
-    main.tsx          # createRoot + <BifrostProvider>
-    App.tsx           # <BrowserRouter> + routes
-    pages/
-      index.tsx       # default page
-    styles.css
+    package.json      # vite + react deps (app root)
+    vite.config.ts    # Tailwind v4 via @tailwindcss/vite
+    index.html        # loads /src/main.tsx
+    src/              # ALL app source under src/
+      main.tsx        # createRoot + <BifrostProvider> (keep as scaffolded)
+      App.tsx         # <BrowserRouter> + routes
+      index.css       # @import "tailwindcss" + shadcn tokens
   functions/
-    hello.py          # @workflow decorated function
+    hello.py          # @workflow decorated function (solution root)
 ```
 
 The workflow ref in the app is workspace-root-relative: `"functions/hello.py::main"` regardless of where the calling app lives under the solution root.
