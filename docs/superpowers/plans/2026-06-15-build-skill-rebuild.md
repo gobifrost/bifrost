@@ -566,31 +566,37 @@ git commit -m "feat(skill-truth): Codex mirror sync (both roots) + symlink norma
 
 ---
 
-## Task 4: CI `skill-accuracy` job (all three gates)
+## Task 4: CI gate wiring (REVISED — see note)
+
+> **Design revised during execution.** A standalone stack-booting `skill-accuracy` job is unnecessary and ill-fitting for this repo's CI:
+> - **Gates 1 & 2 already run.** `test_skill_appendix_fresh.py` (Gate 1, `generate.py --check`) and `test_skill_cli_claims.py` (Gate 2) are collected by `./test.sh unit`, which the existing `test-unit` job runs on every CI trigger. No new job needed.
+> - **Gate 3 (Codex mirror diff)** is the only genuinely new enforcement: `test_codex_mirror_sync.py` SKIPS in the test-runner container (repo-root `scripts/`/`plugins/`/`.codex/` aren't mounted there), so it's added as a host-side shell step in the existing `lint` job (full checkout, bash+git, same trigger, already-required check) rather than a new ~12-min stack job.
+> - **Known limitation (documented in the CI comment):** ci.yml's `paths-ignore` skips CI for skill-only/`.md`-only PRs (they route to `ci-noop.yml`). The gates fire when non-ignored source (`api/bifrost`, `client/src/lib/app-sdk`, `api/src/routers`) changes — which is exactly when appendices go stale / mirrors need regen. Accepted tradeoff.
 
 **Files:**
-- Modify: `.github/workflows/ci.yml`
-- Test: deliberate-drift manual verification
+- Modify: `.github/workflows/ci.yml` (one step added to the `lint` job).
 
-- [ ] **Step 1: Add the job (path-filtered)**
+- [ ] **Step 1: Add the Gate-3 step to the `lint` job**
 
-Add a `skill-accuracy` job to `.github/workflows/ci.yml`, path-filtered to `skills/**, .claude/skills/**, plugins/bifrost/**, .codex/skills/**, api/bifrost/**, client/src/lib/app-sdk/**, api/src/routers/**`, always-on for release tags. Steps:
-1. Boot the test stack (or use the DB-free path if `app.openapi()` imports without a DB — verify; fallback: piggyback the stack-booting job).
-2. `python api/scripts/skill-truth/generate.py --check` (Gate 1).
-3. `./test.sh tests/unit/test_skill_cli_claims.py tests/unit/test_skill_appendix_fresh.py tests/unit/test_skill_reference_freshness.py` (Gate 2 + freshness).
-4. `./scripts/sync-codex-skills.sh && git diff --exit-code plugins/bifrost/skills .codex/skills` (Gate 3).
+Insert after the checkout/pins steps so it runs regardless of later ruff/pyright outcome:
+```yaml
+      - name: Codex skill mirrors in sync
+        run: |
+          chmod +x scripts/sync-codex-skills.sh
+          ./scripts/sync-codex-skills.sh
+          git diff --exit-code -- plugins/bifrost/skills .codex/skills \
+            || { echo "::error::Codex skill mirrors are stale — run scripts/sync-codex-skills.sh and commit."; exit 1; }
+```
 
-(Follow the existing job structure in `ci.yml`; reuse the test-stack boot pattern already present. Copy the exact `runs-on`, cache, and stack-boot steps from the nearest existing unit-test job.)
+- [ ] **Step 2: Validate YAML + simulate the gate**
 
-- [ ] **Step 2: Verify red-on-drift locally (proxy for CI)**
-
-Run: append `\`\`\`bash\nbifrost watch\n\`\`\`` to a scratch copy of a reference file and run the claims linter — confirm it reports. Run `generate.py --check` after hand-editing a `generated/*.md` — confirm STALE. Run the sync + `git diff` after hand-editing a mirror — confirm diff.
+`python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"`; run the sync + `git diff --exit-code` (must pass clean); inject drift into a mirror and confirm the gate exits non-zero, then revert.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
-git commit -m "ci: skill-accuracy job — appendix freshness, claims linter, Codex mirror"
+git commit -m "ci: enforce Codex skill-mirror sync in lint job (Gate 3)"
 ```
 
 ---
