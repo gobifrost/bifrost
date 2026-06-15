@@ -75,11 +75,16 @@ Installs a packaged solution (drag-and-drop equivalent). Use `--set KEY=VALUE` t
 
 `bifrost.solution.yaml` is the **definition** descriptor — `slug`, `name`, `scope`, `version`, `global_repo_access`, and git-source fields (`git_connected`, `git_repo_url`, `repo_subpath`, `git_ref`, `logo`). It is **stateless** and intentionally carries **no install id**. It also doubles as the workspace mode marker (its presence is what switches tooling into solution mode).
 
-The install id lives **server-side** (`Solution.id` — the `solution_id` stamped on every managed entity). Deploy/pull resolve *which install* at runtime by matching **`(slug, scope, org)`** against the server's installs, creating one if none matches. This is deliberate: the **same descriptor installs into many orgs/scopes**, each producing an independent install with its own id, its own config values, and its own entity rows.
+The install id lives **server-side** (`Solution.id` — the `solution_id` stamped on every managed entity *at deploy time*). **Nothing in the repo carries install identity** — not the descriptor, not `.bifrost/*.yaml` (its entries deliberately omit org/access/identity for portability). The repo is the **definition**; deploy is what mints an install and stamps identity onto the entity rows it writes. Deploy/pull resolve *which install* at runtime by matching **`(slug, scope, org)`** against the server's installs, creating one if none matches.
 
-- **Same solution, many customers** → one definition, deployed per customer-org (`scope: org` + `--org "Customer Org"`, or `bifrost solution install pkg.zip --org "Customer Org"`). Each org's install is independent; deploy refuses to let one org's deploy clobber another org's install of the same slug.
-- **Same solution, multiple repos / subfolders** → `repo_subpath` (omni-repo: one repo, a folder per solution) and `git_ref` (pin a branch/tag) distinguish git-connected installs.
-- **Natural key collision** (two installs of the same slug+scope+org) → resolution raises an ambiguity error; pass **`--solution <install-id>`** to target one install by id directly.
+**Instance vs fork — the `slug` is the dividing line:**
+
+- **One definition, many installs (instances).** Keep **one repo / one slug** and deploy it per customer-org: `bifrost solution deploy --org "Customer Org"` (or `bifrost solution install pkg.zip --org "Customer Org"`). Each org gets an **independent install** — its own id, config values, and entity rows — from the *same* source. Deploy refuses to let one org clobber another org's install of the same slug. This is how you run "the same HR portal" for 3 customers: one codebase, three installs.
+- **A genuinely different solution → fork (new slug).** If a customer needs the solution to *diverge* (different features/code, not just different data), **fork the repo and give it a new `slug`**. Different slug = different definition = a separate solution, not an instance of the first. There is no per-customer stamping in the repo to do this for you — forking is the mechanism.
+- **Multiple repos / subfolders** for git-connected installs are distinguished by `repo_subpath` (omni-repo: one repo, a folder per solution) and `git_ref` (pin a branch/tag).
+- **Natural key collision** (two installs of the same slug+scope+org) → resolution raises an ambiguity error; pass **`--solution <install-id>`** to target one install by id.
+
+`scope` in the descriptor only selects the **kind** of install at create time (`global` → org-NULL, ignoring `--org`; `org` → requires an org); the **which-org** coordinate is the deploy-time `--org`. (On export the server even recomputes `scope` from the install's org, so treat the descriptor's `scope` as the default for a fresh deploy, not a stored truth.)
 
 ---
 
@@ -96,6 +101,8 @@ bifrost solution deploy --org "Target Org"   # ship them
 ```
 
 The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `--config`, `--claim`, `--workflow`, `--app` (each takes a name or id; `--config` takes a key).
+
+> **Ordering for a form/agent that references a workflow:** a form's `workflow_id` (and an agent's tool refs) must resolve to a **registered** workflow UUID, and a `functions/*.py` workflow in a brand-new solution isn't registered until its **first `bifrost solution deploy`**. So for a fresh solution, the order is: write the workflow in `functions/` → **deploy once** (registers it, gives it a UUID) → create the form/agent referencing that workflow → capture → pull → deploy again. (If you reference the workflow by portable `path::function` ref, it must be unambiguous — a bare name like `hello` can collide with other workflows; prefer the full `functions/hello.py::main` ref or the UUID.)
 
 **When `--org` is needed (and when it isn't).** `pull` and `deploy` resolve *which install* by `(slug, scope, org)`. The descriptor fixes `slug` and `scope`; the org defaults to **your own** org. So:
 

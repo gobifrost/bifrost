@@ -55,6 +55,15 @@ form/config into the solution → `solution start` + drive → update an entity 
 | A3 | NEEDS-FIX (valid) | yes (manual Tailwind) | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | 4 real doc fixes (below) → applied, streak reset | 0 |
 | A4 | NEEDS-FIX (valid) | yes (styling callout WORKED) | **all 4 round-trip + survive** ✓ | yes ✓ (.bifrost edit path) | clean ✓ | ✓ 409 | 3 fixes: pull `--org`, entities.md `.bifrost` contradiction, scaffold `src/` tree → applied | 0 |
 | A5 | NEEDS-FIX (1, self-inflicted) | yes (styling + file layout matched) | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | 1 fix: the "capture by id re-stamps global" claim was FALSE → corrected | 0 |
+| A6 | NEEDS-FIX (1) | yes | **all 4 round-trip + survive** ✓ | yes ✓ | clean ✓ | ✓ 409 | drove app in **real browser** ✓; 1 fix: deploy-first ordering for a form→workflow ref → applied | 0 |
+
+### A6 — full clean scorecard (incl. real browser drive); 1 ordering fix
+
+A6 confirmed A3/A4/A5 fixes ALL held, and for the first time the **browser drive succeeded** (localhost:4000, Tailwind classes rendered). Its one finding is a real lifecycle-ordering gap: a form's `workflow_id` must resolve to a **registered** workflow UUID (verified `forms.py` router validates `workflow_id` exists in WorkflowORM), but a fresh solution's `functions/*.py` workflow isn't registered until its first deploy. → Added an "Ordering for a form/agent that references a workflow" note to Path A (deploy once to register → create form/agent → capture → pull → deploy) + the ambiguous-bare-name caveat.
+
+Also landed the **fork-vs-instance** clarity (from the Jack exchange): repo = definition, nothing stamps install identity into it, one slug → N installs (instances), **fork = new slug** for a divergent solution; `scope` only picks global-vs-org *kind* at create (export recomputes it). This makes the "One definition, many installs" section answer the real builder question.
+
+Claims lint 0, mirror synced. Platform design questions logged below (not skill bugs).
 
 ### A5 — cleanest run yet; the only finding was my own scope-rule error
 
@@ -118,3 +127,11 @@ iterate. Cover SDK surface Track A didn't reach.
 | Run | Result | UI/exec | Entities | Update | Execute | Invariant | Misleading moments → fix | Streak |
 |-----|--------|---------|----------|--------|---------|-----------|--------------------------|--------|
 | _pending_ | | | | | | | | |
+
+---
+
+## Platform design questions surfaced during validation (NOT skill bugs — for the platform side)
+
+1. **`/capture/candidates` vs `capture()` disagree on global→org.** The candidate list (which the CLI gates capture on, solution.py:1764) hides global entities from an org install, but `capture()` has a latent global→org re-stamp path. Either make the gate honor the re-stamp (capture-by-id re-stamps), or drop the dead re-stamp branch. Today the gate wins; the doc tells users to set scope up front.
+2. **Install resolution could resolve on a unique `(slug, scope)` match regardless of org.** Today `_resolve_target_install` binds org-scope resolution to the deployer's own org, so an install in a different org needs `--org`/`--solution` even when there's exactly one same-slug install visible. A unique-match fast path would remove the re-specify friction while keeping the anti-clobber check for the 2+ case.
+3. **Is `scope` in the descriptor worth keeping?** It only selects global-vs-org *kind* at create and is recomputed from the install's org on export. It could plausibly be subsumed by `--org` / a `--global` flag at deploy. Keeping it gives a weak "this solution is intrinsically global/per-org" intent signal; dropping it simplifies the descriptor. Open call.
