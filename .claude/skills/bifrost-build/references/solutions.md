@@ -71,6 +71,18 @@ Installs a packaged solution (drag-and-drop equivalent). Use `--set KEY=VALUE` t
 
 ---
 
+## One definition, many installs
+
+`bifrost.solution.yaml` is the **definition** descriptor — `slug`, `name`, `scope`, `version`, `global_repo_access`, and git-source fields (`git_connected`, `git_repo_url`, `repo_subpath`, `git_ref`, `logo`). It is **stateless** and intentionally carries **no install id**. It also doubles as the workspace mode marker (its presence is what switches tooling into solution mode).
+
+The install id lives **server-side** (`Solution.id` — the `solution_id` stamped on every managed entity). Deploy/pull resolve *which install* at runtime by matching **`(slug, scope, org)`** against the server's installs, creating one if none matches. This is deliberate: the **same descriptor installs into many orgs/scopes**, each producing an independent install with its own id, its own config values, and its own entity rows.
+
+- **Same solution, many customers** → one definition, deployed per customer-org (`scope: org` + `--org "Customer Org"`, or `bifrost solution install pkg.zip --org "Customer Org"`). Each org's install is independent; deploy refuses to let one org's deploy clobber another org's install of the same slug.
+- **Same solution, multiple repos / subfolders** → `repo_subpath` (omni-repo: one repo, a folder per solution) and `git_ref` (pin a branch/tag) distinguish git-connected installs.
+- **Natural key collision** (two installs of the same slug+scope+org) → resolution raises an ambiguity error; pass **`--solution <install-id>`** to target one install by id directly.
+
+---
+
 ## Getting forms, agents, tables, and configs into a Solution
 
 A solution owns these entities the same way it owns apps and workflows: deploy writes them, and they are read-only afterwards. There are two ways content arrives in the workspace manifest deploy reads.
