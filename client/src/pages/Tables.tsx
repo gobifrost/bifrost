@@ -118,6 +118,18 @@ export function Tables() {
 
 	const handleConfirmDelete = async () => {
 		if (!tableToDelete) return;
+		// Defense in depth: solution-managed tables are deploy-owned and
+		// read-only on the platform (server returns 409). The Delete button is
+		// already disabled for them; this guards the bulk/stale-render path so we
+		// never round-trip to a raw 409 (audit U1).
+		if (tableToDelete.is_solution_managed) {
+			toast.error(
+				"Solution-managed entities can only be managed by deployment methods.",
+			);
+			setIsDeleteDialogOpen(false);
+			setTableToDelete(undefined);
+			return;
+		}
 		await deleteTable.mutateAsync({
 			params: {
 				path: { table_id: tableToDelete.id },
@@ -417,7 +429,14 @@ export function Tables() {
 														onClick={() =>
 															handleEdit(table)
 														}
-														title="Edit table"
+														disabled={
+															table.is_solution_managed
+														}
+														title={
+															table.is_solution_managed
+																? "Managed by a Solution — edit via deployment"
+																: "Edit table"
+														}
 														aria-label="Edit table"
 													>
 														<Pencil className="h-4 w-4" />
@@ -428,7 +447,14 @@ export function Tables() {
 														onClick={() =>
 															handleDelete(table)
 														}
-														title="Delete table"
+														disabled={
+															table.is_solution_managed
+														}
+														title={
+															table.is_solution_managed
+																? "Managed by a Solution — delete via deployment"
+																: "Delete table"
+														}
 														aria-label="Delete table"
 													>
 														<Trash2 className="h-4 w-4" />
