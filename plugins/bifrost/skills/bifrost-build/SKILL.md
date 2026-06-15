@@ -357,6 +357,8 @@ These patterns are required for every data-fetching page. Full code examples in 
 
 **Workflow progress:** Apps can observe workflow status/logs through `useWorkflowQuery` / `useWorkflowMutation` (`status`, `logs`, `executionId`). There is currently no public workflow SDK method named `execution.publish`, `execution.update`, or `executions.publish` for arbitrary structured progress events. For live structured data, write rows to a table and read them with `useTable`; for textual progress, use workflow logs.
 
+**Drag-and-drop:** Do NOT use `@dnd-kit/*` or `react-beautiful-dnd`. esm.sh's externalization signatures cause the context-providing module to load twice; `useSortable`'s `listeners` come back empty and the drag handle silently never gets an `onPointerDown`. Use native HTML5 drag-and-drop instead — see [app-patterns.md](app-patterns.md) §12 for the handle-armed pattern and reference implementations.
+
 ### Platform API Reference
 
 Every name exported by the `"bifrost"` package is listed in [platform-api.md](platform-api.md) with signature and usage example. The canonical list lives in `api/bifrost/platform_names.py` (`PLATFORM_EXPORT_NAMES`) and a drift test enforces docs match the set.

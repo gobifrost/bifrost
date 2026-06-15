@@ -583,6 +583,12 @@ Variants: `default`, `destructive`.
 ### AlertDescription
 See `Alert`.
 
+### AlertAction
+See `Alert`. Optional action slot rendered at the end of the alert (e.g. a dismiss or undo button).
+
+### AlertDialogMedia
+See `AlertDialog`. Optional icon/media slot rendered above the title (Rhea style).
+
 ### AlertDialog
 Modal confirmation dialog. Composed of `AlertDialog`, `AlertDialogTrigger`, `AlertDialogContent`, `AlertDialogHeader`, `AlertDialogTitle`, `AlertDialogDescription`, `AlertDialogFooter`, `AlertDialogAction`, `AlertDialogCancel`.
 ```tsx
@@ -1066,6 +1072,15 @@ import { Popover, PopoverTrigger, PopoverContent, Button } from "bifrost";
 ### PopoverAnchor
 Virtual anchor element for a Popover.
 
+### PopoverHeader
+See `Popover`. Header block for structured popover content.
+
+### PopoverTitle
+See `Popover`.
+
+### PopoverDescription
+See `Popover`.
+
 ### PopoverContent
 See `Popover`.
 
@@ -1239,6 +1254,9 @@ See `Tabs`.
 ### TabsList
 See `Tabs`.
 
+### tabsListVariants
+See `Tabs`. `cva` variants helper for styling custom elements like a `TabsList`.
+
 ### TabsTrigger
 See `Tabs`.
 
@@ -1372,6 +1390,10 @@ Signature: `formatDateShort(dateString: string | Date): string` — `"Jan 15, 20
 import { formatDateShort } from "bifrost";
 formatDateShort(new Date());  // "Apr 16, 2026"
 ```
+
+### parseBackendDate
+
+Signature: `parseBackendDate(value: string): Date`. Parses backend timestamps safely: naive-UTC isoformat strings (no `Z`/offset, as emitted by Python `isoformat()`) are interpreted as UTC instead of local time. Use this instead of `new Date(...)` for any API timestamp.
 
 ### formatDuration
 
