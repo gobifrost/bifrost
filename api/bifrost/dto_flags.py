@@ -292,6 +292,16 @@ def build_cli_flags(
         # [required]. Create DTOs carry real required fields; Update DTOs make
         # everything optional, so is_required() is correct for both shapes.
         required = bool(field.is_required())
+        # Click 8.4.1 changed ``value_is_missing``: a value counts as missing
+        # only when it ``is UNSET`` (Click's sentinel), NOT when it is ``None``.
+        # So a ``required=True`` option that also carries ``default=None`` is
+        # NEVER seen as missing — required-enforcement silently no-ops and the
+        # command runs through to a server 422. For required scalar flags we must
+        # therefore OMIT ``default`` entirely (Click then defaults to UNSET and
+        # required is enforced). Optional flags keep ``default=None`` for their
+        # omit-to-leave-unchanged semantics. ``multiple`` flags are exempt — they
+        # default to ``()`` and Click handles their missing-check separately.
+        scalar_default = {} if required else {"default": None}
 
         if name in verb_ref_lookups:
             ref_kind = verb_ref_lookups[name]
@@ -301,7 +311,7 @@ def build_cli_flags(
                     flag,
                     name,
                     type=str,
-                    default=None,
+                    **scalar_default,
                     required=required,
                     help=f"{ref_kind} ref (UUID or name) for {name}.",
                 )
@@ -349,7 +359,7 @@ def build_cli_flags(
                     f"--{_kebab(name)}",
                     name,
                     type=str,
-                    default=None,
+                    **scalar_default,
                     required=required,
                     help=(
                         f"{name} as JSON literal or @path to a YAML/JSON file."
@@ -364,7 +374,7 @@ def build_cli_flags(
                     f"--{_kebab(name)}",
                     name,
                     type=click.Choice(_enum_choices(annotation)),
-                    default=None,
+                    **scalar_default,
                     required=required,
                     help=name,
                 )
@@ -377,7 +387,7 @@ def build_cli_flags(
                     f"--{_kebab(name)}",
                     name,
                     type=int,
-                    default=None,
+                    **scalar_default,
                     required=required,
                     help=name,
                 )
@@ -390,7 +400,7 @@ def build_cli_flags(
                     f"--{_kebab(name)}",
                     name,
                     type=float,
-                    default=None,
+                    **scalar_default,
                     required=required,
                     help=name,
                 )
@@ -403,7 +413,7 @@ def build_cli_flags(
                     f"--{_kebab(name)}",
                     name,
                     type=str,
-                    default=None,
+                    **scalar_default,
                     required=required,
                     help=f"{name} (UUID).",
                 )
@@ -416,7 +426,7 @@ def build_cli_flags(
                 f"--{_kebab(name)}",
                 name,
                 type=str,
-                default=None,
+                **scalar_default,
                 required=required,
                 help=name,
             )

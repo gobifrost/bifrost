@@ -216,3 +216,47 @@ def test_update_dtos_force_no_required_flags() -> None:
     assert _required_flag_dests(FormUpdate) == set()
     assert _required_flag_dests(TableUpdate) == set()
     assert _required_flag_dests(AgentUpdate) == set()
+
+
+def test_required_flags_are_actually_enforced_by_click() -> None:
+    """Required must be ENFORCED at parse time, not merely set as an attribute.
+
+    Regression guard for a Click 8.4.1 trap: ``value_is_missing`` only treats a
+    value as missing when it ``is UNSET`` — NOT when it is ``None``. So a flag
+    built with both ``required=True`` AND ``default=None`` parses ``None`` as a
+    *present* value, silently no-ops the required check, and the command runs
+    through to a server 422 instead of failing fast. ``_required_flag_dests``
+    (the attribute check) passed throughout that bug — only invoking the command
+    with the flag omitted catches it. Build a throwaway command from FormCreate's
+    flags, invoke it missing the required ``--form-schema``, and assert Click
+    raises 'Missing option'."""
+    import click
+    from click.testing import CliRunner
+
+    from src.models.contracts.forms import FormCreate
+
+    flags = build_cli_flags(
+        FormCreate,
+        exclude=DTO_EXCLUDES.get("FormCreate", set()),
+        verb_ref_lookups=DTO_REF_LOOKUPS.get("FormCreate", {}),
+    )
+
+    def _body(**_kwargs: object) -> None:  # noqa: ARG001 - body assertion only
+        click.echo("body-ran")
+
+    fn: object = _body
+    for flag in reversed(flags):
+        fn = flag(fn)
+    probe = click.command()(fn)
+
+    # Omit the required --form-schema (supply the other required --name).
+    result = CliRunner().invoke(probe, ["--name", "x"])
+    assert result.exit_code == 2, result.output
+    assert "Missing option" in result.output
+    assert "form-schema" in result.output
+    assert "body-ran" not in result.output  # the body must NOT execute
+
+    # A complete call parses cleanly (reaches the body, no Missing error).
+    ok = CliRunner().invoke(probe, ["--name", "x", "--form-schema", "{}"])
+    assert "Missing option" not in ok.output
+    assert "body-ran" in ok.output
