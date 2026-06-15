@@ -20,7 +20,7 @@ references:
   - file: references/entities.md
     source_globs:
       - api/bifrost/commands/*.py
-    verified_at_sha: df734d3a
+    verified_at_sha: 2b8e5585
 
   - file: references/import-patterns.md
     source_globs:

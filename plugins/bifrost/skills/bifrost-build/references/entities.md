@@ -17,7 +17,7 @@ For the exact generated flag list, see `generated/cli-reference.md`. For the RES
 
 **Read commands (`list` / `get`) do NOT take `--org`/`--global`.** They return the caller's full combined visibility (own org + global cascade). Passing `--org` to a `list`/`get` (e.g. `forms list --org ...`) errors `No such option`. To see a specific scope, read everything and filter the output (e.g. by `organization_id` in `--json`).
 
-(`claims` are always org-scoped: `--global` is rejected. `apps` and integration `add-mapping`/`update-mapping` predate the standard and keep their own `--organization`/`--scope` flags.)
+(`claims` are always org-scoped: `--global` is rejected. `apps create` and integration `add-mapping`/`update-mapping` predate the standard and accept **only `--organization`** — they do NOT accept `--org`, `--global`, or `--scope`; passing `--scope`/`--org` there errors `No such option`.)
 
 ---
 
