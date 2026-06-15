@@ -102,6 +102,13 @@ CI wiring: path-filtered to `skills/**, .claude/skills/**, plugins/bifrost/**, a
 
 This is how "done" is *defined* for the skill. After the skill is written and Gates 1–3 are green, run a fresh-session validation loop with **two tracks**, both held to the same bar.
 
+**Coverage mandate (not a representative slice).** The loop must drive **every feature of the web SDK and the Python SDK**, because the curated reference files (`tables.md`, `web-sdk-v2.md`, `python-sdk.md`, `workflows-python.md`) are hand-written prose that must be proven *empirically true*, not merely plausible. The skill working end-to-end is necessary but not sufficient — a reference doc can be wrong in a way a single happy-path build never hits. So the loop maintains an explicit **SDK-surface coverage checklist** derived from `generated/*` (the introspected signatures), and a reference file is not "verified" until every operation it documents has been *driven against the live stack* at least once:
+- **Python SDK** (`api/bifrost/{tables,integrations,config,files,agents,forms,workflows,executions,knowledge,organizations,roles,users,ai,events}.py`): every public method exercised in a real workflow run — both happy path and the documented error/edge behavior where the doc makes a claim (e.g. `tables.update` → null-on-missing, `tables.count(where=…)` filtered count is Python-only).
+- **Web SDK** (`client/src/lib/app-sdk/index.v2.ts`): every export driven from a real app under `solution start` / `npm run dev` — `useWorkflow`, `useWorkflowQuery`, `useWorkflowMutation`, `useTable`, `useInfiniteTable`, `tables.*` (get/insert/upsert/update/delete/query/count/subscribe), `BifrostProvider`/`BifrostHeader` (incl. theme), and the error classes (`TableAccessDeniedError`, `TableNotFoundError`) actually triggered.
+- The **tables.md side-by-side** gets special attention — it documents the Python↔Web traps (same name, different object; batch spelling; kwargs vs options object; nested vs flat rows). Every cell in that table must be driven on *both* sides so the trap descriptions are confirmed real, not inferred.
+
+Coverage gaps found mid-loop are themselves findings: an undocumented method, a doc claim no run exercised, a signature that doesn't match `generated/`. Each forces a doc fix and resets the streak (below).
+
 **Mechanism.** Spawn Sonnet subagents (`subagent_type: general-purpose`, `model: sonnet`), each in a clean scratch dir (`/tmp/bifrost-build-validation-<track>-<n>`), pointed at the running debug stack (`./debug.sh status` for URL; `dev@gobifrost.com` / `password`; **port mode** for any browser drive — netbird can't drive Vite). Each subagent is given ONLY the rebuilt skill as guidance (no source-tree spelunking) and a from-scratch build task. Runs are **serialized against the single debug stack** (one stack; sequential drives) per the worktree's test-stack discipline.
 
 **Track A — Solution build (read-only invariant in force):**
@@ -122,28 +129,56 @@ The v1/global-workspace flow → author a workflow `.py` + create entities via l
 
 **Done bar (user decision):** stop a track after **~3 consecutive clean runs with no skill-doc edits in between.** Between runs, every logged misleading moment → a skill-doc fix → the consecutive-clean streak **resets to zero**. A track is done when it converges to a 3-run clean streak. Both tracks must reach the bar.
 
-**Deliverable:** a validation log (`docs/plans/2026-06-15-build-skill-validation-log.md`) — per-run scorecards, the doc fixes each run triggered, and the final clean streak as evidence.
+**Deliverable:** a validation log (`docs/plans/2026-06-15-build-skill-validation-log.md`) — per-run scorecards, the doc fixes each run triggered, the SDK-surface coverage checklist marked off, and the final clean streak as evidence.
 
-## 8. Task breakdown
+## 8. Keeping the reference files current (operationalization)
 
-Follows 06-09 §7, with the validation loop expanded to two tracks. Each task gates the next; tests/gates green before proceeding.
+The `generated/*` appendices stay honest cheaply (Gate 1 regenerates them; CI fails on diff). The **curated** reference files (`tables.md`, `solutions.md`, `web-sdk-v2.md`, `python-sdk.md`, `workflows-python.md`, `entities.md`, `apps.md`) are hand-written prose — they can silently rot as the SDK evolves. We need a durable, low-effort currency loop for them, separate from the one-time build. The model is **proven in-repo already**: the `bifrost-documentation` skill keeps the docs site fresh via a manifest (`screenshots.yaml`) that maps each output to `source_globs` + the `bifrost_sha` it was last captured at, plus a `diff` mode that re-acts only on entries whose source changed. We mirror that exactly.
+
+**Manifest:** `.claude/skills/bifrost-build/references/sources.yaml` — one entry per curated reference file:
+```yaml
+- file: references/tables.md
+  source_globs: ["api/bifrost/tables.py", "client/src/lib/app-sdk/tables.ts", "api/src/routers/tables.py"]
+  verified_at_sha: <git sha the file's claims were last driven/verified against>
+```
+
+**Two enforcement layers, escalating by cost:**
+1. **Cheap, always-on (CI) — staleness flag.** A pytest/CI check (`api/tests/unit/test_skill_reference_freshness.py`) compares, per entry, whether any `source_globs` path has commits newer than `verified_at_sha`. If so it **warns** (informational in CI, like the existing plugin-version drift report) — "tables.md documents tables.py, which changed in 3 commits since it was last verified." This is the low-effort signal; it never blocks a merge but makes rot visible.
+2. **On-demand re-verification — a `diff`-mode skill run.** Operationalized as a documented mode of the build skill's own maintenance (and a candidate slash entrypoint, e.g. `/bifrost-build --verify-references` or a thin `bifrost-build-maintenance` companion): short-list reference files whose `source_globs` moved past `verified_at_sha`, **re-drive only those operations** against the debug stack (reusing the §7 coverage harness scoped to the changed surface), fix the prose, and bump `verified_at_sha`. This is the recurring, much-lighter version of the §7 loop — you never re-drive the whole SDK, only what changed.
+
+**Why not make staleness a hard gate?** A source change is not always a doc change (rename, internal refactor, added private helper). A hard gate would force a full re-drive on every SDK touch — exactly the generation-heavy burden the user wants to avoid. Warn cheaply; re-verify deliberately. The `generated/*` appendices remain the *hard* gate for mechanical facts (signatures); the manifest is the *soft* gate for prose.
+
+**Scope note:** this freshness manifest covers the build skill's reference files. If the same rot risk applies to `skills/migrate` (it documents the same v2 SDK surface), add its reference content to the manifest too — empowered per the user's "update existing skills as needed."
+
+## 9. Existing-skill reconciliation (empowered scope)
+
+The user empowered drastic plugin/skills changes and updates to project-specific skills. In-scope adjacent cleanups discovered during exploration (do them where they serve this work; don't gold-plate unrelated skills):
+
+- **Codex mirror is split across two roots.** `plugins/bifrost/skills/` holds 4 public skills (build/copilot/migrate/setup, plain files); `.codex/skills/` holds a *different* 8 maintainer skills. The Gate 3 / `sync-codex-skills.sh` design (§5) must reconcile **both** Codex roots against `.claude/skills/` — not just `plugins/bifrost/skills/`. Determine the intended split (public-distributable vs maintainer) and make the sync script + `diff -r` gate enforce it for both. This is the real fix for the "two drifted copies" item in the RESUME doc.
+- **`skills/` symlink inconsistency.** `skills/build|setup|copilot-cowork-package` are symlinks → `.claude/skills/bifrost-*`, but `skills/migrate` is a **real dir** (not a symlink). Normalize to the symlink pattern so `bifrost skill update`'s allowlist derivation is uniform, OR document why migrate differs. Verify against `skill.py`'s symlink-reading allowlist logic before changing.
+- **`bifrost-documentation` skill.** No content collision (it's the docs-site refresher, not an SDK teacher), so no rewrite needed. But it is the *source pattern* for §8's freshness manifest — cross-reference it from `sources.yaml`'s design so the two currency mechanisms stay conceptually aligned, and if its `diff`-mode harness (`bootstrap-manifest.mjs`) is generic enough, reuse rather than reinvent.
+
+## 10. Task breakdown
+
+Follows 06-09 §7, with the validation loop expanded to two tracks + full-SDK coverage + the freshness manifest. Each task gates the next; tests/gates green before proceeding.
 
 - **Task 0 — Ground-truth dumps.** `scripts/skill-truth/generate.py` (CLI walk + Python `inspect` + OpenAPI digest) + `dump-app-sdk-surface.mjs`; commit first `generated/*`. *Done:* double-run → zero diff. **Needs care.**
 - **Task 1 — Claims linter (red), incl. mode-conditional bans.** *Done:* fails red against the CURRENT skill (flags `bifrost watch`/`export`/`git push`) AND flags a deliberately-planted `bifrost agents create` inside a solution-context block. **Needs care.**
-- **Task 2 — CI job + Codex sync + Gate 3.** *Done:* `skill-accuracy` red on a deliberate doc/flag edit, green after regen + sync.
+- **Task 2 — CI job + Codex sync (both roots) + Gate 3.** *Done:* `skill-accuracy` red on a deliberate doc/flag edit, green after regen + sync; `sync-codex-skills.sh` + `diff -r` reconcile **both** `plugins/bifrost/skills/` and `.codex/skills/` (§9). Normalize the `skills/migrate` symlink inconsistency here.
 - **Task 3 — Hub `SKILL.md` rewrite (dispatcher).** *Done:* ≤ ~250 lines; `bifrost.solution.yaml` detection routes correctly; linter green; every routing target exists.
 - **Task 4 — `tables.md`** (the pain-point deliverable) + policies + scope/solution cascade. *Done:* every signature matches `generated/` verbatim.
 - **Task 5 — `solutions.md` (LIGHT) + `repo.md` (entry) + `workflows-python.md`**; llm.txt salvage → `entities.md`, then delete `docs/llm.txt` + CLAUDE.md/AGENTS.md edits. *Done:* solutions.md points at /migrate, restates no shared facts; repo.md carries v1/global + links to mcp-mode.md.
 - **Task 6 — `web-sdk-v2.md` + `apps.md`** (merge app-patterns, v2-first; platform-api.md / import-patterns.md retained as v1 refs).
 - **Task 7 — `entities.md`, `mcp-mode.md`, `rest-api.md`, `python-sdk.md`.**
-- **Task 8 — Sonnet validation loop, Track A (solution).** Iterate to a 3-consecutive-clean streak; log each run + fix.
-- **Task 9 — Sonnet validation loop, Track B (repo/global).** Iterate to a 3-consecutive-clean streak; log each run + fix.
-- **Task 10 — Distribution check.** Plugin load (Claude + Codex), `bifrost skill update` round-trip from branch tarball (confirm nested `references/`+`generated/` materialize), version-bump dry run.
-- **Task 11 — Plugin version bump.** `scripts/update-plugin-version.sh "$(scripts/compute-dev-version.sh)"` (bumps all three manifests). (RESUME task 4 — pairs with any `skills/` change.)
+- **Task 8 — SDK-surface coverage harness + Track A loop (solution).** Build the coverage checklist from `generated/*`; iterate Track A to a 3-consecutive-clean streak with **full web+Python SDK coverage** marked off (§7 coverage mandate); log each run + fix.
+- **Task 9 — Track B loop (repo/global)** to a 3-consecutive-clean streak; covers any SDK surface not reachable from the solution track (so the union of A+B drives the whole SDK); log each run + fix.
+- **Task 10 — Reference-freshness manifest.** `references/sources.yaml` + `test_skill_reference_freshness.py` (cheap CI staleness warn) + the documented `diff`-mode re-verification path (§8). *Done:* manifest covers every curated reference file with a real `verified_at_sha`; the staleness check warns on a deliberately-staled entry.
+- **Task 11 — Distribution check.** Plugin load (Claude + Codex, both roots), `bifrost skill update` round-trip from branch tarball (confirm nested `references/`+`generated/` materialize), version-bump dry run.
+- **Task 12 — Plugin version bump.** `scripts/update-plugin-version.sh "$(scripts/compute-dev-version.sh)"` (bumps all manifests). (RESUME task 4 — pairs with any `skills/` change.)
 
-## 9. Critical files
+## 11. Critical files
 
-- `.claude/skills/bifrost-build/SKILL.md` (+ new `references/`, `generated/`) — the artifact; symlinked from `skills/build`.
+- `.claude/skills/bifrost-build/SKILL.md` (+ new `references/`, `generated/`, `references/sources.yaml`) — the artifact; symlinked from `skills/build`.
 - `api/bifrost/commands/__init__.py` + `solution.py` + `workflows.py` — the Click tree the linter walks.
 - `api/bifrost/tables.py` ↔ `client/src/lib/app-sdk/tables.ts` — the two sides of the tables pain point.
 - `client/src/lib/app-sdk/index.v2.ts` — v2 SDK export surface (ground truth for web-sdk-v2.md / web-sdk-surface.md).
@@ -151,9 +186,11 @@ Follows 06-09 §7, with the validation loop expanded to two tracks. Each task ga
 - `api/bifrost/skill.py` — `bifrost skill update` fetch/write (verified recurses nested dirs).
 - `scripts/{update-plugin-version,compute-dev-version}.sh` — version bump.
 - `.github/workflows/ci.yml` — gate job + plugin-version guards.
-- `skills/migrate/SKILL.md` — the worked v1→v2 path `solutions.md` points at (do not duplicate).
+- `skills/migrate/SKILL.md` — the worked v1→v2 path `solutions.md` points at (do not duplicate); `skills/migrate` is a real dir, not a symlink (§9 reconciliation).
+- `.claude/skills/bifrost-documentation/SKILL.md` + `scripts/docs/bootstrap-manifest.mjs` — the proven manifest+diff freshness pattern §8 mirrors.
+- `.codex/skills/` AND `plugins/bifrost/skills/` — the two Codex mirror roots Gate 3 must reconcile (§9).
 
-## 10. Constraints
+## 12. Constraints
 
 - Worktree only; never two concurrent `./test.sh`; full pre-completion verification before claiming done; no client specifics in the public repo.
 - Solution-managed writes from deploy/sync/delete must use Core statements (the always-on read-only guard 500s on ORM-object mutation in prod but passes in isolated unit tests — install the guard in the test).
