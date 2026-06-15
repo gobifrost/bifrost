@@ -100,6 +100,27 @@ Non-obvious:
 - `--form-schema` is **required** (the CLI now errors `Missing option '--form-schema'` if omitted; `cli-reference.md` marks it `[required]`). Accepts YAML/JSON inline or `@path/to/schema.yaml`. Schema shape: `{fields: [...]}`.
 - `--workflow` / `--launch-workflow` accept portable refs (UUID, name, or `path::func`).
 
+Schema shape — each field is `{name, label, type, required, ...}`. Field `type` is one of: `text`, `email`, `number`, `select`, `multi_select`, `checkbox`, `textarea`, `radio`, `date`, `datetime`, `file`, `markdown`, `html`. A `select` / `multi_select` / `radio` field's choices go in `options`, which is a **list of `{value, label}` objects — NOT a list of strings**. Passing `options: ["low", "high"]` fails with `422 Input should be a valid dictionary`; the correct shape is:
+
+```yaml
+# schema.yaml
+fields:
+  - name: title
+    label: Task title
+    type: text
+    required: true
+  - name: priority
+    label: Priority
+    type: select
+    required: true
+    options:                 # list of {value, label} objects, never bare strings
+      - { value: low,    label: Low }
+      - { value: medium, label: Medium }
+      - { value: high,   label: High }
+```
+
+`value` is what the workflow receives; `label` is what the user sees. (`name` is the workflow parameter name; `label` is the field's display label — distinct from an option's `label`.)
+
 ---
 
 ## Agents
