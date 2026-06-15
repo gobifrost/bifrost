@@ -855,6 +855,43 @@ async def deploy_solution(
             detail="This install is git-connected; deploy is disabled (auto-pull is the only writer).",
         )
 
+    # Capture round-trip guard: an entity captured (UI/CLI) into this install but
+    # not yet pulled into source has a pending_captures row. If such an entity is
+    # absent from the incoming full-replace manifest, the reconcile sweep would
+    # silently DELETE it — so we 409-block instead and tell the caller to pull
+    # first. An entity absent with NO pending row is a genuine delete (source has
+    # demonstrably seen it), and proceeds unchanged. force=True bypasses the block.
+    if not body.force:
+        from src.models.orm.pending_capture import PendingCaptureORM
+        from src.services.solutions.pending import unpulled_blockers
+
+        manifest_ids: dict[str, set[str]] = {
+            "table": {str(t["id"]) for t in body.tables if t.get("id")},
+            "form": {str(f["id"]) for f in body.forms if f.get("id")},
+            "agent": {str(a["id"]) for a in body.agents if a.get("id")},
+            "config": {str(c["key"]) for c in body.config_schemas if c.get("key")},
+            "event": {str(e["id"]) for e in body.events if e.get("id")},
+            "claim": {str(c["id"]) for c in body.claims if c.get("id")},
+        }
+        pending_rows = (
+            await ctx.db.execute(
+                select(PendingCaptureORM.entity_type, PendingCaptureORM.entity_id).where(
+                    PendingCaptureORM.solution_id == solution_id
+                )
+            )
+        ).all()
+        blockers = unpulled_blockers([(t, i) for t, i in pending_rows], manifest_ids)
+        if blockers:
+            detail = ", ".join(f"{t}:{i}" for t, i in blockers)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"{len(blockers)} entity(ies) were captured into this solution but are "
+                    f"not in your source manifest: {detail}. Run `bifrost solution pull`, "
+                    f"then deploy (or deploy with force to override)."
+                ),
+            )
+
     # One writer per install (criterion 6): hold a per-install lock ACROSS the DB
     # commit AND the post-commit S3 finalize, so two concurrent deploys can't
     # interleave (A commits, B commits, then A's finalize uploads last → DB from

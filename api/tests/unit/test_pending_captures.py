@@ -16,6 +16,36 @@ from src.services.solutions.capture import (
     SolutionCaptureSelectors,
     SolutionCaptureService,
 )
+from src.services.solutions.pending import unpulled_blockers
+
+
+def _empty_manifest_ids() -> dict[str, set[str]]:
+    return {
+        "table": set(),
+        "form": set(),
+        "agent": set(),
+        "config": set(),
+        "event": set(),
+        "claim": set(),
+    }
+
+
+def test_unpulled_capture_blocks():
+    # one pending form, manifest does NOT contain it → blocker
+    blockers = unpulled_blockers([("form", "form-1")], _empty_manifest_ids())
+    assert blockers == [("form", "form-1")]
+
+
+def test_pulled_then_removed_is_not_blocked():
+    # genuine delete: entity absent from manifest AND no pending row
+    assert unpulled_blockers([], _empty_manifest_ids()) == []
+
+
+def test_pending_present_in_manifest_clears():
+    # captured AND now in the manifest (pulled) → not a blocker
+    manifest = _empty_manifest_ids()
+    manifest["form"] = {"form-1"}
+    assert unpulled_blockers([("form", "form-1")], manifest) == []
 
 
 async def _make_solution(db_session, slug: str = "test-sol") -> Solution:
