@@ -485,6 +485,25 @@ class SolutionCaptureResponse(BaseModel):
     config_declarations_captured: int = 0
 
 
+class PullAckEntity(BaseModel):
+    """One captured entity the client has materialized into source `.bifrost/`."""
+
+    entity_type: str  # table|form|agent|config|event|claim
+    entity_id: str  # entity id; for config, its key
+
+
+class PullAckRequest(BaseModel):
+    """Tell the server which pending_captures rows `bifrost solution pull`
+    materialized into source, so it can clear exactly those rows
+    (server-authoritative — a stale client can't clear what it didn't pull)."""
+
+    entities: list[PullAckEntity] = Field(default_factory=list)
+
+
+class PullAckResponse(BaseModel):
+    cleared: int = 0
+
+
 class SolutionSetupItem(BaseModel):
     """One declared requirement paired with whether it's satisfied.
 

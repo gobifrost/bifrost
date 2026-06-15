@@ -41,6 +41,8 @@ from src.models.contracts.solutions import (
     SolutionEntitySummary,
     SolutionExistingInstall,
     SolutionInstallPreview,
+    PullAckRequest,
+    PullAckResponse,
     SolutionReadme,
     SolutionReadmeUpdate,
     SolutionRepoPreviewRequest,
@@ -1036,6 +1038,45 @@ async def capture_solution_entities(
         claims_captured=result.claims_captured,
         config_declarations_captured=result.config_declarations_captured,
     )
+
+
+@router.post(
+    "/{solution_id}/pull/ack",
+    response_model=PullAckResponse,
+    summary="Clear pending_captures rows the client pulled into source (admin only)",
+)
+async def ack_pulled_captures(
+    solution_id: UUID, body: PullAckRequest, ctx: Context, user: CurrentSuperuser
+) -> PullAckResponse:
+    """Server-authoritative clear of pending_captures rows.
+
+    ``bifrost solution pull`` materializes captured entities into the workspace
+    ``.bifrost/`` manifest, then POSTs exactly what it wrote here so the server
+    deletes those queue rows. A stale client can only clear rows it names, so it
+    can't double-clear another client's un-pulled captures.
+    """
+    from sqlalchemy import and_, delete
+
+    from src.models.orm.pending_capture import PendingCaptureORM
+
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    cleared = 0
+    for ent in body.entities:
+        res = await ctx.db.execute(
+            delete(PendingCaptureORM).where(
+                and_(
+                    PendingCaptureORM.solution_id == solution_id,
+                    PendingCaptureORM.entity_type == ent.entity_type,
+                    PendingCaptureORM.entity_id == ent.entity_id,
+                )
+            )
+        )
+        cleared += res.rowcount or 0
+    await ctx.db.commit()
+    return PullAckResponse(cleared=cleared)
 
 
 @router.post(
