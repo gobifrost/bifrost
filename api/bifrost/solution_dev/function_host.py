@@ -69,11 +69,19 @@ def _load_module(py: Path, rel: str) -> ModuleType | None:
         return None
 
 
-def set_dev_execution_context(*, user: dict, org: dict | None) -> None:
+def set_dev_execution_context(
+    *, user: dict, org: dict | None, solution_id: str | None = None
+) -> None:
     """Configure the in-process execution context the local host runs under.
 
     Mirrors `bifrost run`'s context setup so locally-run functions see
     context.org_id/user_id and the data-plane runs under the chosen org.
+
+    ``solution_id`` is the resolved install id for this workspace. When set, the
+    host's functions resolve their OWN install-scoped tables/configs own-first
+    (the SDK appends ``?solution=``), matching the server engine — without it a
+    solution workflow run via ``solution start`` would read the ``_repo/``
+    cascade instead of its own data plane (F2).
     """
     import uuid as _uuid
 
@@ -100,6 +108,7 @@ def set_dev_execution_context(*, user: dict, org: dict | None) -> None:
         is_function_key=False,
         execution_id=f"solution-start-{_uuid.uuid4()}",
         workflow_name="solution-start",
+        solution_id=solution_id,
     )
     _set_execution_context(ctx)
 

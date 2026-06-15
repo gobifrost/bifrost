@@ -1027,6 +1027,44 @@ def _resolve_target_install(
     )
 
 
+def resolve_install_id_for_workspace(client, solution_root) -> str | None:
+    """Best-effort resolve the install id for a checked-out Solution workspace.
+
+    Used by the LOCAL execution paths (``bifrost run``, ``bifrost solution
+    start``) so a solution workflow run offline resolves its OWN install-scoped
+    data plane (tables/configs) instead of the ``_repo/`` cascade. The server
+    engine gets ``solution_id`` from the workflow's DB row; locally there is no
+    DB row, so we read the descriptor's (slug, scope) and look up the matching
+    install via ``/api/solutions``.
+
+    Fully defensive — returns ``None`` (callers then behave exactly as before)
+    when: not a solution workspace, no auth, the list endpoint is forbidden
+    (non-admin) or unreachable, no install exists yet, or the match is ambiguous.
+    Never raises; the offline loop must keep working even with no resolvable
+    install. (Platform-impact audit F1/F2.)
+    """
+    try:
+        from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
+
+        if solution_root is None or not is_solution_workspace(solution_root):
+            return None
+        descriptor = load_descriptor(solution_root)
+        resp = client._sync_http.get("/api/solutions")
+        if resp.status_code != 200:
+            return None
+        installs = resp.json().get("solutions", [])
+        org = client.organization or {}
+        deployer_org_id = org.get("id")
+        try:
+            return _resolve_target_install(
+                installs, descriptor.slug, descriptor.scope, deployer_org_id
+            )
+        except _AmbiguousInstall:
+            return None
+    except Exception:  # noqa: BLE001 — best-effort; never break the local run loop over install resolution
+        return None
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
@@ -1420,7 +1458,15 @@ def start_cmd(app_slug: str | None, org_ref: str | None, port: int) -> None:
     if main_tsx_needs_dev_fallback(main_tsx):
         click.echo(PATCH_HINT, err=True)
 
-    set_dev_execution_context(user=client.user, org=org_info)
+    # Resolve this install's id so the host's functions resolve their own
+    # solution-scoped data plane own-first, matching the server engine (F2).
+    dev_solution_id = resolve_install_id_for_workspace(client, workspace)
+    if dev_solution_id:
+        click.echo(f"Resolved Solution install id: {dev_solution_id}")
+
+    set_dev_execution_context(
+        user=client.user, org=org_info, solution_id=dev_solution_id
+    )
 
     host = FunctionHost(workspace)
     host.reload()

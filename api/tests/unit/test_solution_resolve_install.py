@@ -239,3 +239,98 @@ def test_deploy_other_409_unchanged(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "Deploy failed: 409" in result.output
     assert "--force" not in result.output
+
+
+# ── resolve_install_id_for_workspace (audit F1/F2: local-exec data plane) ────
+
+
+class _SyncResp:
+    def __init__(self, status_code: int, body: dict | None = None):
+        self.status_code = status_code
+        self._body = body or {}
+
+    def json(self):
+        return self._body
+
+
+class _SyncHTTP:
+    def __init__(self, resp: _SyncResp):
+        self._resp = resp
+
+    def get(self, path, **kwargs):
+        assert path == "/api/solutions"
+        return self._resp
+
+
+class _LocalRunFakeClient:
+    """A client exposing the SYNC surface the local-exec helper uses."""
+
+    def __init__(self, resp: _SyncResp, org_id: str | None = "org-1"):
+        self._sync_http = _SyncHTTP(resp)
+        self.organization = {"id": org_id} if org_id else None
+
+
+def _write_workspace(tmp_path, scope="org", slug="mysol"):
+    (tmp_path / "bifrost.solution.yaml").write_text(
+        f"slug: {slug}\nname: S\nscope: {scope}\n"
+    )
+    return tmp_path
+
+
+def test_resolve_install_id_resolves_org_install(tmp_path):
+    from bifrost.commands.solution import resolve_install_id_for_workspace
+
+    ws = _write_workspace(tmp_path, scope="org", slug="mysol")
+    client = _LocalRunFakeClient(
+        _SyncResp(200, {"solutions": [
+            {"id": "inst-1", "slug": "mysol", "organization_id": "org-1"},
+        ]}),
+        org_id="org-1",
+    )
+    assert resolve_install_id_for_workspace(client, ws) == "inst-1"
+
+
+def test_resolve_install_id_none_when_not_a_workspace(tmp_path):
+    from bifrost.commands.solution import resolve_install_id_for_workspace
+
+    # No descriptor at tmp_path.
+    client = _LocalRunFakeClient(_SyncResp(200, {"solutions": []}))
+    assert resolve_install_id_for_workspace(client, tmp_path) is None
+
+
+def test_resolve_install_id_none_on_forbidden_list(tmp_path):
+    """A non-admin dev whose /api/solutions is 403 degrades to None (the run
+    proceeds against the _repo/ cascade exactly as before)."""
+    from bifrost.commands.solution import resolve_install_id_for_workspace
+
+    ws = _write_workspace(tmp_path)
+    client = _LocalRunFakeClient(_SyncResp(403))
+    assert resolve_install_id_for_workspace(client, ws) is None
+
+
+def test_resolve_install_id_none_when_no_install_yet(tmp_path):
+    from bifrost.commands.solution import resolve_install_id_for_workspace
+
+    ws = _write_workspace(tmp_path, slug="mysol")
+    client = _LocalRunFakeClient(
+        _SyncResp(200, {"solutions": [
+            {"id": "other", "slug": "different", "organization_id": "org-1"},
+        ]}),
+    )
+    assert resolve_install_id_for_workspace(client, ws) is None
+
+
+def test_resolve_install_id_none_on_ambiguous(tmp_path):
+    """Two same-slug org installs in the caller's org → ambiguous → None (the
+    helper never guesses; it just declines to scope rather than crash the run)."""
+    from bifrost.commands.solution import resolve_install_id_for_workspace
+
+    ws = _write_workspace(tmp_path, scope="org", slug="mysol")
+    client = _LocalRunFakeClient(
+        _SyncResp(200, {"solutions": [
+            {"id": "i1", "slug": "mysol", "organization_id": "org-1"},
+            {"id": "i2", "slug": "mysol", "organization_id": "org-1"},
+        ]}),
+        org_id="org-1",
+    )
+    assert resolve_install_id_for_workspace(client, ws) is None

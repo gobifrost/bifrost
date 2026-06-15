@@ -1095,6 +1095,7 @@ def _run_direct(
     params: dict[str, Any],
     verbose: bool = False,
     organization_id: str | None = None,
+    solution_root: "pathlib.Path | None" = None,
 ) -> int:
     """
     Run a workflow directly in standalone mode.
@@ -1155,6 +1156,21 @@ def _run_direct(
             ) if org_info else None
             scope = org_info["id"] if org_info else "GLOBAL"
 
+            # When the workflow lives in a Solution workspace, resolve this
+            # install's id so its SDK data-plane calls (tables/configs) carry
+            # ?solution= and resolve the install's OWN entities own-first —
+            # mirroring the server engine's solution_id propagation (F1). Falls
+            # back to None (the _repo/ cascade) when not resolvable.
+            solution_id: str | None = None
+            if solution_root is not None:
+                from bifrost.commands.solution import (
+                    resolve_install_id_for_workspace,
+                )
+
+                solution_id = resolve_install_id_for_workspace(client, solution_root)
+                if verbose and solution_id:
+                    print(f"Resolved Solution install id: {solution_id}")
+
             ctx = ExecutionContext(
                 user_id=user_info.get("id", "cli-user"),
                 email=user_info.get("email", ""),
@@ -1165,6 +1181,7 @@ def _run_direct(
                 is_function_key=False,
                 execution_id=f"standalone-{uuid.uuid4()}",
                 workflow_name=selected_workflow,
+                solution_id=solution_id,
             )
             set_execution_context(ctx)
         except Exception:
@@ -1337,7 +1354,11 @@ def handle_run(args: list[str]) -> int:
             return 1
 
         params = inline_params if inline_params is not None else {}
-        return _run_direct(selected_workflow, workflows, params, verbose=verbose, organization_id=organization_id)
+        return _run_direct(
+            selected_workflow, workflows, params,
+            verbose=verbose, organization_id=organization_id,
+            solution_root=solution_root,
+        )
 
     # Interactive mode (--interactive) — browser-based session
     # Ensure user is authenticated (only needed for API-based flow)
