@@ -6,6 +6,15 @@ This file documents the CLI mutation surface for each entity group. The canonica
 
 For the exact generated flag list, see `generated/cli-reference.md`. For the REST passthrough escape hatch, see `references/rest-api.md`.
 
+**Unified `--org` standard (org targeting).** Every org-targeting command — `tables`, `forms`, `agents`, `configs`, `claims`, `workflows`, `events`, and the `solution` subcommands — takes the same flag:
+
+- **Omit it** → your own org ("home"). A bare command never writes a global entity by accident.
+- **`--org <uuid|name>`** → that org.
+- **`--global`** (or `--org none` / `--org global`) → global scope (`organization_id` NULL).
+- **`--organization` and `--scope`** are permanent synonyms for `--org`.
+
+(`claims` are always org-scoped: `--global` is rejected. `apps` and integration `add-mapping`/`update-mapping` predate the standard and keep their own `--organization`/`--scope` flags.)
+
 ---
 
 ## Organizations
@@ -288,12 +297,14 @@ An installable surface — a workspace (apps + workflows + tables + configs + fo
 Commands: `solution init / scaffold-app / start / deploy / install`
 
 ```bash
-bifrost solution init --slug my-solution --name "My Solution" --scope org
+bifrost solution init --slug my-solution --name "My Solution"
 bifrost solution scaffold-app my-app
-bifrost solution start [APP_SLUG]          # APP_SLUG is a positional (the apps/ dir name); optional --org <ref> / --port
-bifrost solution deploy
+bifrost solution start [APP_SLUG]          # APP_SLUG positional (the apps/ dir name); optional org targeting + --port
+bifrost solution deploy                    # your org; --global or --org <ref> targets elsewhere
 bifrost solution install solution.zip --org acme
 ```
+
+`solution init` carries **no install scope** — install kind (org vs global) is the deploy-time `--org`/`--global` choice (the unified standard, below), not a descriptor field.
 
 Non-obvious:
 - `deploy` (alias: `bifrost deploy`) full-replaces the install; refuses bundles older than the installed version unless `--force`.

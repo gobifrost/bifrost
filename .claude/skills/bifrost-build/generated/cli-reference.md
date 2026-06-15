@@ -32,6 +32,11 @@ Usage: agents create [OPTIONS]
   ``--delegated-agent-ids`` resolve each entry via the ref resolver before the
   body is sent.
 
+  Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+  agent to the caller's org, ``--global`` makes it global, ``--org <id|name>``
+  scopes it to that org. (Non-admins may only create private agents in their
+  own org regardless.)
+
 Options:
   --name TEXT                     name
   --description TEXT              description
@@ -39,7 +44,6 @@ Options:
   --channels TEXT                 channels (repeat for multiple).
   --access-level [authenticated|everyone|role_based|private]
                                   access_level
-  --organization TEXT             org ref (UUID or name) for organization_id.
   --tool-ids TEXT                 tool_ids (repeat for multiple; comma-split
                                   also accepted).
   --delegated-agent-ids TEXT      delegated_agent_ids (repeat for multiple;
@@ -54,6 +58,12 @@ Options:
   --llm-max-tokens INTEGER        llm_max_tokens
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -108,6 +118,9 @@ Usage: agents update [OPTIONS] REF
   :class:`RefResolver`; ambiguous names fail loudly with the candidate list.
   The verb is **PUT** per the cli-mutation-surface audit correction.
 
+  Passing ``--org``/``--global`` re-scopes the agent (HOME leaves the scope
+  unchanged, since omitting org sends no ``organization_id``).
+
 Options:
   --name TEXT                     name
   --description TEXT              description
@@ -115,7 +128,6 @@ Options:
   --channels TEXT                 channels (repeat for multiple).
   --access-level [authenticated|everyone|role_based|private]
                                   access_level
-  --organization TEXT             org ref (UUID or name) for organization_id.
   --is-active / --no-is-active    is_active (tri-state; omit to leave
                                   unchanged).
   --tool-ids TEXT                 tool_ids (repeat for multiple; comma-split
@@ -135,6 +147,12 @@ Options:
   --llm-max-tokens INTEGER        llm_max_tokens
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -336,14 +354,19 @@ Usage: claims create [OPTIONS]
   Create a custom claim.
 
 Options:
-  --name TEXT         name
-  --description TEXT  description
-  --type TEXT         type
-  --query TEXT        query as JSON literal or @path to a YAML/JSON file.
-  --scope TEXT        Target organization scope (org UUID). Defaults to
-                      caller's home org.
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --name TEXT                     name
+  --description TEXT              description
+  --type TEXT                     type
+  --query TEXT                    query as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `claims delete`
@@ -354,10 +377,14 @@ Usage: claims delete [OPTIONS] NAME
   Delete a custom claim by name.
 
 Options:
-  --scope TEXT  Target organization scope (org UUID). Defaults to caller's
-                home org.
-  --json        Emit JSON instead of human-readable output.
-  --help        Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `claims get`
@@ -368,10 +395,14 @@ Usage: claims get [OPTIONS] NAME
   Get a custom claim by name.
 
 Options:
-  --scope TEXT  Target organization scope (org UUID). Defaults to caller's
-                home org.
-  --json        Emit JSON instead of human-readable output.
-  --help        Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `claims list`
@@ -382,10 +413,14 @@ Usage: claims list [OPTIONS]
   List custom claims (superusers see all orgs by default).
 
 Options:
-  --scope TEXT  Target organization scope (org UUID). Defaults to caller's
-                home org.
-  --json        Emit JSON instead of human-readable output.
-  --help        Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `claims update`
@@ -396,13 +431,18 @@ Usage: claims update [OPTIONS] NAME
   Update a custom claim by name.
 
 Options:
-  --description TEXT  description
-  --type TEXT         type
-  --query TEXT        query as JSON literal or @path to a YAML/JSON file.
-  --scope TEXT        Target organization scope (org UUID). Defaults to
-                      caller's home org.
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --description TEXT              description
+  --type TEXT                     type
+  --query TEXT                    query as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ## `configs`
@@ -439,7 +479,12 @@ Options:
   --config-type [string|int|bool|json|secret]
                                   config_type
   --description TEXT              description
-  --organization TEXT             org ref (UUID or name) for organization_id.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -501,10 +546,19 @@ Usage: configs set [OPTIONS] KEY
   parameter, so filtering happens in the CLI. PUTs the existing row if found;
   POSTs otherwise. The result is idempotent from the caller's perspective.
 
+  Org targeting follows the unified ``--org`` standard: HOME (omit) targets
+  the caller's org, ``--global`` targets global, ``--org <id|name>`` targets
+  that org. The scope filter only narrows the upsert to an explicit scope when
+  one was given (GLOBAL or ORG); HOME falls back to key-only matching.
+
 Options:
   --value TEXT                    Config value (plain string).  [required]
-  --organization TEXT             Organization ref (UUID or name). Omit for
-                                  global scope.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --type [string|int|bool|json|secret]
                                   Config type (enum). On create, defaults to
                                   'string'. On update, omit to preserve the
@@ -573,11 +627,14 @@ Usage: events create-source [OPTIONS]
   each group is required when ``--source-type`` is ``schedule`` or
   ``webhook``, respectively — the API validates the shape.
 
+  Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+  source to the caller's org, ``--global`` makes it global, ``--org
+  <id|name>`` scopes it to that org.
+
 Options:
   --name TEXT                     name
   --source-type [webhook|schedule|topic]
                                   source_type
-  --organization TEXT             org ref (UUID or name) for organization_id.
   --event-type TEXT               event_type
   --cron TEXT                     Cron expression, e.g. '*/5 * * * *'
                                   (collapses into schedule config).
@@ -594,6 +651,12 @@ Options:
   --webhook-config TEXT           Webhook adapter config as JSON literal or
                                   @path/to/file.yaml (collapses into webhook
                                   config).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -686,11 +749,13 @@ Usage: events update-source [OPTIONS] REF
   as on ``create-source`` — if any flat schedule / webhook flag is supplied,
   the corresponding nested object is rebuilt and patched.
 
+  Passing ``--org``/``--global`` re-scopes the source (HOME leaves the scope
+  unchanged, since omitting org sends no ``organization_id``).
+
 Options:
   --name TEXT                     name
   --is-active / --no-is-active    is_active (tri-state; omit to leave
                                   unchanged).
-  --organization TEXT             org ref (UUID or name) for organization_id.
   --cron TEXT                     Cron expression, e.g. '*/5 * * * *'
                                   (collapses into schedule config).
   --timezone TEXT                 Schedule timezone, e.g. 'UTC' (collapses
@@ -706,6 +771,12 @@ Options:
   --webhook-config TEXT           Webhook adapter config as JSON literal or
                                   @path/to/file.yaml (collapses into webhook
                                   config).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -890,6 +961,10 @@ Usage: forms create [OPTIONS]
   ``path::func`` ref. ``--form-schema`` accepts a JSON literal or
   ``@path/to/schema.yaml`` — the file is loaded and embedded as a dict.
 
+  Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+  form to the caller's org, ``--global`` makes it global, ``--org <id|name>``
+  scopes it to that org.
+
 Options:
   --name TEXT                     name
   --description TEXT              description
@@ -903,9 +978,14 @@ Options:
                                   YAML/JSON file.
   --access-level [authenticated|everyone|role_based]
                                   access_level
-  --organization TEXT             org ref (UUID or name) for organization_id.
   --role-ids TEXT                 role_ids (repeat for multiple; comma-split
                                   also accepted).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -960,6 +1040,9 @@ Usage: forms update [OPTIONS] REF
   ambiguous names fail loudly with the candidate list. Unset flags are omitted
   from the payload so only the supplied fields are patched.
 
+  Passing ``--org``/``--global`` re-scopes the form (HOME leaves the scope
+  unchanged, since omitting org sends no ``organization_id``).
+
 Options:
   --name TEXT                     name
   --description TEXT              description
@@ -975,12 +1058,17 @@ Options:
                                   unchanged).
   --access-level [authenticated|everyone|role_based]
                                   access_level
-  --organization TEXT             org ref (UUID or name) for organization_id.
   --clear-roles / --no-clear-roles
                                   clear_roles (tri-state; omit to leave
                                   unchanged).
   --role-ids TEXT                 role_ids (repeat for multiple; comma-split
                                   also accepted).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -1426,12 +1514,16 @@ Usage: solution deploy [OPTIONS] [PATH]
   Deploy the current Solution workspace (full replace, non-interactive).
 
 Options:
-  --solution TEXT  Target install id (override when ambiguous).
-  --org TEXT       Target org (UUID or name) to resolve-or-create the install
-                   in (default: your org).
-  --force          Apply even if the bundle version is older than the
-                   installed version (downgrade).
-  --help           Show this message and exit.
+  --solution TEXT                 Target install id (override when ambiguous).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --force                         Apply even if the bundle version is older
+                                  than the installed version (downgrade).
+  --help                          Show this message and exit.
 ```
 
 ### `solution export`
@@ -1465,7 +1557,6 @@ Options:
   --name TEXT                     Display name (defaults to slug).
   --version TEXT                  Bundle version recorded on the install at
                                   deploy time.  [default: 0.1.0]
-  --scope [org|global]            [default: org]
   --global-repo-access / --no-global-repo-access
                                   [default: no-global-repo-access]
   --help                          Show this message and exit.
@@ -1479,16 +1570,21 @@ Usage: solution install [OPTIONS] ZIP_PATH
   Install a Solution from a workspace zip (drag-and-drop equivalent).
 
 Options:
-  --org TEXT         Target org id (omit for a global install).
-  --set TEXT         Config value KEY=VALUE (repeatable). Applied atomically
-                     with the deploy.
-  --password TEXT    Decryption password for a full-backup zip (required when
-                     the zip carries secrets).
-  --replace-secrets  Overwrite existing config values when the zip carries
-                     conflicting secret values.
-  --replace-data     Overwrite existing table data when the zip carries
-                     conflicting rows.
-  --help             Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --set TEXT                      Config value KEY=VALUE (repeatable). Applied
+                                  atomically with the deploy.
+  --password TEXT                 Decryption password for a full-backup zip
+                                  (required when the zip carries secrets).
+  --replace-secrets               Overwrite existing config values when the
+                                  zip carries conflicting secret values.
+  --replace-data                  Overwrite existing table data when the zip
+                                  carries conflicting rows.
+  --help                          Show this message and exit.
 ```
 
 ### `solution migrate-app`
@@ -1515,10 +1611,14 @@ Usage: solution pull [OPTIONS] [PATH]
   source code).
 
 Options:
-  --solution TEXT  Target install id (override when ambiguous).
-  --org TEXT       Target org (UUID or name) to resolve the install in
-                   (default: your org).
-  --help           Show this message and exit.
+  --solution TEXT                 Target install id (override when ambiguous).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
 ```
 
 ### `solution scaffold-app`
@@ -1544,9 +1644,14 @@ Usage: solution start [OPTIONS] [APP_SLUG]
   Run the app's dev server + local workflows (one origin).
 
 Options:
-  --org TEXT      Org ref (UUID or name) to run under (superuser).
-  --port INTEGER  Local origin port.  [default: 3000]
-  --help          Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --port INTEGER                  Local origin port.  [default: 3000]
+  --help                          Show this message and exit.
 ```
 
 ### `solution swap-slugs`
@@ -1591,14 +1696,25 @@ Usage: tables create [OPTIONS]
   same shape and embeds row-level access policies; see
   ``docs/superpowers/specs/2026-04-30-table-policies-design.md``.
 
+  Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+  table to the caller's org, ``--global`` makes it global, ``--org <id|name>``
+  scopes it to that org.
+
 Options:
-  --name TEXT          name
-  --description TEXT   description
-  --schema TEXT        schema as JSON literal or @path to a YAML/JSON file.
-  --organization TEXT  org ref (UUID or name) for organization_id.
-  --policies TEXT      policies as JSON literal or @path to a YAML/JSON file.
-  --json               Emit JSON instead of human-readable output.
-  --help               Show this message and exit.
+  --name TEXT                     name
+  --description TEXT              description
+  --schema TEXT                   schema as JSON literal or @path to a
+                                  YAML/JSON file.
+  --policies TEXT                 policies as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `tables delete`
@@ -1809,6 +1925,10 @@ Usage: workflows register [OPTIONS]
   or the file editor). This command indexes a ``@workflow`` / ``@tool`` /
   ``@data_provider`` function so it becomes executable via the API.
 
+  Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
+  workflow to the caller's org, ``--global`` makes it global, ``--org
+  <id|name>`` scopes it to that org.
+
   ``--access-level`` and ``--role-ids`` set the workflow's access controls at
   registration time, mirroring the create-time surface for forms and apps.
   Role refs accept names or UUIDs and are resolved before the request.
@@ -1819,8 +1939,12 @@ Options:
                                   [required]
   --function-name TEXT            Name of the decorated function to register.
                                   [required]
-  --org TEXT                      Organization ref (UUID or name) to scope the
-                                  workflow to; omit for global.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --access-level [authenticated|everyone|role_based]
                                   Access level for the workflow. Omit to leave
                                   at default.
