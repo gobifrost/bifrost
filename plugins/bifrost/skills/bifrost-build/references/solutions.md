@@ -69,18 +69,29 @@ Installs a packaged solution (drag-and-drop equivalent). Use `--set KEY=VALUE` t
 
 ---
 
-## Entities in a Solution — the open question (TBD)
+## Getting forms, agents, tables, and configs into a Solution
 
-**Getting forms, agents, tables, and configs into a solution workspace is being pinned down by live validation (Task 11).** Two mechanisms are under consideration:
+A solution owns these entities the same way it owns apps and workflows: deploy writes them, and they are read-only afterwards. There are two ways content arrives in the workspace manifest deploy reads.
 
-- **`bifrost solution capture <solution-id>`** — author an entity in a scratch/global context (via CLI or MCP), then capture it into the solution's deploy bundle by ID or name.
-- **Deploy-time manifest** — declare entities inline in `bifrost.solution.yaml` so deploy creates them on first install.
+**Path A — capture an existing entity (the migration road).** Author a form/agent/table/config in a scratch or global context (CLI or MCP), then adopt it into the install:
+
+```bash
+bifrost solution capture <solution-id> --table <id> --form <id> --agent <id> --config <KEY>
+bifrost solution pull          # bring the captured entities into source .bifrost/
+bifrost solution deploy        # ship them
+```
+
+The capture flags are singular and repeatable: `--table`, `--form`, `--agent`, `--config`, `--claim`, `--workflow`, `--app` (each takes a name or id; `--config` takes a key).
+
+Capture stamps ownership server-side but does **not** write source. `bifrost solution pull` materializes the captured entities into the workspace `.bifrost/*.yaml` manifest (it touches only `.bifrost/`, never your `apps/` or `functions/` source — safe to run any time). Then deploy ships them.
+
+**The deploy guard:** because deploy is full-replace, an entity captured in the UI/CLI but absent from your source manifest would be deleted by the reconcile sweep. To prevent silent loss, **deploy 409-blocks** if a captured-but-unpulled entity is missing from the manifest, naming it and telling you to `bifrost solution pull` first. An entity you previously pulled and then deliberately removed from the manifest is a genuine delete and proceeds. So the rule is simple: **after any capture, run `bifrost solution pull` before `bifrost solution deploy`.**
+
+**Path B — author from scratch.** The `bifrost:migrate` skill scaffolds a complete solution (including its forms/agents/tables) end-to-end; invoke it as a Claude skill (not a CLI command) when starting fresh.
 
 What is settled:
-- Live entity create/update commands against a solution-managed record **409s** — do not do this.
-- Local YAML in the workspace is **not** a mechanism — the manifest is platform-dev plumbing, not a user workspace feature.
-
-Do not assert either candidate mechanism as the one true path until validation confirms it. **Until then, the worked path is the `bifrost:migrate` skill** — a Claude skill you invoke, NOT a `bifrost` CLI command. Use it to scaffold a complete solution instead of guessing the entity mechanism.
+- Live entity create/update commands against a solution-managed record **409** — deploy owns those records.
+- Local hand-edited YAML in `.bifrost/` is not the authoring surface — capture + pull generate it. The manifest is machine-managed.
 
 ---
 

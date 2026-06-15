@@ -409,6 +409,7 @@
 | GET | `/api/solutions/{solution_id}/entities` |
 | POST | `/api/solutions/{solution_id}/export` |
 | GET | `/api/solutions/{solution_id}/logo` |
+| POST | `/api/solutions/{solution_id}/pull/ack` |
 | GET | `/api/solutions/{solution_id}/readme` |
 | PUT | `/api/solutions/{solution_id}/readme` |
 | GET | `/api/solutions/{solution_id}/setup` |

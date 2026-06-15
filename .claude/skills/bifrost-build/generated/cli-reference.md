@@ -1387,6 +1387,7 @@ Commands:
   init          Scaffold a bifrost.solution.yaml descriptor.
   install       Install a Solution from a workspace zip (drag-and-drop...
   migrate-app   Migrate a v1 inline app dir to a scaffolded standalone_v2...
+  pull          Pull captured entities into the local .bifrost/ manifest...
   scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
   start         Run the app's dev server + local workflows (one origin).
   swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
@@ -1503,6 +1504,21 @@ Options:
   --title TEXT    App display title (default: the v2 slug).
   --api-url TEXT  Instance URL the app resolves `bifrost` from.
   --help          Show this message and exit.
+```
+
+### `solution pull`
+
+```
+Usage: solution pull [OPTIONS] [PATH]
+
+  Pull captured entities into the local .bifrost/ manifest (does not touch
+  source code).
+
+Options:
+  --solution TEXT  Target install id (override when ambiguous).
+  --org TEXT       Target org (UUID or name) to resolve the install in
+                   (default: your org).
+  --help           Show this message and exit.
 ```
 
 ### `solution scaffold-app`
