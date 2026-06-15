@@ -243,6 +243,17 @@ All 3 agents had **fully green scorecards** (workflow register+execute, table/fo
 
 Streak 0; next batch tests these fixes. Broad SDK/CLI coverage this batch: tables (insert/query attr-access at runtime ✓), config.get-in-workflow (cascade ✓), `bifrost run` local exec, configs/agents/forms/workflows/tables/orgs/roles/events/integrations CLI + REST executions.
 
+### BW-batch 2 — 3 Sonnet in PARALLEL; 0/3; 2 real fixes + 1 claim EMPIRICALLY DEBUNKED
+
+(The first BW-batch-2 attempt `wcw06j6n1` died mid-run when a turn was cut off — agent transcripts stopped, result file empty, task vanished; Jack flagged "no agents running" and I re-ran it fresh as `w0doop7ok`.) All 3 agents green scorecards + `org_ok: true`; the BW-batch-1 `--org`-is-write-only fix HELD (all 3 confirmed `list`/`get` reject `--org`). 2 real findings:
+
+1. **`tables list --json` / `apps list --json` return wrapped dicts** (`{"tables":[...],"total":N}` / `{"applications":...}`) while every other entity `list --json` returns a bare array — hit by 2 agents; iterating the dict raises `TypeError`. VERIFIED by driving the CLI (`tables`→dict, `apps`→dict, `forms`→bare array). repo.md/entities.md didn't call it out. → Added a "list --json shape is NOT uniform" note to both Discovery sections.
+2. **`forms create --form-schema` is REQUIRED** (422 without it) but entities.md framed it as "non-obvious"/optional (agent 3). VERIFIED. → Marked it **required** in entities.md (the repo.md example already had it from B1).
+
+**EMPIRICALLY DEBUNKED — the `agents update` "pre-update response" claim.** BW1-agent1 AND BW2-agent1 both claimed `agents update --json` echoes the PRE-update record. I did NOT document it in BW1 (code contradicted it: the PUT handler applies the fields then reloads + returns fresh state, agents.py:699-704 + 824-835). With a 2nd agent repeating it, I **drove the CLI directly** (`/tmp/bifrost-verify-agentupd`): create agent "ORIGINAL prompt" → `agents update --system-prompt "UPDATED prompt v2" --json` → **response showed `UPDATED prompt v2`** (fresh, correct) → `agents get` confirmed. **The claim is FALSE** — both agents misread (likely a stale captured variable). NOT documented. (Lesson reinforced: two agents agreeing ≠ true; reproduce against the running system — `feedback_org_scoping_blocker2_retracted`. Good that BW1's discipline held; BW2's reproduction settled it.)
+
+Streak 0; next batch tests the list-shape + form-schema-required notes.
+
 ---
 
 ## Platform design questions surfaced during validation (NOT skill bugs — for the platform side)

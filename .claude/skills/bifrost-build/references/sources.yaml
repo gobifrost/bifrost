@@ -20,7 +20,7 @@ references:
   - file: references/entities.md
     source_globs:
       - api/bifrost/commands/*.py
-    verified_at_sha: a254ac039dd8c4c2d53772bdf2123e59b604e094
+    verified_at_sha: 5b13796c110f49e61fc32147ad2e1579135720a0
 
   - file: references/import-patterns.md
     source_globs:
@@ -48,7 +48,7 @@ references:
     source_globs:
       - api/bifrost/cli.py
       - api/bifrost/commands/*.py
-    verified_at_sha: a254ac039dd8c4c2d53772bdf2123e59b604e094
+    verified_at_sha: 5b13796c110f49e61fc32147ad2e1579135720a0
 
   - file: references/rest-api.md
     source_globs:

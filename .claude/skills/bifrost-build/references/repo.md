@@ -122,6 +122,8 @@ bifrost events list-sources --json
 bifrost events list-subscriptions <source-ref> --json
 ```
 
+**`list --json` shape is NOT uniform:** `tables list` → `{"tables": [...], "total": N}` and `apps list` → `{"applications": [...], "total": N}` (wrapped dicts); the rest (`workflows`/`forms`/`agents`/`configs`/`orgs`/`roles`) return a **bare array**. Read `tables`/`apps` rows from the `.tables`/`.applications` key when scripting.
+
 For anything without a dedicated command, fall back to the authenticated REST passthrough:
 
 ```bash

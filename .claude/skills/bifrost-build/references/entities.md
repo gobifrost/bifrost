@@ -4,6 +4,8 @@ This file documents the CLI mutation surface for each entity group. The canonica
 
 **Core rule (global `_repo` workspace):** `.bifrost/` is export-only. Never read it for entity discovery — use the `list` and `get` subcommands for each entity group. All CLI commands accept `--json` for machine-readable output. Refs resolve by UUID, name, or portable ref (e.g. `path::function` for workflows, slug for apps). (**Solution workspaces differ** — there `.bifrost/*.yaml` is the deploy-read manifest and editing entity *content fields* there is the documented update path; see `references/solutions.md`.)
 
+**`list --json` response shape is NOT uniform:** `tables list` returns `{"tables": [...], "total": N}` and `apps list` returns `{"applications": [...], "total": N}` (wrapped dicts), while `forms`/`agents`/`workflows`/`configs`/`orgs`/`roles` `list` return a **bare JSON array**. When scripting, read `tables`/`apps` rows from the `.tables`/`.applications` key — iterating the dict directly raises `TypeError`.
+
 For the exact generated flag list, see `generated/cli-reference.md`. For the REST passthrough escape hatch, see `references/rest-api.md`.
 
 **Unified `--org` standard (org targeting).** Every org-targeting **write** command — the `create` / `update` / `set` / `register` verbs of `tables`, `forms`, `agents`, `configs`, `claims`, `workflows`, `events`, and the `solution` subcommands — takes the same flag:
@@ -95,7 +97,7 @@ bifrost forms update <ref> --name "Onboarding" --workflow new-wf-uuid
 ```
 
 Non-obvious:
-- `--form-schema` accepts YAML/JSON inline or `@path/to/schema.yaml`. Schema shape: `{fields: [...]}`.
+- `--form-schema` is **required** (create 422s `form_schema: Field required` without it). Accepts YAML/JSON inline or `@path/to/schema.yaml`. Schema shape: `{fields: [...]}`.
 - `--workflow` / `--launch-workflow` accept portable refs (UUID, name, or `path::func`).
 
 ---
