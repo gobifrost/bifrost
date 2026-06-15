@@ -141,6 +141,9 @@ def _validate_invocation(
 
         for tok in tokens[3:]:
             # Only check --flag tokens; skip positional args and --flag=value values.
+            # (Positional-arg arity isn't validated: doc examples use quoted
+            # multi-word values and trailing comments that make a reliable
+            # positional count infeasible without a real Click parse.)
             flag = tok.split("=")[0]
             if flag.startswith("--") and flag not in valid:
                 findings.append(

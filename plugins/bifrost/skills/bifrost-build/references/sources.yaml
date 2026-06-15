@@ -15,7 +15,7 @@ references:
       - api/bifrost/commands/apps.py
       - client/src/lib/app-sdk/*.ts
       - client/src/lib/app-sdk/*.tsx
-    verified_at_sha: 0acfe992366829409fd852e0d68627de258fc857
+    verified_at_sha: 3b0c41622c2ec7c1a6ca3412793fa76ae3288fdb
 
   - file: references/entities.md
     source_globs:

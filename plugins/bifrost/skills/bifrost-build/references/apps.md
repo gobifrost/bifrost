@@ -30,32 +30,46 @@ my-solution/
   bifrost.solution.yaml   # Solution descriptor
 ```
 
-The app's `main.tsx` wraps the tree in `<BifrostProvider>`. **Use the `main.tsx` that `bifrost solution scaffold-app` writes — do not hand-roll it.** It reads a per-viewer bootstrap (base URL, token, org scope, mount element) the platform injects at runtime, keyed by this entry's nonce so multiple apps on one page don't read each other's bootstrap, and falls back to Vite env vars for local dev:
+The app's `main.tsx` wraps the tree in `<BifrostProvider>`. **Use the `main.tsx` that `bifrost solution scaffold-app` writes verbatim — do not hand-roll it or copy a snippet from memory.** It reads a per-viewer bootstrap (base URL, token, org scope, app id, theme, mount element) the platform injects at runtime, keyed by this entry's nonce so multiple apps on one page don't read each other's bootstrap, and falls back to Vite env vars for local dev. The scaffold's actual shape (do not retype this — let `scaffold-app` write it):
 
 ```tsx
-import { BifrostProvider } from "bifrost";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import { BifrostProvider } from "bifrost";
 import App from "./App";
+import "./index.css";
 
-// The platform injects a per-viewer bootstrap; main.tsx reads THIS entry's
-// nonce so co-mounted apps don't cross-read. Locally, Vite env vars fill in.
-const __m = (document.currentScript as HTMLScriptElement | null)?.dataset?.m;
+// Read THIS entry's nonce from its own module URL (NOT document.currentScript —
+// that's null for module scripts the platform loads) and prefer the registry so
+// co-mounted apps don't cross-read; fall back to the legacy single object, then
+// to Vite env for `npm run dev`.
+const __m = new URL(import.meta.url).searchParams.get("m");
 const boot =
   (__m && window.__BIFROST_APPS__ && window.__BIFROST_APPS__[__m]) ||
   window.__BIFROST_APP__;
+const mountEl = boot?.mountEl ?? document.getElementById("root")!;
+const basename = boot?.basename ?? "/";
 const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
 const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
 const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
-const mountEl = boot?.mountEl ?? document.getElementById("root")!;
+const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;
+const theme = boot?.theme ?? "light";
 
-createRoot(mountEl).render(
-  <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope}>
-    <App />
-  </BifrostProvider>
+const root = createRoot(mountEl);
+boot?.registerUnmount?.(() => root.unmount());   // platform tears the root down on nav
+root.render(
+  <StrictMode>
+    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} appId={appId} theme={theme} supportsTheme onLogout={boot?.onLogout}>
+      <BrowserRouter basename={basename}>
+        <App />
+      </BrowserRouter>
+    </BifrostProvider>
+  </StrictMode>,
 );
 ```
 
-(The old `window.__BIFROST_API_URL__` / `window.__BIFROST_TOKEN__` globals are a stale single-app pattern — the current boot protocol is the nonce-keyed registry above. Just keep the scaffolded `main.tsx`.)
+(The old `window.__BIFROST_API_URL__` / `window.__BIFROST_TOKEN__` globals AND `document.currentScript?.dataset?.m` are stale — the current boot protocol is the `new URL(import.meta.url)` nonce + registry above. Just keep the scaffolded `main.tsx`.)
 
 Imports in a **v2 standalone app** (this is NOT the v1 surface — see the warning below):
 - **SDK hooks/providers ONLY come from `"bifrost"`**: `import { BifrostProvider, BifrostHeader, useWorkflowQuery, useWorkflowMutation, useWorkflow, useTable, useInfiniteTable, tables } from "bifrost"`. That export list is the whole SDK — see `references/web-sdk-v2.md` / `generated/web-sdk-surface.md`. Nothing else lives in `"bifrost"`.
@@ -323,7 +337,7 @@ What is NOT supported: Tailwind plugins beyond `@tailwindcss/typography`; `@sour
 For apps where each user manages their own rows:
 
 ```bash
-bifrost tables create my_tasks --policies '{"policies":[
+bifrost tables create --name my_tasks --policies '{"policies":[
   {"name":"admin_bypass","actions":["read","create","update","delete"],"when":{"user":"is_platform_admin"}},
   {"name":"own_row","actions":["read","create","update","delete"],"when":{"eq":[{"row":"created_by"},{"user":"user_id"}]}}
 ]}'
