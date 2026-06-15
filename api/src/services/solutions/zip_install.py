@@ -124,6 +124,9 @@ class PreviewResult:
     # Each: {integration_name, template, position}. Install pre-creates an empty
     # integration shell and persists a SolutionConnectionSchema row from each.
     connection_schemas: list[dict[str, Any]] = field(default_factory=list)
+    # Event/schedule triggers read from .bifrost/events.yaml. Each is a
+    # ManifestEventSource-shaped dict (source + schedule/webhook + subscriptions).
+    events: list[dict[str, Any]] = field(default_factory=list)
     # Long-form README markdown read from the repo-root README.md (Task 6).
     readme: str | None = None
     # True when the zip contains .bifrost/secrets.enc (a full-backup export).
@@ -157,6 +160,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         _collect_claims,
         _collect_config_schemas,
         _collect_connection_schemas,
+        _collect_events,
         _collect_forms,
         _collect_tables,
         _collect_workflows,
@@ -190,6 +194,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
         connection_schemas=_collect_connection_schemas(workspace),
+        events=_collect_events(workspace),
         readme=_read_readme(workspace),
         requires_password=requires_password,
     )
@@ -311,6 +316,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
         claims=preview.claims,
         config_schemas=preview.config_schemas,
         connection_schemas=preview.connection_schemas,
+        events=preview.events,
         version=preview.version,
         logo_b64=logo_b64,
         logo_content_type=logo_content_type,

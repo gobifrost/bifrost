@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -26,6 +26,12 @@ from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.config import Config
 from src.models.orm.custom_claims import CustomClaim
+from src.models.orm.events import (
+    EventSource,
+    EventSubscription,
+    ScheduleSource,
+    WebhookSource,
+)
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution
@@ -51,6 +57,7 @@ class SolutionCaptureSelectors:
     agents: list[UUID]
     claims: list[UUID]
     configs: list[str]
+    events: list[UUID] = field(default_factory=list)
 
 
 @dataclass
@@ -62,6 +69,7 @@ class SolutionCaptureResult:
     agents_captured: int = 0
     claims_captured: int = 0
     config_declarations_captured: int = 0
+    events_captured: int = 0
 
 
 logger = logging.getLogger(__name__)
@@ -121,6 +129,7 @@ class SolutionCaptureService:
         await self._capture_model(Agent, solution, selectors.agents)
         await self._capture_model(CustomClaim, solution, selectors.claims)
         await self._capture_configs(solution, selectors.configs)
+        await self._capture_events(solution, selectors.events)
         await self.db.flush()
 
         return SolutionCaptureResult(
@@ -131,7 +140,25 @@ class SolutionCaptureService:
             agents_captured=len(set(selectors.agents)),
             claims_captured=len(set(selectors.claims)),
             config_declarations_captured=len(set(selectors.configs)),
+            events_captured=len(set(selectors.events)),
         )
+
+    async def _capture_events(self, solution: Solution, ids: list[UUID]) -> None:
+        """Adopt EventSources (+ their subscriptions) into the install.
+
+        Reuses ``_capture_model`` for the EventSource row (scope rules, ownership
+        guard, org re-stamp), then stamps ``solution_id`` on the source's
+        EventSubscription rows so they too become managed. Child schedule/webhook
+        rows are owned transitively via their EventSource FK cascade — no
+        ``solution_id`` of their own.
+        """
+        await self._capture_model(EventSource, solution, ids)
+        for source_id in dict.fromkeys(ids):
+            await self.db.execute(
+                update(EventSubscription)
+                .where(EventSubscription.event_source_id == source_id)
+                .values(solution_id=solution.id)
+            )
 
     async def _capture_model(
         self, model: type, solution: Solution, ids: list[UUID]
@@ -277,6 +304,7 @@ class SolutionCaptureService:
         claims = await self._claim_entries(solution.id)
         config_schemas = await self._config_entries(solution.id)
         connection_schemas = await self._connection_entries(solution.id)
+        events = await self._event_entries(solution.id)
         python_files = await self._python_files(
             workflows, include_imports=include_imports
         )
@@ -297,6 +325,7 @@ class SolutionCaptureService:
             claims=claims,
             config_schemas=config_schemas,
             connection_schemas=connection_schemas,
+            events=events,
             readme=solution.readme,
             version=solution.version,
             config_values=config_values,
@@ -328,6 +357,51 @@ class SolutionCaptureService:
                 "roles": roles,
                 "role_names": await self._role_names(roles),
             }))
+        return out
+
+    async def _event_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        """Portable trigger entries for this install's managed EventSources.
+
+        Each entry is a ManifestEventSource-shaped dict (source + nested
+        schedule/webhook config + subscriptions). Built via the canonical
+        ``serialize_event_source`` (same code git-sync uses), which already
+        OMITS the webhook instance secrets (``state``/``external_id``/
+        ``expires_at``) — only the portable ``config`` travels. The instance
+        re-establishes the external subscription + binds ``integration_id`` after
+        install.
+        """
+        from src.services.manifest_generator import serialize_event_source
+
+        sources = (
+            await self.db.execute(
+                select(EventSource).where(EventSource.solution_id == solution_id)
+            )
+        ).scalars().all()
+        out: list[dict[str, Any]] = []
+        for es in sources:
+            schedule = (
+                await self.db.execute(
+                    select(ScheduleSource).where(
+                        ScheduleSource.event_source_id == es.id
+                    )
+                )
+            ).scalar_one_or_none()
+            webhook = (
+                await self.db.execute(
+                    select(WebhookSource).where(
+                        WebhookSource.event_source_id == es.id
+                    )
+                )
+            ).scalar_one_or_none()
+            subs = (
+                await self.db.execute(
+                    select(EventSubscription).where(
+                        EventSubscription.event_source_id == es.id
+                    )
+                )
+            ).scalars().all()
+            manifest = serialize_event_source(es, schedule, webhook, list(subs))
+            out.append(manifest.model_dump(mode="json"))
         return out
 
     async def _table_entries(self, solution_id: UUID) -> list[dict[str, Any]]:

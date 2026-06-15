@@ -146,6 +146,16 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                 ),
             )
 
+        # Event/schedule triggers — keyed by EventSource id. Webhook instance
+        # secrets are already scrubbed by capture (serialize_event_source omits
+        # state/external_id/expires_at); the portable definition + subscriptions
+        # travel, the instance re-establishes external state after install.
+        if bundle.events:
+            put(
+                ".bifrost/events.yaml",
+                _manifest_yaml("events", {str(e["id"]): dict(e) for e in bundle.events}),
+            )
+
         # ── Long-form README markdown at the repo root (deploy-owned) ────────
         if bundle.readme:
             put("README.md", bundle.readme)

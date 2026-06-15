@@ -854,6 +854,11 @@ def _collect_agents(workspace: pathlib.Path) -> list[dict]:
     return _collect_manifest_entities(workspace, "agents.yaml", "agents")
 
 
+def _collect_events(workspace: pathlib.Path) -> list[dict]:
+    """Read event/schedule triggers from .bifrost/events.yaml (keyed by EventSource UUID)."""
+    return _collect_manifest_entities(workspace, "events.yaml", "events")
+
+
 # Text source files sent inline as UTF-8 in ``src_files``. Everything else in
 # the app dir (PNG/JPG/fonts, files under public/, etc.) is a real build input
 # too — a Vite app commonly `import logo from './logo.png'` — so it's carried as
