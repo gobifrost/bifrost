@@ -55,7 +55,7 @@ from bifrost import integrations
 # Get the integration config for the calling org's mapping
 data = await integrations.get("halopsa")
 # data.config: dict of config key→value
-# data.oauth_token: OAuth token if set
+# data.oauth: OAuthCredentials | None (attribute access — e.g. data.oauth.access_token)
 
 # Get or create a per-entity mapping (e.g. sub-tenant)
 mapping = await integrations.get_mapping("halopsa", entity_id="tenant-123")

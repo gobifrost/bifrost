@@ -42,7 +42,7 @@ references:
   - file: references/python-sdk.md
     source_globs:
       - api/bifrost/*.py
-    verified_at_sha: 6733fc93b4654b1c348453488b691328c41c7437
+    verified_at_sha: e757b85df16aae69cceb91aca6c12f4eaab71b97
 
   - file: references/repo.md
     source_globs:
@@ -66,7 +66,7 @@ references:
       - client/src/lib/app-sdk/tables.ts
       - client/src/lib/app-sdk/use-table.ts
       - api/src/routers/tables.py
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+    verified_at_sha: e757b85df16aae69cceb91aca6c12f4eaab71b97
 
   - file: references/web-sdk-v2.md
     source_globs:

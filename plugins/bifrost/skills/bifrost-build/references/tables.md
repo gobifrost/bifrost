@@ -163,7 +163,7 @@ one-shot reads.
 | Access denied (403) | Raises HTTP exception upstream | Throws `TableAccessDeniedError` |
 
 ```typescript
-import { TableAccessDeniedError, TableNotFoundError } from "@/lib/app-sdk/tables";
+import { tables, TableAccessDeniedError, TableNotFoundError } from "bifrost";
 
 try {
     const row = await tables.get("tickets", id);
