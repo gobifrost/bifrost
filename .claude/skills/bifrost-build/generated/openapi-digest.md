@@ -89,6 +89,7 @@
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |
+| DELETE | `/api/branding/application-name` |
 | DELETE | `/api/branding/color` |
 | DELETE | `/api/branding/logo/{logo_type}` |
 | GET | `/api/branding/logo/{logo_type}` |
