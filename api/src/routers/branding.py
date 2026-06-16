@@ -31,6 +31,7 @@ MAX_LOGO_SIZE = 5 * 1024 * 1024  # 5MB
 def _branding_response(branding: GlobalBranding | None) -> BrandingSettings:
     if not branding:
         return BrandingSettings(
+            application_name=None,
             square_logo_url=None,
             rectangle_logo_url=None,
             primary_color=None,
@@ -38,6 +39,7 @@ def _branding_response(branding: GlobalBranding | None) -> BrandingSettings:
         )
 
     return BrandingSettings(
+        application_name=branding.application_name,
         primary_color=branding.primary_color,
         terminology=BrandingTerminology.model_validate(branding.terminology or {}),
         square_logo_url="/api/branding/logo/square" if branding.square_logo_data else None,
@@ -103,13 +105,20 @@ async def update_branding(
     branding_repo = BrandingRepository(ctx.db)
 
     terminology = request.terminology.model_dump(exclude_none=True) if request.terminology else None
+    # application_name defaults to None in the request DTO ("leave unchanged");
+    # only forward it to the repo when a value was provided. Clearing is done via
+    # DELETE /application-name.
+    extra: dict = {}
+    if request.application_name is not None:
+        extra["application_name"] = request.application_name
     branding = await branding_repo.set_branding(
         primary_color=request.primary_color,
         terminology=terminology,
+        **extra,
     )
 
     await ctx.db.commit()
-    logger.info(f"Primary color updated by {user.email}")
+    logger.info(f"Branding updated by {user.email}")
 
     return _branding_response(branding)
 
@@ -319,6 +328,35 @@ async def reset_color(
 
 
 @router.delete(
+    "/application-name",
+    response_model=BrandingSettings,
+    summary="Reset application name to default",
+    description="Remove custom application name and revert to default (superuser only)",
+)
+async def reset_application_name(
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> BrandingSettings:
+    """Reset application name to default."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only superusers can reset branding",
+        )
+
+    from src.repositories.branding import BrandingRepository
+    branding_repo = BrandingRepository(ctx.db)
+
+    # Clear application name (pass explicit None to clear, not the unchanged sentinel)
+    branding = await branding_repo.set_branding(application_name=None)
+
+    await ctx.db.commit()
+    logger.info(f"Application name reset to default by {user.email}")
+
+    return _branding_response(branding)
+
+
+@router.delete(
     "",
     response_model=BrandingSettings,
     summary="Reset all branding to defaults",
@@ -345,6 +383,7 @@ async def reset_all_branding(
     logger.info(f"All branding reset to defaults by {user.email}")
 
     return BrandingSettings(
+        application_name=None,
         primary_color=None,
         square_logo_url=None,
         rectangle_logo_url=None,

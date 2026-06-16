@@ -38,8 +38,12 @@ class BrandingTerminology(BaseModel):
 
 class BrandingSettings(BaseModel):
     """Global platform branding configuration"""
+    application_name: str | None = Field(
+        default=None,
+        description="Product name shown in the UI (login, browser tab, header). Raw stored value; None when unset.",
+    )
     square_logo_url: str | None = Field(default=None, description="Square logo URL (for icons, 1:1 ratio)")
-    rectangle_logo_url: str | None = Field(default=None, description="Rectangle logo URL (for headers, 16:9 ratio)")
+    rectangle_logo_url: str | None = Field(default=None, description="Horizontal logo URL (for headers, ~4:1 ratio)")
     primary_color: str | None = Field(default=None, description="Primary brand color (hex format, e.g., #FF5733)")
     terminology: BrandingTerminology = Field(
         default_factory=BrandingTerminology,
@@ -63,6 +67,12 @@ class BrandingSettings(BaseModel):
 
 class BrandingUpdateRequest(BaseModel):
     """Request model for updating branding settings - logos use POST /logo/{type}"""
+    application_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=40,
+        description="Product name shown in the UI. Omit to leave unchanged; use the reset endpoint to clear.",
+    )
     primary_color: str | None = Field(default=None, description="Primary color (hex code, e.g., #0066CC)")
     terminology: BrandingTerminology | None = Field(
         default=None,

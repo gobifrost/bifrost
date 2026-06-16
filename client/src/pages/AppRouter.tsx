@@ -23,6 +23,7 @@ import {
 import { useApplication } from "@/hooks/useApplications";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDocumentChrome } from "@/lib/useDocumentChrome";
+import { useApplicationName } from "@/lib/applicationName";
 import { term, useTerminology } from "@/lib/terminology";
 import { BundledAppShell } from "@/components/jsx-app/BundledAppShell";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -36,6 +37,7 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 	const { applicationId: slugParam } = useParams();
 	const navigate = useNavigate();
 	const terminology = useTerminology();
+	const applicationName = useApplicationName();
 	const { hasRole } = useAuth();
 	const isEmbed = hasRole("EmbedUser");
 
@@ -52,8 +54,8 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 	useDocumentChrome({
 		title: application?.name
 			? preview
-				? `${application.name} (Preview) | Bifrost`
-				: `${application.name} | Bifrost`
+				? `${application.name} (Preview) | ${applicationName}`
+				: `${application.name} | ${applicationName}`
 			: undefined,
 		logo: application?.logo,
 		enabled: !isEmbed,
