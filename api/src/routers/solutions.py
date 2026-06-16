@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import zipfile
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated
@@ -1292,7 +1293,9 @@ async def install_preview_repo(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
-        if not (root / "bifrost.solution.yaml").is_file():
+        _r = os.path.realpath(root)
+        _marker = os.path.realpath(os.path.join(_r, "bifrost.solution.yaml"))
+        if not _marker.startswith(_r + os.sep) or not os.path.isfile(_marker):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"No bifrost.solution.yaml at "
@@ -1348,7 +1351,9 @@ async def install_from_repo(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
-        if not (root / "bifrost.solution.yaml").is_file():
+        _r = os.path.realpath(root)
+        _marker = os.path.realpath(os.path.join(_r, "bifrost.solution.yaml"))
+        if not _marker.startswith(_r + os.sep) or not os.path.isfile(_marker):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"No bifrost.solution.yaml at "

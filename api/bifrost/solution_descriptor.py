@@ -63,12 +63,11 @@ class SolutionDescriptor(BaseModel):
 
 def is_solution_workspace(path: Path | str) -> bool:
     """True if ``path`` (a dir) contains a ``bifrost.solution.yaml``."""
-    p = Path(path)
-    if p.is_dir():
-        root = os.path.realpath(p)
-        target = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
-        return target.startswith(root + os.sep) and Path(target).is_file()
-    return p.is_file()
+    real = os.path.realpath(path)
+    if os.path.isdir(real):
+        target = os.path.realpath(os.path.join(real, DESCRIPTOR_FILENAME))
+        return target.startswith(real + os.sep) and os.path.isfile(target)
+    return os.path.isfile(real)
 
 
 def find_solution_root(start: Path | str) -> Path | None:
@@ -79,11 +78,12 @@ def find_solution_root(start: Path | str) -> Path | None:
     to make solution-local imports (``from modules.x import y``) resolve against
     the solution root even when invoked from a subdirectory (criterion 15).
     """
-    p = Path(start).resolve()
-    if p.is_file():
+    p = Path(os.path.realpath(start))
+    if os.path.isfile(p):
         p = p.parent
     for candidate in (p, *p.parents):
-        if (candidate / DESCRIPTOR_FILENAME).is_file():
+        marker = os.path.realpath(os.path.join(os.path.realpath(candidate), DESCRIPTOR_FILENAME))
+        if marker.startswith(os.path.realpath(candidate) + os.sep) and os.path.isfile(marker):
             return candidate
     return None
 
@@ -94,18 +94,18 @@ def load_descriptor(path: Path | str) -> SolutionDescriptor:
     Raises FileNotFoundError if absent, and pydantic ValidationError on a bad
     schema (missing slug/name, etc.). A legacy ``scope:`` key is ignored.
     """
-    p = Path(path)
-    if p.is_dir():
-        # Confine the descriptor read to the given dir (realpath + startswith,
-        # the recognized traversal barrier) so a symlinked entry can't redirect.
-        root = os.path.realpath(p)
-        resolved = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
-        if not resolved.startswith(root + os.sep):
-            raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {p / DESCRIPTOR_FILENAME}")
-        descriptor_file = Path(resolved)
+    # Normalize the input up front (os.path.realpath collapses .. and follows
+    # symlinks) so every access below runs on a sanitized value, not the raw
+    # argument. When it's a directory, confine the descriptor to it via a
+    # startswith prefix check (the recognized traversal barrier).
+    real = os.path.realpath(path)
+    if os.path.isdir(real):
+        resolved = os.path.realpath(os.path.join(real, DESCRIPTOR_FILENAME))
+        if not resolved.startswith(real + os.sep):
+            raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {Path(real) / DESCRIPTOR_FILENAME}")
     else:
-        descriptor_file = p
-    if not descriptor_file.is_file():
-        raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {descriptor_file}")
-    data = yaml.safe_load(descriptor_file.read_text()) or {}
+        resolved = real
+    if not os.path.isfile(resolved):
+        raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {resolved}")
+    data = yaml.safe_load(Path(resolved).read_text()) or {}
     return SolutionDescriptor.model_validate(data)
