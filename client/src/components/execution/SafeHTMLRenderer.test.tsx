@@ -1,9 +1,21 @@
 /**
+ * @vitest-environment jsdom
+ *
  * Component tests for SafeHTMLRenderer.
  *
  * Critical behaviours: HTML content ends up in the DOM; DOMPurify strips
  * dangerous event handlers we explicitly FORBID; the "Open" button delegates
  * to window.open.
+ *
+ * NOTE: this file pins the jsdom environment instead of the suite-wide
+ * happy-dom. SafeHTMLRenderer sanitises with DOMPurify in `WHOLE_DOCUMENT`
+ * mode; dompurify >= 3.4.8 hoists nodes via `document.insertBefore`, which
+ * happy-dom rejects with "Only one element on document allowed" because its
+ * HTMLDocument forbids inserting a second element into a populated document.
+ * jsdom (the reference DOM) handles WHOLE_DOCUMENT correctly, so the component
+ * — which is correct in real browsers — can be exercised faithfully here.
+ * Downgrading dompurify below 3.4.8 is not an option: 3.4.8 carries the
+ * GHSA-hpcv-96wg-7vj8 realm-safety / mXSS hardening.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
