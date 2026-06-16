@@ -152,6 +152,17 @@ The release skill calls this one (in `diff` mode) before tagging or pushing when
 
 **Important:** the release skill's step 1b-i identifies net-new feature surface separately and routes around this skill for that case (manual authoring + capture, see above) — `diff` mode is appropriate ONLY for refreshing existing entries.
 
+## Capture gotchas (learned the hard way — read before authoring entries)
+
+- **`mocks`/`actions`/`crop` MUST nest under `capture:`.** Top-level ones are silently ignored → premature empty-state screenshot that still "passes." Top-level keys are only: `id`, `image`, `route`, `auth_as`, `seed`, `external`, `diataxis`, `captured_at`.
+- **Wait on always-present structure, not data labels.** End actions with `wait_for` on a card title / `h1` that renders regardless of data (e.g. `text=Maintenance Actions`), NOT a fixture-specific row value that may not paint. Add a `wait_ms` settle after.
+- **Find the REAL mount endpoints before mocking.** Pages use a typed `apiClient.GET("/api/...")` — grep the *service* file, not just the component. Mock every endpoint hit on load (incl. `/api/organizations` for org-name badges, `/api/maintenance/preflight` via `useWorkflows`). A missing mock → error card → wait_for times out. Mock the MOST SPECIFIC path first (`/foo/bar` before `/foo`) so a broad glob doesn't shadow it.
+- **Deep routes (`/x/:id`) need `nav_via` + `goto_spa`,** not a hard `goto` (which can 404 the SPA shell or hit a Vite proxy prefix). Pattern: `nav_via: {from: '/', click: '<Sidebar Label>'}` then `actions: [{goto_spa: '/x/<id>'}, {wait_for: ...}]`. See `mcp-external-server-detail`.
+- **A page gated on `data && obj` needs the object-shaped fixture.** E.g. SolutionDetail reads `data.solution` from `GET /api/solutions/{id}/entities` — the entities fixture must contain `{solution:{...}, ...}`, and the bare `/{id}` mock needs its own solution-object fixture (not the entities one).
+- **ALWAYS open the captured PNG and confirm it shows real, correct data** — a green test does not prove the mock matched, the right page loaded, or data rendered. This is non-negotiable; it has caught empty states and wrong-page captures every session. See [[feedback_drive_dont_just_test]].
+- **Capture before build.** New MDX `![](…png)` refs break `npm run build` until the PNG exists — run the pipeline first, then build.
+- **The pipeline auto-resets test state and auto-installs `scripts/docs` deps**, and **post-process now runs even if some entries fail** (partial captures land; failed ones are reported). Re-run only the failures with `--ids`.
+
 ## Hard rules
 
 1. Never edit prose without running anti-bloat self-review.
@@ -159,3 +170,4 @@ The release skill calls this one (in `diff` mode) before tagging or pushing when
 3. Never commit `.tmp-captures/` — it's gitignored.
 4. Never run capture mode against a dirty docs tree — abort and ask.
 5. The skill writes to a branch, never directly to `main`.
+6. Never leave a `{/* SCREENSHOT */}` placeholder in shipped docs. Either capture it (most surfaces are mockable — even detail pages, via fixtures + `nav_via`/`goto_spa`) or fold the description into prose and delete the marker.
