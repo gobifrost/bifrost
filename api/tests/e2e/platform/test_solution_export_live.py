@@ -34,7 +34,7 @@ async def test_export_reflects_currently_owned_app(
     sol_r = e2e_client.post(
         "/api/solutions",
         headers=headers,
-        json={"slug": slug, "name": slug.upper(), "scope": "global"},
+        json={"slug": slug, "name": slug.upper(), "organization_id": None},
     )
     assert sol_r.status_code in (200, 201), sol_r.text
     sol_id = sol_r.json()["id"]

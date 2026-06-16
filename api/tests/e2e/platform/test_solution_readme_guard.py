@@ -12,7 +12,7 @@ pytestmark = pytest.mark.e2e
 
 
 def _create_solution(e2e_client, headers, slug: str, *, git: bool) -> str:
-    body: dict = {"slug": slug, "name": slug.upper(), "scope": "global"}
+    body: dict = {"slug": slug, "name": slug.upper(), "organization_id": None}
     if git:
         # A git-connected install carries a repo URL; create disconnected then
         # PATCH the git fields on (mirrors how the UI connects an install).
