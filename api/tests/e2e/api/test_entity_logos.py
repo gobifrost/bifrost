@@ -18,7 +18,7 @@ def _create_app(e2e_client, headers, slug, name=None):
     resp = e2e_client.post(
         "/api/applications",
         headers=headers,
-        json={"name": name or slug, "slug": slug},
+        json={"name": name or slug, "slug": slug, "app_model": "inline_v1"},
     )
     assert resp.status_code == 201, f"create app failed: {resp.text}"
     return resp.json()

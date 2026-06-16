@@ -32,7 +32,7 @@ class TestEmbedWorkflowExecution:
         r = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "embed-wf-test", "slug": "embed-wf-test"},
+            json={"name": "embed-wf-test", "slug": "embed-wf-test", "app_model": "inline_v1"},
         )
         assert r.status_code == 201, r.text
         app = r.json()

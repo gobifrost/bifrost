@@ -18,7 +18,7 @@ def _create_app(e2e_client, headers, slug, name=None, params=None, **json_extra)
     response = e2e_client.post(
         "/api/applications",
         headers=headers,
-        json={"name": name or slug, "slug": slug, **json_extra},
+        json={"name": name or slug, "slug": slug, "app_model": "inline_v1", **json_extra},
         **kwargs,
     )
     assert response.status_code == 201, f"Create app '{slug}' failed: {response.text}"
@@ -42,6 +42,7 @@ class TestApplicationCRUD:
             json={
                 "name": "E2E Test App",
                 "slug": "e2e-test-app",
+                "app_model": "inline_v1",
                 "description": "Test application for E2E tests",
                 "icon": "box",
             },
@@ -221,7 +222,7 @@ class TestApplicationDuplicateSlugs:
         response2 = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Second App", "slug": "duplicate-slug"},
+            json={"name": "Second App", "slug": "duplicate-slug", "app_model": "inline_v1"},
         )
         assert response2.status_code == 409, \
             f"Expected 409 Conflict for duplicate slug, got {response2.status_code}"
@@ -245,7 +246,7 @@ class TestApplicationDuplicateSlugs:
         response2 = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Global App", "slug": "cross-scope-dup"},
+            json={"name": "Global App", "slug": "cross-scope-dup", "app_model": "inline_v1"},
             params={"scope": "global"},
         )
         assert response2.status_code == 409, \
@@ -268,6 +269,7 @@ class TestApplicationVersioning:
             json={
                 "name": "Versioning Test App",
                 "slug": "versioning-test-app",
+                "app_model": "inline_v1",
                 "description": "Tests draft/live versioning",
             },
         )
@@ -369,7 +371,7 @@ class TestApplicationAccess:
         response = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Global App", "slug": "global-app", "organization_id": None},
+            json={"name": "Global App", "slug": "global-app", "app_model": "inline_v1", "organization_id": None},
         )
         assert response.status_code == 201
         app = response.json()
@@ -400,7 +402,7 @@ class TestApplicationScopeFiltering:
         response = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Global App", "slug": f"global-scope-app-{suffix}", "organization_id": None},
+            json={"name": "Global App", "slug": f"global-scope-app-{suffix}", "app_model": "inline_v1", "organization_id": None},
         )
         assert response.status_code == 201
         apps["global"] = response.json()
@@ -409,7 +411,7 @@ class TestApplicationScopeFiltering:
         response = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Org App", "slug": f"org-scope-app-{suffix}", "organization_id": org1["id"]},
+            json={"name": "Org App", "slug": f"org-scope-app-{suffix}", "app_model": "inline_v1", "organization_id": org1["id"]},
         )
         assert response.status_code == 201
         apps["org"] = response.json()
@@ -557,7 +559,7 @@ class TestApplicationDBStorage:
         response = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Immediate Query App", "slug": "immediate-query-app"},
+            json={"name": "Immediate Query App", "slug": "immediate-query-app", "app_model": "inline_v1"},
         )
         assert response.status_code == 201
         created = response.json()
@@ -581,7 +583,7 @@ class TestApplicationDBStorage:
         create_response = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": "Persist Test App", "slug": "persist-test-app"},
+            json={"name": "Persist Test App", "slug": "persist-test-app", "app_model": "inline_v1"},
         )
         assert create_response.status_code == 201
         app = create_response.json()
@@ -630,6 +632,7 @@ class TestCodeEngineApps:
             json={
                 "name": "Code Engine Test",
                 "slug": "code-engine-test",
+                "app_model": "inline_v1",
             },
         )
         assert response.status_code == 201, f"Create app failed: {response.text}"
@@ -690,7 +693,7 @@ class TestCodeEngineApps:
             response = e2e_client.post(
                 "/api/applications",
                 headers=platform_admin.headers,
-                json={"name": "Preserve Local Source", "slug": slug},
+                json={"name": "Preserve Local Source", "slug": slug, "app_model": "inline_v1"},
             )
             assert response.status_code == 201, f"Create app failed: {response.text}"
             app = response.json()

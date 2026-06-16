@@ -98,7 +98,7 @@ async def test_get_solution_entities_includes_app_logo(e2e_client, platform_admi
     created = e2e_client.post(
         "/api/applications",
         headers=headers,
-        json={"name": "Summary App", "slug": app_slug},
+        json={"name": "Summary App", "slug": app_slug, "app_model": "inline_v1"},
     )
     assert created.status_code == 201, created.text
     app = created.json()

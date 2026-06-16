@@ -131,7 +131,7 @@ def _mint_app_embed_token(e2e_client, platform_admin, *, organization_id=None):
     """Create an app (optionally in a specific org) with an embed secret and
     return (app, app-embed bearer token)."""
     secret_name = f"app-{uuid.uuid4().hex[:8]}"
-    body = {"name": secret_name, "slug": secret_name}
+    body = {"name": secret_name, "slug": secret_name, "app_model": "inline_v1"}
     if organization_id is not None:
         body["organization_id"] = organization_id
     r = e2e_client.post("/api/applications", headers=platform_admin.headers, json=body)

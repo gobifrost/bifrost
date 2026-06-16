@@ -72,7 +72,7 @@ class TestCliApps:
         create_resp = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": slug, "slug": slug},
+            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
         )
         assert create_resp.status_code == 201, create_resp.text
         app_id = create_resp.json()["id"]
@@ -109,6 +109,8 @@ class TestCliApps:
                 slug,
                 "--slug",
                 slug,
+                "--app-model",
+                "inline_v1",
                 "--deps",
                 f"@{pkg_path}",
             ]
@@ -146,7 +148,7 @@ class TestCliApps:
         slug = f"cli-app-nodeps-{uuid4().hex[:8]}"
 
         result = _invoke(
-            ["--json", "create", "--name", slug, "--slug", slug]
+            ["--json", "create", "--name", slug, "--slug", slug, "--app-model", "inline_v1"]
         )
         assert result.exit_code == 0, result.output
         created = json.loads(result.output)
@@ -174,7 +176,7 @@ class TestCliApps:
         create_resp = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": slug, "slug": slug, "description": "before"},
+            json={"name": slug, "slug": slug, "app_model": "inline_v1", "description": "before"},
         )
         assert create_resp.status_code == 201, create_resp.text
         app_id = create_resp.json()["id"]
@@ -207,7 +209,7 @@ class TestCliApps:
         create_resp = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": slug, "slug": slug},
+            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
         )
         assert create_resp.status_code == 201, create_resp.text
         app_id = create_resp.json()["id"]
@@ -239,7 +241,7 @@ class TestCliApps:
         create_resp = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": slug, "slug": slug},
+            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
         )
         assert create_resp.status_code == 201, create_resp.text
         app_id = create_resp.json()["id"]

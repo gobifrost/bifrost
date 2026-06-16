@@ -55,7 +55,7 @@ def embed_session(e2e_client, platform_admin):
     r = e2e_client.post(
         "/api/applications",
         headers=platform_admin.headers,
-        json={"name": f"embed-ext-{SUFFIX}", "slug": f"embed-ext-{SUFFIX}"},
+        json={"name": f"embed-ext-{SUFFIX}", "slug": f"embed-ext-{SUFFIX}", "app_model": "inline_v1"},
     )
     assert r.status_code == 201, r.text
     app = r.json()
@@ -209,7 +209,7 @@ class TestEmbedAppBinding:
         r = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": f"embed-other-{SUFFIX}", "slug": f"embed-other-{SUFFIX}"},
+            json={"name": f"embed-other-{SUFFIX}", "slug": f"embed-other-{SUFFIX}", "app_model": "inline_v1"},
         )
         assert r.status_code == 201, r.text
         other = r.json()

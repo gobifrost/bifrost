@@ -33,7 +33,7 @@ def _create_app(e2e_client, headers, name: str) -> str:
     resp = e2e_client.post(
         "/api/applications",
         headers=headers,
-        json={"name": name, "slug": slug},
+        json={"name": name, "slug": slug, "app_model": "inline_v1"},
     )
     assert resp.status_code in (200, 201), resp.text
     return resp.json()["id"]
