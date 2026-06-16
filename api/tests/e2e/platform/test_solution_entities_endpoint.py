@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import base64
 import uuid
+from uuid import UUID
 
 import pytest
+
+from src.services.solutions.deploy import solution_entity_id
 
 pytestmark = pytest.mark.e2e
 
@@ -33,11 +36,6 @@ def _create_org_solution(e2e_client, headers, slug: str) -> str:
     })
     assert r.status_code in (200, 201), r.text
     return r.json()["id"]
-
-
-def _upload_headers(headers):
-    """Strip Content-Type so httpx sets it for multipart."""
-    return {k: v for k, v in headers.items() if k.lower() != "content-type"}
 
 
 async def test_get_solution_entities_reports_config_status(e2e_client, platform_admin):
@@ -94,36 +92,41 @@ async def test_get_solution_entities_includes_app_logo(e2e_client, platform_admi
     slug = f"app-logo-summary-{uuid.uuid4().hex[:8]}"
     sid = _create_org_solution(e2e_client, headers, slug)
     app_slug = f"summary-app-{uuid.uuid4().hex[:8]}"
+    app_id = str(uuid.uuid4())
+    real_id = str(solution_entity_id(UUID(sid), UUID(app_id)))
 
-    created = e2e_client.post(
-        "/api/applications",
-        headers=headers,
-        json={"name": "Summary App", "slug": app_slug, "app_model": "inline_v1"},
-    )
-    assert created.status_code == 201, created.text
-    app = created.json()
-
-    uploaded = e2e_client.post(
-        f"/api/applications/{app['id']}/logo",
-        headers=_upload_headers(headers),
-        files={"file": ("logo.png", CLEAN_PNG, "image/png")},
-    )
-    assert uploaded.status_code == 200, uploaded.text
-
-    captured = e2e_client.post(
-        f"/api/solutions/{sid}/capture",
+    # Solution-managed apps are standalone_v2 and arrive via deploy (loose-app
+    # capture rejects v1, and bare standalone_v2 creation is blocked). A managed
+    # app is read-only, so its logo travels IN the deploy payload (a post-deploy
+    # logo upload is correctly rejected by the read-only guard). The CLI resolves
+    # the manifest's logo path to bytes and sends logo_b64 + logo_content_type;
+    # deploy decodes those (deploy.py:_decode_logo). Confirm it round-trips in
+    # entities. Deploy remaps the supplied manifest id to solution_entity_id.
+    logo_b64 = base64.b64encode(CLEAN_PNG).decode("ascii")
+    dep = e2e_client.post(
+        f"/api/solutions/{sid}/deploy",
         headers=headers,
         json={
-            "workflows": [],
-            "tables": [],
-            "apps": [app["id"]],
-            "forms": [],
-            "agents": [],
-            "claims": [],
-            "configs": [],
+            "apps": [
+                {
+                    "id": app_id,
+                    "slug": app_slug,
+                    "name": "Summary App",
+                    "app_model": "standalone_v2",
+                    "dependencies": {},
+                    "access_level": "authenticated",
+                    "logo_b64": logo_b64,
+                    "logo_content_type": "image/png",
+                    "dist_files": {
+                        "index.html": '<!doctype html><html><body><div id="root"></div></body></html>',
+                    },
+                }
+            ]
         },
     )
-    assert captured.status_code == 200, captured.text
+    assert dep.status_code in (200, 201), dep.text
+
+    app = {"id": real_id}
 
     entities = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
     assert entities.status_code == 200, entities.text
