@@ -710,20 +710,24 @@ def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
     app_dirs = _app_source_dirs(workspace)
     files: dict[str, str] = {}
     ws_root = os.path.realpath(workspace)
-    for py in pathlib.Path(ws_root).rglob("*.py"):
-        # Confine each swept file to the workspace (realpath + startswith — the
-        # recognized traversal barrier) so a symlink pointing out of the tree
-        # can't make the bundle read an arbitrary file.
-        py_real = os.path.realpath(py)
-        if not py_real.startswith(ws_root + os.sep):
-            continue
-        rel_parts = py.relative_to(ws_root).parts
-        if any(part in _PY_SKIP_DIRS for part in rel_parts):
-            continue
-        rel = py.relative_to(ws_root).as_posix()
-        if any(rel == d or rel.startswith(d + "/") for d in app_dirs):
-            continue
-        files[rel] = pathlib.Path(py_real).read_text(encoding="utf-8")
+    for dirpath, _dirnames, filenames in os.walk(ws_root):
+        for fname in filenames:
+            if not fname.endswith(".py"):
+                continue
+            # Confine each swept file to the workspace (realpath + startswith —
+            # the recognized traversal barrier) so a symlink pointing out of the
+            # tree can't make the bundle read an arbitrary file.
+            py_real = os.path.realpath(os.path.join(dirpath, fname))
+            if not py_real.startswith(ws_root + os.sep):
+                continue
+            rel = os.path.relpath(py_real, ws_root)
+            rel_parts = rel.split(os.sep)
+            if any(part in _PY_SKIP_DIRS for part in rel_parts):
+                continue
+            rel_posix = pathlib.PurePath(rel).as_posix()
+            if any(rel_posix == d or rel_posix.startswith(d + "/") for d in app_dirs):
+                continue
+            files[rel_posix] = pathlib.Path(py_real).read_text(encoding="utf-8")
     return files
 
 

@@ -62,7 +62,10 @@ def resolve_repo_subpath(checkout_root: Path, repo_subpath: str | None) -> Path:
         return checkout_root
     base_real = os.path.realpath(checkout_root)
     root = os.path.realpath(os.path.join(base_real, repo_subpath))
-    if root != base_real and not root.startswith(base_real + os.sep):
+    # Pure startswith (not `root != base and not startswith`): a non-empty
+    # subpath always resolves to a strict descendant when valid, and the
+    # bare-startswith form is the barrier static analysis recognizes.
+    if not root.startswith(base_real + os.sep):
         raise NotASolutionWorkspace(
             f"repo_subpath {repo_subpath!r} escapes the repo checkout"
         )

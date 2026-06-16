@@ -87,11 +87,12 @@ def test_not_a_solution_workspace(tmp_path: pathlib.Path) -> None:
     assert is_solution_workspace(tmp_path) is False
 
 
-def test_accepts_file_path_or_dir(tmp_path: pathlib.Path) -> None:
+def test_loads_descriptor_from_workspace_dir(tmp_path: pathlib.Path) -> None:
+    # load_descriptor takes the workspace DIRECTORY and resolves the descriptor
+    # as a confined child of it (the descriptor read never touches a
+    # caller-supplied path directly).
     p = _write(tmp_path, "slug: x\nname: X\n")
-    by_dir = load_descriptor(p)
-    by_file = load_descriptor(p / DESCRIPTOR_FILENAME)
-    assert by_dir.slug == by_file.slug == "x"
+    assert load_descriptor(p).slug == "x"
 
 
 def test_find_solution_root_from_subdir(tmp_path: pathlib.Path) -> None:

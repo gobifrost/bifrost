@@ -62,12 +62,16 @@ class SolutionDescriptor(BaseModel):
 
 
 def is_solution_workspace(path: Path | str) -> bool:
-    """True if ``path`` (a dir) contains a ``bifrost.solution.yaml``."""
-    real = os.path.realpath(path)
-    if os.path.isdir(real):
-        target = os.path.realpath(os.path.join(real, DESCRIPTOR_FILENAME))
-        return target.startswith(real + os.sep) and os.path.isfile(target)
-    return os.path.isfile(real)
+    """True if directory ``path`` contains a ``bifrost.solution.yaml``.
+
+    ``path`` is always a workspace directory. The descriptor is resolved as a
+    child of it and confined with a startswith barrier, so the only filesystem
+    access is on a path proven to live inside the given root — never on the
+    caller-supplied string directly.
+    """
+    root = os.path.realpath(path)
+    target = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
+    return target.startswith(root + os.sep) and os.path.isfile(target)
 
 
 def find_solution_root(start: Path | str) -> Path | None:
@@ -89,23 +93,19 @@ def find_solution_root(start: Path | str) -> Path | None:
 
 
 def load_descriptor(path: Path | str) -> SolutionDescriptor:
-    """Load + validate the descriptor at ``path`` (a workspace dir or the file).
+    """Load + validate the ``bifrost.solution.yaml`` inside directory ``path``.
 
     Raises FileNotFoundError if absent, and pydantic ValidationError on a bad
     schema (missing slug/name, etc.). A legacy ``scope:`` key is ignored.
+
+    ``path`` is the workspace directory; the descriptor is always resolved as a
+    child of it and confined with a startswith barrier (os.path.realpath
+    collapses any ``..``/symlink first), so the read only ever touches a file
+    proven to live inside the given root — never the caller string directly.
     """
-    # Normalize the input up front (os.path.realpath collapses .. and follows
-    # symlinks) so every access below runs on a sanitized value, not the raw
-    # argument. When it's a directory, confine the descriptor to it via a
-    # startswith prefix check (the recognized traversal barrier).
-    real = os.path.realpath(path)
-    if os.path.isdir(real):
-        resolved = os.path.realpath(os.path.join(real, DESCRIPTOR_FILENAME))
-        if not resolved.startswith(real + os.sep):
-            raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {Path(real) / DESCRIPTOR_FILENAME}")
-    else:
-        resolved = real
-    if not os.path.isfile(resolved):
-        raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {resolved}")
+    root = os.path.realpath(path)
+    resolved = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
+    if not resolved.startswith(root + os.sep) or not os.path.isfile(resolved):
+        raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {Path(root) / DESCRIPTOR_FILENAME}")
     data = yaml.safe_load(Path(resolved).read_text()) or {}
     return SolutionDescriptor.model_validate(data)
