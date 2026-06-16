@@ -5,6 +5,18 @@ description: Build and release Bifrost. Use when pushing commits to main, cuttin
 
 # Bifrost Release
 
+## Release cadence (the three rungs, and who they're for)
+
+Bifrost ships on a deliberate three-rung ladder. Know which audience each rung serves before you cut it:
+
+| Rung | Tag / image | Cadence | Stability promise | Who runs it |
+|------|-------------|---------|-------------------|-------------|
+| **dev** | `:dev` (every merge to main) | Continuous | **Bleeding edge. Expect bugs.** This is where the maintainer flushes out defects in his own production before they reach anyone else. | The maintainer's prod + community members who want the very latest and accept breakage. |
+| **pre-release** | `vX.Y.Z-rc.N` → versioned images, GitHub Release marked *pre-release*, **no `:latest`** | Roughly monthly, **in between** full releases | **Safer than dev** — a candidate that's been through the gates and is being soak-tested, but not yet blessed as final. | Operators who want fresher-than-monthly without riding `:dev`. |
+| **full release** | `vX.Y.Z` → versioned images + `:latest` + final GitHub Release | Roughly monthly | **Blessed/stable.** The default for production installs. | Everyone on `:latest`. |
+
+The intent going forward (announce this in the first full release that introduces it): **full releases land roughly monthly; between them we cut `-rc.N` pre-releases that are intended to be safer but more frequent. `:dev` remains bleeding edge and will contain bugs the maintainer intends to find in his own production first.** When you draft notes for the release that introduces this cadence, include a short "Release cadence going forward" callout stating exactly that.
+
 ## Step 1: Ask which workflow
 
 > "Which release rung?
