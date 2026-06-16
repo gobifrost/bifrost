@@ -42,6 +42,10 @@ COMPOSE_PROJECT_NAME="$(compute_project_name .)"
 
 LOG_DIR="/tmp/bifrost-$COMPOSE_PROJECT_NAME"
 mkdir -p "$LOG_DIR"
+# Pre-create the fixture subdir the api container bind-mounts (install/preview-repo
+# e2e tests stage file:// git repos here). Creating it host-side first means Docker
+# binds an existing host-owned dir instead of auto-creating a root-owned mountpoint.
+mkdir -p "$LOG_DIR/solution-repo-fixtures"
 export LOG_DIR
 
 # Load .env.test for optional secrets (GitHub PAT, LLM keys, etc.)

@@ -166,10 +166,17 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - test-mounts:/mounts  # File storage for uploads, branding, etc.
-      # Same per-worktree host dir the test-runner mounts, so an e2e test can
-      # stage a file:// git fixture the API container clones server-side
-      # (install/preview-repo). Host bind => writable by the test-runner uid.
-      - ${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost
+      # Share ONLY the fixture subdir the test-runner stages file:// git repos
+      # in, so install/preview-repo can clone them server-side. Do NOT bind the
+      # whole LOG_DIR over the api's /tmp/bifrost: the api runs as root and its
+      # entrypoint `chown -R`s /tmp/bifrost to the bifrost uid (1000), which
+      # would clobber the host-owned LOG_DIR (test-runner.log, test-results.xml,
+      # *.log) — on a CI runner whose uid != 1000 the host-side `tee
+      # $LOG_DIR/test-runner.log` in run_pytest then fails with EPERM and the
+      # step exits 1 even though every test passed. The fixture repos are created
+      # by the uid-1000 test-runner, so chown-ing just this subdir to 1000 is a
+      # no-op and never touches the LOG_DIR root.
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -351,6 +358,11 @@ services:
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/pytest.ini:/app/pytest.ini:ro
       - ./api/pyproject.toml:/app/pyproject.toml:ro
+      - ./docker-compose.test.yml:/app/docker-compose.test.yml:ro  # Read-only —
+                                      # the harness guard in
+                                      # tests/unit/test_compose_test_harness.py
+                                      # asserts the api service never re-binds
+                                      # the host LOG_DIR root over /tmp/bifrost.
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
