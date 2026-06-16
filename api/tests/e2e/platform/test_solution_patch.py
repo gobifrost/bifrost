@@ -17,10 +17,12 @@ pytestmark = pytest.mark.e2e
 
 
 def _create_global_solution(e2e_client, headers, slug: str) -> str:
+    # Global install = explicit organization_id=null (the create endpoint derives
+    # scope from organization_id; there is no `scope` input — see SolutionCreate).
     r = e2e_client.post(
         "/api/solutions",
         headers=headers,
-        json={"slug": slug, "name": slug.upper(), "scope": "global"},
+        json={"slug": slug, "name": slug.upper(), "organization_id": None},
     )
     assert r.status_code in (200, 201), r.text
     return r.json()["id"]

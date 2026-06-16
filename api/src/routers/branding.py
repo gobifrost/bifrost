@@ -315,15 +315,9 @@ async def reset_color(
 )
 async def reset_application_name(
     ctx: Context,
-    user: CurrentActiveUser,
+    user: CurrentSuperuser,
 ) -> BrandingSettings:
     """Reset application name to default."""
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superusers can reset branding",
-        )
-
     from src.repositories.branding import BrandingRepository
     branding_repo = BrandingRepository(ctx.db)
 

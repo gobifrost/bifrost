@@ -358,6 +358,9 @@ async def e2e_external_users_global_tool(q: str = "x") -> str:
         "e2e_external_users_global_tool.py",
         content,
         "e2e_external_users_global_tool",
+        # GLOBAL (org NULL) — a bare register would HOME-default to the admin's
+        # org, hiding it from cross-org/external users (unified --org standard).
+        organization_id=None,
     )
     assert result["type"] == "tool", result
     yield result

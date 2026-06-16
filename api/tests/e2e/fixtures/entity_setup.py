@@ -95,6 +95,7 @@ def test_app_with_workflow(
             "slug": "e2e-portable-ref-test",
             "description": "App for testing portable workflow refs",
             "access_level": "authenticated",
+            "app_model": "inline_v1",
         },
     )
     assert app_response.status_code == 201, f"Create app failed: {app_response.text}"

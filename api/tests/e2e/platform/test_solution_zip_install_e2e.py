@@ -343,9 +343,14 @@ async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admi
     assert api_key is not None and api_key["value_set"] is True
 
 
-async def test_export_404_before_first_deploy(e2e_client, platform_admin):
-    """An install created but never deployed has no stored bundle — 404 with a
-    pointed detail, not an empty zip."""
+async def test_export_before_first_deploy_rebuilds_live(e2e_client, platform_admin):
+    """Export rebuilds the bundle LIVE from the entities the install currently
+    owns (it is not a stored-bundle fetch). An install created but never deployed
+    owns nothing, so the export is a valid, re-installable zip carrying just the
+    ``bifrost.solution.yaml`` descriptor — not a 404."""
+    import io
+    import zipfile
+
     headers = platform_admin.headers
     slug = f"zip-noexp-{uuid.uuid4().hex[:8]}"
     create = e2e_client.post("/api/solutions", headers=headers, json={
@@ -357,5 +362,7 @@ async def test_export_404_before_first_deploy(e2e_client, platform_admin):
     sid = create.json()["id"]
 
     exp = e2e_client.post(f"/api/solutions/{sid}/export", json={}, headers=headers)
-    assert exp.status_code == 404, exp.text
-    assert "No stored bundle" in exp.json()["detail"]
+    assert exp.status_code == 200, exp.text
+    assert exp.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(exp.content)) as zf:
+        assert "bifrost.solution.yaml" in zf.namelist()

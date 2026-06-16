@@ -238,6 +238,10 @@ class TestFileUploadAccessControl:
             json={
                 "name": "Access Control Form",
                 "description": "Form for testing upload access",
+                # Global form (org NULL) so any authenticated user reaches it via
+                # the org→global cascade. A bare create would HOME-default to the
+                # admin's org, hiding it from cross-org users (unified --org std).
+                "organization_id": None,
                 "workflow_id": None,
                 "form_schema": {
                     "fields": [

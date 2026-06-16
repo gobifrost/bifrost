@@ -86,10 +86,19 @@ def e2e_client():
         yield client
 
 
+_UNSET = object()
+
+
 def write_and_register(
-    e2e_client, headers, path: str, content: str, function_name: str
+    e2e_client, headers, path: str, content: str, function_name: str,
+    *, organization_id=_UNSET,
 ) -> dict:
     """Write a Python file and register its decorated function.
+
+    By default ``organization_id`` is OMITTED from the register request, so the
+    workflow HOME-defaults to the caller's own org (unified --org standard). Pass
+    ``organization_id=None`` to register a GLOBAL workflow, or a UUID string to
+    target a specific org.
 
     Returns the RegisterWorkflowResponse dict with keys: id, name, function_name, path, type, description.
     """
@@ -104,10 +113,13 @@ def write_and_register(
     )
 
     # Register the decorated function
+    register_body = {"path": path, "function_name": function_name}
+    if organization_id is not _UNSET:
+        register_body["organization_id"] = organization_id
     resp = e2e_client.post(
         "/api/workflows/register",
         headers=headers,
-        json={"path": path, "function_name": function_name},
+        json=register_body,
     )
     if resp.status_code == 409:
         # Already registered from a previous test run — look up and return existing
