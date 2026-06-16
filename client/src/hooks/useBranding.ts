@@ -193,9 +193,7 @@ export async function resetAllBranding(): Promise<BrandingSettings_API> {
 	if (error) {
 		throw new Error(
 			`Failed to reset branding: ${
-				typeof error === "object" &&
-				error !== null &&
-				"message" in error
+				error && typeof error === "object" && "message" in error
 					? (error as { message?: string }).message
 					: "Unknown error"
 			}`,

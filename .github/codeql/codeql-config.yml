@@ -23,3 +23,11 @@ query-filters:
   # on Python's TYPE_CHECKING pattern; not a productive signal here.
   - exclude:
       id: py/cyclic-import
+  # py/unsafe-cyclic-import is the same false positive on the same ORM
+  # relationship graph (e.g. "'User' may not be defined if module
+  # src.models.orm.users is imported before src.models.orm.agents"). The
+  # "may not be defined" only holds for a name USED at import time; these
+  # names appear solely in TYPE_CHECKING-guarded Mapped[...] annotations,
+  # never evaluated at import. Excluded for the same reason as py/cyclic-import.
+  - exclude:
+      id: py/unsafe-cyclic-import

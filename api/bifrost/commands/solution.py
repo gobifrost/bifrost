@@ -663,13 +663,34 @@ export function cn(...inputs: ClassValue[]) {
 _PY_SKIP_DIRS = {"node_modules", "dist", ".venv", "venv", "__pycache__", ".git", ".bifrost"}
 
 
+def _bifrost_manifest(workspace: pathlib.Path, name: str) -> pathlib.Path | None:
+    """Resolve ``.bifrost/<name>`` confined to ``workspace``, or None on escape.
+
+    The workspace root is request/argv-derived and reused as the read root by
+    every collector below, so each confines its own read here. Uses
+    os.path.realpath + a startswith prefix check — the path-traversal barrier
+    static analysis recognizes — with a trailing os.sep to block sibling-prefix
+    bypass. Inlined per collector (not a returning helper) because the barrier
+    must sit in the same function as the file read to be effective.
+    """
+    root = os.path.realpath(workspace)
+    target = os.path.realpath(os.path.join(root, ".bifrost", name))
+    if not target.startswith(root + os.sep):
+        return None
+    return pathlib.Path(target)
+
+
 def _app_source_dirs(workspace: pathlib.Path) -> set[str]:
     """Relative (POSIX) app source dirs from .bifrost/apps.yaml, to exclude from
     the Python-source sweep (apps are bundled by _collect_apps)."""
-    manifest = workspace / ".bifrost" / "apps.yaml"
-    if not manifest.is_file():
+    root = os.path.realpath(workspace)
+    manifest = os.path.realpath(os.path.join(root, ".bifrost", "apps.yaml"))
+    if not manifest.startswith(root + os.sep):
         return set()
-    data = yaml.safe_load(manifest.read_text()) or {}
+    manifest_path = pathlib.Path(manifest)
+    if not manifest_path.is_file():
+        return set()
+    data = yaml.safe_load(manifest_path.read_text()) or {}
     out: set[str] = set()
     for body in (data.get("apps", {}) or {}).values():
         if isinstance(body, dict) and body.get("path"):
@@ -688,21 +709,28 @@ def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
     """
     app_dirs = _app_source_dirs(workspace)
     files: dict[str, str] = {}
-    for py in workspace.rglob("*.py"):
-        rel_parts = py.relative_to(workspace).parts
+    ws_root = os.path.realpath(workspace)
+    for py in pathlib.Path(ws_root).rglob("*.py"):
+        # Confine each swept file to the workspace (realpath + startswith — the
+        # recognized traversal barrier) so a symlink pointing out of the tree
+        # can't make the bundle read an arbitrary file.
+        py_real = os.path.realpath(py)
+        if not py_real.startswith(ws_root + os.sep):
+            continue
+        rel_parts = py.relative_to(ws_root).parts
         if any(part in _PY_SKIP_DIRS for part in rel_parts):
             continue
-        rel = py.relative_to(workspace).as_posix()
+        rel = py.relative_to(ws_root).as_posix()
         if any(rel == d or rel.startswith(d + "/") for d in app_dirs):
             continue
-        files[rel] = py.read_text(encoding="utf-8")
+        files[rel] = pathlib.Path(py_real).read_text(encoding="utf-8")
     return files
 
 
 def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     """Read workflow entries from .bifrost/workflows.yaml (the descriptor indexes it)."""
-    wf_file = workspace / ".bifrost" / "workflows.yaml"
-    if not wf_file.is_file():
+    wf_file = _bifrost_manifest(workspace, "workflows.yaml")
+    if wf_file is None or not wf_file.is_file():
         return []
     data = yaml.safe_load(wf_file.read_text()) or {}
     raw = data.get("workflows", {})
@@ -732,8 +760,8 @@ def _collect_tables(workspace: pathlib.Path) -> list[dict]:
     Only structure is deployed — row data is runtime state and never carried in
     a bundle (criterion 11).
     """
-    tbl_file = workspace / ".bifrost" / "tables.yaml"
-    if not tbl_file.is_file():
+    tbl_file = _bifrost_manifest(workspace, "tables.yaml")
+    if tbl_file is None or not tbl_file.is_file():
         return []
     data = yaml.safe_load(tbl_file.read_text()) or {}
     raw = data.get("tables", {})
@@ -759,8 +787,8 @@ def _collect_config_schemas(workspace: pathlib.Path) -> list[dict]:
     Declarations ONLY — there is no ``value`` field by design. Config values are
     instance-owned and supplied at install time; local dev reads them from .env.
     """
-    cfg_file = workspace / ".bifrost" / "configs.yaml"
-    if not cfg_file.is_file():
+    cfg_file = _bifrost_manifest(workspace, "configs.yaml")
+    if cfg_file is None or not cfg_file.is_file():
         return []
     data = yaml.safe_load(cfg_file.read_text()) or {}
     raw = data.get("configs", {})
@@ -788,8 +816,8 @@ def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
     server's deploy pre-creates an empty integration shell and persists a
     SolutionConnectionSchema row from each, so Setup surfaces the connection.
     """
-    conn_file = workspace / ".bifrost" / "connections.yaml"
-    if not conn_file.is_file():
+    conn_file = _bifrost_manifest(workspace, "connections.yaml")
+    if conn_file is None or not conn_file.is_file():
         return []
     data = yaml.safe_load(conn_file.read_text()) or {}
     raw = data.get("connections", {})
@@ -815,8 +843,8 @@ def _collect_readme(workspace: pathlib.Path) -> str | None:
 
 def _collect_claims(workspace: pathlib.Path) -> list[dict]:
     """Read Custom Claim definitions from .bifrost/claims.yaml (keyed by UUID)."""
-    claims_file = workspace / ".bifrost" / "claims.yaml"
-    if not claims_file.is_file():
+    claims_file = _bifrost_manifest(workspace, "claims.yaml")
+    if claims_file is None or not claims_file.is_file():
         return []
     data = yaml.safe_load(claims_file.read_text()) or {}
     raw = data.get("claims", {})
@@ -840,8 +868,8 @@ def _collect_manifest_entities(workspace: pathlib.Path, filename: str, key: str)
     The form/agent inline content (fields, system_prompt, etc.) lives in the
     manifest body; deploy stamps solution_id + scope and full-replaces.
     """
-    f = workspace / ".bifrost" / filename
-    if not f.is_file():
+    f = _bifrost_manifest(workspace, filename)
+    if f is None or not f.is_file():
         return []
     data = yaml.safe_load(f.read_text()) or {}
     entries: list[dict] = []
@@ -899,16 +927,25 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
     """
     import base64
 
-    apps_file = workspace / ".bifrost" / "apps.yaml"
-    if not apps_file.is_file():
+    apps_file = _bifrost_manifest(workspace, "apps.yaml")
+    if apps_file is None or not apps_file.is_file():
         return []
     data = yaml.safe_load(apps_file.read_text()) or {}
     raw = data.get("apps", {})
     entries: list[dict] = []
+    ws_root = os.path.realpath(workspace)
     for key, body in raw.items():
         if not isinstance(body, dict):
             continue
-        app_dir = workspace / body["path"]
+        # ``body["path"]`` is manifest-controlled; confine the app dir to the
+        # workspace (realpath + startswith — the recognized traversal barrier)
+        # so a crafted ``path: ../../etc`` can't read outside the bundle.
+        _app_dir = os.path.realpath(os.path.join(ws_root, str(body["path"])))
+        if not _app_dir.startswith(ws_root + os.sep):
+            raise click.ClickException(
+                f"app '{key}': path {body['path']!r} escapes the workspace"
+            )
+        app_dir = pathlib.Path(_app_dir)
         src_files: dict[str, str] = {}
         bin_files: dict[str, str] = {}
         if app_dir.is_dir():
@@ -928,11 +965,16 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
                 # dist, …) — never bundle build output or deps.
                 if any(p in _APP_SKIP_DIRS for p in rel_parts[:-1]):
                     continue
+                f_real = os.path.realpath(f)
+                if not f_real.startswith(_app_dir + os.sep):
+                    continue
                 rel = f.relative_to(app_dir).as_posix()
                 if f.suffix in _APP_TEXT_SUFFIXES:
-                    src_files[rel] = f.read_text(encoding="utf-8")
+                    src_files[rel] = pathlib.Path(f_real).read_text(encoding="utf-8")
                 else:
-                    bin_files[rel] = base64.b64encode(f.read_bytes()).decode("ascii")
+                    bin_files[rel] = base64.b64encode(
+                        pathlib.Path(f_real).read_bytes()
+                    ).decode("ascii")
 
         # App LOGO: the manifest may point `logo:` at an image file relative to
         # the app dir (e.g. "public/logo.svg"). Read + carry it base64 so the
@@ -943,7 +985,13 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
         logo_content_type: str | None = None
         logo_path = body.get("logo")
         if logo_path:
-            logo_file = app_dir / logo_path
+            # ``logo`` is manifest-controlled; confine it to the app dir.
+            _logo = os.path.realpath(os.path.join(_app_dir, str(logo_path)))
+            if not _logo.startswith(_app_dir + os.sep):
+                raise click.ClickException(
+                    f"app '{key}': logo path {logo_path!r} escapes the app dir"
+                )
+            logo_file = pathlib.Path(_logo)
             if logo_file.is_file():
                 logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("ascii")
                 logo_content_type = _LOGO_CONTENT_TYPES.get(logo_file.suffix.lower())

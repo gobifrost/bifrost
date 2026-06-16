@@ -1627,7 +1627,7 @@ async def update_workflow(
             await redis_client.invalidate_endpoint_workflow_cache(str(workflow.id))
             await redis_client.invalidate_workflow_metadata_cache(str(workflow.id))
         except Exception as e:
-            logger.warning(f"Failed to invalidate caches for workflow {workflow.name}: {e}")
+            logger.warning(f"Failed to invalidate caches for workflow {log_safe(workflow.name)}: {e}")
 
         # Refresh MCP tool registry so updated signatures appear immediately
         try:

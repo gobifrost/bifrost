@@ -181,7 +181,9 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         version = descriptor.version
         logo = descriptor.logo
 
-    requires_password = (workspace / ".bifrost" / "secrets.enc").exists()
+    _ws = os.path.realpath(workspace)
+    _secrets = os.path.realpath(os.path.join(_ws, ".bifrost", "secrets.enc"))
+    requires_password = _secrets.startswith(_ws + os.sep) and os.path.exists(_secrets)
 
     return PreviewResult(
         slug=slug,
@@ -205,7 +207,11 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
 
 def _read_readme(workspace: Path) -> str | None:
     """Read the repo-root ``README.md`` as UTF-8 markdown, or None if absent."""
-    path = workspace / "README.md"
+    root = os.path.realpath(workspace)
+    target = os.path.realpath(os.path.join(root, "README.md"))
+    if not target.startswith(root + os.sep):
+        return None
+    path = Path(target)
     if not path.is_file():
         return None
     return path.read_text(encoding="utf-8")

@@ -26,10 +26,33 @@ from dataclasses import dataclass
 
 import aiohttp
 import httpx
+import yarl
 from aiohttp import web
 
 # Hop-by-hop headers we must not forward when reverse-proxying.
 _STRIP = {"host", "content-length", "transfer-encoding", "connection", "keep-alive"}
+
+
+def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
+    """Build a target URL whose authority is ALWAYS ``base_url``'s.
+
+    ``rel_url`` is request-controlled. Reconstructing the target as a plain
+    f-string (``f"{base_url}{rel_url}"``) lets a crafted request path repoint
+    the proxy at a different host (``//evil/…``, an embedded ``@``, a scheme),
+    i.e. server-side request forgery. Instead we keep the trusted base's
+    scheme/host/port and graft on ONLY ``rel_url``'s already-encoded path +
+    raw query string, so the authority can never come from the request.
+
+    The query is taken as the RAW string (not reparsed via ``with_query``):
+    Vite distinguishes flag-style query params — ``?raw``/``?url``/``?worker``
+    for ``import x from './f.md?raw'`` — from ``?raw=``, and reparsing would
+    turn the former into the latter and break those imports through the proxy.
+    """
+    base = yarl.URL(base_url)
+    target = base.with_path(rel_url.raw_path, encoded=True)
+    if rel_url.raw_query_string:
+        return f"{target}?{rel_url.raw_query_string}"
+    return str(target)
 
 
 @dataclass(frozen=True)
@@ -155,7 +178,7 @@ async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketRe
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Bridge realtime (/ws/...) sockets to the dev API."""
     cfg: DevProxyConfig = request.app[_CFG]
-    target = f"{_ws_scheme(cfg.upstream_url)}{request.rel_url}"
+    target = _ws_scheme(_join_upstream(cfg.upstream_url, request.rel_url))
     return await _ws_proxy(request, target)
 
 
@@ -201,13 +224,13 @@ async def _execute_handler(request: web.Request) -> web.Response:
 async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
     cfg: DevProxyConfig = request.app[_CFG]
     if _is_ws_upgrade(request):
-        target = f"{_ws_scheme(cfg.upstream_url)}{request.rel_url}"
+        target = _ws_scheme(_join_upstream(cfg.upstream_url, request.rel_url))
         return await _ws_proxy(request, target)
     data = await request.read()
     try:
         resp = await request.app[_HTTP].request(
             request.method,
-            f"{cfg.upstream_url}{request.rel_url}",
+            _join_upstream(cfg.upstream_url, request.rel_url),
             content=data or None,
             headers=_auth_headers(cfg, request.headers),
         )
@@ -224,13 +247,13 @@ async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
 async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
     vite_url = request.app[_VITE]
     if _is_ws_upgrade(request):
-        target = f"{_ws_scheme(vite_url)}{request.rel_url}"
+        target = _ws_scheme(_join_upstream(vite_url, request.rel_url))
         return await _ws_proxy(request, target)
     data = await request.read()
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _STRIP}
     resp = await request.app[_HTTP].request(
         request.method,
-        f"{vite_url}{request.rel_url}",
+        _join_upstream(vite_url, request.rel_url),
         content=data or None,
         headers=headers,
     )

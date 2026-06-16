@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -48,15 +49,24 @@ class NotASolutionWorkspace(Exception):
 def resolve_repo_subpath(checkout_root: Path, repo_subpath: str | None) -> Path:
     """Resolve ``repo_subpath`` under ``checkout_root``, guarding against
     traversal (``..``/absolute) escapes. Returns the checkout root when
-    ``repo_subpath`` is empty. Raises NotASolutionWorkspace if it escapes."""
+    ``repo_subpath`` is empty. Raises NotASolutionWorkspace if it escapes.
+
+    ``repo_subpath`` is request-supplied (it comes straight off the install/
+    preview-repo HTTP body) and the returned path becomes the root every
+    workspace collector reads from, so this is the single traversal chokepoint
+    for the whole repo-install flow. Implemented with os.path.realpath + a
+    startswith prefix check (the barrier static analysis recognizes for path
+    traversal); the trailing os.sep prevents sibling-prefix bypass.
+    """
     if not repo_subpath:
         return checkout_root
-    root = (checkout_root / repo_subpath).resolve()
-    if not root.is_relative_to(checkout_root.resolve()):
+    base_real = os.path.realpath(checkout_root)
+    root = os.path.realpath(os.path.join(base_real, repo_subpath))
+    if root != base_real and not root.startswith(base_real + os.sep):
         raise NotASolutionWorkspace(
             f"repo_subpath {repo_subpath!r} escapes the repo checkout"
         )
-    return root
+    return Path(root)
 
 
 def _collect_python_files(workspace: Path) -> dict[str, str]:
@@ -70,8 +80,10 @@ def _collect_python_files(workspace: Path) -> dict[str, str]:
 
 
 def _collect_entities(workspace: Path, manifest_file: str, key: str) -> list[dict[str, Any]]:
-    path = workspace / ".bifrost" / manifest_file
-    if not path.is_file():
+    from bifrost.commands.solution import _bifrost_manifest
+
+    path = _bifrost_manifest(workspace, manifest_file)
+    if path is None or not path.is_file():
         return []
     data = yaml.safe_load(path.read_text()) or {}
     out: list[dict[str, Any]] = []
@@ -138,7 +150,11 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
 
 def _read_readme(workspace: Path) -> str | None:
     """Read the repo-root ``README.md`` as UTF-8 markdown, or None if absent."""
-    path = workspace / "README.md"
+    root = os.path.realpath(workspace)
+    target = os.path.realpath(os.path.join(root, "README.md"))
+    if not target.startswith(root + os.sep):
+        return None
+    path = Path(target)
     if not path.is_file():
         return None
     return path.read_text(encoding="utf-8")
@@ -159,7 +175,9 @@ async def deploy_from_workspace(
     — otherwise an empty/ wrong checkout would full-replace the install down to
     nothing. The descriptor is the workspace marker (§3.8).
     """
-    if not (workspace / _DESCRIPTOR_FILENAME).is_file():
+    _root = os.path.realpath(workspace)
+    _desc = os.path.realpath(os.path.join(_root, _DESCRIPTOR_FILENAME))
+    if not _desc.startswith(_root + os.sep) or not Path(_desc).is_file():
         raise NotASolutionWorkspace(
             f"checkout at {workspace} has no {_DESCRIPTOR_FILENAME}; "
             f"refusing to full-replace install {solution.id} from a non-Solution repo"

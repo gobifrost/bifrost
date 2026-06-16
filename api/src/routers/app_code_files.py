@@ -815,10 +815,10 @@ async def get_v2_dist_asset(
             raise HTTPException(
                 status_code=404, detail=f"dist asset not found: {rel}"
             ) from exc
-        logger.exception("dist asset read failed: app=%s rel=%s", app.id, rel)
+        logger.exception("dist asset read failed: app=%s rel=%s", app.id, log_safe(rel))
         raise
     except Exception:
-        logger.exception("dist asset read failed: app=%s rel=%s", app.id, rel)
+        logger.exception("dist asset read failed: app=%s rel=%s", app.id, log_safe(rel))
         raise
 
     if rel.endswith(".html"):

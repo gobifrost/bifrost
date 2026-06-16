@@ -15,6 +15,7 @@ Stateless — no DB or S3 dependency.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -60,17 +61,14 @@ class SolutionDescriptor(BaseModel):
     logo: str | None = None
 
 
-def _descriptor_path(path: Path | str) -> Path:
-    """Resolve ``path`` (a workspace dir OR the descriptor file) to the file."""
-    p = Path(path)
-    if p.is_dir():
-        return p / DESCRIPTOR_FILENAME
-    return p
-
-
 def is_solution_workspace(path: Path | str) -> bool:
     """True if ``path`` (a dir) contains a ``bifrost.solution.yaml``."""
-    return _descriptor_path(path).is_file()
+    p = Path(path)
+    if p.is_dir():
+        root = os.path.realpath(p)
+        target = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
+        return target.startswith(root + os.sep) and Path(target).is_file()
+    return p.is_file()
 
 
 def find_solution_root(start: Path | str) -> Path | None:
@@ -96,7 +94,17 @@ def load_descriptor(path: Path | str) -> SolutionDescriptor:
     Raises FileNotFoundError if absent, and pydantic ValidationError on a bad
     schema (missing slug/name, etc.). A legacy ``scope:`` key is ignored.
     """
-    descriptor_file = _descriptor_path(path)
+    p = Path(path)
+    if p.is_dir():
+        # Confine the descriptor read to the given dir (realpath + startswith,
+        # the recognized traversal barrier) so a symlinked entry can't redirect.
+        root = os.path.realpath(p)
+        resolved = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
+        if not resolved.startswith(root + os.sep):
+            raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {p / DESCRIPTOR_FILENAME}")
+        descriptor_file = Path(resolved)
+    else:
+        descriptor_file = p
     if not descriptor_file.is_file():
         raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {descriptor_file}")
     data = yaml.safe_load(descriptor_file.read_text()) or {}

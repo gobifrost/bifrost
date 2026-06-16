@@ -29,6 +29,8 @@ import logging
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
+from src.core.log_safety import log_safe
+
 logger = logging.getLogger(__name__)
 
 # Short TTL + active renewal: a live holder keeps extending it; a crashed holder
@@ -100,7 +102,7 @@ async def solution_write_lock(solution_id: UUID) -> AsyncIterator[None]:
                 raise
             except Exception:  # noqa: BLE001 - renewal is best-effort; keep trying
                 logger.warning(
-                    "write-lock renewal failed for %s (will retry)", solution_id
+                    "write-lock renewal failed for %s (will retry)", log_safe(solution_id)
                 )
 
     watchdog = asyncio.create_task(_renew())

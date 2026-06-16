@@ -3,9 +3,46 @@ import socket
 
 import aiohttp
 import httpx
+import yarl
 from aiohttp import web
 
-from bifrost.solution_dev.proxy import DevProxyConfig, build_dev_app
+from bifrost.solution_dev.proxy import DevProxyConfig, _join_upstream, build_dev_app
+
+
+def test_join_upstream_keeps_trusted_authority():
+    """A request path can never repoint the proxy at another host (partial SSRF).
+
+    yarl normalizes the relative URL, so even authority-smuggling shapes
+    (//evil, embedded @, an absolute scheme) keep the trusted base's host/port.
+    """
+    base = "http://127.0.0.1:8000"
+
+    # Ordinary path + query: grafted onto the base verbatim.
+    assert (
+        _join_upstream(base, yarl.URL("/api/tables/foo?x=1"))
+        == "http://127.0.0.1:8000/api/tables/foo?x=1"
+    )
+
+    # Authority-smuggling attempts must still resolve to the trusted host.
+    for hostile in ["//evil.example/x", "/\\evil.example", "/@evil.example/x"]:
+        out = yarl.URL(_join_upstream(base, yarl.URL(hostile)))
+        assert out.host == "127.0.0.1" and out.port == 8000, (out, hostile)
+
+
+def test_join_upstream_preserves_flag_style_query():
+    """Vite flag queries (?raw, ?url, ?worker) must NOT become ?raw= etc.
+
+    Reparsing the query via yarl's with_query() would turn the value-less flag
+    into an empty-valued param, breaking `import x from './f.md?raw'` through
+    the dev proxy. We pass the raw query string through verbatim.
+    """
+    base = "http://127.0.0.1:8000"
+    assert _join_upstream(base, yarl.URL("/src/f.md?raw")) == "http://127.0.0.1:8000/src/f.md?raw"
+    assert _join_upstream(base, yarl.URL("/src/f.ts?worker&inline")) == (
+        "http://127.0.0.1:8000/src/f.ts?worker&inline"
+    )
+    # An ordinary key=value query is preserved too.
+    assert _join_upstream(base, yarl.URL("/api/x?a=1&b=2")) == "http://127.0.0.1:8000/api/x?a=1&b=2"
 
 
 def _free_port() -> int:

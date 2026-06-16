@@ -28,6 +28,7 @@ from uuid import UUID
 from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import selectinload
 
+from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
 from src.models import Workflow
 from src.models.orm.workflow_roles import WorkflowRole
@@ -196,8 +197,8 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         # install executes — callers 404 with the ref in the detail.
         logger.warning(
             "Ambiguous unscoped path-ref %s::%s matches %d solution workflows; refusing",
-            path,
-            function_name,
+            log_safe(path),
+            log_safe(function_name),
             len(rows),
         )
         return None
