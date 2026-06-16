@@ -22,6 +22,7 @@ side closes, the bridge tears down both sockets (no half-open pump leaks).
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 
 import aiohttp
@@ -33,15 +34,21 @@ from aiohttp import web
 _STRIP = {"host", "content-length", "transfer-encoding", "connection", "keep-alive"}
 
 
+class _UpstreamAuthorityError(ValueError):
+    """The constructed proxy target's authority is not the trusted base's."""
+
+
 def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
     """Build a target URL whose authority is ALWAYS ``base_url``'s.
 
     ``rel_url`` is request-controlled. Reconstructing the target as a plain
     f-string (``f"{base_url}{rel_url}"``) lets a crafted request path repoint
     the proxy at a different host (``//evil/…``, an embedded ``@``, a scheme),
-    i.e. server-side request forgery. Instead we keep the trusted base's
-    scheme/host/port and graft on ONLY ``rel_url``'s already-encoded path +
-    raw query string, so the authority can never come from the request.
+    i.e. server-side request forgery. We keep the trusted base's scheme/host/
+    port and graft on ONLY ``rel_url``'s already-encoded path + raw query
+    string, then **re-validate** that the result's origin is still the base's
+    origin with an anchored ``re.fullmatch`` allowlist before returning — so the
+    authority can never come from the request even if yarl's join surprised us.
 
     The query is taken as the RAW string (not reparsed via ``with_query``):
     Vite distinguishes flag-style query params — ``?raw``/``?url``/``?worker``
@@ -51,8 +58,17 @@ def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
     base = yarl.URL(base_url)
     target = base.with_path(rel_url.raw_path, encoded=True)
     if rel_url.raw_query_string:
-        return f"{target}?{rel_url.raw_query_string}"
-    return str(target)
+        result = f"{target}?{rel_url.raw_query_string}"
+    else:
+        result = str(target)
+    # Anchored allowlist: the target MUST start with the exact trusted origin
+    # (scheme://host[:port]) followed by a path. re.fullmatch on an
+    # origin-prefixed pattern is the SSRF barrier static analysis recognizes,
+    # and it genuinely rejects any authority the request managed to inject.
+    origin = f"{base.scheme}://{base.raw_host}" + (f":{base.port}" if base.port else "")
+    if not re.fullmatch(re.escape(origin) + r"(?:/.*)?", result, re.DOTALL):
+        raise _UpstreamAuthorityError(f"proxy target {result!r} escapes upstream {origin!r}")
+    return result
 
 
 @dataclass(frozen=True)
