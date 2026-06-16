@@ -29,6 +29,8 @@ export interface BrandingState {
 	squareLogoUrl: string | null;
 	/** URL for rectangle logo (header) */
 	rectangleLogoUrl: string | null;
+	/** Custom product name, or null when unset (falls back to the default) */
+	applicationName: string | null;
 	/** Refresh branding data (e.g., after upload) */
 	refreshBranding: () => void;
 }
@@ -159,6 +161,30 @@ export async function resetColor(): Promise<BrandingSettings_API> {
 }
 
 /**
+ * Reset application name to default (superuser only)
+ */
+export async function resetApplicationName(): Promise<BrandingSettings_API> {
+	const { data, error } = await apiClient.DELETE(
+		"/api/branding/application-name",
+		{},
+	);
+
+	if (error) {
+		throw new Error(
+			`Failed to reset application name: ${
+				typeof error === "object" &&
+				error !== null &&
+				"message" in error
+					? (error as { message?: string }).message
+					: "Unknown error"
+			}`,
+		);
+	}
+
+	return data;
+}
+
+/**
  * Reset all branding to defaults (superuser only)
  */
 export async function resetAllBranding(): Promise<BrandingSettings_API> {
@@ -265,6 +291,7 @@ export function useBranding(): BrandingState {
 		logoLoaded,
 		squareLogoUrl,
 		rectangleLogoUrl,
+		applicationName: branding?.application_name || null,
 		refreshBranding,
 	};
 }

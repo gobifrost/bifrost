@@ -32,6 +32,7 @@ import { motion } from "framer-motion";
 import type { OAuthProvider } from "@/services/auth";
 import { Logo } from "@/components/branding/Logo";
 import { AuthTransition } from "@/components/auth/AuthTransition";
+import { useApplicationName } from "@/lib/applicationName";
 
 type LoginStep = "credentials" | "mfa" | "mfa-setup";
 
@@ -44,6 +45,7 @@ interface MFAState {
 export function Login() {
 	const navigate = useNavigate();
 	const location = useLocation();
+	const applicationName = useApplicationName();
 	const {
 		login,
 		loginWithMfa,
@@ -371,12 +373,12 @@ export function Login() {
 							<Logo
 								type="square"
 								className="h-16 w-16"
-								alt="Bifrost"
+								alt={applicationName}
 							/>
 						</motion.div>
 						<div className="space-y-1">
 							<h1 className="text-2xl font-bold tracking-tight">
-								Bifrost
+								{applicationName}
 							</h1>
 							<CardDescription className="text-base">
 								{step === "credentials" &&

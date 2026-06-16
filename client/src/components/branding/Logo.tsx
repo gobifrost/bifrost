@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { Skeleton } from "@/components/ui/skeleton";
+import { resolveApplicationName } from "@/lib/applicationName";
 
 interface LogoProps {
 	type: "square" | "rectangle";
@@ -17,9 +18,17 @@ interface LogoProps {
  * Shows skeleton loader while branding is being loaded
  */
 export function Logo({ type, className = "", alt = "Logo" }: LogoProps) {
-	const { squareLogoUrl, rectangleLogoUrl, brandingLoaded, logoLoaded } =
-		useOrgScope();
+	const {
+		squareLogoUrl,
+		rectangleLogoUrl,
+		applicationName,
+		brandingLoaded,
+		logoLoaded,
+	} = useOrgScope();
 	const [error, setError] = useState(false);
+
+	// Product name shown in the default (no custom logo) header wordmark.
+	const productName = resolveApplicationName(applicationName);
 
 	// Default logo - fallback to standard logo.svg
 	const defaultLogo = "/logo.svg";
@@ -67,7 +76,7 @@ export function Logo({ type, className = "", alt = "Logo" }: LogoProps) {
 			<div className="flex items-center gap-2">
 				<img src={defaultLogo} alt={alt} className="h-8 w-8" />
 				<span className="hidden sm:inline-block font-semibold">
-					Bifrost Integrations
+					{productName}
 				</span>
 			</div>
 		);

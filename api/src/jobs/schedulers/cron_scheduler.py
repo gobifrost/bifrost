@@ -187,17 +187,26 @@ async def process_schedule_sources() -> dict[str, Any]:
                     # Create deliveries for each subscription
                     deliveries_for_event = 0
                     for sub in subscriptions:
-                        if not sub.workflow_id:
-                            logger.warning(
-                                f"Subscription {sub.id} has no workflow, skipping"
-                            )
-                            continue
+                        target_type = getattr(sub, "target_type", "workflow") or "workflow"
+
+                        if target_type == "agent":
+                            if not sub.agent_id:
+                                logger.warning(
+                                    f"Subscription {sub.id} is agent type but has no agent_id, skipping"
+                                )
+                                continue
+                        else:
+                            if not sub.workflow_id:
+                                logger.warning(
+                                    f"Subscription {sub.id} has no workflow, skipping"
+                                )
+                                continue
 
                         delivery = EventDelivery(
                             id=uuid.uuid4(),
                             event_id=event.id,
                             event_subscription_id=sub.id,
-                            workflow_id=sub.workflow_id,
+                            workflow_id=sub.workflow_id,  # None for agent targets
                             status=EventDeliveryStatus.PENDING,
                         )
                         db.add(delivery)

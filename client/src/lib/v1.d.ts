@@ -2506,6 +2506,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/branding/application-name": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Reset application name to default
+         * @description Remove custom application name and revert to default (superuser only)
+         */
+        delete: operations["reset_application_name_api_branding_application_name_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/read": {
         parameters: {
             query?: never;
@@ -3725,22 +3745,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10839,13 +10859,18 @@ export interface components {
          */
         BrandingSettings: {
             /**
+             * Application Name
+             * @description Product name shown in the UI (login, browser tab, header). Raw stored value; None when unset.
+             */
+            application_name?: string | null;
+            /**
              * Square Logo Url
              * @description Square logo URL (for icons, 1:1 ratio)
              */
             square_logo_url?: string | null;
             /**
              * Rectangle Logo Url
-             * @description Rectangle logo URL (for headers, 16:9 ratio)
+             * @description Horizontal logo URL (for headers, ~4:1 ratio)
              */
             rectangle_logo_url?: string | null;
             /**
@@ -10880,6 +10905,11 @@ export interface components {
          * @description Request model for updating branding settings - logos use POST /logo/{type}
          */
         BrandingUpdateRequest: {
+            /**
+             * Application Name
+             * @description Product name shown in the UI. Omit to leave unchanged; use the reset endpoint to clear.
+             */
+            application_name?: string | null;
             /**
              * Primary Color
              * @description Primary color (hex code, e.g., #0066CC)
@@ -27678,6 +27708,26 @@ export interface operations {
             };
         };
     };
+    reset_application_name_api_branding_application_name_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandingSettings"];
+                };
+            };
+        };
+    };
     read_file_api_files_read_post: {
         parameters: {
             query?: never;
@@ -29601,7 +29651,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -29634,7 +29684,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -29667,7 +29717,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -29700,7 +29750,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {

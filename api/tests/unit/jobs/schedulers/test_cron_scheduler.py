@@ -353,3 +353,100 @@ async def test_schedule_skipped_when_active_agent_run_target(db_session, caplog)
     # No new Event row must have been created for this source
     after = await _count_events_for_source(db_session, source.id)
     assert after == 1, "Expected exactly 1 event (the prior one) — agent-target overlap must block"
+
+
+async def _deliveries_for_source(db_session, source_id) -> list[EventDelivery]:
+    rows = (
+        await db_session.execute(
+            select(EventDelivery)
+            .join(Event, Event.id == EventDelivery.event_id)
+            .where(Event.event_source_id == source_id)
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@pytest.mark.asyncio
+async def test_schedule_creates_delivery_for_agent_subscription(db_session):
+    """Regression: a fired schedule must create a delivery for an AGENT-target
+    subscription.
+
+    Agent subscriptions carry agent_id and leave workflow_id NULL by design. The
+    scheduler previously skipped any subscription without a workflow_id, so no
+    EventDelivery was ever created and the agent never ran (the UI mislabeled it
+    "Subscription added after this event arrived"). Workflows were unaffected.
+    """
+    from src.models.orm.agents import Agent
+
+    agent = Agent(
+        id=uuid4(),
+        name="sched-agent",
+        system_prompt="you are a test agent",
+        created_by="test",
+    )
+    source, ss, sub = _make_source_and_subscription(target_type="agent")
+    sub.agent_id = agent.id  # agent target: agent_id set, workflow_id stays None
+    db_session.add(agent)
+    db_session.add(source)
+    db_session.add(ss)
+    db_session.add(sub)
+    await db_session.commit()
+
+    mock_sub_repo = AsyncMock()
+    mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
+    mock_processor = AsyncMock()
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=1)
+
+    from src.jobs.schedulers.cron_scheduler import process_schedule_sources
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_IS_VALID, return_value=True),
+        patch(PATH_SUB_REPO, return_value=mock_sub_repo),
+        patch(PATH_PROCESSOR, return_value=mock_processor),
+    ):
+        await process_schedule_sources()
+
+    deliveries = await _deliveries_for_source(db_session, source.id)
+    assert len(deliveries) == 1, "agent subscription should produce exactly one delivery"
+    assert deliveries[0].event_subscription_id == sub.id
+    assert deliveries[0].workflow_id is None  # agent target carries no workflow_id
+
+
+@pytest.mark.asyncio
+async def test_schedule_creates_delivery_for_workflow_subscription(db_session):
+    """Workflow-target subscriptions still get a delivery (no regression)."""
+    from src.models.orm.workflows import Workflow
+
+    workflow = Workflow(
+        id=uuid4(),
+        name="sched-wf",
+        function_name="sched_wf",
+        path="workflows/sched_wf.py",
+    )
+    source, ss, sub = _make_source_and_subscription(target_type="workflow")
+    sub.workflow_id = workflow.id
+    db_session.add(workflow)
+    db_session.add(source)
+    db_session.add(ss)
+    db_session.add(sub)
+    await db_session.commit()
+
+    mock_sub_repo = AsyncMock()
+    mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
+    mock_processor = AsyncMock()
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=1)
+
+    from src.jobs.schedulers.cron_scheduler import process_schedule_sources
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_IS_VALID, return_value=True),
+        patch(PATH_SUB_REPO, return_value=mock_sub_repo),
+        patch(PATH_PROCESSOR, return_value=mock_processor),
+    ):
+        await process_schedule_sources()
+
+    deliveries = await _deliveries_for_source(db_session, source.id)
+    assert len(deliveries) == 1
+    assert deliveries[0].workflow_id == sub.workflow_id

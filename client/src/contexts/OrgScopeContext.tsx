@@ -30,6 +30,7 @@ interface OrgScopeContextType {
 	logoLoaded: boolean;
 	squareLogoUrl: string | null;
 	rectangleLogoUrl: string | null;
+	applicationName: string | null;
 	terminology: Terminology;
 	refreshBranding: () => void;
 }
@@ -60,6 +61,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 	const [rectangleLogoUrl, setRectangleLogoUrl] = useState<string | null>(
 		null,
 	);
+	const [applicationName, setApplicationName] = useState<string | null>(null);
 	const [terminology, setTerminology] =
 		useState<Terminology>(DEFAULT_TERMINOLOGY);
 	const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -87,6 +89,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 			setLogoLoaded(false);
 			setSquareLogoUrl(null);
 			setRectangleLogoUrl(null);
+			setApplicationName(null);
 			setTerminology(DEFAULT_TERMINOLOGY);
 
 			try {
@@ -147,6 +150,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 				// Store logo URLs in context
 				setSquareLogoUrl(sqUrl || null);
 				setRectangleLogoUrl(rectUrl || null);
+				setApplicationName(branding.application_name || null);
 				setTerminology(nextTerminology);
 
 				// Apply branding theme (colors to CSS) - no need to fetch again
@@ -180,10 +184,11 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 			logoLoaded,
 			squareLogoUrl,
 			rectangleLogoUrl,
+			applicationName,
 			terminology,
 			refreshBranding,
 		}),
-		[scope, setScope, isGlobalScope, brandingLoaded, logoLoaded, squareLogoUrl, rectangleLogoUrl, terminology, refreshBranding],
+		[scope, setScope, isGlobalScope, brandingLoaded, logoLoaded, squareLogoUrl, rectangleLogoUrl, applicationName, terminology, refreshBranding],
 	);
 
 	return (

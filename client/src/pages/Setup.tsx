@@ -27,6 +27,7 @@ import {
 import { Loader2, Mail, User } from "lucide-react";
 import { motion } from "framer-motion";
 import { Logo } from "@/components/branding/Logo";
+import { useApplicationName } from "@/lib/applicationName";
 import { toast } from "sonner";
 import { AuthSetupSteps } from "@/components/auth/AuthSetupSteps";
 
@@ -34,6 +35,7 @@ type SetupMode = "choose" | "auth";
 
 export function Setup() {
 	const navigate = useNavigate();
+	const applicationName = useApplicationName();
 	const {
 		needsSetup,
 		isLoading: authLoading,
@@ -162,12 +164,12 @@ export function Setup() {
 							<Logo
 								type="square"
 								className="h-16 w-16"
-								alt="Bifrost"
+								alt={applicationName}
 							/>
 						</motion.div>
 						<div className="space-y-1">
 							<CardTitle className="text-2xl font-bold tracking-tight">
-								Welcome to Bifrost
+								Welcome to {applicationName}
 							</CardTitle>
 							<CardDescription className="text-base">
 								{mode === "choose" &&

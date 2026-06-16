@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Loader2, Upload, Palette, RotateCcw } from "lucide-react";
+import { Loader2, Upload, Palette, RotateCcw, Type } from "lucide-react";
 import {
 	updateBranding,
 	uploadLogo,
 	resetLogo,
 	resetColor,
+	resetApplicationName,
 	getBranding,
 } from "@/hooks/useBranding";
 import { applyBrandingTheme, type BrandingSettings } from "@/lib/branding";
@@ -60,13 +61,15 @@ export function Branding() {
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [savingTerminology, setSavingTerminology] = useState(false);
+	const [savingApplicationName, setSavingApplicationName] = useState(false);
 	const [uploading, setUploading] = useState<"square" | "rectangle" | null>(
 		null,
 	);
 	const [resetting, setResetting] = useState<
-		"square" | "rectangle" | "color" | null
+		"square" | "rectangle" | "color" | "application-name" | null
 	>(null);
 	const [primaryColor, setPrimaryColor] = useState("#0066CC");
+	const [applicationName, setApplicationName] = useState("");
 	const [terminology, setTerminology] =
 		useState<Terminology>(DEFAULT_TERMINOLOGY);
 
@@ -84,6 +87,7 @@ export function Branding() {
 					if (data.primary_color) {
 						setPrimaryColor(data.primary_color);
 					}
+					setApplicationName(data.application_name ?? "");
 					setTerminology(
 						mergeTerminology(
 							data.terminology as BrandingTerminologyInput,
@@ -153,6 +157,58 @@ export function Branding() {
 			});
 		} finally {
 			setSavingTerminology(false);
+		}
+	};
+
+	const handleApplicationNameUpdate = async () => {
+		const trimmed = applicationName.trim();
+		setSavingApplicationName(true);
+		try {
+			// Empty input clears the custom name back to the default.
+			const updated = trimmed
+				? await updateBranding({ application_name: trimmed })
+				: await resetApplicationName();
+			setBranding(updated);
+			setApplicationName(updated.application_name ?? "");
+			refreshBranding();
+
+			toast.success("Application name updated", {
+				description: trimmed
+					? `Now showing "${trimmed}"`
+					: "Reverted to the default name",
+			});
+		} catch (err) {
+			toast.error("Error", {
+				description:
+					err instanceof Error
+						? err.message
+						: "Failed to update application name",
+			});
+		} finally {
+			setSavingApplicationName(false);
+		}
+	};
+
+	const handleResetApplicationName = async () => {
+		setResetting("application-name");
+		try {
+			const updated = await resetApplicationName();
+			setBranding(updated);
+			setApplicationName(updated.application_name ?? "");
+			refreshBranding();
+
+			toast.success("Application name reset", {
+				description: "Reverted to the default name",
+			});
+		} catch (err) {
+			toast.error("Error", {
+				description:
+					err instanceof Error
+						? err.message
+						: "Failed to reset application name",
+			});
+		} finally {
+			setResetting(null);
 		}
 	};
 
@@ -344,6 +400,67 @@ export function Branding() {
 
 	return (
 		<div className="space-y-6">
+			{/* Application Name */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Type className="h-5 w-5" />
+						Application Name
+					</CardTitle>
+					<CardDescription>
+						Shown on the login screen, browser tab, and header.
+						Leave blank to use the default.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div>
+						<Label htmlFor="applicationName">Name</Label>
+						<Input
+							id="applicationName"
+							type="text"
+							value={applicationName}
+							onChange={(e) =>
+								setApplicationName(e.target.value)
+							}
+							placeholder="Bifrost"
+							maxLength={40}
+							className="max-w-sm"
+						/>
+					</div>
+					<div className="flex gap-2">
+						<Button
+							onClick={handleApplicationNameUpdate}
+							disabled={
+								savingApplicationName ||
+								resetting === "application-name"
+							}
+							variant="default"
+						>
+							{savingApplicationName ? (
+								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+							) : null}
+							Update Name
+						</Button>
+						<Button
+							onClick={handleResetApplicationName}
+							disabled={
+								savingApplicationName ||
+								resetting === "application-name"
+							}
+							variant="outline"
+							size="icon"
+							title="Reset to default name"
+						>
+							{resetting === "application-name" ? (
+								<Loader2 className="h-4 w-4 animate-spin" />
+							) : (
+								<RotateCcw className="h-4 w-4" />
+							)}
+						</Button>
+					</div>
+				</CardContent>
+			</Card>
+
 			{/* Primary Color */}
 			<Card>
 				<CardHeader>
@@ -514,6 +631,9 @@ export function Branding() {
 									</Button>
 								)}
 							</div>
+							<p className="text-xs text-muted-foreground">
+								Recommended: 512×512 px
+							</p>
 							<div
 								className={`relative border-2 border-dashed rounded-lg p-6 transition-colors h-48 flex items-center justify-center ${
 									dragActiveSquare
@@ -574,10 +694,10 @@ export function Branding() {
 							</div>
 						</div>
 
-						{/* Rectangle Logo */}
+						{/* Horizontal Logo */}
 						<div className="space-y-3">
 							<div className="flex items-center justify-between">
-								<Label>Rectangle Logo (16:9 ratio)</Label>
+								<Label>Horizontal Logo (~4:1 ratio)</Label>
 								{branding?.rectangle_logo_url && (
 									<Button
 										size="sm"
@@ -599,6 +719,9 @@ export function Branding() {
 									</Button>
 								)}
 							</div>
+							<p className="text-xs text-muted-foreground">
+								Recommended: 800×200 px
+							</p>
 							<div
 								className={`relative border-2 border-dashed rounded-lg p-6 transition-colors h-48 flex items-center justify-center ${
 									dragActiveRectangle

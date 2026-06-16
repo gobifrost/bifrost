@@ -26,6 +26,12 @@ vi.mock("@/components/branding/Logo", () => ({
 	Logo: () => null,
 }));
 
+// Register reads the product name via useApplicationName, which depends on
+// OrgScopeContext. Stub it so the page renders without the full provider tree.
+vi.mock("@/lib/applicationName", () => ({
+	useApplicationName: () => "Bifrost",
+}));
+
 vi.mock("@/services/passkeys", () => ({
 	registerInviteWithPasskey: vi.fn(),
 }));

@@ -6,6 +6,7 @@ No organization scoping - single global branding record.
 """
 
 import logging
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models import GlobalBranding
 
 logger = logging.getLogger(__name__)
+
+# Sentinel distinguishing "argument omitted" (leave field unchanged) from an
+# explicit None (clear the field). The legacy logo/color args use the
+# None-means-skip convention, which cannot express clearing; application_name
+# needs both update-with-value and clear-to-None, so it uses this sentinel.
+_UNSET: Any = object()
 
 
 class BrandingRepository:
@@ -45,6 +52,7 @@ class BrandingRepository:
         rectangle_logo_content_type: str | None = None,
         primary_color: str | None = None,
         terminology: dict | None = None,
+        application_name: str | None = _UNSET,
     ) -> GlobalBranding:
         """
         Create or update global branding configuration (upsert).
@@ -56,6 +64,8 @@ class BrandingRepository:
             rectangle_logo_content_type: Rectangle logo MIME type (e.g., 'image/png')
             primary_color: Hex color code (e.g., '#0066CC')
             terminology: Fixed product terminology overrides
+            application_name: Product name. Omit to leave unchanged; pass None to
+                clear it back to the default.
 
         Returns:
             Created or updated GlobalBranding record
@@ -76,6 +86,8 @@ class BrandingRepository:
                 existing.primary_color = primary_color
             if terminology is not None:
                 existing.terminology = terminology
+            if application_name is not _UNSET:
+                existing.application_name = application_name
 
             await self.session.flush()
             await self.session.refresh(existing)
@@ -90,6 +102,7 @@ class BrandingRepository:
                 rectangle_logo_content_type=rectangle_logo_content_type,
                 primary_color=primary_color,
                 terminology=terminology,
+                application_name=None if application_name is _UNSET else application_name,
             )
             self.session.add(branding)
             await self.session.flush()
