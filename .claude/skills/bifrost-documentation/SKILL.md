@@ -9,6 +9,24 @@ Refresh `bifrost-integrations-docs` programmatically: re-capture screenshots, au
 
 The docs repo is at `~/GitHub/bifrost-integrations-docs` (or clone it from `git@github.com:jackmusick/bifrost-integrations-docs.git` if missing). The bifrost repo's worktree is the source of truth for the running app.
 
+## Default behavior — "catch up everything since the last documented commit"
+
+**When invoked with no mode, do the whole job in one pass — both existing and net-new surface.** The user's expectation: *"run it, figure it all out — all new features, all existing features. Know the last commit it fully documented, document all changes and features since, and update it with screenshots."* Don't ask which mode; just bring the docs current.
+
+The watermark already lives in the manifest: each entry carries `captured_at.bifrost_sha`. The **lowest** sha across all entries is the "fully documented through" commit. Net-new surface is discovered by **router-walk ∖ manifest**.
+
+Run this sequence (fan out the per-page work with `Workflow` — one agent per page — when there's more than a handful):
+
+1. **Establish the watermark.** `WATERMARK=$(min captured_at.bifrost_sha across screenshots.yaml entries)`. Everything in `git log $WATERMARK..HEAD` (bifrost) is in scope.
+2. **Discover undocumented routes.** Enumerate client routes from `client/src/App.tsx` (`grep -oE 'path="[^"]+"'`), normalize, and subtract every `route:` already in `screenshots.yaml`. The remainder is net-new surface needing **MDX + a manifest entry + fixtures**. (Skip non-visual routes: `*/callback*`, `device`, `mfa-setup`, `auth/*`, param-only redirects.)
+3. **Discover stale existing entries.** Entries whose `source_globs` changed in `$WATERMARK..HEAD`, or whose `captured_at.bifrost_sha` is behind HEAD — these need a re-capture (and a prose check if the feature changed, not just pixels).
+4. **Author (fan out).** For each net-new route: pick the Diátaxis quadrant, write the MDX page, add the sidebar entry, and add a `screenshots.yaml` entry (`id`, `route`, `seed`, `diataxis.{page,type}`, per-entry `mocks`/fixtures). For each stale page: update prose if the feature changed. Apply the anti-bloat self-review. **MDX comments are `{/* */}`, never `<!-- -->`.**
+5. **Capture in one loop.** `scripts/docs/run-pipeline.sh --docs-repo $DOCS --bifrost-repo $BIFROST --full` (or `--ids <new+stale ids>`). Runs headless in the playwright-runner container **on this host** — no external browser. Pixel-diff gates commits.
+6. **Stamp the watermark forward.** Every captured entry's `captured_at.bifrost_sha` is set to the bifrost HEAD it was captured against. That advances the watermark so the next run starts exactly here.
+7. **Build + lint + PR.** `npm run lint:manifest` and `npm run build` must pass; commit; open the docs PR with the TL;DR.
+
+The named modes below are the surgical primitives this default orchestrates. Reach for a single mode only when you explicitly want just that slice (e.g. `lint` after hand-editing). The default path is what a release or a monthly catch-up should use.
+
 ## Modes
 
 | Mode | When | What it does |
@@ -115,7 +133,7 @@ If the user asks for a doc and you can't pick a quadrant in one sentence, ask th
 - The user wants to write a single targeted doc page from scratch — write it directly.
 - The user is debugging or fixing a typo — direct edit.
 - The bifrost test stack is broken — fix that first; this skill cannot work without it.
-- **The user is shipping net-new feature docs.** None of this skill's modes author MDX from a feature spec — `diff` only refreshes existing entries, `bootstrap` walks the router but produces a draft manifest that overwrites the existing one (destructive — discards hand-curated mocks/seeds/actions), and `full` only authors stubs for MDX pages already referenced by the manifest. Brand-new how-to / explanation pages must be authored directly (read the PR description, brainstorm structure with the user, write MDX, add manifest entries with mocks/seeds, then run with `--ids <new-ids>` to capture). The bifrost-release skill flags this case in step 1b-i and prompts the user before invoking this skill.
+- **Net-new feature docs ARE in scope — see "Default behavior" at the top.** (This used to be a carve-out. It no longer is.) The default no-mode run discovers undocumented routes via router-walk ∖ manifest, authors MDX + manifest entries + fixtures for each (fanning out with `Workflow`), then captures in one loop and stamps the watermark forward. The individual `diff`/`bootstrap`/`full` modes remain the surgical primitives, but you do **not** need to hand-author net-new pages before running — the default path does it. The `Authoring new captures` procedure below is the per-page recipe each fan-out agent follows.
 
 ## Authoring new captures (manual)
 
