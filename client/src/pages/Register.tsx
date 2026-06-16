@@ -22,8 +22,10 @@ import {
 	type OAuthProvider,
 } from "@/services/auth";
 import { registerInviteWithPasskey } from "@/services/passkeys";
+import { useApplicationName } from "@/lib/applicationName";
 
 export function Register() {
+	const applicationName = useApplicationName();
 	const [params] = useSearchParams();
 	const token = params.get("token") ?? "";
 	const [error, setError] = useState<string | null>(null);
@@ -127,7 +129,11 @@ export function Register() {
 						transition={{ delay: 0.1, duration: 0.3 }}
 						className="flex justify-center"
 					>
-						<Logo type="square" className="h-16 w-16" alt="Bifrost" />
+						<Logo
+						type="square"
+						className="h-16 w-16"
+						alt={applicationName}
+					/>
 					</motion.div>
 					<div className="space-y-1">
 						<h1 className="text-2xl font-bold tracking-tight">

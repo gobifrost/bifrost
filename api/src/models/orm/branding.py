@@ -20,6 +20,7 @@ class GlobalBranding(Base):
     __tablename__ = "branding"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    application_name: Mapped[str | None] = mapped_column(String(40), default=None)
     square_logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     square_logo_content_type: Mapped[str | None] = mapped_column(
         String(50), default=None

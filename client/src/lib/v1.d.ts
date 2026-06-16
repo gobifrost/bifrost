@@ -2166,6 +2166,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/remap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remap workflow references
+         * @description Move references from one workflow ID to another active workflow ID
+         */
+        post: operations["remap_workflow_references_api_workflows__workflow_id__remap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}/recreate": {
         parameters: {
             query?: never;
@@ -2481,6 +2501,26 @@ export interface paths {
          * @description Remove custom primary color and revert to default (superuser only)
          */
         delete: operations["reset_color_api_branding_color_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/branding/application-name": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Reset application name to default
+         * @description Remove custom application name and revert to default (superuser only)
+         */
+        delete: operations["reset_application_name_api_branding_application_name_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3705,22 +3745,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8445,6 +8485,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/modules/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fetch Module
+         * @description Fetch a workspace module by path.
+         *
+         *     Returns the module source and hash exactly as the module cache would.
+         *     On miss (module not found in Redis or S3), returns 404.
+         *
+         *     This endpoint is called by the child process's virtual import hook when
+         *     Redis is cold (i.e. after a Redis restart that evicted cached modules).
+         *     The child authenticates with its pre-minted engine token.
+         *
+         *     Args:
+         *         path: Module path relative to workspace root (e.g. "features/api.py").
+         */
+        get: operations["fetch_module_api_sdk_modules__path__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/modules-index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fetch Module Index
+         * @description Fetch the set of all known workspace module paths.
+         *
+         *     Returns JSON: {"paths": ["features/api.py", ...]}.
+         *     Used by the child's VirtualModuleFinder to rebuild the module index when
+         *     the Redis SET is cold.
+         */
+        get: operations["fetch_module_index_api_sdk_modules_index_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fetch Requirements
+         * @description Fetch requirements.txt content.
+         *
+         *     Returns JSON: {"content": "...", "hash": "..."} or 404 if none exists.
+         *     Used by the child's install_requirements() when Redis is cold.
+         */
+        get: operations["fetch_requirements_api_sdk_requirements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -10132,13 +10249,18 @@ export interface components {
          */
         BrandingSettings: {
             /**
+             * Application Name
+             * @description Product name shown in the UI (login, browser tab, header). Raw stored value; None when unset.
+             */
+            application_name?: string | null;
+            /**
              * Square Logo Url
              * @description Square logo URL (for icons, 1:1 ratio)
              */
             square_logo_url?: string | null;
             /**
              * Rectangle Logo Url
-             * @description Rectangle logo URL (for headers, 16:9 ratio)
+             * @description Horizontal logo URL (for headers, ~4:1 ratio)
              */
             rectangle_logo_url?: string | null;
             /**
@@ -10173,6 +10295,11 @@ export interface components {
          * @description Request model for updating branding settings - logos use POST /logo/{type}
          */
         BrandingUpdateRequest: {
+            /**
+             * Application Name
+             * @description Product name shown in the UI. Omit to leave unchanged; use the reset endpoint to clear.
+             */
+            application_name?: string | null;
             /**
              * Primary Color
              * @description Primary color (hex code, e.g., #0066CC)
@@ -18623,6 +18750,45 @@ export interface components {
             job_id: string;
         };
         /**
+         * RemapWorkflowRequest
+         * @description Request to move references from one workflow row to another.
+         */
+        RemapWorkflowRequest: {
+            /**
+             * Target Workflow Id
+             * @description Active workflow UUID that should receive the references
+             */
+            target_workflow_id: string;
+        };
+        /**
+         * RemapWorkflowResponse
+         * @description Response after remapping workflow references.
+         */
+        RemapWorkflowResponse: {
+            /**
+             * Success
+             * @description Whether remap succeeded
+             */
+            success: boolean;
+            /**
+             * Source Workflow Id
+             * @description UUID references were moved from
+             */
+            source_workflow_id: string;
+            /**
+             * Target Workflow Id
+             * @description UUID references were moved to
+             */
+            target_workflow_id: string;
+            /**
+             * Updated
+             * @description Counts of references updated by category
+             */
+            updated?: {
+                [key: string]: number;
+            };
+        };
+        /**
          * RenderFileResponse
          * @description Single compiled file for rendering (no source).
          */
@@ -24530,7 +24696,7 @@ export interface operations {
                 workflowName?: string | null;
                 /** @description Filter by workflow UUID */
                 workflowId?: string | null;
-                /** @description Filter by execution status */
+                /** @description Filter by execution status (comma-separated values match any) */
                 status?: string | null;
                 /** @description Filter by start date (ISO format) */
                 startDate?: string | null;
@@ -25233,6 +25399,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReplaceWorkflowResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remap_workflow_references_api_workflows__workflow_id__remap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemapWorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemapWorkflowResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25982,6 +26183,26 @@ export interface operations {
         };
     };
     reset_color_api_branding_color_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandingSettings"];
+                };
+            };
+        };
+    };
+    reset_application_name_api_branding_application_name_delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -27924,7 +28145,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -27957,7 +28178,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -27990,7 +28211,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -28023,7 +28244,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -36787,6 +37008,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fetch_module_api_sdk_modules__path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fetch_module_index_api_sdk_modules_index_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    fetch_requirements_api_sdk_requirements_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

@@ -127,6 +127,58 @@ class TestBranding:
             f"Org user should not update branding: {response.status_code}"
         )
 
+    def test_update_and_clear_application_name(self, e2e_client, platform_admin):
+        """Superuser can set the application name, read it back, and clear it."""
+        # Set a custom application name
+        response = e2e_client.put(
+            "/api/branding",
+            headers=platform_admin.headers,
+            json={"application_name": "Acme Portal"},
+        )
+        assert response.status_code in [200, 201], f"Update failed: {response.text}"
+        assert response.json()["application_name"] == "Acme Portal"
+
+        # Public GET reflects it (login screen reads this pre-auth)
+        public = e2e_client.get("/api/branding")
+        assert public.status_code == 200
+        assert public.json()["application_name"] == "Acme Portal"
+
+        # A color-only update must NOT clear the application name
+        color_only = e2e_client.put(
+            "/api/branding",
+            headers=platform_admin.headers,
+            json={"primary_color": "#123456"},
+        )
+        assert color_only.status_code in [200, 201], color_only.text
+        assert color_only.json()["application_name"] == "Acme Portal"
+
+        # Clearing via the dedicated endpoint reverts to null (default)
+        cleared = e2e_client.delete(
+            "/api/branding/application-name",
+            headers=platform_admin.headers,
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["application_name"] is None
+
+    def test_application_name_rejects_overlong(self, e2e_client, platform_admin):
+        """Application name longer than 40 chars is rejected (422)."""
+        response = e2e_client.put(
+            "/api/branding",
+            headers=platform_admin.headers,
+            json={"application_name": "x" * 41},
+        )
+        assert response.status_code == 422, f"Expected 422: {response.text}"
+
+    def test_application_name_org_user_denied(self, e2e_client, org1_user):
+        """Org user cannot clear the application name (403)."""
+        response = e2e_client.delete(
+            "/api/branding/application-name",
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, (
+            f"Org user should not reset application name: {response.status_code}"
+        )
+
     def test_upload_square_logo_superuser(self, e2e_client, platform_admin):
         """Superuser can upload square logo."""
         import os

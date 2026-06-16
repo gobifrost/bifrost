@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 
 import { Logo } from "@/components/branding/Logo";
 import { Card, CardContent } from "@/components/ui/card";
+import { useApplicationName } from "@/lib/applicationName";
 
 /**
  * Full-card "we're finishing up" state for auth flows.
@@ -13,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
  * slow connection, which reads as "nothing happened".
  */
 export function AuthTransition({ message }: { message: string }) {
+	const applicationName = useApplicationName();
 	return (
 		<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
 			<Card className="w-full max-w-md border-primary/10 shadow-xl shadow-primary/5">
@@ -23,7 +25,11 @@ export function AuthTransition({ message }: { message: string }) {
 						transition={{ duration: 0.3 }}
 						className="flex justify-center"
 					>
-						<Logo type="square" className="h-16 w-16" alt="Bifrost" />
+						<Logo
+							type="square"
+							className="h-16 w-16"
+							alt={applicationName}
+						/>
 					</motion.div>
 					<Loader2 className="h-6 w-6 animate-spin text-primary" />
 					<p className="text-sm text-muted-foreground">{message}</p>
