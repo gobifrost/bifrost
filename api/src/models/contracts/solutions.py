@@ -457,6 +457,10 @@ class SolutionDeployResponse(BaseModel):
     # Empty integration shells created for declared connections that did not yet
     # exist globally (never clobbers a configured integration).
     integrations_shell_created: int = 0
+    # Names of roles auto-created because the bundle referenced a role missing
+    # from the target env. Created global + empty (grant nothing until assigned).
+    # Surfaced so the operator sees them — and a typo'd role name is visible.
+    roles_created: list[str] = Field(default_factory=list)
 
 
 class SolutionCaptureRequest(BaseModel):

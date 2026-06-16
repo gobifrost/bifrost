@@ -364,10 +364,28 @@ async def _resolve_agent_content(
 # =============================================================================
 
 
-async def _resolve_role_names(db: AsyncSession, names: list[str]) -> list[str]:
+async def _resolve_role_names(
+    db: AsyncSession,
+    names: list[str],
+    *,
+    create_missing: bool = False,
+    created_out: set[str] | None = None,
+) -> list[str]:
     """Resolve role display names to UUID strings against the target DB.
 
-    Fails loud on any unknown name. Returned list preserves input order.
+    Returned list preserves input order.
+
+    ``create_missing`` controls the unknown-name behavior:
+
+    * ``False`` (default, e.g. git-sync): fail loud — the role must already
+      exist in the target env.
+    * ``True`` (Solution install/deploy): auto-create any missing role as a
+      GLOBAL, empty role (no permissions, no members) and use it. An empty role
+      grants nobody anything until the operator assigns members, so this can't
+      expose anything; it just removes the "create every referenced role by
+      hand first" papercut. Created names are added to ``created_out`` (when
+      provided) so the caller can surface "created N new roles" — which also
+      makes a typo'd manifest role name visible rather than silently absorbed.
     """
     from src.models.orm.users import Role
 
@@ -379,7 +397,16 @@ async def _resolve_role_names(db: AsyncSession, names: list[str]) -> list[str]:
     for name in names:
         role_id = by_name.get(name)
         if role_id is None:
-            raise ValueError(f"unknown role: {name} — create it first in the target env.")
+            if not create_missing:
+                raise ValueError(f"unknown role: {name} — create it first in the target env.")
+            # Auto-create a global, empty role (grants nothing until assigned).
+            role = Role(name=name, created_by="solution-install")
+            db.add(role)
+            await db.flush()
+            role_id = str(role.id)
+            by_name[name] = role_id  # dedupe within this call (same name twice)
+            if created_out is not None:
+                created_out.add(name)
         resolved.append(role_id)
     return resolved
 

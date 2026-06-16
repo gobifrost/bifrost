@@ -234,6 +234,11 @@ class DeployResult:
     claims_upserted: int = 0
     claims_deleted: int = 0
     integrations_shell_created: int = 0
+    # Names of roles auto-created during this deploy because the bundle
+    # referenced a role that didn't yet exist in the target env. Created as
+    # global, empty roles (grant nothing until assigned). Surfaced so the
+    # operator sees them — and so a typo'd manifest role name is visible.
+    roles_created: list[str] = field(default_factory=list)
     finalize_s3: Callable[[], Awaitable[None]] = field(
         default=_noop_finalize, compare=False, repr=False
     )
@@ -286,6 +291,9 @@ class SolutionDeployer:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        # Accumulates role names auto-created during this deploy (see
+        # _resolve_roles). Surfaced on DeployResult.roles_created.
+        self._created_roles: set[str] = set()
 
     async def deploy(self, bundle: SolutionBundle, force: bool = False) -> DeployResult:
         """Full-replace this install from ``bundle`` — DB phase + app COMPILE.
@@ -452,6 +460,7 @@ class SolutionDeployer:
             claims_upserted=len(rb.claims),
             claims_deleted=claim_deleted,
             integrations_shell_created=shells_created,
+            roles_created=sorted(self._created_roles),
             finalize_s3=_finalize_s3,
         )
 
@@ -584,14 +593,25 @@ class SolutionDeployer:
 
         ``role_names`` (portable, cross-env) wins over ``roles`` (raw UUIDs) when
         present — deploy is cross-environment, so names are the durable ref. Both
-        are optional; absent → no roles. Unknown names fail loud (the role must
-        exist in the install's env first).
+        are optional; absent → no roles. A referenced role that doesn't exist in
+        the target env is AUTO-CREATED (global, empty) rather than failing the
+        deploy — created names accumulate on ``self._created_roles`` and surface
+        on the result. An empty role grants nobody anything until assigned, so
+        this is safe and removes the "create every role by hand first" papercut.
         """
         from src.services.manifest_import import _resolve_role_names
 
         role_names = entry.get("role_names")
         if role_names:
-            return [UUID(r) for r in await _resolve_role_names(self.db, list(role_names))]
+            return [
+                UUID(r)
+                for r in await _resolve_role_names(
+                    self.db,
+                    list(role_names),
+                    create_missing=True,
+                    created_out=self._created_roles,
+                )
+            ]
         return [UUID(str(r)) for r in (entry.get("roles") or [])]
 
     async def _sync_entity_roles(

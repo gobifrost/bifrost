@@ -987,6 +987,7 @@ async def deploy_solution(
         claims_upserted=result.claims_upserted,
         claims_deleted=result.claims_deleted,
         integrations_shell_created=result.integrations_shell_created,
+        roles_created=result.roles_created,
     )
 
 

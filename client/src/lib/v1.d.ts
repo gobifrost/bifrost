@@ -7204,7 +7204,10 @@ export interface paths {
          * @description Full-replace the install's README markdown (``readme=null`` clears it).
          *
          *     Normally README is repo-sourced (deploy reads README.md), but the UI can
-         *     edit it directly here on a disconnected install.
+         *     edit it directly here on a **disconnected** install. For a git-connected
+         *     install the next auto-pull would clobber any hand edit, so editing the
+         *     README here is refused (409) — the repo owns it. The UI hides the edit
+         *     affordance for connected installs to match.
          */
         put: operations["put_solution_readme_api_solutions__solution_id__readme_put"];
         post?: never;
@@ -7369,6 +7372,31 @@ export interface paths {
          *     ``solution_id`` and stores an export zip containing the captured definitions.
          */
         post: operations["capture_solution_entities_api_solutions__solution_id__capture_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/pull/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear pending_captures rows the client pulled into source (admin only)
+         * @description Server-authoritative clear of pending_captures rows.
+         *
+         *     ``bifrost solution pull`` materializes captured entities into the workspace
+         *     ``.bifrost/`` manifest, then POSTs exactly what it wrote here so the server
+         *     deletes those queue rows. A stale client can only clear rows it names, so it
+         *     can't double-clear another client's un-pulled captures.
+         */
+        post: operations["ack_pulled_captures_api_solutions__solution_id__pull_ack_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -18864,6 +18892,34 @@ export interface components {
             at?: string;
         };
         /**
+         * PullAckEntity
+         * @description One captured entity the client has materialized into source `.bifrost/`.
+         */
+        PullAckEntity: {
+            /** Entity Type */
+            entity_type: string;
+            /** Entity Id */
+            entity_id: string;
+        };
+        /**
+         * PullAckRequest
+         * @description Tell the server which pending_captures rows `bifrost solution pull`
+         *     materialized into source, so it can clear exactly those rows
+         *     (server-authoritative — a stale client can't clear what it didn't pull).
+         */
+        PullAckRequest: {
+            /** Entities */
+            entities?: components["schemas"]["PullAckEntity"][];
+        };
+        /** PullAckResponse */
+        PullAckResponse: {
+            /**
+             * Cleared
+             * @default 0
+             */
+            cleared: number;
+        };
+        /**
          * QueueItem
          * @description An item in the execution queue.
          */
@@ -20701,9 +20757,14 @@ export interface components {
          * SolutionCreate
          * @description Create-shape for an install.
          *
-         *     For ``scope=org`` the install's org is taken from the caller's context (or
-         *     an explicit ``organization_id`` for cross-org admins); ``scope=global``
-         *     means ``organization_id IS NULL``.
+         *     Install kind is DERIVED from ``organization_id``, per the unified --org
+         *     standard — there is no ``scope`` input:
+         *
+         *     - ``organization_id`` absent (HOME) => the caller's own org.
+         *     - ``organization_id`` explicit null  => global (org NULL).
+         *     - ``organization_id`` a UUID         => that org (cross-org admins).
+         *
+         *     ``model_fields_set`` distinguishes absent (HOME) from explicit null (global).
          */
         SolutionCreate: {
             /**
@@ -20713,12 +20774,6 @@ export interface components {
             slug: string;
             /** Name */
             name: string;
-            /**
-             * Scope
-             * @default org
-             * @enum {string}
-             */
-            scope: "org" | "global";
             /**
              * Global Repo Access
              * @default false
@@ -20977,6 +21032,8 @@ export interface components {
              * @default 0
              */
             integrations_shell_created: number;
+            /** Roles Created */
+            roles_created?: string[];
         };
         /**
          * SolutionEntities
@@ -21166,6 +21223,11 @@ export interface components {
             repo_subpath?: string | null;
             /** Git Ref */
             git_ref?: string | null;
+            /**
+             * Organization Id
+             * @description Target org for the install (absent => caller's org, null => global).
+             */
+            organization_id?: string | null;
         };
         /**
          * SolutionSetupItem
@@ -36181,6 +36243,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionCaptureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ack_pulled_captures_api_solutions__solution_id__pull_ack_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PullAckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullAckResponse"];
                 };
             };
             /** @description Validation Error */

@@ -1356,12 +1356,32 @@ def deploy_cmd(
             click.echo(f"Deploy failed: {deploy.status_code} {deploy.text}", err=True)
             return 1
         body = deploy.json()
-        click.echo(
-            f"Deployed install {target_id}: "
-            f"{body.get('workflows_upserted', 0)} workflow(s) upserted, "
-            f"{body.get('claims_upserted', 0)} claim(s) upserted, "
-            f"{body.get('workflows_deleted', 0)} deleted."
+        # Summarize every entity kind that was upserted (not just workflows +
+        # claims) so the operator sees their tables/forms/apps shipped too.
+        kinds = [
+            ("workflow", body.get("workflows_upserted", 0)),
+            ("table", body.get("tables_upserted", 0)),
+            ("app", body.get("apps_upserted", 0)),
+            ("form", body.get("forms_upserted", 0)),
+            ("agent", body.get("agents_upserted", 0)),
+            ("claim", body.get("claims_upserted", 0)),
+        ]
+        upserted = ", ".join(f"{n} {label}(s)" for label, n in kinds if n) or "0 entities"
+        total_deleted = sum(
+            body.get(k, 0)
+            for k in (
+                "workflows_deleted", "tables_deleted", "apps_deleted",
+                "forms_deleted", "agents_deleted", "claims_deleted",
+            )
         )
+        click.echo(f"Deployed install {target_id}: {upserted} upserted, {total_deleted} deleted.")
+        roles_created = body.get("roles_created") or []
+        if roles_created:
+            click.echo(
+                f"  Auto-created {len(roles_created)} new role(s): "
+                f"{', '.join(roles_created)} "
+                f"(empty — assign members to grant access)."
+            )
         return 0
 
     rc = asyncio.run(_run())

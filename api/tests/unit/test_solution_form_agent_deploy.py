@@ -124,6 +124,80 @@ class TestSolutionFormAgentDeploy:
         assert agent.organization_id == sol.organization_id
         assert result.agents_upserted == 1
 
+    async def test_deploy_auto_creates_missing_role(self, db_session):
+        """A bundle that references a role not yet in the target env auto-creates
+        it (global, empty) instead of failing the deploy, and reports it on the
+        result so the operator sees it (and a typo'd name is visible)."""
+        from sqlalchemy import select as _select
+
+        from src.models.orm.users import Role
+
+        db = db_session
+        sol = await self._install(db)
+        role_name = f"Solution Role {uuid.uuid4().hex[:6]}"
+        fid = str(uuid.uuid4())
+        result = await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            forms=[{
+                "id": fid, "name": "gated", "access_level": "role_based",
+                "role_names": [role_name],
+                "form_schema": {"fields": []},
+            }],
+        ))
+        await db.flush()
+        # The role was created, GLOBAL (org NULL), empty (no permissions).
+        rows = (await db.execute(
+            _select(Role).where(Role.name == role_name)
+        )).scalars().all()
+        assert len(rows) == 1, "missing role should be auto-created exactly once"
+        created = rows[0]
+        assert not created.permissions, "auto-created role must be empty (grants nothing)"
+        # It's surfaced on the result.
+        assert role_name in result.roles_created
+        # The form is linked to the created role.
+        from src.models.orm.forms import FormRole
+        linked = (await db.execute(
+            _select(FormRole.role_id).where(
+                FormRole.form_id == solution_entity_id(sol.id, uuid.UUID(fid))
+            )
+        )).scalars().all()
+        assert created.id in linked
+
+    async def test_resolve_role_names_default_fails_loud(self, db_session):
+        """The shared resolver still FAILS LOUD by default (create_missing=False)
+        — git-sync relies on this (it must NOT silently invent roles). Only the
+        Solution install/deploy path opts into auto-create."""
+        from src.services.manifest_import import _resolve_role_names
+
+        with pytest.raises(ValueError, match="unknown role"):
+            await _resolve_role_names(db_session, [f"Nope {uuid.uuid4().hex[:6]}"])
+
+    async def test_deploy_reuses_existing_role_not_recreated(self, db_session):
+        """An already-existing referenced role is reused, not duplicated, and NOT
+        listed as created."""
+        from sqlalchemy import select as _select
+
+        from src.models.orm.users import Role
+
+        db = db_session
+        sol = await self._install(db)
+        role_name = f"Existing Role {uuid.uuid4().hex[:6]}"
+        db.add(Role(name=role_name, created_by="test"))
+        await db.flush()
+        result = await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            forms=[{
+                "id": str(uuid.uuid4()), "name": "gated2", "access_level": "role_based",
+                "role_names": [role_name], "form_schema": {"fields": []},
+            }],
+        ))
+        await db.flush()
+        assert role_name not in result.roles_created, "existing role must not be reported as created"
+        rows = (await db.execute(
+            _select(Role).where(Role.name == role_name)
+        )).scalars().all()
+        assert len(rows) == 1, "existing role must not be duplicated"
+
     async def test_redeploy_without_form_removes_for_this_install(self, db_session):
         db = db_session
         sol = await self._install(db)
