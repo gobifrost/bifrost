@@ -259,16 +259,27 @@ def test_tables_create_org_none_is_global(monkeypatch):
 def test_forms_create_org_forms(monkeypatch):
     from bifrost.commands.forms import forms_group
 
+    schema = '{"fields": []}'
     # omit -> home
-    sent, res = _run(monkeypatch, forms_group, ["create", "--name", "f1"])
+    sent, res = _run(
+        monkeypatch, forms_group, ["create", "--name", "f1", "--form-schema", schema]
+    )
     assert res.exit_code == 0
     assert "organization_id" not in sent["post"][1]
     # --global -> null
-    sent, res = _run(monkeypatch, forms_group, ["create", "--name", "f2", "--global"])
+    sent, res = _run(
+        monkeypatch,
+        forms_group,
+        ["create", "--name", "f2", "--form-schema", schema, "--global"],
+    )
     assert res.exit_code == 0
     assert sent["post"][1].get("organization_id", "MISSING") is None
     # --org acme -> uuid
-    sent, res = _run(monkeypatch, forms_group, ["create", "--name", "f3", "--org", "acme"])
+    sent, res = _run(
+        monkeypatch,
+        forms_group,
+        ["create", "--name", "f3", "--form-schema", schema, "--org", "acme"],
+    )
     assert res.exit_code == 0
     assert sent["post"][1]["organization_id"] == "uuid-acme"
 

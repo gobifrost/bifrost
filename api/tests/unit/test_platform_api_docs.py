@@ -25,7 +25,12 @@ from bifrost.platform_names import PLATFORM_EXPORT_NAMES
 # api/tests/unit/test_platform_api_docs.py -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PLATFORM_API_DOC = (
-    _REPO_ROOT / ".claude" / "skills" / "bifrost-build" / "platform-api.md"
+    _REPO_ROOT
+    / ".claude"
+    / "skills"
+    / "bifrost-build"
+    / "references"
+    / "platform-api.md"
 )
 
 
