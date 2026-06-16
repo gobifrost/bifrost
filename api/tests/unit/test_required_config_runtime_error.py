@@ -1,5 +1,7 @@
 """Unit tests for RequiredConfigUnset — actionable error when a required config has no value."""
 
+import uuid
+
 import pytest
 from src.models.enums import ConfigType
 
@@ -15,12 +17,15 @@ async def test_missing_required_solution_config_raises_actionable_error(
     """
     from src.repositories.config import ConfigRepository, RequiredConfigUnset
 
+    # Unique key: config matching is by (key, org) only, so a generic key like
+    # "api_key" can collide with a value another test left in the shared DB.
+    key = f"unset_key_{uuid.uuid4().hex[:8]}"
     repo = ConfigRepository(db_session, org_id=None, is_superuser=True)
     with pytest.raises(RequiredConfigUnset) as ei:
-        await repo.require("api_key")
+        await repo.require(key)
 
     msg = str(ei.value)
-    assert "api_key" in msg
+    assert key in msg
     assert "set" in msg.lower()
 
 

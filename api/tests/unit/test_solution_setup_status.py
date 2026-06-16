@@ -24,12 +24,15 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_config_item_carries_kind_config(db_session: AsyncSession):
+    # Unique key: compute_setup_status matches Config rows by (key, org) only,
+    # so a generic key like "api_key" can read a value another test left global.
+    key = f"cfg_key_{uuid4().hex[:8]}"
     sol = Solution(id=uuid4(), slug="cfg", name="CFG", organization_id=None)
     db_session.add(sol)
     await db_session.flush()
     db_session.add(
         SolutionConfigSchema(
-            solution_id=sol.id, key="api_key", type="string", required=True,
+            solution_id=sol.id, key=key, type="string", required=True,
             position=0, description="needed",
         )
     )
@@ -38,13 +41,13 @@ async def test_config_item_carries_kind_config(db_session: AsyncSession):
     status = await compute_setup_status(db_session, sol)
     cfg = [i for i in status.items if i.kind == "config"]
     assert len(cfg) == 1
-    assert cfg[0].key == "api_key"
+    assert cfg[0].key == key
     assert cfg[0].is_set is False
     assert status.setup_complete is False
 
     # Provide the value globally → complete.
     db_session.add(
-        Config(key="api_key", value="xyz", organization_id=None, updated_by="test")
+        Config(key=key, value="xyz", organization_id=None, updated_by="test")
     )
     await db_session.flush()
     status2 = await compute_setup_status(db_session, sol)

@@ -120,8 +120,13 @@ async def test_install_with_set_value_flips_setup_complete(e2e_client, platform_
     # application/json Content-Type that would otherwise override it — strip it.
     upload_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
 
+    # Unique key: these are GLOBAL installs and setup-status matches config
+    # values by (key, org), so a leftover global "api_key" value from another
+    # test would wrongly flip setup_complete to True.
+    cfg_key = f"api_key_{uuid.uuid4().hex[:8]}"
+
     slug_no_val = f"setup-sc-noval-{uuid.uuid4().hex[:8]}"
-    zip_no_val = _make_required_config_zip(slug_no_val, key="api_key")
+    zip_no_val = _make_required_config_zip(slug_no_val, key=cfg_key)
 
     # Install WITHOUT the value — required config unset → incomplete.
     # The install RESPONSE carries the persisted setup_complete column value.
@@ -138,13 +143,13 @@ async def test_install_with_set_value_flips_setup_complete(e2e_client, platform_
 
     # Install WITH the value — required config set → complete.
     slug_with_val = f"setup-sc-val-{uuid.uuid4().hex[:8]}"
-    zip_with_val = _make_required_config_zip(slug_with_val, key="api_key")
+    zip_with_val = _make_required_config_zip(slug_with_val, key=cfg_key)
 
     r2 = e2e_client.post(
         "/api/solutions/install",
         headers=upload_headers,
         files={"file": ("s.zip", zip_with_val, "application/zip")},
-        data={"config_values": '{"api_key": "xyz"}'},
+        data={"config_values": '{"' + cfg_key + '": "xyz"}'},
     )
     assert r2.status_code in (200, 201), r2.text
     assert r2.json()["setup_complete"] is True, (
