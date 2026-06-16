@@ -26,6 +26,12 @@ Drove the full **install → update-signal → export → DR** arc via CLI/API a
 
 None of these are blockers I fixed inline — they're design calls (warn-vs-create, preview parity) that want Jack's input rather than an overnight unilateral change to install/deploy semantics. F4/F-DR/F-PROVIDER are verified-working (no action). F5/F1-as-bug dissolved on reproduction.
 
+> **UPDATE 2026-06-16 — F2 + F3 BUILT (Jack approved auto-create).** Jack: "just auto create roles… no idea how an auto-created role does any harm" + "we shouldn't have to remember that kind of small update." Implemented (commit `186da752`):
+> - **F2 → auto-create:** missing roles are now auto-created (GLOBAL + EMPTY → grant nothing until assigned) at the shared `_resolve_role_names` chokepoint, so BOTH deploy and zip-install get it (resolves the deploy-vs-install asymmetry). git-sync keeps fail-loud (default `create_missing=False`). Created names surface on the deploy response + CLI ("Auto-created N new role(s): … (empty — assign members)"), which also makes a typo'd role name visible. Driven live: deployed a solution referencing a brand-new role → auto-created, gated form deployed, no 422. Tests: auto-create + reuse-not-duplicate + git-sync-still-fails-loud.
+> - **F3 → deploy summary:** now lists every upserted kind (workflows/tables/apps/forms/agents/claims), not just workflows+claims.
+> - **F2 #1 (roles in the unmet-needs *preview*)** still open as a nice-to-have — auto-create makes it lower priority (the operator no longer needs the pre-warning to avoid failure), but surfacing the about-to-be-created roles in the preview would still be tidy. Left for Jack.
+> - **F1** dropped (nothing shipped; dead `scope:` key is harmlessly ignored).
+
 ---
 
 ## Findings (ranked)
