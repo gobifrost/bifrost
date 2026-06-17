@@ -3769,22 +3769,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5439,6 +5439,30 @@ export interface paths {
          * @description Switch the conversation's active leaf — sibling navigation.
          */
         post: operations["switch_active_leaf_api_chat_conversations__conversation_id__active_leaf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Attachments
+         * @description Upload one or more files to a conversation.
+         *
+         *     Files are validated, stored to S3, and (for PDF/CSV/text) text-extracted.
+         *     They are created unbound; they bind to a user message when the next chat
+         *     message referencing their IDs is sent.
+         */
+        post: operations["upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10685,6 +10709,38 @@ export interface components {
             at?: string;
         };
         /**
+         * AttachmentPublic
+         * @description A file attached to a chat message.
+         */
+        AttachmentPublic: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Has Extracted Text
+             * @description True if server-side text was extracted (PDF/CSV/text). Images have none.
+             * @default false
+             */
+            has_extracted_text: boolean;
+        };
+        /**
+         * AttachmentUploadResponse
+         * @description Response after uploading attachments to a conversation.
+         *
+         *     ``attachments`` is always present (the endpoint returns the records it just
+         *     created), so it is required — keeps the generated client type a plain array
+         *     rather than ``T[] | undefined``.
+         */
+        AttachmentUploadResponse: {
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentPublic"][];
+        };
+        /**
          * AuditLogActor
          * @description Who performed the action.
          */
@@ -11089,6 +11145,14 @@ export interface components {
              * @description Logo image (PNG/JPEG/SVG, ≤5MB)
              */
             file: string;
+        };
+        /** Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post */
+        Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post: {
+            /**
+             * Files
+             * @description Files to attach (images, PDFs, CSVs, text)
+             */
+            files: string[];
         };
         /** Body_upload_avatar_api_profile_avatar_post */
         Body_upload_avatar_api_profile_avatar_post: {
@@ -11827,7 +11891,7 @@ export interface components {
             stream: boolean;
             /**
              * Attachment Ids
-             * @description IDs of attachments (previously uploaded to this conversation) to bind to this user message.
+             * @description IDs of attachments (previously uploaded to this conversation) to bind to this user message. Each must belong to this conversation and not already be bound to another message.
              */
             attachment_ids?: string[];
         };
@@ -17714,33 +17778,6 @@ export interface components {
              * @default 0
              */
             sibling_index: number;
-            /** Attachments */
-            attachments?: components["schemas"]["AttachmentPublic"][];
-        };
-        /**
-         * AttachmentPublic
-         * @description A file attached to a chat message.
-         */
-        AttachmentPublic: {
-            /** Id */
-            id: string;
-            /** Filename */
-            filename: string;
-            /** Content Type */
-            content_type: string;
-            /** Size Bytes */
-            size_bytes: number;
-            /**
-             * Has Extracted Text
-             * @default false
-             */
-            has_extracted_text: boolean;
-        };
-        /**
-         * AttachmentUploadResponse
-         * @description Response after uploading attachments to a conversation.
-         */
-        AttachmentUploadResponse: {
             /** Attachments */
             attachments?: components["schemas"]["AttachmentPublic"][];
         };
@@ -30375,7 +30412,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30408,7 +30445,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30441,7 +30478,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30474,7 +30511,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -33251,6 +33288,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_attachments_api_chat_conversations__conversation_id__attachments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentUploadResponse"];
                 };
             };
             /** @description Validation Error */

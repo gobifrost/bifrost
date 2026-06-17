@@ -375,8 +375,13 @@ class AttachmentPublic(BaseModel):
 
 
 class AttachmentUploadResponse(BaseModel):
-    """Response after uploading attachments to a conversation."""
-    attachments: list[AttachmentPublic] = Field(default_factory=list)
+    """Response after uploading attachments to a conversation.
+
+    ``attachments`` is always present (the endpoint returns the records it just
+    created), so it is required — keeps the generated client type a plain array
+    rather than ``T[] | undefined``.
+    """
+    attachments: list[AttachmentPublic]
 
 
 # ==================== MESSAGE MODELS ====================
