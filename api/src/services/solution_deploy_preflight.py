@@ -1,10 +1,15 @@
 """Preflight + name extraction so the decorator name stays the execution identity.
 
 The execution engine matches a workflow by ``@workflow(name=...)`` (the decorated
-name). Manifest import and solution deploy must therefore persist *that* name into
-``Workflow.name`` rather than the manifest dict slug. ``extract_workflow_name_from_source``
-recovers the decorated name from source; ``preflight_workflows`` flags any bundle
-entry whose declared name diverges from the decorated one before it is written.
+name). Manifest import and solution deploy persist *that* name into ``Workflow.name``
+rather than the manifest dict slug — ``extract_workflow_name_from_source`` recovers
+the decorated name from source and import always uses it, so a manifest slug that
+differs from the decorated/function name is resolved correctly and is NOT an error.
+
+``preflight_workflows`` therefore does not compare slug vs decorator. It flags only
+the genuinely execution-breaking case: the ``function_name`` the bundle entry points
+at does not exist in the carried source at all (the "Executable not found" class) —
+import would then write a name nothing can resolve.
 """
 from __future__ import annotations
 
@@ -44,24 +49,45 @@ def extract_workflow_name_from_source(source: str, function_name: str) -> str | 
     return function_name
 
 
-def preflight_workflows(workflows: list[dict]) -> list[str]:
-    """Return mismatch errors for a deploy bundle (empty list = OK).
+def _source_defines_function(source: str, function_name: str) -> bool:
+    """True if ``function_name`` is defined as a (sync/async) function in source."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # Unparseable source can't be statically verified — don't block on it
+        # (the engine, not preflight, owns runtime import failures).
+        return True
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+        for node in ast.walk(tree)
+    )
 
-    Each entry is expected to carry ``name``, ``function_name``, ``path`` and the
-    ``.py`` ``source`` text. Entries without source are skipped (no source = nothing
-    to compare against).
+
+def preflight_workflows(workflows: list[dict]) -> list[str]:
+    """Return execution-breaking errors for a deploy bundle (empty list = OK).
+
+    Each entry is expected to carry ``function_name``, ``path`` and the ``.py``
+    ``source`` text. The only failure flagged is a ``function_name`` that the
+    carried source does not define at all — import would then persist a
+    ``Workflow.name`` the execution engine can never resolve. A manifest slug
+    (``name``) that differs from the decorated/function name is NOT an error:
+    import always writes the decorated name, so the divergence is resolved.
+
+    Entries without source are skipped (nothing to verify against).
     """
     errors: list[str] = []
     for wf in workflows:
         src = wf.get("source")
         if not src:
             continue
-        actual = extract_workflow_name_from_source(src, wf.get("function_name", ""))
-        declared = wf.get("name")
-        if actual and declared and actual != declared:
+        function_name = wf.get("function_name", "")
+        if not function_name:
+            continue
+        if not _source_defines_function(src, function_name):
             errors.append(
-                f"Workflow manifest entry `{declared}` points to {wf.get('path')}::"
-                f"{wf.get('function_name')}, but the decorated name is `{actual}`. "
-                f'Use @workflow(name="{declared}") or update the manifest.'
+                f"Workflow `{wf.get('name')}` points to {wf.get('path')}::"
+                f"{function_name}, but no function named `{function_name}` exists "
+                f"in that source. Fix the manifest's function_name or add the function."
             )
     return errors

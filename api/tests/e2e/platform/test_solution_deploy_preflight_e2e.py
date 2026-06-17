@@ -1,9 +1,11 @@
 """End-to-end: the deploy workflow-name preflight refuses a bundle whose
-manifest entry name diverges from the decorated @workflow(name=...).
+``function_name`` is not defined in the carried source.
 
-A bundle that carried such a mismatch would persist a Workflow.name the
-execution engine can't resolve ("Executable 'hello' not found"). The deploy
-endpoint catches it up front and returns 422 with actionable guidance.
+That bundle would persist a Workflow.name the execution engine can't resolve
+("Executable not found"). The deploy endpoint catches it up front and returns
+422 with actionable guidance. A manifest slug that merely differs from the
+decorated name is NOT a failure (import resolves to the decorated name), so
+that case deploys cleanly.
 """
 from __future__ import annotations
 
@@ -31,15 +33,17 @@ def _create_solution(e2e_client, headers, *, slug: str) -> str:
     return resp.json()["id"]
 
 
-def test_deploy_rejects_workflow_name_mismatch(e2e_client, platform_admin):
+def test_deploy_rejects_missing_function(e2e_client, platform_admin):
+    """function_name points at a function the source does not define → 422."""
     headers = platform_admin.headers
     slug = f"sol-preflight-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug=slug)
 
+    # Source defines `other`, but the bundle entry points at `main`.
     source = (
         "from bifrost import workflow\n\n"
         '@workflow(name="Sandbox Ticket Snapshot")\n'
-        "async def main():\n"
+        "async def other():\n"
         "    return 1\n"
     )
     resp = e2e_client.post(
@@ -50,7 +54,6 @@ def test_deploy_rejects_workflow_name_mismatch(e2e_client, platform_admin):
             "workflows": [
                 {
                     "id": str(uuid.uuid4()),
-                    # Manifest entry name diverges from the decorated name.
                     "name": "hello",
                     "function_name": "main",
                     "path": "workflows/snap.py",
@@ -63,13 +66,13 @@ def test_deploy_rejects_workflow_name_mismatch(e2e_client, platform_admin):
     resp = wait_for_deploy(e2e_client, resp, headers)
     assert resp.status_code == 422, f"expected 422, got {resp.status_code}: {resp.text}"
     detail = resp.json()["detail"]
-    assert "hello" in detail
-    assert "Sandbox Ticket Snapshot" in detail
+    assert "main" in detail
     assert "workflows/snap.py" in detail
 
 
-def test_deploy_accepts_matching_workflow_name(e2e_client, platform_admin):
-    """A bundle whose manifest name matches the decorated name passes preflight."""
+def test_deploy_accepts_slug_differing_from_decorator(e2e_client, platform_admin):
+    """A manifest slug that differs from the decorated name still deploys —
+    import resolves to the decorated name, so preflight must not block it."""
     headers = platform_admin.headers
     slug = f"sol-preflight-ok-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug=slug)
@@ -89,7 +92,8 @@ def test_deploy_accepts_matching_workflow_name(e2e_client, platform_admin):
             "workflows": [
                 {
                     "id": str(uuid.uuid4()),
-                    "name": wf_name,
+                    # Slug diverges from the decorated name — legitimate, not blocked.
+                    "name": "hello-slug",
                     "function_name": "main",
                     "path": "workflows/snap.py",
                     "type": "workflow",
