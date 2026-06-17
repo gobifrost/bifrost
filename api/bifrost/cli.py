@@ -1810,6 +1810,9 @@ Examples:
         print(f"Error: {parsed.local_path} is not a valid file or directory", file=sys.stderr)
         return 1
 
+    from bifrost._solution_workspace import assert_not_solution_workspace
+    assert_not_solution_workspace(parsed.local_path, "push")
+
     # Block push if a watch (or another sync/push) is already running in
     # this workspace — see handle_sync for rationale.
     try:
@@ -1887,6 +1890,9 @@ Examples:
         print(f"Error: {parsed.local_path} is not a valid directory", file=sys.stderr)
         return 1
 
+    from bifrost._solution_workspace import assert_not_solution_workspace
+    assert_not_solution_workspace(parsed.local_path, "sync")
+
     # Block sync if a watch (or another sync) is already running in this
     # workspace — concurrent watch+sync would issue separate session_ids
     # that the server can't dedupe, ping-ponging each other's writes.
@@ -1960,20 +1966,9 @@ Examples:
     # Refuse inside a Solution workspace (D1). `watch` only ever syncs to the
     # global `_repo/` workspace; a Solution developer running it here would
     # silently push their apps/ and workflows/ to `_repo/` instead of the
-    # install, with no error — actively misleading. Solutions are
-    # local-development-first: `bifrost solution start` runs the app + local
-    # workflows behind one origin and deploys nothing.
-    from bifrost.solution_descriptor import find_solution_root
-
-    if find_solution_root(resolved) is not None:
-        print(
-            "Error: this is a Solution workspace (bifrost.solution.yaml present).\n"
-            "Solutions are local-development-first — run `bifrost solution start` "
-            "for local dev; `watch` is for _repo/ development and would push your "
-            "changes to the wrong place.",
-            file=sys.stderr,
-        )
-        return 1
+    # install, with no error — actively misleading.
+    from bifrost._solution_workspace import assert_not_solution_workspace
+    assert_not_solution_workspace(parsed.local_path, "watch")
 
     # Acquire the per-workspace lock. Held for the lifetime of the watch
     # process; the kernel releases it on any exit (including crashes), so no
@@ -2082,6 +2077,9 @@ Examples:
     if not resolved.exists() or not resolved.is_dir():
         print(f"Error: {local_path} is not a valid directory", file=sys.stderr)
         return 1
+
+    from bifrost._solution_workspace import assert_not_solution_workspace
+    assert_not_solution_workspace(local_path, "pull")
 
     # Block pull if a watch (or another sync/push/pull) is already running
     # in this workspace — see handle_sync for rationale.
