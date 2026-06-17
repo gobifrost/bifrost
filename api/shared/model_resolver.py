@@ -78,6 +78,10 @@ class ModelChoice:
     display_name: str
     capabilities: dict[str, Any]
     provenance: str  # one of: message, conversation, user, workspace, role, org, platform
+    # The model's context window in tokens (from platform_models), or None when
+    # the model isn't in the cache. Used by M5 compaction to compute the
+    # per-model auto-compaction threshold (0.85 * context_window).
+    context_window: int | None = None
 
 
 class ModelResolutionError(RuntimeError):
@@ -273,6 +277,7 @@ async def resolve_model(
             display_name=pm.display_name,
             capabilities=dict(pm.capabilities or {}),
             provenance=chosen_provenance,
+            context_window=pm.context_window,
         )
     return ModelChoice(
         model_id=chosen_id,
@@ -280,6 +285,7 @@ async def resolve_model(
         display_name=chosen_id.split("/")[-1],
         capabilities={},
         provenance=chosen_provenance,
+        context_window=None,
     )
 
 

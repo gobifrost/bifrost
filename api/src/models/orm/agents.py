@@ -217,6 +217,17 @@ class Conversation(Base):
         default=None,
     )
     instructions: Mapped[str | None] = mapped_column(Text, default=None)
+    # Lossless compaction checkpoint (Chat V2 M5, §4.1). The message rows are
+    # never modified; these fields only describe how the working context is
+    # folded. ``compaction_through_sequence`` is the highest message sequence
+    # folded into ``compaction_summary``; later messages stay verbatim.
+    compaction_summary: Mapped[str | None] = mapped_column(Text, default=None)
+    compaction_through_sequence: Mapped[int | None] = mapped_column(
+        Integer, default=None
+    )
+    compaction_original_tokens: Mapped[int | None] = mapped_column(
+        Integer, default=None
+    )
     extra_data: Mapped[dict] = mapped_column(JSONB, default={})  # Channel-specific metadata
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

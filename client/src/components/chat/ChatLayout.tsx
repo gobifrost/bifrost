@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ChatSidebar } from "./ChatSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
+import { CompactButton } from "./CompactButton";
 import { useChatStore } from "@/stores/chatStore";
 import {
 	useConversation,
@@ -207,6 +208,14 @@ export function ChatLayout({
 
 								{/* Context budget indicator (all users) */}
 								<ContextBudgetIndicator
+									messages={messages ?? []}
+									contextWindow={contextWindow}
+								/>
+
+								{/* Manual "Compact older turns" (§4.3) — suggested
+								    once the budget approaches 70%. */}
+								<CompactButton
+									conversationId={activeConversationId}
 									messages={messages ?? []}
 									contextWindow={contextWindow}
 								/>

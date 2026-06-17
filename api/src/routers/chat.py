@@ -26,6 +26,7 @@ from src.models.contracts.agents import (
     AttachmentUploadResponse,
     ChatRequest,
     ChatResponse,
+    CompactConversationResponse,
     ConversationCreate,
     ConversationPublic,
     ConversationSummary,
@@ -482,6 +483,47 @@ async def switch_active_leaf(
         message_count=message_count,
         last_message_at=last_message_at,
         agent_name=conversation.agent.name if conversation.agent else None,
+    )
+
+
+@router.post("/conversations/{conversation_id}/compact")
+async def compact_conversation(
+    conversation_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> CompactConversationResponse:
+    """Manually compact older turns (§4.3, "Compact older turns" button).
+
+    Lossless: summarizes older turns into a persisted checkpoint that folds
+    them in the model's working context only. The message rows are never
+    modified — the user still sees the full conversation in scrollback.
+    """
+    from src.services.chat_compaction import compact_now
+
+    result = await db.execute(
+        select(Conversation)
+        .where(Conversation.id == conversation_id)
+        .where(Conversation.user_id == user.user_id)
+    )
+    conversation = result.scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation {conversation_id} not found",
+        )
+
+    outcome = await compact_now(
+        db,
+        conversation_id,
+        organization_id=user.organization_id,
+    )
+    await db.commit()
+    return CompactConversationResponse(
+        compacted=outcome.compacted,
+        turns_compacted=outcome.turns_compacted,
+        tokens_before=outcome.tokens_before,
+        tokens_after=outcome.tokens_after,
+        message=outcome.message,
     )
 
 

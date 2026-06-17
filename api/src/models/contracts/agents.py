@@ -478,6 +478,15 @@ class SwitchBranchRequest(BaseModel):
     message_id: UUID = Field(..., description="Target message id (must belong to this conversation).")
 
 
+class CompactConversationResponse(BaseModel):
+    """Result of a manual "Compact older turns" request (§4.3)."""
+    compacted: bool = Field(..., description="Whether anything was compacted")
+    turns_compacted: int = Field(default=0, description="Number of earlier turns folded into the summary")
+    tokens_before: int = Field(default=0, description="Estimated tokens of the folded span")
+    tokens_after: int = Field(default=0, description="Estimated tokens of the resulting summary")
+    message: str = Field(default="", description="Human-readable result for toast/feedback")
+
+
 class AgentSwitch(BaseModel):
     """Agent switch event during chat."""
     agent_id: str = Field(..., description="ID of the agent switched to")
@@ -486,11 +495,20 @@ class AgentSwitch(BaseModel):
 
 
 class ContextWarning(BaseModel):
-    """Context window warning/compaction event."""
+    """Context window warning/compaction event.
+
+    Carried by both ``context_warning`` chunks (compaction approaching) and
+    ``compaction_complete`` chunks (compaction ran). Per the M5 spec the
+    ``context_warning`` semantics shifted from "messages will be deleted" to
+    "compaction is approaching/imminent."
+    """
     current_tokens: int = Field(..., description="Estimated current token count")
-    max_tokens: int = Field(..., description="Configured threshold")
+    max_tokens: int = Field(..., description="Per-model compaction threshold (0.85 * context window)")
     action: str = Field(..., description="'warning' or 'compacted'")
     message: str = Field(..., description="Human-readable explanation")
+    turns_compacted: int = Field(
+        default=0, description="Number of earlier turns folded into the summary (compaction_complete only)"
+    )
 
 
 class ToolProgressLog(BaseModel):
@@ -524,6 +542,11 @@ class ChatStreamChunk(BaseModel):
         "tool_result",
         "agent_switch",
         "context_warning",
+        # M5 compaction (§10): compaction_started fires before the summarizer
+        # runs; compaction_complete carries the ContextWarning result. The
+        # context_warning chunk now means "compaction approaching."
+        "compaction_started",
+        "compaction_complete",
         "title_update",
         "done",
         "error",

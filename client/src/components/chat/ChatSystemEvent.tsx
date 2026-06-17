@@ -9,10 +9,14 @@
  * These appear as subtle, centered cards that maintain conversation context.
  */
 
-import { Bot, AlertCircle, ArrowRight, Sparkles } from "lucide-react";
+import { Bot, AlertCircle, ArrowRight, Sparkles, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type SystemEventType = "agent_switch" | "error" | "info";
+export type SystemEventType =
+	| "agent_switch"
+	| "error"
+	| "info"
+	| "compaction";
 
 export interface SystemEvent {
 	id: string;
@@ -41,7 +45,29 @@ export function ChatSystemEvent({ event }: ChatSystemEventProps) {
 		return <ErrorEvent event={event} />;
 	}
 
+	if (event.type === "compaction") {
+		return <CompactionEvent event={event} />;
+	}
+
 	return <InfoEvent event={event} />;
+}
+
+/**
+ * Compaction bookmark (§16.11). Persistent inline marker showing where older
+ * turns were folded into a working-context summary. The user never sees the
+ * summary itself — only this divider noting it happened.
+ */
+function CompactionEvent({ event }: { event: SystemEvent }) {
+	return (
+		<div className="flex items-center gap-3 py-3 px-4">
+			<div className="h-px flex-1 bg-border" />
+			<div className="inline-flex items-center gap-1.5 text-xs italic text-muted-foreground shrink-0">
+				<Layers className="h-3.5 w-3.5" />
+				<span>{event.message || "Compacted earlier turns"}</span>
+			</div>
+			<div className="h-px flex-1 bg-border" />
+		</div>
+	);
 }
 
 function AgentSwitchEvent({ event }: { event: SystemEvent }) {

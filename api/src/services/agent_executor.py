@@ -96,12 +96,8 @@ def _serialize_for_json(value: Any) -> str:
 # Maximum tool call iterations to prevent infinite loops
 MAX_TOOL_ITERATIONS = 10
 
-# Context window management thresholds
-# Claude models have ~200K context, we use conservative limits
-CONTEXT_MAX_TOKENS = 120_000  # Prune when exceeding this
-CONTEXT_WARNING_TOKENS = 100_000  # Warn when approaching this
-CONTEXT_KEEP_RECENT = 20  # Keep this many recent messages when pruning
-TOOL_OUTPUT_PROTECT_TOKENS = 10_000  # Protect this many tokens of recent tool outputs
+# Context window management lives in src/services/chat_compaction.py (M5):
+# lossless, per-model-aware compaction replaces the old fixed-threshold prune.
 
 # Fallback system prompt (used if no config set)
 FALLBACK_SYSTEM_PROMPT = """You are a helpful AI assistant. You can help users with a variety of tasks including answering questions, providing information, and having general conversations.
@@ -385,6 +381,7 @@ class AgentExecutor:
             messages = self._fix_dangling_tool_calls(messages)
 
             # 5b. Enhance system prompt with tool-use instructions if tools available
+            tool_instruction = ""
             if tool_definitions and messages and messages[0].role == "system":
                 tool_names = [t.name for t in tool_definitions]
                 tool_instruction = f"""
@@ -401,44 +398,87 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             async with self._db() as session:
                 llm_client = await get_llm_client(session)
 
-            # 7. Check context size and prune if needed
-            estimated_tokens = self._estimate_tokens(messages)
+            # 7. Lossless compaction (§4.1/§4.2): per-model threshold =
+            # 0.85 * context_window. If the working context is over the line,
+            # summarize older turns into a persisted checkpoint (DB untouched),
+            # then REBUILD the working context so the folded view is sent. The
+            # context_warning chunk now means "compaction approaching/imminent."
+            from src.services.chat_compaction import (
+                compaction_threshold_tokens,
+                maybe_auto_compact,
+            )
 
-            if estimated_tokens > CONTEXT_WARNING_TOKENS:
-                if estimated_tokens > CONTEXT_MAX_TOKENS:
-                    # Prune and notify
-                    messages, original_tokens = await self._prune_context(
-                        messages, llm_client
+            estimated_tokens = self._estimate_tokens(messages)
+            threshold = compaction_threshold_tokens(choice.context_window)
+
+            if estimated_tokens > threshold:
+                yield ChatStreamChunk(type="compaction_started")
+                result = await maybe_auto_compact(
+                    self._session_factory,
+                    conversation.id,
+                    organization_id=owner.organization_id,
+                )
+                if result.compacted:
+                    # Re-load the conversation + rebuild history so the folded
+                    # summary block replaces the older turns in working context.
+                    async with self._db() as _cs:
+                        refreshed = await _cs.get(Conversation, conversation.id)
+                        if refreshed is not None:
+                            conversation = refreshed
+                    messages = await self._build_message_history(
+                        agent, conversation, include_images=supports_vision
                     )
+                    messages = self._fix_interleaved_messages(messages)
+                    messages = self._fix_dangling_tool_calls(messages)
+                    if tool_instruction and messages and messages[0].role == "system":
+                        messages[0] = LLMMessage(
+                            role="system",
+                            content=(messages[0].content or "") + tool_instruction,
+                        )
                     new_tokens = self._estimate_tokens(messages)
                     yield ChatStreamChunk(
-                        type="context_warning",
+                        type="compaction_complete",
                         context_warning=ContextWarning(
-                            current_tokens=original_tokens,
-                            max_tokens=CONTEXT_MAX_TOKENS,
+                            current_tokens=result.tokens_before,
+                            max_tokens=threshold,
                             action="compacted",
-                            message=(
-                                f"Conversation history was summarized to stay within "
-                                f"context limits. Original: ~{original_tokens:,} tokens, "
-                                f"now: ~{new_tokens:,} tokens."
-                            ),
+                            turns_compacted=result.turns_compacted,
+                            message=result.message,
                         ),
+                    )
+                    logger.info(
+                        "Auto-compacted conversation %s: ~%d -> ~%d tokens",
+                        conversation.id, estimated_tokens, new_tokens,
                     )
                 else:
-                    # Just warn - approaching limit
+                    # Couldn't compact (nothing eligible / summarizer empty):
+                    # surface a warning rather than silently overflowing.
                     yield ChatStreamChunk(
-                        type="context_warning",
+                        type="compaction_complete",
                         context_warning=ContextWarning(
                             current_tokens=estimated_tokens,
-                            max_tokens=CONTEXT_MAX_TOKENS,
+                            max_tokens=threshold,
                             action="warning",
-                            message=(
-                                f"Approaching context limit (~{estimated_tokens:,} of "
-                                f"{CONTEXT_MAX_TOKENS:,} tokens). Consider starting a "
-                                f"new conversation soon."
-                            ),
+                            turns_compacted=0,
+                            message=result.message,
                         ),
                     )
+            elif estimated_tokens > int(threshold * 0.82):
+                # Approaching the compaction line — passive heads-up (§16.5,
+                # the budget indicator suggests "Compact" near this point).
+                yield ChatStreamChunk(
+                    type="context_warning",
+                    context_warning=ContextWarning(
+                        current_tokens=estimated_tokens,
+                        max_tokens=threshold,
+                        action="warning",
+                        message=(
+                            f"Approaching context limit (~{estimated_tokens:,} of "
+                            f"~{threshold:,} tokens). Older turns will be compacted "
+                            "automatically soon."
+                        ),
+                    ),
+                )
 
             # 8. Run completion loop with tool calling
             iteration = 0
@@ -1019,8 +1059,21 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             )
         )
 
+        # M5 lossless compaction (§4.1/§4.5): if a compaction checkpoint exists,
+        # inject the [Conversation history summary] block right after the system
+        # prompt and drop the folded messages from the *working context only*.
+        # The DB rows are untouched — they still render in scrollback.
+        from src.services.chat_compaction import build_summary_block
+
+        summary_block = build_summary_block(conversation)
+        fold_through = conversation.compaction_through_sequence
+        if summary_block is not None:
+            messages.append(summary_block)
+
         # Get the active branch path (chronological).
         db_messages = await self._load_active_branch(conversation)
+        if fold_through is not None:
+            db_messages = [m for m in db_messages if m.sequence > fold_through]
 
         # Track seen tool_call IDs to handle providers (e.g. Minimax) that
         # reuse the same IDs across turns. When a collision is detected, remap
@@ -1143,63 +1196,6 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 total += len(tool_json) // 4
         return total
 
-    def _find_turn_boundaries(self, messages: list[LLMMessage]) -> list[int]:
-        """Find indices where new conversation turns start.
-
-        A turn is either a single message, or an assistant message with tool_calls
-        grouped together with the following tool result messages.
-        """
-        boundaries = []
-        i = 0
-        while i < len(messages):
-            boundaries.append(i)
-            if messages[i].role == "assistant" and messages[i].tool_calls:
-                i += 1
-                while i < len(messages) and messages[i].role == "tool":
-                    i += 1
-            else:
-                i += 1
-        return boundaries
-
-    def _compact_tool_outputs(self, messages: list[LLMMessage]) -> list[LLMMessage]:
-        """Replace old tool result content with placeholder, keeping recent ones.
-
-        Walks backward through messages, protecting the most recent tool outputs
-        up to TOOL_OUTPUT_PROTECT_TOKENS. Older large tool outputs get replaced
-        with a short placeholder. This preserves all message structure (tool_use/
-        tool_result pairs stay intact) while reducing token count.
-        """
-        protected_tokens = 0
-        protect_indices: set[int] = set()
-
-        for i in range(len(messages) - 1, -1, -1):
-            content = messages[i].content
-            if messages[i].role == "tool" and content:
-                tokens = len(content) // 4
-                if protected_tokens + tokens <= TOOL_OUTPUT_PROTECT_TOKENS:
-                    protected_tokens += tokens
-                    protect_indices.add(i)
-
-        result = []
-        for i, msg in enumerate(messages):
-            if (
-                msg.role == "tool"
-                and i not in protect_indices
-                and msg.content
-                and len(msg.content) > 200
-            ):
-                result.append(
-                    LLMMessage(
-                        role=msg.role,
-                        content="[Tool output cleared for context management]",
-                        tool_call_id=msg.tool_call_id,
-                        tool_name=msg.tool_name,
-                    )
-                )
-            else:
-                result.append(msg)
-        return result
-
     def _fix_interleaved_messages(
         self, messages: list[LLMMessage]
     ) -> list[LLMMessage]:
@@ -1276,175 +1272,6 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     j += 1
             i += 1
         return result
-
-    async def _summarize_messages(
-        self,
-        messages: list[LLMMessage],
-        llm_client: Any,
-    ) -> str:
-        """
-        Summarize a batch of messages into a concise context string.
-
-        Used when pruning context to preserve important information
-        from older messages that are being removed.
-        """
-        # Build a text representation of the messages to summarize
-        message_texts = []
-        for msg in messages:
-            if msg.content:
-                role_label = msg.role.upper()
-                message_texts.append(f"{role_label}: {msg.content}")
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    message_texts.append(f"TOOL_CALL: {tc.name}({json.dumps(tc.arguments)})")
-            if msg.role == "tool" and msg.tool_name:
-                message_texts.append(f"TOOL_RESULT ({msg.tool_name}): {msg.content}")
-
-        conversation_text = "\n\n".join(message_texts)
-
-        summary_prompt = [
-            LLMMessage(
-                role="system",
-                content=(
-                    "Summarize this conversation history concisely. "
-                    "Include key facts, decisions made, and important outcomes. "
-                    "Focus on information that would be useful context for continuing "
-                    "the conversation. Keep your summary under 1000 words."
-                ),
-            ),
-            LLMMessage(
-                role="user",
-                content=conversation_text,
-            ),
-        ]
-
-        response = await llm_client.complete(messages=summary_prompt)
-        return response.content or ""
-
-    async def _prune_context(
-        self,
-        messages: list[LLMMessage],
-        llm_client: Any,
-        keep_recent: int = CONTEXT_KEEP_RECENT,
-    ) -> tuple[list[LLMMessage], int]:
-        """
-        Prune messages if context is too large, preserving tool_use/tool_result pairs.
-
-        Two-phase strategy:
-        1. **Tool output compaction**: Replace old, large tool outputs with short
-           placeholders while keeping message structure intact (pairs stay paired).
-        2. **Turn-boundary summarization**: If still over limit, summarize older
-           messages but only cut at turn boundaries so tool_use+tool_result groups
-           are never split.
-
-        Also fixes dangling tool_calls (tool_use without matching tool_result)
-        before returning.
-
-        Args:
-            messages: Full message history
-            llm_client: LLM client for summarization
-            keep_recent: Number of recent messages to preserve
-
-        Returns:
-            Tuple of (pruned_messages, original_token_estimate)
-        """
-        original_tokens = self._estimate_tokens(messages)
-
-        if original_tokens <= CONTEXT_MAX_TOKENS:
-            return messages, original_tokens
-
-        logger.info(
-            f"Context pruning triggered: {original_tokens:,} tokens exceeds "
-            f"{CONTEXT_MAX_TOKENS:,} limit"
-        )
-
-        # Phase 1: Compact old tool outputs (preserves all message structure)
-        messages = self._compact_tool_outputs(messages)
-        compacted_tokens = self._estimate_tokens(messages)
-        if compacted_tokens <= CONTEXT_MAX_TOKENS:
-            logger.info(
-                f"Tool output compaction sufficient: {original_tokens:,} -> "
-                f"{compacted_tokens:,} tokens"
-            )
-            messages = self._fix_dangling_tool_calls(messages)
-            return messages, original_tokens
-
-        # Phase 2: Summarize middle messages at turn boundaries
-        boundaries = self._find_turn_boundaries(messages)
-
-        # Keep system prompt (always first)
-        system_msg = messages[0]
-
-        # Find first user message
-        first_user_idx = next(
-            (i for i, m in enumerate(messages) if m.role == "user"),
-            None,
-        )
-        first_user_msg = messages[first_user_idx] if first_user_idx else None
-
-        # Determine where to start summarizing
-        if first_user_idx is not None:
-            middle_start = first_user_idx + 1
-        else:
-            middle_start = 1  # After system message
-
-        # Snap the cut point to the nearest turn boundary
-        target_cut = len(messages) - keep_recent
-        cut_idx = boundaries[0]
-        for b in boundaries:
-            if b <= target_cut:
-                cut_idx = b
-            else:
-                break
-
-        # Ensure cut_idx is at least past middle_start
-        if cut_idx < middle_start:
-            cut_idx = middle_start
-
-        middle_end = cut_idx
-
-        if middle_end <= middle_start:
-            logger.info("Not enough middle messages to summarize, keeping original")
-            messages = self._fix_dangling_tool_calls(messages)
-            return messages, original_tokens
-
-        to_summarize = messages[middle_start:middle_end]
-        recent_messages = messages[cut_idx:]
-        logger.info(
-            f"Summarizing {len(to_summarize)} messages from the middle of "
-            f"conversation (turn-boundary cut at index {cut_idx})"
-        )
-
-        # Generate summary
-        summary = await self._summarize_messages(to_summarize, llm_client)
-
-        # Build pruned message list
-        pruned: list[LLMMessage] = [system_msg]
-
-        if first_user_msg:
-            pruned.append(first_user_msg)
-
-        # Add summary as a user context message
-        pruned.append(
-            LLMMessage(
-                role="user",
-                content=f"[Previous conversation summary]\n{summary}",
-            )
-        )
-
-        # Add recent messages (guaranteed to start at a turn boundary)
-        pruned.extend(recent_messages)
-
-        # Fix any dangling tool calls in the final result
-        pruned = self._fix_dangling_tool_calls(pruned)
-
-        new_tokens = self._estimate_tokens(pruned)
-        logger.info(
-            f"Context pruned: {original_tokens:,} -> {new_tokens:,} tokens "
-            f"({len(messages)} -> {len(pruned)} messages)"
-        )
-
-        return pruned, original_tokens
 
     async def _save_message(
         self,

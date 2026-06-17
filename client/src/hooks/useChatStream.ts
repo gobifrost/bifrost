@@ -378,6 +378,36 @@ export function useChatStream({
 					break;
 				}
 
+				// M5 lossless compaction (§16.11). compaction_started is a
+				// transient indicator; compaction_complete drops a persistent
+				// bookmark into the scrollback. context_warning (compaction
+				// approaching) is intentionally NOT surfaced as an event — the
+				// header budget indicator already communicates it.
+				case "compaction_complete": {
+					const convId = currentConversationIdRef.current;
+					const turns = chunk.context_warning?.turns_compacted ?? 0;
+					if (convId && turns > 0) {
+						addSystemEvent(convId, {
+							id: `compaction-${Date.now()}`,
+							type: "compaction",
+							timestamp: new Date().toISOString(),
+							message:
+								chunk.context_warning?.message ||
+								`Compacted ${turns} earlier ${
+									turns === 1 ? "turn" : "turns"
+								} to free context space`,
+						});
+					}
+					break;
+				}
+
+				case "compaction_started":
+				case "context_warning": {
+					// No scrollback event — the header budget indicator owns
+					// the "approaching compaction" affordance.
+					break;
+				}
+
 				case "error": {
 					const errorMsg = chunk.error || "Unknown error occurred";
 					setStreamError(errorMsg);

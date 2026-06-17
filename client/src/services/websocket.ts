@@ -317,7 +317,9 @@ export interface ChatStreamChunk {
 		| "assistant_message_start"
 		| "assistant_message_end"
 		| "todo_update"
-		| "context_warning";
+		| "context_warning"
+		| "compaction_started"
+		| "compaction_complete";
 	conversation_id?: string;
 	content?: string | null;
 	tool_call?: ChatToolCall | null;
@@ -343,6 +345,15 @@ export interface ChatStreamChunk {
 	todos?: TodoItem[] | null;
 	// Client-generated ID echoed back for dedup
 	local_id?: string | null;
+	// Compaction / context-warning fields (M5). Carried by context_warning and
+	// compaction_complete chunks.
+	context_warning?: {
+		current_tokens: number;
+		max_tokens: number;
+		action: string;
+		message: string;
+		turns_compacted?: number;
+	} | null;
 }
 
 // Pool/worker message types for real-time diagnostics
@@ -932,6 +943,9 @@ class WebSocketService {
 			case "assistant_message_start":
 			case "assistant_message_end":
 			case "todo_update":
+			case "context_warning":
+			case "compaction_started":
+			case "compaction_complete":
 				this.dispatchChatStreamChunk(message as ChatStreamChunk);
 				break;
 

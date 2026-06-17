@@ -3769,22 +3769,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5439,6 +5439,30 @@ export interface paths {
          * @description Switch the conversation's active leaf — sibling navigation.
          */
         post: operations["switch_active_leaf_api_chat_conversations__conversation_id__active_leaf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compact Conversation
+         * @description Manually compact older turns (§4.3, "Compact older turns" button).
+         *
+         *     Lossless: summarizes older turns into a persisted checkpoint that folds
+         *     them in the model's working context only. The message rows are never
+         *     modified — the user still sees the full conversation in scrollback.
+         */
+        post: operations["compact_conversation_api_chat_conversations__conversation_id__compact_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12049,6 +12073,41 @@ export interface components {
             /**
              * Message
              * @description Commit message
+             */
+            message: string;
+        };
+        /**
+         * CompactConversationResponse
+         * @description Result of a manual "Compact older turns" request (§4.3).
+         */
+        CompactConversationResponse: {
+            /**
+             * Compacted
+             * @description Whether anything was compacted
+             */
+            compacted: boolean;
+            /**
+             * Turns Compacted
+             * @description Number of earlier turns folded into the summary
+             * @default 0
+             */
+            turns_compacted: number;
+            /**
+             * Tokens Before
+             * @description Estimated tokens of the folded span
+             * @default 0
+             */
+            tokens_before: number;
+            /**
+             * Tokens After
+             * @description Estimated tokens of the resulting summary
+             * @default 0
+             */
+            tokens_after: number;
+            /**
+             * Message
+             * @description Human-readable result for toast/feedback
+             * @default
              */
             message: string;
         };
@@ -30412,7 +30471,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30445,7 +30504,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30478,7 +30537,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30511,7 +30570,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -33288,6 +33347,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compact_conversation_api_chat_conversations__conversation_id__compact_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompactConversationResponse"];
                 };
             };
             /** @description Validation Error */

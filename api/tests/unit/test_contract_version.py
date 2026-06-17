@@ -146,7 +146,13 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # RequiredConnectionUnset escalation). ADDITIVE — an old CLI simply omits the
     # field and keeps silent-None behavior, so no CONTRACT_VERSION bump; fingerprint
     # refreshed only.
-    "a1a2c7ef31c5dabb5b3be5256f1f49e756c8ba3252596fc8efa8e045fcfee16d"
+    #
+    # Chat V2 M5 compaction (2026-06-17): ChatStreamChunk gained
+    # `compaction_started`/`compaction_complete` type members, ContextWarning gained
+    # optional `turns_compacted`, and CompactConversationResponse was added. ADDITIVE
+    # (streaming chat chunks the CLI doesn't parse; new optional field) — fingerprint
+    # refreshed only, no CONTRACT_VERSION bump.
+    "f5ed3ec3cef91c485673e69a4493732d878e60db7e73f69760aac17be6df5f06"
 )
 
 
