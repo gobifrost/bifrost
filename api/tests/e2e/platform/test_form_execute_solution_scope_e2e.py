@@ -5,6 +5,7 @@ Also pins the RBAC contract: the handler resolves the workflow on the FORM's
 behalf (is_superuser=True), so a form user with no role on a ``role_based``
 workflow must still reach it — the form's own access gate is authoritative.
 """
+import contextlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -207,9 +208,18 @@ class TestFormExecuteEndpointRbac:
             assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
             assert r.json().get("execution_id"), r.text
         finally:
-            e2e_client.delete(f"/api/forms/{form_id}", headers=platform_admin.headers)
-            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
-            e2e_client.delete(f"/api/files/editor?path={path}", headers=platform_admin.headers)
+            # Best-effort cleanup: the assertions above have already run, so a
+            # transient transport blip (httpx connection-reset) or non-2xx while
+            # deleting a fixture must NOT fail an otherwise-passing test. Each
+            # delete is suppressed independently so one failure doesn't skip the
+            # rest. (This teardown flaking is what repeatedly red-ran the merge
+            # queue / release build / Dependabot on a role-DELETE reset.)
+            with contextlib.suppress(Exception):
+                e2e_client.delete(f"/api/forms/{form_id}", headers=platform_admin.headers)
+            with contextlib.suppress(Exception):
+                e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
+            with contextlib.suppress(Exception):
+                e2e_client.delete(f"/api/files/editor?path={path}", headers=platform_admin.headers)
 
 
 @pytest.mark.e2e
