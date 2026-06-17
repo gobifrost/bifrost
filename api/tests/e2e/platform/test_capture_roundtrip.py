@@ -21,6 +21,7 @@ import zipfile
 
 import pytest
 import yaml
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -113,6 +114,7 @@ def test_capture_roundtrip(e2e_client, platform_admin):
         headers=headers,
         json={"tables": [], "forms": []},
     )
+    blocked = wait_for_deploy(e2e_client, blocked, headers)
     assert blocked.status_code == 409, blocked.text
     detail = blocked.json()["detail"]
     assert "bifrost solution pull" in detail
@@ -154,6 +156,7 @@ def test_capture_roundtrip(e2e_client, platform_admin):
         headers=headers,
         json={"tables": [table_entry], "forms": [form_entry]},
     )
+    ok = wait_for_deploy(e2e_client, ok, headers)
     assert ok.status_code in (200, 201), ok.text
     assert e2e_client.get(f"/api/tables/{table_id}", headers=headers).status_code == 200
     assert e2e_client.get(f"/api/forms/{form_id}", headers=headers).status_code == 200
@@ -165,6 +168,7 @@ def test_capture_roundtrip(e2e_client, platform_admin):
         headers=headers,
         json={"tables": [table_entry], "forms": []},
     )
+    deleted = wait_for_deploy(e2e_client, deleted, headers)
     assert deleted.status_code in (200, 201), deleted.text
     assert deleted.json()["forms_deleted"] >= 1
     assert e2e_client.get(f"/api/forms/{form_id}", headers=headers).status_code == 404

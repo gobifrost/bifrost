@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -66,6 +67,7 @@ def test_vendored_shared_dep_resolves_without_global_repo_access(e2e_client, pla
             "path": "workflows/uses_shared.py", "type": "workflow",
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     # The vendored shared.* import resolves even with global_repo_access OFF.

@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import select
 
 from src.models.orm.workflows import Workflow
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -78,6 +79,7 @@ async def test_patch_scope_restamps_owned_entities(e2e_client, platform_admin, d
             }],
         },
     )
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     # The owned workflow currently sits on the global scope (org NULL).

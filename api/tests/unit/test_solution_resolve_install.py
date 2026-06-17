@@ -138,22 +138,49 @@ class _Resp:
 
 
 class _DeployFakeClient:
-    """Resolves the install by slug and records the deploy request body."""
+    """Resolves the install by slug and records the deploy request body.
+
+    Deploy is async: the POST returns 202 + a job id, then the CLI polls the
+    deploy-jobs status endpoint. ``deploy_resp`` overrides the POST response (to
+    exercise the synchronous 409 paths); the default POST enqueues and the poll
+    GET reports the job ``succeeded``.
+    """
 
     organization = {"id": "org-1"}
 
-    def __init__(self, deploy_resp: _Resp | None = None):
+    def __init__(
+        self,
+        deploy_resp: _Resp | None = None,
+        job_status: str = "succeeded",
+        job_error: str = "boom",
+    ):
         self.deploy_body: dict | None = None
         self._deploy_resp = deploy_resp or _Resp(
-            200, body={"workflows_upserted": 0, "workflows_deleted": 0}
+            202, body={"deploy_job_id": "job-1"}
         )
+        self._job_status = job_status
+        self._job_error = job_error
 
     async def get(self, path, **kwargs):
-        assert path == "/api/solutions"
-        return _Resp(
-            200,
-            body={"solutions": [{"id": "inst-1", "slug": "s", "organization_id": "org-1"}]},
-        )
+        if path == "/api/solutions":
+            return _Resp(
+                200,
+                body={
+                    "solutions": [
+                        {"id": "inst-1", "slug": "s", "organization_id": "org-1"}
+                    ]
+                },
+            )
+        if path == "/api/solutions/deploy-jobs/job-1":
+            return _Resp(
+                200,
+                body={
+                    "status": self._job_status,
+                    "error": self._job_error,
+                    "result": {},
+                },
+            )
+        raise AssertionError(f"unexpected GET {path}")
 
     async def post(self, path, **kwargs):
         if path == "/api/solutions/inst-1/deploy":
@@ -209,14 +236,14 @@ def test_deploy_no_descriptor_version_sends_null(tmp_path, monkeypatch):
     assert fake.deploy_body.get("version") is None
 
 
-def test_deploy_downgrade_409_prints_detail_and_force_hint(tmp_path, monkeypatch):
-    """The downgrade 409 (Task 20 gate) surfaces the server detail PLUS a
-    re-run-with---force hint."""
+def test_deploy_downgrade_prints_detail_and_force_hint(tmp_path, monkeypatch):
+    """The downgrade gate (Task 20) now surfaces as a FAILED deploy job; the CLI
+    re-attaches the re-run-with---force hint when polling sees the error."""
     detail = (
         "bundle version 0.9.0 is older than installed 1.0.0; "
         "re-run with force to downgrade"
     )
-    fake = _DeployFakeClient(deploy_resp=_Resp(409, body={"detail": detail}))
+    fake = _DeployFakeClient(job_status="failed", job_error=detail)
     runner, grp = _deploy_workspace(
         tmp_path, monkeypatch, fake, "slug: s\nname: S\nversion: 0.9.0\n"
     )

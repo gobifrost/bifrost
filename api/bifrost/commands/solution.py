@@ -21,6 +21,7 @@ import json
 import os
 import pathlib
 import subprocess
+import time
 
 import click
 import yaml
@@ -1294,6 +1295,41 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
         raise SystemExit(rc)
 
 
+async def _poll_deploy_job(client, job_id: str, *, interval: float = 3.0) -> int:
+    """Poll a deploy job until terminal, printing a heartbeat each tick.
+
+    The deploy endpoint runs the (often >100s) work as a background job and
+    returns immediately, so the CLI polls for the result instead of holding
+    one long HTTP request that times out client-side (Task 7 bug). Returns 0 on
+    ``succeeded``, 1 on ``failed`` (printing the server-captured error).
+    """
+    start = time.monotonic()
+    while True:
+        resp = await client.get(f"/api/solutions/deploy-jobs/{job_id}")
+        if resp.status_code != 200:
+            click.echo(
+                f"Failed to read deploy status ({resp.status_code}): {resp.text[:200]}",
+                err=True,
+            )
+            return 1
+        body = resp.json()
+        status = body.get("status")
+        if status == "succeeded":
+            click.echo("Deploy complete.")
+            return 0
+        if status == "failed":
+            error = body.get("error") or "unknown error"
+            # Task 20 downgrade gate now surfaces as a failed job — re-attach the
+            # deliberate-override hint so the operator knows how to proceed.
+            if "older than installed" in error:
+                error = f"{error}\nRe-run with --force to downgrade."
+            click.echo(f"Deploy failed: {error}", err=True)
+            return 1
+        elapsed = int(time.monotonic() - start)
+        click.echo(f"Still deploying... {elapsed}s")
+        await asyncio.sleep(interval)
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
@@ -1325,6 +1361,7 @@ def deploy_cmd(
         solution_logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("ascii")
         solution_logo_content_type = _LOGO_CONTENT_TYPES.get(logo_file.suffix.lower())
 
+    click.echo("Collecting solution files...")
     python_files = _collect_python_files(workspace)
     workflows = _collect_workflows(workspace)
     tables = _collect_tables(workspace)
@@ -1395,59 +1432,39 @@ def deploy_cmd(
                 click.echo(f"Vendored {len(vendored)} shared dependency file(s).")
                 bundle_python = {**python_files, **vendored}
 
-        deploy = await client.post(f"/api/solutions/{target_id}/deploy", json={
-            "python_files": bundle_python,
-            "workflows": workflows,
-            "tables": tables,
-            "apps": apps,
-            "forms": forms,
-            "agents": agents,
-            "claims": claims,
-            "config_schemas": config_schemas,
-            "connection_schemas": connection_schemas,
-            "events": events,
-            "readme": readme,
-            "version": descriptor.version,
-            "logo_b64": solution_logo_b64,
-            "logo_content_type": solution_logo_content_type,
-            "force": force,
-        })
-        if deploy.status_code == 409 and "older than installed" in deploy.text:
-            # Task 20 downgrade gate — surface the server's detail and how to
-            # override it deliberately.
-            detail = deploy.json().get("detail", deploy.text)
-            raise click.ClickException(f"{detail}\nRe-run with --force to downgrade.")
-        if deploy.status_code not in (200, 201):
+        click.echo("Uploading bundle...")
+        # Deploy is async server-side; the POST returns a job id quickly. We give
+        # the upload itself a generous timeout (large bundles) but never block on
+        # the deploy work — that is observed via the poll loop below.
+        deploy = await client.post(
+            f"/api/solutions/{target_id}/deploy",
+            json={
+                "python_files": bundle_python,
+                "workflows": workflows,
+                "tables": tables,
+                "apps": apps,
+                "forms": forms,
+                "agents": agents,
+                "claims": claims,
+                "config_schemas": config_schemas,
+                "connection_schemas": connection_schemas,
+                "events": events,
+                "readme": readme,
+                "version": descriptor.version,
+                "logo_b64": solution_logo_b64,
+                "logo_content_type": solution_logo_content_type,
+                "force": force,
+            },
+            timeout=600,
+        )
+        if deploy.status_code != 202:
+            # Synchronous refusals (git-connected, captured-but-unpulled entities)
+            # come back on the POST itself, before any job is created.
             click.echo(f"Deploy failed: {deploy.status_code} {deploy.text}", err=True)
             return 1
-        body = deploy.json()
-        # Summarize every entity kind that was upserted (not just workflows +
-        # claims) so the operator sees their tables/forms/apps shipped too.
-        kinds = [
-            ("workflow", body.get("workflows_upserted", 0)),
-            ("table", body.get("tables_upserted", 0)),
-            ("app", body.get("apps_upserted", 0)),
-            ("form", body.get("forms_upserted", 0)),
-            ("agent", body.get("agents_upserted", 0)),
-            ("claim", body.get("claims_upserted", 0)),
-        ]
-        upserted = ", ".join(f"{n} {label}(s)" for label, n in kinds if n) or "0 entities"
-        total_deleted = sum(
-            body.get(k, 0)
-            for k in (
-                "workflows_deleted", "tables_deleted", "apps_deleted",
-                "forms_deleted", "agents_deleted", "claims_deleted",
-            )
-        )
-        click.echo(f"Deployed install {target_id}: {upserted} upserted, {total_deleted} deleted.")
-        roles_created = body.get("roles_created") or []
-        if roles_created:
-            click.echo(
-                f"  Auto-created {len(roles_created)} new role(s): "
-                f"{', '.join(roles_created)} "
-                f"(empty — assign members to grant access)."
-            )
-        return 0
+        job_id = deploy.json()["deploy_job_id"]
+        click.echo(f"Deploying install {target_id} (job {job_id})...")
+        return await _poll_deploy_job(client, job_id)
 
     rc = asyncio.run(_run())
     if rc:

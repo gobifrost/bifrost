@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Body, File, HTTPException, Response, UploadFile, status
 from fastapi import Form as FastapiForm
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -36,8 +36,9 @@ from src.models.contracts.solutions import (
     SolutionDeleteSummary,
     SolutionDependencyPreview,
     SolutionDependencyPreviewRequest,
+    SolutionDeployEnqueued,
+    SolutionDeployJobStatus,
     SolutionDeployRequest,
-    SolutionDeployResponse,
     SolutionEntities,
     SolutionEntitySummary,
     SolutionExistingInstall,
@@ -58,6 +59,7 @@ from src.models.orm.config import Config
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.forms import Form
 from src.models.orm.solution_config_schema import SolutionConfigSchema
+from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
@@ -854,14 +856,126 @@ async def delete_solution(
     return summary
 
 
+async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployRequest) -> None:
+    """Execute the deploy under a fresh session (background task).
+
+    Flips the job ``running`` → ``succeeded`` / ``failed``. Deploy errors that
+    were previously surfaced as HTTP status codes are captured into ``error``
+    so the polling caller can inspect them (the HTTP request returned 202 long
+    before this ran). The whole deploy — including the per-install write lock,
+    the DB commit, and the post-commit S3 finalize — happens here so the (often
+    >100s) work no longer blocks the request and times out the CLI (Task 7).
+    """
+    from src.core.database import get_db_context
+    from src.services.solutions.write_lock import (
+        SolutionWriteLockHeld,
+        solution_write_lock,
+    )
+
+    async def _set_status(
+        status_value: str,
+        error: str | None = None,
+        result: dict | None = None,
+    ) -> None:
+        async with get_db_context() as db:
+            job = await db.get(SolutionDeployJob, job_id)
+            if job is None:
+                return
+            job.status = status_value
+            job.error = error
+            job.result = result
+
+    await _set_status("running")
+    deploy_result: dict | None = None
+    try:
+        async with get_db_context() as db:
+            async with solution_write_lock(solution_id):
+                solution = await db.get(SolutionORM, solution_id)
+                if solution is None:
+                    raise SolutionDeployConflict("Solution not found")
+                deployer = SolutionDeployer(db)
+                result = await deployer.deploy(
+                    SolutionBundle(
+                        solution=solution,
+                        python_files=body.python_files,
+                        workflows=body.workflows,
+                        tables=body.tables,
+                        apps=body.apps,
+                        forms=body.forms,
+                        agents=body.agents,
+                        claims=body.claims,
+                        config_schemas=body.config_schemas,
+                        connection_schemas=body.connection_schemas,
+                        events=body.events,
+                        version=body.version,
+                        logo_b64=body.logo_b64,
+                        logo_content_type=body.logo_content_type,
+                        readme=body.readme,
+                    ),
+                    force=body.force,
+                )
+                await db.commit()
+                # S3 only after the DB is durable — a failed commit changes no running
+                # code (P1-c). Still inside the lock so finalize can't race another deploy.
+                await result.finalize_s3()
+                deploy_result = {
+                    "solution_id": str(solution_id),
+                    "workflows_upserted": result.workflows_upserted,
+                    "workflows_deleted": result.workflows_deleted,
+                    "tables_upserted": result.tables_upserted,
+                    "tables_deleted": result.tables_deleted,
+                    "apps_upserted": result.apps_upserted,
+                    "apps_deleted": result.apps_deleted,
+                    "forms_upserted": result.forms_upserted,
+                    "forms_deleted": result.forms_deleted,
+                    "agents_upserted": result.agents_upserted,
+                    "agents_deleted": result.agents_deleted,
+                    "claims_upserted": result.claims_upserted,
+                    "claims_deleted": result.claims_deleted,
+                    "integrations_shell_created": result.integrations_shell_created,
+                    "roles_created": list(result.roles_created),
+                }
+    except SolutionWriteLockHeld:
+        await _set_status(
+            "failed",
+            "A deploy is already in progress for this install; retry shortly.",
+        )
+    except SolutionFinalizeIncomplete:
+        # Storage failed every retry (a real outage). The DB is committed and the
+        # deploy is full-replace + idempotent, so re-running heals it.
+        await _set_status(
+            "failed",
+            "Deploy committed but storage was unavailable after retries. "
+            "Re-run the deploy to complete it (it is idempotent).",
+        )
+    except (
+        SolutionDowngradeBlocked,
+        SolutionDeployConflict,
+        SolutionWorkflowNameMismatch,
+    ) as exc:
+        # Caller errors (downgrade without force, invalid bundle, workflow-name
+        # mismatch). Surfaced as the job error string for the poller to read.
+        await _set_status("failed", str(exc))
+    except Exception:  # noqa: BLE001 — capture any deploy failure onto the job
+        logger.exception("Solution deploy job %s failed", job_id)
+        await _set_status("failed", "Deploy failed unexpectedly; see server logs.")
+    else:
+        await _set_status("succeeded", result=deploy_result)
+
+
 @router.post(
     "/{solution_id}/deploy",
-    response_model=SolutionDeployResponse,
-    summary="Deploy a bundle to an install (full replace, non-interactive, admin only)",
+    response_model=SolutionDeployEnqueued,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue a deploy to an install (async, full replace, admin only)",
 )
 async def deploy_solution(
-    solution_id: UUID, body: SolutionDeployRequest, ctx: Context, user: CurrentSuperuser
-) -> SolutionDeployResponse:
+    solution_id: UUID,
+    body: SolutionDeployRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+    background_tasks: BackgroundTasks,
+) -> SolutionDeployEnqueued:
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -880,6 +994,8 @@ async def deploy_solution(
     # silently DELETE it — so we 409-block instead and tell the caller to pull
     # first. An entity absent with NO pending row is a genuine delete (source has
     # demonstrably seen it), and proceeds unchanged. force=True bypasses the block.
+    # These are immediate caller-input errors, so they stay synchronous (the
+    # caller gets a 409 from the request, not a failed job).
     if not body.force:
         from src.models.orm.pending_capture import PendingCaptureORM
         from src.services.solutions.pending import unpulled_blockers
@@ -911,93 +1027,31 @@ async def deploy_solution(
                 ),
             )
 
-    # One writer per install (criterion 6): hold a per-install lock ACROSS the DB
-    # commit AND the post-commit S3 finalize, so two concurrent deploys can't
-    # interleave (A commits, B commits, then A's finalize uploads last → DB from
-    # B but artifacts from A). The app-slug advisory lock inside deploy() is
-    # transaction-scoped and releases at commit, before finalize — so it does NOT
-    # cover this (Codex #12). The git-connected sync holds the same lock.
-    from src.services.solutions.write_lock import (
-        SolutionWriteLockHeld,
-        solution_write_lock,
-    )
+    # Persist the orchestration row before scheduling the task so the caller can
+    # poll for status the instant it has the id.
+    job = SolutionDeployJob(install_id=solution_id, status="queued")
+    ctx.db.add(job)
+    await ctx.db.commit()
+    await ctx.db.refresh(job)
 
-    try:
-        async with solution_write_lock(solution_id):
-            deployer = SolutionDeployer(ctx.db)
-            result = await deployer.deploy(
-                SolutionBundle(
-                    solution=solution,
-                    python_files=body.python_files,
-                    workflows=body.workflows,
-                    tables=body.tables,
-                    apps=body.apps,
-                    forms=body.forms,
-                    agents=body.agents,
-                    claims=body.claims,
-                    config_schemas=body.config_schemas,
-                    connection_schemas=body.connection_schemas,
-                    events=body.events,
-                    version=body.version,
-                    logo_b64=body.logo_b64,
-                    logo_content_type=body.logo_content_type,
-                    readme=body.readme,
-                ),
-                force=body.force,
-            )
-            await ctx.db.commit()
-            # S3 only after the DB is durable — a failed commit changes no running
-            # code (P1-c). Still inside the lock so finalize can't race another deploy.
-            await result.finalize_s3()
-    except SolutionWriteLockHeld as exc:
+    background_tasks.add_task(_run_deploy_job, job.id, solution_id, body)
+    return SolutionDeployEnqueued(deploy_job_id=job.id)
+
+
+@router.get(
+    "/deploy-jobs/{job_id}",
+    response_model=SolutionDeployJobStatus,
+    summary="Poll the status of an async deploy job (admin only)",
+)
+async def get_deploy_job(
+    job_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionDeployJobStatus:
+    job = await ctx.db.get(SolutionDeployJob, job_id)
+    if job is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A deploy is already in progress for this install; retry shortly.",
-        ) from exc
-    except SolutionDowngradeBlocked as exc:
-        # The bundle's version is older than installed (Task 20). The caller can
-        # re-run with force=true to apply the downgrade deliberately.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except SolutionDeployConflict as exc:
-        # The bundle is invalid for this install: a foreign/owned entity id, an
-        # app-slug collision with a visible app, or a non-standalone_v2 app. These
-        # are caller errors → 409 with the reason, not an unhandled 500 (Codex #13).
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except SolutionWorkflowNameMismatch as exc:
-        # A workflow's manifest name diverges from its decorated @workflow(name=...);
-        # deploying it would persist a name execution can't resolve. Caller error →
-        # 422 with per-workflow guidance (fix the manifest or the decorator).
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-    except SolutionFinalizeIncomplete as exc:
-        # Reached only when storage failed every retry (a real outage), not a
-        # transient blip. The DB is committed and the deploy is full-replace +
-        # idempotent, so re-running heals it; surface 502 so the operator retries.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                "Deploy committed but storage was unavailable after retries. "
-                "Re-run the deploy to complete it (it is idempotent)."
-            ),
-        ) from exc
-    return SolutionDeployResponse(
-        solution_id=solution_id,
-        workflows_upserted=result.workflows_upserted,
-        workflows_deleted=result.workflows_deleted,
-        tables_upserted=result.tables_upserted,
-        tables_deleted=result.tables_deleted,
-        apps_upserted=result.apps_upserted,
-        apps_deleted=result.apps_deleted,
-        forms_upserted=result.forms_upserted,
-        forms_deleted=result.forms_deleted,
-        agents_upserted=result.agents_upserted,
-        agents_deleted=result.agents_deleted,
-        claims_upserted=result.claims_upserted,
-        claims_deleted=result.claims_deleted,
-        integrations_shell_created=result.integrations_shell_created,
-        roles_created=result.roles_created,
-    )
+            status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
+        )
+    return SolutionDeployJobStatus.model_validate(job)
 
 
 @router.post(

@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from src.models.orm.solution_config_schema import SolutionConfigSchema
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -33,6 +34,7 @@ async def test_deploy_solution_with_config_declaration(e2e_client, platform_admi
             "required": True, "description": "needed", "position": 0,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     rows = (

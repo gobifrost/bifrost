@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -49,6 +50,7 @@ async def test_get_solution_entities_reports_config_status(e2e_client, platform_
             "required": True, "description": "needed", "position": 0,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     r = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
@@ -124,6 +126,7 @@ async def test_get_solution_entities_includes_app_logo(e2e_client, platform_admi
             ]
         },
     )
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     app = {"id": real_id}

@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -44,6 +45,7 @@ def test_solution_id_populated_on_workflow_and_agent(e2e_client, platform_admin)
             "system_prompt": "You are a helper.", "channels": ["chat"],
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     # Deploy remaps each manifest id to uuid5(install_id, manifest_id).

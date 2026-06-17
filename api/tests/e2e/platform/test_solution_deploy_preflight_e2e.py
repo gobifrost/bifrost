@@ -11,6 +11,8 @@ import uuid
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_deploy
+
 pytestmark = pytest.mark.e2e
 
 
@@ -58,6 +60,7 @@ def test_deploy_rejects_workflow_name_mismatch(e2e_client, platform_admin):
             ],
         },
     )
+    resp = wait_for_deploy(e2e_client, resp, headers)
     assert resp.status_code == 422, f"expected 422, got {resp.status_code}: {resp.text}"
     detail = resp.json()["detail"]
     assert "hello" in detail
@@ -95,4 +98,5 @@ def test_deploy_accepts_matching_workflow_name(e2e_client, platform_admin):
             ],
         },
     )
+    resp = wait_for_deploy(e2e_client, resp, headers)
     assert resp.status_code in (200, 201), f"deploy failed: {resp.status_code} {resp.text}"

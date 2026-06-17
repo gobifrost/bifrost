@@ -104,6 +104,8 @@ def make_solution_with_table_rows(e2e_client, platform_admin):
                 ],
             },
         )
+        from tests.e2e.platform.conftest import wait_for_deploy
+        dep = wait_for_deploy(e2e_client, dep, headers)
         assert dep.status_code in (200, 201), dep.text
 
         # Real deployed table id = uuid5(install_id, manifest_id).

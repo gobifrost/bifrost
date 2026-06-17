@@ -440,27 +440,27 @@ class SolutionDeleteSummary(BaseModel):
     config_values_orphaned: int = 0
 
 
-class SolutionDeployResponse(BaseModel):
-    solution_id: UUID
-    workflows_upserted: int = 0
-    workflows_deleted: int = 0
-    tables_upserted: int = 0
-    tables_deleted: int = 0
-    apps_upserted: int = 0
-    apps_deleted: int = 0
-    forms_upserted: int = 0
-    forms_deleted: int = 0
-    agents_upserted: int = 0
-    agents_deleted: int = 0
-    claims_upserted: int = 0
-    claims_deleted: int = 0
-    # Empty integration shells created for declared connections that did not yet
-    # exist globally (never clobbers a configured integration).
-    integrations_shell_created: int = 0
-    # Names of roles auto-created because the bundle referenced a role missing
-    # from the target env. Created global + empty (grant nothing until assigned).
-    # Surfaced so the operator sees them — and a typo'd role name is visible.
-    roles_created: list[str] = Field(default_factory=list)
+class SolutionDeployEnqueued(BaseModel):
+    """Returned by ``POST /{id}/deploy`` — the deploy runs as a background job;
+    the caller polls ``GET /deploy-jobs/{deploy_job_id}`` for the result."""
+
+    deploy_job_id: UUID
+
+
+class SolutionDeployJobStatus(BaseModel):
+    """Current state of an async deploy job."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    install_id: UUID
+    status: Literal["queued", "running", "succeeded", "failed"]
+    error: str | None = None
+    # Per-entity upsert/delete counts (and auto-created role names), present once
+    # the job ``succeeded``. None while queued/running or on failure.
+    result: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SolutionCaptureRequest(BaseModel):

@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -44,6 +45,7 @@ def _deploy_workflow_and_app(e2e_client, headers, sid: str):
             "dist_files": {"index.html": "<html></html>"},
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     # Deploy remaps each manifest id to uuid5(install_id, manifest_id); the entity
     # is addressable only by the remapped id.
@@ -75,6 +77,7 @@ def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
             }],
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     real_es = str(solution_entity_id(UUID(sid), UUID(es_id)))
 
@@ -181,6 +184,7 @@ def test_remap_skips_managed_form_and_agent_tool(e2e_client, platform_admin):
             "system_prompt": "x", "tool_ids": [wf_id],
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     real_wf = str(solution_entity_id(UUID(sid), UUID(wf_id)))
@@ -239,6 +243,7 @@ def test_delete_role_bound_to_managed_entity_is_refused(e2e_client, platform_adm
             "access_level": "role_based", "role_names": [role_name],
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     # Deleting the role now would cascade-remove the managed binding → refuse.

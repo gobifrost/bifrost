@@ -25,6 +25,7 @@ import pytest
 from tests.e2e.conftest import write_and_register
 from tests.e2e.fixtures.setup import _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -659,6 +660,7 @@ def ext_install(e2e_client, platform_admin, org1):
             }],
         },
     )
+    deploy = wait_for_deploy(e2e_client, deploy, platform_admin.headers)
     assert deploy.status_code in (200, 201), deploy.text
 
     # The app's DB id is the remapped uuid5(install, manifest_id).

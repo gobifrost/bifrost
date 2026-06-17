@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -30,6 +31,7 @@ def test_table_deploy_preserves_rows_across_schema_change(e2e_client, platform_a
     dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
         "tables": [{"id": tid, "name": f"people_{slug}", "schema": {"columns": [{"name": "email"}]}, "policies": None}],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     assert dep.json()["tables_upserted"] == 1
 
@@ -47,6 +49,7 @@ def test_table_deploy_preserves_rows_across_schema_change(e2e_client, platform_a
     dep2 = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
         "tables": [{"id": tid, "name": f"people_{slug}", "schema": {"columns": [{"name": "email"}, {"name": "phone"}]}, "policies": None}],
     })
+    dep2 = wait_for_deploy(e2e_client, dep2, headers)
     assert dep2.status_code in (200, 201), dep2.text
 
     # Row survives the schema migration.
@@ -71,6 +74,7 @@ def test_repo_table_coexists_with_solution_table_same_name(e2e_client, platform_
     dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
         "tables": [{"id": tid, "name": name, "schema": {"columns": [{"name": "email"}]}, "policies": None}],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     sol_table_id = str(solution_entity_id(UUID(sid), UUID(tid)))
 
@@ -110,6 +114,7 @@ def test_solution_table_coexists_with_existing_repo_table(e2e_client, platform_a
     dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
         "tables": [{"id": tid, "name": name, "schema": {"columns": [{"name": "email"}]}, "policies": None}],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), f"solution deploy blocked by _repo row: {dep.text}"
     sol_table_id = str(solution_entity_id(UUID(sid), UUID(tid)))
 
@@ -135,6 +140,7 @@ def test_solution_app_resolves_its_table_by_name(e2e_client, platform_admin):
         "apps": [{"id": app_manifest_id, "slug": f"app-{slug}", "name": "App",
                   "app_model": "standalone_v2", "dist_files": {"index.html": "<html></html>"}}],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     app_id = str(solution_entity_id(UUID(sid), UUID(app_manifest_id)))
 
@@ -176,6 +182,7 @@ def test_solution_workflow_resolves_its_table_by_name(e2e_client, platform_admin
         "tables": [{"id": tid, "name": table_name,
                     "schema": {"columns": [{"name": "label"}]}, "policies": None}],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     # WITHOUT the solution scope: name cascade excludes the solution table → 404.
