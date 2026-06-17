@@ -46,7 +46,7 @@ def _clean_sys_modules():
 
 def test_switching_solution_evicts_other_solutions_module(_clean_sys_modules, monkeypatch):
     import src.core.module_cache_sync as mcs
-    from src.services.execution.simple_worker import _clear_workspace_modules
+    import src.services.execution.simple_worker as sw
 
     sid_b = str(uuid.uuid4())
 
@@ -62,7 +62,7 @@ def test_switching_solution_evicts_other_solutions_module(_clean_sys_modules, mo
     # Now Solution B is the active execution.
     mcs.set_solution_context(sid_b, global_repo_access=False)
     try:
-        _clear_workspace_modules()
+        sw._clear_workspace_modules()
     finally:
         mcs._solution_ctx.value = None
 
@@ -74,7 +74,7 @@ def test_switching_solution_evicts_other_solutions_module(_clean_sys_modules, mo
 
 def test_same_solution_keeps_its_module(_clean_sys_modules, monkeypatch):
     import src.core.module_cache_sync as mcs
-    from src.services.execution.simple_worker import _clear_workspace_modules
+    import src.services.execution.simple_worker as sw
 
     sid = str(uuid.uuid4())
     sys.modules["modules.foo"] = _fake_solution_module("modules.foo", "modules/foo.py", "hashA")
@@ -87,7 +87,7 @@ def test_same_solution_keeps_its_module(_clean_sys_modules, monkeypatch):
 
     mcs.set_solution_context(sid, global_repo_access=False)
     try:
-        _clear_workspace_modules()
+        sw._clear_workspace_modules()
     finally:
         mcs._solution_ctx.value = None
 

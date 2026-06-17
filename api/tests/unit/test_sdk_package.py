@@ -88,10 +88,10 @@ def test_build_sdk_tarball_shape_and_exports():
     if not (_SDK_SERVICE.parent / "app_bundler" / "node_modules" / "esbuild").exists():
         pytest.skip("esbuild not installed in this environment")
 
-    from src.services.sdk_package import build_sdk_tarball
+    import src.services.sdk_package as sdkpkg
 
-    build_sdk_tarball.cache_clear()  # never serve another test's stubbed bundle
-    data = build_sdk_tarball("v1.2-3-gabc1234")
+    sdkpkg.build_sdk_tarball.cache_clear()  # never serve another test's stubbed bundle
+    data = sdkpkg.build_sdk_tarball("v1.2-3-gabc1234")
     assert data[:2] == b"\x1f\x8b", "not a gzip tarball"
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:

@@ -127,7 +127,7 @@ def test_scan_third_party_deps_finds_direct_non_bifrost_imports() -> None:
     srcs = [
         'import { LineChart } from "recharts";\nimport { format } from "date-fns";',
         'import { Button } from "bifrost";\nimport X from "./local";\n'
-        'import { cn } from "@/lib/utils";\nimport React from "react";',
+        + 'import { cn } from "@/lib/utils";\nimport React from "react";',
         'import { z } from "@scope/pkg";',
     ]
     deps = scan_third_party_deps(srcs)

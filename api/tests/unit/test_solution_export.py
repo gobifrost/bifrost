@@ -168,9 +168,6 @@ def test_export_descriptor_omits_scope_regardless_of_org() -> None:
     result = preview_zip(build_workspace_zip(b))
     assert result.scope is None
     # And the raw descriptor in the zip has no scope: key.
-    import io
-    import zipfile
-
     import yaml
 
     with zipfile.ZipFile(io.BytesIO(build_workspace_zip(b))) as z:

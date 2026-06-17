@@ -348,9 +348,6 @@ async def test_export_before_first_deploy_rebuilds_live(e2e_client, platform_adm
     owns (it is not a stored-bundle fetch). An install created but never deployed
     owns nothing, so the export is a valid, re-installable zip carrying just the
     ``bifrost.solution.yaml`` descriptor — not a 404."""
-    import io
-    import zipfile
-
     headers = platform_admin.headers
     slug = f"zip-noexp-{uuid.uuid4().hex[:8]}"
     create = e2e_client.post("/api/solutions", headers=headers, json={

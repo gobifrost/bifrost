@@ -225,7 +225,7 @@ class TestGitSyncRerun:
         """Codex #13: a sync trigger arriving while a sync holds the lock must not
         be dropped. The holder re-checks a pending flag after finishing and
         re-syncs, so the newest commit is always deployed."""
-        from src.core.redis_client import get_redis_client
+        import src.core.redis_client as rc
         from src.services.solutions import git_sync as gs
 
         sol = Solution(
@@ -235,7 +235,7 @@ class TestGitSyncRerun:
         db_session.add(sol)
         await db_session.flush()
 
-        redis = await get_redis_client()._get_redis()
+        redis = await rc.get_redis_client()._get_redis()
         pending_key = f"bifrost:solution:sync-pending:{sol.id}"
         await redis.delete(pending_key)
 
@@ -258,7 +258,7 @@ class TestGitSyncRerun:
         assert await redis.get(pending_key) is None
 
     async def test_no_rerun_without_pending_trigger(self, db_session, monkeypatch):
-        from src.core.redis_client import get_redis_client
+        import src.core.redis_client as rc
         from src.services.solutions import git_sync as gs
 
         sol = Solution(
@@ -267,7 +267,7 @@ class TestGitSyncRerun:
         )
         db_session.add(sol)
         await db_session.flush()
-        redis = await get_redis_client()._get_redis()
+        redis = await rc.get_redis_client()._get_redis()
         await redis.delete(f"bifrost:solution:sync-pending:{sol.id}")
 
         calls = {"n": 0}

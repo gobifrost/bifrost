@@ -1016,8 +1016,6 @@ Examples:
         # that 401s with no recovery. Best-effort: if refresh fails, warn but still
         # emit what we have so the dev gets a clear "re-login" signal, not silence.
         if credentials.is_token_expired(api_url=url_override):
-            import asyncio
-
             from bifrost.client import refresh_tokens
             try:
                 if asyncio.run(refresh_tokens()):

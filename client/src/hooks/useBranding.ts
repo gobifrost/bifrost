@@ -191,13 +191,13 @@ export async function resetAllBranding(): Promise<BrandingSettings_API> {
 	const { data, error } = await apiClient.DELETE("/api/branding", {});
 
 	if (error) {
-		throw new Error(
-			`Failed to reset branding: ${
-				error && typeof error === "object" && "message" in error
-					? (error as { message?: string }).message
-					: "Unknown error"
-			}`,
-		);
+		// `error` is already narrowed to truthy here, so a typeof-object check is
+		// enough (no redundant `!== null`, no object-vs-null comparison).
+		const message =
+			typeof error === "object" && "message" in error
+				? (error as { message?: string }).message
+				: "Unknown error";
+		throw new Error(`Failed to reset branding: ${message}`);
 	}
 
 	return data;

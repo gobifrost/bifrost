@@ -570,10 +570,11 @@ class TestDeployTransactionalS3:
     async def test_finalize_retries_a_transient_upload_failure(self, db_session, monkeypatch):
         """A transient storage blip during post-commit finalize is absorbed by
         retrying the idempotent step — the deploy completes, no error (Codex R5)."""
-        import src.services.solutions.deploy as deploy_mod
         from src.services.solutions import app_build
 
-        monkeypatch.setattr(deploy_mod, "_FINALIZE_BACKOFF_S", 0)  # fast test
+        monkeypatch.setattr(
+            "src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0
+        )  # fast test
 
         attempts = {"n": 0}
 
@@ -607,11 +608,10 @@ class TestDeployTransactionalS3:
     async def test_finalize_raises_when_storage_stays_down(self, db_session, monkeypatch):
         """If a finalize step fails every retry (a real outage), finalize raises
         SolutionFinalizeIncomplete so the caller can surface a retry (Codex R5)."""
-        import src.services.solutions.deploy as deploy_mod
         from src.services.solutions import app_build
         from src.services.solutions.deploy import SolutionFinalizeIncomplete
 
-        monkeypatch.setattr(deploy_mod, "_FINALIZE_BACKOFF_S", 0)
+        monkeypatch.setattr("src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0)
 
         def _compile(self, *a, **k):
             return {"index.html": b"<html></html>"}

@@ -207,22 +207,23 @@ class TestGetV2DistAsset:
         from types import SimpleNamespace
         from uuid import uuid4
 
-        import src.routers.app_code_files as router_mod
-        import src.services.solutions.app_build as build_mod
-
         app_id = uuid4()
         fake_app = SimpleNamespace(id=app_id)
 
         async def _fake_get_app(ctx, _app_id):
             return fake_app
 
-        monkeypatch.setattr(router_mod, "get_application_or_404", _fake_get_app)
+        monkeypatch.setattr(
+            "src.routers.app_code_files.get_application_or_404", _fake_get_app
+        )
 
         class _FakeBuilder:
             async def read_dist(self, _app_id, _rel):
                 raise read_dist_exc
 
-        monkeypatch.setattr(build_mod, "SolutionAppBuilder", _FakeBuilder)
+        monkeypatch.setattr(
+            "src.services.solutions.app_build.SolutionAppBuilder", _FakeBuilder
+        )
         return app_id
 
     async def test_missing_key_returns_404(self, monkeypatch):

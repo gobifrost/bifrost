@@ -52,10 +52,10 @@ class TestSolutionWriteLock:
         """Codex #13: a stale holder must not release a SUCCESSOR's lock. Acquire
         as A, simulate A losing it + B acquiring (overwrite the key with B's
         token), then exit A's context — A's release must NOT delete B's key."""
-        from src.core.redis_client import get_redis_client
+        import src.core.redis_client as rc
 
         sid = uuid4()
-        redis = await get_redis_client()._get_redis()
+        redis = await rc.get_redis_client()._get_redis()
         key = _lock_key(sid)
         async with solution_write_lock(sid):
             # Simulate: A's TTL lapsed and B acquired with its OWN token.
@@ -67,10 +67,10 @@ class TestSolutionWriteLock:
     async def test_holds_a_live_ttl_that_renews(self) -> None:
         """While held, the key carries a positive TTL (it's the renewable lock,
         not a permanent key) so a crashed holder still self-heals."""
-        from src.core.redis_client import get_redis_client
+        import src.core.redis_client as rc
 
         sid = uuid4()
         async with solution_write_lock(sid):
-            redis = await get_redis_client()._get_redis()
+            redis = await rc.get_redis_client()._get_redis()
             ttl = await redis.ttl(_lock_key(sid))
             assert 0 < ttl <= _LOCK_TTL_S

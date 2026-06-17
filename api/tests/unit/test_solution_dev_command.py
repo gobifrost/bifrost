@@ -37,7 +37,6 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
     import subprocess
 
     import bifrost.client as client_mod
-    import bifrost.commands.solution as solution_mod
     from bifrost.solution_dev import function_host
 
     monkeypatch.chdir(tmp_path)
@@ -92,8 +91,10 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
     async def _fake_serve(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(solution_mod, "_serve", _fake_serve)
-    monkeypatch.setattr(solution_mod, "_terminate_process_group", lambda proc: None)
+    monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr(
+        "bifrost.commands.solution._terminate_process_group", lambda proc: None
+    )
 
     result = CliRunner().invoke(solution_group, ["start"])
     assert result.exit_code == 0, result.output

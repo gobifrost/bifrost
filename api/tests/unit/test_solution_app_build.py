@@ -82,7 +82,6 @@ def test_materialize_vendors_bifrost_sdk(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ab, "build_sdk_tarball", lambda v: b"FAKE_TGZ", raising=False)
     # patch the symbol the method imports locally
-    import src.services.sdk_package as sdkpkg
     monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
 
     b = SolutionAppBuilder()
@@ -102,7 +101,6 @@ def test_materialize_merges_into_app_package_json(monkeypatch, tmp_path):
     clobbered (the app keeps its scripts/deps)."""
     import json
 
-    import src.services.sdk_package as sdkpkg
     monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
 
     app_pkg = {"name": "my-app", "scripts": {"dev": "vite"},
