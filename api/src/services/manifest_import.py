@@ -27,6 +27,7 @@ from bifrost.manifest import (
     Manifest,
     read_manifest_from_dir,
 )
+from src.services.solution_deploy_preflight import extract_workflow_name_from_source
 
 logger = logging.getLogger(__name__)
 
@@ -1014,8 +1015,22 @@ class ManifestResolver:
                 imported_wf_ids.add(mwf.id)  # Still track as present for event source refs
                 continue
             if await _file_exists(mwf.path):
-                await _prog(f"Importing workflow: {mwf.name or key}")
-                wf_ops = self._resolve_workflow(mwf.name or key, mwf, cache)
+                # The execution engine matches a workflow by its decorated
+                # @workflow(name=...) — NOT the manifest dict slug. Recover that
+                # name from source so import never writes a slug that execution
+                # can't resolve (e.g. key "hello" vs decorated "Sandbox Ticket
+                # Snapshot"). Falls back to the manifest name/key only when the
+                # source is unreadable/unparseable.
+                raw_src = await _file_read(mwf.path)
+                exec_name = mwf.name or key
+                if raw_src is not None:
+                    decorated = extract_workflow_name_from_source(
+                        raw_src.decode("utf-8", errors="replace"), mwf.function_name
+                    )
+                    if decorated:
+                        exec_name = decorated
+                await _prog(f"Importing workflow: {exec_name}")
+                wf_ops = self._resolve_workflow(exec_name, mwf, cache)
                 await self._apply_ops(wf_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("wf_ids", set()))
                 imported_wf_ids.add(mwf.id)
 

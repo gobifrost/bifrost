@@ -748,13 +748,26 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     for key, body in raw.items():
         if not isinstance(body, dict):
             continue
-        entries.append({
+        # Carry the workflow's source text so the server's deploy preflight can
+        # compare the manifest name against the decorated @workflow(name=...) —
+        # the value the execution engine actually matches on. Missing/unreadable
+        # source simply omits the field; preflight skips entries without source.
+        source: str | None = None
+        wf_path = body.get("path")
+        if wf_path:
+            src_file = workspace / wf_path
+            if src_file.is_file():
+                source = src_file.read_text()
+        entry = {
             **body,
             "id": body.get("id", key),
             "name": body.get("name") or key,
             "function_name": body["function_name"],
             "path": body["path"],
-        })
+        }
+        if source is not None:
+            entry["source"] = source
+        entries.append(entry)
     return entries
 
 

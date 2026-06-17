@@ -50,6 +50,7 @@ from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
+from src.services.solution_deploy_preflight import preflight_workflows
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
 
@@ -146,6 +147,16 @@ class SolutionDowngradeBlocked(Exception):
 
     Refused by default (Task 20) — re-run with ``force`` to downgrade. Only
     raised when BOTH versions parse as PEP 440; unordered versions never block.
+    """
+
+
+class SolutionWorkflowNameMismatch(Exception):
+    """A bundle workflow's manifest name diverges from its decorated name.
+
+    The execution engine matches a workflow by ``@workflow(name=...)``; a bundle
+    whose manifest entry name differs from the decorated name in its carried
+    source would deploy a workflow that execution can't resolve. Refused before
+    any write so the operator fixes the manifest or the decorator.
     """
 
 
@@ -350,6 +361,14 @@ class SolutionDeployer:
         # a byte-identical bundle installs independently into N scopes (and a
         # redeploy is stable).
         rb = await self._remapped_bundle(bundle)
+
+        # ── Workflow-name preflight (before ANY writes) ─────────────────────
+        # A bundle whose manifest entry name diverges from its decorated
+        # @workflow(name=...) would deploy a Workflow.name the execution engine
+        # can't resolve. Catch it up front with actionable guidance.
+        name_errors = preflight_workflows(rb.workflows)
+        if name_errors:
+            raise SolutionWorkflowNameMismatch("\n".join(name_errors))
 
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, rb.workflows)

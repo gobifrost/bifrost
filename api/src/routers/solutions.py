@@ -67,6 +67,7 @@ from src.services.solutions.deploy import (
     SolutionDeployConflict,
     SolutionDowngradeBlocked,
     SolutionFinalizeIncomplete,
+    SolutionWorkflowNameMismatch,
 )
 
 if TYPE_CHECKING:
@@ -962,6 +963,13 @@ async def deploy_solution(
         # app-slug collision with a visible app, or a non-standalone_v2 app. These
         # are caller errors → 409 with the reason, not an unhandled 500 (Codex #13).
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SolutionWorkflowNameMismatch as exc:
+        # A workflow's manifest name diverges from its decorated @workflow(name=...);
+        # deploying it would persist a name execution can't resolve. Caller error →
+        # 422 with per-workflow guidance (fix the manifest or the decorator).
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     except SolutionFinalizeIncomplete as exc:
         # Reached only when storage failed every retry (a real outage), not a
         # transient blip. The DB is committed and the deploy is full-replace +
@@ -1467,6 +1475,7 @@ async def install_solution(
         SolutionDeployConflict,
         SolutionDowngradeBlocked,
         SolutionFinalizeIncomplete,
+        SolutionWorkflowNameMismatch,
     )
     from src.services.solutions.write_lock import SolutionWriteLockHeld
     from src.services.solutions.zip_install import (
@@ -1547,6 +1556,10 @@ async def install_solution(
         ) from exc
     except SolutionDeployConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SolutionWorkflowNameMismatch as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     except SolutionFinalizeIncomplete as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
