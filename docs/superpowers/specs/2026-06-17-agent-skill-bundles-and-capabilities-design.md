@@ -91,27 +91,34 @@ Bifrost injects a small contract into the agent prompt when a bundle is present:
 ```
 You are backed by a skill bundle. Follow SKILL.md naturally.
 When it references a relative file, use read_skill_asset.
-If script execution is enabled, you may run bundled or temporary scripts with execute_script.
 ```
 
-Two new **invisible capabilities** hook into `resolve_agent_tools()` (`api/src/services/execution/agent_helpers.py`) as system tools:
+One new **invisible capability** hooks into `resolve_agent_tools()` (`api/src/services/execution/agent_helpers.py`) as a system tool:
 
 - **`read_skill_asset(path)`** — resolves only inside the agent's `bundle_path` root (path-traversal guarded; reuse the CodeQL-recognized realpath+startswith barrier — see `reference_codeql_recognized_barriers`). Reads from S3 source of truth. Available whenever `bundle_path` is set.
-- **`execute_script(...)`** — available only when `script_execution != disabled` (A.5). Runs through the execution path.
 
-### A.5 Script execution modes (carried from 2026-06-13, unchanged)
+There is **no `execute_script` capability.** See A.5 — code execution is a workflow tool, not a skill-bundle execution mode.
 
-- **`disabled`** (default for imported/community bundles) — scripts are inert files; `read_skill_asset` still works.
-- **`trusted`** — scripts run through the **existing Bifrost execution engine** with `ExecutionContext`, SDK access, logs, audit, timeout, same caller/org permission model as workflow code. (NOT the sandbox — trusted == full workflow trust.)
-- **`external`** — future: a configured external runner (Azure Functions / Cloud Run / Lambda / local Docker / Firecracker) gets script text + input JSON, runs with no Bifrost credentials, returns stdout/stderr/result. **Protocol design only** unless explicitly prioritized; do not hard-code Azure as the product surface.
+### A.5 Code execution = a workflow tool, NOT a bundle execution mode (revised 2026-06-17)
 
-**We do NOT promise an OSS built-in sandbox.** In-cluster bwrap was explored and **rejected** (not CI-testable, needs `CAP_SYS_ADMIN`, doesn't transfer to a hardened multi-tenant deployment) — see the decision record `2026-06-17-code-execution-decision.md`. A bundle script that needs untrusted isolation runs via the **`external` runner** (Anthropic Managed Agents as the first reference runner; a hosted "call it over the API" runner, not a kernel sandbox we operate) — protocol-only until actually built. The honest, shipping options are `disabled` and `trusted`; `external` is the untrusted escape hatch when needed.
+The 2026-06-13 brainstorm proposed `script_execution: disabled | trusted | external` with an `execute_script` capability. **`trusted` is dropped — it was a redundant second path to a thing agents already have.** A "trusted script" is author-written code that runs in the existing engine with full ExecutionContext/SDK, invoked by the agent. That is *exactly* a **workflow tool** (`tool_ids` → Workflow), which:
+- runs in the engine with ExecutionContext/SDK, is author-reviewed, is agent-invocable,
+- and is **packaged with the bundle anyway** (Solutions packages workflows alongside the agent).
 
-### A.6 Import/export boundary (carried from 2026-06-13)
+So "this skill needs to run code" is answered by **including a workflow in the bundle**, not by a new execution mode. The only thing `execute_script(trusted)` added over a workflow was *model-authored* code — and running model-authored code with full credentials is RCE-by-hallucination, which is precisely why it's unacceptable in `trusted`. Model-authored / untrusted code is the `external` runner's job (Part B), not the engine's.
 
-- Export keeps the whole bundle including `scripts/`.
-- Import/create-from-bundle: create/update the agent from SKILL.md + manifest metadata, preserve companion files if bundle storage exists, **default `script_execution: disabled`**.
-- Admins explicitly opt a bundle up to `trusted` (or configure `external`) after review.
+**Bundled `scripts/` are still carried** (portable, Agent-Skills-spec compliant) and **readable** via `read_skill_asset` — they are **inert assets**, not an execution surface. A SKILL.md may reference a script as material or as something to run *elsewhere*; Bifrost does not execute it in-engine.
+
+The remaining (future, optional) mode:
+- **`external`** — a configured hosted runner (Anthropic Managed Agents first reference; also Cloud Run / Lambda / local Docker / Firecracker) gets script text + input JSON, runs with **no Bifrost credentials**, returns stdout/stderr/result. This is the *only* mode that does something workflows can't: run untrusted/model-authored code in isolation. **Protocol-only until explicitly prioritized.**
+
+**We do NOT promise an OSS built-in sandbox.** In-cluster bwrap was explored and **rejected** (not CI-testable, needs `CAP_SYS_ADMIN`, doesn't transfer to a hardened multi-tenant deployment) — see `2026-06-17-code-execution-decision.md`. The honest shipping surface is: **read-only bundle assets + workflow tools for code.** `external` is the untrusted escape hatch if/when needed.
+
+### A.6 Import/export boundary (revised 2026-06-17)
+
+- Export keeps the whole bundle including `scripts/` (inert assets) and any bundled workflow tools.
+- Import/create-from-bundle: create/update the agent from SKILL.md + manifest metadata, preserve companion files (incl. `scripts/`) if bundle storage exists. Bundled scripts are inert; bundled workflows follow the normal workflow import/review path (a community workflow tool is enabled only after admin review, same as any imported workflow today).
+- There is no per-bundle "enable script execution" toggle to flip — code capability *is* the set of workflow tools bound to the agent, governed by the existing tool/workflow permission model.
 
 ### A.7 What chat "Skills" becomes
 
@@ -131,10 +138,11 @@ Net: **delete sub-project 3 as separate work.** Its value is delivered by A.1–
 So untrusted execution is the **`external` runner** (A.5): a configured runner (Managed Agents first) gets script text + input JSON, runs with zero Bifrost credentials, returns stdout/stderr/result. Protocol-only until built.
 
 What this means for the layers:
-- **Untrusted skill scripts** → `external` runner when it exists; until then, `trusted` (existing engine) or `disabled`.
-- **Server-side file generation for artifacts** (Part C) → in `trusted` mode runs in the existing engine (the org accepts that trust); untrusted generation would go through `external`. **File-first artifact v1 needs neither** — a trusted workflow tool can produce files today.
+- **Skill code today** → a **workflow tool** bound to the agent (author-written, reviewed, runs in the existing engine). There is no `trusted` script-execution mode — see A.5. Bundled `scripts/` are inert, readable assets.
+- **Untrusted / model-authored code** → the `external` runner when it exists; until then, unsupported (use a workflow).
+- **Server-side file generation for artifacts** (Part C) → a workflow tool can produce files in the existing engine today (the org accepts that trust); untrusted generation would go through `external`. **File-first artifact v1 needs neither.**
 
-The relationship: **Part A gives skills a place to declare scripts; `trusted` runs them in the existing engine now; `external` is the untrusted path when needed; Part C gives their file output a render contract.**
+The relationship: **Part A gives skills read-only access to bundle assets; code is a workflow tool (existing machinery); `external` is the untrusted path when needed; Part C gives file output a render contract.**
 
 ---
 
@@ -239,17 +247,16 @@ This turns "four more subsystems" into "one capability/return contract + Code Ex
 
 1. **Agent bundle metadata** — add `bundle_path` to `Agent` ORM + `AgentCreate/Update/Public` contracts + `ManifestAgent` (portable) + manifest_generator/github_sync round-trip + CLI/MCP flags. SKILL.md frontmatter parse + legacy export projection. *(Round-trip test in `test_manifest.py`; DTO parity in `test_dto_flags.py`; contract-version gate per CLAUDE.md.)*
 2. **`read_skill_asset`** — system tool, bundle-root-scoped, realpath+startswith barrier, reads S3 source. Add to `get_system_tools()` + `resolve_agent_tools()`.
-3. **`script_execution` field** (`disabled|trusted|external`) on Agent + prompt injection + UI trust warning. Imported bundles default `disabled`.
-4. **`execute_script` (trusted)** — through the existing engine path with ExecutionContext. Gains a `runtime` selector once (2) Code Execution lands.
-5. **Artifact contract (Part C)** — tool-result schema extension; trusted-layer file persistence reusing M4 storage; API render-time signed URLs; frontend renderer for markdown/image/pdf/csv + the artifact panel.
-6. **Default tools (Part D)** — `bifrost.fetch` (SSRF-guarded, outside sandbox) + the default-tool injection point in `resolve_agent_tools()`, org-policy gated.
-7. **External runner protocol** — design separately before any `external` implementation.
+3. **(no script-execution field, no `execute_script`)** — dropped. Code capability = the workflow tools bound to the agent (existing `tool_ids` machinery). Bundled `scripts/` are inert assets read via `read_skill_asset`. The future `external` runner, if built, is a separate hosted-runner integration — not an Agent field flipped here.
+4. **Artifact contract (Part C)** — tool-result schema extension; trusted-layer file persistence reusing M4 storage; API render-time signed URLs; frontend renderer for markdown/image/pdf/csv + the artifact panel.
+5. **Default tools (Part D)** — `bifrost.fetch` (SSRF-guarded, outside any runner) + the default-tool injection point in `resolve_agent_tools()`, org-policy gated.
+6. **External runner protocol** — design separately before any `external` implementation.
 
 ### Sequencing
-- **(1) bundle metadata + (2) read_skill_asset** can start now — pure agent/manifest work, no sandbox dependency. Best branched from the Solutions-merged main so `bundle_path` lines up with `repo_subpath`/SolutionStorage.
-- **Artifact contract (5)** — design now; the **file-first inert path can ship against trusted workflow tools today** (no Code Execution dependency), reusing M4 storage. Sandbox-backed generation waits on (2).
-- **`execute_script` untrusted runtime, untrusted skill scripts, untrusted binary artifacts** — gated on the `external` runner being built (NOT bwrap; see decision record).
-- **`external` runner** — protocol-only until explicitly prioritized.
+- **(1) bundle metadata + (2) read_skill_asset** can start now — pure agent/manifest work, no dependency on anything deferred. Best branched from the Solutions-merged main so `bundle_path` lines up with `repo_subpath`/SolutionStorage.
+- **Artifact contract (4)** — design now; the **file-first inert path can ship against workflow tools today** (no external-runner dependency), reusing M4 storage.
+- **Untrusted / model-authored code + untrusted binary generation** — gated on the `external` runner being built (NOT bwrap; see decision record). Until then, code = workflow tools.
+- **`external` runner (6)** — protocol-only until explicitly prioritized.
 
 ## Open questions
 
@@ -259,4 +266,4 @@ This turns "four more subsystems" into "one capability/return contract + Code Ex
 
 ## Picking this back up
 
-Read Part A first — it's the spine (agents are skills, no separate Skills build). Parts C and D are the "capabilities are tools" corollaries that delete sub-projects 4 and 5 as separate work. Part B records that in-house bwrap is **rejected** — untrusted execution is the `external` runner (Managed Agents) when needed; see `2026-06-17-code-execution-decision.md`. The 2026-06-13 brainstorm's MVP honesty still holds: skill-compatible bundles + `read_skill_asset` + `script_execution: disabled|trusted` are the core; `external` is later, and there is no bwrap.
+Read Part A first — it's the spine (agents are skills, no separate Skills build). Parts C and D are the "capabilities are tools" corollaries that delete sub-projects 4 and 5 as separate work. Part B records that in-house bwrap is **rejected** — untrusted execution is the `external` runner (Managed Agents) when needed; see `2026-06-17-code-execution-decision.md`. The 2026-06-13 brainstorm's MVP honesty still holds, simplified further: skill-compatible bundles + `read_skill_asset` (read-only assets) are the core; **code is a workflow tool** (existing machinery, no `execute_script`/`script_execution`); `external` (untrusted code) is later; there is no bwrap.
