@@ -2,6 +2,6 @@
   "name": "bifrost-app-bundler",
   "private": true,
   "dependencies": {
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.28.1"
   }
 }
