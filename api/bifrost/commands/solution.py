@@ -17,6 +17,7 @@ load-bearing workflow path.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import pathlib
@@ -1330,6 +1331,42 @@ async def _poll_deploy_job(client, job_id: str, *, interval: float = 3.0) -> int
         await asyncio.sleep(interval)
 
 
+# Vendoring modules/ + shared/ into a Solution can balloon the bundle; warn the
+# operator loudly so an accidental dependency tree doesn't ship silently.
+_VENDORED_WARN_THRESHOLD = 200
+
+
+@dataclasses.dataclass
+class BundleSummary:
+    file_count: int
+    size_mb: float
+    warn: bool
+    message: str
+
+
+def summarize_bundle(python_files: dict, apps: list, vendored_count: int) -> BundleSummary:
+    """Count files + bytes in the assembled deploy bundle and flag oversized
+    vendored trees so the operator sees what they're about to upload."""
+    app_files = sum(
+        len(a.get("src_files", {})) + len(a.get("bin_files", {})) for a in apps
+    )
+    count = len(python_files) + app_files
+    size = sum(len(v.encode()) for v in python_files.values())
+    size += sum(
+        len(s.encode()) for a in apps for s in a.get("src_files", {}).values()
+    )
+    mb = round(size / 1_000_000, 1)
+    warn = vendored_count > _VENDORED_WARN_THRESHOLD
+    if warn:
+        msg = (
+            f"This deploy includes {vendored_count} vendored files from modules/ and "
+            f"shared/. Bundle size: {mb} MB."
+        )
+    else:
+        msg = f"Bundle: {count} files, {mb} MB."
+    return BundleSummary(count, mb, warn, msg)
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
@@ -1416,6 +1453,7 @@ def deploy_cmd(
         # Solution is self-contained (criterion 5). When global_repo_access is on
         # the install can reach _repo/ at runtime, so vendoring is skipped.
         bundle_python = python_files
+        vendored: dict[str, str] = {}
         if not descriptor.global_repo_access:
             from bifrost.solution_vendoring import vendor_shared_deps
 
@@ -1431,6 +1469,9 @@ def deploy_cmd(
             if vendored:
                 click.echo(f"Vendored {len(vendored)} shared dependency file(s).")
                 bundle_python = {**python_files, **vendored}
+
+        summary = summarize_bundle(bundle_python, apps, len(vendored))
+        click.echo(summary.message, err=summary.warn)
 
         click.echo("Uploading bundle...")
         # Deploy is async server-side; the POST returns a job id quickly. We give
