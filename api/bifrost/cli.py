@@ -112,6 +112,18 @@ def _print_sync_summary(summary: str) -> None:
     print(f"  {_check_glyph()} {summary}")
 
 
+# Module-level TTY override. ``None`` means "detect from the real stdio";
+# tests set this to ``True``/``False`` to exercise the interactive vs
+# line-oriented (non-TTY) progress paths deterministically.
+_is_tty: bool | None = None
+
+
+def _resolve_is_tty() -> bool:
+    if _is_tty is not None:
+        return _is_tty
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 # ---------------------------------------------------------------------------
 # Shared CLI utilities
 # ---------------------------------------------------------------------------
@@ -3055,6 +3067,12 @@ async def _sync_files(
         repo_prefix = _detect_repo_prefix(path)
 
     # ── 1. Collect local files ───────────────────────────────────────────
+    # Non-TTY (CI, piped, agent-driven) runs get line-oriented progress so a
+    # large push never looks hung. Detect once up front so the phase banners
+    # can be printed before the slow scan/compare/upload steps.
+    line_progress = push_only and not _resolve_is_tty()
+    if line_progress:
+        print("Scanning files...", flush=True)
     files, skipped = _collect_push_files(path, repo_prefix, single_file=single_file)
     regular_files = {k: v for k, v in files.items() if not _is_bifrost_path(k)}
 
@@ -3183,12 +3201,16 @@ async def _sync_files(
 
     unchanged = len(regular_files) - len(sync_items)
 
+    if line_progress:
+        print(f"Scanned {len(regular_files)} files, {unchanged} unchanged", flush=True)
+        print("Comparing remote state...", flush=True)
+
     subtitle = f"Scanned {len(regular_files)} file(s), {unchanged} unchanged"
     if skipped:
         subtitle += f", {skipped} skipped"
 
     # ── 6. Interactive TUI or auto-accept ────────────────────────────────
-    _is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    is_tty = _resolve_is_tty()
     # _use_tui is the single source of truth for both the selection TUI (below)
     # AND the progress TUI (further down). When --yes/-y (force), or
     # BIFROST_NONINTERACTIVE=1, or no TTY, we must use NEITHER — the progress TUI
@@ -3198,7 +3220,7 @@ async def _sync_files(
     # interactive — it always applies default (push) actions. Only the
     # destructive --mirror path and the bidirectional sync/pull callers reach
     # the selection/progress TUI.
-    _use_tui = (not push_only) and _sync_use_tui(force=force, is_tty=_is_tty)
+    _use_tui = (not push_only) and _sync_use_tui(force=force, is_tty=is_tty)
 
     if not _use_tui:
         # Auto-accept: use default actions
@@ -3315,6 +3337,29 @@ async def _sync_files(
         from bifrost.tui.progress import ProgressApp
         app = ProgressApp("Syncing", progress_items, _do_sync_work, post_fn=_post_sync)
         errors = await app.run_async() or []
+    elif progress_items and line_progress:
+        total = len(progress_items)
+        pushed = 0
+        failed = 0
+        last_print = time.monotonic()
+        for i, (name, data) in enumerate(progress_items, start=1):
+            repo_path = data["item"].get("rel", name)
+            now = time.monotonic()
+            if total <= 50 or i % 25 == 0 or (now - last_print) >= 1.0:
+                print(f"Uploading {i}/{total} {repo_path}", flush=True)
+                last_print = now
+            try:
+                await _do_sync_work(data, name)
+                pushed += 1
+            except Exception as e:
+                failed += 1
+                errors.append(f"{name}: {e}")
+                print(f"  Error: {name}: {e}", file=sys.stderr)
+        print(
+            f"Done: {pushed} pushed, {unchanged} unchanged, "
+            f"{skipped} skipped, {failed} failed",
+            flush=True,
+        )
     elif progress_items:
         for name, data in progress_items:
             try:
