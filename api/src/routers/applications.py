@@ -703,23 +703,28 @@ async def validate_application(
     errors: list[AppValidationIssue] = []
     warnings: list[AppValidationIssue] = []
 
-    # Check required file structure
-    layout_path = f"{prefix}_layout.tsx"
-    index_path = f"{prefix}pages/index.tsx"
+    # standalone_v2 apps own their createRoot + router; the v1 _layout.tsx /
+    # pages-routing convention (and its <Outlet /> requirement) does not apply.
+    is_v2 = app.app_model == "standalone_v2"
 
-    if layout_path not in files:
-        errors.append(AppValidationIssue(
-            severity="error",
-            file="_layout.tsx",
-            message="Missing required _layout.tsx file",
-        ))
+    # Check required file structure (v1-only — v2 has no _layout/pages convention)
+    if not is_v2:
+        layout_path = f"{prefix}_layout.tsx"
+        index_path = f"{prefix}pages/index.tsx"
 
-    if index_path not in files:
-        warnings.append(AppValidationIssue(
-            severity="warning",
-            file="pages/index.tsx",
-            message="Missing pages/index.tsx (home page)",
-        ))
+        if layout_path not in files:
+            errors.append(AppValidationIssue(
+                severity="error",
+                file="_layout.tsx",
+                message="Missing required _layout.tsx file",
+            ))
+
+        if index_path not in files:
+            warnings.append(AppValidationIssue(
+                severity="warning",
+                file="pages/index.tsx",
+                message="Missing pages/index.tsx (home page)",
+            ))
 
     # Get declared dependencies and track referenced ones
     declared_deps = app.dependencies or {}
@@ -761,8 +766,8 @@ async def validate_application(
                         message="Missing default export. Pages and components must have a default export (e.g., export default function MyComponent() { ... })",
                     ))
 
-            # Check _layout.tsx uses <Outlet /> not {children}
-            if rel_path == "_layout.tsx":
+            # Check _layout.tsx uses <Outlet /> not {children} (v1-only convention)
+            if not is_v2 and rel_path == "_layout.tsx":
                 if "{children}" in content and "Outlet" not in content:
                     errors.append(AppValidationIssue(
                         severity="error",
