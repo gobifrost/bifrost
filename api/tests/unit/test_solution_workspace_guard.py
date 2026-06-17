@@ -1,5 +1,3 @@
-import pathlib
-
 import pytest
 
 from bifrost._solution_workspace import (
@@ -28,8 +26,8 @@ def test_assert_blocks_with_message(tmp_path, capsys):
 
 
 def test_assert_passes_outside_solution(tmp_path):
-    # No descriptor anywhere up the tree -> no raise.
-    assert_not_solution_workspace(str(tmp_path), "push") is None
+    # No descriptor anywhere up the tree -> no raise, returns None.
+    assert assert_not_solution_workspace(str(tmp_path), "push") is None
 
 
 def test_handle_push_blocks_in_solution(tmp_path, monkeypatch):
