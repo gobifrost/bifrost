@@ -89,12 +89,6 @@ describe("RegistrationLinkDialog", () => {
 	});
 
 	it("animates the copy button to a success state", async () => {
-		const writeText = vi.fn().mockResolvedValue(undefined);
-		Object.defineProperty(navigator.clipboard, "writeText", {
-			configurable: true,
-			value: writeText,
-		});
-
 		const { user } = renderWithProviders(
 			<RegistrationLinkDialog
 				open={true}
@@ -103,6 +97,15 @@ describe("RegistrationLinkDialog", () => {
 				onOpenChange={vi.fn()}
 			/>,
 		);
+
+		// Patch writeText AFTER renderWithProviders so the spy targets the
+		// userEvent clipboard stub that renderWithProviders installs; patching
+		// before render would target a stale clipboard instance.
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(navigator.clipboard, "writeText", {
+			configurable: true,
+			value: writeText,
+		});
 
 		await user.click(
 			screen.getByRole("button", { name: /copy registration link/i }),

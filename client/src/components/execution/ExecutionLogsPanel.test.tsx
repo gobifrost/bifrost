@@ -11,7 +11,7 @@
  *   - the Live badge shows while streaming is running and connected
  */
 
-import { describe, it, expect, vi, beforeEach, MockInstance } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
 import { ExecutionLogsPanel } from "./ExecutionLogsPanel";
 import type { LogEntry } from "./ExecutionLogsPanel";
@@ -20,15 +20,11 @@ function log(level: string, message: string, ts = "2026-04-20T12:00:00Z"): LogEn
 	return { level, message, timestamp: ts } as LogEntry;
 }
 
-let writeTextSpy: MockInstance;
-
-beforeEach(() => {
-	// happy-dom exposes `navigator.clipboard` as a getter on the prototype
-	// that returns the same Clipboard instance, so spying on writeText via
-	// that instance is the cleanest way to capture the call.
-	writeTextSpy = vi
-		.spyOn(navigator.clipboard, "writeText")
-		.mockResolvedValue(undefined);
+// Restore any spies after each test so the next test's spy is on the current
+// navigator.clipboard instance (which userEvent.setup() may have replaced
+// with its own clipboard stub during renderWithProviders).
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 describe("ExecutionLogsPanel — empty states", () => {
@@ -135,11 +131,16 @@ describe("ExecutionLogsPanel — copy button", () => {
 			/>,
 		);
 
+		// Spy AFTER render so the spy targets the userEvent clipboard stub that
+		// renderWithProviders installs (via userEvent.setup()); a spy created
+		// before render would target the pre-stub instance and miss all calls.
+		const writeTextSpy = vi
+			.spyOn(navigator.clipboard, "writeText")
+			.mockResolvedValue(undefined);
+
 		// The running variant's copy button is an icon-only ghost button with
 		// no accessible name, so we target it by the card header region.
-		const buttons = screen.getAllByRole("button");
-		expect(buttons.length).toBeGreaterThan(0);
-		await user.click(buttons[0]);
+		await user.click(screen.getByTitle(/copy logs/i));
 
 		expect(writeTextSpy).toHaveBeenCalledTimes(1);
 		const payload = writeTextSpy.mock.calls[0][0] as string;
@@ -228,6 +229,12 @@ describe("ExecutionLogsPanel — header affordances", () => {
 			/>,
 		);
 		expect(screen.getByText(/2 lines/i)).toBeInTheDocument();
+
+		// Spy AFTER render so it targets the userEvent clipboard stub.
+		const writeTextSpy = vi
+			.spyOn(navigator.clipboard, "writeText")
+			.mockResolvedValue(undefined);
+
 		await user.click(screen.getByTitle(/copy logs/i));
 		expect(writeTextSpy).toHaveBeenCalledWith(
 			expect.stringContaining("one"),

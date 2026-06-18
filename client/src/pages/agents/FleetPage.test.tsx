@@ -6,7 +6,7 @@
  * scope so we can control loading / data states deterministically.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
 
 // -----------------------------------------------------------------------------
@@ -246,33 +246,8 @@ describe("FleetPage — solution-managed badge", () => {
 });
 
 describe("FleetPage — agent MCP URL copy badge", () => {
-	let writeText: ReturnType<typeof vi.fn>;
-	let originalWriteText: typeof navigator.clipboard.writeText | undefined;
-
 	beforeEach(() => {
 		mockToastSuccess.mockClear();
-		writeText = vi.fn().mockResolvedValue(undefined);
-		// happy-dom's Clipboard is a real EventTarget on the Navigator prototype
-		// and resists `defineProperty(navigator, "clipboard", ...)`. Patch the
-		// method on the existing instance instead.
-		originalWriteText = navigator.clipboard?.writeText.bind(
-			navigator.clipboard,
-		);
-		(
-			navigator.clipboard as unknown as {
-				writeText: typeof writeText;
-			}
-		).writeText = writeText;
-	});
-
-	afterEach(() => {
-		if (originalWriteText) {
-			(
-				navigator.clipboard as unknown as {
-					writeText: typeof originalWriteText;
-				}
-			).writeText = originalWriteText;
-		}
 	});
 
 	it("copies the agent-scoped MCP URL when the badge is clicked", async () => {
@@ -281,6 +256,12 @@ describe("FleetPage — agent MCP URL copy badge", () => {
 			isLoading: false,
 		});
 		await renderPage();
+		// Patch writeText AFTER renderPage so the spy targets the userEvent
+		// clipboard stub that renderWithProviders installs; patching before
+		// render would target a stale clipboard instance.
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		(navigator.clipboard as unknown as { writeText: typeof writeText }).writeText =
+			writeText;
 		fireEvent.click(screen.getByTestId("agent-mcp-copy"));
 		expect(writeText).toHaveBeenCalledWith(
 			`${window.location.origin}/mcp/agent-xyz`,
@@ -294,6 +275,11 @@ describe("FleetPage — agent MCP URL copy badge", () => {
 			isLoading: false,
 		});
 		await renderPage();
+		// Patch writeText AFTER renderPage so the spy targets the userEvent
+		// clipboard stub.
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		(navigator.clipboard as unknown as { writeText: typeof writeText }).writeText =
+			writeText;
 		const badge = screen.getByTestId("agent-mcp-copy");
 		const event = new MouseEvent("click", { bubbles: true, cancelable: true });
 		badge.dispatchEvent(event);

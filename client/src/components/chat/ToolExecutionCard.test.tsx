@@ -10,7 +10,7 @@
  */
 
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 
 // Execution data hooks: return no data by default so behavior falls through
@@ -26,6 +26,16 @@ vi.mock("@/hooks/useExecutions", () => ({
 	useExecution: () => mockUseExecution(),
 	useExecutionLogs: () => mockUseExecutionLogs(),
 }));
+
+// Reset persistent mockReturnValue overrides before each test so tests that
+// call mockReturnValue (not mockReturnValueOnce) cannot bleed into siblings.
+beforeEach(() => {
+	mockUseExecution.mockReset();
+	mockUseExecutionLogs.mockReset();
+	// Restore the default implementations after reset.
+	mockUseExecution.mockImplementation(() => ({ data: undefined, isLoading: false }));
+	mockUseExecutionLogs.mockImplementation(() => ({ data: undefined }));
+});
 
 vi.mock("@/hooks/useExecutionStream", () => ({
 	useExecutionStream: () => undefined,

@@ -246,6 +246,13 @@ IDENTITY_MODELS: set[str] = {
     # A Solution install belongs to a scope (organization_id) but is never
     # resolved by name with cascade — it is identity, like Organization.
     "Solution",
+    # A Workspace (chat scoping container) belongs to an org/role/user but is
+    # looked up by ID, user_id, or role_id — never by name with cascade.
+    "Workspace",
+    # OrgModelAlias maps alias names to model IDs within a specific org.
+    # organization_id is NOT NULL — no global rows exist — so the org→global
+    # cascade pattern does not apply. Resolved by alias within a known org.
+    "OrgModelAlias",
 }
 
 
@@ -253,13 +260,14 @@ IDENTITY_MODELS: set[str] = {
 # subclass. The phase-4-onward migrations create the repos that aren't here
 # yet; until they exist, those models are allow-listed.
 EXECUTION_RESOLUTION_MODELS_WITHOUT_REPO_YET: set[str] = {
-    "OAuthProvider",     # Phase 4: OAuthProviderRepository
-    "OAuthToken",        # Phase 4: OAuthTokenRepository
-    "SystemConfig",      # Future: SystemConfigRepository (post-phase-5)
-    "EventSource",       # Future: EventSourceRepository (post-phase-6)
-    "CustomClaim",       # Future: CustomClaimRepository (post-phase-6)
-    "MCPConnection",     # Existing MCPConnectionRepository but check confirms
-    "MCPServer",         # Existing MCPServerRepository but check confirms
+    "OAuthProvider",        # Phase 4: OAuthProviderRepository
+    "OAuthToken",           # Phase 4: OAuthTokenRepository
+    "SystemConfig",         # Future: SystemConfigRepository (post-phase-5)
+    "EventSource",          # Future: EventSourceRepository (post-phase-6)
+    "CustomClaim",          # Future: CustomClaimRepository (post-phase-6)
+    "MCPConnection",        # Existing MCPConnectionRepository but check confirms
+    "MCPServer",            # Existing MCPServerRepository but check confirms
+    "ModelDeprecation",     # Future: org-override cascade (NULL=platform-wide, UUID=org override)
 }
 
 

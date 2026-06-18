@@ -7,6 +7,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// The first test in this file cold-loads ExecutionHistory via dynamic import
+// inside renderPage(). Under parallel-worker CPU contention the import can
+// take 3–6 s, which exceeds vitest's default 5 s timeout. Raise the limit for
+// the whole file so any test that runs first survives the cold load.
+vi.setConfig({ testTimeout: 15000 });
+
 import { useLocation } from "react-router-dom";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 
