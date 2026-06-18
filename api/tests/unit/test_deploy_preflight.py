@@ -1,10 +1,11 @@
-"""Unit tests for the solution-deploy workflow-name preflight.
+"""Unit tests for the solution-deploy workflow preflight.
 
 ``preflight_workflows`` flags only the genuinely execution-breaking case: a
 bundle entry whose ``function_name`` is not defined anywhere in the carried
-source (the "Executable not found" class). A manifest slug (``name``) that
-differs from the decorated/function name is NOT an error — import always writes
-the decorated name, so the divergence is resolved on import.
+source (the "Executable not found" class). A manifest ``name`` that differs from
+the decorated or function name is NOT an error — execution resolves a workflow
+by its ``function_name`` (service.py / module_loader.py), so the DB ``name`` is
+identity/display only.
 """
 from src.services.solution_deploy_preflight import preflight_workflows
 

@@ -88,6 +88,49 @@ def test_deploy_and_run_solution_local_import(e2e_client, platform_admin):
     assert result["result"] == {"value": 42}
 
 
+def test_deploy_and_run_when_name_diverges_from_function(e2e_client, platform_admin):
+    """Regression for the "Executable 'hello' not found" bug.
+
+    Deploy a workflow whose manifest ``name`` differs from BOTH the decorator
+    display name AND the Python ``function_name``. Execution must still run it —
+    resolution is by ``function_name`` (service.py / module_loader.py), and the
+    DB ``name`` is identity/display only. Before the fix, execution matched the
+    decorator display name against the DB name and raised "Executable not found".
+    """
+    from tests.e2e.conftest import execute_workflow_sync
+
+    headers = platform_admin.headers
+    slug = f"sol-namediv-{uuid.uuid4().hex[:8]}"
+    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
+
+    _deploy(
+        e2e_client,
+        headers,
+        sid,
+        python_files={
+            "workflows/snap.py": (
+                "from bifrost import workflow\n\n"
+                '@workflow(name="Sandbox Ticket Snapshot")\n'  # decorator display name
+                "async def snapshot():\n"  # function_name = "snapshot"
+                "    return {'ok': True}\n"
+            ),
+        },
+        workflows=[{
+            "id": str(uuid.uuid4()),
+            "name": "hello",  # manifest name diverges from decorator AND function
+            "function_name": "snapshot",
+            "path": "workflows/snap.py",
+            "type": "workflow",
+        }],
+    )
+
+    result = execute_workflow_sync(
+        e2e_client, headers, "workflows/snap.py::snapshot", request_sync=True
+    )
+    assert result["status"] == "Success", f"name-divergent workflow failed to run: {result}"
+    assert result["result"] == {"ok": True}
+
+
 def test_global_repo_import_blocked_when_flag_off(e2e_client, platform_admin):
     """With global_repo_access OFF, importing a _repo/ `shared.*` module must
     NOT resolve — no silent fallback (criterion 4)."""
