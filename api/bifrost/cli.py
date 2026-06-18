@@ -1770,7 +1770,7 @@ def handle_push(args: list[str]) -> int:
       bifrost push <path> [--mirror] [--validate]
 
     Args:
-      path: Local directory to push (defaults to ".")
+      path: Local file or directory to push (defaults to ".")
       --mirror: Make target match source exactly (delete files not present locally)
       --validate: Validate after push (for apps)
     """
@@ -1781,7 +1781,7 @@ Usage: bifrost push [path] [options]
 Push local files to Bifrost platform.
 
 Arguments:
-  path                  Local directory to push (default: current directory)
+  path                  Local file or directory to push (default: current directory)
 
 Options:
   --mirror              Make target match source exactly (delete files not present locally)
@@ -1798,6 +1798,7 @@ Use 'bifrost watch' for continuous file watching.
 Examples:
   bifrost push apps/my-app
   bifrost push apps/my-app --mirror
+  bifrost push workflows/my_workflow.py
   bifrost push .
 """.strip())
         return 0

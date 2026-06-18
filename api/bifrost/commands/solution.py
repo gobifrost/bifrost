@@ -1407,7 +1407,7 @@ def deploy_cmd(
         solution_logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("ascii")
         solution_logo_content_type = _LOGO_CONTENT_TYPES.get(logo_file.suffix.lower())
 
-    click.echo("Collecting solution files...")
+    click.echo("Scanning solution files...")
     python_files = _collect_python_files(workspace)
     workflows = _collect_workflows(workspace)
     tables = _collect_tables(workspace)
@@ -1419,6 +1419,10 @@ def deploy_cmd(
     connection_schemas = _collect_connection_schemas(workspace)
     events = _collect_events(workspace)
     readme = _collect_readme(workspace)
+    click.echo(
+        f"  found {len(python_files)} python file(s), {len(workflows)} workflow(s), "
+        f"{len(apps)} app(s), {len(forms)} form(s), {len(agents)} agent(s)."
+    )
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -1466,6 +1470,12 @@ def deploy_cmd(
         if not descriptor.global_repo_access:
             from bifrost.solution_vendoring import vendor_shared_deps
 
+            # Vendoring scans imports and reads each referenced _repo/ module
+            # over the network one at a time, so it can take a few seconds on a
+            # solution with a deep shared-module graph. Announce it up front so
+            # the wait isn't a silent gap before the bundle summary.
+            click.echo("Vendoring shared dependencies...")
+
             async def _repo_read(path: str) -> str | None:
                 resp = await client.post("/api/files/read", json={
                     "path": path, "location": "workspace", "mode": "cloud",
@@ -1476,8 +1486,10 @@ def deploy_cmd(
 
             vendored = await vendor_shared_deps(python_files, _repo_read)
             if vendored:
-                click.echo(f"Vendored {len(vendored)} shared dependency file(s).")
+                click.echo(f"  vendored {len(vendored)} shared dependency file(s).")
                 bundle_python = {**python_files, **vendored}
+            else:
+                click.echo("  no shared dependencies to vendor.")
 
         summary = summarize_bundle(bundle_python, apps, len(vendored))
         click.echo(summary.message, err=summary.warn)
