@@ -28,6 +28,7 @@ from sqlalchemy.orm import selectinload
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
+    ArtifactInfo,
     ChatStreamChunk,
     ContextWarning,
     DelegationInfo,
@@ -662,6 +663,15 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                         caller_user_id=caller_user_id,
                     )
 
+                    # Artifacts (Part C): if the tool returned an artifact contract,
+                    # persist its files (trusted layer) and strip the inline bytes
+                    # from the result so they never reach the LLM history or client.
+                    artifact_info = await self._persist_tool_artifact(
+                        tool_result=tool_result,
+                        conversation_id=conversation.id,
+                        message_id=tool_call_msg.id,
+                    )
+
                     # Update TOOL_CALL message with result and state
                     await self._update_tool_call_message(
                         message_id=tool_call_msg.id,
@@ -676,6 +686,12 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                             tool_result=tool_result,
                             message_id=str(tool_call_msg.id),
                         )
+                        if artifact_info is not None:
+                            yield ChatStreamChunk(
+                                type="artifact_generated",
+                                artifact=artifact_info,
+                                message_id=str(tool_call_msg.id),
+                            )
 
                     # M6: pair the delegation_started with a delegation_complete
                     # carrying the delegated agent's response/error so the badge
@@ -1399,6 +1415,50 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         return message
 
+    async def _persist_tool_artifact(
+        self,
+        *,
+        tool_result: ToolResult,
+        conversation_id: UUID,
+        message_id: UUID,
+    ) -> ArtifactInfo | None:
+        """Detect, persist, and strip an artifact contract on a tool result.
+
+        Returns the render metadata for the ``artifact_generated`` chunk, or None
+        if the tool returned no (valid) artifact. Mutates ``tool_result.result``
+        in place to remove the inline ``artifact`` bytes so they never reach the
+        LLM history or the client. A persistence failure is logged and swallowed —
+        a broken artifact must never fail the turn.
+        """
+        from src.services.artifacts import (
+            ArtifactError,
+            ArtifactService,
+            extract_artifact_contract,
+            strip_artifact_from_result,
+        )
+
+        contract = extract_artifact_contract(tool_result.result)
+        if contract is None:
+            return None
+
+        # Strip the inline bytes immediately, regardless of persist outcome.
+        tool_result.result = strip_artifact_from_result(tool_result.result)
+
+        try:
+            async with self._db() as session:
+                service = ArtifactService(session)
+                return await service.persist(
+                    contract=contract,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                )
+        except ArtifactError as exc:
+            logger.warning("Skipping invalid artifact from tool: %s", exc)
+            return None
+        except Exception:
+            logger.exception("Failed to persist tool artifact")
+            return None
+
     async def _update_tool_call_message(
         self,
         message_id: UUID,
@@ -1504,7 +1564,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 parameters=tool_call.arguments or {},
                 user_id=str(user.id) if user else "system",
                 user_email=user.email if user else "system@internal.gobifrost.com",
-                user_name=user.name if user else "System",
+                user_name=(user.name if user else None) or "System",
                 org_id=org_id,
                 is_platform_admin=user.is_superuser if user else False,
                 execution_id=execution_id,
@@ -1914,7 +1974,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 org_id=str(agent.organization_id) if agent.organization_id else None,
                 is_platform_admin=user.is_superuser if user else False,
                 user_email=user.email if user else "",
-                user_name=user.name if user else "",
+                user_name=(user.name if user else None) or "",
                 session=None,
             )
 

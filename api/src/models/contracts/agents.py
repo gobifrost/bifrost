@@ -384,6 +384,103 @@ class AttachmentUploadResponse(BaseModel):
     attachments: list[AttachmentPublic]
 
 
+# ==================== ARTIFACT MODELS ====================
+#
+# Artifacts are the mirror image of attachments: a tool/skill returns an
+# artifact contract (file metadata + inline bytes + an optional inert preview),
+# the trusted execution layer persists the bytes to S3 under
+# ``_artifacts/{conversation_id}/...`` and exposes only metadata. Download URLs
+# are minted scoped + expiring at render time by the API — a tool NEVER returns
+# a URL (it has no credentials and a baked-in URL bypasses authorization).
+# See Part C of the agent-skill-bundles-and-capabilities design.
+
+# Inert preview kinds the browser renders natively + safely. No html/svg/react.
+ArtifactPreviewKind = Literal["markdown", "image", "pdf", "csv"]
+
+
+class ArtifactToolFile(BaseModel):
+    """One file in a tool's returned artifact contract (input side).
+
+    The tool provides the bytes inline as base64. The trusted layer strips
+    ``content_base64`` before persisting and before any value reaches the model
+    or client — it is never echoed back.
+    """
+
+    name: str = Field(..., description="File name, e.g. 'report.pdf'")
+    content_type: str = Field(..., description="MIME type, e.g. 'application/pdf'")
+    content_base64: str = Field(..., description="Base64-encoded file bytes (stripped after persist)")
+
+
+class ArtifactToolPreview(BaseModel):
+    """Optional inline preview in a tool's artifact contract (input side)."""
+
+    kind: ArtifactPreviewKind
+    # For image/pdf/csv: the name of the file in files[] to preview.
+    content_ref: str | None = Field(
+        default=None, description="Name of the files[] entry to preview (image/pdf/csv)"
+    )
+    # For markdown: the text itself.
+    inline: str | None = Field(default=None, description="Inline markdown text (markdown only)")
+
+
+class ArtifactToolContract(BaseModel):
+    """The ``artifact`` object a tool may return alongside its normal result.
+
+    Detected on ``tool_result.result['artifact']`` by the trusted layer.
+    """
+
+    title: str | None = None
+    preview: ArtifactToolPreview | None = None
+    files: list[ArtifactToolFile] = Field(default_factory=list)
+
+
+class ArtifactFilePublic(BaseModel):
+    """Artifact file metadata exposed to the client (no URL, no bytes)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str | None = None
+
+    @field_serializer("id")
+    def serialize_id(self, v: UUID) -> str:
+        return str(v)
+
+
+class ArtifactPreviewPublic(BaseModel):
+    """The inert preview to render inline (no URL — file fetched via download endpoint)."""
+
+    kind: ArtifactPreviewKind
+    # For image/pdf/csv: the artifact file id to fetch via the download endpoint.
+    file_id: UUID | None = None
+    # For markdown: the inline text.
+    inline: str | None = None
+
+    @field_serializer("file_id")
+    def serialize_file_id(self, v: UUID | None) -> str | None:
+        return str(v) if v is not None else None
+
+
+class ArtifactInfo(BaseModel):
+    """A rendered artifact carried on the ``artifact_generated`` stream chunk and
+    persisted per message. Metadata only — download URLs are minted at render
+    time by the API, never stored here."""
+
+    title: str | None = None
+    preview: ArtifactPreviewPublic | None = None
+    files: list[ArtifactFilePublic] = Field(default_factory=list)
+
+
+class ArtifactDownloadResponse(BaseModel):
+    """A scoped, expiring download URL minted at render time for one artifact file."""
+
+    url: str
+    expires_in: int = Field(..., description="Seconds until the URL expires")
+
+
 # ==================== MESSAGE MODELS ====================
 
 
@@ -417,6 +514,7 @@ class MessagePublic(BaseModel):
     sibling_count: int = 1   # 1 = this message has no siblings
     sibling_index: int = 0   # 0-based index among siblings
     attachments: list[AttachmentPublic] = Field(default_factory=list)
+    artifacts: list[ArtifactInfo] = Field(default_factory=list)
 
     @field_serializer("id", "conversation_id")
     def serialize_uuid(self, v: UUID) -> str:
@@ -580,6 +678,11 @@ class ChatStreamChunk(BaseModel):
         # "✓ consulted <agent>" badge with an expandable detail.
         "delegation_started",
         "delegation_complete",
+        # Artifacts (Part C): a tool returned an artifact contract; the trusted
+        # layer persisted its files and emits this chunk so the UI can render the
+        # inert preview + open the artifact panel. Carries metadata only — the
+        # client fetches download URLs from the artifact download endpoint.
+        "artifact_generated",
         "title_update",
         "done",
         "error",
@@ -600,6 +703,9 @@ class ChatStreamChunk(BaseModel):
 
     # M6 multi-agent delegation (delegation_started / delegation_complete)
     delegation: DelegationInfo | None = None
+
+    # Artifacts (artifact_generated): the rendered artifact (metadata + preview)
+    artifact: ArtifactInfo | None = None
 
     # Message IDs
     message_id: str | None = None

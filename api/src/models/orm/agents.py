@@ -320,6 +320,11 @@ class Message(Base):
         cascade="all, delete-orphan",
         order_by="MessageAttachment.created_at",
     )
+    artifacts: Mapped[list["MessageArtifact"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="MessageArtifact.created_at",
+    )
 
     __table_args__ = (
         Index("ix_messages_conversation_sequence", "conversation_id", "sequence"),
@@ -366,4 +371,51 @@ class MessageAttachment(Base):
     __table_args__ = (
         Index("ix_message_attachments_message_id", "message_id"),
         Index("ix_message_attachments_conversation_id", "conversation_id"),
+    )
+
+
+class MessageArtifact(Base):
+    """A file produced by a tool/skill and rendered as a chat artifact.
+
+    The mirror image of MessageAttachment (input): a tool returns an artifact
+    contract (file metadata + an optional inert preview), the trusted execution
+    layer persists the bytes to S3 under ``_artifacts/{conversation_id}/...``,
+    and only metadata lives in the DB. Download URLs are minted scoped + expiring
+    at render time by the API — never stored here, never returned by the tool.
+    See Part C of the agent-skill-bundles-and-capabilities design.
+    """
+
+    __tablename__ = "message_artifacts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # The assistant/tool-call message this artifact was produced for.
+    message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    # Title for the whole artifact group (a tool may emit several files).
+    title: Mapped[str | None] = mapped_column(String(500), default=None)
+    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    # Inert preview rendered inline (markdown/image/pdf/csv). For markdown the
+    # text is inlined here; for image/pdf/csv the preview points at this file.
+    preview_kind: Mapped[str | None] = mapped_column(String(32), default=None)
+    preview_inline: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+
+    # Relationships
+    message: Mapped["Message"] = relationship(back_populates="artifacts")
+
+    __table_args__ = (
+        Index("ix_message_artifacts_message_id", "message_id"),
+        Index("ix_message_artifacts_conversation_id", "conversation_id"),
     )

@@ -3769,22 +3769,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5487,6 +5487,30 @@ export interface paths {
          *     message referencing their IDs is sent.
          */
         post: operations["upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/artifacts/{artifact_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Artifact
+         * @description Mint a scoped, expiring download URL for one artifact file.
+         *
+         *     The URL is minted per request, never stored on the artifact and never
+         *     returned by the tool that produced it. Ownership is enforced via the
+         *     conversation (conversations are owned by their creating user).
+         */
+        get: operations["download_artifact_api_chat_conversations__conversation_id__artifacts__artifact_id__download_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10667,6 +10691,63 @@ export interface components {
             history_id: string;
             /** Affected Run Ids */
             affected_run_ids: string[];
+        };
+        /**
+         * ArtifactDownloadResponse
+         * @description A scoped, expiring download URL minted at render time for one artifact file.
+         */
+        ArtifactDownloadResponse: {
+            /** Url */
+            url: string;
+            /**
+             * Expires In
+             * @description Seconds until the URL expires
+             */
+            expires_in: number;
+        };
+        /**
+         * ArtifactFilePublic
+         * @description Artifact file metadata exposed to the client (no URL, no bytes).
+         */
+        ArtifactFilePublic: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Sha256 */
+            sha256?: string | null;
+        };
+        /**
+         * ArtifactInfo
+         * @description A rendered artifact carried on the ``artifact_generated`` stream chunk and
+         *     persisted per message. Metadata only — download URLs are minted at render
+         *     time by the API, never stored here.
+         */
+        ArtifactInfo: {
+            /** Title */
+            title?: string | null;
+            preview?: components["schemas"]["ArtifactPreviewPublic"] | null;
+            /** Files */
+            files?: components["schemas"]["ArtifactFilePublic"][];
+        };
+        /**
+         * ArtifactPreviewPublic
+         * @description The inert preview to render inline (no URL — file fetched via download endpoint).
+         */
+        ArtifactPreviewPublic: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "markdown" | "image" | "pdf" | "csv";
+            /** File Id */
+            file_id?: string | null;
+            /** Inline */
+            inline?: string | null;
         };
         /**
          * AssignAgentsToRoleRequest
@@ -17856,6 +17937,8 @@ export interface components {
             sibling_index: number;
             /** Attachments */
             attachments?: components["schemas"]["AttachmentPublic"][];
+            /** Artifacts */
+            artifacts?: components["schemas"]["ArtifactInfo"][];
         };
         /**
          * MessageRole
@@ -30462,7 +30545,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30495,7 +30578,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30528,7 +30611,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30561,7 +30644,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -33404,6 +33487,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_artifact_api_chat_conversations__conversation_id__artifacts__artifact_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDownloadResponse"];
                 };
             };
             /** @description Validation Error */

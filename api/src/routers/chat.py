@@ -22,6 +22,8 @@ from sqlalchemy.orm import selectinload
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.agents import (
+    ArtifactDownloadResponse,
+    ArtifactInfo,
     AttachmentPublic,
     AttachmentUploadResponse,
     ChatRequest,
@@ -615,6 +617,51 @@ async def upload_attachments(
 
 
 # =============================================================================
+# Artifacts
+# =============================================================================
+
+
+@router.get("/conversations/{conversation_id}/artifacts/{artifact_id}/download")
+async def download_artifact(
+    conversation_id: UUID,
+    artifact_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ArtifactDownloadResponse:
+    """Mint a scoped, expiring download URL for one artifact file.
+
+    The URL is minted per request, never stored on the artifact and never
+    returned by the tool that produced it. Ownership is enforced via the
+    conversation (conversations are owned by their creating user).
+    """
+    from src.services.artifacts import DOWNLOAD_URL_TTL_SECONDS, ArtifactService
+
+    result = await db.execute(
+        select(Conversation)
+        .where(Conversation.id == conversation_id)
+        .where(Conversation.user_id == user.user_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation {conversation_id} not found",
+        )
+
+    service = ArtifactService(db)
+    artifact = await service.get_for_download(
+        artifact_id=artifact_id, conversation_id=conversation_id
+    )
+    if artifact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact {artifact_id} not found",
+        )
+
+    url = await service.mint_download_url(artifact)
+    return ArtifactDownloadResponse(url=url, expires_in=DOWNLOAD_URL_TTL_SECONDS)
+
+
+# =============================================================================
 # Messages
 # =============================================================================
 
@@ -685,6 +732,25 @@ async def get_messages(
             if att.message_id is not None:
                 attachments_by_message.setdefault(att.message_id, []).append(att)
 
+    # Batch-load artifacts for the returned messages (avoids N+1).
+    artifacts_by_message: dict[UUID, list[ArtifactInfo]] = {}
+    if message_ids:
+        from src.services.artifacts import build_artifact_infos
+        from src.models.orm import MessageArtifact
+
+        art_rows = (
+            await db.execute(
+                select(MessageArtifact)
+                .where(MessageArtifact.message_id.in_(message_ids))
+                .order_by(MessageArtifact.created_at)
+            )
+        ).scalars().all()
+        grouped: dict[UUID, list[MessageArtifact]] = {}
+        for art in art_rows:
+            grouped.setdefault(art.message_id, []).append(art)
+        for mid, art_list in grouped.items():
+            artifacts_by_message[mid] = build_artifact_infos(art_list)
+
     return [
         MessagePublic(
             id=m.id,
@@ -695,6 +761,7 @@ async def get_messages(
                 AttachmentPublic.model_validate(a)
                 for a in attachments_by_message.get(m.id, [])
             ],
+            artifacts=artifacts_by_message.get(m.id, []),
             tool_calls=[
                 ToolCall(
                     id=tc["id"],
