@@ -17,6 +17,9 @@
 | GET | `/api/admin/llm/models` |
 | POST | `/api/admin/llm/test` |
 | POST | `/api/admin/llm/test-saved` |
+| POST | `/api/admin/models/apply-allowlist-migration` |
+| POST | `/api/admin/models/preview-allowlist-migration` |
+| GET | `/api/admin/models/referenced-allowlist-ids` |
 | GET | `/api/admin/roi/settings` |
 | POST | `/api/admin/roi/settings` |
 | GET | `/api/agent-runs` |
@@ -98,8 +101,14 @@
 | POST | `/api/chat/conversations` |
 | DELETE | `/api/chat/conversations/{conversation_id}` |
 | GET | `/api/chat/conversations/{conversation_id}` |
+| PATCH | `/api/chat/conversations/{conversation_id}` |
+| POST | `/api/chat/conversations/{conversation_id}/active-leaf` |
+| POST | `/api/chat/conversations/{conversation_id}/attachments` |
+| POST | `/api/chat/conversations/{conversation_id}/compact` |
+| GET | `/api/chat/conversations/{conversation_id}/export` |
 | GET | `/api/chat/conversations/{conversation_id}/messages` |
 | POST | `/api/chat/conversations/{conversation_id}/messages` |
+| GET | `/api/chat/model-context` |
 | GET | `/api/claims` |
 | POST | `/api/claims` |
 | DELETE | `/api/claims/{name}` |
@@ -301,6 +310,7 @@
 | POST | `/api/packages/install` |
 | GET | `/api/packages/updates` |
 | DELETE | `/api/packages/{package_name}` |
+| GET | `/api/platform-models` |
 | GET | `/api/platform/queue` |
 | GET | `/api/platform/stuck-history` |
 | GET | `/api/platform/workers` |
@@ -436,6 +446,8 @@
 | GET | `/api/users` |
 | POST | `/api/users` |
 | PATCH | `/api/users/bulk` |
+| GET | `/api/users/me/preferences` |
+| PATCH | `/api/users/me/preferences` |
 | DELETE | `/api/users/{user_id}` |
 | GET | `/api/users/{user_id}` |
 | PATCH | `/api/users/{user_id}` |
@@ -466,6 +478,11 @@
 | GET | `/api/workflows/{workflow_id}/roles` |
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
+| GET | `/api/workspaces` |
+| POST | `/api/workspaces` |
+| DELETE | `/api/workspaces/{workspace_id}` |
+| GET | `/api/workspaces/{workspace_id}` |
+| PATCH | `/api/workspaces/{workspace_id}` |
 | POST | `/auth/admin/revoke-user` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |

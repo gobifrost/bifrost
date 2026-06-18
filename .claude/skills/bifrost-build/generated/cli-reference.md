@@ -1247,6 +1247,8 @@ Options:
   --name TEXT                   name  [required]
   --is-active / --no-is-active  is_active (tri-state; omit to leave
                                 unchanged).
+  --allowed-chat-models TEXT    allowed_chat_models (repeat for multiple).
+  --default-chat-model TEXT     default_chat_model
   --json                        Emit JSON instead of human-readable output.
   --help                        Show this message and exit.
 ```
@@ -1303,6 +1305,8 @@ Options:
   --name TEXT                   name
   --is-active / --no-is-active  is_active (tri-state; omit to leave
                                 unchanged).
+  --allowed-chat-models TEXT    allowed_chat_models (repeat for multiple).
+  --default-chat-model TEXT     default_chat_model
   --json                        Emit JSON instead of human-readable output.
   --help                        Show this message and exit.
 ```
