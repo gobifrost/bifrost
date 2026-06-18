@@ -365,15 +365,10 @@ export interface ChatStreamChunk {
 	artifact?: components["schemas"]["ArtifactInfo"] | null;
 }
 
-export interface ChatDelegationInfo {
-	tool_call_id: string;
-	agent_id?: string | null;
-	agent_name: string;
-	task?: string;
-	response?: string | null;
-	error?: string | null;
-	duration_ms?: number | null;
-}
+// Single source of truth: the generated DelegationInfo schema. Used both for
+// live delegation_started/complete chunks and the reconstructed delegation that
+// MessagePublic now carries on reload, so the two never drift.
+export type ChatDelegationInfo = components["schemas"]["DelegationInfo"];
 
 // Pool/worker message types for real-time diagnostics
 export interface PoolHeartbeatMessage {

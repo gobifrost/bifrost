@@ -515,6 +515,11 @@ class MessagePublic(BaseModel):
     sibling_index: int = 0   # 0-based index among siblings
     attachments: list[AttachmentPublic] = Field(default_factory=list)
     artifacts: list[ArtifactInfo] = Field(default_factory=list)
+    # M6: reconstructed for a persisted delegate_to_* tool_call message so the
+    # "✓ consulted <agent>" badge survives a reload (live turns set it from the
+    # delegation_started/complete chunks instead). Forward ref — DelegationInfo
+    # is defined below; resolved by model_rebuild() after its definition.
+    delegation: "DelegationInfo | None" = None
 
     @field_serializer("id", "conversation_id")
     def serialize_uuid(self, v: UUID) -> str:
@@ -617,6 +622,10 @@ class DelegationInfo(BaseModel):
     duration_ms: int | None = Field(
         default=None, description="Delegation duration (delegation_complete only)"
     )
+
+
+# Resolve MessagePublic's forward reference to DelegationInfo (defined above).
+MessagePublic.model_rebuild()
 
 
 class ContextWarning(BaseModel):

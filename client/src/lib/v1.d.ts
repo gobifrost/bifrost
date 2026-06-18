@@ -3769,22 +3769,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -12949,6 +12949,55 @@ export interface components {
             decorators: components["schemas"]["DecoratorInfo"][];
         };
         /**
+         * DelegationInfo
+         * @description Multi-agent delegation event during a single chat turn (M6).
+         *
+         *     Carried by ``delegation_started`` (response unset) and
+         *     ``delegation_complete`` (response/error populated) chunks. The primary
+         *     agent calls a ``delegate_to_<agent>`` tool mid-turn; the delegated agent
+         *     runs and its result returns as a tool result the primary continues from.
+         *     The UI renders a "✓ consulted <agent>" badge with the exchange in an
+         *     expandable detail.
+         */
+        DelegationInfo: {
+            /**
+             * Tool Call Id
+             * @description ID of the delegate_to_* tool call
+             */
+            tool_call_id: string;
+            /**
+             * Agent Id
+             * @description Delegated agent UUID
+             */
+            agent_id?: string | null;
+            /**
+             * Agent Name
+             * @description Delegated agent display name
+             */
+            agent_name: string;
+            /**
+             * Task
+             * @description Task/question delegated to the agent
+             * @default
+             */
+            task: string;
+            /**
+             * Response
+             * @description Delegated agent's response (delegation_complete only)
+             */
+            response?: string | null;
+            /**
+             * Error
+             * @description Error if the delegation failed (delegation_complete only)
+             */
+            error?: string | null;
+            /**
+             * Duration Ms
+             * @description Delegation duration (delegation_complete only)
+             */
+            duration_ms?: number | null;
+        };
+        /**
          * DeleteWorkflowRequest
          * @description Request body for DELETE /api/workflows/{workflow_id}.
          *
@@ -17939,6 +17988,7 @@ export interface components {
             attachments?: components["schemas"]["AttachmentPublic"][];
             /** Artifacts */
             artifacts?: components["schemas"]["ArtifactInfo"][];
+            delegation?: components["schemas"]["DelegationInfo"] | null;
         };
         /**
          * MessageRole
@@ -30545,7 +30595,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30578,7 +30628,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30611,7 +30661,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30644,7 +30694,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {

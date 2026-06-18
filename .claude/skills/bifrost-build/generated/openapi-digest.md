@@ -103,6 +103,7 @@
 | GET | `/api/chat/conversations/{conversation_id}` |
 | PATCH | `/api/chat/conversations/{conversation_id}` |
 | POST | `/api/chat/conversations/{conversation_id}/active-leaf` |
+| GET | `/api/chat/conversations/{conversation_id}/artifacts/{artifact_id}/download` |
 | POST | `/api/chat/conversations/{conversation_id}/attachments` |
 | POST | `/api/chat/conversations/{conversation_id}/compact` |
 | GET | `/api/chat/conversations/{conversation_id}/export` |

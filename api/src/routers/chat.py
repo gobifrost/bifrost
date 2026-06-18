@@ -25,6 +25,7 @@ from src.models.contracts.agents import (
     ArtifactDownloadResponse,
     ArtifactInfo,
     AttachmentPublic,
+    DelegationInfo,
     AttachmentUploadResponse,
     ChatRequest,
     ChatResponse,
@@ -666,6 +667,33 @@ async def download_artifact(
 # =============================================================================
 
 
+def _reconstruct_delegation(m: Message) -> DelegationInfo | None:
+    """Rebuild the M6 delegation badge data from a persisted delegate_to_* call.
+
+    Live turns set ``delegation`` from the delegation_started/complete chunks; on
+    a reload the chunk history is gone, so the "✓ consulted <agent>" badge would
+    vanish. The delegate_to_* tool_call message persists everything the badge
+    needs — agent name + response in ``tool_result``, task in ``tool_input``,
+    plus state and duration — so we reconstruct it here for the GET path.
+    """
+    if not (m.tool_name and m.tool_name.startswith("delegate_to_")):
+        return None
+    result = m.tool_result if isinstance(m.tool_result, dict) else {}
+    task = ""
+    if isinstance(m.tool_input, dict):
+        task = str(m.tool_input.get("task", "") or "")
+    response = result.get("response")
+    agent_name = str(result.get("agent") or m.tool_name.removeprefix("delegate_to_"))
+    return DelegationInfo(
+        tool_call_id=m.tool_call_id or str(m.id),
+        agent_name=agent_name,
+        task=task,
+        response=str(response) if response is not None else None,
+        error=str(result.get("error")) if result.get("error") else None,
+        duration_ms=m.duration_ms,
+    )
+
+
 @router.get("/conversations/{conversation_id}/messages")
 async def get_messages(
     conversation_id: UUID,
@@ -762,6 +790,7 @@ async def get_messages(
                 for a in attachments_by_message.get(m.id, [])
             ],
             artifacts=artifacts_by_message.get(m.id, []),
+            delegation=_reconstruct_delegation(m),
             tool_calls=[
                 ToolCall(
                     id=tc["id"],
