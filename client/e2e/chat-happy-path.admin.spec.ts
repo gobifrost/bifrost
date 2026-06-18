@@ -18,6 +18,47 @@ import { seedAgentViaPage } from "./setup/seed-agent";
 
 const uniq = (p: string) => `${p} ${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 
+/**
+ * The CI test stack has NO LLM provider configured (and one cannot be added at
+ * runtime — `POST /api/admin/llm/config` runs a real 1-token completion against
+ * the provider and rolls back if it fails, so it needs a live key + network).
+ * Without a provider, `Chat.tsx` replaces the ENTIRE chat shell with an
+ * "AI Chat Not Configured" setup prompt (gated purely on the frontend response
+ * of `GET /api/admin/llm/config`). That gate makes the sidebar, composer, model
+ * picker, and conversation rows non-existent — so rename/export/attachment/model
+ * tests can't reach any of the real UI they assert on.
+ *
+ * We fulfil just that one read-only status endpoint so the real chat shell
+ * mounts. Everything downstream (conversation create, sidebar listing, inline
+ * rename PATCH, Markdown export blob, attachment upload + chip) then runs against
+ * the genuine backend. The only thing this can't conjure is a real assistant
+ * reply / the provider's live model catalogue, which the affected tests already
+ * treat as soft annotations.
+ */
+async function mockLLMConfigured(page: Page): Promise<void> {
+	await page.route("**/api/admin/llm/config", async (route) => {
+		if (route.request().method() !== "GET") {
+			await route.fallback();
+			return;
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				provider: "anthropic",
+				model: "claude-sonnet-4-20250514",
+				endpoint: null,
+				max_tokens: 16384,
+				default_system_prompt: null,
+				summarization_model: null,
+				tuning_model: null,
+				is_configured: true,
+				api_key_set: true,
+			}),
+		});
+	});
+}
+
 /** Start a fresh chat bound to a seeded agent; returns the conversation id. */
 async function startChatWithAgent(page: Page, agentId: string): Promise<string> {
 	await page.goto(`/agents/${agentId}`);
@@ -67,6 +108,7 @@ test.describe("Chat V2 happy path (admin)", () => {
 	test("send a chat with a CSV attachment — chip renders, request accepted", async ({
 		page,
 	}) => {
+		await mockLLMConfigured(page);
 		const agent = await seedAgentViaPage(page, {
 			namePrefix: "Chat Attach Spec",
 		});
@@ -133,6 +175,7 @@ test.describe("Chat V2 happy path (admin)", () => {
 	test("rename a conversation inline in the sidebar (Radix focus path)", async ({
 		page,
 	}) => {
+		await mockLLMConfigured(page);
 		const agent = await seedAgentViaPage(page, {
 			namePrefix: "Chat Rename Spec",
 		});
@@ -144,12 +187,14 @@ test.describe("Chat V2 happy path (admin)", () => {
 		// row must exist in the sidebar list. Navigate to /chat (general pool).
 		const newTitle = uniq("Renamed");
 
-		// Open the conversation's overflow menu in the sidebar. The seeded chat
-		// row is labelled by its title/agent name; its actions button has an
-		// accessible name "Actions for …".
+		// The conversation row lands in the sidebar Recent list (general pool).
+		// Its overflow button is `opacity-0` until the ROW is hovered on desktop
+		// (sm:group-hover:opacity-100), so reveal it by hovering the row first.
 		const actionsBtn = page
 			.getByRole("button", { name: /^Actions for / })
 			.first();
+		await actionsBtn.waitFor({ state: "attached", timeout: 10000 });
+		await actionsBtn.hover();
 		await expect(actionsBtn).toBeVisible({ timeout: 10000 });
 		await actionsBtn.click();
 
@@ -176,6 +221,7 @@ test.describe("Chat V2 happy path (admin)", () => {
 	test("switch model mid-conversation — composer pill updates", async ({
 		page,
 	}) => {
+		await mockLLMConfigured(page);
 		const agent = await seedAgentViaPage(page, {
 			namePrefix: "Chat Model Spec",
 		});
@@ -191,18 +237,27 @@ test.describe("Chat V2 happy path (admin)", () => {
 
 		await picker.click();
 
-		// The popover lists models (CommandItem rows). Pick a model that isn't
-		// the current trigger label, if more than one is offered.
+		// The popover opens with a search box regardless of how many models the
+		// provider exposes — that's the stack-independent fact we hard-assert.
+		const search = page.getByPlaceholder("Search models…");
+		await expect(search).toBeVisible({ timeout: 5000 });
+
+		// The selectable rows are provider-dependent. The CI test stack has NO
+		// LLM provider (the shell is only reachable via the mocked config status),
+		// so /api/admin/llm/models is empty and there is nothing to switch to.
+		// Below ~2 options there's no second model to switch into — prove the
+		// picker is reachable + interactive and annotate the catalogue size.
 		const options = page.getByRole("option");
 		const count = await options.count();
 		if (count < 2) {
 			test.info().annotations.push({
 				type: "model-picker",
-				description: `only ${count} model(s) selectable on this stack — single-model allowlist; picker reachable + opens, switch skipped`,
+				description: `${count} model(s) selectable — the test stack has no provider catalogue, so a real switch can't be exercised; picker reachable + popover opens (search box rendered), switch skipped`,
 			});
-			// Still prove the popover opened and is interactive, then close.
+			// Close the popover; the trigger pill stays intact.
 			await page.keyboard.press("Escape");
-			expect(count).toBeGreaterThanOrEqual(1);
+			await expect(search).toBeHidden({ timeout: 5000 });
+			expect(before.length).toBeGreaterThan(0);
 			return;
 		}
 
@@ -231,6 +286,7 @@ test.describe("Chat V2 happy path (admin)", () => {
 	test("manual compact affordance is budget-gated (header)", async ({
 		page,
 	}) => {
+		await mockLLMConfigured(page);
 		const agent = await seedAgentViaPage(page, {
 			namePrefix: "Chat Compact Spec",
 		});
@@ -271,16 +327,20 @@ test.describe("Chat V2 happy path (admin)", () => {
 	test("export conversation as Markdown triggers a download", async ({
 		page,
 	}) => {
+		await mockLLMConfigured(page);
 		const agent = await seedAgentViaPage(page, {
 			namePrefix: "Chat Export Spec",
 		});
 		await startChatWithAgent(page, agent.id);
 
 		// Export lives in the sidebar conversation overflow menu → Export →
-		// Markdown.
+		// Markdown. The overflow button is `opacity-0` until the row is hovered
+		// (sm:group-hover:opacity-100), so reveal it by hovering the row first.
 		const actionsBtn = page
 			.getByRole("button", { name: /^Actions for / })
 			.first();
+		await actionsBtn.waitFor({ state: "attached", timeout: 10000 });
+		await actionsBtn.hover();
 		await expect(actionsBtn).toBeVisible({ timeout: 10000 });
 		await actionsBtn.click();
 
