@@ -34,6 +34,65 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 
+class _DeployResult:
+    """httpx-Response-like shim for the now-async solution deploy.
+
+    Deploy is enqueued (202 + ``deploy_job_id``) and observed by polling
+    ``GET /api/solutions/deploy-jobs/{id}``. This shim lets the many existing
+    e2e call sites keep their ``deploy.status_code`` / ``deploy.json()`` shape:
+    on a succeeded job ``status_code`` is 200 and ``json()`` returns the deploy
+    result counts; on a failed job ``status_code`` is 422 and ``json()`` carries
+    a ``detail`` (mirroring the old synchronous error response).
+    """
+
+    def __init__(self, status_code: int, payload: dict, text: str) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def wait_for_deploy(e2e_client, post_resp, headers, *, timeout_s: float = 30.0):
+    """Given a deploy POST response, return a terminal-state shim.
+
+    A synchronous error (non-202 — git-connected, pending-capture block,
+    downgrade gate) is returned unchanged. A 202 is polled to a terminal job
+    status, then mapped onto the old response shape via :class:`_DeployResult`.
+    """
+    import time as _time
+
+    if post_resp.status_code != 202:
+        return post_resp
+    job_id = post_resp.json()["deploy_job_id"]
+    deadline = _time.monotonic() + timeout_s
+    body: dict = {}
+    while _time.monotonic() < deadline:
+        st = e2e_client.get(f"/api/solutions/deploy-jobs/{job_id}", headers=headers)
+        assert st.status_code == 200, f"status fetch failed: {st.status_code} {st.text}"
+        body = st.json()
+        if body["status"] == "succeeded":
+            result = body.get("result") or {}
+            return _DeployResult(200, result, post_resp.text)
+        if body["status"] == "failed":
+            detail = body.get("error") or "deploy failed"
+            return _DeployResult(422, {"detail": detail}, detail)
+        _time.sleep(0.25)
+    raise AssertionError(f"deploy job {job_id} did not finish in {timeout_s}s: {body}")
+
+
+def deploy_solution(e2e_client, solution_id, headers, body):
+    """POST a deploy bundle and block until the async job is terminal.
+
+    Drop-in for ``e2e_client.post(f"/api/solutions/{id}/deploy", ...)`` that
+    returns a terminal-state shim (see :func:`wait_for_deploy`)."""
+    resp = e2e_client.post(
+        f"/api/solutions/{solution_id}/deploy", headers=headers, json=body
+    )
+    return wait_for_deploy(e2e_client, resp, headers)
+
+
 @pytest.fixture
 def cli_client(e2e_api_url, platform_admin):
     """Bind a ``BifrostClient`` to the E2E API + admin JWT for the CLI run."""

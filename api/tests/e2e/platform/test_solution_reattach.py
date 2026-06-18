@@ -22,6 +22,7 @@ from sqlalchemy import select
 from src.models.orm.config import Config
 from src.models.orm.tables import Document, Table
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -58,6 +59,7 @@ async def test_reinstall_reattaches_orphaned_table_with_data(
             "schema": {"columns": [{"name": "email"}]}, "policies": None,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
     real_tid_1 = solution_entity_id(UUID(sid1), UUID(bundle_tid))
 
@@ -94,6 +96,7 @@ async def test_reinstall_reattaches_orphaned_table_with_data(
             "schema": {"columns": [{"name": "email"}]}, "policies": None,
         }],
     })
+    dep2 = wait_for_deploy(e2e_client, dep2, headers)
     assert dep2.status_code == 200, dep2.text
 
     # ── Assert: the SAME table id was adopted (not recreated) ─────────────────
@@ -140,6 +143,7 @@ async def test_reinstall_reattaches_orphaned_config_value(
             "required": True, "description": "needed", "position": 0,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
     sc = e2e_client.post("/api/config", headers=headers, json={
         "key": key, "value": "sekret", "type": "string", "organization_id": None,
@@ -167,6 +171,7 @@ async def test_reinstall_reattaches_orphaned_config_value(
             "required": True, "description": "needed", "position": 0,
         }],
     })
+    dep2 = wait_for_deploy(e2e_client, dep2, headers)
     assert dep2.status_code == 200, dep2.text
 
     # The value is un-orphaned and intact.
@@ -198,6 +203,7 @@ async def test_fresh_install_no_orphan_creates_empty(
             "schema": {"columns": [{"name": "x"}]}, "policies": None,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     db_session.expire_all()

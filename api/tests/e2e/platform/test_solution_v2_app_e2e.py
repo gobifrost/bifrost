@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -66,6 +67,7 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
             ]
         },
     )
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     assert dep.json()["apps_upserted"] == 1
 
@@ -130,6 +132,7 @@ def test_redeploy_without_app_removes_it_for_this_install(e2e_client, platform_a
             ]
         },
     )
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
     assert e2e_client.get(f"/api/applications/{app_slug}", headers=headers).status_code == 200
 
@@ -137,6 +140,7 @@ def test_redeploy_without_app_removes_it_for_this_install(e2e_client, platform_a
     dep2 = e2e_client.post(
         f"/api/solutions/{sid}/deploy", headers=headers, json={"apps": []}
     )
+    dep2 = wait_for_deploy(e2e_client, dep2, headers)
     assert dep2.status_code in (200, 201), dep2.text
     assert dep2.json()["apps_deleted"] == 1
     assert e2e_client.get(f"/api/applications/{app_slug}", headers=headers).status_code == 404

@@ -21,6 +21,7 @@ from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Document, Table
 from src.models.orm.workflows import Workflow
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -58,6 +59,7 @@ async def test_delete_cascades_code_entities(e2e_client, platform_admin, db_sess
             "required": True, "description": "needed", "position": 0,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     r = e2e_client.delete(f"/api/solutions/{sid}", headers=headers)
@@ -107,6 +109,7 @@ async def test_delete_orphans_tables_with_data(e2e_client, platform_admin, db_se
             "policies": None,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
     real_tid = solution_entity_id(UUID(sid), UUID(bundle_tid))
 
@@ -179,6 +182,7 @@ async def test_uninstall_with_same_name_repo_table_succeeds(
             "policies": None,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     # 3. Uninstall must succeed — the detach stamps orphaned_at, moving the row
@@ -213,6 +217,7 @@ async def test_delete_orphans_config_values(e2e_client, platform_admin, db_sessi
             "required": True, "description": "needed", "position": 0,
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
 
     # Set a value in the install's (global) scope.

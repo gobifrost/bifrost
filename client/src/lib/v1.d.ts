@@ -7599,8 +7599,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Deploy a bundle to an install (full replace, non-interactive, admin only) */
+        /** Enqueue a deploy to an install (async, full replace, admin only) */
         post: operations["deploy_solution_api_solutions__solution_id__deploy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/deploy-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll the status of an async deploy job (admin only) */
+        get: operations["get_deploy_job_api_solutions_deploy_jobs__job_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -21551,6 +21568,55 @@ export interface components {
             include_imports: boolean;
         };
         /**
+         * SolutionDeployEnqueued
+         * @description Returned by ``POST /{id}/deploy`` — the deploy runs as a background job;
+         *     the caller polls ``GET /deploy-jobs/{deploy_job_id}`` for the result.
+         */
+        SolutionDeployEnqueued: {
+            /**
+             * Deploy Job Id
+             * Format: uuid
+             */
+            deploy_job_id: string;
+        };
+        /**
+         * SolutionDeployJobStatus
+         * @description Current state of an async deploy job.
+         */
+        SolutionDeployJobStatus: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Install Id
+             * Format: uuid
+             */
+            install_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed";
+            /** Error */
+            error?: string | null;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
          * SolutionDeployRequest
          * @description Full-replace deploy bundle for one install.
          *
@@ -21614,81 +21680,6 @@ export interface components {
              * @default false
              */
             force: boolean;
-        };
-        /** SolutionDeployResponse */
-        SolutionDeployResponse: {
-            /**
-             * Solution Id
-             * Format: uuid
-             */
-            solution_id: string;
-            /**
-             * Workflows Upserted
-             * @default 0
-             */
-            workflows_upserted: number;
-            /**
-             * Workflows Deleted
-             * @default 0
-             */
-            workflows_deleted: number;
-            /**
-             * Tables Upserted
-             * @default 0
-             */
-            tables_upserted: number;
-            /**
-             * Tables Deleted
-             * @default 0
-             */
-            tables_deleted: number;
-            /**
-             * Apps Upserted
-             * @default 0
-             */
-            apps_upserted: number;
-            /**
-             * Apps Deleted
-             * @default 0
-             */
-            apps_deleted: number;
-            /**
-             * Forms Upserted
-             * @default 0
-             */
-            forms_upserted: number;
-            /**
-             * Forms Deleted
-             * @default 0
-             */
-            forms_deleted: number;
-            /**
-             * Agents Upserted
-             * @default 0
-             */
-            agents_upserted: number;
-            /**
-             * Agents Deleted
-             * @default 0
-             */
-            agents_deleted: number;
-            /**
-             * Claims Upserted
-             * @default 0
-             */
-            claims_upserted: number;
-            /**
-             * Claims Deleted
-             * @default 0
-             */
-            claims_deleted: number;
-            /**
-             * Integrations Shell Created
-             * @default 0
-             */
-            integrations_shell_created: number;
-            /** Roles Created */
-            roles_created?: string[];
         };
         /**
          * SolutionEntities
@@ -37369,12 +37360,43 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDeployEnqueued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_deploy_job_api_solutions_deploy_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SolutionDeployResponse"];
+                    "application/json": components["schemas"]["SolutionDeployJobStatus"];
                 };
             };
             /** @description Validation Error */

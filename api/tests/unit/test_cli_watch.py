@@ -362,18 +362,21 @@ def test_watch_refuses_in_solution_workspace(tmp_path, capsys):
     """`bifrost watch` must refuse inside a Solution workspace (D1): watch only
     syncs to the global _repo/, so running it where a bifrost.solution.yaml is
     present would silently push the developer's apps/ and workflows/ to the
-    wrong place. It must abort with a clear message before doing any work."""
+    wrong place. It must hard-fail (SystemExit) before doing any work via the
+    unified solution-workspace guard."""
+    import pytest
+
     from bifrost.cli import handle_watch
 
     # A directory that IS a Solution workspace (descriptor present).
     (tmp_path / "bifrost.solution.yaml").write_text("slug: demo\nname: Demo\n")
 
-    rc = handle_watch([str(tmp_path)])
+    with pytest.raises(SystemExit):
+        handle_watch([str(tmp_path)])
 
-    assert rc == 1, "watch must refuse (exit 1) in a Solution workspace"
     err = capsys.readouterr().err
     assert "Solution workspace" in err
-    assert "bifrost solution start" in err
+    assert "solution deploy" in err
 
 
 def test_watch_allowed_in_plain_repo_workspace(tmp_path):

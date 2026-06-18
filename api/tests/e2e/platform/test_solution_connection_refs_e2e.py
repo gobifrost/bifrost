@@ -44,6 +44,7 @@ from src.models.orm.integrations import Integration, IntegrationConfigSchema
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.workflows import Workflow
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -256,6 +257,7 @@ async def test_deploy_creates_integration_shell_and_readme_round_trips(
     dep = e2e_client.post(
         f"/api/solutions/{sid}/deploy", headers=headers, json=deploy_body
     )
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
     assert dep.json()["integrations_shell_created"] == 1, dep.text
 
@@ -285,6 +287,7 @@ async def test_deploy_creates_integration_shell_and_readme_round_trips(
     dep2 = e2e_client.post(
         f"/api/solutions/{sid}/deploy", headers=headers, json=deploy_body
     )
+    dep2 = wait_for_deploy(e2e_client, dep2, headers)
     assert dep2.status_code == 200, dep2.text
     assert dep2.json()["integrations_shell_created"] == 0, (
         "re-deploy must not re-create / clobber the existing integration"

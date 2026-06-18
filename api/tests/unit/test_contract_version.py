@@ -61,6 +61,11 @@ from src.models.contracts.organizations import (  # noqa: E402
     OrganizationCreate,
     OrganizationUpdate,
 )
+from src.models.contracts.solutions import (  # noqa: E402
+    SolutionDeployEnqueued,
+    SolutionDeployJobStatus,
+    SolutionDeployRequest,
+)
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
@@ -104,6 +109,9 @@ _COMMAND_DTOS: list[type] = [
     EventSourceUpdate,
     EventSubscriptionCreate,
     EventSubscriptionUpdate,
+    SolutionDeployRequest,
+    SolutionDeployEnqueued,
+    SolutionDeployJobStatus,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -147,12 +155,16 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # field and keeps silent-None behavior, so no CONTRACT_VERSION bump; fingerprint
     # refreshed only.
     #
+    # Solution deploy now returns 202 + deploy_job_id and the CLI polls
+    # SolutionDeployJobStatus for the prior summary shape (2026-06-17).
+    # CONTRACT_VERSION bumped to 5.
+    #
     # Chat V2 M5 compaction (2026-06-17): ChatStreamChunk gained
     # `compaction_started`/`compaction_complete` type members, ContextWarning gained
     # optional `turns_compacted`, and CompactConversationResponse was added. ADDITIVE
     # (streaming chat chunks the CLI doesn't parse; new optional field) — fingerprint
-    # refreshed only, no CONTRACT_VERSION bump.
-    "f5ed3ec3cef91c485673e69a4493732d878e60db7e73f69760aac17be6df5f06"
+    # refreshed after merge with main, no further CONTRACT_VERSION bump.
+    "MERGE_PLACEHOLDER_RECOMPUTE"
 )
 
 

@@ -396,6 +396,7 @@
 | POST | `/api/settings/oauth/{provider}/test` |
 | GET | `/api/solutions` |
 | POST | `/api/solutions` |
+| GET | `/api/solutions/deploy-jobs/{job_id}` |
 | POST | `/api/solutions/install` |
 | POST | `/api/solutions/install/from-repo` |
 | POST | `/api/solutions/install/preview` |

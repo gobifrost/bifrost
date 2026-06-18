@@ -288,10 +288,17 @@ async def get_workflow_by_id(
         if not callable(obj):
             continue
 
-        # All decorators use _executable_metadata
-        if hasattr(obj, "_executable_metadata"):
+        # All decorators use _executable_metadata.
+        # Match by Python function name (the module attr name), NOT the decorator
+        # display name (meta.name) — mirroring the worker loader
+        # (module_loader.py: "Match by Python function name, not display name").
+        # The DB ``name`` is identity/display only and can legitimately differ
+        # from both the decorator name and function_name (custom @workflow(name=),
+        # CLI rename via PATCH, or a manifest-declared name). function_name is the
+        # stable source-code identity the module was loaded by.
+        if hasattr(obj, "_executable_metadata") and name == workflow_record.function_name:
             meta = getattr(obj, "_executable_metadata", None)
-            if meta and hasattr(meta, 'name') and meta.name == workflow_record.name:
+            if meta:
                 workflow_func = obj
                 # For data providers, convert to WorkflowMetadata for consistent execution
                 if hasattr(meta, 'type') and meta.type == 'data_provider':
@@ -315,7 +322,7 @@ async def get_workflow_by_id(
 
     if not workflow_func or not workflow_metadata:
         raise WorkflowLoadError(
-            f"No decorated function named '{workflow_record.name}' found in {workflow_record.path}"
+            f"No decorated function '{workflow_record.function_name}' found in {workflow_record.path}"
         )
 
     # Enrich metadata from database record

@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 
 from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -40,6 +41,7 @@ def test_solution_workflow_is_read_only(e2e_client, platform_admin):
             "path": "workflows/w.py", "type": "workflow",
         }],
     })
+    dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
 
     # Deploy remaps the manifest id to uuid5(install_id, manifest_id); address by that.

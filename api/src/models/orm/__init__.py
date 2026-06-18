@@ -43,6 +43,7 @@ from src.models.orm.organizations import Organization
 from src.models.orm.platform_models import ModelDeprecation, OrgModelAlias, PlatformModel
 from src.models.orm.pending_capture import PendingCaptureORM
 from src.models.orm.solution_config_schema import SolutionConfigSchema
+from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solutions import Solution
 from src.models.orm.custom_claims import CustomClaim
@@ -64,6 +65,7 @@ __all__ = [
     "Solution",
     "SolutionConfigSchema",
     "SolutionConnectionSchema",
+    "SolutionDeployJob",
     "PendingCaptureORM",
     # Applications (App Builder)
     "Application",

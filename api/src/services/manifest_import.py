@@ -1014,8 +1014,16 @@ class ManifestResolver:
                 imported_wf_ids.add(mwf.id)  # Still track as present for event source refs
                 continue
             if await _file_exists(mwf.path):
-                await _prog(f"Importing workflow: {mwf.name or key}")
-                wf_ops = self._resolve_workflow(mwf.name or key, mwf, cache)
+                # Execution resolves a workflow by ``function_name`` (service.py /
+                # module_loader.py both match the Python def name, not the display
+                # name), so the DB ``name`` is identity/display only. Write it the
+                # way registration does: the manifest's declared name, else the
+                # dict key, as the INITIAL value. ``_resolve_workflow`` sets it
+                # only when the DB row's name is unset — it never overwrites a
+                # UI/CLI rename (matching the indexer's source-of-truth rule).
+                resolved_name = mwf.name or key
+                await _prog(f"Importing workflow: {resolved_name}")
+                wf_ops = self._resolve_workflow(resolved_name, mwf, cache)
                 await self._apply_ops(wf_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("wf_ids", set()))
                 imported_wf_ids.add(mwf.id)
 
