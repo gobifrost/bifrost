@@ -230,7 +230,11 @@ describe("ChatWindow — messages render & send", () => {
 		fireEvent.change(input, { target: { value: "hello" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(streamRef.sendMessage).toHaveBeenCalledWith("hello");
+		expect(streamRef.sendMessage).toHaveBeenCalledWith(
+			"hello",
+			undefined,
+			undefined,
+		);
 	});
 
 	it("creates a conversation from the blank draft and sends the first message", () => {
@@ -258,6 +262,7 @@ describe("ChatWindow — messages render & send", () => {
 		expect(streamRef.sendMessage).toHaveBeenCalledWith(
 			"hello from draft",
 			"new-conversation-id",
+			undefined,
 		);
 	});
 });
