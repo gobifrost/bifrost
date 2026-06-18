@@ -126,7 +126,7 @@ describe("ChatMessage — assistant messages", () => {
 		expect(screen.getByText(/1500ms/)).toBeInTheDocument();
 	});
 
-	it("renders the cost-tier glyph for a known tier", () => {
+	it("renders the cost-tier icon for a known tier", () => {
 		renderWithProviders(
 			<ChatMessage
 				message={makeMessage({
@@ -136,7 +136,10 @@ describe("ChatMessage — assistant messages", () => {
 				})}
 			/>,
 		);
-		expect(screen.getByLabelText("Balanced tier")).toHaveTextContent("⚖");
+		// Rendered as a Lucide icon (svg), not an emoji glyph, so the three
+		// tiers read as one coherent monochrome set.
+		const badge = screen.getByLabelText("Balanced tier");
+		expect(badge.querySelector("svg")).not.toBeNull();
 	});
 
 	it("omits the cost-tier glyph for an unknown/missing tier", () => {

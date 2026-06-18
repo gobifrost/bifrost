@@ -14,7 +14,6 @@ import {
 	FileText,
 	Loader2,
 	Paperclip,
-	Plus,
 	Square,
 	X,
 } from "lucide-react";
@@ -450,16 +449,6 @@ export function ChatInput({
 					<div className="flex items-center justify-between px-3 pb-3">
 						{/* Left side actions */}
 						<div className="flex items-center gap-1">
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon"
-								className="h-8 w-8 rounded-full text-muted-foreground/50 cursor-not-allowed"
-								disabled
-								title="Coming soon"
-							>
-								<Plus className="h-5 w-5" />
-							</Button>
 							<input
 								ref={fileInputRef}
 								type="file"
@@ -545,10 +534,9 @@ export function ChatInput({
 					</div>
 				</div>
 
-				{/* Disclaimer */}
+				{/* Disclaimer — provider-neutral (the model may be Claude, GPT, etc.) */}
 				<p className="text-center text-xs text-muted-foreground mt-2">
-					Claude is AI and can make mistakes. Please double-check
-					responses.
+					AI can make mistakes. Please double-check responses.
 				</p>
 			</div>
 		</div>

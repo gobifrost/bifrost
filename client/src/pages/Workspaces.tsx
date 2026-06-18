@@ -280,7 +280,7 @@ function WorkspaceCard({
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+						className="sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
 						onClick={(e) => {
 							e.stopPropagation();
 							onEdit();
@@ -292,7 +292,7 @@ function WorkspaceCard({
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+						className="sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
 						onClick={(e) => {
 							e.stopPropagation();
 							onDelete();

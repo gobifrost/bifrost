@@ -27,12 +27,6 @@ export type PlatformAllowlistApplyResponse =
 
 export type CostTier = "fast" | "balanced" | "premium";
 
-export const COST_TIER_GLYPH: Record<CostTier, string> = {
-	fast: "⚡",
-	balanced: "⚖",
-	premium: "💎",
-};
-
 export const COST_TIER_LABEL: Record<CostTier, string> = {
 	fast: "Fast",
 	balanced: "Balanced",

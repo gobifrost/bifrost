@@ -6,12 +6,20 @@
  * Supports full markdown rendering for AI responses.
  */
 
-import { Bot, FileImage, FileSpreadsheet, FileText } from "lucide-react";
+import {
+	Bot,
+	FileImage,
+	FileSpreadsheet,
+	FileText,
+	Gauge,
+	Gem,
+	Zap,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 import { isImageAttachment } from "@/services/chatAttachments";
 import {
-	COST_TIER_GLYPH,
 	COST_TIER_LABEL,
 	type CostTier,
 } from "@/services/platformModels";
@@ -71,32 +79,43 @@ function MessageAttachments({
 }
 
 /**
- * Detect if text is a progress/status update rather than the final result.
- * Progress updates are rendered with subdued styling.
+ * Detect if a paragraph is a throwaway progress/status line (e.g. "Let me check
+ * that.") rather than real answer content, so it can be rendered subdued.
+ *
+ * A progress opener alone is NOT enough — those phrases ("Let me", "Now,",
+ * "Great!", "I found") routinely begin substantive final answers too. We only
+ * subdue a paragraph that is BOTH a progress opener AND short: a genuine status
+ * line is a brief single sentence, so anything past ~80 chars or containing
+ * multiple sentences is treated as real content and left at full emphasis.
  */
+const PROGRESS_MAX_CHARS = 80;
+
 function isProgressUpdate(text: string): boolean {
 	const trimmed = text.trim();
 
-	// Patterns that indicate progress/status updates
+	// Only ever subdue brief, single-sentence lines. A long or multi-sentence
+	// paragraph is content, regardless of how it opens.
+	if (trimmed.length > PROGRESS_MAX_CHARS) {
+		return false;
+	}
+	// More than one sentence-ending punctuation mark => it's saying something,
+	// not just announcing an action.
+	if ((trimmed.match(/[.!?](\s|$)/g)?.length ?? 0) > 1) {
+		return false;
+	}
+
 	const progressPatterns = [
-		// Starting patterns - agent announcing what it's about to do
+		// Agent announcing what it's about to do.
 		/^(Let me|I'll|I will|Now I'm|I'm going to|I'm now|Now let me)/i,
 		/^(Searching|Looking|Checking|Analyzing|Reading|Processing|Fetching|Loading)/i,
 		/^(First,|Next,|Then,|Finally,|Now,|Alright,|Okay,)/i,
-
-		// Transitional/enthusiastic openers
+		// Transitional/enthusiastic openers.
 		/^(Excellent|Great|Perfect|Good|Wonderful|Alright)(!|,)/i,
-
-		// Short status updates (under 100 chars and matches pattern)
+		// Brief status updates.
 		/^(I found|I see|I notice|I can see|I've found|I've located)/i,
 	];
 
-	// Check if matches any progress pattern
-	if (progressPatterns.some((p) => p.test(trimmed))) {
-		return true;
-	}
-
-	return false;
+	return progressPatterns.some((p) => p.test(trimmed));
 }
 
 /**
@@ -138,18 +157,27 @@ const COST_TIERS: ReadonlySet<string> = new Set<CostTier>([
  * stay in the admin dashboard — chat is anxiety-free. Renders nothing for an
  * unknown/missing tier.
  */
+// Lucide icons (not emoji) so the three tiers read as one coherent, monochrome
+// set — the emoji glyphs (⚡/⚖/💎) rendered inconsistently (color vs thin mono).
+const COST_TIER_ICON: Record<CostTier, LucideIcon> = {
+	fast: Zap,
+	balanced: Gauge,
+	premium: Gem,
+};
+
 function CostTierBadge({ tier }: { tier: string | null | undefined }) {
 	if (!tier || !COST_TIERS.has(tier)) return null;
 	const t = tier as CostTier;
+	const Icon = COST_TIER_ICON[t];
 	return (
 		<TooltipProvider delayDuration={200}>
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<span
-						className="cursor-default select-none"
+						className="cursor-default select-none text-muted-foreground"
 						aria-label={`${COST_TIER_LABEL[t]} tier`}
 					>
-						{COST_TIER_GLYPH[t]}
+						<Icon className="size-3.5" />
 					</span>
 				</TooltipTrigger>
 				<TooltipContent>{COST_TIER_LABEL[t]} tier</TooltipContent>

@@ -43,13 +43,15 @@ describe("DelegationBadge — label + status", () => {
 		expect(icon?.getAttribute("class") || "").toMatch(/animate-spin/);
 	});
 
-	it("shows '✓ consulted <agent>' with a green check when completed", () => {
+	it("shows '✓ consulted <agent>' with a settled (muted) check when completed", () => {
 		const { container } = renderWithProviders(
 			<DelegationBadge delegation={makeDelegation()} status="completed" />,
 		);
 		expect(screen.getByText("consulted Researcher")).toBeInTheDocument();
+		// Completed badge is de-emphasized via the muted-foreground token
+		// (design-system color, not a raw green-500).
 		const icon = container.querySelector("svg");
-		expect(icon?.getAttribute("class") || "").toMatch(/text-green-500/);
+		expect(icon?.getAttribute("class") || "").toMatch(/text-muted-foreground/);
 	});
 
 	it("shows an error icon when the delegation failed", () => {

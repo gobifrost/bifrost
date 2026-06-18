@@ -42,17 +42,20 @@ export function DelegationBadge({
 	const isRunning = status === "running" && !delegation.response && !delegation.error;
 	const isError = status === "error" || Boolean(delegation.error);
 
+	// Use design tokens, not raw palette colors: in-progress reads as the
+	// accent (primary), a settled "consulted" badge is de-emphasized
+	// (muted-foreground), errors use the destructive token.
 	const Icon = isRunning ? Loader2 : isError ? XCircle : CheckCircle2;
 	const iconClass = isRunning
-		? "text-blue-500 animate-spin"
+		? "text-primary animate-spin"
 		: isError
 			? "text-destructive"
-			: "text-green-500";
+			: "text-muted-foreground";
 	const badgeClass = isRunning
-		? "bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 border-blue-500/30 animate-pulse"
+		? "bg-primary/10 text-primary hover:bg-primary/20 border-primary/30 animate-pulse"
 		: isError
 			? "bg-destructive/10 text-destructive hover:bg-destructive/20 border-destructive/30"
-			: "bg-green-500/10 text-green-600 hover:bg-green-500/20 border-green-500/30";
+			: "bg-muted text-muted-foreground hover:bg-muted/80 border-border";
 
 	const label = isRunning
 		? `consulting ${delegation.agent_name}`
