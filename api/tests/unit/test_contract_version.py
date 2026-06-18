@@ -61,6 +61,11 @@ from src.models.contracts.organizations import (  # noqa: E402
     OrganizationCreate,
     OrganizationUpdate,
 )
+from src.models.contracts.solutions import (  # noqa: E402
+    SolutionDeployEnqueued,
+    SolutionDeployJobStatus,
+    SolutionDeployRequest,
+)
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
@@ -104,6 +109,9 @@ _COMMAND_DTOS: list[type] = [
     EventSourceUpdate,
     EventSubscriptionCreate,
     EventSubscriptionUpdate,
+    SolutionDeployRequest,
+    SolutionDeployEnqueued,
+    SolutionDeployJobStatus,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -146,7 +154,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # RequiredConnectionUnset escalation). ADDITIVE — an old CLI simply omits the
     # field and keeps silent-None behavior, so no CONTRACT_VERSION bump; fingerprint
     # refreshed only.
-    "a1a2c7ef31c5dabb5b3be5256f1f49e756c8ba3252596fc8efa8e045fcfee16d"
+    #
+    # Solution deploy now returns 202 + deploy_job_id and the CLI polls
+    # SolutionDeployJobStatus for the prior summary shape (2026-06-17).
+    # CONTRACT_VERSION bumped to 5.
+    "4d84dfc7b2ae64d8be2aba15ca782467b5b92de256507bcbc4228fb36a336ec3"
 )
 
 

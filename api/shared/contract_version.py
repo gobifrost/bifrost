@@ -16,7 +16,9 @@ or cosmetic changes do NOT bump it. The tripwire in
 # v4: unified --org standard — SolutionCreate/SolutionBase drop `scope` (install
 #     kind is derived from organization_id); SolutionRepoPreviewRequest gains
 #     organization_id; descriptor no longer carries scope (2026-06-15)
-CONTRACT_VERSION: int = 4
+# v5: Solution deploy is async: POST /deploy returns 202 + deploy_job_id and
+#     callers poll SolutionDeployJobStatus for the deploy summary (2026-06-17)
+CONTRACT_VERSION: int = 5
 
 
 def get_contract_version() -> int:

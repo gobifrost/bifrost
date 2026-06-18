@@ -30,6 +30,21 @@ def test_assert_passes_outside_solution(tmp_path):
     assert assert_not_solution_workspace(str(tmp_path), "push") is None
 
 
+def test_assert_blocks_when_cwd_is_inside_solution_even_for_outside_target(
+    tmp_path,
+    monkeypatch,
+):
+    sol = tmp_path / "solution"
+    sol.mkdir()
+    (sol / "bifrost.solution.yaml").write_text("name: demo\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(sol)
+
+    with pytest.raises(SystemExit):
+        assert_not_solution_workspace(str(outside), "push")
+
+
 def test_handle_push_blocks_in_solution(tmp_path, monkeypatch):
     (tmp_path / "bifrost.solution.yaml").write_text("name: demo\n")
     f = tmp_path / "x.py"

@@ -44,6 +44,16 @@ def test_collect_push_files_single_file_nested_with_prefix(tmp_path):
     assert set(files.keys()) == {"repo/apps/x/main.tsx"}
 
 
+def test_collect_push_files_single_file_honors_ignore_filter(tmp_path):
+    f = tmp_path / ".env"
+    f.write_text("BIFROST_ACCESS_TOKEN=secret\n")
+
+    files, skipped = cli._collect_push_files(tmp_path, "", single_file=str(f))
+
+    assert files == {}
+    assert skipped == 1
+
+
 @pytest.mark.asyncio
 async def test_plain_push_with_tty_does_not_open_tui(tmp_path, monkeypatch):
     f = tmp_path / "mod.py"
@@ -85,3 +95,57 @@ async def test_plain_push_with_tty_does_not_open_tui(tmp_path, monkeypatch):
         single_file=str(f),
     )
     assert rc == 0
+
+
+@pytest.mark.asyncio
+async def test_push_only_drops_pull_items_before_auto_accept(tmp_path, monkeypatch, capsys):
+    local = tmp_path / "local.py"
+    local.write_text("x = 1\n")
+
+    monkeypatch.setattr(cli, "_resolve_is_tty", lambda: False)
+
+    class FakeResp:
+        def __init__(self, status_code, payload=None):
+            self.status_code = status_code
+            self._payload = payload or {}
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, *a, **k):
+            self.calls.append((url, k.get("json")))
+            if url == "/api/files/list":
+                return FakeResp(200, {
+                    "files_metadata": [
+                        {
+                            "path": "remote.py",
+                            "etag": "server-md5",
+                            "last_modified": "2026-01-01T00:00:00+00:00",
+                            "updated_by": "server",
+                        }
+                    ]
+                })
+            if url == "/api/files/write":
+                return FakeResp(204)
+            if url == "/api/files/read":
+                raise AssertionError("push-only sync must not pull server files")
+            return FakeResp(200, {})
+
+    client = FakeClient()
+    rc = await cli._sync_files(
+        str(tmp_path),
+        mirror=False,
+        force=False,
+        client=client,
+        one_way=True,
+    )
+
+    assert rc == 0
+    assert [payload["path"] for url, payload in client.calls if url == "/api/files/write"] == ["local.py"]
+    assert not (tmp_path / "remote.py").exists()
+    out = capsys.readouterr().out
+    assert "to pull" not in out

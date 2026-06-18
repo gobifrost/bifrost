@@ -141,9 +141,24 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.default_user_email and settings.default_user_password:
         await create_default_user()
 
+    from src.core.database import get_session_factory
+    from src.routers.solutions import reconcile_orphaned_deploy_jobs
+
+    try:
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            count = await reconcile_orphaned_deploy_jobs(db)
+            if count:
+                await db.commit()
+                logger.warning(
+                    "Marked %d orphaned solution deploy job(s) as failed after API startup",
+                    count,
+                )
+    except Exception as e:
+        logger.warning(f"Solution deploy job reconciliation failed: {e}")
+
     # Reconcile file_index with S3 _repo/ in background
     from src.services.file_index_reconciler import reconcile_file_index
-    from src.core.database import get_session_factory
 
     async def _run_reconciler():
         try:

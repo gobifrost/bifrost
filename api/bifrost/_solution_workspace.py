@@ -16,7 +16,7 @@ def find_solution_root(start: pathlib.Path) -> pathlib.Path | None:
 
 
 def assert_not_solution_workspace(path: str, command: str) -> None:
-    root = find_solution_root(pathlib.Path(path))
+    root = find_solution_root(pathlib.Path(path)) or find_solution_root(pathlib.Path.cwd())
     if root is not None:
         print(
             f"This is a Solution workspace ({root}). `bifrost {command}` targets the "

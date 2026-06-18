@@ -2990,6 +2990,9 @@ def _collect_push_files(
         p = pathlib.Path(single_file).resolve()
         rel_str = p.relative_to(path).as_posix()
         repo_path = f"{repo_prefix}/{rel_str}" if repo_prefix else rel_str
+        spec = _build_file_filter(path)
+        if _should_skip_path(rel_str, spec, repo_path):
+            return {}, 1
         try:
             raw = _normalize_line_endings(p.read_bytes())
             files[repo_path] = base64.b64encode(raw).decode("ascii")
@@ -3193,6 +3196,12 @@ async def _sync_files(
             "rel": rel,
             "_content": "",
         })
+
+    if push_only:
+        sync_items = [
+            item for item in sync_items
+            if item.get("default_action") == "push"
+        ]
 
     # ── 4. Check if there's anything to sync ─────────────────────────────
     if not sync_items:

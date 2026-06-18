@@ -1,10 +1,12 @@
 """Orchestration row for an async, observable solution deploy.
 
 Created when an admin calls ``POST /api/solutions/{id}/deploy``. The endpoint
-enqueues the (sometimes >100s) deploy as a background task and returns the
-``deploy_job_id`` immediately; the background task flips the row
-``queued`` → ``running`` → ``succeeded`` / ``failed`` (capturing the error).
-The CLI polls ``GET /api/solutions/deploy-jobs/{id}`` until a terminal status.
+enqueues the (sometimes >100s) deploy as an in-process background task and
+returns the ``deploy_job_id`` immediately; the task flips the row ``queued`` →
+``running`` → ``succeeded`` / ``failed`` (capturing the error). API startup
+marks stale queued/running jobs failed so pollers never wait forever after a
+restart. The CLI polls ``GET /api/solutions/deploy-jobs/{id}`` until a terminal
+status.
 
 This decouples deploy from the HTTP request so the CLI no longer hits an httpx
 ``ReadTimeout`` while the server completes successfully (Task 7 bug).

@@ -741,6 +741,7 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     data = yaml.safe_load(wf_file.read_text()) or {}
     raw = data.get("workflows", {})
     entries: list[dict] = []
+    ws_root = os.path.realpath(workspace)
     # workflows.yaml is keyed by workflow UUID; the display name is body["name"].
     # Pass the FULL body through (not a narrowed subset): the deployer's
     # _upsert_workflows consumes endpoint_enabled/public_endpoint/timeout_seconds/
@@ -757,9 +758,17 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
         source: str | None = None
         wf_path = body.get("path")
         if wf_path:
-            src_file = workspace / wf_path
+            # ``body["path"]`` is manifest-controlled; confine it to the
+            # workspace (realpath + startswith — the recognized traversal
+            # barrier) so a crafted path can't read outside the bundle.
+            _src_file = os.path.realpath(os.path.join(ws_root, str(wf_path)))
+            if not _src_file.startswith(ws_root + os.sep):
+                raise click.ClickException(
+                    f"workflow '{key}': path {wf_path!r} escapes the workspace"
+                )
+            src_file = pathlib.Path(_src_file)
             if src_file.is_file():
-                source = src_file.read_text()
+                source = src_file.read_text(encoding="utf-8")
         entry = {
             **body,
             "id": body.get("id", key),
