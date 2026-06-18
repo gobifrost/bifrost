@@ -79,13 +79,21 @@ def test_async_deploy_completes(e2e_client, platform_admin):
 
 
 def test_async_deploy_reports_failure(e2e_client, platform_admin):
-    """A bundle whose workflow manifest name diverges from the decorated name
-    fails preflight inside the job — the job reaches ``failed`` with the error,
-    not a 500 at enqueue time."""
+    """A bundle whose declared ``function_name`` does not exist in the carried
+    source fails preflight inside the job — the job reaches ``failed`` with the
+    error, not a 500 at enqueue time.
+
+    Note: a manifest *name* (slug) that merely differs from the decorated name is
+    NOT a failure — import persists the decorated name regardless of the slug, so
+    preflight only blocks the genuinely execution-breaking case (the named
+    function is absent from the source). This mirrors the unit/e2e preflight
+    contract in test_deploy_preflight.py / test_solution_deploy_preflight_e2e.py.
+    """
     headers = platform_admin.headers
     slug = f"sol-async-fail-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug=slug)
 
+    # Source defines `main`, but the bundle points function_name at `missing`.
     source = (
         "from bifrost import workflow\n\n"
         '@workflow(name="Real Name")\n'
@@ -100,8 +108,8 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
             "workflows": [
                 {
                     "id": str(uuid.uuid4()),
-                    "name": "diverged",
-                    "function_name": "main",
+                    "name": "snap",
+                    "function_name": "missing",
                     "path": "workflows/snap.py",
                     "type": "workflow",
                     "source": source,
@@ -124,4 +132,4 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
 
     assert status == "failed", f"expected failed, got {body}"
     assert body["error"]
-    assert "diverged" in body["error"]
+    assert "missing" in body["error"]
