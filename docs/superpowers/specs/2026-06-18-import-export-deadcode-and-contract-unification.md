@@ -893,3 +893,83 @@ with Solutions the sole user-facing portable format + a separate identity-aware 
 product call, not a code call — flagged here, deferred. It interacts with the §10.3 bucket-B and
 §11 "don't maintain two backup tools" decisions and should be decided together, against the shared
 content core, in Phase 4.
+
+---
+
+# 17. Decorator-classified contract — pressure-tested (2026-06-19)
+
+Jack's "snap my fingers" design: ONE contract per entity; field decorators mark
+identifying / backup-only / secret / match-key; consumers opt into field-CLASSES; `_repo` vs
+Solutions differ "only by solution_id." Pressure-tested against the real code (not affirmed).
+Verdict: **right about WHAT travels, over-idealized about HOW it's written. Two orthogonal axes.**
+
+## 17.1 Axis 1 — field classification (Jack's decorators): WORKS, and is needed
+Classifying each field as content / identifying / backup-only / secret / match-key cleanly solves
+the SERIALIZATION question — which bytes flow per consumer. This is strictly better than today's
+three hand-maintained field lists per entity (ManifestX model, serialize_X, deploy values dict)
+that drift — that drift is literally how `tool_description` got dropped (§8). The
+`_repo`=backup-not-secrets / Solutions=none / export-with-data=backup+secrets opt-in model is
+correct for WHAT travels. This becomes the mechanism behind the §11 EntitySerializer (replacing
+hand lists with one annotated contract). KEEP IT.
+
+Caveat found: "secret" is NOT always a static field flag. Config `value` is secret only when
+`config_type=="secret"` (`manifest_generator.py:278`), and import adds "don't overwrite an
+existing non-null secret." So the secret class needs to support a value-/state-dependent
+predicate, not just a boolean tag. OAuth `client_secret` IS a clean static exclude
+(`integration_template.py` allowlist). So: most fields classify statically; a few (config value)
+need a conditional classifier. The decorator system must allow a predicate, not only a flag.
+
+## 17.2 Axis 2 — "differ only by solution_id": REFUTED
+The same-entity (agent) write differs between `_repo` `_resolve_*` and Solutions `_upsert_*` on
+EIGHT axes, every one independent of `solution_id`:
+1. **Match strategy** — `_repo` natural-key `(path/name,org)`→realign-id; Solutions id-only +
+   uuid5 remap + ownership guard. (`manifest_import.py:1464-1504` vs `deploy.py:799,759-776`)
+2. **Role policy** — `_repo` unknown role_name → FAIL; Solutions → AUTO-CREATE.
+   (`manifest_import.py:1507` vs `deploy.py:623-634`) Opposite control flow.
+3. **Org handling** — `_repo` carries entity `organization_id`; Solutions IGNORES it and stamps
+   `solution.organization_id`. (`deploy.py:793`) Same field, opposite handling.
+4. **uuid5 per-install remap** — Solutions only. 5. **Ownership guard `_guard_owner`** — Solutions
+   only. 6. **Scoped full-replace reconcile** `WHERE solution_id==sid` — Solutions only.
+7. **Config table gate** — `_repo` writes Config VALUES (type-aware); Solutions writes ONLY
+   `SolutionConfigSchema`, never values. (`deploy.py:1340-1378`) 8. **Integration gate** — `_repo`
+   updates by natural key + FK cascade; Solutions creates empty SHELLS only, never updates.
+
+`solution_id` is the MARKER of which world a row is in; the BEHAVIOR difference is a bundle of
+reconciliation policies that do not reduce to it. A field decorator cannot express "ignore this
+field and substitute the install's value" or "fail vs auto-create on unknown role."
+
+## 17.3 The synthesis: TWO abstractions, not one (this is the real design)
+The codebase currently has NEITHER abstraction — both axes are reinvented inline in every
+`_resolve_*` / `_upsert_*` (the §7 disease, and the source of #329/#148). The fix is to separate:
+
+- **(A) Annotated contract** (Jack's decorators) — *what each field is*. One per entity. Drives
+  serialization opt-in. → the §11 EntitySerializer mechanism.
+- **(B) Reconciliation policy** — *how to write*: a small per-consumer object with ~5 knobs:
+  `match_strategy` (by_id | natural_key_realign | uuid5_remap), `role_policy` (fail | autocreate),
+  `org_mode` (carry | override_from_scope), `table_gates` (which tables/fields this consumer
+  writes), `guards` (ownership on/off). → the §6.1 EntityWriter, but richer than "identity +
+  resolution params" — it's a policy object. `_repo` and Solutions are TWO instances of this
+  policy over the SAME contract + SAME writer.
+
+Jack's instinct was to fold both into field decorators; the code shows axis 2 cannot live on
+fields. But the conclusion is MORE aligned with "stop reinventing rules," not less: today axis 2
+is implicit + duplicated in N methods; making it an explicit policy object per consumer is exactly
+the centralization. So: adopt the decorators for axis A, add an explicit ReconciliationPolicy for
+axis B, and `_repo`-vs-Solutions becomes "two policy instances," which is the truthful version of
+"differ only by solution_id."
+
+## 17.4 Precedent to build on
+`dto_flags.py` already does registry-based field classification for CLI/MCP parity
+(`DTO_EXCLUDES`, `_ORG_TARGET_EXCLUDE={"organization_id"}`) — same SHAPE as axis A, proving the
+team already excludes-by-policy rather than per-field today. The annotated contract upgrades that
+from hand registries to declared field metadata. No `json_schema_extra`/`Annotated` behavioral
+flags exist yet — this would be new, but `dto_flags` shows the appetite and the test discipline
+(parity tests) to enforce it. The deleted `portable.py` scrub rules (§ history) are the axis-A
+classification done imperatively; the decorators make them declarative.
+
+## 17.5 Roadmap impact
+Sharpens Phase 2/3, no Phase-1 change. Phase 3 (EntitySerializer) = axis A (annotated contract).
+Phase 2 (EntityWriter) = axis B (ReconciliationPolicy), with `_repo` and Solutions as two policy
+instances. #313's per-entity `_resolve_*` migration is the natural place to introduce both,
+one entity at a time. The "differ only by solution_id" framing is replaced by "differ by a
+declared ReconciliationPolicy; solution_id is just the row-world marker."
