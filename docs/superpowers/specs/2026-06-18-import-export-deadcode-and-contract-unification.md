@@ -973,3 +973,61 @@ Phase 2 (EntityWriter) = axis B (ReconciliationPolicy), with `_repo` and Solutio
 instances. #313's per-entity `_resolve_*` migration is the natural place to introduce both,
 one entity at a time. The "differ only by solution_id" framing is replaced by "differ by a
 declared ReconciliationPolicy; solution_id is just the row-world marker."
+
+---
+
+# 18. Codex adversarial design review — VERDICT: pursue-with-changes (2026-06-19)
+
+Ran Codex (independent model) adversarially against §16-§17. It overrode my read on two points;
+I verified every claim it made against the code — all hold. Triaged via receiving-code-review.
+
+## 18.1 Verified-true findings (I confirmed each at file:line)
+- **Workflow is NOT a safe spike target — it's the EASIEST case, rigged to make the design look
+  good.** My methodological error. Even workflow already breaks the 5-knob model:
+  - `field_absence_policy` (6th knob): `_repo` writes `description` only if present (PATCH,
+    `manifest_import.py:1482-1484`); Solutions always writes it, missing CLEARS (FULL-REPLACE,
+    `deploy.py:784-787`). Not covered by match/role/org/table/guard.
+  - relation-reconciliation mode: `_repo` role sync skips when roles empty (no clear,
+    `manifest_import.py:1506-1514`); Solutions full-replaces incl. empty (`deploy.py:802-804`).
+  - `Upsert.match_on` only supports id / name(/natural_key-as-name-alias) (`sync_ops.py:60-64,
+    91-101`) — the workflow `(path,function_name)` realign is HAND-ROLLED
+    (`manifest_import.py:1488-1495`). So the `match_strategy: natural_key_realign` knob assumed a
+    capability that does not exist; composite-key shape + scope aren't expressible as one enum.
+- **Axis A boundary is narrower than "field classes solve serialization."** Beyond config-value:
+  `IntegrationMapping.oauth_token_id` is an env credential POINTER preserved on import when the
+  manifest omits it (`manifest_import.py:2143-2165`); webhook instance state is source-type+
+  consumer dependent (`capture.py:410-419` vs `deploy.py:1599-1614` vs `manifest_generator.py:
+  332-351`); full-backup config/table DATA isn't a field on the entity at all — it lives in
+  `secrets.enc` with collision/replace flags (`export.py:199-213`, `zip_install.py:548-647`).
+  So Axis A handles "what bytes serialize," NOT DB-state-preserving writes / credential pointers /
+  post-deploy data restore.
+- **Axis B "one writer + 5 knobs" is NOT less rules — it relocates them into unnamed hooks:**
+  field-absence mode, relation-replacement mode, graph ref resolver, FK-cascade/cache repair,
+  credential preservation, orphan adoption, collision policy, post-commit side effects, data
+  restore. Once those become `before_write`/`after_realign`/`preserve_existing`/`reattach`/
+  `post_commit` callbacks, it is NOT one writer — it's shared utilities + entity-specific
+  reconcilers in a universal-writer costume.
+
+## 18.2 Revised recommendation (supersedes §17.5 "spike workflow")
+- **Axis A — KEEP**, scoped honestly: it is a *serialization* mechanism (what bytes travel per
+  consumer, with predicate support for config-value-type cases). It does NOT extend to credential
+  pointers or backup DATA — those stay as explicit, separate handling. This is the §11
+  EntitySerializer, bounded.
+- **Axis B — DO NOT spike on workflow; DO NOT commit to "one universal writer" yet.** Spike on
+  **Config + Integration together** (Codex's call, correct): they carry the real pressure
+  (type-dependent secrets + skip-existing, PK realign + FK-cascade cache repair, child-schema
+  natural-key sync, OAuth sentinel, mapping-token preservation, schema linkage, orphan reattach).
+  Success test: can a policy express BOTH without opaque per-entity callbacks? If it needs
+  `before_write`/`after_realign`/`preserve_existing`/`reattach`/`post_commit` escape hatches,
+  then the honest abstraction is **shared utilities + per-entity reconcilers**, NOT a universal
+  writer — and we should say so rather than ship a leaky "one writer."
+- **Net verdict: pursue-with-changes.** The convergence goal (stop reinventing CRUD rules) is
+  still right, but the *form* is likely "shared contract (Axis A) + shared utilities + thin
+  per-entity reconcilers sharing those utilities," NOT "one writer + policy enum." The spike on
+  Config+Integration is what decides between those two forms.
+
+## 18.3 Process note
+I chose workflow because it was self-contained — which Codex correctly identified as choosing the
+case that flatters the design. A second model was worth more here than my own spike: the spike
+would have "succeeded" on workflow and validated a model that leaks on config/integration. Logged
+as a reminder that a spike target must be the HARD case, not the clean one.
