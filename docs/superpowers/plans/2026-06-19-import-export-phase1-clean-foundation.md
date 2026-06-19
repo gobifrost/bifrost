@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the three confirmed write-path bugs' fixes and remove the verified dead manifest-import code, producing the "ultra-clean foundation" before any write-service / serializer centralization.
+**Goal:** Land the three confirmed write-path bugs' fixes, three Solutions-path stability fixes from the §audit, and remove the verified dead manifest-import code, producing the "ultra-clean foundation" before any write-service / serializer centralization.
+
+**Stability fixes added (Tasks 9-11)** from the Solutions stability audit (`docs/superpowers/specs/2026-06-19-solutions-stability-audit.md`): per Jack's triage, only the **Solutions-path reproducible** findings are fixed here (events-wipe critical, EventSubscription PK reuse, table orphan cross-solution reattach). The shared/`_repo`/field-parity findings (auto_fill, agent-delegation order, tool_description/max_run_timeout/event_type/display_name) are DEFERRED to convergence as its acceptance checklist — NOT in this plan.
 
 **This is Phase 1 of a 4-phase roadmap** (spec §12). Phase 1 only prunes + fixes — it builds no new abstraction. The later phases (NOT in this plan) put the *surviving* manifest-based machinery on shared contracts: **Phase 2** = one `EntityWriter.upsert` CRUD contract for the pruned manifest write path (§6.1); **Phase 3** = one `EntitySerializer` per entity with **Tables first** (the UI export/import feature and the Solutions tables service share one core, §11); **Phase 4** = remaining entities + the deferred bucket-B capability decisions (§10.3). The point of Phase 1 is to refactor a *clean, minimal* base so Phases 2-4 aren't disciplining dead code. Tables and Knowledge stay as UI features throughout.
 
@@ -588,9 +590,214 @@ git commit -m "chore: regenerate client types after removing dead manifest-impor
 
 ---
 
+## Task 9: Git-connected Solutions sync stops wiping all event triggers (audit CRITICAL)
+
+`solutions/git_sync.py:read_workspace_bundle` builds the bundle **without** `events=`, so a git-connected solution's deploy reconciles against an empty event set and deletes every EventSource / schedule / webhook for the install on every sync. The zip path passes `events=` and is unaffected. Live-confirmed 1→0 (`docs/superpowers/specs/2026-06-19-solutions-stability-audit.md`). The CLI already exports `_collect_events`.
+
+**Files:**
+- Modify: `api/src/services/solutions/git_sync.py` (`read_workspace_bundle`, the `return SolutionBundle(...)` ~line 131)
+- Test: `api/tests/e2e/platform/test_solution_git_sync_events.py` (create)
+
+**Interfaces:**
+- Consumes: `_collect_events` from `bifrost.commands.solution` (same module `read_workspace_bundle` already imports `_collect_python_files`/`_collect_apps`/`_collect_claims`/`_collect_connection_schemas` from).
+- Produces: `read_workspace_bundle` returns a `SolutionBundle` whose `.events` is populated from `.bifrost/events.yaml`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `api/tests/e2e/platform/test_solution_git_sync_events.py`:
+
+```python
+"""read_workspace_bundle must carry events, or a git-connected sync deletes every
+EventSource/schedule/webhook for the install (audit CRITICAL, live-confirmed 1->0)."""
+import pathlib
+import pytest
+
+from src.services.solutions.git_sync import read_workspace_bundle
+
+
+def test_read_workspace_bundle_carries_events(tmp_path, seeded_solution):
+    bifrost = tmp_path / ".bifrost"
+    bifrost.mkdir()
+    (tmp_path / "bifrost.solution.yaml").write_text(
+        f"slug: {seeded_solution.slug}\nname: T\nversion: 0.1.0\n"
+    )
+    (bifrost / "events.yaml").write_text(
+        "events:\n"
+        "  11111111-1111-1111-1111-111111111111:\n"
+        "    id: 11111111-1111-1111-1111-111111111111\n"
+        "    name: nightly\n"
+        "    source_type: schedule\n"
+        "    is_active: true\n"
+        "    schedule: {cron: '0 0 * * *', timezone: UTC}\n"
+        "    subscriptions: []\n"
+    )
+    bundle = read_workspace_bundle(seeded_solution, tmp_path)
+    assert len(bundle.events) == 1, "events.yaml must populate bundle.events"
+    assert bundle.events[0]["name"] == "nightly"
+```
+
+> `seeded_solution` — reuse the fixture/inline install from `test_solution_deploy_async.py` (read it first). Only its `.slug` is used here.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `./test.sh e2e`
+Expected: FAIL — `bundle.events` is `[]` today (the omission). Check `/tmp/bifrost-<project>/test-results.xml`.
+
+- [ ] **Step 3: Collect events in read_workspace_bundle**
+
+In `api/src/services/solutions/git_sync.py`, in `read_workspace_bundle`, add the import alongside the existing CLI collector imports and pass `events=` in the `SolutionBundle(...)` return:
+
+```python
+    from bifrost.commands.solution import _collect_events
+```
+and in the `return SolutionBundle(...)`, add (next to `connection_schemas=...`):
+```python
+        events=_collect_events(workspace),
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `./test.sh e2e`
+Expected: PASS for `test_read_workspace_bundle_carries_events`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add api/src/services/solutions/git_sync.py api/tests/e2e/platform/test_solution_git_sync_events.py
+git commit -m "fix(solutions): git-connected sync carries events — stop wiping all triggers on every sync"
+```
+
+---
+
+## Task 10: Remap EventSubscription own-id per install (audit HIGH — 2nd-install 500)
+
+`_remapped_bundle` remaps the EventSource's own id (pass 1) and the subscription's `workflow_id`/`agent_id` refs (pass 2), but **never remaps the subscription's own `id`**. So `_upsert_events` inserts it verbatim (`deploy.py:1623`), and installing the same bundle into a second install raises a duplicate-PK 500. Fix belongs in pass 2 of `_remapped_bundle` (keep all remapping in one place), using `solution_entity_id` directly — the subscription id is an own-id, not an in-bundle cross-ref, so `_remap_ref` doesn't apply.
+
+**Files:**
+- Modify: `api/src/services/solutions/deploy.py` (`_remapped_bundle` pass-2 event loop, ~line 569-577)
+- Test: `api/tests/e2e/platform/test_solution_event_sub_remap.py` (create)
+
+**Interfaces:**
+- Consumes: `solution_entity_id(install_id, manifest_id)` (already defined `deploy.py:100`), `sid` (in scope in `_remapped_bundle`).
+- Produces: after `_remapped_bundle`, each subscription's `id` is `solution_entity_id(sid, original_id)`; two installs of the same bundle get distinct subscription PKs.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `api/tests/e2e/platform/test_solution_event_sub_remap.py`:
+
+```python
+"""The same bundle (with an event subscription) must install into two installs
+without a duplicate-PK collision — the subscription's own id must be remapped
+per install (audit HIGH)."""
+import uuid
+import pytest
+
+from src.services.solutions.deploy import SolutionDeployer, SolutionBundle, solution_entity_id
+
+
+@pytest.mark.asyncio
+async def test_event_subscription_id_remapped_per_install(db_session, two_seeded_solutions):
+    sol_a, sol_b = two_seeded_solutions
+    sub_id = "33333333-3333-3333-3333-333333333333"
+    src_id = "22222222-2222-2222-2222-222222222222"
+    def bundle(sol):
+        return SolutionBundle(
+            solution=sol, version="0.1.0",
+            events=[{
+                "id": src_id, "name": "nightly", "source_type": "schedule", "is_active": True,
+                "schedule": {"cron": "0 0 * * *", "timezone": "UTC"},
+                "subscriptions": [{"id": sub_id, "target_type": "workflow", "is_active": True}],
+            }],
+        )
+    await SolutionDeployer(db_session).deploy(bundle(sol_a), force=True)
+    # Must NOT raise a duplicate-PK IntegrityError:
+    await SolutionDeployer(db_session).deploy(bundle(sol_b), force=True)
+    # And the two installs hold DISTINCT subscription ids:
+    assert solution_entity_id(sol_a.id, uuid.UUID(sub_id)) != solution_entity_id(sol_b.id, uuid.UUID(sub_id))
+```
+
+> `two_seeded_solutions` — two installs in different orgs; build inline mirroring the single-install fixture in `test_solution_deploy_async.py`. If a same-session second deploy needs a commit/rollback boundary, follow that file's pattern.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `./test.sh e2e`
+Expected: FAIL — the second `deploy` raises a duplicate-key `IntegrityError` on `event_subscriptions_pkey`.
+
+- [ ] **Step 3: Remap the subscription own-id in pass 2**
+
+In `api/src/services/solutions/deploy.py`, in `_remapped_bundle`, inside the pass-2 event loop (where `msub` `workflow_id`/`agent_id` are remapped), add remapping of the subscription's own id. After the `for fld in ("workflow_id", "agent_id"):` block, within the same `for msub in ...` loop:
+
+```python
+                if msub.get("id") is not None:
+                    msub["id"] = str(solution_entity_id(sid, UUID(str(msub["id"]))))
+```
+
+(`solution_entity_id` and `sid` are already in scope; `UUID` is imported.)
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `./test.sh e2e`
+Expected: PASS — both installs succeed, distinct subscription ids.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add api/src/services/solutions/deploy.py api/tests/e2e/platform/test_solution_event_sub_remap.py
+git commit -m "fix(solutions): remap EventSubscription own-id per install — no duplicate-PK on 2nd install"
+```
+
+---
+
+## Task 11: Table orphan adoption cross-solution bleed — NEEDS A DESIGN DECISION (do not blind-fix)
+
+> **HOLD — this one is NOT a clean reproducible-fix.** Verifying the ORM during planning revealed
+> the obvious fix would break the feature's intended behavior. Flagged for a decision before any
+> code; left in the plan so it isn't lost, but **do not implement Steps blindly.**
+
+**The defect (real):** `_upsert_tables` orphan adoption (`deploy.py:894-905`) matches an orphaned
+table on `(origin_solution_slug==slug, name==name, org)`. Slug is author-controlled and unique
+only per (slug, org) install — so an unrelated solution sharing a slug+table-name in an org adopts
+the previous solution's table rows AND documents (data bleed). Audit HIGH.
+
+**Why it's not a one-liner (the trap):** `tables.py:61-62` states `origin_solution_id` is
+*"informational (NOT a FK — the Solution row is gone); origin_solution_slug is the stable reattach
+key."* The design INTENT is slug-keying, precisely because a reinstall of "the same solution" gets
+a **new** `solution.id` (the old Solution row was deleted). So matching adoption on
+`origin_solution_id == solution.id` would **never reattach even the legitimate same-solution
+reinstall** — it would silently break orphan recovery, which is the feature's whole point. The
+verified facts: `origin_solution_id` exists and is stamped (`solutions.py:778,834`), but is
+explicitly NOT meant as the match key.
+
+**The actual question (Jack's call before coding):** slug is doing double duty as both "portable
+definition identity" and "the reattach key," and those conflict the moment two solutions share a
+slug. Options:
+- (a) **Make slug a trusted, unique solution-definition identity** — enforce global slug
+  uniqueness (or per-org), so slug-keyed reattach is safe by construction. Changes install
+  validation; affects community bundles.
+- (b) **Add a stable definition-id that survives reinstall** (distinct from the per-install
+  `solution.id`), stamp it on orphan + match on it. New column + capture/deploy plumbing.
+- (c) **Require the reinstalling solution to explicitly claim the orphan** (opt-in adoption),
+  rather than silent slug-match. Safest against bleed, changes UX.
+
+This is a Phase-1.5 / convergence-adjacent decision, not a clean-foundation one-liner. **Defer
+until decided.** When decided, the test below (cross-solution must NOT adopt) plus a sibling
+(same-definition reinstall MUST adopt) are the acceptance pair — but the fix body depends entirely
+on which option above is chosen, so it is intentionally NOT written here.
+
+```python
+# Acceptance test SHAPE (write once the design is chosen):
+# - unrelated solution B (same slug, same table name, same org) deploys -> B's table has 0 of A's documents
+# - the SAME solution definition reinstalled -> DOES re-adopt its own orphan + documents
+# (db_session, two solutions, soft-delete-to-orphan mirroring routers/solutions.py:771-781)
+```
+
+---
+
 ## Self-Review notes
 
 - **Spec coverage:** Tasks 1-2 = §8 Bug B (blank-name silent swallow + lying count). Tasks 3-5 = §8 Bug C / §4.1 (tool_description end-to-end). Tasks 6-7 = §9 dead-code removal manifest (endpoint + function + 2 helpers + their tests). Task 8 = generated-types hygiene. Bug A in §4.2 ("name behaves differently") is the same root cause as Bug B and is resolved by Task 1's validation (the indexer now matches the REST `min_length` contract).
+- **Stability audit (Tasks 9-11):** Task 9 = audit CRITICAL (git-sync events wipe, live-confirmed, 1-line). Task 10 = audit HIGH (EventSubscription PK reuse, 2nd-install 500). Task 11 = audit HIGH (table orphan cross-solution bleed) — **ON HOLD pending a design decision** (the obvious fix breaks legitimate same-solution reattach by design; slug is intentionally the reattach key). Execute Tasks 9-10; do NOT implement Task 11 until the slug-identity question is decided.
+- **Deferred to convergence (NOT in this plan):** the shared/`_repo`/field-parity audit findings (`auto_fill` drop via shared FormIndexer, agent-delegation order via shared single-pass, `tool_description`/`max_run_timeout`/`event_type`/`display_name` parity). These become the convergence acceptance checklist (spec §18.2 + audit triage).
 - **Out of scope (later phases, intentionally):** `EntityWriter` (§6.1), `EntitySerializer` (§11), the bucket-B capability decisions (§10.3), `/api/export-import` consolidation. Phase 1 is the clean foundation only.
 - **Preservation guard:** Tasks 6-7 each include an explicit grep step proving no live caller before deletion and an explicit grep proving the shared `ManifestResolver`/`_diff_and_collect`/content-helpers survive. This is the "extract the dead wrapper, keep the shared core" requirement from §9.2.
 - **Test-filter caveat:** e2e cannot be filtered to one path (`./test.sh e2e` runs the suite); read `/tmp/bifrost/test-results.xml` for individual results. Unit tests CAN be filtered by `::test_name`.

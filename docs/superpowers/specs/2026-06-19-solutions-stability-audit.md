@@ -91,3 +91,15 @@ Verified each finding's WRITE PATH to decide fix-now vs defer:
 Every DEFER item is a field/relation the converged contract+writer must carry — so they become the
 convergence test suite, not lost work. Every FIX-NOW item is a Solutions-path reproducible that
 shouldn't wait. This is exactly Jack's split.
+
+---
+
+## Triage correction (2026-06-19, post-ORM-verification)
+While planning the fix, the Table ORM revealed the orphan-adoption finding is NOT a clean
+fix-now: `tables.py:61-62` states `origin_solution_id` is informational and `origin_solution_slug`
+is the INTENDED reattach key — because a reinstalled solution gets a NEW solution.id (old row
+deleted). So matching adoption on solution.id would break the legitimate same-solution-reinstall
+reattach. The cross-solution bleed is real, but the fix requires a design decision (make slug a
+trusted unique identity / add a stable definition-id / opt-in adoption). MOVED from "fix now" to a
+HOLD item (Phase-1 plan Task 11, not executed pending decision). Net fix-now Solutions-path list:
+**Task 9 (events wipe, CRITICAL) + Task 10 (EventSub PK, HIGH)** — both clean one-spot fixes.
