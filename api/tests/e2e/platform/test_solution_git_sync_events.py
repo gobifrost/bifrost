@@ -1,26 +1,22 @@
 """read_workspace_bundle must carry events, or a git-connected sync deletes every
 EventSource/schedule/webhook for the install (audit CRITICAL, live-confirmed 1->0)."""
-import pathlib
-import types
 import uuid
 
 import pytest
 
+from src.models.orm.solutions import Solution
 from src.services.solutions.git_sync import read_workspace_bundle
 
 
 pytestmark = pytest.mark.e2e
 
 
-def _make_fake_solution(slug: str) -> object:
-    """Return a minimal Solution-like object with only the .slug attribute needed."""
-    sol = types.SimpleNamespace(
-        id=uuid.uuid4(),
+def _make_fake_solution(slug: str) -> Solution:
+    """Return a minimal (unpersisted) Solution ORM object with only fields needed by read_workspace_bundle."""
+    return Solution(
         slug=slug,
         name="Events Test Solution",
-        organization_id=None,
     )
-    return sol
 
 
 def test_read_workspace_bundle_carries_events(tmp_path):
