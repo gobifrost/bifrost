@@ -786,6 +786,7 @@ class SolutionDeployer:
                 # Full-replace deploy-owned metadata so a redeploy that changes
                 # (or clears) these is reflected, not left stale (criteria 10/14).
                 "description": mwf.get("description"),
+                "tool_description": mwf.get("tool_description"),
                 "endpoint_enabled": mwf.get("endpoint_enabled", False),
                 "public_endpoint": mwf.get("public_endpoint", False),
                 "timeout_seconds": mwf.get("timeout_seconds", 1800),

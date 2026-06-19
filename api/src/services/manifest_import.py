@@ -1482,6 +1482,8 @@ class ManifestResolver:
         # Only include description if manifest explicitly provides it
         if mwf.description is not None:
             wf_values["description"] = mwf.description
+        if mwf.tool_description is not None:
+            wf_values["tool_description"] = mwf.tool_description
 
         ops: list[SyncOp] = []
 
