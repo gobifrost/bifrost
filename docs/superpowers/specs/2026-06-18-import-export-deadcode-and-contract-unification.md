@@ -833,3 +833,63 @@ write-centralization land together.
 No Phase-1 change. The roadmap is now anchored to an existing accepted issue: manifest stays,
 Solutions is the subset, and #313's per-entity `_resolve_*` migration IS the incremental path to
 the §6.1 single writer. Do not deprecate `_repo` manifest sync; converge it.
+
+---
+
+# 16. CORRECTION: Solutions is NOT a "subset" of manifest — identity semantics differ (2026-06-19)
+
+Pushback from Jack: "Solutions aren't meant to carry identifying information, where the old
+system was." This is correct and it BREAKS the clean "Solutions is a subset of manifest" framing
+I'd been agreeing to. Verified:
+
+## 16.1 The verified semantic difference (not a subset — a different contract)
+- **Manifest CARRIES identity per entity:** `ManifestWorkflow/Form/Agent/App` each have
+  `organization_id`, `roles` (UUIDs), `role_names` (`manifest.py:88-90,120-122,152-154,188-190`).
+  A manifest entity *asserts* "I belong to org X, roles A/B." It is a whole-environment MIRROR.
+- **Solutions SCRUBS identity and re-derives at install:** capture resolves roles to NAMES for
+  "portable, cross-env install" (`capture.py:933`), strips secrets/state; at deploy
+  `organization_id` is INHERITED FROM THE INSTALL, not read from the entity (`deploy.py:15-16`
+  "no per-entity binding", `:793,955,997`). A Solutions entity is identity-AGNOSTIC; the
+  installer supplies scope and resolves roles by name.
+
+So it is NOT subset (= "same data, fewer fields/types"). It is **two formats over a shared
+entity-CONTENT core that DISAGREE on the identity layer**: manifest binds org/roles (identity
+travels); Solutions deliberately does not (identity is supplied at install). The content
+(prompts, schemas, field defs, tool bindings) is shared; the identity/scope layer is where they
+legitimately and permanently diverge.
+
+## 16.2 Practicals of "keep both" (what this actually forces)
+1. **The shared unit is CONTENT, not the whole entity.** The §6.1 `EntityWriter` must take
+   `identity` as a PARAMETER — manifest passes the carried org/roles; Solutions passes
+   install-scope + name-resolution. This is not an implementation nicety; it is FORCED by the
+   semantic split. The `identity` parameter is the exact seam between "carries identity" and
+   "supplies identity." (This validates §6.1's shape for a deeper reason than first stated.)
+2. **The bug-prone identity-resolution code is manifest-only.** Both real user bugs (#329
+   config_schema_id-not-linked, #148 UUID-rewrite-by-name vs FK CASCADE) live in the manifest
+   `_resolve_*` cross-env identity machinery — the part Solutions SIDESTEPS by re-deriving
+   identity at install. "Keep both" = keep this gnarly identity-resolution alive on the manifest
+   side. Convergence must preserve it (manifest needs by-name realign + org binding) while
+   Solutions keeps NOT needing it. The shared writer handles this via the `resolution` +
+   `identity` params; it does not erase the difference.
+3. **"Subset" is a TRAP to avoid in the language.** If we call Solutions "a subset," someone will
+   later add org_id/roles to it "for completeness" and reintroduce the identity LEAK the portable
+   format exists to prevent (this is the CLAUDE.md "portability design" rule — env-specific fields
+   must NOT enter portable serialization). Frame it as **"different contracts, shared content
+   core,"** not subset.
+
+## 16.3 Does "keep both" still hold? (honest answer)
+Yes — but for a sharper reason than "Solutions is smaller." Keep both because they answer
+DIFFERENT questions: manifest = "mirror this whole environment, identity and all" (git-sync,
+cross-env replication, the #313 surface); Solutions = "package this content so ANY environment
+can install it under its own identity." Neither subsumes the other. The convergence (§6.1) shares
+the CONTENT write/serialize core and parameterizes identity — it does NOT merge the two formats
+into one. #329/#148 are the evidence that the manifest identity-layer is both real and
+bug-prone, i.e. worth putting on a disciplined shared writer, not worth deleting.
+
+## 16.4 Open practical to discuss (NOT yet decided)
+If both formats persist long-term, do we want the manifest's identity-bearing format to remain a
+USER-FACING surface (git round-trip of a whole env), or eventually become an INTERNAL mirror only,
+with Solutions the sole user-facing portable format + a separate identity-aware backup? That is a
+product call, not a code call — flagged here, deferred. It interacts with the §10.3 bucket-B and
+§11 "don't maintain two backup tools" decisions and should be decided together, against the shared
+content core, in Phase 4.
