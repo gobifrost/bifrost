@@ -96,6 +96,10 @@ class ManifestWorkflow(BaseModel):
     timeout_seconds: int = Field(default=1800, description="Max execution time in seconds. 0 = no timeout. Default 1800 (30 min), max 86400 (24h).")
     public_endpoint: bool = Field(default=False, description="Allow unauthenticated API access")
     description: str | None = Field(default=None, description="Workflow description")
+    tool_description: str | None = Field(
+        default=None,
+        description="LLM/agent-facing tool description (portable). API/UI-set, not derived from source.",
+    )
     category: str = Field(default="General", description="Category for organization")
     tags: list[str] = Field(default_factory=list, description="Tags for filtering")
 

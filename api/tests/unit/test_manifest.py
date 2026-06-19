@@ -2371,3 +2371,18 @@ def test_app_model_round_trips_through_manifest():
     assert m.app_model == "standalone_v2"
     # default when omitted
     assert ManifestApp(id="a2", path="apps/y").app_model == "inline_v1"
+
+
+def test_manifest_workflow_carries_tool_description():
+    from bifrost.manifest import ManifestWorkflow
+
+    wf = ManifestWorkflow(
+        id="33333333-3333-3333-3333-333333333333",
+        path="functions/x.py",
+        function_name="x",
+        tool_description="curated tool blurb",
+    )
+    assert wf.tool_description == "curated tool blurb"
+    # Default is None when omitted
+    wf2 = ManifestWorkflow(id="44444444-4444-4444-4444-444444444444", path="p.py", function_name="f")
+    assert wf2.tool_description is None
