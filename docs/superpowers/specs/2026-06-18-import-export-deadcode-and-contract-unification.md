@@ -698,3 +698,54 @@ is the whole point of sequencing them last.
 **What stays, all phases:** git-sync as a whole-environment mirror (it legitimately needs the
 manifest for org/role/MCP that don't belong in portable packages); Tables + Knowledge as UI
 features; Solutions' install-time remap/ownership/scope guards (they wrap the shared cores).
+
+---
+
+# 13. Dry-run / sync==deploy convergence (Jack, 2026-06-19)
+
+Jack: "there should be a dry-run validation step for sync, which should basically be the same
+thing as deploy other than getting info from GitHub instead of local." Investigation result:
+**this is already architecturally true for Solutions, and the only missing piece is the dry-run
+flag.** Two distinct "syncs" must not be conflated:
+
+## 13.1 The two syncs
+- **Solutions git-sync** (`solutions/git_sync.py:166-305`) ALREADY IS "deploy from GitHub":
+  `_run_sync_once` clones the repo → `read_workspace_bundle()` → `SolutionDeployer.deploy(bundle,
+  force=True)` (`git_sync.py:194,288`). Same validate-then-apply pipeline as a local deploy; the
+  source is a GitHub clone instead of an uploaded zip. So for Solutions, Jack's model is the
+  status quo — it just lacks a dry-run.
+- **Global git-sync** (`github_sync.py` + `ManifestResolver`/`_resolve_*`) is the orthogonal
+  whole-`_repo` mirror. This is where the divergent CRUD mechanisms (§7) and the silent
+  blank-name drop live. It does NOT go through `SolutionDeployer`.
+
+## 13.2 Deploy already separates validate from commit (the dry-run foundation exists)
+`deploy()` (`deploy.py:309-484`) runs a PRE-COMMIT validation phase that fails with ZERO side
+effects — module-closure gate (`:335`), downgrade gate (`:347`), id remap (`:363`),
+workflow-name preflight (`:369`), ownership guards (`_guard_owner`), policy/schema validation,
+and app-compile-in-memory (`:435`) — BEFORE the caller commits. `finalize_s3` is the only
+post-commit work. `/install/preview` (`routers/solutions.py:1308`, `zip_install.preview_zip`)
+proves a no-write preview path works, though today it's PARSE-ONLY (it does not run deploy's
+validations).
+
+## 13.3 The convergence move (Phase 2/3 sized — NOT Phase 1)
+Extract deploy's pre-commit checks into a reusable `validate_bundle()`; add `validate_only` so
+`deploy(bundle, validate_only=True)` runs every validation and returns without mutating. Then:
+- `POST /solutions/{id}/deploy?validate_only=true` → real dry-run (not the parse-only preview).
+- Solutions git-sync gets dry-run for free (it already calls `deploy`).
+- The blank-name agent (and every other invalid-input case) is caught by the SAME validation on
+  both the deploy and the sync path — which is exactly Jack's "same thing, different source"
+  goal, and removes the need to hand-wire per-path blank-name error handling.
+
+Honest scoping (per audit): this is **Phase 2/3**, not Phase 1, because it reshapes `deploy()` —
+the single proven writer — needs new test coverage for the `validate_only` branch, and carries a
+real design choice: does dry-run run the expensive app-compile (catches build errors, slow) or
+skip it (fast, misses them)? Recommend: dry-run runs everything EXCEPT app-compile by default,
+with an opt-in `?build=true`. Decide when Phase 2 lands.
+
+## 13.4 Impact on Phase 1 (the open blank-name question)
+Because the real convergence is Phase 2, Phase 1 still needs the blank-name agent to fail loudly
+NOW — but framed as "validation the future `validate_bundle()` will absorb," not a one-off. Phase
+1: indexer raises on blank name (matches the REST contract); deploy already surfaces it as 409;
+global git-sync's handling is the one behavioral call (fail the sync vs collect-and-report) —
+still open, see §6.2 / the open questions. The Phase-1 fix is forward-compatible with the
+`validate_bundle()` extraction either way.
