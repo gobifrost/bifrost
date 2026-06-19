@@ -67,17 +67,19 @@ class FieldClass(str, Enum):
     REFERENCE   = "reference"    # FK to another entity by id/name — round-trips, REMAPPED per install
                                  # on Solution deploy (deploy.py:495/557).
 
-def classify(field_class, *, match_key=False, when=None, keep_on_portable=False) -> dict:
+def classify(field_class, *, match_key=False, predicate=None, keep_on_portable=False) -> dict:
     # match_key: this field is (part of) the natural key used to re-pair entities on a path that
     #            regenerates ids (Solution install). One-or-more fields. See §3.
-    # when:      conditional class — receives the row, returns a FieldClass (e.g. Config.value is
-    #            SECRET when config_type=='secret', else CONTENT).
+    # predicate: a STRING key into a PREDICATES registry resolving a conditional class (e.g.
+    #            Config.value is SECRET when config_type=='secret', else CONTENT). MUST be a string,
+    #            NOT a callable — a callable in json_schema_extra raises PydanticSerializationError on
+    #            schema generation (Codex round-2-verified). The registry lives in field_classes.py.
     # keep_on_portable: an ENVIRONMENT field nonetheless kept on shareable export because it is the
     #            portable shadow of a scrubbed field (role_names carries roles across the scrub).
     extra = {"bifrost_field_class": field_class.value}
     if match_key:        extra["bifrost_match_key"] = True
     if keep_on_portable: extra["bifrost_keep_on_portable"] = True
-    if when is not None: extra["bifrost_class_predicate"] = when
+    if predicate is not None: extra["bifrost_class_predicate"] = predicate  # a STRING, schema-safe
     return {"json_schema_extra": extra}
 ```
 
@@ -186,10 +188,10 @@ The field-class stickers label the **manifest** envelope only. These are separat
 
 **ManifestOrganization:** id=identity · name=content **MK** · is_active=environment ⚠️(state)
 **ManifestRole:** id=identity · name=content **MK**
-**ManifestWorkflow:** id=identity · name=content · path=content **MK** · function_name=content **MK** · type=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · endpoint_enabled=content ⚠️ · timeout_seconds=content · public_endpoint=content · description=content · tool_description=content · category=content · tags=content
-**ManifestForm:** id=identity *(matcher: remap, no MK)* · name=content · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · description=content · workflow_id=reference · launch_workflow_id=reference · default_launch_params=content · allowed_query_params=content · form_schema=content
-**ManifestAgent:** id=identity *(remap, no MK)* · name=content · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · description=content · system_prompt=content · channels=content · tool_ids=reference · delegated_agent_ids=reference · knowledge_sources=content · system_tools=content · mcp_connection_ids=reference · llm_model=content · llm_max_tokens=content · max_iterations=content · max_token_budget=content
-**ManifestApp:** id=identity · path=content · slug=content **MK** · name=content · description=content · dependencies=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · app_model=content · logo=content
+**ManifestWorkflow:** id=identity · name=content · path=content **MK** · function_name=content **MK** · type=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=content (deploy preserves it — Codex-verified deploy.py:801/1323; NOT environment) · endpoint_enabled=content ⚠️ · timeout_seconds=content · public_endpoint=content · description=content · tool_description=content · category=content · tags=content
+**ManifestForm:** id=identity *(matcher: remap, no MK)* · name=content · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=content (deploy preserves it — Codex-verified deploy.py:801/1323; NOT environment) · description=content · workflow_id=reference · launch_workflow_id=reference · default_launch_params=content · allowed_query_params=content · form_schema=content
+**ManifestAgent:** id=identity *(remap, no MK)* · name=content · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=content (deploy preserves it — Codex-verified deploy.py:801/1323; NOT environment) · description=content · system_prompt=content · channels=content · tool_ids=reference · delegated_agent_ids=reference · knowledge_sources=content · system_tools=content · mcp_connection_ids=reference · llm_model=content · llm_max_tokens=content · max_iterations=content · max_token_budget=content
+**ManifestApp:** id=identity · path=content · slug=content **MK** · name=content · description=content · dependencies=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=content (deploy preserves it — Codex-verified deploy.py:801/1323; NOT environment) · app_model=content · logo=content
 **ManifestIntegrationConfigSchema:** key=content **MK**(within integration) · type=content · required=content · description=content · options=content · position=content
 **ManifestOAuthProvider:** provider_name=content **MK** · display_name=content · oauth_flow_type=content · client_id=reference ⚠️ · authorization_url=content · token_url=content · token_url_defaults=content · scopes=content · redirect_uri=content
 **ManifestIntegrationMapping:** organization_id=environment · entity_id=reference · entity_name=content · oauth_token_id=⚠️(reference vs secret — see §7.3)
