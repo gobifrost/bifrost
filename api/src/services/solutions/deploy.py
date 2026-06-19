@@ -577,6 +577,8 @@ class SolutionDeployer:
                 for fld in ("workflow_id", "agent_id"):
                     if msub.get(fld) is not None:
                         msub[fld] = _remap_ref(msub[fld], id_map)
+                if msub.get("id") is not None:
+                    msub["id"] = str(solution_entity_id(sid, UUID(str(msub["id"]))))
 
         return SolutionBundle(
             solution=bundle.solution,
