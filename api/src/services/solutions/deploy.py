@@ -474,6 +474,8 @@ class SolutionDeployer:
             apps_deleted=app_deleted,
             forms_upserted=len(rb.forms),
             forms_deleted=form_deleted,
+            # Accurate because _upsert_agents aborts the deploy (SolutionDeployConflict)
+            # if any agent fails to index — a partial success is impossible here.
             agents_upserted=len(rb.agents),
             agents_deleted=agent_deleted,
             claims_upserted=len(rb.claims),
@@ -1297,7 +1299,12 @@ class SolutionDeployer:
             await self._guard_owner(Agent, agent_id, sid)
             ma = ManifestAgent.model_validate({**magent, "id": str(agent_id)})
             content = _agent_content_from_manifest(ma)
-            await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+            try:
+                await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+            except ValueError as exc:
+                raise SolutionDeployConflict(
+                    f"agent {agent_id}: {exc}"
+                ) from exc
             # access_level is deploy-owned (manifest-declared); apply it here —
             # the indexer preserves it and the entity is read-only outside deploy
             # (Codex #14). org/solution scope is stamped alongside.
