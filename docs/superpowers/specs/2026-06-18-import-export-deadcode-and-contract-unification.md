@@ -601,3 +601,54 @@ sanitization.
 Consolidation can't be "just delete the old format" until we resolve, per gap in bucket B:
 absorb into Solutions, OR keep a narrow backup tool, OR accept the capability loss. These are
 product decisions, captured in §10.3 once answered. Bucket A drops cleanly with the old format.
+
+---
+
+# 11. Refinement (Jack, 2026-06-19): shared export/import CORE, not "delete export-import"
+
+Jack's correction to §10: the **UI-supported** import/export features (Solutions' and Tables')
+are real user features, a different category from the dead backend plumbing in §9 — they are
+NOT deletion targets. The actual goal is **don't maintain two backup tools**: where Solutions
+and the standalone per-entity export/import *overlap*, they must share ONE underlying structure,
+so that when Solutions gains a capability (knowledge, etc.) there's a common core to extend, not
+a third parallel copy.
+
+## 11.1 The duplication, concretely (Tables — Jack's example)
+
+Tables is exported/imported in **two independent implementations today**:
+- `/api/export-import`: `_build_tables_export` → `TableExportItem` + `DocumentExportItem` (rows),
+  with its own import-side org-rebind + decode (`export_import.py:449,595`).
+- Solutions `capture.py`: `_table_entries` (schema + `policies`, `:455-465`) + `_table_data`
+  (rows via `include_data`, `:363`) → solution bundle structure + `secrets.enc`.
+
+Two field mappings, two row-data formats, two decoders, for the SAME entity. The §7 audit
+already found these share only `src.core.security` primitives. Adding knowledge/configs later
+under today's pattern would mean a THIRD copy each.
+
+## 11.2 Principle: one entity serialize/deserialize core; envelopes stay distinct
+
+Mirror of the write-side decision (§6.1). For each entity, ONE
+`EntitySerializer.{to_portable, from_portable}` owns: field set, secret handling, row-data
+handling, org/identity rebind on import. Both consumers call it:
+- **Solutions** packaging (capture→bundle, deploy/install→DB) wraps it in the solution zip +
+  `secrets.enc` envelope + per-install remap/guards.
+- **Standalone UI backup** (`/api/export-import`, the Tables/Config/etc. buttons) wraps it in the
+  operator JSON/ZIP envelope.
+
+What stays distinct (correctly): the **envelope** (solution zip vs operator JSON/ZIP), the
+**trigger** (solution capture vs a per-entity UI button), and Solutions' install-time
+remap/ownership/scope. What gets shared: the per-entity *structure* underneath. Result — a Tables
+change is made once; Solutions gaining knowledge = add one serializer both paths use; no second
+backup tool to maintain.
+
+This pairs with §6.1: **writes** centralize on one `EntityWriter`; **export/import**
+centralizes on one `EntitySerializer`. Same "everyone calls the same stuff" principle, both
+directions. (The `from_portable` import path is the natural producer of the validated
+`content_dto` that `EntityWriter.upsert` consumes — the two cores meet there.)
+
+## 11.3 Status of the §10.3 product decisions
+DEFERRED, not decided — Jack dismissed the four questions in favor of the §11 framing. Knowledge
+absorption, config-values/table-data backup story, and bucket-A drop are still open and will be
+revisited once the shared-core structure exists (which is the point: decide capability scope
+against a common structure, not against two divergent ones). The Phase-1 sequencing question is
+also still open and gates plan-writing.
