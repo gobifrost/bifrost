@@ -2,6 +2,95 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+---
+
+## 0. FRESH-SESSION ONBOARDING (read this first — this plan is self-contained)
+
+This plan was produced by a long investigation in a prior session. **You do not need that
+session's context.** Everything required is here or in the two companion docs. Read this section,
+then execute Tasks 1–10. (Task 11 is a deliberate HOLD — see below.)
+
+### Environment / where to work
+- **Worktree (work HERE):** `/home/jack/GitHub/bifrost/.claude/worktrees/solutions-deadcode-audit`,
+  branch `worktree-solutions-deadcode-audit`, based on `origin/main` @ `9a76c95c` (Solutions
+  PR #347 already merged). Do NOT work in the primary checkout.
+- **Companion docs (committed in this worktree):**
+  - Spec / full reasoning: `docs/superpowers/specs/2026-06-18-import-export-deadcode-and-contract-unification.md` (§1–§18)
+  - Stability audit + verdict: `docs/superpowers/specs/2026-06-19-solutions-stability-audit.md`
+- **Dev stack** (for live repro, optional): `./debug.sh up` / `./debug.sh status`. A scratch CLI
+  venv may exist at `/tmp/bifrost-cli-deadcode`; if not, follow CLAUDE.md "Spinning up the dev
+  environment". Note: stack defaults to **netbird mode** where browser automation hangs — drive
+  via CLI/API or the in-`api`-container `python -c` pattern (see §8 live-repro in the spec).
+- **Tests:** ALWAYS `./test.sh` (Dockerised). Unit filterable by `::test_name`; **e2e is NOT
+  filterable** (`./test.sh e2e` runs the whole suite) — read results from
+  `/tmp/bifrost-<project>/test-results.xml`.
+
+### What this is and why (one paragraph)
+Bifrost has multiple write paths that turn portable entity declarations into DB rows for the same
+entities (REST routers, the manifest/git-sync `_resolve_*` path, Solutions deploy `_upsert_*`, and
+MCP tools). They have **drifted** — each re-decides field mapping and create-vs-update rules — so
+fields the REST contract carries get silently dropped on other paths. Two such bugs were
+**reproduced live** (tool_description dropped end-to-end; blank-name agent silently swallowed +
+false "success" count). A 31-agent stability audit of Solutions found one **CRITICAL** (git-sync
+wipes all event triggers — live-confirmed) and a cluster of highs. **Phase 1 (this plan)** fixes
+the reproducible bugs and removes verified-dead code to leave a clean base. **Convergence
+(Phases 2–4, NOT here)** then puts the surviving paths on one shared contract — see §Handoff below.
+
+### Task map (what each task is, and which are blocked on what)
+- **Tasks 1–2** — Bug B: AgentIndexer rejects blank name (was silent no-op) + deploy surfaces it
+  as 409 / count reflects reality. (Task 1 is the shared-indexer fix; it also hardens git-sync.)
+- **Tasks 3–5** — Bug C: `tool_description` round-trips (manifest model → export → import+deploy).
+- **Tasks 6–7** — Dead-code removal: the orphaned `POST /api/files/manifest/import` endpoint +
+  request/response models (Task 6) and the now-unreachable `import_manifest_from_repo` + 2 private
+  helpers + their two helper-only tests (Task 7). **Each has a pre-delete grep gate** proving no
+  live caller AND proving the shared `ManifestResolver`/`_diff_and_collect`/content-helpers
+  survive — do not skip those.
+- **Task 8** — Regenerate `client/src/lib/v1.d.ts` + full verification sweep.
+- **Task 9** — audit CRITICAL: git-connected Solutions sync carries events (1-line; live-confirmed
+  1→0 today).
+- **Task 10** — audit HIGH: remap EventSubscription own-id per install (else 2nd-install 500).
+- **Task 11** — audit HIGH: table orphan cross-solution data bleed. **ON HOLD — DO NOT IMPLEMENT.**
+  The obvious fix breaks legitimate same-solution reattach by design (slug is the intended reattach
+  key because reinstall gets a new `solution.id`). It needs a product decision first. Leave it; it
+  is documented in-task so the decision isn't lost.
+
+**Execution order:** 1 → 2 → 3 → 4 → 5 → 9 → 10 (the fixes; verify e2e green), then 6 → 7 → 8 (the
+removals; they change the OpenAPI schema so types regen comes last). Commit per task (each task
+ends with a commit step). Run the full verification sweep (Task 8 Step 4) before declaring done.
+
+### Definition of done for Phase 1
+Tasks 1–10 implemented, every task's tests green via `./test.sh all` + `./test.sh client unit`,
+`pyright` + `ruff check .` + `npm run tsc` + `npm run lint` all clean, `client/src/lib/v1.d.ts`
+regenerated. Then update this plan's checkboxes and proceed to the §Handoff.
+
+### → HANDOFF TO CONVERGENCE (do this AFTER Phase 1 is green; it's the next focus)
+Convergence is the real prize and is fully designed in the spec — read these sections in order:
+- **§6.1** — the decision: ONE write-core per entity, identity + resolution as parameters.
+- **§16–§17** — the SHARPENED design: **two orthogonal axes** — (A) an *annotated contract*
+  (fields tagged content/identifying/backup/secret/match-key; consumers opt into field-classes)
+  and (B) a *ReconciliationPolicy* object (match_strategy / role_policy / org_mode / table_gates /
+  guards). `_repo` and Solutions become two policy instances over one contract. Note §17's caveat:
+  "secret" needs a predicate (config value), not a static flag.
+- **§18** — Codex's adversarial review (verified): "one writer + 5 knobs" is NOT fewer rules; it
+  relocates them into hooks. **VERDICT: pursue-with-changes.** The likely true shape is "shared
+  contract + shared utilities + thin per-entity reconcilers," NOT a universal writer. **The spike
+  that decides this must be Config + Integration (the HARD cases), NOT workflow** (workflow is the
+  easy case that flatters the design — see §18.1).
+- **§13** — sync==deploy + dry-run: Solutions git-sync ALREADY is "deploy from GitHub"; the
+  missing piece is a `validate_only` dry-run extracted from deploy's existing pre-commit phase.
+- **§14–§15** — `_repo` git-sync manifest CRUD is **load-bearing, keep it** (issue **#313** is the
+  accepted plan-of-record to migrate `_resolve_*` to `OrgScopedRepository`; fold #313 into Phase 2).
+- **Convergence acceptance checklist** (the deferred audit findings — the converged writer is
+  "done" only when each round-trips): `auto_fill` (form field, dropped by shared FormIndexer),
+  agent-delegation order-independence (shared single-pass in `manifest_import.py:1255-1270`),
+  `tool_description` / `max_run_timeout` / `event_type` / `display_name` field parity, and the
+  Task 11 slug-identity decision.
+- **Recommended first convergence step:** a throwaway **Config + Integration** spike of axis A +
+  axis B, success bar = "reproduces BOTH `_resolve_*` and `_upsert_*` with NO opaque per-entity
+  callbacks." If it can't, name it "shared-utils + reconcilers" and stop calling it one writer.
+
+---
+
 **Goal:** Land the three confirmed write-path bugs' fixes, three Solutions-path stability fixes from the §audit, and remove the verified dead manifest-import code, producing the "ultra-clean foundation" before any write-service / serializer centralization.
 
 **Stability fixes added (Tasks 9-11)** from the Solutions stability audit (`docs/superpowers/specs/2026-06-19-solutions-stability-audit.md`): per Jack's triage, only the **Solutions-path reproducible** findings are fixed here (events-wipe critical, EventSubscription PK reuse, table orphan cross-solution reattach). The shared/`_repo`/field-parity findings (auto_fill, agent-delegation order, tool_description/max_run_timeout/event_type/display_name) are DEFERRED to convergence as its acceptance checklist — NOT in this plan.
