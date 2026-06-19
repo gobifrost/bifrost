@@ -435,3 +435,39 @@ Two findings are real bugs whose *runtime consequence* cannot be fully settled b
 1. **Silent empty-name agent deploy (FK orphan / lying count).** Code confirms `AgentIndexer.index_agent` returns `False` and writes no row on blank name/system_prompt (`agent.py:69-77`), yet deploy then runs `update(Agent).where(id==...)` (0 rows, silent), adds role/MCP junction rows whose FK target may not exist, and `DeployResult.agents_upserted` counts `len(bundle.agents)` regardless (`deploy.py:476`). Whether the junction inserts actually raise a FK violation at COMMIT (vs. silently succeed against a non-existent agent id) depends on DB constraint enforcement at runtime — needs a live deploy of a bundle with a blank-named agent to observe whether it 500s, half-commits, or reports a false-positive count.
 
 2. **`Workflow.tool_description` round-trip loss on capture→deploy.** Code confirms the field is omitted from capture, the manifest model, the importer, and the deploy values dict, while the column exists and is user-settable via the workflow PATCH. The end-user-visible impact — a `type='tool'` workflow's MCP/agent-facing description silently reverting to NULL after a capture-then-redeploy cycle — needs a live capture → install → inspect to confirm the column is actually cleared (vs. left untouched on an update that omits the key).
+
+---
+
+# 8. LIVE REPRO — both bugs reproduced end-to-end (2026-06-19)
+
+Driven via the API-matched CLI against a fresh netbird dev stack (`bifrost-debug-be6ad6da`),
+solution `tooldesc-repro` install `58a5f7ec…`. Not code-reading — observed behavior.
+
+## Bug 1 — `tool_description` dropped on export/capture — CONFIRMED LIVE
+- Set `workflows.tool_description = 'CURATED-TOOLDESC-DO-NOT-LOSE-12345'` on the deployed
+  solution workflow `hello` (direct DB write, since the API blocks it — see below).
+- `bifrost solution export tooldesc-repro --mode shareable` → unzipped bundle.
+- The exported `.bifrost/workflows.yaml` carries `type, endpoint_enabled, public_endpoint,
+  timeout_seconds, category, tags, access_level, roles` — **but no `tool_description`**.
+- `grep -r CURATED-TOOLDESC… bundle/` → **NOT FOUND ANYWHERE**. The curated description is gone
+  the moment the solution is exported; any reinstall loses it.
+- **Stronger finding (the guard makes it unfixable):** trying to set it the supported way —
+  `PATCH /api/workflows/{id} {"tool_description": …}` on a solution-managed workflow — returns
+  `403 "Solution-managed entities can only be managed by deployment methods."` So for a
+  solution tool: the API path is **blocked by the read-only guard**, and the deployment path
+  **doesn't carry the field**. There is **no supported path** to give a solution's tool a
+  curated description. (Only a `_repo`/global workflow can have one — and capture drops it.)
+
+## Bug 2 — blank-name agent silently swallowed + lying success count — CONFIRMED LIVE
+- Added an agent with `name: ''` + a `tool_ids` binding to `.bifrost/agents.yaml`, deployed.
+- CLI printed `found … 1 agent(s)` and `Deploy complete.` with **no error**.
+- DB after: **0 agents**, **0 orphan agent_tools**. The agent never materialized —
+  `AgentIndexer.index_agent` hit `if not name: return False` (`agent.py:69-72`) and no-op'd.
+- The deploy job result row (`c1ffaaf9…`) recorded `"status":"succeeded"` and
+  **`"agents_upserted": 1`** — a **false-positive count**: it claims it upserted an agent that
+  does not exist. No 500, no surfaced warning. Worst-case diagnostic: a solution author ships a
+  package, sees green, and the agent is silently missing on every install.
+
+Both bugs are structural consequences of the manifest/indexer path NOT going through the REST
+contract (which would 422 the blank name and carry `tool_description`). This is the empirical
+backing for the §6 unification work.
