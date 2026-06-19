@@ -749,3 +749,48 @@ NOW — but framed as "validation the future `validate_bundle()` will absorb," n
 global git-sync's handling is the one behavioral call (fail the sync vs collect-and-report) —
 still open, see §6.2 / the open questions. The Phase-1 fix is forward-compatible with the
 `validate_bundle()` extraction either way.
+
+---
+
+# 14. `_repo` git-sync manifest processing — NOT a missed deprecation (verified 2026-06-19)
+
+Jack's hypothesis: `_repo` git-sync should be files-only now (like watch), and if it still touches
+the manifest that's a missed deprecation. **Verified answer: it DOES still do full manifest-entity
+CRUD — but that is load-bearing, not vestigial. The watch analogy does not transfer.**
+
+## 14.1 Confirmed: it still does manifest entity CRUD
+Scheduler → `GitHubSyncService.desktop_sync()` (`github_sync.py:837-847`, scheduler `main.py:474`)
+unconditionally runs `_import_all_entities` (`:1132`) → `read_manifest_from_dir` (`:1149`) →
+`_diff_and_collect` (`:1162`) → `ManifestResolver.plan_import` (`:1169`) → all `_resolve_*`
+writes. No files-only flag, no guard. So yes — it does what watch was made to stop doing.
+
+## 14.2 Why it is NOT the same as the watch deprecation
+- **Watch = PUSH (local→platform).** It dropped the bulk manifest-push because per-file
+  `/api/files/write` already covered code, and the bulk push was redundant AND destructive (it
+  deleted entities absent from local `.bifrost/` → the disappearing-entity bug). Net loss: zero.
+- **`_repo` git-sync = PULL/round-trip (GitHub→platform).** The manifest import is the ONLY thing
+  that turns a committed `forms.yaml`/`agents.yaml`/`tables.yaml` into DB ROWS. There is no
+  per-file equivalent that creates a form row from `forms.yaml`. Making it files-only would mean
+  `git pull` syncs code but silently stops creating entities — the SAME silent-loss class we're
+  fixing, inverted.
+- **Load-bearing proof:** 15+ e2e in `test_git_sync_local.py` assert `desktop_sync()` creates
+  rows: `test_pull_new_workflow:699`, `test_pull_new_form:758`, `test_pull_new_agent_with_tools:848`,
+  `test_pull_integration_from_manifest:1897`, `test_pull_config_from_manifest:1954`,
+  `test_pull_table_from_manifest:2114`, `test_pull_custom_claim_from_manifest:2159`,
+  `test_pull_event_source_from_manifest:2377`, `test_pull_idempotent:2532`.
+
+## 14.3 The REAL deprecation hiding here (this is the right target)
+`_repo` git-sync needs manifest→DB for the same reason Solutions deploy does: turn portable
+entity declarations into rows. Solutions does it via the disciplined `SolutionDeployer`; `_repo`
+does it via the divergent `ManifestResolver`/`_resolve_*` mechanisms (§7). **Two implementations
+of one job.** What to deprecate is the `_resolve_*` SECOND IMPLEMENTATION, not "manifest
+processing on `_repo`." Under §6.1, `_repo` git-sync KEEPS importing entities, but through the
+SAME `EntityWriter` Solutions uses — `resolution=by_natural_key_realign`, global scope. That is
+the convergence (and what §13's dry-run extraction feeds into). `_repo` sync stays full-fidelity;
+it just stops being a parallel CRUD codebase.
+
+## 14.4 Net effect on the plan
+No Phase-1 change. This REINFORCES §6.1/§12-Phase-2: the prize is collapsing `_resolve_*` and
+`SolutionDeployer`'s entity writes onto one `EntityWriter`, after which `_repo` git-sync and
+Solutions deploy differ only by (source, scope, resolution) — exactly Jack's "same thing,
+different source" model, now spanning BOTH syncs. Do NOT make `_repo` git-sync files-only.
