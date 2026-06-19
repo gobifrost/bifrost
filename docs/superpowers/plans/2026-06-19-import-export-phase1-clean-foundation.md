@@ -1,5 +1,15 @@
 # Import/Export Phase 1 — Clean Foundation Implementation Plan
 
+> **STATUS: COMPLETE (2026-06-19).** Tasks 1–10 implemented, reviewed, and committed on
+> `worktree-solutions-deadcode-audit` (`49ea0bc4..0cbaf5e8`, 12 commits). Full verification green
+> (pyright/ruff/tsc/lint clean; `./test.sh all` 6228 passed; client unit 1441 passed). Final
+> whole-branch review: **Ready to merge — zero Critical/Important/Minor findings.** **Task 11
+> remains ON HOLD** (design decision — not implemented, by design). Two non-blocking PR notes: the
+> `v1.d.ts` `execute_endpoint _get→_put` churn is pre-existing generator noise (single
+> `@router.api_route` at `endpoints.py:79`), not an API change; git-sync blank-name feedback is
+> coarse (whole-sync fail vs the deploy path's per-agent 409) — fine for Phase 1. Next: the
+> §Handoff to Convergence (Phases 2–4).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 ---
@@ -141,7 +151,7 @@ Fixes the §8 live-repro bug: `index_agent` returns `False` on a missing/blank n
 **Interfaces:**
 - Produces: `AgentIndexer.index_agent(path, content)` now raises `ValueError` (message contains `"agent name is required"`) when the YAML `name` is missing/empty or `system_prompt` is missing/empty, instead of returning `False`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `api/tests/unit/test_agent_indexer_blank_name.py`:
 
@@ -178,12 +188,12 @@ async def test_index_agent_raises_on_missing_system_prompt(db_session):
         await indexer.index_agent("agents/x.agent.yaml", content)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh tests/unit/test_agent_indexer_blank_name.py -v`
 Expected: FAIL — `index_agent` currently returns `False`, so `pytest.raises(ValueError)` does not trigger (`DID NOT RAISE`).
 
-- [ ] **Step 3: Replace the silent returns with raises**
+- [x] **Step 3: Replace the silent returns with raises**
 
 In `api/src/services/file_storage/indexers/agent.py`, change the two guard blocks (currently lines 69-77):
 
@@ -199,12 +209,12 @@ In `api/src/services/file_storage/indexers/agent.py`, change the two guard block
 
 (Leave the `yaml.YAMLError` guard above them returning `False` — a malformed file is a different, non-content failure.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./test.sh tests/unit/test_agent_indexer_blank_name.py -v`
 Expected: PASS (both tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/services/file_storage/indexers/agent.py api/tests/unit/test_agent_indexer_blank_name.py
@@ -226,7 +236,7 @@ With Task 1, `index_agent` now raises mid-deploy. Translate it to `SolutionDeplo
 - Consumes: `AgentIndexer.index_agent` raising `ValueError` (Task 1).
 - Produces: deploying a bundle with a blank-name agent raises `SolutionDeployConflict`; a successful deploy's `agents_upserted` equals the number of agents actually indexed.
 
-- [ ] **Step 1: Write the failing e2e test**
+- [x] **Step 1: Write the failing e2e test**
 
 Create `api/tests/e2e/platform/test_solution_deploy_blank_name.py`:
 
@@ -256,12 +266,12 @@ async def test_deploy_blank_name_agent_raises(db_session, seeded_solution):
 
 > Note: `seeded_solution` — if no such fixture exists, create the install row inline mirroring `test_solution_deploy_async.py`'s setup. Read that file first and reuse its fixture/helpers; do not invent a new bundle shape.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh e2e` (e2e cannot be filtered to one path; let the suite run and read `/tmp/bifrost/test-results.xml` for this test).
 Expected: FAIL — today the agent is swallowed and `deploy` returns success, so `pytest.raises` does not trigger.
 
-- [ ] **Step 3: Wrap the indexer call in deploy**
+- [x] **Step 3: Wrap the indexer call in deploy**
 
 In `api/src/services/solutions/deploy.py`, in `_upsert_agents`, replace the bare call (line ~1300):
 
@@ -274,7 +284,7 @@ In `api/src/services/solutions/deploy.py`, in `_upsert_agents`, replace the bare
                 ) from exc
 ```
 
-- [ ] **Step 4: Make the count reflect reality**
+- [x] **Step 4: Make the count reflect reality**
 
 `_upsert_agents` currently returns nothing and `deploy` sets `agents_upserted=len(rb.agents)` at line 477. With Task 1+Step 3 a blank-name agent aborts the whole deploy, so any *successful* deploy did upsert every agent — `len(rb.agents)` is now accurate. Add a guard comment so the invariant is explicit and a future "skip-bad-agent" change can't silently re-introduce the lie:
 
@@ -292,12 +302,12 @@ to:
             agents_upserted=len(rb.agents),
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `./test.sh e2e`
 Expected: PASS for `test_deploy_blank_name_agent_raises` (check `/tmp/bifrost/test-results.xml`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add api/src/services/solutions/deploy.py api/tests/e2e/platform/test_solution_deploy_blank_name.py
@@ -317,7 +327,7 @@ The portable manifest must carry `tool_description` so it survives export/captur
 **Interfaces:**
 - Produces: `ManifestWorkflow.tool_description: str | None` (default `None`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `api/tests/unit/test_manifest.py`, add:
 
@@ -337,12 +347,12 @@ def test_manifest_workflow_carries_tool_description():
     assert wf2.tool_description is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh tests/unit/test_manifest.py::test_manifest_workflow_carries_tool_description -v`
 Expected: FAIL — `ManifestWorkflow` has no `tool_description` field (`unexpected keyword argument` or attribute error).
 
-- [ ] **Step 3: Add the field**
+- [x] **Step 3: Add the field**
 
 In `api/bifrost/manifest.py`, inside `ManifestWorkflow`, after the `description` field:
 
@@ -353,12 +363,12 @@ In `api/bifrost/manifest.py`, inside `ManifestWorkflow`, after the `description`
     )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./test.sh tests/unit/test_manifest.py::test_manifest_workflow_carries_tool_description -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/bifrost/manifest.py api/tests/unit/test_manifest.py
@@ -379,7 +389,7 @@ git commit -m "feat(manifest): carry tool_description on ManifestWorkflow"
 - Consumes: `ManifestWorkflow.tool_description` (Task 3).
 - Produces: `serialize_workflow(wf)` sets `tool_description=wf.tool_description`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `api/tests/unit/test_manifest_generator.py`, add:
 
@@ -401,12 +411,12 @@ def test_serialize_workflow_carries_tool_description():
 
 > If `test_manifest_generator.py` builds a real `Workflow` ORM via a factory rather than `SimpleNamespace`, follow that file's existing pattern instead and set `tool_description` on the factory object.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh tests/unit/test_manifest_generator.py::test_serialize_workflow_carries_tool_description -v`
 Expected: FAIL — `serialize_workflow` does not set `tool_description`, so `out.tool_description` is `None`.
 
-- [ ] **Step 3: Emit the field**
+- [x] **Step 3: Emit the field**
 
 In `api/src/services/manifest_generator.py`, in `serialize_workflow`, add to the `ManifestWorkflow(...)` constructor (next to `description=wf.description`):
 
@@ -414,12 +424,12 @@ In `api/src/services/manifest_generator.py`, in `serialize_workflow`, add to the
         tool_description=wf.tool_description,
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./test.sh tests/unit/test_manifest_generator.py::test_serialize_workflow_carries_tool_description -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/services/manifest_generator.py api/tests/unit/test_manifest_generator.py
@@ -441,7 +451,7 @@ Both write paths that consume a manifest workflow — git-sync import (`_resolve
 - Consumes: `ManifestWorkflow.tool_description` (Task 3).
 - Produces: after deploy/import of a manifest workflow whose entry has `tool_description`, the `Workflow.tool_description` column equals that value.
 
-- [ ] **Step 1: Write the failing e2e test**
+- [x] **Step 1: Write the failing e2e test**
 
 Create `api/tests/e2e/platform/test_solution_tool_description_roundtrip.py`:
 
@@ -478,12 +488,12 @@ async def test_deploy_carries_tool_description(db_session, seeded_solution):
 
 > Reuse `seeded_solution` / bundle setup from `test_solution_deploy_async.py` (read it first). The remapped workflow id may differ from `wid` if the bundle goes through per-install remap — if the deploy remaps ids, query by `(solution_id, name)` instead of the raw `wid`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh e2e`
 Expected: FAIL — `row.tool_description` is `None` (field dropped today). Check `/tmp/bifrost/test-results.xml`.
 
-- [ ] **Step 3: Carry it in the deploy values dict**
+- [x] **Step 3: Carry it in the deploy values dict**
 
 In `api/src/services/solutions/deploy.py`, in `_upsert_workflows`, add to the `values` dict (next to `"description": mwf.get("description"),`):
 
@@ -491,7 +501,7 @@ In `api/src/services/solutions/deploy.py`, in `_upsert_workflows`, add to the `v
                 "tool_description": mwf.get("tool_description"),
 ```
 
-- [ ] **Step 4: Carry it on the git-sync import path**
+- [x] **Step 4: Carry it on the git-sync import path**
 
 In `api/src/services/manifest_import.py`, in `_resolve_workflow`, after the `if mwf.description is not None:` block, add:
 
@@ -500,12 +510,12 @@ In `api/src/services/manifest_import.py`, in `_resolve_workflow`, after the `if 
             wf_values["tool_description"] = mwf.tool_description
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `./test.sh e2e`
 Expected: PASS for `test_deploy_carries_tool_description`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add api/src/services/solutions/deploy.py api/src/services/manifest_import.py api/tests/e2e/platform/test_solution_tool_description_roundtrip.py
@@ -527,7 +537,7 @@ git commit -m "fix(solutions/git-sync): carry tool_description through deploy an
 **Interfaces:**
 - Produces: nothing — pure removal. `GET /api/files/manifest` stays. `ManifestResolver`, `_diff_and_collect`, `generate_manifest` stay.
 
-- [ ] **Step 1: Confirm no live caller remains (guard against a stale assumption)**
+- [x] **Step 1: Confirm no live caller remains (guard against a stale assumption)**
 
 Run:
 ```bash
@@ -535,19 +545,19 @@ grep -rn "manifest/import" api/src client/src api/bifrost --include='*.py' --inc
 ```
 Expected: only `api/src/routers/files.py` (the handler being deleted). If anything else appears, STOP and re-evaluate — do not delete.
 
-- [ ] **Step 2: Delete the endpoint handler + request model**
+- [x] **Step 2: Delete the endpoint handler + request model**
 
 In `api/src/routers/files.py`, delete the `ManifestImportRequest` class (~lines 427-454) and the entire `@router.post("/manifest/import", ...)` handler (~lines 457-511). Remove the now-unused `ManifestImportRequest`/`ManifestImportResponse` names from the file's contracts import at the top (`files.py:30`).
 
-- [ ] **Step 3: Delete the dead contracts + exports**
+- [x] **Step 3: Delete the dead contracts + exports**
 
 In `api/src/models/contracts/files.py`, delete the `ManifestImportRequest` and `ManifestImportResponse` model definitions. In `api/src/models/contracts/__init__.py`, delete the `ManifestImportResponse` import (~line 297) and its `__all__` entry (~line 1031), and the same for `ManifestImportRequest` if exported there.
 
-- [ ] **Step 4: Remove the dead endpoint tests**
+- [x] **Step 4: Remove the dead endpoint tests**
 
 In `api/tests/e2e/platform/test_cli_push_pull.py`, delete `test_push_bifrost_manifest` and `test_push_manifest_response_shape` (the two functions that POST `/api/files/manifest/import`). Leave the rest of the file (push/pull file-write tests) intact.
 
-- [ ] **Step 5: Verify nothing else references the removed names**
+- [x] **Step 5: Verify nothing else references the removed names**
 
 Run:
 ```bash
@@ -555,7 +565,7 @@ grep -rn "ManifestImportRequest\|ManifestImportResponse" api/ --include='*.py' |
 ```
 Expected: zero results (or only the lines you're about to remove in Task 7's function — if Task 7 not yet done, the `import_manifest_from_repo` return annotation may still reference `ManifestImportResult`, which is a DIFFERENT name and stays).
 
-- [ ] **Step 6: Run type check + targeted tests**
+- [x] **Step 6: Run type check + targeted tests**
 
 Run:
 ```bash
@@ -564,7 +574,7 @@ cd api && pyright && cd ..
 ```
 Expected: pyright clean; e2e green (the deleted tests are gone, nothing else broke). Confirm `test_watch_regression_disappearing_entity` still passes (it asserts the endpoint is never *called* — removal doesn't break it).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add api/src/routers/files.py api/src/models/contracts/files.py api/src/models/contracts/__init__.py api/tests/e2e/platform/test_cli_push_pull.py
@@ -585,7 +595,7 @@ git commit -m "chore: remove dead /api/files/manifest/import endpoint + request/
 **Interfaces:**
 - Produces: nothing — pure removal. PRESERVE `ManifestResolver`, `_diff_and_collect` and its diff helpers, `_form/_agent_content_from_manifest`, `_resolve_*_content`, `_resolve_role_names`, `ManifestImportResult` (return type still referenced by preserved code? verify in Step 1).
 
-- [ ] **Step 1: Confirm callers + what dies with it**
+- [x] **Step 1: Confirm callers + what dies with it**
 
 Run:
 ```bash
@@ -595,17 +605,17 @@ grep -rn "ManifestImportResult" api/src --include='*.py'
 ```
 Expected: `import_manifest_from_repo` only in its own def + the two test files (the `files.py` caller is already gone from Task 6). The two helpers only inside `import_manifest_from_repo`. If `ManifestImportResult` is referenced ONLY by `import_manifest_from_repo`, it dies too — note it for Step 3. If anything else uses these, STOP.
 
-- [ ] **Step 2: Delete the two helper-only tests**
+- [x] **Step 2: Delete the two helper-only tests**
 
 ```bash
 git rm api/tests/e2e/platform/test_manifest_import.py api/tests/e2e/platform/test_manifest_import_config_cache.py
 ```
 
-- [ ] **Step 3: Delete the dead functions**
+- [x] **Step 3: Delete the dead functions**
 
 In `api/src/services/manifest_import.py`, delete `import_manifest_from_repo` (the full `async def`, ~524-736), `_apply_role_name_resolution` (~414-466), and `_rewrite_org_ids` (~468-510). If Step 1 showed `ManifestImportResult` is used only by the deleted function, delete its dataclass too; otherwise leave it. Remove any now-unused imports at the top of the file that pyright flags.
 
-- [ ] **Step 4: Verify the shared logic is intact**
+- [x] **Step 4: Verify the shared logic is intact**
 
 Run:
 ```bash
@@ -613,7 +623,7 @@ grep -n "def _diff_and_collect\|class ManifestResolver\|def _resolve_role_names\
 ```
 Expected: all still present (these are the live git-sync/Solutions helpers — must NOT have been deleted).
 
-- [ ] **Step 5: Type check + full backend suite**
+- [x] **Step 5: Type check + full backend suite**
 
 Run:
 ```bash
@@ -622,7 +632,7 @@ cd api && pyright && ruff check . && cd ..
 ```
 Expected: pyright + ruff clean (no unused-import/undefined-name from the deletion); `./test.sh all` green — git-sync e2e and the Solutions deploy e2e still pass, proving the `_resolve_*` logic is exercised without the deleted entrypoint.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add api/src/services/manifest_import.py
@@ -638,19 +648,19 @@ Removing the endpoint changes the OpenAPI schema; regenerate the generated TS ty
 **Files:**
 - Modify: `client/src/lib/v1.d.ts` (regenerated)
 
-- [ ] **Step 1: Ensure the debug stack is up for this worktree**
+- [x] **Step 1: Ensure the debug stack is up for this worktree**
 
 Run: `./debug.sh status | grep -q "Status:   UP" || ./debug.sh up`
 Get the URL/port from `./debug.sh status`.
 
-- [ ] **Step 2: Regenerate types**
+- [x] **Step 2: Regenerate types**
 
 Run (set `OPENAPI_URL` to the worktree stack's URL from Step 1 if not on the default port):
 ```bash
 cd client && npm run generate:types && cd ..
 ```
 
-- [ ] **Step 3: Confirm the dead route is gone from generated types**
+- [x] **Step 3: Confirm the dead route is gone from generated types**
 
 Run:
 ```bash
@@ -659,7 +669,7 @@ grep -n "files/manifest\"" client/src/lib/v1.d.ts && echo "GET /manifest still p
 ```
 Expected: `/manifest/import` GONE; `GET /api/files/manifest` still present.
 
-- [ ] **Step 4: Full verification sweep**
+- [x] **Step 4: Full verification sweep**
 
 Run:
 ```bash
@@ -670,7 +680,7 @@ cd client && npm run tsc && npm run lint && cd ..
 ```
 Expected: all green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add client/src/lib/v1.d.ts
@@ -691,7 +701,7 @@ git commit -m "chore: regenerate client types after removing dead manifest-impor
 - Consumes: `_collect_events` from `bifrost.commands.solution` (same module `read_workspace_bundle` already imports `_collect_python_files`/`_collect_apps`/`_collect_claims`/`_collect_connection_schemas` from).
 - Produces: `read_workspace_bundle` returns a `SolutionBundle` whose `.events` is populated from `.bifrost/events.yaml`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `api/tests/e2e/platform/test_solution_git_sync_events.py`:
 
@@ -727,12 +737,12 @@ def test_read_workspace_bundle_carries_events(tmp_path, seeded_solution):
 
 > `seeded_solution` — reuse the fixture/inline install from `test_solution_deploy_async.py` (read it first). Only its `.slug` is used here.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh e2e`
 Expected: FAIL — `bundle.events` is `[]` today (the omission). Check `/tmp/bifrost-<project>/test-results.xml`.
 
-- [ ] **Step 3: Collect events in read_workspace_bundle**
+- [x] **Step 3: Collect events in read_workspace_bundle**
 
 In `api/src/services/solutions/git_sync.py`, in `read_workspace_bundle`, add the import alongside the existing CLI collector imports and pass `events=` in the `SolutionBundle(...)` return:
 
@@ -744,12 +754,12 @@ and in the `return SolutionBundle(...)`, add (next to `connection_schemas=...`):
         events=_collect_events(workspace),
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./test.sh e2e`
 Expected: PASS for `test_read_workspace_bundle_carries_events`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/services/solutions/git_sync.py api/tests/e2e/platform/test_solution_git_sync_events.py
@@ -770,7 +780,7 @@ git commit -m "fix(solutions): git-connected sync carries events — stop wiping
 - Consumes: `solution_entity_id(install_id, manifest_id)` (already defined `deploy.py:100`), `sid` (in scope in `_remapped_bundle`).
 - Produces: after `_remapped_bundle`, each subscription's `id` is `solution_entity_id(sid, original_id)`; two installs of the same bundle get distinct subscription PKs.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `api/tests/e2e/platform/test_solution_event_sub_remap.py`:
 
@@ -807,12 +817,12 @@ async def test_event_subscription_id_remapped_per_install(db_session, two_seeded
 
 > `two_seeded_solutions` — two installs in different orgs; build inline mirroring the single-install fixture in `test_solution_deploy_async.py`. If a same-session second deploy needs a commit/rollback boundary, follow that file's pattern.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh e2e`
 Expected: FAIL — the second `deploy` raises a duplicate-key `IntegrityError` on `event_subscriptions_pkey`.
 
-- [ ] **Step 3: Remap the subscription own-id in pass 2**
+- [x] **Step 3: Remap the subscription own-id in pass 2**
 
 In `api/src/services/solutions/deploy.py`, in `_remapped_bundle`, inside the pass-2 event loop (where `msub` `workflow_id`/`agent_id` are remapped), add remapping of the subscription's own id. After the `for fld in ("workflow_id", "agent_id"):` block, within the same `for msub in ...` loop:
 
@@ -823,12 +833,12 @@ In `api/src/services/solutions/deploy.py`, in `_remapped_bundle`, inside the pas
 
 (`solution_entity_id` and `sid` are already in scope; `UUID` is imported.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./test.sh e2e`
 Expected: PASS — both installs succeed, distinct subscription ids.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/services/solutions/deploy.py api/tests/e2e/platform/test_solution_event_sub_remap.py
