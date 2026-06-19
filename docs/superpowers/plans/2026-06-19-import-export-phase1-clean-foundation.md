@@ -4,7 +4,9 @@
 
 **Goal:** Land the three confirmed write-path bugs' fixes and remove the verified dead manifest-import code, producing the "ultra-clean foundation" before any write-service / serializer centralization.
 
-**Architecture:** Phase 1 of the spec at `docs/superpowers/specs/2026-06-18-import-export-deadcode-and-contract-unification.md`. Three targeted bug fixes in the manifest→indexer→deploy path, plus an evidence-backed dead-code excision (§9 of the spec) that preserves the shared `ManifestResolver`/`_resolve_*` logic git-sync and Solutions still use. NO new abstractions in this phase — `EntityWriter` (§6.1) and `EntitySerializer` (§11) are explicitly later phases.
+**This is Phase 1 of a 4-phase roadmap** (spec §12). Phase 1 only prunes + fixes — it builds no new abstraction. The later phases (NOT in this plan) put the *surviving* manifest-based machinery on shared contracts: **Phase 2** = one `EntityWriter.upsert` CRUD contract for the pruned manifest write path (§6.1); **Phase 3** = one `EntitySerializer` per entity with **Tables first** (the UI export/import feature and the Solutions tables service share one core, §11); **Phase 4** = remaining entities + the deferred bucket-B capability decisions (§10.3). The point of Phase 1 is to refactor a *clean, minimal* base so Phases 2-4 aren't disciplining dead code. Tables and Knowledge stay as UI features throughout.
+
+**Architecture:** Phase 1 of the spec at `docs/superpowers/specs/2026-06-18-import-export-deadcode-and-contract-unification.md`. Three targeted bug fixes in the manifest→indexer→deploy path, plus an evidence-backed dead-code excision (§9 of the spec) that preserves the shared `ManifestResolver`/`_resolve_*` logic git-sync and Solutions still use (the substrate Phase 2 will discipline, not replace). NO new abstractions in this phase — `EntityWriter` (§6.1) and `EntitySerializer` (§11) are explicitly later phases.
 
 **Tech Stack:** Python 3.11 / FastAPI / SQLAlchemy (async) / Pydantic; tests via `./test.sh` (Dockerised stack). Frontend untouched in this phase.
 
