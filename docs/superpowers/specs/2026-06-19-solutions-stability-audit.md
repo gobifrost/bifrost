@@ -52,3 +52,42 @@ sources** (rolled back, not persisted). Confirmed:
 - `_reconcile_one(EventSource, sid, set())` (deploy.py:1751) sweeps all install event sources;
   children cascade.
 Not theoretical — git-connected solutions lose every schedule/webhook on every sync.
+
+---
+
+## Triage by path (Jack's rule: fix Solutions-path reproducibles now; defer _repo/shared to convergence)
+
+Verified each finding's WRITE PATH to decide fix-now vs defer:
+
+### FIX NOW — Solutions-path, reproducible, narrow
+- **CRITICAL — git-connected events wipe.** Lives in `solutions/git_sync.py:99` `read_workspace_bundle`
+  (Solutions path; `github_sync.py` does NOT touch it — grep clean). Events DO ship with Solutions
+  (`capture.py:137,176` capture+count them). Fix = one line: add `events=_collect_events(workspace)`
+  to `read_workspace_bundle`, mirroring `zip_install.py:202`. Live-confirmed 1→0.
+- **HIGH — EventSubscription PK reuse.** `deploy.py:1623` inserts `id=msub["id"]` verbatim; the remap
+  pass never rewrites it. Solutions deploy, all install paths. Fix = remap `msub["id"]` through the
+  id_map like the source id. Reproducible (2nd-install 500).
+- **HIGH — table orphan cross-solution reattach.** `deploy.py:894` adopts on (slug,name,org) not
+  solution identity. Solutions deploy. Reproducible (data bleed). Fix = tighten the adoption key.
+
+### DEFER TO CONVERGENCE — shared/_repo path; list as "confirm the converged writer kills these"
+- **HIGH — FormField.auto_fill dropped.** Root cause is the SHARED `FormIndexer` (`form.py` re-inserts
+  FormFieldORM without `auto_fill=`), used by Solutions deploy AND git-sync AND file-sync. REST sets it
+  (`routers/forms.py:103`). Not Solutions-specific; a field-parity gap the converged serializer/contract
+  must carry. (Could hotfix the indexer line now if auto_fill is in active use — flagged as a judgement call.)
+- **HIGH — agent delegation order-dependence.** Audit confirms the same single-pass exists in canonical
+  `manifest_import.py:1255-1270` — SHARED, not Solutions-specific. The two-pass fix belongs in the
+  converged writer (wire all delegations after all agent rows exist).
+- **Field-parity gaps** (`tool_description`, `max_run_timeout`, `event_type`, `display_name`,
+  max_iterations clear-to-None): all are "writer doesn't carry a field the contract has" — the EXACT
+  class the annotated-contract (Axis A) eliminates. These become the convergence acceptance checklist:
+  the converged writer is "done" only when each of these round-trips.
+
+### KNOWN / already in Phase 1
+- **blank-name silent no-op + false count** — Phase 1 plan already fixes (indexer raises; deploy
+  surfaces 409). Note: indexer is SHARED so the raise also hardens git-sync; the count is Solutions.
+
+### Bridge
+Every DEFER item is a field/relation the converged contract+writer must carry — so they become the
+convergence test suite, not lost work. Every FIX-NOW item is a Solutions-path reproducible that
+shouldn't wait. This is exactly Jack's split.
