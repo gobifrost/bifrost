@@ -25,6 +25,7 @@ def _mock_workflow(name="test_wf", org_id=None):
     wf.public_endpoint = False
     wf.category = "General"
     wf.description = None
+    wf.tool_description = None
     wf.tags = []
     wf.is_active = True
     wf.workflow_roles = []
@@ -360,5 +361,16 @@ async def test_generate_manifest_access_levels(mock_db):
     assert manifest.forms[str(form.id)].access_level == "authenticated"
     assert manifest.agents[str(agent.id)].access_level == "private"
     assert manifest.apps[str(app.id)].access_level == "role_based"
+
+
+def test_serialize_workflow_carries_tool_description():
+    """Should include tool_description when serializing a workflow."""
+    from src.services.manifest_generator import serialize_workflow
+
+    wf = _mock_workflow(name="test_tool")
+    wf.tool_description = "CURATED-TOOLDESC"
+
+    out = serialize_workflow(wf)
+    assert out.tool_description == "CURATED-TOOLDESC"
 
 

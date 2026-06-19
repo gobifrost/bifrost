@@ -89,6 +89,7 @@ def serialize_workflow(wf: Workflow, roles: list[str] | None = None) -> Manifest
         function_name=wf.function_name,
         type=wf.type or "workflow",
         description=wf.description,
+        tool_description=wf.tool_description,
         organization_id=str(wf.organization_id) if wf.organization_id else None,
         roles=roles or [],
         access_level=wf.access_level or "authenticated",
