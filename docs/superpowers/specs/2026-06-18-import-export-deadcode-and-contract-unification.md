@@ -794,3 +794,42 @@ No Phase-1 change. This REINFORCES §6.1/§12-Phase-2: the prize is collapsing `
 `SolutionDeployer`'s entity writes onto one `EntityWriter`, after which `_repo` git-sync and
 Solutions deploy differ only by (source, scope, resolution) — exactly Jack's "same thing,
 different source" model, now spanning BOTH syncs. Do NOT make `_repo` git-sync files-only.
+
+---
+
+# 15. Existing issue #313 confirms the play: keep manifest, Solutions is a subset (2026-06-19)
+
+Jack recalled an open issue on this. Found: **#313 (OPEN, 2026-05-26) "Org-scoping phase 8:
+manifest sync `_resolve_*` migration"** + sibling **#309** ("migrate inline cascades in UI-facing
+routers"). Note: #313 predates the Solutions merge and names `routers/export_import.py`, but the
+`_resolve_*` methods it targets now live in `manifest_import.py` — same family, pre-Solutions
+file map.
+
+## 15.1 What #313 establishes (plan of record)
+#313 treats the manifest `_resolve_*` sync as a surface to **KEEP and CLEAN UP**, not deprecate:
+"manifest import touches every execution-resolution entity and has subtle round-trip
+invariants... migrate each entity's `_resolve_` path independently with its own test review."
+It's deferred org-scoping work — 13 inline cascades tagged "phase 8 follow-up" to fold into
+`OrgScopedRepository.get()`. So the accepted direction is already: manifest sync stays;
+discipline it entity-by-entity.
+
+## 15.2 This confirms Jack's framing — and the §14 verdict
+"Keep manifest working; Solutions supports a subset for now" is correct AND already backed:
+- **Keep manifest:** §14 (load-bearing pull path) + #313 (keep+migrate, don't deprecate).
+- **Solutions = subset:** the §10 coverage delta proves it — Solutions covers fewer entity types
+  than the manifest (no orgs/roles/MCP/knowledge/integration-mappings). Solutions is the curated,
+  disciplined subset; the manifest is the full-fidelity whole-env vocabulary.
+
+## 15.3 #313 is a down-payment on §6.1
+#313 migrates `_resolve_*` toward the canonical `OrgScopedRepository` — the same "stop
+reinventing CRUD rules" instinct as the §6.1 `EntityWriter`. They are the same arc: #313 does it
+per-entity for org-scoping; §6.1 completes it by routing both `_resolve_*` AND `SolutionDeployer`
+writes through one writer. **Recommendation: fold #313 INTO Phase 2** rather than run it
+separately — migrating a `_resolve_*` path to `OrgScopedRepository` and onto `EntityWriter` is
+one motion, not two. Reference #313/#309 in the Phase-2 plan so the org-scoping follow-up and the
+write-centralization land together.
+
+## 15.4 Net
+No Phase-1 change. The roadmap is now anchored to an existing accepted issue: manifest stays,
+Solutions is the subset, and #313's per-entity `_resolve_*` migration IS the incremental path to
+the §6.1 single writer. Do not deprecate `_repo` manifest sync; converge it.
