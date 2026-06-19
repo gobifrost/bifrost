@@ -1,41 +1,45 @@
-# Manifest Field-Class Contract + Generated Round-Trip Test Harness — Design Spec
+# Manifest Field-Class Contract + Generated Round-Trip Test Harness — Design Spec (v2)
 
-> **Status: DRAFT for review (2026-06-19).** This is the design Jack and Claude settled
-> interactively. The per-entity classification table (§5) is the part most likely to need
-> correction — **review every row**, especially the ⚠️-flagged ones in §6. Once approved, an
-> implementation plan is written from this spec.
+> **Status: DRAFT v2 (2026-06-19), Codex-reviewed.** v1 was reviewed by Codex (independent model);
+> it confirmed the core design is sound but found 4 code-verified corrections (path-dependent match
+> keys; full-backup does not keep environment; two missed bundle envelopes) + 3 false-confidence
+> risks. All are folded into this v2. The per-entity classification table (§6) and the path policies
+> (§4) are still the parts most worth scrutinising before the plan is executed.
 
 ## 0. Why this exists
 
 Bifrost has **multiple, divergent code paths** that turn manifest entity declarations into DB rows
-(and back) for the same entities: `_repo` git-sync (`generate_manifest` ↔ `ManifestResolver`),
-Solution export/import (`_collect_*` + deploy `_upsert_*`), and Solution full-backup/restore
-(Fernet-encrypted). Phase 1 (the prior plan, now complete) fixed three reproduced field-drop bugs
+(and back) for the same entities. Phase 1 (prior, complete) fixed three reproduced field-drop bugs
 one at a time. The **convergence** refactor (Phases 2–4) wants to put these paths on one shared
-contract — but we have no safety net proving that a refactor preserves every field on every path.
-A field silently dropped by the converged writer would only be caught if someone happened to have
-written a checklist line for it (that is how Bug C — `tool_description` — was found, by luck).
+writer — but we have no safety net proving a refactor preserves every field on every path. A field
+silently dropped by the converged writer would only be caught by luck (that is how Bug C —
+`tool_description` — was found).
 
-This spec defines:
-1. **A field-class contract** — machine-readable metadata on every manifest field declaring how it
-   behaves on each round-trip path. This is *axis A* of the convergence design (spec
-   `2026-06-18-...-contract-unification.md` §16–17) — building it here produces the contract the
-   refactor is meant to be built on, not throwaway test scaffolding.
-2. **A generated round-trip test harness** that drives each REAL path and asserts each field obeys
-   its class's per-path policy. Built FIRST, against current code, so it is the regression oracle
-   the refactor must keep green.
-
-**The harness is the thing that makes us comfortable with a big refactor.** Build it before
-touching the writers.
+This spec defines (1) **field-class metadata** on every manifest field declaring how it behaves per
+path, and (2) a **generated round-trip test harness** that drives each REAL path and asserts each
+field obeys its class's per-path policy. **Built FIRST, against current code, as the regression
+oracle the refactor must keep green.** The metadata is also *axis A* of the convergence design
+(`2026-06-18-...-contract-unification.md` §16–17) — building it here produces the contract the
+refactor is meant to be built on.
 
 ## 1. Terminology (settled)
 
-This is **field-level metadata / annotations** — the Python analog of a **C# attribute**
-(`[JsonProperty]`, `[Key]`) read via reflection. It is **NOT a decorator** (decorators wrap a whole
-class/function, not a field). Carried in the Pydantic `Field()` descriptor via `json_schema_extra`,
-introspected through `Model.model_fields[name]`. We deliberately chose `Field(**classify(...))` over
-`typing.Annotated[T, ...]` to keep all field metadata (default, description, class) in one call site,
-matching how these models already declare everything in `Field()`.
+**Field-level metadata / annotations** — the Python analog of a **C# attribute** (`[JsonProperty]`,
+`[Key]`), read via reflection. **NOT a decorator** (decorators wrap a class/function, not a field).
+Carried in the Pydantic `Field()` descriptor via `json_schema_extra`, introspected through
+`Model.model_fields[name]`. Chosen over `typing.Annotated[T, ...]` to keep all field metadata in one
+call site.
+
+### 1.1 ELI5 framing (the mental model — keep this in the plan's preamble)
+A solution/export is a **shipping box with several labeled envelopes**: a **manifest** envelope
+(entity *blueprints* — every field we sticker), a **code** envelope (`.py`/app source), a
+**table_data** envelope (table rows, full-backup only), and a **secrets** envelope (Fernet-encrypted,
+full-backup only). **Field-class stickers label fields INSIDE the manifest envelope only.** The other
+envelopes are separate round-trip checks (§5). On each kind of trip the robot checks every stickered
+field obeys its color's rule. Five colors (§2); but think of them in two groups for intuition —
+**"always travels"** (content, references) vs **"sensitive/scoped, handled specially"** (environment,
+secret, identity) — with the important caveat (§4) that the three paths each treat the second group
+differently, which is exactly why we can't collapse to two buckets.
 
 ## 2. The mechanism (settled)
 
@@ -46,182 +50,224 @@ from enum import Enum
 from typing import Callable, Any
 
 class FieldClass(str, Enum):
-    IDENTITY    = "identity"     # the row's own PK/UUID. REGENERATED (remapped) on a portable path —
-                                 # does NOT round-trip as-is; never the cross-env match key.
-    CONTENT     = "content"      # portable payload — MUST round-trip on every path.
-    ENVIRONMENT = "environment"  # org/roles/access/state tied to THIS install — scrubbed on portable
-                                 # export, kept on _repo sync and full backup.
-    SECRET      = "secret"       # credential/sensitive — scrubbed on _repo (goes to git!) AND portable
-                                 # share; kept (Fernet-encrypted) only in full backup.
-    REFERENCE   = "reference"    # FK to another entity by id/name — round-trips, remapped per install.
+    IDENTITY    = "identity"     # the row's own PK/UUID. On _repo it round-trips (same-env keeps id);
+                                 # on Solution install it is REGENERATED — so it is an ASSERTION/MATCH
+                                 # behavior, not a scrub bucket: the harness never asserts identity
+                                 # equality on a path that regenerates ids, and uses the match key
+                                 # (§3) to pair rows instead.
+    CONTENT     = "content"      # portable payload (blueprint) — MUST round-trip on every path.
+    ENVIRONMENT = "environment"  # org / roles / access / local binding tied to an install. Kept by
+                                 # _repo (same env); STAMPED from the target on Solution install
+                                 # (export carries no scope; deploy sets organization_id from the
+                                 # install — deploy.py:797). i.e. NOT preserved on ANY Solution path,
+                                 # shareable OR full.
+    SECRET      = "secret"       # credential/sensitive. Scrubbed on _repo (it writes to git!) AND on
+                                 # shareable export. Kept ONLY in the full-backup SECRETS envelope
+                                 # (Fernet-encrypted, password-gated) — never in the manifest envelope.
+    REFERENCE   = "reference"    # FK to another entity by id/name — round-trips, REMAPPED per install
+                                 # on Solution deploy (deploy.py:495/557).
 
-def classify(
-    field_class: FieldClass,
-    *,
-    match_key: bool = False,           # this field (alone or with other match_key fields) is the
-                                       # NATURAL key used to re-pair "the same logical entity" across
-                                       # a portable round trip, where IDENTITY was regenerated.
-    when: Callable[[Any], FieldClass] | None = None,  # conditional class (e.g. value is SECRET only
-                                       # when config_type=='secret', else CONTENT). Receives the row.
-    keep_on_portable: bool = False,    # ENVIRONMENT field that is nonetheless KEPT on portable export
-                                       # because it is the portable shadow of a scrubbed field
-                                       # (role_names carries roles across the scrub).
-) -> dict:
+def classify(field_class, *, match_key=False, when=None, keep_on_portable=False) -> dict:
+    # match_key: this field is (part of) the natural key used to re-pair entities on a path that
+    #            regenerates ids (Solution install). One-or-more fields. See §3.
+    # when:      conditional class — receives the row, returns a FieldClass (e.g. Config.value is
+    #            SECRET when config_type=='secret', else CONTENT).
+    # keep_on_portable: an ENVIRONMENT field nonetheless kept on shareable export because it is the
+    #            portable shadow of a scrubbed field (role_names carries roles across the scrub).
     extra = {"bifrost_field_class": field_class.value}
-    if match_key: extra["bifrost_match_key"] = True
+    if match_key:        extra["bifrost_match_key"] = True
     if keep_on_portable: extra["bifrost_keep_on_portable"] = True
-    if when is not None: extra["bifrost_class_predicate"] = when   # stored; harness calls it per row
+    if when is not None: extra["bifrost_class_predicate"] = when
     return {"json_schema_extra": extra}
 ```
 
-Usage:
-```python
-class ManifestWorkflow(BaseModel):
-    id:            str = Field(description="Agent UUID", **classify(FieldClass.IDENTITY))
-    function_name: str = Field(..., **classify(FieldClass.CONTENT, match_key=True))
-    organization_id: str | None = Field(default=None, **classify(FieldClass.ENVIRONMENT))
-    role_names:    list[str] | None = Field(default=None,
-                       **classify(FieldClass.ENVIRONMENT, keep_on_portable=True))
-```
-
-### 2.1 The tripwire (what keeps the contract honest)
+### 2.1 The tripwire (keeps the contract honest)
 A unit test introspects every `Manifest*` model and asserts **every field carries
-`bifrost_field_class`**. An untagged field is a HARD failure. This is the mechanism that prevents
-silent drift when Phase 3 adds fields — the same idea as the existing `test_dto_flags.py` /
-`test_contract_version.py` tripwires.
+`bifrost_field_class`**. An untagged field is a HARD failure — prevents silent drift when Phase 3
+adds fields. (Same idea as `test_dto_flags.py` / `test_contract_version.py`.)
 
-## 3. Match keys answer "how do we re-pair entities when IDs are regenerated?" (settled)
+## 3. Match keys — PATH-DEPENDENT (Codex correction #2, the big one)
 
-**Solutions deliberately do not carry stable IDs across environments.** On install, an entity gets a
-new `solution_entity_id(install_id, manifest_id)` (see Phase-1 Task 10's remap). So the raw `id`
-cannot pair "the workflow I exported" with "the workflow I imported." The **match key** — one or more
-fields flagged `match_key=True` — is the natural key that does. Per-entity match keys are drawn from
-how deploy/the engine already match (code evidence in §5). A field can be BOTH `content` and a match
-key (a table `name` is user-visible content AND its reattach key) — `match_key` is an orthogonal flag,
-not a sixth mutually-exclusive class.
+The harness must pair "the entity I exported" with "the entity I imported." **How it pairs depends
+on the path, because the two families of path identify entities differently:**
 
-**This is the substrate the held Task 11 decision plugs into:** "what is a solution entity's stable
-identity across reinstall" is the match-key question; `(origin_solution_slug, name)` is a composite
-match key with a scope qualifier.
+- **`_repo` git-sync pairs by `id`.** It is same-env; `_diff_and_collect` explicitly "Index[es] by
+  entity .id" (`manifest_import.py:94`) and forms/agents/events/MCP-servers upsert **by `id` only**
+  (`:2531/2579/2235/2387` — MCP server: *"Always upserts on the UUID — never the natural key"*).
+  Natural keys exist in `_repo` ONLY as a *fallback* for cross-env ID realignment in the prefetch
+  cache (`:1019/1059` "Try by name (cross-env ID sync)") — they are NOT the primary matcher.
+- **Solution install pairs by NATURAL KEY**, because install regenerates ids
+  (`solution_entity_id(install_id, manifest_id)`; Phase-1 Task 10's remap). The natural keys (from
+  the prefetch cache `_diff_and_collect` builds at `:466-540`, which IS the cross-env matcher there):
 
-## 4. The contract (3 paths × 5 classes) — pinned by the harness, matching EXISTING code
+| Entity | Natural key (Solution-install matcher) | Code |
+|---|---|---|
+| Organization | `name` | :467 |
+| Role | `name` | :475 |
+| **Workflow** | **`(path, function_name)`** (the lone composite; `name` is a renameable display field, fallback only) | :482 |
+| Integration | `name` | :493 |
+| IntegrationConfigSchema | `(integration_id, key)` (within parent integration) | :501 |
+| App | `slug` | :514 |
+| Table | `(name, organization_id)` | :520 |
+| Config | `(key, integration_id, organization_id)` | :530 |
+| CustomClaim | `(name, organization_id)` | :538 |
+| MCPConnectionTool | `(connection_id, tool_name)` (within parent connection) | :2509 |
+| Form / Agent / EventSource / MCPServer | **id only — NO natural key matcher exists** (Codex #2) | :2531/2579/2235/2387 |
+
+**Implication of the last row:** Forms, agents, event sources, and MCP servers have NO name-based
+match in the code. On a Solution round trip where their id is regenerated, the harness must pair them
+by the **manifest position / deterministic remap** (`solution_entity_id(install, manifest_id)` is a
+pure function — the harness can compute the expected post-install id), NOT by name. So `match_key`
+metadata is set only on the entities that actually have a natural-key matcher; for id-only entities
+the harness pairs via the known remap function. **Do not invent name match keys the code doesn't
+honor** (v1's error).
+
+### 3.1 Two key-mechanics, no new annotation
+- **Composite key** = 2+ fields flagged `match_key` (Workflow path+function_name; Config
+  key+integration_id+organization_id). Matched together.
+- **Parent-scoped key** = a nested child's `match_key` field (MCPConnectionTool.tool_name,
+  IntegrationConfigSchema.key), matched within its already-paired parent. The parent FK isn't in the
+  manifest, so it's never tagged — scope is implicit from nesting.
+- **Scrubbed key-part rule + its caveat (Codex #2):** when a path scrubs/stamps a key-part (org is
+  stamped from the install on Solution paths), the matcher matches on the *surviving* parts. **This
+  is only safe if the surviving parts are unique in the fixture.** For Table/Config/Claim the
+  surviving parts after dropping org are `name` / `(key, integration_id)` / `name` — the harness
+  fixtures MUST enforce uniqueness on those within a single target org, or two same-name rows would
+  mis-pair. The generator (§5) guarantees this.
+
+## 4. The contract (3 paths × 5 classes) — CORRECTED (Codex #1, #3), matching existing code
 
 | Path | identity | content | environment | secret | reference |
 |---|---|---|---|---|---|
-| **`_repo` git-sync** (same-env, **writes to a git repo**) | keep | keep | keep | **scrub** | keep |
-| **Solution export `--mode shareable`** (portable) | regen (match by key) | keep | **scrub** (except `keep_on_portable`) | **scrub** | keep (remap) |
-| **Solution export `--mode full` / backup** (Fernet, password) | regen (match by key) | keep | keep | **keep (encrypted)** | keep (remap) |
+| **`_repo` git-sync** (same-env, writes to a git repo) | **keep (match by id)** | keep | **keep** | **scrub** | keep |
+| **Solution export `shareable`** | regen (match by natural key / remap) | keep | **stamp from target** (scrub source; except `keep_on_portable`) | **scrub** | keep (remap) |
+| **Solution export `full` / backup** | regen (match by natural key / remap) | keep | **stamp from target** (NOT preserved) | **keep in encrypted SECRETS envelope** | keep (remap) |
 
-Code evidence this is the EXISTING (implicit) contract, not a new invention:
-- `_repo` scrubs secret: `manifest_generator.py:279` (`value=None if config_type==SECRET`),
-  `:390-391` (`encrypted_client_secret intentionally omitted — secrets are gitignored`).
-- `_repo` keeps environment: it emits `organization_id`, `roles`, `access_level` (same-env sync).
-- Portable scrubs environment: the inline-content serialization "intentionally excludes
-  organization_id, roles, access_level" (CLAUDE.md portability design); `role_names` is the kept shadow.
-- Full backup keeps secret encrypted: `secrets_blob.py` Fernet envelope; `capture.py:345 include_data`.
+Key corrections vs v1:
+- **`_repo` keeps environment, scrubs secret** (not "keep secret"). `generate_manifest` emits
+  org/role/access (`manifest_generator.py:83/268/384`) but nulls `ConfigType.SECRET` values (`:279`)
+  and omits `encrypted_client_secret` (`:390`).
+- **Full backup does NOT keep environment in the manifest** (Codex #3). Org is *stamped from the
+  install* on deploy (`deploy.py:797` "Scope is inherited from the install"); the exported descriptor
+  carries no scope (`export.py:86`). Full mode's extra is the **encrypted secrets** + optional
+  **table_data** envelopes, not preserved environment.
+- **Secret in full backup lives in the SECRETS envelope, not the manifest** — the manifest envelope
+  scrubs secrets on every path; only the separate Fernet envelope carries them (`secrets_blob.py:50`,
+  `routers/solutions.py:311`).
 
-**`secret` on `_repo` was the one I (Claude) got wrong first** — git-sync must NOT write decrypted
-secrets to git. The code already scrubs them; the harness pins that so convergence cannot regress it
-into a leak.
+## 5. The other envelopes (NOT manifest fields — separate round-trip checks)
 
-## 5. PROPOSED per-entity field-class table (REVIEW EVERY ROW)
+The field-class stickers label the **manifest** envelope only. These are separate checks:
 
-> Generated by classifier heuristic + code evidence. `MK` = match_key. `env+keep` =
-> environment, keep_on_portable. `secret?` = conditional (see §6). Entities are nested where a field
-> holds a list of other Manifest* models — the harness recurses.
+1. **Table row data** (Codex #4a / Jack's catch) — `SolutionContent.table_data`, gated by
+   `include_data` (default False, `mode=full` only — `routers/solutions.py:269`), encrypted +
+   applied separately (`capture.py:794`, `deploy.py:814` "schema + policies only",
+   `zip_install.py:697`). Separate check: rows survive a **full-backup** round trip; absent on
+   shareable / `_repo`.
+2. **Secrets envelope** — Fernet blob (`secrets_blob.py`). Separate check: a sentinel secret value
+   survives **full-backup** encrypt→decrypt; and a **leak check** that shareable / `_repo` outputs
+   do NOT contain the sentinel anywhere.
+3. **Code envelope** (`.py` / app source) — not entity fields; round-trips on `_repo` and all
+   Solution paths. Light check (present + byte-identical); not the focus of this harness.
+4. **Solution CONNECTION DECLARATIONS** (Codex #4b — new) — a solution's declared integration
+   *connections* are NOT full `ManifestIntegration`/`ManifestOAuthProvider`/`ManifestMCPServer`
+   entities. They are **secret-scrubbed setup skeletons** (`integration_template.py`): config-schema
+   shape + a whitelist of safe OAuth fields, with `client_id`/`client_secret`/tokens/mappings/org-ids
+   **dropped by construction**. The harness needs a SEPARATE policy for this envelope — asserting the
+   skeleton shape survives AND that none of the dropped credential fields ever appear — NOT the full
+   integration field-class policy, or it tests the wrong shape.
 
-**ManifestOrganization:** id=identity · name=content **MK** · is_active=content ⚠️
+## 6. PROPOSED per-entity field-class table (REVIEW EVERY ROW)
+
+> `MK`=match_key (Solution-install matcher per §3). `env+keep`=environment, keep_on_portable.
+> `secret?`=conditional via `when=`. Nested = recurse into child models. **For id-only entities
+> (Form/Agent/EventSource/MCPServer) NO field carries MK — the harness pairs them by remap (§3).**
+
+**ManifestOrganization:** id=identity · name=content **MK** · is_active=environment ⚠️(state)
 **ManifestRole:** id=identity · name=content **MK**
-**ManifestWorkflow:** id=identity · name=content · path=content(deprecated→absent) · function_name=content **MK** · type=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · endpoint_enabled=content ⚠️ · timeout_seconds=content · public_endpoint=content · description=content · tool_description=content · category=content · tags=content
-**ManifestForm:** id=identity · name=content **MK** · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · description=content · workflow_id=reference · launch_workflow_id=reference · default_launch_params=content · allowed_query_params=content · form_schema=content
-**ManifestAgent:** id=identity · name=content **MK** · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · description=content · system_prompt=content · channels=content · tool_ids=reference · delegated_agent_ids=reference · knowledge_sources=content · system_tools=content · mcp_connection_ids=reference · llm_model=content · llm_max_tokens=content · max_iterations=content · max_token_budget=content
+**ManifestWorkflow:** id=identity · name=content · path=content **MK** · function_name=content **MK** · type=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · endpoint_enabled=content ⚠️ · timeout_seconds=content · public_endpoint=content · description=content · tool_description=content · category=content · tags=content
+**ManifestForm:** id=identity *(matcher: remap, no MK)* · name=content · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · description=content · workflow_id=reference · launch_workflow_id=reference · default_launch_params=content · allowed_query_params=content · form_schema=content
+**ManifestAgent:** id=identity *(remap, no MK)* · name=content · path=content(deprecated) · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · description=content · system_prompt=content · channels=content · tool_ids=reference · delegated_agent_ids=reference · knowledge_sources=content · system_tools=content · mcp_connection_ids=reference · llm_model=content · llm_max_tokens=content · max_iterations=content · max_token_budget=content
 **ManifestApp:** id=identity · path=content · slug=content **MK** · name=content · description=content · dependencies=content · organization_id=environment · roles=environment · role_names=env+keep · access_level=environment · app_model=content · logo=content
-**ManifestIntegrationConfigSchema:** key=content **MK** · type=content · required=content · description=content · options=content · position=content
+**ManifestIntegrationConfigSchema:** key=content **MK**(within integration) · type=content · required=content · description=content · options=content · position=content
 **ManifestOAuthProvider:** provider_name=content **MK** · display_name=content · oauth_flow_type=content · client_id=reference ⚠️ · authorization_url=content · token_url=content · token_url_defaults=content · scopes=content · redirect_uri=content
-**ManifestIntegrationMapping:** organization_id=environment · entity_id=reference · entity_name=content · oauth_token_id=secret ⚠️
+**ManifestIntegrationMapping:** organization_id=environment · entity_id=reference · entity_name=content · oauth_token_id=⚠️(reference vs secret — see §7.3)
 **ManifestIntegration:** id=identity · name=content **MK** · entity_id=reference · entity_id_name=content · default_entity_id=reference · list_entities_data_provider_id=reference · config_schema=nested · oauth_provider=nested · mappings=nested
-**ManifestConfig:** id=identity · integration_id=reference · key=content **MK** · config_type=content · description=content · organization_id=environment · value=**secret?** (when config_type==secret, else content) ⚠️
+**ManifestConfig:** id=identity · integration_id=reference **MK** · key=content **MK** · config_type=content · description=content · organization_id=environment **MK**(stamped) · value=**secret?**(when config_type==secret else content) ⚠️
 **ManifestSolutionConfigSchema:** id=identity · key=content **MK** · type=content · required=content · description=content · default=content ⚠️ · position=content
-**ManifestCustomClaim:** id=identity · name=content **MK** · description=content · organization_id=environment · type=content · query=content
-**ManifestPolicy:** name=content **MK** · description=content · actions=content · when=content
-**ManifestTable:** id=identity · name=content **MK** · description=content · organization_id=environment · table_schema=content · policies=nested
-**ManifestEventSubscription:** id=identity · target_type=content · workflow_id=reference · agent_id=reference · event_type=content · filter_expression=content · input_mapping=content · is_active=content ⚠️
-**ManifestEventSource:** id=identity · name=content **MK** · source_type=content · organization_id=environment · is_active=content ⚠️ · cron_expression=content · timezone=content · schedule_enabled=content ⚠️ · overlap_policy=content · adapter_name=content · webhook_integration_id=reference · webhook_config=content ⚠️ · rate_limit_*=content · subscriptions=nested
-**ManifestMCPConnectionTool:** tool_name=content **MK** · tool_schema=content · enabled=content · disabled_reason=content
-**ManifestMCPConnection:** organization_id=environment · client_id=reference ⚠️ · server_url_override=content · available_in_chat=content · available_to_autonomous=content · service_oauth_token_id=secret ⚠️ · tools=nested
-**ManifestMCPServer:** id=identity · name=content **MK** · server_url=content · oauth_provider_id=reference · redirect_url=content · discovery_metadata=content ⚠️ · organization_id=environment · is_active=content ⚠️ · connections=nested
+**ManifestCustomClaim:** id=identity · name=content **MK** · description=content · organization_id=environment **MK**(stamped) · type=content · query=content
+**ManifestPolicy:** name=content **MK**(within parent table) · description=content · actions=content · when=content
+**ManifestTable:** id=identity · name=content **MK** · description=content · organization_id=environment **MK**(stamped) · table_schema=content · policies=nested
+**ManifestEventSubscription:** id=identity *(within parent source)* · target_type=content · workflow_id=reference · agent_id=reference · event_type=content · filter_expression=content · input_mapping=content · is_active=environment ⚠️(state)
+**ManifestEventSource:** id=identity *(remap, no MK)* · name=content · source_type=content · organization_id=environment · is_active=environment ⚠️ · cron_expression=content · timezone=content · schedule_enabled=environment ⚠️ · overlap_policy=content · adapter_name=content · webhook_integration_id=reference · webhook_config=content ⚠️(blob) · rate_limit_*=content · subscriptions=nested
+**ManifestMCPConnectionTool:** tool_name=content **MK**(within connection) · tool_schema=content · enabled=content · disabled_reason=content
+**ManifestMCPConnection:** organization_id=environment · client_id=reference ⚠️ · server_url_override=content · available_in_chat=content · available_to_autonomous=content · service_oauth_token_id=⚠️(reference vs secret — §7.3) · tools=nested
+**ManifestMCPServer:** id=identity *(remap, no MK)* · name=content · server_url=content · oauth_provider_id=reference · redirect_url=content · discovery_metadata=content ⚠️(blob) · organization_id=environment · is_active=environment ⚠️ · connections=nested
 
-## 6. ⚠️ Rows needing an explicit human decision (the targeted-review list)
+## 7. ⚠️ Rows needing an explicit human decision (targeted review)
 
-1. **State flags: `is_active`, `enabled`, `endpoint_enabled`, `schedule_enabled`, `public_endpoint`.**
-   Called `content`. Real question: is "is this active/enabled" part of the **portable definition**
-   (travels) or **per-install state** (`environment`)? E.g. should a shareable bundle dictate that
-   an event source is *active* in the target, or is active/paused a local decision? Default proposal:
-   keep as `content` (the author's intent travels; the installer can toggle after). Confirm.
-2. **`ManifestConfig.value` conditional secret** — `secret` when `config_type=='secret'`, else
-   `content`. Needs the `when=` predicate. Confirm the predicate and that no other field is
-   conditionally secret.
-3. **`oauth_token_id` / `service_oauth_token_id`** — token *references* (the token lives in the DB,
-   not the manifest). Called `secret` (so scrubbed on `_repo` + portable). But they are ids, not
-   credentials. Question: is the reference itself sensitive enough to scrub, or is it `reference`
-   (round-trips, remapped)? Code emits the id on `_repo` (`manifest_generator.py:261`) — which
-   argues `reference`, NOT `secret`. **Likely needs flipping to `reference`.** Decide.
-4. **`client_id`** (OAuth/MCP) — half a credential, but code emits it to `_repo`
-   (`manifest_generator.py:247,395`). Called `reference`. Confirm it is not `secret`.
-5. **`ManifestWorkflow.function_name` vs `name` as match key** — proposed `function_name` (engine
-   resolves by it; `SolutionWorkflowNameMismatch` at `deploy.py:156`). Is `name` a fallback/composite
-   match key? Decide single vs composite.
-6. **Blob fields: `webhook_config`, `discovery_metadata`, `table_schema`, `query`, `app_model`,
-   `tool_schema`, `default_launch_params`, `form_schema`.** Called `content`. Confirm none embed a
-   secret (a secret inside a JSON blob would slip through scrubbing). If any can, it needs a custom rule.
-7. **`ManifestSolutionConfigSchema.default`** — a schema default value; called `content`. If a schema
-   can default a *secret* config, this is a leak vector. Confirm.
-8. **Deprecated `path`** (Workflow/Form/Agent) — content today is inline; generator no longer emits
-   `path`. Proposal: tag `content` but the harness asserts it is ABSENT both directions (the tripwire
-   tolerates it; the round-trip expects null↔null). Confirm we don't want a dedicated `deprecated` tag.
+1. **State flags: `is_active` (org/event/source), `schedule_enabled`, `endpoint_enabled`,
+   `public_endpoint`.** v2 proposes `environment` (per-install state — a shared bundle shouldn't
+   dictate active/paused in the target; the installer decides). v1 had them `content`. **Decide:
+   environment or content?** (Leaning environment for is_active/schedule_enabled; endpoint_enabled /
+   public_endpoint are arguably definition → content.)
+2. **`ManifestConfig.value` conditional secret** — `secret` when `config_type=='secret'` else
+   `content`. Needs `when=`. Confirm predicate; confirm no other field is conditionally secret.
+3. **`oauth_token_id` / `service_oauth_token_id`** — token *references* (token lives in DB, not
+   manifest). `_repo` emits the id (`manifest_generator.py:261`), arguing **`reference`** (round-trip,
+   remap) NOT `secret`. But it points at a credential. **Decide reference vs secret** (Claude leans
+   reference, matching code).
+4. **`client_id`** (OAuth/MCP) — emitted to `_repo` (`:247/395`), so **not** treated as secret today
+   → `reference`. Confirm.
+5. **Workflow match key** — `(path, function_name)` confirmed (Codex). `name` is fallback only, NOT a
+   key. Confirm no composite-with-name is wanted.
+6. **Blob fields:** `webhook_config`, `discovery_metadata`, `table_schema`, `query`, `app_model`,
+   `tool_schema`, `default_launch_params`, `form_schema`. `content`, compared as **canonical JSON**
+   (§8 risk 3). Confirm none can embed a secret (a secret-in-blob bypasses scrubbing → needs a rule).
+7. **`ManifestSolutionConfigSchema.default`** — a schema default value; `content`. If a schema can
+   default a *secret* config, leak vector. Confirm.
+8. **Deprecated `path`** (Workflow/Form/Agent) — content is inline; generator no longer emits `path`.
+   Harness asserts ABSENT both directions. Confirm no dedicated `deprecated` tag wanted.
+9. **`nested`** — NOT a class; the container field holds child models and the harness recurses,
+   applying child field-classes. Confirm the container field gets `classify(CONTENT)` as a structural
+   default while the real assertion is on recursed children.
 
-## 7. The harness (shape — detailed in the implementation plan)
+## 8. The harness shape + the 3 false-confidence defenses (Codex risks)
 
-- **`api/bifrost/field_classes.py`** — the enum + `classify()` + introspection helpers
-  (`field_class_of(model, field, row)`, `match_keys(model)`).
-- **`RoundTripPath`** objects — one per path (`REPO_SYNC`, `SOLUTION_SHAREABLE`, `SOLUTION_FULL`),
-  each declaring its per-class policy (the §4 table) and exposing `run(entity_rows) -> entity_rows`
-  that drives the REAL code (`generate_manifest`/`ManifestResolver`; the `_collect_*`+deploy;
-  the Fernet capture/restore). No reimplementation of the paths.
-- **Generators** — per entity: `all_fields_populated()`, `each_field_isolated()` (one fixture per
-  field set, rest at defaults), `known_tricky()` (agent-delegation order-independence; nested event
-  subscriptions; cascade override; conditional-secret config both ways). Bounded & deterministic;
-  **no Hypothesis**. A generator that doesn't populate a newly-added field is caught by a
-  generator-completeness tripwire (introspect model_fields vs what the generator sets).
-- **The assertion** (`assert_roundtrip(model, before, after, path)`): pair before/after rows by
-  `match_keys` (on portable paths where identity is regenerated; by id on same-env); for each field,
-  read its class (calling `when=` predicate against the row); if `path.preserves(class, field)`
-  assert equal, else assert scrubbed (None/[]/{} or, for secret-in-full, assert decryptable-equal).
-- **Existing known drops become RED**: `auto_fill` (form field dropped by shared FormIndexer),
-  agent-delegation order, `max_run_timeout`/`event_type`/`display_name` parity — the harness, built
-  against current code, fails on these immediately. Fixing them to green is part of Phase 1.5, and
-  turns the prior plan's prose §Handoff checklist into executable tests.
+- **`api/bifrost/field_classes.py`** — enum + `classify()` + introspection (`field_class_of(model,
+  field, row)` resolving `when=`; `match_keys(model)`).
+- **`RoundTripPath` objects** — `REPO_SYNC`, `SOLUTION_SHAREABLE`, `SOLUTION_FULL`, each declaring its
+  §4 per-class policy + how it pairs (`by_id` vs `by_natural_key` vs `by_remap`), exposing
+  `run(rows) -> rows` that drives the REAL code (`generate_manifest`/`ManifestResolver`; the
+  `_collect_*` + `deploy`; the Fernet `capture`/`zip_install`). **Plus** a `CONNECTION_DECL` check
+  (§5.4) and the `table_data` / secrets-envelope checks (§5.1–5.2).
+- **Generators** — per entity: `all_fields_populated()`, `each_field_isolated()`, `known_tricky()`
+  (agent-delegation order; nested event subscriptions; cascade override; conditional-secret both
+  ways; org-name-collision to exercise the §3.1 uniqueness caveat). Bounded, deterministic, **no
+  Hypothesis**.
+- **Defense vs Risk 1 (generator misses a field / only defaults):** a **generator-completeness
+  tripwire** introspects `model_fields` and asserts the generator sets a **non-default sentinel** for
+  every field. A new field with no sentinel = hard failure.
+- **Defense vs Risk 2 (drivers reimplement instead of calling real code):** `RoundTripPath.run` MUST
+  call the real exported functions end-to-end (`generate_manifest`, the real collectors, real
+  `deploy`, real export-zip + decrypt + install). A reimplementation is the test lying to itself; a
+  code-review gate on the driver enforces "calls real API, no inline re-derivation."
+- **Defense vs Risk 3 (loose equality on blobs / secrets):** dict/JSON fields compared via
+  **canonical JSON** (sorted keys); secrets asserted via **explicit decrypt-then-equal**; plus a
+  **sentinel-leak assertion** that shareable / `_repo` outputs contain the sentinel secret string
+  NOWHERE.
 
-## 8. Sequencing (settled: harness FIRST)
+## 9. Sequencing (settled: harness FIRST)
+Phase 1.5 (this spec → its plan), BEFORE convergence: (1) `field_classes.py` + tripwire; (2) tag all
+20 entities per approved §6; (3) the `RoundTripPath` drivers + the 4 envelope checks over REAL code;
+(4) generators + assertion + completeness tripwire; (5) run; fix the drops the harness surfaces to
+green (`auto_fill`, agent-delegation order, `max_run_timeout`/`event_type`/`display_name` parity —
+the prior plan's prose §Handoff becomes failing tests). THEN convergence keeps the harness green; the
+metadata IS axis-A and the `RoundTripPath` policies ARE the per-path ReconciliationPolicy instances.
 
-**Phase 1.5 (this spec → its plan), BEFORE convergence:**
-1. `field_classes.py` + `classify()` + the tagging tripwire.
-2. Tag all 20 entities per the approved §5 table.
-3. Build the three `RoundTripPath` drivers over the REAL paths.
-4. Build the generators + the round-trip assertion + the generator-completeness tripwire.
-5. Run; fix the existing drops the harness surfaces to green (the §7 known-drops list).
-**Then convergence (Phases 2–4):** refactor the writers onto the shared contract, keeping the
-harness green at every step. The field-class metadata from step 2 IS axis-A of the converged
-contract; the `RoundTripPath` policies ARE the per-path ReconciliationPolicy instances (spec
-`2026-06-18` §16–17).
-
-## 9. Open questions for review
-- §6 rows 1–8 (the targeted-review list) — each needs a yes/confirm or a correction.
-- Is `nested` a sixth FieldClass, or just "this field holds child Manifest models, recurse" (no class
-  of its own — the CHILDREN carry classes)? **Proposal: not a class** — nested containers aren't
-  scrubbed/kept as a unit; the harness recurses into them and applies child field classes. The
-  container field itself is implicitly "structural." Confirm — this affects whether nested fields
-  need a `classify()` tag (proposal: they get `classify(FieldClass.CONTENT)` as a container but the
-  real assertion is on the recursed children).
-- Backup/restore round-trip: confirm the harness should exercise the full Fernet encrypt→decrypt
-  cycle (not just assert the field is present pre-encrypt), to catch an encryption-layer drop.
+## 10. Open questions for review
+- §7 rows 1–9 — each needs a confirm/correct.
+- Whether the `CONNECTION_DECL` skeleton (§5.4) should get its own tiny field-class set or just an
+  allow/deny field whitelist mirroring `_SAFE_OAUTH_FIELDS` + the dropped list.
+- Whether id-only entities (§3) should ALSO grow a real natural-key matcher as part of convergence
+  (would make Solution reinstall idempotent by name) — likely a convergence decision, not this spec.
