@@ -20,6 +20,11 @@
 - Metadata mechanism is `Field(**classify(...))` — NOT `typing.Annotated`, NOT a decorator. **No callables in `json_schema_extra`** (breaks pydantic schema gen) — conditional class uses a string `predicate` key resolved through a registry in `field_classes.py`.
 - Solution-deploy tests hit the always-on read-only `before_flush` guard; any deploying test installs `install_solution_write_guard()` (autouse fixture).
 
+### Full-dict coverage — the harness compares ACTUAL serialized dicts, not just `Manifest*` fields (Codex round-2 P2 / the "single model" gap)
+The `Manifest*` pydantic models are NOT a complete description of what every path serializes. Solution capture emits keys the model doesn't name — e.g. `max_run_timeout` (`capture.py:610`) is written for agents but is NOT a `ManifestAgent` field. A field-class-only harness is structurally BLIND to such keys, which is exactly where a Bug-C-class silent drop hides. **Therefore the oracle compares the real serialized dicts each path produces**, in two layers:
+1. **Classified layer:** for every key that IS a `Manifest*` field, apply its field-class policy (the bulk of the harness).
+2. **Unclassified-key layer:** for every key a path emits that is NOT a `Manifest*` field (the "transport extras" like `max_run_timeout`), apply a small **declared extra-field policy** (`EXTRA_FIELD_POLICY` in `paths.py`: `{("agent","max_run_timeout"): "keep", ...}`) and a **completeness assertion** that EVERY emitted key is either a classified field or a declared extra — an unaccounted key is a hard failure. This makes the model/serializer divergence VISIBLE (it lists every drifted field) instead of silently uncovered. The divergence this surfaces is precisely what the convergence refactor (Phases 2-4) collapses onto one model — the harness names the work; convergence does it.
+
 ### Real entry points the drivers MUST call (Codex-pinned — do not reimplement)
 - **`_repo` export (DB→manifest):** `src.services.manifest_generator.generate_manifest(db, ...)`.
 - **`_repo` import (manifest→DB):** `src.services.github_sync.GitHubSyncService._import_all_entities(...)` — NOT bare `ManifestResolver.plan_import`; the indexer side-effects for inline form/agent CONTENT run in the wrapper (`github_sync.py:1229`). This is the path that drops `auto_fill`, so the harness MUST exercise it.
@@ -160,6 +165,18 @@ def test_every_field_is_classified(model):
 def test_metadata_is_schema_safe(model):
     # A callable left in json_schema_extra raises PydanticSerializationError here.
     model.model_json_schema()
+
+
+@pytest.mark.parametrize("model", iter_manifest_models(), ids=lambda m: m.__name__)
+def test_predicate_keys_are_registered(model):
+    # Codex round-2 P3: a tag referencing an unregistered predicate would KeyError at
+    # runtime in field_class_of. Catch it here, statically, for every field.
+    from bifrost.field_classes import PREDICATES
+    for f in model.model_fields:
+        extra = model.model_fields[f].json_schema_extra or {}
+        key = extra.get("bifrost_class_predicate")
+        if key is not None:
+            assert key in PREDICATES, f"{model.__name__}.{f} references unregistered predicate {key!r}"
 ```
 
 - [ ] **Step 3: Run — FAIL** (`test_every_field_is_classified` red; nothing tagged). `./test.sh tests/unit/test_field_class_tripwire.py -v`.
@@ -177,6 +194,11 @@ git commit -m "feat(manifest): field-class mechanism (string-key predicate regis
 **Files:** Modify `api/bifrost/manifest.py`. Tripwire flips green.
 
 **§7 tags (code-current defaults; flagged for override):** state flags `is_active`/`schedule_enabled`→ENVIRONMENT, `endpoint_enabled`/`public_endpoint`→CONTENT; `Config.value`→`classify(FieldClass.CONTENT, predicate="config_value")` (base CONTENT, predicate promotes to SECRET when config_type==secret); `oauth_token_id`/`service_oauth_token_id`/`client_id`→REFERENCE; blob fields→CONTENT; deprecated `path`→CONTENT; nested containers→`classify(FieldClass.CONTENT)` (recurse asserts children).
+
+**Codex round-2 classification corrections (code-verified — these are NOT optional):**
+- **`access_level`** (Workflow/Form/Agent/App) → **CONTENT**, not environment. Deploy PRESERVES the manifest value (`deploy.py:801` `if mwf.get("access_level") is not None: values["access_level"]=...`; agent `:1323`). It travels; classifying it environment would assert a FALSE red. (Note: it is an enum on the DB side — the generator must produce a VALID `access_level` value, not a raw sentinel string; see Task 3 domain-valid note.)
+- **`mcp_connection_ids`** (Agent) → keep **REFERENCE** but its Solution policy is *full-replace from manifest, NOT remapped* (`deploy.py:1340` — env-scoped MCPConnection grants). The `remap` assertion (presence-or-exact-id) handles this; do not expect a `solution_entity_id` remap on these.
+- **`role_names`** stays env+`keep_on_portable`; **`roles`** (UUIDs) environment.
 
 - [ ] **Step 1: Add `from bifrost.field_classes import FieldClass, classify` and tag every field per spec §6.** Workflow match keys = `path`+`function_name` (both `match_key=True`); Config = `key`+`integration_id`+`organization_id`; App=`slug`; Table=`name`+`organization_id`; Claim=`name`+`organization_id`; Integration=`name`; nested keys (IntegrationConfigSchema.key, MCPConnectionTool.tool_name) `match_key=True`. Form/Agent/EventSource/MCPServer carry NO `match_key` (id-only). `role_names` carries `keep_on_portable=True`.
 
@@ -221,6 +243,7 @@ git commit -m "feat(manifest): tag all 20 entities with field classes + match ke
 ```python
 """Deterministic fixture generators. No randomness, no Hypothesis."""
 from __future__ import annotations
+import types
 import typing
 import uuid
 from typing import Any, Literal, get_args, get_origin
@@ -232,8 +255,12 @@ _NS = uuid.UUID("00000000-0000-0000-0000-0000000000ff")  # fixed namespace
 def _det_uuid(model_name: str, field: str) -> str:
     return str(uuid.uuid5(_NS, f"{model_name}.{field}"))
 
+def _is_union(ann) -> bool:
+    # BOTH PEP 604 (X | None -> types.UnionType) AND typing.Union[...] (Codex round-2 P1)
+    return get_origin(ann) in (typing.Union, types.UnionType)
+
 def _unwrap_optional(ann):
-    if get_origin(ann) is typing.Union:
+    if _is_union(ann):
         args = [a for a in get_args(ann) if a is not type(None)]
         return args[0] if args else ann
     return ann
@@ -256,14 +283,16 @@ def sentinel_for(model_name: str, name: str, info: FieldInfo) -> Any:
         if isinstance(inner, type) and issubclass(inner, BaseModel):
             return [all_fields_populated(inner)]
         return [f"SENT::{model_name}.{name}.0"]
-    if origin is dict:
-        kt, vt = (get_args(ann) + (str, str))[:2]
-        vt = _unwrap_optional(vt)
+    if origin is dict or ann is dict:                # bare `dict` has origin None (Codex round-2 P1)
+        args = get_args(ann)
+        vt = _unwrap_optional(args[1]) if len(args) == 2 else str
         if isinstance(vt, type) and issubclass(vt, BaseModel):
             return {f"SENT_K::{name}": all_fields_populated(vt)}
         return {f"SENT_K::{name}": f"SENT_V::{name}"}
-    if isinstance(ann, type) and issubclass(ann, BaseModel):
+    if isinstance(ann, type) and issubclass(ann, BaseModel):  # nested model incl. ClaimQuery
         return all_fields_populated(ann)
+    if ann is object or ann is Any:                  # `object`/`Any` annotations
+        return f"SENT::{model_name}.{name}"
     return f"SENT::{model_name}.{name}"
 
 def all_fields_populated(model: type[BaseModel]) -> dict:
@@ -293,6 +322,8 @@ def test_all_fields_populated(model):
 ```
 
 - [ ] **Step 3: Run — green for ALL 20.** `./test.sh tests/roundtrip/test_generator_completeness.py -v`. If a model fails validation (e.g. an aliased field like `ManifestTable.table_schema` alias `schema`, or a `ClaimQuery` nested type), fix `sentinel_for`/validation call to handle that type — do NOT skip the field. Note `populate_by_name` models accept the python name; for alias-only models pass `by_alias` appropriately.
+
+  **DOMAIN-VALID sentinels (Codex round-2 P1):** some string fields are enum-constrained DOWNSTREAM even though the manifest types them as `str` — they pass `model_validate` but a raw `SENT::...` string breaks the real import/deploy path. Maintain a small `DOMAIN_VALUES` override map in `generators.py` for these, returning a valid member: `access_level` → `"role_based"`; agent `channels` → `["chat"]` (filtered to valid enums at `agent.py:100`); EventSource `source_type` → `"schedule"` (DB enum `events.py:50`); `config_type` → `"string"` (so the `Config.value` predicate stays CONTENT in the base fixture; a SECOND fixture sets `config_type="secret"` to exercise the SECRET branch — see Task 6). `sentinel_for` consults `DOMAIN_VALUES[(model_name, field)]` (or `[field]`) before falling back to a generic sentinel. This is the all-fields-populated path; the round-trip tests (Tasks 5-6) need values that survive the REAL import, not just pydantic validation.
 
 - [ ] **Step 4: Commit**
 ```bash
@@ -324,7 +355,10 @@ Policy = dict[FieldClass, str]  # action per class: keep | scrub | stamp | remap
 def canonical(v: Any) -> str:
     return json.dumps(v, sort_keys=True, default=str)
 
-def assert_field_roundtrip(model, field, before, after, policy: Policy, row) -> None:
+def assert_field_roundtrip(model, field, before, after, policy: Policy, row, *, remap=None) -> None:
+    """remap: optional callable old_ref_id -> expected_new_ref_id, used to check that a
+    reference to an IN-BUNDLE entity was remapped to the EXACT expected id (Codex round-2 P1 —
+    presence-only is too weak; a wrong remap must fail)."""
     cls = field_class_of(model, field, row)
     action = policy[cls]
     bval, aval = before.get(field), after.get(field)
@@ -336,6 +370,15 @@ def assert_field_roundtrip(model, field, before, after, policy: Policy, row) -> 
         assert aval is not None, f"{model.__name__}.{field} ({cls.value}) not stamped"
     elif action == "remap":
         assert (aval is None) == (bval is None), f"{model.__name__}.{field} ({cls.value}) presence changed on remap"
+        if remap is not None and bval is not None:
+            # EXACT-id check for in-bundle refs. For a list of refs, map each; for a scalar, map it.
+            if isinstance(bval, list):
+                expected = [remap(x) for x in bval]
+                assert canonical(aval) == canonical(expected), f"{model.__name__}.{field} refs mis-remapped: {aval!r} != {expected!r}"
+            else:
+                exp = remap(bval)
+                if exp is not None:  # remap returns None for an out-of-bundle ref it can't predict
+                    assert str(aval) == str(exp), f"{model.__name__}.{field} ref mis-remapped: {aval!r} != {exp!r}"
     else:
         raise AssertionError(f"unknown action {action!r}")
 
@@ -410,9 +453,11 @@ git commit -m "feat(roundtrip): policy assertion + canonical-JSON + leak + STRIC
 
 **`REPO_POLICY`** = `{identity:keep, content:keep, environment:keep, secret:scrub, reference:keep}`, pairing `by_id`.
 
-- [ ] **Step 1: `paths.py`** — `RoundTripPath` dataclass + `REPO_SYNC` constants + thin wrappers that call `generate_manifest` and `GitHubSyncService._import_all_entities`. (Read both real signatures first; wire them. No reimplementation.)
+- [ ] **Step 1: `paths.py`** — `RoundTripPath` dataclass + `REPO_SYNC` constants + thin wrappers. (Read real signatures first; wire them. No reimplementation.) **Codex round-2 P1 (split-file export):** the real `_repo` export is NOT bare `generate_manifest` — it is `GitHubSyncService._regenerate_manifest_to_dir()` (`github_sync.py:697`), which writes the split `.bifrost/*.yaml` files the importer reads. The driver's export step calls THAT; `generate_manifest` is the in-memory model it builds on, not the file-writing path. Wire `_regenerate_manifest_to_dir` → the on-disk manifest → `_import_all_entities`.
 
-- [ ] **Step 2: `test_roundtrip_repo.py`** — seed each entity with `all_fields_populated`, run real export→import, read back, pair `by_id`, `assert_field_roundtrip` per field with `REPO_POLICY` (predicate rows passed for `Config.value`). Start with Workflow to prove wiring; then parametrize over `iter_manifest_models()`. `@pytest.mark.e2e`. Include the **secret-leak check**: the generated `_repo` manifest text must not contain a secret sentinel.
+- [ ] **Step 2: `test_roundtrip_repo.py`** — seed each entity with `all_fields_populated`, run real export→import **INTO A DISTINCT TARGET** (see delta note), read back, pair `by_id`, `assert_field_roundtrip` per field with `REPO_POLICY` (predicate rows passed for `Config.value`). Start with Workflow; then parametrize over `iter_manifest_models()`. `@pytest.mark.e2e`. Include the **secret-leak check**: the generated `_repo` manifest text must not contain a secret sentinel.
+
+  **Codex round-2 P1 (FORCE A REAL IMPORT DELTA):** `_import_all_entities` is INCREMENTAL — `_diff_and_collect` returns early on no changed ids (`github_sync.py:1164`), so an export-then-import of the *same* DB state NO-OPS and false-greens without ever running the resolver/indexers. The test MUST create a delta so import actually executes: export from a seeded DB, then import into a **freshly-reset / empty** DB (or a DB where the entity is absent/changed), so `_diff_and_collect` sees the entity as new/changed and the indexers run. Assert the import actually touched the entity (non-empty SyncOps / the row appears) BEFORE asserting field round-trip — a zero-op import is itself a test failure.
 
 - [ ] **Step 3: Run (e2e) — reds are REAL findings.** `./test.sh e2e`; read per-worktree XML. Record every `(model, field)` red. Do NOT loosen assertions. (`auto_fill` is expected red here — that's the harness working.)
 
@@ -433,7 +478,9 @@ git commit -m "feat(roundtrip): _repo round-trip over real generate_manifest + G
 - **`SOLUTION_SHAREABLE`** = `{identity:remap, content:keep, environment:stamp, secret:scrub, reference:remap}`, pairing `by_remap`. (`keep_on_portable` env fields — `role_names` — are the one exception: asserted `keep`, checked separately.)
 - **`SOLUTION_FULL`** = same policy for the MANIFEST envelope (env stamped, secret scrubbed from manifest); secrets travel only in the encrypted envelope (separate check).
 
-- [ ] **Step 1: Add solution policies + real wrappers to `paths.py`** — wrappers call: real export-zip builder → `zip_install.install_zip` → `SolutionDeployer.deploy`; `secrets_blob` for the full-mode secret envelope; `build_integration_template` for connection decls. Provide `expected_id(before) = solution_entity_id(solution.id, UUID(before["id"]))` for `by_remap`.
+- [ ] **Step 1: Add solution policies + real wrappers to `paths.py`** — wrappers call: real export-zip builder → `zip_install.install_zip` → `SolutionDeployer.deploy`; `secrets_blob` for the full-mode secret envelope; `build_integration_template` for connection decls. Provide `expected_id(before) = solution_entity_id(solution.id, UUID(before["id"]))` for `by_remap`. The same `expected_id` is the `remap=` callable passed to `assert_field_roundtrip` for in-bundle reference fields (exact-id check).
+
+  **Codex round-2 caveat (FRESH-TARGET ONLY for now):** `_remapped_bundle` remaps own ids via `solution_entity_id` for all solution entities (`deploy.py:534`), EXCEPT table **orphan reattach**, which intentionally keeps the orphaned table's existing id (`deploy.py:879`) to re-adopt prior data. So `by_remap` `expected_id` is correct for a FRESH target install; a reinstall/orphan-reattach scenario pairs differently. **This harness covers fresh-target round trips; document the orphan-reattach exception and leave reinstall-pairing to a follow-up** (it ties into the held Task-11 slug-identity decision — out of scope here).
 
 - [ ] **Step 2: Shareable round-trip test** — seed the Solution-entity subset ONLY (workflows/tables/apps/forms/agents/claims/config_schemas/events/connection_schemas — NOT mcp_servers), real shareable export→install into a fresh target org, read back, pair `by_remap`, assert `SOLUTION_SHAREABLE`. Autouse write-guard. **Leak check:** the shareable zip's manifest text contains NO secret sentinel. **Env-stamp check:** `organization_id` on imported rows == target org (not the source).
 
@@ -485,6 +532,7 @@ git commit -m "docs(plan): mark round-trip harness Phase 1.5 complete"
 ---
 
 ## Self-Review notes
-- **Codex v1 (spec) corrections** → spec v2 §3/§4/§5. **Codex v2 (plan) corrections** → all 8 folded here: remap pairing (Task 6 `by_remap`); strict pair_rows skip-scrubbed-key + fail-on-missing (Task 4); env:stamp policies (Task 6); MCPServer Solution-excluded (Global Constraints "Solution entity set" + Task 6 Step 2); generator container/Literal/nested/alias handling (Task 3); string-key predicate registry, no callable in extra (Task 1, +schema-safe tripwire test); real `_import_all_entities` entry point (Task 5); constrained Task 7.
+- **Codex v1 (spec) corrections** → spec v2 §3/§4/§5. **Codex v2 (plan) corrections** → all 8 folded: remap pairing (Task 6 `by_remap`); strict pair_rows skip-scrubbed-key + fail-on-missing (Task 4); env:stamp policies (Task 6); MCPServer Solution-excluded (Global Constraints + Task 6); generator container/Literal/nested/alias handling (Task 3); string-key predicate registry (Task 1); real `_import_all_entities` entry point (Task 5); constrained Task 7.
+- **Codex v3 (plan round-2) corrections folded:** (P1) `sentinel_for` handles `types.UnionType` PEP-604 + bare `dict`/`object` (Task 3) — fixes the 15/20 model-validate failures; (P1) `_repo` driver forces a real import delta (import into empty/changed DB, assert non-zero ops) + uses `_regenerate_manifest_to_dir` split-file export (Task 5); (P1) `remap` assertion does EXACT in-bundle id check, not presence-only (Task 4); (P2) `access_level`→CONTENT (deploy preserves it) + `mcp_connection_ids` full-replace-not-remap (Task 2); (P2) full-dict coverage with `EXTRA_FIELD_POLICY` + unaccounted-key completeness assertion catches model/serializer drift like `max_run_timeout` (Global Constraints — the "single model" gap made visible); (P3) predicate-key tripwire (Task 1) + table-orphan-reattach exception documented (Task 6).
 - **Risk defenses:** Risk-1 = completeness tripwire (Task 3); Risk-2 = "drives REAL code" + named entry points (Global Constraints) + strict pairing (Task 4); Risk-3 = canonical JSON + secret-decrypt + sentinel-leak (Tasks 4/6).
 - **Out of scope:** the convergence refactor; changing scrub rules; adding natural-key matchers to id-only entities (convergence decision, spec §10).
