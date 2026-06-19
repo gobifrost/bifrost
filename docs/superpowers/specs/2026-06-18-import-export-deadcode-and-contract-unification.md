@@ -652,3 +652,49 @@ absorption, config-values/table-data backup story, and bucket-A drop are still o
 revisited once the shared-core structure exists (which is the point: decide capability scope
 against a common structure, not against two divergent ones). The Phase-1 sequencing question is
 also still open and gates plan-writing.
+
+---
+
+# 12. ROADMAP — the multi-phase shape (Jack, 2026-06-19)
+
+Jack's framing, made explicit. The import/export system **relies on the manifest** — this is
+verified, not aspirational: Solutions deploy has no serialization of its own; it imports the
+manifest helpers directly (`deploy.py:621` `_resolve_role_names`, `:1243`
+`_form_content_from_manifest`, `:1291` `_agent_content_from_manifest`). So the manifest
+machinery is the shared substrate ALREADY — it's just undisciplined (each `_resolve_*` reinvents
+CRUD rules). The work is **prune the dead manifest code, then put the SURVIVING manifest-based
+CRUD on a shared contract** so it stops reinventing rules. Manifest doesn't go away; it gets
+disciplined. Tables and Knowledge stay as UI features throughout.
+
+## Phase 1 — Clean foundation (PLANNED: `plans/2026-06-19-import-export-phase1-clean-foundation.md`)
+Bug fixes (§8) + dead-code removal (§9). Nothing built; the surface is made correct and minimal
+so later phases refactor a clean base. Tables/Knowledge untouched.
+
+## Phase 2 — Shared CRUD contract for the surviving manifest write path (§6.1)
+The pruned manifest `_resolve_*` / indexer writes get a single `EntityWriter.upsert(content_dto,
+*, identity, resolution)` per entity: shared validation + field-map + side-effects; identity
+caller-supplied (manifest scrubs it, deploy supplies it); resolution pluggable (by_id /
+by_natural_key_realign / per_install_remap). REST, manifest/git-sync, Solutions deploy, **and
+MCP** route through it. This is "the pruned manifest still shares a basic CRUD contract so it's
+not reinventing rules." Start with agent (highest-signal: both bugs + the MCP divergence).
+
+## Phase 3 — Shared per-entity export/import core, Tables first (§11)
+Refactor so the UI-facing Tables export/import (`export_import._build_tables_export` /
+`import_tables`) and the Solutions tables service (`capture._table_entries`/`_table_data`,
+`deploy._upsert_tables`) **share one `EntitySerializer` for tables** — `to_portable` /
+`from_portable` (fields + policies + row data). Two consumers (operator-JSON envelope vs
+solution-bundle envelope), one core. This is the concrete "don't maintain two backup tools"
+fix. (export_import.py:661 already carries a "Task 16 will extend TableExportItem to carry
+policies" TODO — i.e. it's drifting toward re-deriving what Solutions tables already encodes;
+the shared core removes that drift.) `from_portable` produces the validated `content_dto` that
+Phase 2's `EntityWriter.upsert` consumes — the two cores meet here.
+
+## Phase 4 — Extend the cores to remaining entities + decide bucket-B capability scope (§10.3)
+Migrate the other overlapping entities onto both cores behind the parity test. Resolve the
+deferred product decisions (knowledge absorption, config-values/table-data backup story,
+bucket-A drop) against the now-common structure rather than against two divergent ones — which
+is the whole point of sequencing them last.
+
+**What stays, all phases:** git-sync as a whole-environment mirror (it legitimately needs the
+manifest for org/role/MCP that don't belong in portable packages); Tables + Knowledge as UI
+features; Solutions' install-time remap/ownership/scope guards (they wrap the shared cores).
