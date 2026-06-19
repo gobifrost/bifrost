@@ -248,15 +248,63 @@ Three candidate shapes, in increasing ambition:
   insert/update, with mode-specific hooks for id-remap/ownership. Cleanest end state, largest
   blast radius, touches the most live code.
 
-**Decided with Jack (2026-06-18):** Approach **B with A folded in first**, scoped to the live
-overlapping entities (agents, forms, workflows, apps, tables, configs, integrations). The two
-reported bugs (§4.1, §4.2) ship as the first increment so they're fixed immediately and a
-parity test prevents regression while the broader unification lands. Solutions'
-ownership/scope guards (`guard.py`) stay exactly as they are. `/api/export-import` is **out of
-scope** for this effort (operator-backup use case + Knowledge pins it alive) but recorded in
-§2.3 as the next consolidation candidate.
+### 6.1 DECISION (revised 2026-06-19): approach **C — single write-service per entity**
 
-**Remaining open question (one):**
+> Supersedes the 2026-06-18 "B with A first" decision. After the live repro (§8) proved both
+> bugs are the same root cause — a writer that bypasses the contract — Jack's directive is:
+> **"everything should call the same stuff. If manifest needs to do something special like
+> resolve by name that's one thing, but it should always use common contracts."** That is
+> approach **C**, with a discipline that keeps it from becoming a rewrite.
+
+**The model: one write-core per entity; identity & resolution are caller-supplied parameters.**
+
+For each overlapping entity (agent, form, workflow, app, table, config, integration) there is
+exactly one write function — call it `EntityWriter.upsert(content_dto, *, identity, resolution)`:
+
+- **`content_dto`** — the validated portable contract (the existing `XxxCreate`/`XxxUpdate`
+  field set). This is the SINGLE source of truth for *what fields exist, validation rules
+  (name min_length, etc.), defaults, and field→column mapping*. No caller may skip it or carry
+  a different field set. `tool_description` lives here, so every door carries it; a blank name
+  fails validation here, so every door rejects it. **This is the layer that makes both bugs
+  structurally impossible.**
+- **`identity`** — org_id / access_level / owner / created_by, supplied BY THE CALLER. The
+  portable content intentionally excludes identity (manifest scrubs it; `bifrost.solution.yaml`
+  / the deploy command / the REST request supplies it). This formalizes the existing
+  "portable content carries no env-specific fields" rule — see CLAUDE.md "portability design".
+- **`resolution`** — the pluggable strategy for *which row* and create-vs-update:
+  `by_id` (REST PUT), `by_natural_key_realign` (manifest cross-env), `per_install_remap`
+  (Solutions uuid5 + ownership guard). This is the "something special" Jack carved out — it's a
+  strategy object, NOT a license to hand-roll a separate write. The 8 mechanisms in §7 collapse
+  to: ONE writer + a small set of named resolution strategies.
+- **Side-effects are shared and unskippable** — role-sync (`sync_*_roles_to_workflows`), tool
+  binding, delegation sync run inside the write-core. The MCP bug (drops role-sync) and the
+  manifest drifts disappear because no caller can forget a side-effect the core owns.
+
+**Callers after unification:**
+- REST routers → `upsert(dto, identity=request, resolution=by_id)` (POST allocates id).
+- git-sync / manifest import → `upsert(dto, identity=manifest-entry-scope, resolution=by_natural_key_realign)`.
+- Solutions deploy → `upsert(dto, identity=solution-scope, resolution=per_install_remap)` — the
+  ownership/scope guard (`guard.py`) and full-replace reconciliation stay as a deploy-level
+  wrapper AROUND the write-core, not inside it.
+- MCP tools → `upsert(dto, identity=caller-org, resolution=by_id)` — **IN SCOPE** (Jack's call):
+  this removes the direct-ORM writes, the hand-rolled name validation, and the dropped role-sync.
+
+**Scope (in):** agents, forms, workflows, apps, tables, configs, integrations — across REST,
+manifest/git-sync, Solutions deploy, MCP.
+**Scope (out):** `/api/export-import` (operator backup; Knowledge pins it alive — §2.3) and the
+Solutions ownership-guard / reconciliation logic (legitimately deploy-specific; wraps the core).
+
+**Sequencing (so the bugs are fixed early and the refactor lands safely):**
+1. **Increment 1 — fix the two bugs + add the third's guard** directly (tool_description into the
+   manifest/workflow serialization; name validation in the indexer; make blank-name a hard error
+   not a silent no-op + fix the lying `agents_upserted` count). Ships value immediately.
+2. **Increment 2 — stand up `EntityWriter` for one entity (agent)** and route all four doors
+   through it; add a parity test that fails if any door carries a field set diverging from the
+   DTO. Agent is the highest-signal (both bugs + MCP divergence live there).
+3. **Increment 3..N — migrate remaining entities** one at a time behind the same parity test,
+   deleting each bespoke writer as its entity moves over.
+
+### 6.2 Remaining open question (one)
 - OK to remove the orphaned `POST /api/files/manifest/import` endpoint wrapper (keeping the
   live `import_manifest_from_repo` service function), pending a prod request-log confirmation
   that nothing external hits it?
