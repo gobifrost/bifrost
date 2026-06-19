@@ -68,13 +68,11 @@ class AgentIndexer:
 
         name = agent_data.get("name")
         if not name:
-            logger.warning(f"Agent file missing name: {path}")
-            return False
+            raise ValueError(f"agent name is required (file: {path})")
 
         system_prompt = agent_data.get("system_prompt")
         if not system_prompt:
-            logger.warning(f"Agent file missing system_prompt: {path}")
-            return False
+            raise ValueError(f"system_prompt is required (file: {path})")
 
         # Use ID from JSON if present (for API-created agents), otherwise generate new
         agent_id_str = agent_data.get("id")
