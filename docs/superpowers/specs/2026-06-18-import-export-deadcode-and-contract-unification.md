@@ -519,3 +519,43 @@ solution `tooldesc-repro` install `58a5f7ec…`. Not code-reading — observed b
 Both bugs are structural consequences of the manifest/indexer path NOT going through the REST
 contract (which would 422 the blank name and carry `tool_description`). This is the empirical
 backing for the §6 unification work.
+
+---
+
+# 9. DEAD-CODE REMOVAL MANIFEST (verified 2026-06-19)
+
+Per Jack: "anything dead should be removed." Each item below has been verified to have NO live
+(non-test) caller. Tests-only ≠ live. This is a removal work-list for the plan.
+
+## 9.1 Confirmed DEAD — remove
+
+| Item | file:line | Proof of death | Tests to delete/rewrite |
+|---|---|---|---|
+| `POST /api/files/manifest/import` endpoint | `routers/files.py:457-511` | No client fetch (only generated `v1.d.ts`), no CLI caller; last production caller (CLI watch manifest-push) was **deliberately removed** — `test_watch_regression_disappearing_entity.py` asserts it must never be called again | `test_cli_push_pull.py` (the two POST tests), regression test's assertion stays valid |
+| `ManifestImportRequest` class | `routers/files.py:427-454` | Type for the dead handler only; no other use | — |
+| `ManifestImportResponse` contract + exports | `models/contracts/files.py` + `__init__.py:297,1031` | No CLI/client/SDK consumer; only the dead endpoint returns it | — |
+| `import_manifest_from_repo()` | `manifest_import.py:524-736` | Only caller is the dead endpoint (`files.py:493`). NOT used by git-sync (uses `ManifestResolver` directly) or Solutions | `test_manifest_import.py`, `test_manifest_import_config_cache.py` (both drive this fn directly — delete or re-point at `ManifestResolver`) |
+| `_apply_role_name_resolution()` | `manifest_import.py:414-466` | Called only from `import_manifest_from_repo:604` | (via above) |
+| `_rewrite_org_ids()` | `manifest_import.py:468-510` | Called only from `import_manifest_from_repo:609` | (via above) |
+
+## 9.2 MUST PRESERVE — shared with live git-sync / Solutions (do NOT delete)
+
+`ManifestResolver` (used by `github_sync.py:279`), `_diff_and_collect` + its diff helpers (used
+by `github_sync.py:1162`), `_form/_agent_content_from_manifest`, `_resolve_*_content`,
+`_resolve_role_names` (used by `solutions/deploy.py:627`), `generate_manifest` +
+`GET /api/files/manifest` (live: git-sync state export + app tests), all `_resolve_*` methods.
+These are the logic the dead `import_manifest_from_repo` *also* touched — removal must extract
+the dead wrapper while leaving these intact.
+
+## 9.3 Test impact
+
+`test_manifest_import.py` and `test_manifest_import_config_cache.py` exist solely to exercise
+`import_manifest_from_repo` in isolation (no git). When the function goes, these either delete
+(the `_resolve_*` logic they cover is already covered by git-sync e2e + the Solutions deploy
+e2e) or get re-pointed at `ManifestResolver`. Decide per-test during the plan — do not blindly
+delete coverage of `_resolve_*` without confirming git-sync/Solutions e2e covers the same paths.
+
+## 9.4 Already-dead (no action — confirmed removed upstream)
+
+`bifrost export` / `bifrost import` CLI commands, `api/bifrost/portable.py` — gone from the tree
+(§2.1). No orphaned `cli.py` dispatch branches remain.
