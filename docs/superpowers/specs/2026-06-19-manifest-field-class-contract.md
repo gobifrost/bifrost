@@ -112,7 +112,8 @@ on the path, because the two families of path identify entities differently:**
 | Config | `(key, integration_id, organization_id)` | :530 |
 | CustomClaim | `(name, organization_id)` | :538 |
 | MCPConnectionTool | `(connection_id, tool_name)` (within parent connection) | :2509 |
-| Form / Agent / EventSource / MCPServer | **id only — NO natural key matcher exists** (Codex #2) | :2531/2579/2235/2387 |
+| Form / Agent / EventSource | **id only — NO natural key matcher** (Codex #2). On `_repo` paired by id; on Solution paired by REMAP (`solution_entity_id`) | :2531/2579/2235 |
+| MCPServer / MCPConnection / MCPConnectionTool | **`_repo`-ONLY entities — NOT in `SolutionBundle`** (Codex #4, deploy.py:259 has no `mcp_servers`). Paired by id on `_repo`; NEVER asserted through a Solution path. Solutions carry only scrubbed integration *connection declarations* (`connections.yaml`, §5.4). | deploy.py:259 |
 
 **Implication of the last row:** Forms, agents, event sources, and MCP servers have NO name-based
 match in the code. On a Solution round trip where their id is regenerated, the harness must pair them
@@ -202,7 +203,7 @@ The field-class stickers label the **manifest** envelope only. These are separat
 **ManifestEventSource:** id=identity *(remap, no MK)* · name=content · source_type=content · organization_id=environment · is_active=environment ⚠️ · cron_expression=content · timezone=content · schedule_enabled=environment ⚠️ · overlap_policy=content · adapter_name=content · webhook_integration_id=reference · webhook_config=content ⚠️(blob) · rate_limit_*=content · subscriptions=nested
 **ManifestMCPConnectionTool:** tool_name=content **MK**(within connection) · tool_schema=content · enabled=content · disabled_reason=content
 **ManifestMCPConnection:** organization_id=environment · client_id=reference ⚠️ · server_url_override=content · available_in_chat=content · available_to_autonomous=content · service_oauth_token_id=⚠️(reference vs secret — §7.3) · tools=nested
-**ManifestMCPServer:** id=identity *(remap, no MK)* · name=content · server_url=content · oauth_provider_id=reference · redirect_url=content · discovery_metadata=content ⚠️(blob) · organization_id=environment · is_active=environment ⚠️ · connections=nested
+**ManifestMCPServer:** *(`_repo`-ONLY — never asserted on a Solution path; paired by id on `_repo`)* id=identity · name=content · server_url=content · oauth_provider_id=reference · redirect_url=content · discovery_metadata=content ⚠️(blob) · organization_id=environment · is_active=environment ⚠️ · connections=nested
 
 ## 7. ⚠️ Rows needing an explicit human decision (targeted review)
 
