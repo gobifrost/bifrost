@@ -559,3 +559,45 @@ delete coverage of `_resolve_*` without confirming git-sync/Solutions e2e covers
 
 `bifrost export` / `bifrost import` CLI commands, `api/bifrost/portable.py` — gone from the tree
 (§2.1). No orphaned `cli.py` dispatch branches remain.
+
+---
+
+# 10. CONSOLIDATION GOAL + entity-coverage delta (2026-06-19)
+
+**Revised north star (Jack):** the end state is **Solutions as the single export/import/backup
+system**. The old manifest portable format and `/api/export-import` get cleared away once
+Solutions covers what users actually need — leaving an *ultra-clean foundation* BEFORE we
+centralize writes onto the single write-service (§6.1). So dead-code removal (§9) is step one,
+but the real question is the **capability delta**: the old format supported entities Solutions
+does not, and we must not delete a format that's carrying a capability Solutions lacks.
+
+## 10.1 Coverage buckets (full matrix verified — see audit)
+
+**A. Old manifest/export-import carried it, Solutions does NOT — but it SHOULDN'T be portable
+(safe to drop with the old format):**
+- Organizations, Users, User-Role assignments — platform identity, never belongs in a package.
+- Role *definitions* — Solutions binds roles per-entity but doesn't author role rows. Identity.
+- MCP servers / connections / connection-tools — per-org platform bindings + vendor secrets.
+- Integration *mappings* + OAuth *provider client secrets* — env/secret-bearing.
+- These were in the manifest only because git-sync is a whole-env MIRROR, not a portable
+  package. Solutions correctly omits them. Dropping the manifest format does not lose a
+  *packaging* capability here.
+
+**B. Real CONTENT gaps that block "Solutions = the one system" (Solutions must absorb these, or
+we knowingly accept the loss before deleting the old path):**
+| Gap | Who has it today | Why it matters | Severity |
+|---|---|---|---|
+| **Knowledge stores (RAG)** | `/api/export-import/knowledge` ONLY (`export_import.py:165-191,420`) | A RAG solution can't package its knowledge; nothing in manifest OR Solutions carries it | HIGH |
+| **Config VALUES** | manifest + export-import carry values; Solutions = schema-only (`capture.py:296`, `deploy.py:1340`) | Solutions can't ship default/seed config values; backup can't restore a config snapshot | MED |
+| **Table DATA (rows)** | export-import carries `Document` rows; Solutions capture has `include_data` but deploy never writes rows (`deploy.py:806`) | Operator BACKUP/restore of operational data has no Solutions equivalent | MED (backup), LOW (packaging) |
+
+**C. Solutions does things the old formats never did (the reason it's the right base):**
+inline Python source bundling, solution metadata (version/logo/readme), config-schema
+declarations, connection declarations, per-install id remap + ownership/scope guards, SVG logo
+sanitization.
+
+## 10.2 The decisions this forces (Jack's call — see §10.3)
+
+Consolidation can't be "just delete the old format" until we resolve, per gap in bucket B:
+absorb into Solutions, OR keep a narrow backup tool, OR accept the capability loss. These are
+product decisions, captured in §10.3 once answered. Bucket A drops cleanly with the old format.
