@@ -520,3 +520,114 @@ async def test_claim_install_parity(db_session):
         await db_session.execute(delete(Solution).where(Solution.id == sol_id))
         await db_session.execute(delete(Organization).where(Organization.id == org_id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_integration_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded Integration (with config_schema, oauth_provider, mappings)
+    matches the committed golden snapshot.
+
+    Integration has no install path (install uses connection_schema templates).
+    Child models (ConfigSchema, OAuthProvider, Mapping) have no standalone orm path.
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
+    from src.models.orm.oauth import OAuthProvider
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestIntegration
+    from bifrost.manifest_codec import Destination
+
+    integ_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+
+    org = Organization(id=org_id, name=f"rt-integration-org-{org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    integ = Integration(
+        id=integ_id,
+        name="rt-integration-golden",
+        entity_id="tenant_id",
+        entity_id_name="Tenant ID",
+        default_entity_id=None,
+        list_entities_data_provider_id=None,
+        is_deleted=False,
+    )
+    db_session.add(integ)
+    await db_session.flush()
+
+    cs = IntegrationConfigSchema(
+        integration_id=integ_id,
+        key="api_key",
+        type="secret",
+        required=True,
+        description="API key for auth",
+        options=None,
+        position=0,
+    )
+    db_session.add(cs)
+    await db_session.flush()
+
+    op = OAuthProvider(
+        provider_name="rt-golden-oauth",
+        display_name="RT Golden OAuth",
+        oauth_flow_type="authorization_code",
+        client_id="test-client-id",
+        encrypted_client_secret=b"",
+        authorization_url="https://auth.example.com/authorize",
+        token_url="https://auth.example.com/token",
+        token_url_defaults=None,
+        scopes=["openid", "email"],
+        redirect_uri="https://app.example.com/callback",
+        integration_id=integ_id,
+    )
+    db_session.add(op)
+    await db_session.flush()
+
+    mapping = IntegrationMapping(
+        integration_id=integ_id,
+        organization_id=org_id,
+        entity_id="tenant-abc-123",
+        entity_name="Tenant ABC",
+        oauth_token_id=None,
+    )
+    db_session.add(mapping)
+    await db_session.commit()
+
+    try:
+        produced = ManifestIntegration.from_row(
+            integ,
+            config_schema=[cs],
+            oauth_provider=op,
+            mappings=[mapping],
+        ).view(Destination.GIT_SYNC)
+        assert_golden(
+            produced,
+            "integration_git_sync",
+            volatile_keys={"id", "organization_id"},
+        )
+
+        # Verify child-model to_orm_values raises (no standalone path)
+        import pytest as _pytest
+        with _pytest.raises(NotImplementedError):
+            ManifestIntegration.from_row(integ).to_orm_values(Destination.INSTALL)
+    finally:
+        await db_session.execute(
+            delete(IntegrationMapping).where(IntegrationMapping.integration_id == integ_id)
+        )
+        await db_session.execute(
+            delete(OAuthProvider).where(OAuthProvider.integration_id == integ_id)
+        )
+        await db_session.execute(
+            delete(IntegrationConfigSchema).where(
+                IntegrationConfigSchema.integration_id == integ_id
+            )
+        )
+        await db_session.execute(
+            delete(Integration).where(Integration.name.like("rt-integration%"))
+        )
+        await db_session.execute(
+            delete(Organization).where(Organization.id == org_id)
+        )
+        await db_session.commit()

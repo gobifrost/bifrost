@@ -333,7 +333,7 @@ class ManifestApp(BaseModel):
 # -- New entity types for manifest expansion --
 
 
-class ManifestIntegrationConfigSchema(BaseModel):
+class ManifestIntegrationConfigSchema(EntityCodec, BaseModel):
     """Config schema item within an integration."""
     key: str = Field(description="Config key name", **classify(FieldClass.CONTENT, match_key=True))
     type: str = Field(description="string | int | bool | json | secret", **classify(FieldClass.CONTENT))
@@ -342,8 +342,26 @@ class ManifestIntegrationConfigSchema(BaseModel):
     options: list[str] | None = Field(default=None, description="Allowed values (for string type)", **classify(FieldClass.CONTENT))
     position: int = Field(default=0, description="Display order in UI", **classify(FieldClass.CONTENT))
 
+    @classmethod
+    def from_row(cls, cs) -> "ManifestIntegrationConfigSchema":
+        """Mirror serialize_integration config_schema item in manifest_generator.py."""
+        return cls(
+            key=cs.key,
+            type=cs.type,
+            required=cs.required,
+            description=cs.description,
+            options=cs.options,
+            position=cs.position,
+        )
 
-class ManifestOAuthProvider(BaseModel):
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError(
+            "ManifestIntegrationConfigSchema has no standalone orm path; "
+            "child reconciliation is handled by _resolve_integration"
+        )
+
+
+class ManifestOAuthProvider(EntityCodec, BaseModel):
     """OAuth provider structure within an integration.
 
     client_id uses "__NEEDS_SETUP__" sentinel for new instances.
@@ -359,16 +377,56 @@ class ManifestOAuthProvider(BaseModel):
     scopes: list[str] = Field(default_factory=list, description="OAuth scopes", **classify(FieldClass.CONTENT))
     redirect_uri: str | None = Field(default=None, description="OAuth redirect URI", **classify(FieldClass.CONTENT))
 
+    @classmethod
+    def from_row(cls, op) -> "ManifestOAuthProvider":
+        """Mirror serialize_integration oauth_provider in manifest_generator.py.
 
-class ManifestIntegrationMapping(BaseModel):
+        client_secret is NEVER serialized (security).
+        """
+        return cls(
+            provider_name=op.provider_name,
+            display_name=op.display_name,
+            oauth_flow_type=op.oauth_flow_type,
+            client_id=op.client_id or "__NEEDS_SETUP__",
+            authorization_url=op.authorization_url,
+            token_url=op.token_url,
+            token_url_defaults=op.token_url_defaults or None,
+            scopes=op.scopes or [],
+            redirect_uri=op.redirect_uri,
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError(
+            "ManifestOAuthProvider has no standalone orm path; "
+            "upsert is handled inline by _resolve_integration"
+        )
+
+
+class ManifestIntegrationMapping(EntityCodec, BaseModel):
     """Integration mapping to an org + external entity."""
     organization_id: str | None = Field(default=None, description="Org UUID this mapping belongs to", **classify(FieldClass.ENVIRONMENT))
     entity_id: str = Field(description="External entity identifier (e.g. tenant ID)", **classify(FieldClass.REFERENCE))
     entity_name: str | None = Field(default=None, description="Display name for the entity", **classify(FieldClass.CONTENT))
     oauth_token_id: str | None = Field(default=None, description="Linked OAuth token (set via UI)", **classify(FieldClass.REFERENCE))
 
+    @classmethod
+    def from_row(cls, im) -> "ManifestIntegrationMapping":
+        """Mirror serialize_integration mappings item in manifest_generator.py."""
+        return cls(
+            organization_id=str(im.organization_id) if im.organization_id else None,
+            entity_id=im.entity_id,
+            entity_name=im.entity_name,
+            oauth_token_id=str(im.oauth_token_id) if im.oauth_token_id else None,
+        )
 
-class ManifestIntegration(BaseModel):
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError(
+            "ManifestIntegrationMapping has no standalone orm path; "
+            "upsert is handled inline by _resolve_integration"
+        )
+
+
+class ManifestIntegration(EntityCodec, BaseModel):
     """Integration entry in manifest."""
     id: str = Field(description="Integration UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="Integration display name", **classify(FieldClass.CONTENT, match_key=True))
@@ -379,6 +437,58 @@ class ManifestIntegration(BaseModel):
     config_schema: list[ManifestIntegrationConfigSchema] = Field(default_factory=list, description="Configuration fields", **classify(FieldClass.CONTENT))
     oauth_provider: ManifestOAuthProvider | None = Field(default=None, description="OAuth provider config", **classify(FieldClass.CONTENT))
     mappings: list[ManifestIntegrationMapping] = Field(default_factory=list, description="Per-org entity mappings", **classify(FieldClass.CONTENT))
+
+    @classmethod
+    def from_row(
+        cls,
+        integ,
+        *,
+        config_schema=None,
+        oauth_provider=None,
+        mappings=None,
+    ) -> "ManifestIntegration":
+        """Mirror serialize_integration in manifest_generator.py exactly."""
+        return cls(
+            id=str(integ.id),
+            name=integ.name,
+            entity_id=integ.entity_id,
+            entity_id_name=integ.entity_id_name,
+            default_entity_id=integ.default_entity_id,
+            list_entities_data_provider_id=(
+                str(integ.list_entities_data_provider_id)
+                if integ.list_entities_data_provider_id else None
+            ),
+            config_schema=[
+                ManifestIntegrationConfigSchema.from_row(cs)
+                for cs in (config_schema or [])
+            ],
+            oauth_provider=(
+                ManifestOAuthProvider.from_row(oauth_provider)
+                if oauth_provider else None
+            ),
+            mappings=[
+                ManifestIntegrationMapping.from_row(im)
+                for im in (mappings or [])
+            ],
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        if dest is not Destination.GIT_SYNC:
+            raise NotImplementedError(
+                "ManifestIntegration has no install path — "
+                "install uses connection_schema templates (_upsert_integration_shells), "
+                "a different shape outside this entity's view scope."
+            )
+        return ImportFields(
+            direct={
+                "id": self.id,
+                "name": self.name,
+                "entity_id": self.entity_id,
+                "entity_id_name": self.entity_id_name,
+                "default_entity_id": self.default_entity_id,
+                "list_entities_data_provider_id": self.list_entities_data_provider_id,
+            },
+        )
 
 
 class ManifestConfig(EntityCodec, BaseModel):

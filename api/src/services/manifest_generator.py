@@ -45,12 +45,9 @@ from bifrost.manifest import (
     ManifestEventSubscription,
     ManifestForm,
     ManifestIntegration,
-    ManifestIntegrationConfigSchema,
-    ManifestIntegrationMapping,
     ManifestMCPConnection,
     ManifestMCPConnectionTool,
     ManifestMCPServer,
-    ManifestOAuthProvider,
     ManifestOrganization,
     ManifestRole,
     ManifestTable,
@@ -199,51 +196,11 @@ def serialize_integration(
     oauth_provider: OAuthProvider | None = None,
     mappings: list[IntegrationMapping] | None = None,
 ) -> ManifestIntegration:
-    """Serialize an Integration ORM object to ManifestIntegration."""
-    return ManifestIntegration(
-        id=str(integ.id),
-        name=integ.name,
-        entity_id=integ.entity_id,
-        entity_id_name=integ.entity_id_name,
-        default_entity_id=integ.default_entity_id,
-        list_entities_data_provider_id=(
-            str(integ.list_entities_data_provider_id)
-            if integ.list_entities_data_provider_id else None
-        ),
-        config_schema=[
-            ManifestIntegrationConfigSchema(
-                key=cs.key,
-                type=cs.type,
-                required=cs.required,
-                description=cs.description,
-                options=cs.options,
-                position=cs.position,
-            )
-            for cs in (config_schema or [])
-        ],
-        oauth_provider=(
-            ManifestOAuthProvider(
-                provider_name=oauth_provider.provider_name,
-                display_name=oauth_provider.display_name,
-                oauth_flow_type=oauth_provider.oauth_flow_type,
-                client_id=oauth_provider.client_id or "__NEEDS_SETUP__",
-                authorization_url=oauth_provider.authorization_url,
-                token_url=oauth_provider.token_url,
-                token_url_defaults=oauth_provider.token_url_defaults or None,
-                scopes=oauth_provider.scopes or [],
-                redirect_uri=oauth_provider.redirect_uri,
-            )
-            if oauth_provider else None
-        ),
-        mappings=[
-            ManifestIntegrationMapping(
-                organization_id=str(im.organization_id) if im.organization_id else None,
-                entity_id=im.entity_id,
-                entity_name=im.entity_name,
-                oauth_token_id=str(im.oauth_token_id) if im.oauth_token_id else None,
-            )
-            for im in (mappings or [])
-        ],
+    return ManifestIntegration.from_row(
+        integ,
+        config_schema=config_schema,
+        oauth_provider=oauth_provider,
+        mappings=mappings,
     )
 
 

@@ -1,0 +1,40 @@
+{
+  "config_schema": [
+    {
+      "description": "API key for auth",
+      "key": "api_key",
+      "options": null,
+      "position": 0,
+      "required": true,
+      "type": "secret"
+    }
+  ],
+  "default_entity_id": null,
+  "entity_id": "tenant_id",
+  "entity_id_name": "Tenant ID",
+  "id": "<volatile>",
+  "list_entities_data_provider_id": null,
+  "mappings": [
+    {
+      "entity_id": "tenant-abc-123",
+      "entity_name": "Tenant ABC",
+      "oauth_token_id": null,
+      "organization_id": "<volatile>"
+    }
+  ],
+  "name": "rt-integration-golden",
+  "oauth_provider": {
+    "authorization_url": "https://auth.example.com/authorize",
+    "client_id": "test-client-id",
+    "display_name": "RT Golden OAuth",
+    "oauth_flow_type": "authorization_code",
+    "provider_name": "rt-golden-oauth",
+    "redirect_uri": "https://app.example.com/callback",
+    "scopes": [
+      "openid",
+      "email"
+    ],
+    "token_url": "https://auth.example.com/token",
+    "token_url_defaults": null
+  }
+}

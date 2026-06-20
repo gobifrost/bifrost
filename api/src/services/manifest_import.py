@@ -1639,7 +1639,10 @@ class ManifestResolver:
         from src.models.orm.oauth import OAuthProvider
         from src.services.sync_ops import SyncOp, Upsert  # noqa: F401
 
+        from bifrost.manifest_codec import Destination
+
         integ_id = UUID(minteg.id)
+        fields = minteg.to_orm_values(Destination.GIT_SYNC).direct
 
         # Check by natural key (name) — use cache if available
         if cache is not None:
@@ -1652,12 +1655,12 @@ class ManifestResolver:
 
         integ_values: dict = {
             "name": integ_name,
-            "entity_id": minteg.entity_id,
-            "entity_id_name": minteg.entity_id_name,
-            "default_entity_id": minteg.default_entity_id,
+            "entity_id": fields["entity_id"],
+            "entity_id_name": fields["entity_id_name"],
+            "default_entity_id": fields["default_entity_id"],
             "list_entities_data_provider_id": (
-                UUID(minteg.list_entities_data_provider_id)
-                if minteg.list_entities_data_provider_id else None
+                UUID(fields["list_entities_data_provider_id"])
+                if fields["list_entities_data_provider_id"] else None
             ),
             "is_deleted": False,
         }
