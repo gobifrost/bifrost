@@ -413,6 +413,18 @@ async def delete_integration(db: AsyncSession, entity_id: str) -> None:
     await db.commit()
 
 
+async def delete_form(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.forms import Form, FormField, FormRole
+
+    fid = UUID(entity_id)
+    await db.execute(delete(FormField).where(FormField.form_id == fid))
+    await db.execute(delete(FormRole).where(FormRole.form_id == fid))
+    await db.execute(delete(Form).where(Form.id == fid))
+    await db.commit()
+
+
 DELETERS: dict[str, Callable[[AsyncSession, str], Any]] = {
     "workflows": delete_workflow,
     "tables": delete_table,
@@ -420,4 +432,5 @@ DELETERS: dict[str, Callable[[AsyncSession, str], Any]] = {
     "claims": delete_claim,
     "events": delete_event_source,
     "integrations": delete_integration,
+    "forms": delete_form,
 }

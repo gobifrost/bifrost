@@ -190,6 +190,46 @@ async def seed_event_source(db: AsyncSession, work_dir: Path) -> str:
     return str(esid)
 
 
+async def seed_form(db: AsyncSession, work_dir: Path) -> str:
+    """Seed a Form + its referenced Workflow (.py file) + one FormField.
+
+    The workflow is the dependency closure (the form's ``workflow_id`` ref must
+    resolve); both are written so the form indexer does not skip on re-import.
+    Only the form is deleted to force the import delta.
+    """
+    from src.models.enums import FormAccessLevel
+    from src.models.orm.forms import Form, FormField
+    from src.models.orm.workflows import Workflow
+
+    wf_path = "workflows/rt_form_wf.py"
+    (work_dir / "workflows").mkdir(parents=True, exist_ok=True)
+    (work_dir / wf_path).write_text(SAMPLE_WORKFLOW_PY)
+    wid = uuid4()
+    db.add(Workflow(
+        id=wid, name="RT Form WF", function_name="roundtrip_wf", path=wf_path,
+        type="workflow", access_level="authenticated", is_active=True,
+    ))
+
+    fid = uuid4()
+    db.add(Form(
+        id=fid,
+        name="RoundTrip Form",
+        description="seeded form description",
+        workflow_id=str(wid),
+        access_level=FormAccessLevel.AUTHENTICATED,
+        organization_id=None,
+        allowed_query_params=["foo"],
+        is_active=True,
+        created_by="roundtrip@test.local",
+    ))
+    db.add(FormField(
+        id=uuid4(), form_id=fid, name="title", type="text", required=True,
+        position=0, label="Title", placeholder="Enter title",
+    ))
+    await db.commit()
+    return str(fid)
+
+
 async def seed_integration(db: AsyncSession, work_dir: Path) -> str:
     """Seed an Integration with a config-schema item + an OAuth provider.
 
@@ -237,6 +277,7 @@ SEEDERS = {
     "claims": seed_claim,
     "events": seed_event_source,
     "integrations": seed_integration,
+    "forms": seed_form,
 }
 
 
@@ -325,6 +366,7 @@ import pytest as _pytest  # noqa: E402
         ("claims", "ManifestCustomClaim"),
         ("events", "ManifestEventSource"),
         ("integrations", "ManifestIntegration"),
+        ("forms", "ManifestForm"),
     ],
 )
 async def test_repo_roundtrip_entity(
@@ -347,6 +389,37 @@ async def test_repo_roundtrip_entity(
             reds.append(f"{field} ({cls.value}): {e}")
 
     assert not reds, f"{model_name} _repo round-trip drops:\n" + "\n".join(reds)
+
+
+async def test_form_field_auto_fill_is_dropped_below_manifest(db_session: AsyncSession):
+    """DOCUMENTED PRODUCT-DECISION DROP: FormField.auto_fill never serializes.
+
+    ``auto_fill`` is a ``FormField`` column (forms.py:71) that
+    ``_form_field_to_schema_dict`` (manifest_generator.py:110-129) does NOT emit
+    into ``form_schema.fields``.  It therefore travels through NEITHER the _repo
+    NOR the solution path — the field-class harness is structurally blind to it
+    because the loss happens BELOW the manifest serialization boundary (inside
+    the opaque ``form_schema`` CONTENT blob), not at a ``Manifest*`` field.
+
+    This test PINS the current (dropping) behavior so the finding is executable.
+    Fixing it (adding ``auto_fill`` to ``_form_field_to_schema_dict`` + the form
+    indexer's FormField parse) is a PRODUCT DECISION — auto_fill may be
+    environment-specific prefill data that should NOT be shared — so it is left
+    as a documented finding, not silently fixed.  Mirror of the Phase-1
+    tool_description fix IF the product decision is "it should travel".
+    """
+    from src.services.manifest_generator import _form_field_to_schema_dict
+    from src.models.orm.forms import FormField
+
+    field = FormField(
+        id=uuid4(), name="ticket", type="text", required=False, position=0,
+        auto_fill={"sibling": "metadata.path"},
+    )
+    rendered = _form_field_to_schema_dict(field)
+    assert "auto_fill" not in rendered, (
+        "auto_fill is now serialized — if this is intentional, add it to the form "
+        "indexer's FormField parse on import and update the product-decision finding."
+    )
 
 
 async def test_repo_manifest_has_no_secret_leak(db_session: AsyncSession, tmp_path: Path):
