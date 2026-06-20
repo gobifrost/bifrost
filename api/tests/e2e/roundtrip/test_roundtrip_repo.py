@@ -190,6 +190,44 @@ async def seed_event_source(db: AsyncSession, work_dir: Path) -> str:
     return str(esid)
 
 
+async def seed_integration(db: AsyncSession, work_dir: Path) -> str:
+    """Seed an Integration with a config-schema item + an OAuth provider.
+
+    Standalone (no closure).  Exercises the nested CONTENT (config_schema,
+    oauth_provider).  The OAuth ``encrypted_client_secret`` is intentionally
+    NEVER serialized (a documented secret drop, not a Manifest field); a real
+    ``client_id`` (not the ``__NEEDS_SETUP__`` sentinel) must round-trip.
+    """
+    from src.models.orm.integrations import Integration, IntegrationConfigSchema
+    from src.models.orm.oauth import OAuthProvider
+
+    iid = uuid4()
+    db.add(Integration(
+        id=iid,
+        name=f"rt-integration-{iid.hex[:6]}",
+        entity_id="tenant_id",
+        entity_id_name="Tenant",
+        default_entity_id="default-tenant",
+    ))
+    db.add(IntegrationConfigSchema(
+        id=uuid4(), integration_id=iid, key="base_url",
+        type="string", required=True, position=0, description="Base URL",
+    ))
+    db.add(OAuthProvider(
+        id=uuid4(),
+        provider_name=f"rtprov{iid.hex[:6]}",
+        display_name="RT Provider",
+        client_id="real-client-id-not-sentinel",
+        encrypted_client_secret=b"SECRET_SENTINEL_DO_NOT_LEAK",
+        integration_id=iid,
+        authorization_url="https://example.test/authorize",
+        token_url="https://example.test/token",
+        scopes=["read", "write"],
+    ))
+    await db.commit()
+    return str(iid)
+
+
 # Registry: collection -> seeder.  Workflow is proven end-to-end; more entities
 # get added here as their dependency closures are wired (Task 7).
 SEEDERS = {
@@ -198,6 +236,7 @@ SEEDERS = {
     "configs": seed_config,
     "claims": seed_claim,
     "events": seed_event_source,
+    "integrations": seed_integration,
 }
 
 
@@ -285,6 +324,7 @@ import pytest as _pytest  # noqa: E402
         ("configs", "ManifestConfig"),
         ("claims", "ManifestCustomClaim"),
         ("events", "ManifestEventSource"),
+        ("integrations", "ManifestIntegration"),
     ],
 )
 async def test_repo_roundtrip_entity(

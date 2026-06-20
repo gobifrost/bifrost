@@ -403,10 +403,21 @@ async def delete_event_source(db: AsyncSession, entity_id: str) -> None:
     await db.commit()
 
 
+async def delete_integration(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.integrations import Integration
+
+    # IntegrationConfigSchema / OAuthProvider / mappings cascade via FK ondelete.
+    await db.execute(delete(Integration).where(Integration.id == UUID(entity_id)))
+    await db.commit()
+
+
 DELETERS: dict[str, Callable[[AsyncSession, str], Any]] = {
     "workflows": delete_workflow,
     "tables": delete_table,
     "configs": delete_config,
     "claims": delete_claim,
     "events": delete_event_source,
+    "integrations": delete_integration,
 }
