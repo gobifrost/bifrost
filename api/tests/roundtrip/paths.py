@@ -117,7 +117,12 @@ FIELD_OVERRIDES: dict[tuple[str, str], str] = {
     ("ManifestTable", "organization_id"): "absent",
     ("ManifestConfig", "organization_id"): "absent",
     ("ManifestCustomClaim", "organization_id"): "absent",
-    ("ManifestEventSource", "organization_id"): "absent",
+    # NOTE: ManifestEventSource.organization_id is NOT "absent" — unlike the
+    # _drop_none captures above, EventSource is serialized via
+    # serialize_event_source (capture.py:_event_entries -> manifest_generator
+    # serialize_event_source) which DOES emit organization_id into the bundle
+    # entry. Deploy stamps it to the install org (deploy.py:1571), so it follows
+    # the normal ENVIRONMENT->stamp policy. (A blanket "absent" here false-reds.)
     # Agent.mcp_connection_ids are env-scoped MCPConnection GRANTS, deployed
     # full-replace-from-manifest and NOT remapped via solution_entity_id
     # (deploy.py:1340). The generic REFERENCE remap-id check would false-red.

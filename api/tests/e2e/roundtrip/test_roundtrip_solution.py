@@ -528,6 +528,68 @@ async def test_solution_shareable_roundtrip_claim(db_session: AsyncSession):
 
 
 # ---------------------------------------------------------------------------
+# EventSource (schedule) — solution path. Schedule type has no webhook, so the
+# webhook_integration_id scrub override is exercised on a None value; no
+# subscriptions avoids the workflow dependency.
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_event_source(db: AsyncSession, sol: Solution) -> str:
+    from src.models.enums import ScheduleOverlapPolicy
+    from src.models.orm.events import EventSource, ScheduleSource
+
+    esid = uuid.uuid4()
+    db.add(EventSource(
+        id=esid,
+        name=f"rt_sched_{uuid.uuid4().hex[:6]}",
+        source_type="schedule",
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        is_active=True,
+        created_by="roundtrip@test.local",
+    ))
+    db.add(ScheduleSource(
+        id=uuid.uuid4(),
+        event_source_id=esid,
+        cron_expression="0 9 * * *",
+        timezone="America/New_York",
+        enabled=True,
+        overlap_policy=ScheduleOverlapPolicy.SKIP,
+    ))
+    await db.flush()
+    return str(esid)
+
+
+async def test_solution_shareable_roundtrip_event_source(db_session: AsyncSession):
+    """ManifestEventSource (schedule) obeys SOLUTION_SHAREABLE across export->install."""
+    db = db_session
+    src_sol = await _make_solution(db)
+    src_id = await seed_solution_event_source(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "events")
+    assert len(before_rows) == 1, f"expected 1 source event, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "events")
+    assert len(after_rows) == 1, f"expected 1 installed event, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestEventSource, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+    _assert_complete(m.ManifestEventSource, b, a)
+    reds = _assert_entity_fields(
+        m.ManifestEventSource, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids={str(src_id)},
+    )
+    assert not reds, (
+        "ManifestEventSource SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Envelope check 1: table_data — full carries rows, shareable carries none.
 # ---------------------------------------------------------------------------
 
