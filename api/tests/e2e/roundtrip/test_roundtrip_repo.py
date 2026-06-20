@@ -43,6 +43,17 @@ from tests.roundtrip.paths import (
 pytestmark = pytest.mark.e2e
 
 
+@pytest.fixture(autouse=True)
+async def _cleanup_roundtrip_rows(db_session):
+    """These tests COMMIT (the real import reads state back in a fresh query), so
+    the db_session rollback can't undo them. Delete the committed rt_* rows after
+    each test or a global ``RoundTrip Agent`` leaks into sibling tests."""
+    from tests.roundtrip.paths import cleanup_roundtrip_rows
+
+    yield
+    await cleanup_roundtrip_rows(db_session)
+
+
 SAMPLE_WORKFLOW_PY = """\
 from bifrost import workflow
 

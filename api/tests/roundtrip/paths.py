@@ -390,6 +390,77 @@ async def delete_role(db: AsyncSession, entity_id: str) -> None:
     await db.commit()
 
 
+async def cleanup_roundtrip_rows(db: AsyncSession) -> None:
+    """Delete every committed row the round-trip seeders create.
+
+    The round-trip tests COMMIT (the real import/deploy paths read state back in a
+    fresh query, so the ``db_session`` fixture's end-of-test rollback can't undo
+    them). Without this teardown a committed global ``RoundTrip Agent`` (and the
+    other ``rt_*`` rows) leaks across the whole session and breaks sibling tests
+    that assert on the visible-entity set (e.g. agent-router access). This fixture
+    deletes the seeded TOP-LEVEL rows by their distinctive markers; child rows
+    (schedule/webhook/subscription, integration config-schema/oauth, form fields,
+    documents, solution config-schema) cascade via their FK ``ondelete``. It
+    commits so the deletes are visible to the next test's fresh session.
+    """
+    from sqlalchemy import delete, or_
+
+    from src.models.orm.agents import Agent
+    from src.models.orm.applications import Application
+    from src.models.orm.config import Config
+    from src.models.orm.custom_claims import CustomClaim
+    from src.models.orm.events import EventSource
+    from src.models.orm.external_mcp import MCPServer
+    from src.models.orm.forms import Form
+    from src.models.orm.integrations import Integration
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
+    from src.models.orm.tables import Table
+    from src.models.orm.users import Role
+    from src.models.orm.workflows import Workflow
+
+    # Order: entities that reference others first (forms/agents -> workflows;
+    # everything solution-managed before its Solution). Children cascade via FK.
+    await db.execute(delete(Form).where(Form.name.in_(["RoundTrip Form"])))
+    await db.execute(delete(Agent).where(Agent.name.in_(["RoundTrip Agent"])))
+    await db.execute(
+        delete(Workflow).where(
+            or_(
+                Workflow.name.in_([
+                    "RoundTrip WF", "RoundTrip Display Name", "RoundTrip WF Display",
+                    "RT Form WF", "RT Event WF",
+                ]),
+                Workflow.function_name == "roundtrip_wf",
+            )
+        )
+    )
+    await db.execute(delete(Application).where(Application.slug.like("rt-app-%")))
+    await db.execute(delete(Table).where(Table.name.like("rt_table_%")))
+    await db.execute(
+        delete(Config).where(or_(Config.key.like("RT_CONFIG_%"), Config.key == "RTM_API_KEY"))
+    )
+    await db.execute(delete(CustomClaim).where(CustomClaim.name.like("rt_claim_%")))
+    await db.execute(
+        delete(EventSource).where(
+            or_(EventSource.name.like("rt_schedule_%"), EventSource.name.like("rt_sched_%"))
+        )
+    )
+    await db.execute(delete(Integration).where(Integration.name.like("rt-integration%")))
+    await db.execute(delete(MCPServer).where(MCPServer.name.like("rt-mcp-%")))
+    await db.execute(delete(Role).where(Role.name.like("rt_role_%")))
+    await db.execute(delete(Solution).where(Solution.slug.like("rt-sol-%")))
+    await db.execute(
+        delete(Organization).where(
+            or_(
+                Organization.name.like("RT Org %"),
+                Organization.name.like("RT Claim Org %"),
+                Organization.name.like("RT Target %"),
+            )
+        )
+    )
+    await db.commit()
+
+
 def manifest_text(work_dir: Path) -> str:
     """Concatenate all written ``.bifrost/*.yaml`` files (for the secret-leak scan)."""
     bifrost_dir = work_dir / ".bifrost"

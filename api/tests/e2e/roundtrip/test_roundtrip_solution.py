@@ -89,6 +89,17 @@ def _solution_write_guard():
     yield
 
 
+@pytest.fixture(autouse=True)
+async def _cleanup_roundtrip_rows(db_session):
+    """install_zip/deploy COMMIT, so the db_session rollback can't undo the
+    installed entities. Delete the committed rt_* rows after each test or they
+    leak into sibling tests (e.g. a global ``RoundTrip Agent``)."""
+    from tests.roundtrip.paths import cleanup_roundtrip_rows
+
+    yield
+    await cleanup_roundtrip_rows(db_session)
+
+
 # ---------------------------------------------------------------------------
 # Seeders: build a SOURCE solution owning one rich entity (all content fields
 # set to NON-DEFAULT values so a dropped field shows as a changed value).
