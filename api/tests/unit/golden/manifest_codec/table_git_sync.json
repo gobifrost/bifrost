@@ -1,0 +1,45 @@
+{
+  "description": "parity test table",
+  "id": "<volatile>",
+  "name": "rt_table_golden",
+  "organization_id": null,
+  "policies": [
+    {
+      "actions": [
+        "read",
+        "create",
+        "update",
+        "delete"
+      ],
+      "description": null,
+      "name": "admin_bypass",
+      "when": null
+    },
+    {
+      "actions": [
+        "update",
+        "delete"
+      ],
+      "description": "Row owner may update/delete",
+      "name": "owner_can_edit",
+      "when": {
+        "eq": [
+          {
+            "row": "owner_id"
+          },
+          {
+            "user": "user_id"
+          }
+        ]
+      }
+    }
+  ],
+  "schema": {
+    "columns": [
+      {
+        "name": "col1",
+        "type": "string"
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "access_level": "authenticated",
+  "category": "TestCat",
+  "description": "parity test desc",
+  "endpoint_enabled": true,
+  "function_name": "rt_parity",
+  "id": "<volatile>",
+  "name": "rt_wf_parity",
+  "organization_id": null,
+  "path": "workflows/rt_parity.py",
+  "public_endpoint": true,
+  "role_names": null,
+  "roles": [],
+  "tags": [
+    "alpha",
+    "beta"
+  ],
+  "timeout_seconds": 999,
+  "tool_description": "parity tool desc",
+  "type": "workflow"
+}

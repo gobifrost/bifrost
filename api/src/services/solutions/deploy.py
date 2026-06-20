@@ -815,6 +815,8 @@ class SolutionDeployer:
         (``solution_id == sid AND id NOT IN bundle_ids``) would delete the table
         it just re-adopted.
         """
+        from bifrost.manifest import ManifestTable
+        from bifrost.manifest_codec import Destination
         from shared.policies.probe import make_seed_admin_bypass
         from src.core.pubsub import publish_policy_changed
         from src.models.contracts.policies import TablePolicies
@@ -839,9 +841,6 @@ class SolutionDeployer:
             seen_names.add(nm)
 
         for mtbl in tables:
-            from bifrost.manifest import ManifestTable
-            from bifrost.manifest_codec import Destination
-
             mtbl_model = ManifestTable(**mtbl)
             src = mtbl_model.to_orm_values(Destination.INSTALL).direct
             tbl_id = UUID(mtbl["id"])

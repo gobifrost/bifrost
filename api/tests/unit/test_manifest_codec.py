@@ -1,3 +1,7 @@
+import json
+import os
+from pathlib import Path
+
 import pytest
 from bifrost.field_classes import classify, import_owner_of, FieldClass
 from bifrost.manifest_codec import Destination, EntityCodec, ImportFields
@@ -44,6 +48,109 @@ def test_assert_parity_passes_on_equal_and_fails_on_diff():
         assert_parity({"a": 1, "b": 2}, {"a": 1}, label="extra")
 
 
+# --- Golden-file characterization oracle -----------------------------------
+# A frozen, machine-captured snapshot of each entity's produced git_sync/install
+# dict. Used INSTEAD of comparing against the live writer once Phase B has swapped
+# the writer to delegate to the model — at that point `serialize_X()`/`_X_entries()`
+# call the SAME model code, so comparing against them is circular (tautological).
+# The golden file is captured ONCE while the round-trip detector is green (so the
+# bytes are detector-proven byte-identical to the original writers), then committed.
+# Re-capture deliberately with UPDATE_GOLDEN=1 (review the git diff of the fixture).
+# Committed fixtures live in the repo (read at assert time — the container mounts
+# /app READ-ONLY, so the test can only READ here). Captures in UPDATE_GOLDEN mode
+# are written to the WRITABLE LOG_DIR mount (/tmp/bifrost in-container, host
+# /tmp/bifrost-<project>) for the developer to harvest and commit into GOLDEN_DIR.
+GOLDEN_DIR = Path(__file__).parent / "golden" / "manifest_codec"
+GOLDEN_CAPTURE_DIR = Path("/tmp/bifrost/golden/manifest_codec")
+
+
+# Keys whose VALUES are per-run-random (seeded uuid4 PKs / FK id lists). The
+# golden locks their PRESENCE and shape, not the volatile value: each is replaced
+# with a stable sentinel before capture AND before compare. The seed varies the
+# uuid per run (no fixed-id collision across leaked sessions), the golden stays
+# byte-stable. Nested volatile ids (e.g. inside a policies/subscriptions list) are
+# masked by dotted path handled in _mask.
+VOLATILE_SENTINEL = "<volatile>"
+
+
+def _mask(value, volatile_keys: set[str]):
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if k in volatile_keys:
+                # mask scalars and every element of a list (id-list FKs)
+                out[k] = (
+                    [VOLATILE_SENTINEL for _ in v] if isinstance(v, list) else VOLATILE_SENTINEL
+                )
+            else:
+                out[k] = _mask(v, volatile_keys)
+        return out
+    if isinstance(value, list):
+        return [_mask(v, volatile_keys) for v in value]
+    return value
+
+
+def _normalize(produced: dict, volatile_keys: set[str]) -> dict:
+    # json round-trip normalizes tuples→lists etc. so the comparison matches the
+    # on-disk form exactly (the produced dict is already JSON-mode from view()),
+    # then volatile per-run ids are masked to a stable sentinel.
+    norm = json.loads(json.dumps(produced, sort_keys=True))
+    masked = _mask(norm, volatile_keys)
+    assert isinstance(masked, dict)  # top-level produced is always a dict
+    return masked
+
+
+def assert_golden(produced: dict, name: str, *, volatile_keys: set[str] | None = None) -> None:
+    """Assert *produced* equals the committed golden snapshot ``<name>.json``.
+
+    Non-circular characterization oracle: the golden is captured from a
+    detector-verified run (not from the live, now-delegating writer) and
+    committed. To (re)capture, run the suite with ``UPDATE_GOLDEN=1`` — the new
+    snapshot is written under ``/tmp/bifrost/golden/manifest_codec`` (the
+    writable LOG_DIR mount; ``/app`` is read-only in the test container). Harvest
+    it into ``tests/unit/golden/manifest_codec`` and commit only after confirming
+    the round-trip detector is green and reviewing the fixture diff.
+    """
+    produced_norm = _normalize(produced, volatile_keys or set())
+    if os.environ.get("UPDATE_GOLDEN") == "1":
+        GOLDEN_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        (GOLDEN_CAPTURE_DIR / f"{name}.json").write_text(
+            json.dumps(produced_norm, indent=2, sort_keys=True) + "\n"
+        )
+        return  # capture run: don't assert against a possibly-stale committed fixture
+    path = GOLDEN_DIR / f"{name}.json"
+    assert path.exists(), (
+        f"golden {name}.json is missing. Capture it with UPDATE_GOLDEN=1, then copy "
+        f"from /tmp/bifrost-<project>/golden/manifest_codec into "
+        f"api/tests/unit/golden/manifest_codec and commit."
+    )
+    golden = json.loads(path.read_text())
+    assert produced_norm == golden, (
+        f"{name}: produced diverges from golden {name}.json. If this change is "
+        f"intentional and the round-trip detector is green, re-capture with "
+        f"UPDATE_GOLDEN=1 and review the fixture diff.\n produced={produced_norm}\n golden={golden}"
+    )
+
+
+def test_assert_golden_compares_against_committed_fixture(tmp_path, monkeypatch):
+    # Point GOLDEN_DIR at a tmp dir holding a known fixture; prove compare passes
+    # on match (order-independent) and raises on divergence. Capture-mode is a
+    # no-assert side effect, so it's exercised separately via UPDATE_GOLDEN.
+    monkeypatch.setattr("tests.unit.test_manifest_codec.GOLDEN_DIR", tmp_path)
+    monkeypatch.delenv("UPDATE_GOLDEN", raising=False)
+    (tmp_path / "selfcheck.json").write_text(json.dumps({"a": 1, "b": 2}, sort_keys=True))
+    assert_golden({"b": 2, "a": 1}, "selfcheck")  # equal, order-independent
+    with pytest.raises(AssertionError):
+        assert_golden({"a": 1, "b": 999}, "selfcheck")  # diverges
+    with pytest.raises(AssertionError):
+        assert_golden({"a": 1}, "missing_fixture")  # absent fixture fails loudly
+    # volatile masking: differing id values compare equal once masked
+    (tmp_path / "vol.json").write_text(
+        json.dumps({"id": VOLATILE_SENTINEL, "roles": [VOLATILE_SENTINEL]}, sort_keys=True)
+    )
+    assert_golden({"id": "abc", "roles": ["xyz"]}, "vol", volatile_keys={"id", "roles"})
+
+
 @pytest.mark.e2e
 async def test_organization_git_sync_parity(db_session):
     import uuid
@@ -88,13 +195,12 @@ async def test_role_git_sync_parity(db_session):
 
 @pytest.mark.e2e
 async def test_workflow_git_sync_parity(db_session):
-    """from_row(wf, roles=[...]).view(GIT_SYNC) == serialize_workflow(wf, roles=[...]).model_dump()"""
+    """GIT_SYNC view of a seeded Workflow matches the committed golden snapshot."""
     import uuid
     from sqlalchemy import delete
     from src.models.orm.workflows import Workflow
     from bifrost.manifest import ManifestWorkflow
     from bifrost.manifest_codec import Destination
-    from src.services.manifest_generator import serialize_workflow
 
     wf_id = uuid.uuid4()
     wf = Workflow(
@@ -118,9 +224,8 @@ async def test_workflow_git_sync_parity(db_session):
 
     try:
         roles: list[str] = []
-        expected = serialize_workflow(wf, roles=roles).model_dump()
         produced = ManifestWorkflow.from_row(wf, roles=roles).view(Destination.GIT_SYNC)
-        assert_parity(produced, expected, label="workflow git_sync")
+        assert_golden(produced, "workflow_git_sync", volatile_keys={"id"})
     finally:
         await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
         await db_session.commit()
@@ -128,7 +233,7 @@ async def test_workflow_git_sync_parity(db_session):
 
 @pytest.mark.e2e
 async def test_workflow_install_parity(db_session):
-    """from_row(...).view(INSTALL, extras=...) == _workflow_entries(solution_id)[0]"""
+    """INSTALL view of a seeded solution-owned Workflow matches the committed golden snapshot."""
     import uuid
     from sqlalchemy import delete
     from src.models.orm.solutions import Solution
@@ -178,19 +283,15 @@ async def test_workflow_install_parity(db_session):
     await db_session.commit()
 
     try:
+        # Codec-produced install view. role_ids/role_names are the extras the
+        # capture orchestrator computes and passes in.
         capture = SolutionCaptureService(db_session)
-        # Legacy: the hand-written dict producer.
-        legacy_entries = await capture._workflow_entries(sol_id)
-        assert len(legacy_entries) == 1, f"expected 1 entry, got {legacy_entries}"
-        legacy = legacy_entries[0]
-
-        # New: codec-produced view.
         role_ids = [str(role_id)]
         role_names = await capture._role_names(role_ids)
         produced = ManifestWorkflow.from_row(wf, roles=role_ids).view(
             Destination.INSTALL, extras={"roles": role_ids, "role_names": role_names}
         )
-        assert_parity(produced, legacy, label="workflow install")
+        assert_golden(produced, "workflow_install", volatile_keys={"id", "roles"})
     finally:
         await db_session.execute(delete(WorkflowRole).where(WorkflowRole.workflow_id == wf_id))
         await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
@@ -201,18 +302,17 @@ async def test_workflow_install_parity(db_session):
 
 @pytest.mark.e2e
 async def test_table_git_sync_parity(db_session):
-    """from_row(table).view(GIT_SYNC) == serialize_table(table).model_dump(by_alias=True)"""
+    """GIT_SYNC view of a seeded Table matches the committed golden snapshot."""
     import uuid
     from sqlalchemy import delete
     from src.models.orm.tables import Table
     from bifrost.manifest import ManifestTable
     from bifrost.manifest_codec import Destination
-    from src.services.manifest_generator import serialize_table
 
     tid = uuid.uuid4()
     table = Table(
         id=tid,
-        name=f"rt_table_{tid.hex[:6]}",
+        name="rt_table_golden",
         description="parity test table",
         organization_id=None,
         schema={"columns": [{"name": "col1", "type": "string"}]},
@@ -233,9 +333,8 @@ async def test_table_git_sync_parity(db_session):
         # The roundtrip writer calls model_dump(by_alias=True) on the serialized
         # ManifestTable; use that same call on both sides so the parity oracle
         # is comparing apples to apples (both emit "schema", not "table_schema").
-        expected = serialize_table(table).model_dump(by_alias=True)
         produced = ManifestTable.from_row(table).view(Destination.GIT_SYNC)
-        assert_parity(produced, expected, label="table git_sync")
+        assert_golden(produced, "table_git_sync", volatile_keys={"id"})
     finally:
         await db_session.execute(delete(Table).where(Table.id == tid))
         await db_session.commit()
@@ -243,14 +342,13 @@ async def test_table_git_sync_parity(db_session):
 
 @pytest.mark.e2e
 async def test_table_install_parity(db_session):
-    """from_row(t).view(INSTALL) == capture._table_entries(solution_id)[0]"""
+    """INSTALL view of a seeded solution-owned Table matches the committed golden snapshot."""
     import uuid
     from sqlalchemy import delete
     from src.models.orm.solutions import Solution
     from src.models.orm.tables import Table
     from bifrost.manifest import ManifestTable
     from bifrost.manifest_codec import Destination
-    from src.services.solutions.capture import SolutionCaptureService
 
     sol_id = uuid.uuid4()
     tid = uuid.uuid4()
@@ -264,7 +362,7 @@ async def test_table_install_parity(db_session):
 
     table = Table(
         id=tid,
-        name=f"rt_table_{tid.hex[:6]}",
+        name="rt_table_install_golden",
         description="install parity table",
         organization_id=None,
         schema={"columns": [{"name": "item", "type": "string"}]},
@@ -277,13 +375,8 @@ async def test_table_install_parity(db_session):
     await db_session.commit()
 
     try:
-        capture = SolutionCaptureService(db_session)
-        legacy_entries = await capture._table_entries(sol_id)
-        assert len(legacy_entries) == 1, f"expected 1 entry, got {legacy_entries}"
-        legacy = legacy_entries[0]
-
         produced = ManifestTable.from_row(table).view(Destination.INSTALL)
-        assert_parity(produced, legacy, label="table install")
+        assert_golden(produced, "table_install", volatile_keys={"id"})
     finally:
         await db_session.execute(delete(Table).where(Table.id == tid))
         await db_session.execute(delete(Solution).where(Solution.id == sol_id))

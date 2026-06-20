@@ -1,0 +1,22 @@
+{
+  "access_level": "role_based",
+  "category": "InstallCat",
+  "description": "install parity desc",
+  "endpoint_enabled": true,
+  "function_name": "rt_install_parity",
+  "id": "<volatile>",
+  "name": "rt_wf_install_parity",
+  "path": "workflows/rt_install_parity.py",
+  "public_endpoint": false,
+  "role_names": [
+    "rt_install_parity_role"
+  ],
+  "roles": [
+    "<volatile>"
+  ],
+  "tags": [
+    "x"
+  ],
+  "timeout_seconds": 300,
+  "type": "workflow"
+}

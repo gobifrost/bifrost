@@ -1,0 +1,25 @@
+{
+  "description": "install parity table",
+  "id": "<volatile>",
+  "name": "rt_table_install_golden",
+  "policies": [
+    {
+      "actions": [
+        "read",
+        "create",
+        "update",
+        "delete"
+      ],
+      "name": "admin_bypass",
+      "when": null
+    }
+  ],
+  "schema": {
+    "columns": [
+      {
+        "name": "item",
+        "type": "string"
+      }
+    ]
+  }
+}
