@@ -190,13 +190,20 @@ def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, plat
     headers = platform_admin.headers
 
     def _deploy_install(marker: str) -> str:
+        from tests.e2e.platform.conftest import deploy_solution
+
         slug = f"twin-{marker}-{uuid.uuid4().hex[:8]}"
         sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
         app_id = str(uuid.uuid4())
-        e2e_client.post(
-            f"/api/solutions/{sid}/deploy",
-            headers=headers,
-            json={
+        # Deploy is ASYNC (BackgroundTasks) — fire-and-forget would race the
+        # background job, so the immediately-following execute can 404 on a
+        # workflow whose row hasn't committed yet (flaky under load). Use the
+        # deploy_solution helper that blocks until the deploy job is terminal.
+        resp = deploy_solution(
+            e2e_client,
+            sid,
+            headers,
+            {
                 "python_files": {
                     "workflows/main.py": (
                         "from bifrost import workflow\n\n"
@@ -225,6 +232,7 @@ def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, plat
                 }],
             },
         )
+        assert resp.status_code in (200, 201), f"deploy failed: {resp.status_code} {resp.text}"
         # The app's DB id is the remapped uuid5(install, manifest_id).
         from src.services.solutions.deploy import solution_entity_id
 

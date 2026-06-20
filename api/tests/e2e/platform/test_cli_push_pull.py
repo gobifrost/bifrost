@@ -3,10 +3,6 @@ import base64
 import hashlib
 
 
-def _b64(text: str) -> str:
-    """Encode text as base64 string (matching CLI push format)."""
-    return base64.b64encode(text.encode("utf-8")).decode("ascii")
-
 
 def _write_file(e2e_client, headers, path, content, binary=False):
     """Helper to write a file via /api/files/write."""
@@ -38,48 +34,6 @@ def test_push_unchanged_files(e2e_client, platform_admin):
     _write_file(e2e_client, platform_admin.headers, path, content)
     # Writing again should also succeed with 204
     _write_file(e2e_client, platform_admin.headers, path, content)
-
-
-def test_push_bifrost_manifest(e2e_client, platform_admin):
-    """Writing workflow source + manifest import triggers manifest processing."""
-    workflows_yaml = (
-        "workflows:\n"
-        "  test-wf:\n"
-        "    name: test-wf\n"
-        "    path: workflows/test_wf.py\n"
-    )
-    # Write the workflow source file first so the manifest import can resolve it
-    _write_file(
-        e2e_client, platform_admin.headers,
-        "workflows/test_wf.py",
-        "from bifrost import workflow\n\n@workflow\ndef test_wf():\n    pass\n",
-    )
-    # Import manifest with inline files
-    resp = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64(workflows_yaml),
-        },
-        "delete_removed_entities": False,
-    })
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "applied" in data
-    assert "manifest_files" in data
-
-
-def test_push_manifest_response_shape(e2e_client, platform_admin):
-    """Manifest import response should include manifest_files and modified_files dicts."""
-    resp = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64("workflows: {}\n"),
-        },
-        "delete_removed_entities": False,
-    })
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data.get("manifest_files"), dict)
-    assert isinstance(data.get("modified_files"), dict)
-    assert isinstance(data.get("warnings"), list)
 
 
 def test_pull_only_returns_manifests(e2e_client, platform_admin):
@@ -298,139 +252,6 @@ def test_list_without_metadata_unchanged(e2e_client, platform_admin):
     assert data.get("files_metadata", []) == []
 
 
-def test_manifest_import_endpoint(e2e_client, platform_admin):
-    """POST /api/files/manifest/import imports .bifrost/ from S3 into DB."""
-    # Write a workflow source file + manifest to S3
-    e2e_client.post("/api/files/write", headers=platform_admin.headers, json={
-        "path": "workflows/import_test_wf.py",
-        "content": "from bifrost import workflow\n\n@workflow\ndef import_test_wf():\n    pass\n",
-        "mode": "cloud",
-        "location": "workspace",
-    })
-    e2e_client.post("/api/files/write", headers=platform_admin.headers, json={
-        "path": ".bifrost/workflows.yaml",
-        "content": (
-            "workflows:\n"
-            "  import-test-wf:\n"
-            "    name: import-test-wf\n"
-            "    path: workflows/import_test_wf.py\n"
-        ),
-        "mode": "cloud",
-        "location": "workspace",
-    })
-
-    resp = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "applied" in data
-    assert isinstance(data.get("warnings"), list)
-    assert isinstance(data.get("manifest_files"), dict)
-    assert isinstance(data.get("modified_files"), dict)
-
-
-def test_push_response_includes_deleted_entities(e2e_client, platform_admin):
-    """Manifest import response should include deleted_entities field."""
-    resp = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64("workflows: {}\n"),
-        },
-        "delete_removed_entities": False,
-    })
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data.get("deleted_entities"), list)
-
-
-def test_push_with_delete_removed_entities(e2e_client, platform_admin):
-    """Manifest import with delete_removed_entities=True should remove server-only entities."""
-    from uuid import uuid4
-
-    wf_id = str(uuid4())
-    wf_py = "from bifrost import workflow\n\n@workflow\ndef del_test_wf():\n    pass\n"
-
-    # Step 1: Write workflow source file
-    _write_file(e2e_client, platform_admin.headers, "workflows/del_test_wf.py", wf_py)
-
-    # Step 2: Import manifest so workflow exists in DB
-    workflows_yaml = (
-        f"workflows:\n"
-        f"  del_test_wf:\n"
-        f"    id: {wf_id}\n"
-        f"    path: workflows/del_test_wf.py\n"
-        f"    function_name: del_test_wf\n"
-    )
-    resp1 = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64(workflows_yaml),
-        },
-        "delete_removed_entities": False,
-    })
-    assert resp1.status_code == 200
-    assert resp1.json()["applied"] is True, f"Step 2 import failed: {resp1.json()}"
-
-    # Step 3: Import empty manifest with delete_removed_entities=True
-    resp2 = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64("workflows: {}\n"),
-        },
-        "delete_removed_entities": True,
-    })
-    assert resp2.status_code == 200
-    data2 = resp2.json()
-    # applied may be False if FK constraints on unrelated workflows block the delete —
-    # that is acceptable; we only assert the response has the correct shape.
-    assert isinstance(data2.get("deleted_entities"), list)
-    assert isinstance(data2.get("entity_changes"), list)
-
-
-def test_push_without_delete_flag_preserves_entities(e2e_client, platform_admin):
-    """Manifest import without delete_removed_entities should not remove entities."""
-    from uuid import uuid4
-
-    wf_id = str(uuid4())
-    wf_py = "from bifrost import workflow\n\n@workflow\ndef preserve_test():\n    pass\n"
-
-    # Write workflow source + import manifest
-    _write_file(e2e_client, platform_admin.headers, "workflows/preserve_test.py", wf_py)
-    workflows_yaml = (
-        f"workflows:\n"
-        f"  preserve_test:\n"
-        f"    id: {wf_id}\n"
-        f"    path: workflows/preserve_test.py\n"
-        f"    function_name: preserve_test\n"
-    )
-    e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64(workflows_yaml),
-        },
-        "delete_removed_entities": False,
-    })
-
-    # Import empty manifest WITHOUT delete flag
-    resp = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {
-            ".bifrost/workflows.yaml": _b64("workflows: {}\n"),
-        },
-        "delete_removed_entities": False,
-    })
-    assert resp.status_code == 200
-    data = resp.json()
-    # deleted_entities should be empty since flag is False
-    assert data.get("deleted_entities", []) == []
-
-
-def test_manifest_import_with_delete_flag(e2e_client, platform_admin):
-    """POST /api/files/manifest/import with delete_removed_entities returns deleted_entities."""
-    resp = e2e_client.post(
-        "/api/files/manifest/import",
-        headers=platform_admin.headers,
-        json={"delete_removed_entities": False},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data.get("deleted_entities"), list)
-
-
 def test_per_file_push_pull_roundtrip(e2e_client, platform_admin):
     """Write files via /write, list with metadata, read back via /read."""
     files = {
@@ -470,49 +291,3 @@ def test_per_file_push_pull_roundtrip(e2e_client, platform_admin):
         assert resp.json()["content"] == expected_content
 
 
-def test_incremental_import_skips_unchanged(e2e_client, platform_admin):
-    """Importing the same manifest twice should report no entity_changes on the second import."""
-    from uuid import uuid4
-
-    wf_id = str(uuid4())
-    wf_py = "from bifrost import workflow\n\n@workflow\ndef incr_test_wf():\n    pass\n"
-
-    # Write workflow source
-    _write_file(e2e_client, platform_admin.headers, "workflows/incr_test_wf.py", wf_py)
-
-    workflows_yaml = (
-        f"workflows:\n"
-        f"  incr-test-wf:\n"
-        f"    id: {wf_id}\n"
-        f"    name: incr_test_wf\n"
-        f"    path: workflows/incr_test_wf.py\n"
-        f"    function_name: incr_test_wf\n"
-    )
-
-    # First import — should create the workflow
-    resp1 = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {".bifrost/workflows.yaml": _b64(workflows_yaml)},
-    })
-    assert resp1.status_code == 200
-    data1 = resp1.json()
-    assert data1["applied"] is True, f"First import failed: {data1}"
-    assert len(data1.get("entity_changes", [])) > 0, f"First import should have entity_changes but got: {data1}"
-
-    # Second import — same manifest, should have no changes for our specific workflow
-    resp2 = e2e_client.post("/api/files/manifest/import", headers=platform_admin.headers, json={
-        "files": {".bifrost/workflows.yaml": _b64(workflows_yaml)},
-    })
-    assert resp2.status_code == 200
-    data2 = resp2.json()
-    assert data2["applied"] is True
-    # Only our workflow should have no non-delete changes on the second import.
-    # Other workflows from prior tests may appear as "delete" candidates — that's fine.
-    our_changes = [
-        c for c in data2.get("entity_changes", [])
-        if c.get("action") != "delete"
-        and c.get("entity_type") == "workflows"
-        and c.get("name") == "incr_test_wf"
-    ]
-    assert len(our_changes) == 0, (
-        f"Second import should have no changes for incr_test_wf but got: {our_changes}"
-    )

@@ -68,13 +68,11 @@ class AgentIndexer:
 
         name = agent_data.get("name")
         if not name:
-            logger.warning(f"Agent file missing name: {path}")
-            return False
+            raise ValueError(f"agent name is required (file: {path})")
 
         system_prompt = agent_data.get("system_prompt")
         if not system_prompt:
-            logger.warning(f"Agent file missing system_prompt: {path}")
-            return False
+            raise ValueError(f"system_prompt is required (file: {path})")
 
         # Use ID from JSON if present (for API-created agents), otherwise generate new
         agent_id_str = agent_data.get("id")
@@ -126,6 +124,21 @@ class AgentIndexer:
             is_active=agent_data.get("is_active", True),
             llm_model=agent_data.get("llm_model"),
             llm_max_tokens=agent_data.get("llm_max_tokens"),
+            # Autonomous-run limits are portable agent CONTENT (ManifestAgent
+            # fields). Without persisting them here the indexer would reset them
+            # to the column defaults (50 / 100000) on every git-sync import — a
+            # silent drop the round-trip harness surfaced. Omit when absent so
+            # the column default still applies to agents that never set them.
+            **(
+                {"max_iterations": agent_data["max_iterations"]}
+                if agent_data.get("max_iterations") is not None
+                else {}
+            ),
+            **(
+                {"max_token_budget": agent_data["max_token_budget"]}
+                if agent_data.get("max_token_budget") is not None
+                else {}
+            ),
             system_tools=agent_data.get("system_tools", []),
             created_by="file_sync",
         ).on_conflict_do_update(
@@ -140,6 +153,22 @@ class AgentIndexer:
                 "is_active": agent_data.get("is_active", True),
                 "llm_model": agent_data.get("llm_model"),
                 "llm_max_tokens": agent_data.get("llm_max_tokens"),
+                # Limits are portable content; persist them on update too, but
+                # ONLY when the manifest carries them (same omit-when-absent rule
+                # as the insert branch) — coalescing an absent value to the
+                # default would rewrite a previously-NULL agent's limit to 50/
+                # 100000 on the first sync, a silent state mutation. Omitting the
+                # key leaves the existing column value untouched.
+                **(
+                    {"max_iterations": agent_data["max_iterations"]}
+                    if agent_data.get("max_iterations") is not None
+                    else {}
+                ),
+                **(
+                    {"max_token_budget": agent_data["max_token_budget"]}
+                    if agent_data.get("max_token_budget") is not None
+                    else {}
+                ),
                 "system_tools": agent_data.get("system_tools", []),
                 "updated_at": now,
                 # NOTE: organization_id and access_level are NOT updated

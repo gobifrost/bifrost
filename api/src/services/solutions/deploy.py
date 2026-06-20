@@ -474,6 +474,8 @@ class SolutionDeployer:
             apps_deleted=app_deleted,
             forms_upserted=len(rb.forms),
             forms_deleted=form_deleted,
+            # Accurate because _upsert_agents aborts the deploy (SolutionDeployConflict)
+            # if any agent fails to index — a partial success is impossible here.
             agents_upserted=len(rb.agents),
             agents_deleted=agent_deleted,
             claims_upserted=len(rb.claims),
@@ -575,6 +577,8 @@ class SolutionDeployer:
                 for fld in ("workflow_id", "agent_id"):
                     if msub.get(fld) is not None:
                         msub[fld] = _remap_ref(msub[fld], id_map)
+                if msub.get("id") is not None:
+                    msub["id"] = str(solution_entity_id(sid, UUID(str(msub["id"]))))
 
         return SolutionBundle(
             solution=bundle.solution,
@@ -784,6 +788,7 @@ class SolutionDeployer:
                 # Full-replace deploy-owned metadata so a redeploy that changes
                 # (or clears) these is reflected, not left stale (criteria 10/14).
                 "description": mwf.get("description"),
+                "tool_description": mwf.get("tool_description"),
                 "endpoint_enabled": mwf.get("endpoint_enabled", False),
                 "public_endpoint": mwf.get("public_endpoint", False),
                 "timeout_seconds": mwf.get("timeout_seconds", 1800),
@@ -1297,7 +1302,12 @@ class SolutionDeployer:
             await self._guard_owner(Agent, agent_id, sid)
             ma = ManifestAgent.model_validate({**magent, "id": str(agent_id)})
             content = _agent_content_from_manifest(ma)
-            await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+            try:
+                await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+            except ValueError as exc:
+                raise SolutionDeployConflict(
+                    f"agent {agent_id}: {exc}"
+                ) from exc
             # access_level is deploy-owned (manifest-declared); apply it here —
             # the indexer preserves it and the entity is read-only outside deploy
             # (Codex #14). org/solution scope is stamped alongside.
@@ -1320,6 +1330,12 @@ class SolutionDeployer:
                 agent_values["max_iterations"] = magent["max_iterations"]
             if magent.get("max_token_budget") is not None:
                 agent_values["max_token_budget"] = magent["max_token_budget"]
+            # max_run_timeout is captured (capture.py:610) but, like the two
+            # limits above, the AgentIndexer does NOT persist it — without
+            # stamping it here a redeploy silently drops the manifest's value
+            # back to the column default. Apply when present.
+            if magent.get("max_run_timeout") is not None:
+                agent_values["max_run_timeout"] = magent["max_run_timeout"]
             await self.db.execute(
                 update(Agent).where(Agent.id == agent_id).values(**agent_values)
             )

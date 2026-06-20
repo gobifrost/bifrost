@@ -89,6 +89,7 @@ def serialize_workflow(wf: Workflow, roles: list[str] | None = None) -> Manifest
         function_name=wf.function_name,
         type=wf.type or "workflow",
         description=wf.description,
+        tool_description=wf.tool_description,
         organization_id=str(wf.organization_id) if wf.organization_id else None,
         roles=roles or [],
         access_level=wf.access_level or "authenticated",
@@ -122,6 +123,7 @@ def _form_field_to_schema_dict(field: FormField) -> dict:
         "max_size_mb": field.max_size_mb,
         "content": field.content,
         "allow_as_query_param": field.allow_as_query_param,
+        "auto_fill": field.auto_fill,
     }
     for key, value in optional_fields.items():
         if value is not None:

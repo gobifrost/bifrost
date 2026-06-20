@@ -15,7 +15,6 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Literal
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -27,7 +26,6 @@ from src.core.log_safety import log_safe
 from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
-    ManifestImportResponse,
     WatchSessionRequest,
 )
 from src.core.database import get_db
@@ -422,101 +420,6 @@ async def get_manifest(
 
     manifest = await generate_manifest(db)
     return serialize_manifest_dir(manifest)
-
-
-class ManifestImportRequest(BaseModel):
-    """Request body for manifest import."""
-    delete_removed_entities: bool = False
-    files: dict[str, str] = Field(default_factory=dict, description="Map of .bifrost/ path to base64-encoded content")
-    dry_run: bool = False
-    target_organization_id: UUID | None = Field(
-        default=None,
-        description=(
-            "When set, every entity in the bundle has its organization_id rewritten to this "
-            "value before upsert. Incompatible with a manifest that carries an organizations section."
-        ),
-    )
-    role_resolution: Literal["uuid", "name"] = Field(
-        default="uuid",
-        description=(
-            "How to interpret role references in the bundle. 'uuid' (default) assumes role UUIDs "
-            "match the target env. 'name' reads role_names and resolves to UUIDs in the target; "
-            "missing names fail with 422."
-        ),
-    )
-    entity_ids: set[str] | None = Field(
-        default=None,
-        description=(
-            "Optional subset of entity UUIDs to apply. When set, only entities whose id is in "
-            "this set are written; all other diff entries are skipped. Use for interactive "
-            "cherry-pick import where the user approves a subset of a dry-run diff."
-        ),
-    )
-
-
-@router.post("/manifest/import", response_model=ManifestImportResponse)
-async def import_manifest(
-    ctx: Context,
-    user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
-    request: ManifestImportRequest | None = None,
-) -> ManifestImportResponse:
-    """Import .bifrost/ manifest files from S3 into DB."""
-    from src.services.manifest_import import import_manifest_from_repo
-
-    # Write provided .bifrost/ files to S3
-    if request and request.files:
-        from src.services.repo_storage import RepoStorage
-        import base64 as b64_mod
-        repo = RepoStorage()
-        for repo_path, content in request.files.items():
-            try:
-                content_bytes = b64_mod.b64decode(content)
-                # Normalize: strip any prefix before .bifrost/
-                parts = repo_path.replace("\\", "/").split("/")
-                try:
-                    bifrost_idx = parts.index(".bifrost")
-                    canonical_path = "/".join(parts[bifrost_idx:])
-                except ValueError:
-                    canonical_path = repo_path
-                await repo.write(canonical_path, content_bytes)
-            except Exception as e:
-                logger.warning(f"Error writing manifest file {repo_path}: {e}")
-
-    delete_entities = request.delete_removed_entities if request else False
-    dry_run = request.dry_run if request else False
-    target_org = request.target_organization_id if request else None
-    role_resolution = request.role_resolution if request else "uuid"
-    entity_ids = request.entity_ids if request else None
-
-    try:
-        result = await import_manifest_from_repo(
-            db,
-            delete_removed_entities=delete_entities,
-            dry_run=dry_run,
-            target_organization_id=target_org,
-            role_resolution=role_resolution,
-            entity_ids=entity_ids,
-        )
-    except ValueError as e:
-        # Cross-env rebinding precondition failure (orgs+target clash, unknown role, etc.)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    if not dry_run:
-        await db.commit()
-
-    return ManifestImportResponse(
-        applied=result.applied,
-        dry_run=result.dry_run,
-        warnings=result.warnings,
-        manifest_files=result.manifest_files,
-        modified_files=result.modified_files,
-        deleted_entities=result.deleted_entities,
-        entity_changes=result.entity_changes,
-    )
 
 
 # =============================================================================

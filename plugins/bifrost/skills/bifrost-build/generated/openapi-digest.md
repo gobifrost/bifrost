@@ -165,7 +165,6 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
-| POST | `/api/files/manifest/import` |
 | POST | `/api/files/pull` |
 | POST | `/api/files/read` |
 | POST | `/api/files/search` |

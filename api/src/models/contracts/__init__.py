@@ -294,7 +294,6 @@ from src.models.contracts.editor import (
 from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
-    ManifestImportResponse,
     WatchSessionRequest,
 )
 
@@ -1028,7 +1027,6 @@ __all__ = [
     # File Operations (CLI push/pull)
     "FilePullRequest",
     "FilePullResponse",
-    "ManifestImportResponse",
     "WatchSessionRequest",
     # Export/Import
     "ExportMetadata",
