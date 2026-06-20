@@ -81,6 +81,43 @@ def assert_field_roundtrip(
         raise AssertionError(f"unknown action {action!r}")
 
 
+def assert_nested_children(
+    child_model: type[BaseModel],
+    before_children: list[dict],
+    after_children: list[dict],
+    policy: Policy,
+    *,
+    strategy: str,
+    expected_id: Any | None = None,
+    remap: Any | None = None,
+) -> list[str]:
+    """Assert a NESTED child list (e.g. ``EventSource.subscriptions``) field-by-field.
+
+    The parent serializers emit children as a CONTENT list, so the parent-level
+    field-class oracle byte-compares the WHOLE list — which FALSE-REDS on the
+    solution path where a child REFERENCE (``subscription.workflow_id``) is
+    remapped to the installed id.  This cracks the blob: it pairs each child
+    (``by_id`` on _repo, ``by_remap`` on the solution path) and runs the
+    per-field policy assertion on every child field, honoring the same ``remap``
+    used for parent reference fields.
+
+    Returns the list of red strings (empty == clean) so the caller can fold them
+    into its own findings list (same shape as ``_assert_entity_fields``).
+    """
+    reds: list[str] = []
+    pairs = pair_rows(
+        child_model, before_children, after_children, strategy, policy, expected_id=expected_id
+    )
+    for cb, ca in pairs:
+        for field in child_model.model_fields:
+            try:
+                assert_field_roundtrip(child_model, field, cb, ca, policy, row=cb, remap=remap)
+            except AssertionError as e:
+                cls = field_class_of(child_model, field, cb)
+                reds.append(f"{child_model.__name__}.{field} ({cls.value}): {e}")
+    return reds
+
+
 def assert_no_secret_leak(text: str, sentinels: list[str]) -> None:
     """Assert no sentinel string appears in *text* (the serialized non-secret envelope)."""
     for s in sentinels:

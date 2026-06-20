@@ -43,6 +43,7 @@ from src.models.orm.workflows import Workflow
 from tests.roundtrip.assertions import (
     assert_dict_keys_accounted,
     assert_field_roundtrip,
+    assert_nested_children,
     assert_no_secret_leak,
     pair_rows,
 )
@@ -170,6 +171,11 @@ def _assert_entity_fields(
     for field in model.model_fields:
         override = FIELD_OVERRIDES.get((model.__name__, field))
         try:
+            if override == "nested":
+                # Nested child list (e.g. EventSource.subscriptions): driven
+                # field-by-field by the caller via assert_nested_children, because
+                # a whole-list byte-compare false-reds on remapped child refs.
+                continue
             if override == "absent":
                 # Scope-inherited field: never serialized into the bundle entry.
                 assert before.get(field) in (None, [], {}, ""), (
@@ -391,6 +397,14 @@ async def seed_solution_table(db: AsyncSession, sol: Solution) -> str:
         schema={"columns": [{"name": "title", "type": "string"}]},
         access={"policies": [
             {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": None},
+            # A non-default policy so every ManifestPolicy field travels (driven
+            # field-by-field via assert_nested_children below).
+            {
+                "name": "owner_can_edit",
+                "description": "Row owner may update/delete",
+                "actions": ["update", "delete"],
+                "when": {"eq": [{"row": "owner_id"}, {"user": "user_id"}]},
+            },
         ]},
     )
     db.add(table)
@@ -421,6 +435,17 @@ async def test_solution_shareable_roundtrip_table(db_session: AsyncSession):
     reds = _assert_entity_fields(
         m.ManifestTable, b, a, SOLUTION_SHAREABLE_POLICY,
         installed_solution_id=installed.id, in_bundle_ids={str(src_table_id)},
+    )
+
+    # Nested children: Table.policies is a CONTENT list of ManifestPolicy with no
+    # references and no id, so they survive the deploy access-blob reconstruction
+    # unchanged — drive each policy field, paired by the policy name match-key.
+    before_pols = b.get("policies") or []
+    after_pols = a.get("policies") or []
+    assert before_pols, "solution table seeded no policy — nested coverage is vacuous"
+    reds += assert_nested_children(
+        m.ManifestPolicy, before_pols, after_pols, SOLUTION_SHAREABLE_POLICY,
+        strategy="by_match_key",
     )
     assert not reds, "ManifestTable SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
 
@@ -534,9 +559,19 @@ async def test_solution_shareable_roundtrip_claim(db_session: AsyncSession):
 # ---------------------------------------------------------------------------
 
 
-async def seed_solution_event_source(db: AsyncSession, sol: Solution) -> str:
+async def seed_solution_event_source(db: AsyncSession, sol: Solution) -> tuple[str, str, str]:
+    """Seed a schedule EventSource + ScheduleSource + a workflow subscription.
+
+    Returns (event_source_id, subscription_id, subscription_workflow_id). The
+    subscription's workflow is solution-managed and in-bundle, so its workflow_id
+    REFERENCE remaps to the installed workflow at deploy; the subscription's own
+    id is also remapped (deploy.py:580). Every subscription content field is set
+    non-default so a dropped nested field shows as a changed value.
+    """
     from src.models.enums import ScheduleOverlapPolicy
-    from src.models.orm.events import EventSource, ScheduleSource
+    from src.models.orm.events import EventSource, EventSubscription, ScheduleSource
+
+    sub_wf_id = await seed_solution_workflow(db, sol)
 
     esid = uuid.uuid4()
     db.add(EventSource(
@@ -556,15 +591,30 @@ async def seed_solution_event_source(db: AsyncSession, sol: Solution) -> str:
         enabled=True,
         overlap_policy=ScheduleOverlapPolicy.SKIP,
     ))
+    subid = uuid.uuid4()
+    db.add(EventSubscription(
+        id=subid,
+        event_source_id=esid,
+        target_type="workflow",
+        workflow_id=uuid.UUID(sub_wf_id),
+        event_type="ticket.created",
+        filter_expression="$.priority == 'high'",
+        input_mapping={"ticket_id": "$.id"},
+        is_active=True,
+        solution_id=sol.id,
+        created_by="roundtrip@test.local",
+    ))
     await db.flush()
-    return str(esid)
+    return str(esid), str(subid), sub_wf_id
 
 
 async def test_solution_shareable_roundtrip_event_source(db_session: AsyncSession):
-    """ManifestEventSource (schedule) obeys SOLUTION_SHAREABLE across export->install."""
+    """ManifestEventSource (schedule) obeys SOLUTION_SHAREABLE across export->install,
+    and its nested subscription is driven field-by-field (workflow_id remaps to the
+    installed workflow; the subscription's own id remaps too)."""
     db = db_session
     src_sol = await _make_solution(db)
-    src_id = await seed_solution_event_source(db, src_sol)
+    src_id, src_sub_id, src_sub_wf_id = await seed_solution_event_source(db, src_sol)
     before_rows = await solution_bundle_entries(db, src_sol, "events")
     assert len(before_rows) == 1, f"expected 1 source event, got {before_rows}"
 
@@ -580,9 +630,27 @@ async def test_solution_shareable_roundtrip_event_source(db_session: AsyncSessio
         SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
     )
     _assert_complete(m.ManifestEventSource, b, a)
+    # in_bundle includes the event source, the subscription, and the workflow the
+    # subscription triggers — so the nested subscription's id (IDENTITY remap) and
+    # workflow_id (REFERENCE remap) are both checked to their EXACT installed ids.
+    in_bundle = {str(src_id), str(src_sub_id), str(src_sub_wf_id)}
     reds = _assert_entity_fields(
         m.ManifestEventSource, b, a, SOLUTION_SHAREABLE_POLICY,
-        installed_solution_id=installed.id, in_bundle_ids={str(src_id)},
+        installed_solution_id=installed.id, in_bundle_ids=in_bundle,
+    )
+
+    # Nested subscriptions: a CONTENT list (parent loop skips it via the "nested"
+    # override) whose elements must be driven field-by-field. The subscription id
+    # is remapped (deploy.py:580) so pair by_remap; workflow_id remaps through the
+    # same in-bundle map.
+    before_subs = b.get("subscriptions") or []
+    after_subs = a.get("subscriptions") or []
+    assert before_subs, "solution event seeded no subscription — nested coverage is vacuous"
+    reds += assert_nested_children(
+        m.ManifestEventSubscription, before_subs, after_subs, SOLUTION_SHAREABLE_POLICY,
+        strategy="by_remap",
+        expected_id=expected_solution_id(installed.id),
+        remap=remap_ref_for(installed.id, in_bundle),
     )
     assert not reds, (
         "ManifestEventSource SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
@@ -621,6 +689,13 @@ async def seed_solution_form(db: AsyncSession, sol: Solution) -> tuple[str, str]
         id=uuid.uuid4(), form_id=fid, name="title", type="text", required=True,
         position=0, label="Title",
     ))
+    # auto_fill (sibling-name -> data provider metadata path) is portable form
+    # structure that must survive the deploy form_schema reconstruction; its
+    # target must reference an existing sibling (validate_auto_fill_targets).
+    db.add(FormField(
+        id=uuid.uuid4(), form_id=fid, name="lookup", type="text", required=False,
+        position=1, label="Lookup", auto_fill={"title": "metadata.suggested_title"},
+    ))
     await db.flush()
     return str(fid), wf_id
 
@@ -654,6 +729,82 @@ async def test_solution_shareable_roundtrip_form(db_session: AsyncSession):
         installed_solution_id=installed.id, in_bundle_ids=in_bundle,
     )
     assert not reds, "ManifestForm SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+
+
+# ---------------------------------------------------------------------------
+# App (standalone_v2) — the one path that touches the app build. Driven via the
+# PREBUILT-DIST fast path: the source app ships a dist/ to S3 (no src files), so
+# capture carries dist_files and deploy's compile_dist returns it verbatim
+# (app_build.py:76 — `if prebuilt_dist: return prebuilt_dist`). No Node/Vite in
+# the test stack is needed, and the REAL export->install->deploy pipeline runs.
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_app(db: AsyncSession, sol: Solution) -> str:
+    """Seed a solution-managed standalone_v2 Application with a prebuilt dist in S3.
+
+    No source files are written at ``repo_prefix``, so capture's dist-fallback
+    (capture.py:518) carries ``dist_files`` from S3 — exercising the prebuilt
+    fast path that needs no Vite. Every content field is set non-default so a
+    dropped field shows as a changed value.
+    """
+    from src.models.orm.applications import Application
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    aid = uuid.uuid4()
+    app = Application(
+        id=aid,
+        name="RoundTrip App",
+        slug=f"rt-app-{uuid.uuid4().hex[:8]}",
+        repo_path=f"apps/rt-app-{aid.hex[:6]}",
+        description="seeded app for solution round trip",
+        dependencies={"react": "^18.0.0"},
+        access_level="authenticated",
+        app_model="standalone_v2",
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        created_by="roundtrip@test.local",
+    )
+    db.add(app)
+    await db.flush()
+    # Ship a prebuilt dist to S3 so capture's dist-fallback carries it and deploy
+    # re-installs via the prebuilt fast path (no Vite build).
+    await SolutionAppBuilder().upload_dist(aid, {"index.html": b"<html><body>RT</body></html>"})
+    return str(aid)
+
+
+async def test_solution_shareable_roundtrip_app(db_session: AsyncSession):
+    """ManifestApp obeys SOLUTION_SHAREABLE across a real export->install->deploy,
+    via the prebuilt-dist fast path. The 7 app transport extras (repo_path,
+    logo_*, src/bin/dist files) are accounted by EXTRA_FIELD_POLICY."""
+    db = db_session
+    # App slug is global-unique CONTENT (not remapped), and a global (org=None)
+    # source app is visible to EVERY org — so it would collide with the install
+    # (deploy.py:1088). Scope the SOURCE solution to its own org and install into
+    # a DIFFERENT org: a purely cross-org slug pair is allowed (deploy.py:1070).
+    src_org = await _fresh_org(db)
+    src_sol = await _make_solution(db, org_id=src_org)
+    src_app_id = await seed_solution_app(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "apps")
+    assert len(before_rows) == 1, f"expected 1 source app, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "apps")
+    assert len(after_rows) == 1, f"expected 1 installed app, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestApp, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+    _assert_complete(m.ManifestApp, b, a)
+    reds = _assert_entity_fields(
+        m.ManifestApp, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids={str(src_app_id)},
+    )
+    assert not reds, "ManifestApp SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
 
 
 # ---------------------------------------------------------------------------

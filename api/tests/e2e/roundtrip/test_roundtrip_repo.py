@@ -24,7 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bifrost.field_classes import field_class_of
 from src.models.orm.workflows import Workflow
-from tests.roundtrip.assertions import assert_field_roundtrip, assert_no_secret_leak, pair_rows
+from src.services.manifest_generator import _form_field_to_schema_dict
+from tests.roundtrip.assertions import (
+    assert_field_roundtrip,
+    assert_nested_children,
+    assert_no_secret_leak,
+    pair_rows,
+)
 from tests.roundtrip.paths import (
     DELETERS,
     REPO_POLICY,
@@ -102,6 +108,15 @@ async def seed_table(db: AsyncSession, work_dir: Path) -> str:
         schema={"columns": [{"name": "title", "type": "string"}]},
         access={"policies": [
             {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": None},
+            # A second policy with a non-default description + a real `when` AST so
+            # every ManifestPolicy field (description/actions/when) is driven, not
+            # just the all-None admin_bypass shell.
+            {
+                "name": "owner_can_edit",
+                "description": "Row owner may update/delete",
+                "actions": ["update", "delete"],
+                "when": {"eq": [{"row": "owner_id"}, {"user": "user_id"}]},
+            },
         ]},
     )
     db.add(table)
@@ -160,14 +175,28 @@ async def seed_claim(db: AsyncSession, work_dir: Path) -> str:
 
 
 async def seed_event_source(db: AsyncSession, work_dir: Path) -> str:
-    """Seed a schedule EventSource + its ScheduleSource (no subscriptions).
+    """Seed a schedule EventSource + its ScheduleSource + a workflow subscription.
 
-    Schedule type avoids the webhook-integration dependency; no subscriptions
-    avoids the workflow dependency.  generate_manifest only serializes
-    is_active sources, so is_active=True is mandatory.
+    Schedule type avoids the webhook-integration dependency.  The subscription
+    carries every ManifestEventSubscription content field non-default so a dropped
+    nested field shows up as a changed value (the subscription's workflow is the
+    dependency closure — its .py file is written so the re-import does not skip).
+    generate_manifest only serializes is_active sources, so is_active=True is
+    mandatory.
     """
     from src.models.enums import ScheduleOverlapPolicy
-    from src.models.orm.events import EventSource, ScheduleSource
+    from src.models.orm.events import EventSource, EventSubscription, ScheduleSource
+    from src.models.orm.workflows import Workflow
+
+    # Subscription target workflow (dependency closure: file + row).
+    wf_path = "workflows/rt_event_wf.py"
+    (work_dir / "workflows").mkdir(parents=True, exist_ok=True)
+    (work_dir / wf_path).write_text(SAMPLE_WORKFLOW_PY)
+    wid = uuid4()
+    db.add(Workflow(
+        id=wid, name="RT Event WF", function_name="roundtrip_wf", path=wf_path,
+        type="workflow", access_level="authenticated", is_active=True,
+    ))
 
     esid = uuid4()
     db.add(EventSource(
@@ -185,6 +214,17 @@ async def seed_event_source(db: AsyncSession, work_dir: Path) -> str:
         timezone="America/New_York",
         enabled=True,
         overlap_policy=ScheduleOverlapPolicy.SKIP,
+    ))
+    db.add(EventSubscription(
+        id=uuid4(),
+        event_source_id=esid,
+        target_type="workflow",
+        workflow_id=wid,
+        event_type="ticket.created",
+        filter_expression="$.priority == 'high'",
+        input_mapping={"ticket_id": "$.id"},
+        is_active=True,
+        created_by="roundtrip@test.local",
     ))
     await db.commit()
     return str(esid)
@@ -225,6 +265,14 @@ async def seed_form(db: AsyncSession, work_dir: Path) -> str:
     db.add(FormField(
         id=uuid4(), form_id=fid, name="title", type="text", required=True,
         position=0, label="Title", placeholder="Enter title",
+    ))
+    # A second field whose auto_fill maps the sibling "title" to a metadata path.
+    # auto_fill is portable self-contained form structure (sibling-name -> data
+    # provider metadata path) and MUST round-trip — its targets must reference
+    # fields that exist in this form (FormSchema.validate_auto_fill_targets).
+    db.add(FormField(
+        id=uuid4(), form_id=fid, name="lookup", type="text", required=False,
+        position=1, label="Lookup", auto_fill={"title": "metadata.suggested_title"},
     ))
     await db.commit()
     return str(fid)
@@ -418,38 +466,147 @@ async def test_repo_roundtrip_entity(
             cls = field_class_of(model, field, b)
             reds.append(f"{field} ({cls.value}): {e}")
 
+    # Nested children: EventSource.subscriptions is a CONTENT list whose elements
+    # are ManifestEventSubscription. The parent byte-compare above keeps the whole
+    # list (ids preserved on _repo), but the per-field drift oracle must drive each
+    # subscription field individually (target_type/workflow_id/event_type/...).
+    if model_name == "ManifestEventSource":
+        before_subs = b.get("subscriptions") or []
+        after_subs = a.get("subscriptions") or []
+        assert before_subs, "event source seeded no subscription — nested coverage is vacuous"
+        reds += assert_nested_children(
+            m.ManifestEventSubscription, before_subs, after_subs, REPO_POLICY,
+            strategy="by_id",
+        )
+
+    # Nested children: Table.policies is a CONTENT list of ManifestPolicy. The
+    # parent keeps the whole list (no refs to remap), but the drift oracle drives
+    # each policy field (description/actions/when) individually, paired by the
+    # policy name match-key (ManifestPolicy has no id).
+    if model_name == "ManifestTable":
+        before_pols = b.get("policies") or []
+        after_pols = a.get("policies") or []
+        assert before_pols, "table seeded no policy — nested coverage is vacuous"
+        reds += assert_nested_children(
+            m.ManifestPolicy, before_pols, after_pols, REPO_POLICY,
+            strategy="by_match_key",
+        )
+
     assert not reds, f"{model_name} _repo round-trip drops:\n" + "\n".join(reds)
 
 
-async def test_form_field_auto_fill_is_dropped_below_manifest(db_session: AsyncSession):
-    """DOCUMENTED PRODUCT-DECISION DROP: FormField.auto_fill never serializes.
+async def test_form_field_auto_fill_round_trips_below_manifest(db_session: AsyncSession):
+    """FIXED (was a real drop): FormField.auto_fill round-trips through the manifest.
 
-    ``auto_fill`` is a ``FormField`` column (forms.py:71) that
-    ``_form_field_to_schema_dict`` (manifest_generator.py:110-129) does NOT emit
-    into ``form_schema.fields``.  It therefore travels through NEITHER the _repo
-    NOR the solution path — the field-class harness is structurally blind to it
-    because the loss happens BELOW the manifest serialization boundary (inside
-    the opaque ``form_schema`` CONTENT blob), not at a ``Manifest*`` field.
+    ``auto_fill`` is a ``FormField`` column (forms.py:71) mapping THIS-form
+    sibling-field-names -> data-provider metadata paths (contracts/forms.py:93).
+    It is self-contained portable form structure (like ``form_schema`` itself),
+    NOT an env-specific binding, so it must travel.  The loss happened BELOW the
+    ``Manifest*`` boundary (inside the opaque ``form_schema`` CONTENT blob), so
+    the field-class harness was structurally blind to it — this test asserts the
+    fix at the two halves of the boundary directly:
 
-    This test PINS the current (dropping) behavior so the finding is executable.
-    Fixing it (adding ``auto_fill`` to ``_form_field_to_schema_dict`` + the form
-    indexer's FormField parse) is a PRODUCT DECISION — auto_fill may be
-    environment-specific prefill data that should NOT be shared — so it is left
-    as a documented finding, not silently fixed.  Mirror of the Phase-1
-    tool_description fix IF the product decision is "it should travel".
+      - serialize: ``_form_field_to_schema_dict`` emits ``auto_fill``
+        (manifest_generator.py).
+      - parse: the form indexer reconstructs ``FormField.auto_fill`` on import
+        (indexers/form.py).
+
+    Mirror of the Phase-1 ``tool_description`` / the Phase-1.5 agent-limit fixes.
     """
-    from src.services.manifest_generator import _form_field_to_schema_dict
+    from src.models.contracts.forms import FormField as FormFieldContract
     from src.models.orm.forms import FormField
 
+    auto_fill = {"sibling": "metadata.path"}
+
+    # Serialize half: the writer must emit auto_fill into the schema dict.
     field = FormField(
         id=uuid4(), name="ticket", type="text", required=False, position=0,
-        auto_fill={"sibling": "metadata.path"},
+        label="Ticket", auto_fill=auto_fill,
     )
     rendered = _form_field_to_schema_dict(field)
-    assert "auto_fill" not in rendered, (
-        "auto_fill is now serialized — if this is intentional, add it to the form "
-        "indexer's FormField parse on import and update the product-decision finding."
+    assert rendered.get("auto_fill") == auto_fill, (
+        "auto_fill dropped from _form_field_to_schema_dict — the manifest writer "
+        "no longer serializes it"
     )
+
+    # Parse half: the emitted dict validates back into a FormField contract that
+    # the indexer reads to construct the FormField ORM row (form.py:212/235),
+    # carrying auto_fill onto the new column.
+    parsed = FormFieldContract.model_validate(rendered)
+    assert parsed.auto_fill == auto_fill, (
+        "auto_fill did not survive the contract validation the indexer feeds the "
+        "FormField ORM constructor"
+    )
+
+
+@_pytest.mark.parametrize(
+    "collection,model_name",
+    [("organizations", "ManifestOrganization"), ("roles", "ManifestRole")],
+)
+async def test_repo_roundtrip_identity_entity(
+    db_session: AsyncSession, tmp_path: Path, collection: str, model_name: str
+):
+    """Organization + Role (LIST-based identity entities) obey REPO_POLICY across a
+    real _repo round trip.
+
+    Unlike the id-keyed dict collections, ``organizations`` / ``roles`` are
+    top-level manifest LISTS, so they use ``manifest_list_entry_for`` and a
+    dedicated deleter — but they ride the SAME ``_import_all_entities`` import the
+    other entities do (github_sync.py:1152 includes them in ``has_entities``; the
+    resolver's ``_resolve_organization`` / ``_resolve_role` re-create them).
+    """
+    import bifrost.manifest as m
+    from src.models.orm.organizations import Organization
+    from src.models.orm.users import Role
+    from tests.roundtrip.paths import (
+        delete_organization,
+        delete_role,
+        manifest_list_entry_for,
+        repo_export,
+        repo_import,
+    )
+
+    if collection == "organizations":
+        eid = uuid4()
+        db_session.add(Organization(
+            id=eid, name=f"RT Org {eid.hex[:6]}", domain=f"rt-{eid.hex[:8]}.test",
+            is_active=True, created_by="roundtrip@test.local",
+        ))
+        deleter = delete_organization
+    else:
+        eid = uuid4()
+        db_session.add(Role(
+            id=eid, name=f"rt_role_{eid.hex[:6]}",
+            description="seeded role description", created_by="roundtrip@test.local",
+        ))
+        deleter = delete_role
+    await db_session.commit()
+
+    model = getattr(m, model_name)
+    before = await manifest_list_entry_for(db_session, collection, str(eid))
+    assert before is not None, f"{collection} {eid} did not serialize into the manifest"
+
+    await repo_export(db_session, tmp_path)
+    await deleter(db_session, str(eid))
+    assert await manifest_list_entry_for(db_session, collection, str(eid)) is None, (
+        "deleter did not remove the entity — delta would be empty"
+    )
+
+    count, _changes = await repo_import(db_session, tmp_path)
+    assert count > 0, "_import_all_entities was a no-op — the round trip never imported"
+
+    after = await manifest_list_entry_for(db_session, collection, str(eid))
+    assert after is not None, f"{collection} {eid} was not re-imported"
+
+    (b, a), = pair_rows(model, [before], [after], "by_id", REPO_POLICY)
+    reds: list[str] = []
+    for field in model.model_fields:
+        try:
+            assert_field_roundtrip(model, field, b, a, REPO_POLICY, row=b)
+        except AssertionError as e:
+            cls = field_class_of(model, field, b)
+            reds.append(f"{field} ({cls.value}): {e}")
+    assert not reds, f"{model_name} _repo round-trip drops:\n" + "\n".join(reds)
 
 
 async def test_repo_roundtrip_mcp_server(db_session: AsyncSession, tmp_path: Path):

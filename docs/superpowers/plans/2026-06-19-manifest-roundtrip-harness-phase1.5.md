@@ -531,6 +531,56 @@ git commit -m "docs(plan): mark round-trip harness Phase 1.5 complete"
 
 ---
 
+## Phase 1.5b — complete coverage (Slice 3 of #390) ✅ COMPLETE (2026-06-20)
+
+Handoff: `docs/superpowers/plans/2026-06-20-phase1.5b-complete-coverage-handoff.md`.
+Closed the 5 false-green blind spots (tagged-but-not-driven models) + fixed the `auto_fill` real drop.
+
+**Honest coverage is now 20/20 models driven field-by-field** (was ~15/20). The detector's
+"green == no silent drop" is true for every `Manifest*` model.
+
+- [x] **`auto_fill` (REAL DROP fixed, not a product decision):** `FormField.auto_fill` is portable
+  self-contained form structure (sibling-name → data-provider metadata path), so it must travel.
+  Fixed BOTH halves — serialize in `manifest_generator._form_field_to_schema_dict` + parse in
+  `file_storage/indexers/form.py` (the indexer's `FormFieldORM(...)` constructor). The pinning test
+  `test_form_field_auto_fill_is_dropped_below_manifest` was INVERTED to
+  `test_form_field_auto_fill_round_trips_below_manifest` (asserts both halves). The `_repo` and
+  solution form seeders now carry a real `auto_fill` so it rides the full round trip. The solution
+  capture path (`capture.py:986`) already emitted it — only the `_repo` writer + indexer dropped it.
+- [x] **EventSubscription (7 fields, was un-driven):** the `_repo` + solution event seeders now attach
+  a workflow subscription. Driven field-by-field via the new `assert_nested_children` helper
+  (`tests/roundtrip/assertions.py`): paired `by_id` on `_repo`, `by_remap` on the solution path
+  (the subscription's own id AND its `workflow_id` ref are remapped — `deploy.py:580/574`). The parent
+  `EventSource.subscriptions` CONTENT list gets a `"nested"` `FIELD_OVERRIDES` action so the parent
+  loop skips the whole-list byte-compare (which would false-red on the remapped child ref).
+- [x] **Organization + Role (identity entities):** driven field-by-field through `_repo` via the new
+  list-aware `manifest_list_entry_for` + `delete_organization`/`delete_role` deleters (orgs/roles are
+  top-level manifest LISTS, not id-keyed dicts). They ride the same `_import_all_entities` import.
+- [x] **Policy:** the `_repo` + solution table seeders now carry a second non-default policy
+  (description + a real `when` AST `{"eq": [{"row": ...}, {"user": ...}]}`). `ManifestPolicy` is driven
+  field-by-field via `assert_nested_children` (paired `by_match_key` on the policy `name`; no refs, no id).
+- [x] **App (the one "hard" blocker — DRIVEN, not documented-as-blocked):** solved via the
+  **prebuilt-dist fast path**. The source app ships a `dist/` to S3 (no src files), so capture carries
+  `dist_files` and deploy's `compile_dist` returns it verbatim (`app_build.py:76` —
+  `if prebuilt_dist: return prebuilt_dist`) — **no Node/Vite in the test stack**, and the REAL
+  export→install→deploy pipeline runs. `ManifestApp` is driven field-by-field on the solution path (its
+  primary distribution path; it's a `SolutionBundle` entity). The source solution is scoped to its own
+  org and installed into a different org because app `slug` is global-unique CONTENT (a global source app
+  would collide with the install — `deploy.py:1088`; a cross-org slug pair is allowed — `deploy.py:1070`).
+
+**Oracle guardrails honored:** the only WRITER change is `auto_fill` (a real content drop, fixed in
+both writer halves). Every new `FIELD_OVERRIDES`/`EXTRA_FIELD_POLICY`-adjacent entry cites the real
+code line. No pairing/assertion code was weakened to make a red green.
+
+**Verification (isolated, fresh `./test.sh stack reset`):** `tests/e2e/roundtrip/` 25/25 green;
+`tests/roundtrip/` 33/33 unit green; `tests/unit/test_manifest.py` 101/101; git-sync regression
+(`test_git_sync_local.py` + `test_solution_git_sync_events.py`) 82/82 alone on a fresh reset;
+`test_forms.py` + `test_solution_app_deploy.py` 50/50. pyright 0 errors on the touched source files
+(`manifest_generator.py`, `indexers/form.py`); ruff clean. The pre-existing `form.py:271` rowcount
+FP and the `tests.roundtrip.*` import FPs are unchanged/ignored per the handoff.
+
+---
+
 ## Codex round-3 punch-list (fix DURING execution — code-cited refinements, not design changes)
 
 Codex round 3 verdict = **B (sound + converging; fix-during-execution).** It verified all 20 models

@@ -130,6 +130,13 @@ FIELD_OVERRIDES: dict[tuple[str, str], str] = {
     # EventSource.webhook_integration_id is reset to None on Solution deploy —
     # the install re-binds its own integration after install (deploy.py:1609).
     ("ManifestEventSource", "webhook_integration_id"): "scrub",
+    # EventSource.subscriptions is a CONTENT list of ManifestEventSubscription.
+    # A whole-list byte-compare false-REDS on the solution path because each
+    # subscription's workflow_id/agent_id REFERENCE is remapped through
+    # solution_entity_id at deploy (deploy.py:574). The per-field drift oracle
+    # cracks the list and drives each subscription field individually via
+    # assert_nested_children (paired by_remap), so the parent loop must SKIP it.
+    ("ManifestEventSource", "subscriptions"): "nested",
 }
 
 
@@ -341,6 +348,46 @@ async def manifest_entry_for(
     coll: dict[str, Any] = getattr(manifest, collection)
     entry = coll.get(entity_id)
     return entry.model_dump() if entry is not None else None
+
+
+async def manifest_list_entry_for(
+    db: AsyncSession,
+    collection: str,
+    entity_id: str,
+) -> dict[str, Any] | None:
+    """Return the manifest dict for one entity in a LIST-based collection.
+
+    ``organizations`` and ``roles`` are top-level manifest LISTS (not id-keyed
+    dicts like ``workflows``), so ``manifest_entry_for``'s ``.get(id)`` does not
+    apply.  This finds the entry by id and returns its ``model_dump`` — the same
+    shape the field-class assertions compare.
+    """
+    from src.services.manifest_generator import generate_manifest
+
+    manifest = await generate_manifest(db)
+    coll: list[Any] = getattr(manifest, collection)
+    for entry in coll:
+        if str(entry.id) == str(entity_id):
+            return entry.model_dump()
+    return None
+
+
+async def delete_organization(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.organizations import Organization
+
+    await db.execute(delete(Organization).where(Organization.id == UUID(entity_id)))
+    await db.commit()
+
+
+async def delete_role(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.users import Role
+
+    await db.execute(delete(Role).where(Role.id == UUID(entity_id)))
+    await db.commit()
 
 
 def manifest_text(work_dir: Path) -> str:

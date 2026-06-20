@@ -123,6 +123,7 @@ def _form_field_to_schema_dict(field: FormField) -> dict:
         "max_size_mb": field.max_size_mb,
         "content": field.content,
         "allow_as_query_param": field.allow_as_query_param,
+        "auto_fill": field.auto_fill,
     }
     for key, value in optional_fields.items():
         if value is not None:
