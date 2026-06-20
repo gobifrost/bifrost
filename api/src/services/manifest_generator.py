@@ -71,12 +71,12 @@ logger = logging.getLogger(__name__)
 
 
 def serialize_organization(org: Organization) -> ManifestOrganization:
-    return ManifestOrganization.from_orm(org)
+    return ManifestOrganization.from_row(org)
 
 
 def serialize_role(role: Role) -> ManifestRole:
     """Serialize a Role ORM object to ManifestRole."""
-    return ManifestRole.from_orm(role)
+    return ManifestRole.from_row(role)
 
 
 def serialize_workflow(wf: Workflow, roles: list[str] | None = None) -> ManifestWorkflow:

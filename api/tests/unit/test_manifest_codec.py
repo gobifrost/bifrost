@@ -58,7 +58,7 @@ async def test_organization_git_sync_parity(db_session):
 
     try:
         expected = {"id": str(org.id), "name": "RT Org Parity", "is_active": True}
-        produced = ManifestOrganization.from_orm(org).view(Destination.GIT_SYNC)
+        produced = ManifestOrganization.from_row(org).view(Destination.GIT_SYNC)
         assert_parity(produced, expected, label="organization git_sync")
     finally:
         await db_session.execute(delete(Organization).where(Organization.id == org.id))
@@ -79,7 +79,7 @@ async def test_role_git_sync_parity(db_session):
 
     try:
         expected = {"id": str(role.id), "name": "rt_role_parity"}
-        produced = ManifestRole.from_orm(role).view(Destination.GIT_SYNC)
+        produced = ManifestRole.from_row(role).view(Destination.GIT_SYNC)
         assert_parity(produced, expected, label="role git_sync")
     finally:
         await db_session.execute(delete(Role).where(Role.id == role.id))

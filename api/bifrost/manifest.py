@@ -75,7 +75,7 @@ class ManifestOrganization(EntityCodec, BaseModel):
     is_active: bool = Field(default=True, **classify(FieldClass.ENVIRONMENT))
 
     @classmethod
-    def from_orm(cls, org) -> "ManifestOrganization":
+    def from_row(cls, org) -> "ManifestOrganization":
         return cls(id=str(org.id), name=org.name, is_active=org.is_active)
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
@@ -88,7 +88,7 @@ class ManifestRole(EntityCodec, BaseModel):
     name: str = Field(**classify(FieldClass.CONTENT, match_key=True))
 
     @classmethod
-    def from_orm(cls, role) -> "ManifestRole":
+    def from_row(cls, role) -> "ManifestRole":
         return cls(id=str(role.id), name=role.name)
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
