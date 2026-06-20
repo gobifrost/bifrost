@@ -89,10 +89,83 @@ async def seed_workflow(db: AsyncSession, work_dir: Path) -> str:
     return str(wid)
 
 
-# Registry: collection -> (seeder, deleter-key).  Workflow is proven end-to-end;
-# more entities get added here as their dependency closures are wired (Task 7).
+async def seed_table(db: AsyncSession, work_dir: Path) -> str:
+    """Seed a global Table — no closure needed (global, policies inline)."""
+    from src.models.orm.tables import Table
+
+    tid = uuid4()
+    table = Table(
+        id=tid,
+        name=f"rt_table_{tid.hex[:6]}",
+        description="seeded table description",
+        organization_id=None,
+        schema={"columns": [{"name": "title", "type": "string"}]},
+        access={"policies": [
+            {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": None},
+        ]},
+    )
+    db.add(table)
+    await db.commit()
+    return str(tid)
+
+
+async def seed_config(db: AsyncSession, work_dir: Path) -> str:
+    """Seed a global (non-integration) string Config — no closure needed."""
+    from src.models.enums import ConfigType
+    from src.models.orm.config import Config
+
+    cid = uuid4()
+    cfg = Config(
+        id=cid,
+        key=f"RT_CONFIG_{cid.hex[:6]}",
+        value={"value": "round-trip-value"},
+        config_type=ConfigType.STRING,
+        description="seeded config description",
+        organization_id=None,
+        integration_id=None,
+        updated_by="roundtrip@test.local",
+    )
+    db.add(cfg)
+    await db.commit()
+    return str(cid)
+
+
+async def seed_claim(db: AsyncSession, work_dir: Path) -> str:
+    """Seed a CustomClaim + its org (organization_id is REQUIRED on claims).
+
+    The org is part of the dependency closure — it round-trips alongside, and
+    only the claim is deleted to force the import delta.
+    """
+    from src.models.orm.custom_claims import CustomClaim
+    from src.models.orm.organizations import Organization
+
+    org_id = uuid4()
+    db.add(Organization(
+        id=org_id,
+        name=f"RT Claim Org {org_id.hex[:6]}",
+        domain=f"rt-{org_id.hex[:8]}.test",
+        created_by="roundtrip@test.local",
+    ))
+    cid = uuid4()
+    db.add(CustomClaim(
+        id=cid,
+        name=f"rt_claim_{cid.hex[:6]}",
+        description="seeded claim description",
+        organization_id=org_id,
+        type="list",
+        query={"table": "rt_source", "where": None, "select": "value"},
+    ))
+    await db.commit()
+    return str(cid)
+
+
+# Registry: collection -> seeder.  Workflow is proven end-to-end; more entities
+# get added here as their dependency closures are wired (Task 7).
 SEEDERS = {
     "workflows": seed_workflow,
+    "tables": seed_table,
+    "configs": seed_config,
+    "claims": seed_claim,
 }
 
 
@@ -161,6 +234,46 @@ async def test_repo_roundtrip_workflow(db_session: AsyncSession, tmp_path: Path)
             reds.append(f"{field} ({cls.value}): {e}")
 
     assert not reds, "ManifestWorkflow _repo round-trip drops:\n" + "\n".join(reds)
+
+
+# ---------------------------------------------------------------------------
+# Additional entities — each wired with a real dependency-closure seeder.
+# The _repo path serializes via generate_manifest -> model_dump, so the emitted
+# dict IS the Manifest* model (no transport extras); the completeness layer is
+# satisfied trivially.  REPO_POLICY keeps everything except secrets.
+# ---------------------------------------------------------------------------
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    "collection,model_name",
+    [
+        ("tables", "ManifestTable"),
+        ("configs", "ManifestConfig"),
+        ("claims", "ManifestCustomClaim"),
+    ],
+)
+async def test_repo_roundtrip_entity(
+    db_session: AsyncSession, tmp_path: Path, collection: str, model_name: str
+):
+    """Every Manifest* field obeys REPO_POLICY across a real _repo round trip."""
+    import bifrost.manifest as m
+
+    model = getattr(m, model_name)
+    before, after = await _run_repo_roundtrip(db_session, tmp_path, collection)
+
+    (b, a), = pair_rows(model, [before], [after], "by_id", REPO_POLICY)
+
+    reds: list[str] = []
+    for field in model.model_fields:
+        try:
+            assert_field_roundtrip(model, field, b, a, REPO_POLICY, row=b)
+        except AssertionError as e:
+            cls = field_class_of(model, field, b)
+            reds.append(f"{field} ({cls.value}): {e}")
+
+    assert not reds, f"{model_name} _repo round-trip drops:\n" + "\n".join(reds)
 
 
 async def test_repo_manifest_has_no_secret_leak(db_session: AsyncSession, tmp_path: Path):

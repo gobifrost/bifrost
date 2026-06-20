@@ -366,6 +366,36 @@ async def delete_workflow(db: AsyncSession, entity_id: str) -> None:
     await db.commit()
 
 
+async def delete_table(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.tables import Table
+
+    await db.execute(delete(Table).where(Table.id == UUID(entity_id)))
+    await db.commit()
+
+
+async def delete_config(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.config import Config
+
+    await db.execute(delete(Config).where(Config.id == UUID(entity_id)))
+    await db.commit()
+
+
+async def delete_claim(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.custom_claims import CustomClaim
+
+    await db.execute(delete(CustomClaim).where(CustomClaim.id == UUID(entity_id)))
+    await db.commit()
+
+
 DELETERS: dict[str, Callable[[AsyncSession, str], Any]] = {
     "workflows": delete_workflow,
+    "tables": delete_table,
+    "configs": delete_config,
+    "claims": delete_claim,
 }
