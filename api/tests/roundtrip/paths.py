@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +56,189 @@ class RoundTripPath:
 
 
 REPO_SYNC = RoundTripPath(name="_repo", policy=REPO_POLICY, pairing="by_id")
+
+
+# A Solution install is a CROSS-INSTALL round trip: every entity id is remapped
+# per install (uuid5(install_id, manifest_id)), the org binding is STAMPED from
+# the target org (not carried), in-bundle references follow the remap, and true
+# secrets are scrubbed from the plaintext manifest (they ride the encrypted
+# .bifrost/secrets.enc envelope in full mode, or are dropped in shareable mode).
+# CONTENT (incl. access_level — deploy preserves it, deploy.py:801/1323) is kept.
+SOLUTION_SHAREABLE_POLICY: Policy = {
+    FieldClass.IDENTITY: "remap",
+    FieldClass.CONTENT: "keep",
+    FieldClass.ENVIRONMENT: "stamp",
+    FieldClass.SECRET: "scrub",
+    FieldClass.REFERENCE: "remap",
+}
+
+# Full-backup applies the SAME policy to the plaintext MANIFEST envelope: env is
+# stamped from the target, and secrets are STILL scrubbed from the manifest —
+# they travel only inside the encrypted secrets.enc blob (asserted separately by
+# the secret-envelope check, not by the manifest field round trip).
+SOLUTION_FULL_POLICY: Policy = dict(SOLUTION_SHAREABLE_POLICY)
+
+
+SOLUTION_SHAREABLE = RoundTripPath(
+    name="solution_shareable", policy=SOLUTION_SHAREABLE_POLICY, pairing="by_remap"
+)
+SOLUTION_FULL = RoundTripPath(
+    name="solution_full", policy=SOLUTION_FULL_POLICY, pairing="by_remap"
+)
+
+
+# ---------------------------------------------------------------------------
+# Per-field transform overrides (Codex round-3 — each cites the code line).
+#
+# A handful of fields do NOT obey their field-class default action on the
+# Solution deploy path.  Without these the generic class-policy assertion would
+# raise a FALSE red.  Every entry names the deploy.py line that performs the
+# divergent transform, so an override can never be added without a code proof
+# (this is also the Task-7 guardrail).  Keyed by (manifest-model-name, field).
+#   - "keep_env_ref": the value is an ENV-scoped grant id, NOT remapped through
+#     solution_entity_id; assert it survives as-is (presence + value preserved).
+#   - "scrub": Solution deploy DROPS the field to None on this path.
+# A field NOT in this map uses its field-class policy action.
+# ---------------------------------------------------------------------------
+#   - "absent": the field is NOT serialized into the solution BUNDLE entry at
+#     all — its value is carried by the install SCOPE (organization_id is
+#     inherited from the install, not bound per-entity), so it must be missing
+#     from both the before and after dict. Asserting it stays None/absent is the
+#     correct stamp behaviour for a field the bundle never names.
+FIELD_OVERRIDES: dict[tuple[str, str], str] = {
+    # organization_id is NEVER part of a solution bundle entry — scope is
+    # inherited from the install ("Scope is inherited from the install — no
+    # per-entity binding", deploy.py:_upsert_workflows / capture _drop_none drops
+    # the None). The install row carries the target org; the entry does not.
+    ("ManifestWorkflow", "organization_id"): "absent",
+    ("ManifestForm", "organization_id"): "absent",
+    ("ManifestAgent", "organization_id"): "absent",
+    ("ManifestApp", "organization_id"): "absent",
+    ("ManifestTable", "organization_id"): "absent",
+    ("ManifestConfig", "organization_id"): "absent",
+    ("ManifestClaim", "organization_id"): "absent",
+    ("ManifestEventSource", "organization_id"): "absent",
+    # Agent.mcp_connection_ids are env-scoped MCPConnection GRANTS, deployed
+    # full-replace-from-manifest and NOT remapped via solution_entity_id
+    # (deploy.py:1340). The generic REFERENCE remap-id check would false-red.
+    ("ManifestAgent", "mcp_connection_ids"): "keep_env_ref",
+    # EventSource.webhook_integration_id is reset to None on Solution deploy —
+    # the install re-binds its own integration after install (deploy.py:1609).
+    ("ManifestEventSource", "webhook_integration_id"): "scrub",
+}
+
+
+# ---------------------------------------------------------------------------
+# Solution real-code wrappers (NO reimplementation).
+# ---------------------------------------------------------------------------
+
+
+def expected_solution_id(installed_solution_id: UUID) -> Callable[[dict], str]:
+    """Return ``expected_id(before)`` for ``by_remap`` pairing AND the ``remap=``
+    callable for in-bundle reference fields.
+
+    The post-install id of a source manifest entity is
+    ``solution_entity_id(install_id, manifest_id)`` where ``install_id`` is the
+    INSTALLED solution's id (deploy.py:100/112). A ref to an in-bundle entity is
+    remapped with the SAME function; a ref to an out-of-bundle id is not in the
+    map and passes through (return None so the exact-id check is skipped for it).
+    """
+    from src.services.solutions.deploy import solution_entity_id
+
+    def _map(before: dict[str, Any]) -> str:
+        return str(solution_entity_id(installed_solution_id, UUID(str(before["id"]))))
+
+    return _map
+
+
+def remap_ref_for(installed_solution_id: UUID, in_bundle_ids: set[str]) -> Callable[[Any], Any]:
+    """``remap=`` callable for reference fields: map an in-bundle id to its
+    post-install id; return None for an out-of-bundle id (skip the exact check).
+    """
+    from src.services.solutions.deploy import solution_entity_id
+
+    def _map(ref: Any) -> Any:
+        s = str(ref)
+        if s not in in_bundle_ids:
+            return None
+        return str(solution_entity_id(installed_solution_id, UUID(s)))
+
+    return _map
+
+
+async def solution_export_zip(
+    db: AsyncSession,
+    solution: Any,
+    *,
+    password: str | None = None,
+    include_values: bool = False,
+    include_data: bool = False,
+) -> bytes:
+    """Real shareable/full export: capture the deployed solution LIVE into a
+    bundle and serialize the installable workspace zip.
+
+    Drives ``SolutionCaptureService.bundle_for`` (DB -> bundle) +
+    ``build_workspace_zip`` (bundle -> zip) — the exact pair the
+    ``GET /api/solutions/{id}/export`` router calls (solutions.py:312/315).
+    A password (full mode) encrypts config_values/table_data into secrets.enc;
+    shareable mode (no password) never carries the sensitive tier.
+    """
+    from src.services.solutions.capture import SolutionCaptureService
+    from src.services.solutions.export import build_workspace_zip
+
+    bundle = await SolutionCaptureService(db).bundle_for(
+        solution, include_values=include_values, include_data=include_data
+    )
+    return build_workspace_zip(bundle, password=password)
+
+
+async def solution_install_zip(
+    db: AsyncSession,
+    zip_bytes: bytes,
+    *,
+    organization_id: UUID | None,
+    password: str | None = None,
+    replace_secrets: bool = False,
+    replace_data: bool = False,
+) -> Any:
+    """Real install: ``zip_install.install_zip`` (zip -> SolutionBundle ->
+    ``SolutionDeployer.deploy``). Returns the installed ``Solution`` row."""
+    from src.services.solutions.zip_install import install_zip
+
+    return await install_zip(
+        db,
+        zip_bytes,
+        organization_id=organization_id,
+        config_values={},
+        deployer_email="roundtrip@test.local",
+        password=password,
+        replace_secrets=replace_secrets,
+        replace_data=replace_data,
+    )
+
+
+async def solution_bundle_entries(
+    db: AsyncSession,
+    solution: Any,
+    collection: str,
+    *,
+    include_values: bool = False,
+    include_data: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the serialized manifest-shaped dicts a solution's *collection*
+    produces, via the REAL ``bundle_for`` capture serializer.
+
+    Used to read BOTH the source bundle (before) and the installed bundle
+    (after) through the identical serializer, so the field round trip compares
+    like for like. *collection* is a ``SolutionBundle`` list attr name
+    (``"workflows"``, ``"tables"``, ...).
+    """
+    from src.services.solutions.capture import SolutionCaptureService
+
+    bundle = await SolutionCaptureService(db).bundle_for(
+        solution, include_values=include_values, include_data=include_data
+    )
+    return list(getattr(bundle, collection))
 
 
 # ---------------------------------------------------------------------------
