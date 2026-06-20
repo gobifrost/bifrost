@@ -902,7 +902,7 @@ class ManifestEventSource(EntityCodec, BaseModel):
         return ImportFields(direct=direct, indexer_content={}, restamp={})
 
 
-class ManifestMCPConnectionTool(BaseModel):
+class ManifestMCPConnectionTool(EntityCodec, BaseModel):
     """Tool catalog row inside an MCP connection.
 
     Populated from the vendor's ``tools/list`` and synced into the manifest
@@ -914,8 +914,24 @@ class ManifestMCPConnectionTool(BaseModel):
     enabled: bool = Field(default=True, description="Whether the tool is enabled in this connection", **classify(FieldClass.CONTENT))
     disabled_reason: str | None = Field(default=None, description="Reason the tool is disabled (admin-set or auto-set)", **classify(FieldClass.CONTENT))
 
+    @classmethod
+    def from_row(cls, tool) -> "ManifestMCPConnectionTool":
+        """Mirror serialize_mcp_connection_tool in manifest_generator.py."""
+        return cls(
+            tool_name=tool.tool_name,
+            tool_schema=tool.tool_schema or {},
+            enabled=tool.enabled,
+            disabled_reason=tool.disabled_reason,
+        )
 
-class ManifestMCPConnection(BaseModel):
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError(
+            "ManifestMCPConnectionTool has no standalone orm path; "
+            "tool reconciliation is handled by _resolve_mcp_connection"
+        )
+
+
+class ManifestMCPConnection(EntityCodec, BaseModel):
     """Per-org MCP connection nested under a server template.
 
     Carries the per-org OAuth client_id and the visibility flags. The
@@ -930,8 +946,35 @@ class ManifestMCPConnection(BaseModel):
     service_oauth_token_id: str | None = Field(default=None, description="FK to oauth_tokens for shared service token", **classify(FieldClass.REFERENCE))
     tools: list[ManifestMCPConnectionTool] = Field(default_factory=list, description="Per-connection tool catalog", **classify(FieldClass.CONTENT))
 
+    @classmethod
+    def from_row(cls, conn, *, tools=None) -> "ManifestMCPConnection":
+        """Mirror serialize_mcp_connection in manifest_generator.py.
 
-class ManifestMCPServer(BaseModel):
+        ``encrypted_client_secret`` is intentionally omitted — secrets are
+        gitignored, the same treatment Config secrets get today.
+        """
+        return cls(
+            organization_id=str(conn.organization_id),
+            client_id=conn.client_id,
+            server_url_override=conn.server_url_override,
+            available_in_chat=conn.available_in_chat,
+            available_to_autonomous=conn.available_to_autonomous,
+            service_oauth_token_id=(
+                str(conn.service_oauth_token_id)
+                if conn.service_oauth_token_id
+                else None
+            ),
+            tools=[ManifestMCPConnectionTool.from_row(t) for t in (tools or [])],
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError(
+            "ManifestMCPConnection has no standalone orm path; "
+            "connection reconciliation is handled by _resolve_mcp_connection"
+        )
+
+
+class ManifestMCPServer(EntityCodec, BaseModel):
     """External MCP server template (top-level manifest entry)."""
     id: str = Field(description="Server template UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(description="Display name (unique)", **classify(FieldClass.CONTENT))
@@ -946,6 +989,62 @@ class ManifestMCPServer(BaseModel):
         description="Per-org connections keyed by connection UUID",
         **classify(FieldClass.CONTENT),
     )
+
+    @classmethod
+    def from_row(
+        cls,
+        server,
+        *,
+        connections_by_id=None,
+        tools_by_connection=None,
+    ) -> "ManifestMCPServer":
+        """Mirror serialize_mcp_server in manifest_generator.py.
+
+        Connections nested under the server keyed by connection UUID; each
+        connection carries its own tool catalog inline.
+        """
+        connections = connections_by_id or {}
+        tools_lookup = tools_by_connection or {}
+        return cls(
+            id=str(server.id),
+            name=server.name,
+            server_url=server.server_url,
+            oauth_provider_id=(
+                str(server.oauth_provider_id) if server.oauth_provider_id else None
+            ),
+            redirect_url=server.redirect_url,
+            discovery_metadata=server.discovery_metadata,
+            organization_id=(
+                str(server.organization_id) if server.organization_id else None
+            ),
+            is_active=server.is_active,
+            connections={
+                cid: ManifestMCPConnection.from_row(conn, tools=tools_lookup.get(cid, []))
+                for cid, conn in connections.items()
+            },
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        """Parent MCPServer scalar columns only — connections/tools built by resolver."""
+        if dest is Destination.INSTALL:
+            raise NotImplementedError(
+                "ManifestMCPServer has no install path (MCP servers are git-sync only)"
+            )
+        # GIT_SYNC: scalar columns _resolve_mcp_server sets on the MCPServer ORM row.
+        # UUID resolution (oauth_provider_id, organization_id) is done by the resolver
+        # which holds DB session context; here we surface the string values so the
+        # resolver can parse them with UUID().
+        direct: dict = {
+            "id": self.id,
+            "name": self.name,
+            "server_url": self.server_url,
+            "oauth_provider_id": self.oauth_provider_id,
+            "redirect_url": self.redirect_url,
+            "discovery_metadata": self.discovery_metadata,
+            "organization_id": self.organization_id,
+            "is_active": self.is_active,
+        }
+        return ImportFields(direct=direct, indexer_content={}, restamp={})
 
 
 class Manifest(BaseModel):

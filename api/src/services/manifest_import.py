@@ -2410,37 +2410,33 @@ class ManifestResolver:
 
         from sqlalchemy.dialects.postgresql import insert
 
+        from bifrost.manifest_codec import Destination
         from src.models.orm.external_mcp import MCPServer
 
-        server_id = UUID(mserver.id)
+        vals = mserver.to_orm_values(Destination.GIT_SYNC).direct
+        server_id = UUID(vals["id"])
+        oauth_provider_id = UUID(vals["oauth_provider_id"]) if vals["oauth_provider_id"] else None
+        organization_id = UUID(vals["organization_id"]) if vals["organization_id"] else None
 
         stmt = insert(MCPServer).values(
             id=server_id,
             name=server_name,
-            server_url=mserver.server_url,
-            oauth_provider_id=(
-                UUID(mserver.oauth_provider_id) if mserver.oauth_provider_id else None
-            ),
-            redirect_url=mserver.redirect_url,
-            discovery_metadata=mserver.discovery_metadata,
-            organization_id=(
-                UUID(mserver.organization_id) if mserver.organization_id else None
-            ),
-            is_active=mserver.is_active,
+            server_url=vals["server_url"],
+            oauth_provider_id=oauth_provider_id,
+            redirect_url=vals["redirect_url"],
+            discovery_metadata=vals["discovery_metadata"],
+            organization_id=organization_id,
+            is_active=vals["is_active"],
         ).on_conflict_do_update(
             index_elements=["id"],
             set_={
                 "name": server_name,
-                "server_url": mserver.server_url,
-                "oauth_provider_id": (
-                    UUID(mserver.oauth_provider_id) if mserver.oauth_provider_id else None
-                ),
-                "redirect_url": mserver.redirect_url,
-                "discovery_metadata": mserver.discovery_metadata,
-                "organization_id": (
-                    UUID(mserver.organization_id) if mserver.organization_id else None
-                ),
-                "is_active": mserver.is_active,
+                "server_url": vals["server_url"],
+                "oauth_provider_id": oauth_provider_id,
+                "redirect_url": vals["redirect_url"],
+                "discovery_metadata": vals["discovery_metadata"],
+                "organization_id": organization_id,
+                "is_active": vals["is_active"],
                 "updated_at": datetime.now(timezone.utc),
             },
         )

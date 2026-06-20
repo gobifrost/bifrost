@@ -231,12 +231,7 @@ def serialize_mcp_connection_tool(
     tool: MCPConnectionTool,
 ) -> ManifestMCPConnectionTool:
     """Serialize an MCPConnectionTool ORM row to its manifest model."""
-    return ManifestMCPConnectionTool(
-        tool_name=tool.tool_name,
-        tool_schema=tool.tool_schema or {},
-        enabled=tool.enabled,
-        disabled_reason=tool.disabled_reason,
-    )
+    return ManifestMCPConnectionTool.from_row(tool)
 
 
 def serialize_mcp_connection(
@@ -248,19 +243,7 @@ def serialize_mcp_connection(
     ``encrypted_client_secret`` is intentionally omitted — secrets are
     gitignored, the same treatment Config secrets get today.
     """
-    return ManifestMCPConnection(
-        organization_id=str(connection.organization_id),
-        client_id=connection.client_id,
-        server_url_override=connection.server_url_override,
-        available_in_chat=connection.available_in_chat,
-        available_to_autonomous=connection.available_to_autonomous,
-        service_oauth_token_id=(
-            str(connection.service_oauth_token_id)
-            if connection.service_oauth_token_id
-            else None
-        ),
-        tools=[serialize_mcp_connection_tool(t) for t in (tools or [])],
-    )
+    return ManifestMCPConnection.from_row(connection, tools=tools)
 
 
 def serialize_mcp_server(
@@ -273,27 +256,10 @@ def serialize_mcp_server(
     Connections nested under the server keyed by connection UUID; each
     connection carries its own tool catalog inline.
     """
-    connections = connections_by_id or {}
-    tools_lookup = tools_by_connection or {}
-    return ManifestMCPServer(
-        id=str(server.id),
-        name=server.name,
-        server_url=server.server_url,
-        oauth_provider_id=(
-            str(server.oauth_provider_id) if server.oauth_provider_id else None
-        ),
-        redirect_url=server.redirect_url,
-        discovery_metadata=server.discovery_metadata,
-        organization_id=(
-            str(server.organization_id) if server.organization_id else None
-        ),
-        is_active=server.is_active,
-        connections={
-            cid: serialize_mcp_connection(
-                conn, tools_lookup.get(cid, [])
-            )
-            for cid, conn in connections.items()
-        },
+    return ManifestMCPServer.from_row(
+        server,
+        connections_by_id=connections_by_id,
+        tools_by_connection=tools_by_connection,
     )
 
 

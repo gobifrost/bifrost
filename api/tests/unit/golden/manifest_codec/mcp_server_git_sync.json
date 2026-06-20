@@ -1,0 +1,37 @@
+{
+  "connections": {
+    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee": {
+      "available_in_chat": true,
+      "available_to_autonomous": false,
+      "client_id": "test-client-id",
+      "organization_id": "<volatile>",
+      "server_url_override": null,
+      "service_oauth_token_id": null,
+      "tools": [
+        {
+          "disabled_reason": null,
+          "enabled": true,
+          "tool_name": "list_tickets",
+          "tool_schema": {
+            "properties": {
+              "limit": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ]
+    }
+  },
+  "discovery_metadata": {
+    "issuer": "https://mcp.example.com"
+  },
+  "id": "<volatile>",
+  "is_active": true,
+  "name": "rt-mcp-golden",
+  "oauth_provider_id": null,
+  "organization_id": "<volatile>",
+  "redirect_url": "https://app.example.com/mcp/callback",
+  "server_url": "https://mcp.example.com/sse"
+}

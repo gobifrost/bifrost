@@ -767,3 +767,107 @@ async def test_event_install_parity(db_session):
         await db_session.execute(delete(ScheduleSource).where(ScheduleSource.id == sched_id))
         await db_session.execute(delete(EventSource).where(EventSource.id == es_id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_mcp_server_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded MCPServer (with connection + tools) matches the committed golden snapshot.
+
+    MCPServer has no install path — to_orm_values(INSTALL) raises NotImplementedError.
+    Child models (Connection, ConnectionTool) have no standalone orm path.
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.external_mcp import MCPConnection, MCPConnectionTool, MCPServer
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestMCPServer
+    from bifrost.manifest_codec import Destination
+
+    server_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+    # Fixed connection UUID so dict key is stable for volatile_keys path
+    conn_id = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    org = Organization(id=org_id, name=f"rt-mcp-org-{org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    server = MCPServer(
+        id=server_id,
+        name="rt-mcp-golden",
+        server_url="https://mcp.example.com/sse",
+        oauth_provider_id=None,
+        redirect_url="https://app.example.com/mcp/callback",
+        discovery_metadata={"issuer": "https://mcp.example.com"},
+        organization_id=None,
+        is_active=True,
+    )
+    db_session.add(server)
+    await db_session.flush()
+
+    conn = MCPConnection(
+        id=conn_id,
+        server_id=server_id,
+        organization_id=org_id,
+        client_id="test-client-id",
+        encrypted_client_secret="placeholder",
+        server_url_override=None,
+        available_in_chat=True,
+        available_to_autonomous=False,
+        service_oauth_token_id=None,
+    )
+    db_session.add(conn)
+    await db_session.flush()
+
+    tool = MCPConnectionTool(
+        connection_id=conn_id,
+        tool_name="list_tickets",
+        tool_schema={"type": "object", "properties": {"limit": {"type": "integer"}}},
+        enabled=True,
+        disabled_reason=None,
+    )
+    db_session.add(tool)
+    await db_session.commit()
+
+    try:
+        conn_id_str = str(conn_id)
+        connections_by_id = {conn_id_str: conn}
+        tools_by_connection = {conn_id_str: [tool]}
+
+        produced = ManifestMCPServer.from_row(
+            server,
+            connections_by_id=connections_by_id,
+            tools_by_connection=tools_by_connection,
+        ).view(Destination.GIT_SYNC)
+
+        # encrypted_client_secret must NEVER appear in any serialized output
+        assert "encrypted_client_secret" not in produced
+        for conn_val in produced.get("connections", {}).values():
+            assert "encrypted_client_secret" not in conn_val
+
+        # organization_id is masked everywhere (server-level and connection-level).
+        # service_oauth_token_id is None in the fixture (not volatile).
+        assert_golden(
+            produced,
+            "mcp_server_git_sync",
+            volatile_keys={"id", "organization_id"},
+        )
+
+        # Child models have no standalone orm path
+        import pytest as _pytest
+        with _pytest.raises(NotImplementedError):
+            ManifestMCPServer.from_row(server).to_orm_values(Destination.INSTALL)
+    finally:
+        await db_session.execute(
+            delete(MCPConnectionTool).where(MCPConnectionTool.connection_id == conn_id)
+        )
+        await db_session.execute(
+            delete(MCPConnection).where(MCPConnection.id == conn_id)
+        )
+        await db_session.execute(
+            delete(MCPServer).where(MCPServer.name.like("rt-mcp-%"))
+        )
+        await db_session.execute(
+            delete(Organization).where(Organization.id == org_id)
+        )
+        await db_session.commit()
