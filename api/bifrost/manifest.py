@@ -436,7 +436,7 @@ class ManifestPolicy(BaseModel):
     )
 
 
-class ManifestTable(BaseModel):
+class ManifestTable(EntityCodec, BaseModel):
     """Table entry in manifest.
 
     Uses ``table_schema`` in Python but serializes as ``schema`` in YAML
@@ -459,6 +459,98 @@ class ManifestTable(BaseModel):
     )
 
     model_config = {"populate_by_name": True}
+
+    # Raw policies list from the DB (used by _install_view to mirror capture
+    # byte-for-byte).  Stored as a PrivateAttr so it isn't included in
+    # model_dump / serialization; only set via from_row().
+    _raw_policies: list[dict] | None = None
+
+    @classmethod
+    def from_row(cls, table) -> "ManifestTable":
+        """Build from a Table ORM row, mirroring serialize_table exactly.
+
+        Unwraps the JSONB ``Table.access`` payload (shape: ``{"policies": [...]}``)
+        into a flat list of ManifestPolicy. Tables with no access blob serialize
+        with ``policies=None``; the importer reseeds those on the next round-trip.
+
+        Also stores the raw policies list from the DB on ``_raw_policies`` so
+        that ``_install_view`` can emit it byte-for-byte (matching
+        ``capture._table_entries`` which reads directly from ``t.access``).
+        """
+        access = table.access if isinstance(table.access, dict) else None
+        raw_policies = access.get("policies") if access else None
+        policies = (
+            [ManifestPolicy.model_validate(p) for p in raw_policies]
+            if raw_policies
+            else None
+        )
+        obj = cls(
+            id=str(table.id),
+            name=table.name,
+            description=table.description,
+            organization_id=str(table.organization_id) if table.organization_id else None,
+            policies=policies,
+            **{"schema": table.schema},  # type: ignore[arg-type]  # alias for table_schema
+        )
+        # Store the raw list so _install_view can pass it through unmodified,
+        # matching capture._table_entries which reads (t.access or {}).get("policies").
+        obj._raw_policies = raw_policies
+        return obj
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._table_entries key-for-key.
+
+        Allowlist: id, name, description, schema, policies; drop-none.
+        organization_id is ABSENT (scope is install-inherited).
+
+        ``policies`` is emitted as the raw list from the DB (``_raw_policies``),
+        NOT the model's parsed ManifestPolicy objects, so the output is
+        byte-identical to what ``capture._table_entries`` produces via
+        ``(t.access or {}).get("policies")``.
+        """
+        raw: dict = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "schema": self.table_schema,
+            "policies": self._raw_policies,
+        }
+        return {k: v for k, v in raw.items() if v is not None}
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        """Column values for ORM upsert — all direct (no indexer split).
+
+        GIT_SYNC: mirrors _resolve_table column set.
+          id/name/organization_id/description/table_schema→``schema`` column.
+          policies→``access`` JSONB wrapping + TablePolicies validation +
+          default admin_bypass seed STAY in the resolver (not here).
+        INSTALL: mirrors _upsert_tables values dict.
+          description and schema always present (full-replace — clearing is
+          intentional on redeploy).  policies absent (deploy reads raw from dict).
+        """
+        if dest is Destination.GIT_SYNC:
+            return ImportFields(
+                direct={
+                    "id": self.id,
+                    "name": self.name,
+                    "organization_id": self.organization_id,
+                    "description": self.description,
+                    "schema": self.table_schema,
+                    "policies": self.policies,
+                },
+                indexer_content={},
+                restamp={},
+            )
+        # INSTALL
+        return ImportFields(
+            direct={
+                "name": self.name,
+                "description": self.description,
+                "schema": self.table_schema,
+            },
+            indexer_content={},
+            restamp={},
+        )
 
 
 class ManifestEventSubscription(BaseModel):

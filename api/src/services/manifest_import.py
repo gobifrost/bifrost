@@ -2024,13 +2024,16 @@ class ManifestResolver:
         from sqlalchemy import update
         from sqlalchemy.dialects.postgresql import insert
 
+        from bifrost.manifest import ManifestTable
+        from bifrost.manifest_codec import Destination
         from shared.policies.probe import make_seed_admin_bypass
         from src.models.contracts.policies import TablePolicies
         from src.models.orm.tables import Table
         from src.services.sync_ops import SyncOp  # noqa: F401
 
-        table_id = UUID(mtable.id)
-        org_id = UUID(mtable.organization_id) if mtable.organization_id else None
+        src = ManifestTable.model_validate(mtable).to_orm_values(Destination.GIT_SYNC).direct
+        table_id = UUID(src["id"])
+        org_id = UUID(src["organization_id"]) if src["organization_id"] else None
         now = datetime.now(timezone.utc)
 
         # Manifest-carried policies → Table.access JSONB. The manifest stores
@@ -2047,8 +2050,9 @@ class ManifestResolver:
         # malformed tables.yaml fails loudly rather than landing an
         # unparseable AST in the DB. Pattern: fail loud at the writer, fail
         # closed at the reader (see _load_policies in src/routers/tables.py).
-        if mtable.policies is not None:
-            policies_list = [p.model_dump(mode="json") for p in mtable.policies]
+        policies = src["policies"]
+        if policies is not None:
+            policies_list = [p.model_dump(mode="json") for p in policies]
             access = {"policies": policies_list}
             TablePolicies(**access)  # raises ValidationError on bad AST
         else:
@@ -2076,8 +2080,8 @@ class ManifestResolver:
                 .where(Table.id == existing_by_natural)
                 .values(
                     id=table_id,
-                    description=mtable.description,
-                    schema=mtable.table_schema,
+                    description=src["description"],
+                    schema=src["schema"],
                     access=access,
                     updated_at=now,
                 )
@@ -2098,8 +2102,8 @@ class ManifestResolver:
                 .where(Table.id == table_id)
                 .values(
                     name=table_name,
-                    description=mtable.description,
-                    schema=mtable.table_schema,
+                    description=src["description"],
+                    schema=src["schema"],
                     access=access,
                     updated_at=now,
                 )
@@ -2110,9 +2114,9 @@ class ManifestResolver:
         stmt = insert(Table).values(
             id=table_id,
             name=table_name,
-            description=mtable.description,
+            description=src["description"],
             organization_id=org_id,
-            schema=mtable.table_schema,
+            schema=src["schema"],
             access=access,
             created_by="git-sync",
         ).on_conflict_do_nothing()

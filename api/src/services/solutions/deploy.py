@@ -839,8 +839,13 @@ class SolutionDeployer:
             seen_names.add(nm)
 
         for mtbl in tables:
+            from bifrost.manifest import ManifestTable
+            from bifrost.manifest_codec import Destination
+
+            mtbl_model = ManifestTable(**mtbl)
+            src = mtbl_model.to_orm_values(Destination.INSTALL).direct
             tbl_id = UUID(mtbl["id"])
-            name = mtbl["name"]
+            name = src["name"]
 
             # Resolve + VALIDATE policies before persisting (mirrors REST/manifest
             # paths) so a malformed AST is rejected at deploy, not at read time.
@@ -909,8 +914,8 @@ class SolutionDeployer:
                         origin_solution_slug=None,
                         origin_solution_id=None,
                         name=name,
-                        description=mtbl.get("description"),
-                        schema=mtbl.get("schema"),
+                        description=src["description"],
+                        schema=src["schema"],
                         access=access,
                     )
                 )
@@ -942,9 +947,7 @@ class SolutionDeployer:
             # (solution-owned metadata), so removing them in the bundle clears
             # the DB value rather than leaving it stale.
             values: dict[str, Any] = {
-                "name": name,
-                "description": mtbl.get("description"),
-                "schema": mtbl.get("schema"),
+                **src,
                 "access": access,
                 "organization_id": solution.organization_id,
                 "solution_id": sid,

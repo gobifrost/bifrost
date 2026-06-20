@@ -197,3 +197,94 @@ async def test_workflow_install_parity(db_session):
         await db_session.execute(delete(Role).where(Role.id == role_id))
         await db_session.execute(delete(Solution).where(Solution.id == sol_id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_table_git_sync_parity(db_session):
+    """from_row(table).view(GIT_SYNC) == serialize_table(table).model_dump(by_alias=True)"""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.tables import Table
+    from bifrost.manifest import ManifestTable
+    from bifrost.manifest_codec import Destination
+    from src.services.manifest_generator import serialize_table
+
+    tid = uuid.uuid4()
+    table = Table(
+        id=tid,
+        name=f"rt_table_{tid.hex[:6]}",
+        description="parity test table",
+        organization_id=None,
+        schema={"columns": [{"name": "col1", "type": "string"}]},
+        access={"policies": [
+            {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": None},
+            {
+                "name": "owner_can_edit",
+                "description": "Row owner may update/delete",
+                "actions": ["update", "delete"],
+                "when": {"eq": [{"row": "owner_id"}, {"user": "user_id"}]},
+            },
+        ]},
+    )
+    db_session.add(table)
+    await db_session.commit()
+
+    try:
+        # The roundtrip writer calls model_dump(by_alias=True) on the serialized
+        # ManifestTable; use that same call on both sides so the parity oracle
+        # is comparing apples to apples (both emit "schema", not "table_schema").
+        expected = serialize_table(table).model_dump(by_alias=True)
+        produced = ManifestTable.from_row(table).view(Destination.GIT_SYNC)
+        assert_parity(produced, expected, label="table git_sync")
+    finally:
+        await db_session.execute(delete(Table).where(Table.id == tid))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_table_install_parity(db_session):
+    """from_row(t).view(INSTALL) == capture._table_entries(solution_id)[0]"""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.solutions import Solution
+    from src.models.orm.tables import Table
+    from bifrost.manifest import ManifestTable
+    from bifrost.manifest_codec import Destination
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol_id = uuid.uuid4()
+    tid = uuid.uuid4()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-sol-{sol_id.hex[:8]}",
+        name="RT Table Install Parity Sol",
+    )
+    db_session.add(sol)
+
+    table = Table(
+        id=tid,
+        name=f"rt_table_{tid.hex[:6]}",
+        description="install parity table",
+        organization_id=None,
+        schema={"columns": [{"name": "item", "type": "string"}]},
+        access={"policies": [
+            {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": None},
+        ]},
+        solution_id=sol_id,
+    )
+    db_session.add(table)
+    await db_session.commit()
+
+    try:
+        capture = SolutionCaptureService(db_session)
+        legacy_entries = await capture._table_entries(sol_id)
+        assert len(legacy_entries) == 1, f"expected 1 entry, got {legacy_entries}"
+        legacy = legacy_entries[0]
+
+        produced = ManifestTable.from_row(table).view(Destination.INSTALL)
+        assert_parity(produced, legacy, label="table install")
+    finally:
+        await db_session.execute(delete(Table).where(Table.id == tid))
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
+        await db_session.commit()

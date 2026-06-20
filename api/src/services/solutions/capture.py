@@ -447,19 +447,13 @@ class SolutionCaptureService:
         return out
 
     async def _table_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestTable
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(select(Table).where(Table.solution_id == solution_id))
         ).scalars().all()
-        return [
-            _drop_none({
-                "id": str(t.id),
-                "name": t.name,
-                "description": t.description,
-                "schema": t.schema,
-                "policies": (t.access or {}).get("policies"),
-            })
-            for t in rows
-        ]
+        return [ManifestTable.from_row(t).view(Destination.INSTALL) for t in rows]
 
     async def _claim_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
         rows = (
