@@ -1,0 +1,12 @@
+{
+  "description": "golden claim",
+  "id": "<volatile>",
+  "name": "rt_claim_golden",
+  "organization_id": "<volatile>",
+  "query": {
+    "select": "id",
+    "table": "users",
+    "where": null
+  },
+  "type": "list"
+}

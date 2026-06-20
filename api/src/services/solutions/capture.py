@@ -456,21 +456,15 @@ class SolutionCaptureService:
         return [ManifestTable.from_row(t).view(Destination.INSTALL) for t in rows]
 
     async def _claim_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestCustomClaim
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(
                 select(CustomClaim).where(CustomClaim.solution_id == solution_id)
             )
         ).scalars().all()
-        return [
-            _drop_none({
-                "id": str(c.id),
-                "name": c.name,
-                "description": c.description,
-                "type": c.type,
-                "query": c.query,
-            })
-            for c in rows
-        ]
+        return [ManifestCustomClaim.from_row(c).view(Destination.INSTALL) for c in rows]
 
     async def _app_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
         rows = (

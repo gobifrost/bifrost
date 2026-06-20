@@ -2139,10 +2139,13 @@ class ManifestResolver:
         from src.models.orm.custom_claims import CustomClaim
         from src.services.sync_ops import SyncOp  # noqa: F401
 
-        claim_id = UUID(mclaim.id)
-        org_id = UUID(mclaim.organization_id)
+        from bifrost.manifest_codec import Destination
+
+        fields = mclaim.to_orm_values(Destination.GIT_SYNC).direct
+        claim_id = UUID(fields["id"])
+        org_id = UUID(fields["organization_id"])
         now = datetime.now(timezone.utc)
-        query = mclaim.query.model_dump(mode="json")
+        query = fields["query"]
 
         if cache is not None:
             existing_by_natural = cache["claim_by_natural"].get((claim_name, org_id))
@@ -2165,9 +2168,9 @@ class ManifestResolver:
                 .where(CustomClaim.id == existing_by_natural)
                 .values(
                     name=claim_name,
-                    description=mclaim.description,
+                    description=fields["description"],
                     organization_id=org_id,
-                    type=mclaim.type,
+                    type=fields["type"],
                     query=query,
                     updated_at=now,
                 )
@@ -2189,9 +2192,9 @@ class ManifestResolver:
                 .where(CustomClaim.id == claim_id)
                 .values(
                     name=claim_name,
-                    description=mclaim.description,
+                    description=fields["description"],
                     organization_id=org_id,
-                    type=mclaim.type,
+                    type=fields["type"],
                     query=query,
                     updated_at=now,
                 )
@@ -2201,9 +2204,9 @@ class ManifestResolver:
         stmt = insert(CustomClaim).values(
             id=claim_id,
             name=claim_name,
-            description=mclaim.description,
+            description=fields["description"],
             organization_id=org_id,
-            type=mclaim.type,
+            type=fields["type"],
             query=query,
         ).on_conflict_do_nothing()
         await self.db.execute(stmt)

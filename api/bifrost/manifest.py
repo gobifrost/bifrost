@@ -407,7 +407,7 @@ class ManifestSolutionConfigSchema(BaseModel):
     position: int = Field(default=0, description="Display ordering within the solution", **classify(FieldClass.CONTENT))
 
 
-class ManifestCustomClaim(BaseModel):
+class ManifestCustomClaim(EntityCodec, BaseModel):
     """Custom Claim entry in manifest."""
     id: str = Field(description="Custom Claim UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(description="Claim name, unique per org", **classify(FieldClass.CONTENT, match_key=True))
@@ -415,6 +415,88 @@ class ManifestCustomClaim(BaseModel):
     organization_id: str = Field(description="Org UUID", **classify(FieldClass.ENVIRONMENT, match_key=True))
     type: Literal["list", "scalar"] = Field(default="list", description="list | scalar", **classify(FieldClass.CONTENT))
     query: ClaimQuery = Field(description="Source table query that resolves the claim", **classify(FieldClass.CONTENT))
+
+    # Raw query dict from the DB (used by _install_view to mirror capture
+    # byte-for-byte). Stored as a PrivateAttr so it isn't included in
+    # model_dump / serialization; only set via from_row().
+    _raw_query: dict | None = None
+
+    @classmethod
+    def from_row(cls, claim) -> "ManifestCustomClaim":
+        """Build from a CustomClaim ORM row, mirroring serialize_custom_claim exactly.
+
+        Also stores the raw query dict from the DB on ``_raw_query`` so that
+        ``_install_view`` can emit it byte-for-byte (matching
+        ``capture._claim_entries`` which reads directly from ``c.query``).
+        """
+        obj = cls(
+            id=str(claim.id),
+            name=claim.name,
+            description=claim.description,
+            organization_id=str(claim.organization_id),
+            type=claim.type,  # type: ignore[arg-type]
+            query=ClaimQuery.model_validate(claim.query),
+        )
+        obj._raw_query = claim.query
+        return obj
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._claim_entries key-for-key.
+
+        Allowlist: id, name, description, type, query. Drop-none.
+        organization_id is ABSENT (scope is install-inherited via solution.organization_id).
+        query is emitted as the raw dict from the DB (``_raw_query``) to preserve
+        byte-identity with capture._claim_entries which reads c.query directly.
+        """
+        raw: dict = {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "type": self.type,
+            # Raw DB dict (set in from_row), emitted directly — mirrors
+            # ManifestTable._install_view's _raw_policies. The install path always
+            # runs through from_row, so _raw_query is always populated here.
+            "query": self._raw_query,
+        }
+        return {k: v for k, v in raw.items() if v is not None}
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        """Column values for ORM upsert — all direct (no indexer split).
+
+        GIT_SYNC: mirrors _resolve_custom_claim column set.
+          query serialized as model_dump(mode="json") — the resolver reads
+          mclaim.query.model_dump(mode="json").
+        INSTALL: mirrors _upsert_claims values dict.
+          organization_id ABSENT — stamped by deployer from solution.organization_id.
+          query serialized as model_dump(mode="json") — deployer re-validates via
+          ClaimQuery.model_validate(mclaim["query"]).model_dump().
+        """
+        query_json = self.query.model_dump(mode="json")
+        if dest is Destination.GIT_SYNC:
+            return ImportFields(
+                direct={
+                    "id": self.id,
+                    "name": self.name,
+                    "description": self.description,
+                    "organization_id": self.organization_id,
+                    "type": self.type,
+                    "query": query_json,
+                },
+                indexer_content={},
+                restamp={},
+            )
+        # INSTALL
+        return ImportFields(
+            direct={
+                "id": self.id,
+                "name": self.name,
+                "description": self.description,
+                "type": self.type,
+                "query": query_json,
+            },
+            indexer_content={},
+            restamp={},
+        )
 
 
 class ManifestPolicy(BaseModel):

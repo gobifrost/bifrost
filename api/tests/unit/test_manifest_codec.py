@@ -381,3 +381,89 @@ async def test_table_install_parity(db_session):
         await db_session.execute(delete(Table).where(Table.id == tid))
         await db_session.execute(delete(Solution).where(Solution.id == sol_id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_claim_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded CustomClaim matches the committed golden snapshot."""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.custom_claims import CustomClaim
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestCustomClaim
+    from bifrost.manifest_codec import Destination
+
+    org_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+
+    org = Organization(id=org_id, name=f"RT Claim Org golden {org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    claim = CustomClaim(
+        id=claim_id,
+        name="rt_claim_golden",
+        organization_id=org_id,
+        type="list",
+        query={"table": "users", "select": "id"},
+        description="golden claim",
+    )
+    db_session.add(claim)
+    await db_session.flush()
+
+    try:
+        produced = ManifestCustomClaim.from_row(claim).view(Destination.GIT_SYNC)
+        assert_golden(produced, "claim_git_sync", volatile_keys={"id", "organization_id"})
+    finally:
+        await db_session.execute(delete(CustomClaim).where(CustomClaim.id == claim_id))
+        await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_claim_install_parity(db_session):
+    """INSTALL view of a seeded solution-owned CustomClaim matches the committed golden snapshot."""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.custom_claims import CustomClaim
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
+    from bifrost.manifest import ManifestCustomClaim
+    from bifrost.manifest_codec import Destination
+
+    org_id = uuid.uuid4()
+    sol_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+
+    org = Organization(id=org_id, name=f"RT Claim Install Org {org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-claim-sol-{sol_id.hex[:8]}",
+        name="RT Claim Install Parity Sol",
+    )
+    db_session.add(sol)
+    await db_session.flush()
+
+    claim = CustomClaim(
+        id=claim_id,
+        name="rt_claim_install_golden",
+        organization_id=org_id,
+        solution_id=sol_id,
+        type="list",
+        query={"table": "assets", "select": "device_id", "where": None},
+        description="install golden claim",
+    )
+    db_session.add(claim)
+    await db_session.flush()
+
+    try:
+        produced = ManifestCustomClaim.from_row(claim).view(Destination.INSTALL)
+        assert_golden(produced, "claim_install", volatile_keys={"id"})
+    finally:
+        await db_session.execute(delete(CustomClaim).where(CustomClaim.id == claim_id))
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
+        await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.commit()

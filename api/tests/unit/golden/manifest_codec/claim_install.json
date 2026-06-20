@@ -1,0 +1,11 @@
+{
+  "description": "install golden claim",
+  "id": "<volatile>",
+  "name": "rt_claim_install_golden",
+  "query": {
+    "select": "device_id",
+    "table": "assets",
+    "where": null
+  },
+  "type": "list"
+}

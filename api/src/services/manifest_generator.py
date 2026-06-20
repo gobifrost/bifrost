@@ -36,7 +36,6 @@ from src.models.orm.users import Role
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from bifrost.manifest import (
-    ClaimQuery,
     Manifest,
     ManifestAgent,
     ManifestApp,
@@ -265,14 +264,7 @@ def serialize_config(cfg: Config) -> ManifestConfig:
 
 def serialize_custom_claim(claim: CustomClaim) -> ManifestCustomClaim:
     """Serialize a CustomClaim ORM object to ManifestCustomClaim."""
-    return ManifestCustomClaim(
-        id=str(claim.id),
-        name=claim.name,
-        description=claim.description,
-        organization_id=str(claim.organization_id),
-        type=claim.type,  # type: ignore[arg-type]
-        query=ClaimQuery.model_validate(claim.query),
-    )
+    return ManifestCustomClaim.from_row(claim)
 
 
 def serialize_table(table: Table) -> ManifestTable:
