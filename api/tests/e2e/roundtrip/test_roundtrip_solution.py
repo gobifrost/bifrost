@@ -590,6 +590,73 @@ async def test_solution_shareable_roundtrip_event_source(db_session: AsyncSessio
 
 
 # ---------------------------------------------------------------------------
+# Form — solution path. Closure: a solution-owned workflow the form binds to
+# (workflow_id is a REFERENCE remapped to the installed workflow's id). The
+# capture emits workflow_path/workflow_function_name extras (completeness layer).
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_form(db: AsyncSession, sol: Solution) -> tuple[str, str]:
+    """Seed a solution workflow + a form binding to it. Returns (form_id, wf_id)."""
+    from src.models.enums import FormAccessLevel
+    from src.models.orm.forms import Form, FormField
+
+    wf_id = await seed_solution_workflow(db, sol)
+
+    fid = uuid.uuid4()
+    db.add(Form(
+        id=fid,
+        name="RoundTrip Form",
+        description="seeded form for solution round trip",
+        workflow_id=wf_id,
+        workflow_path="workflows/roundtrip_wf.py",
+        workflow_function_name="roundtrip_wf",
+        access_level=FormAccessLevel.AUTHENTICATED,
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        allowed_query_params=["foo"],
+        created_by="roundtrip@test.local",
+    ))
+    db.add(FormField(
+        id=uuid.uuid4(), form_id=fid, name="title", type="text", required=True,
+        position=0, label="Title",
+    ))
+    await db.flush()
+    return str(fid), wf_id
+
+
+async def test_solution_shareable_roundtrip_form(db_session: AsyncSession):
+    """ManifestForm obeys SOLUTION_SHAREABLE; workflow_id remaps to the installed
+    workflow; completeness accounts for workflow_path/_function_name extras."""
+    db = db_session
+    src_sol = await _make_solution(db)
+    src_form_id, src_wf_id = await seed_solution_form(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "forms")
+    assert len(before_rows) == 1, f"expected 1 source form, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "forms")
+    assert len(after_rows) == 1, f"expected 1 installed form, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestForm, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+    # in_bundle includes BOTH the form (self) and the referenced workflow so the
+    # workflow_id REFERENCE remap is checked to the EXACT installed workflow id.
+    in_bundle = {str(src_form_id), str(src_wf_id)}
+    _assert_complete(m.ManifestForm, b, a)
+    reds = _assert_entity_fields(
+        m.ManifestForm, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids=in_bundle,
+    )
+    assert not reds, "ManifestForm SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+
+
+# ---------------------------------------------------------------------------
 # Envelope check 1: table_data — full carries rows, shareable carries none.
 # ---------------------------------------------------------------------------
 
