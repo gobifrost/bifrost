@@ -18,13 +18,6 @@ from src.models.orm import Agent, AgentTool, AgentDelegation
 
 logger = logging.getLogger(__name__)
 
-# Derive the autonomous-run-limit fallbacks from the ORM column defaults so the
-# on-conflict-update branch can't drift from the single source of truth (orm/agents.py).
-# Hardcoding the literals here would be a "forgotten fallback" that silently resets
-# agents to a stale value if the column default ever changes.
-_MAX_ITERATIONS_DEFAULT = Agent.__table__.c.max_iterations.default.arg  # type: ignore[union-attr]
-_MAX_TOKEN_BUDGET_DEFAULT = Agent.__table__.c.max_token_budget.default.arg  # type: ignore[union-attr]
-
 
 class AgentIndexer:
     """
@@ -160,11 +153,22 @@ class AgentIndexer:
                 "is_active": agent_data.get("is_active", True),
                 "llm_model": agent_data.get("llm_model"),
                 "llm_max_tokens": agent_data.get("llm_max_tokens"),
-                # See the insert branch: limits are portable content; persist
-                # them on update too, falling back to the column default (derived
-                # from the ORM, not hardcoded) when the manifest omits them.
-                "max_iterations": agent_data.get("max_iterations", _MAX_ITERATIONS_DEFAULT),
-                "max_token_budget": agent_data.get("max_token_budget", _MAX_TOKEN_BUDGET_DEFAULT),
+                # Limits are portable content; persist them on update too, but
+                # ONLY when the manifest carries them (same omit-when-absent rule
+                # as the insert branch) — coalescing an absent value to the
+                # default would rewrite a previously-NULL agent's limit to 50/
+                # 100000 on the first sync, a silent state mutation. Omitting the
+                # key leaves the existing column value untouched.
+                **(
+                    {"max_iterations": agent_data["max_iterations"]}
+                    if agent_data.get("max_iterations") is not None
+                    else {}
+                ),
+                **(
+                    {"max_token_budget": agent_data["max_token_budget"]}
+                    if agent_data.get("max_token_budget") is not None
+                    else {}
+                ),
                 "system_tools": agent_data.get("system_tools", []),
                 "updated_at": now,
                 # NOTE: organization_id and access_level are NOT updated
