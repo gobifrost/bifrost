@@ -18,6 +18,13 @@ from src.models.orm import Agent, AgentTool, AgentDelegation
 
 logger = logging.getLogger(__name__)
 
+# Derive the autonomous-run-limit fallbacks from the ORM column defaults so the
+# on-conflict-update branch can't drift from the single source of truth (orm/agents.py).
+# Hardcoding the literals here would be a "forgotten fallback" that silently resets
+# agents to a stale value if the column default ever changes.
+_MAX_ITERATIONS_DEFAULT = Agent.__table__.c.max_iterations.default.arg  # type: ignore[union-attr]
+_MAX_TOKEN_BUDGET_DEFAULT = Agent.__table__.c.max_token_budget.default.arg  # type: ignore[union-attr]
+
 
 class AgentIndexer:
     """
@@ -154,10 +161,10 @@ class AgentIndexer:
                 "llm_model": agent_data.get("llm_model"),
                 "llm_max_tokens": agent_data.get("llm_max_tokens"),
                 # See the insert branch: limits are portable content; persist
-                # them on update too, falling back to the column default when
-                # the manifest omits them.
-                "max_iterations": agent_data.get("max_iterations", 50),
-                "max_token_budget": agent_data.get("max_token_budget", 100000),
+                # them on update too, falling back to the column default (derived
+                # from the ORM, not hardcoded) when the manifest omits them.
+                "max_iterations": agent_data.get("max_iterations", _MAX_ITERATIONS_DEFAULT),
+                "max_token_budget": agent_data.get("max_token_budget", _MAX_TOKEN_BUDGET_DEFAULT),
                 "system_tools": agent_data.get("system_tools", []),
                 "updated_at": now,
                 # NOTE: organization_id and access_level are NOT updated

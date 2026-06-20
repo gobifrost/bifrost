@@ -452,6 +452,73 @@ async def test_form_field_auto_fill_is_dropped_below_manifest(db_session: AsyncS
     )
 
 
+async def test_repo_roundtrip_mcp_server(db_session: AsyncSession, tmp_path: Path):
+    """MCP server round-trips through the _repo manifest via the DIRECT resolver.
+
+    MCP servers are _repo-only (NOT a Solution entity) AND take a DIFFERENT
+    import path: _diff_and_collect omits mcp_servers (manifest_import.py:82) and
+    has_entities omits them (github_sync.py:1151), so _import_all_entities never
+    touches them.  The real import is ManifestResolver.plan_import driving
+    _resolve_mcp_server, gated on the server id being in changed_ids
+    (manifest_import.py:789).  This test drives that exact path.
+
+    Known intentional drop (documented, NOT a Manifest field): the per-connection
+    encrypted_client_secret is never serialized — secrets stay out of the
+    manifest, like Config values (manifest.py ManifestMCPConnection docstring).
+    """
+    import bifrost.manifest as m
+    from src.models.orm.external_mcp import MCPServer
+    from tests.roundtrip.paths import (
+        REPO_POLICY,
+        make_repo_sync_service,
+        manifest_entry_for,
+        repo_export,
+    )
+
+    sid = uuid4()
+    db_session.add(MCPServer(
+        id=sid,
+        name=f"rt-mcp-{sid.hex[:6]}",
+        server_url="https://mcp.example.test/sse",
+        redirect_url="https://app.test/oauth/callback",
+        discovery_metadata={"version": "1.0"},
+        organization_id=None,
+        is_active=True,
+    ))
+    await db_session.commit()
+
+    before = await manifest_entry_for(db_session, "mcp_servers", str(sid))
+    assert before is not None, "MCP server did not serialize into the manifest"
+
+    await repo_export(db_session, tmp_path)
+
+    # Force a delta: delete the server, then drive the DIRECT resolver with the
+    # server id explicitly in changed_ids (the path _import_all_entities skips).
+    from sqlalchemy import delete
+
+    await db_session.execute(delete(MCPServer).where(MCPServer.id == sid))
+    await db_session.commit()
+
+    from bifrost.manifest import read_manifest_from_dir
+
+    service = make_repo_sync_service(db_session, tmp_path)
+    manifest = read_manifest_from_dir(tmp_path / ".bifrost")
+    await service._resolver.plan_import(manifest, tmp_path, changed_ids={str(sid)})
+    await db_session.commit()
+
+    after = await manifest_entry_for(db_session, "mcp_servers", str(sid))
+    assert after is not None, "MCP server was not re-imported by the direct resolver"
+
+    reds: list[str] = []
+    for field in m.ManifestMCPServer.model_fields:
+        try:
+            assert_field_roundtrip(m.ManifestMCPServer, field, before, after, REPO_POLICY, row=before)
+        except AssertionError as e:
+            cls = field_class_of(m.ManifestMCPServer, field, before)
+            reds.append(f"{field} ({cls.value}): {e}")
+    assert not reds, "ManifestMCPServer _repo round-trip drops:\n" + "\n".join(reds)
+
+
 async def test_repo_manifest_has_no_secret_leak(db_session: AsyncSession, tmp_path: Path):
     """The written _repo manifest text must not contain a secret sentinel.
 
