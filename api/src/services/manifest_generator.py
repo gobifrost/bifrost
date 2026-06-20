@@ -71,8 +71,7 @@ logger = logging.getLogger(__name__)
 
 
 def serialize_organization(org: Organization) -> ManifestOrganization:
-    """Serialize an Organization ORM object to ManifestOrganization."""
-    return ManifestOrganization(id=str(org.id), name=org.name, is_active=org.is_active)
+    return ManifestOrganization.from_orm(org)
 
 
 def serialize_role(role: Role) -> ManifestRole:

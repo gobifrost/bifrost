@@ -42,3 +42,24 @@ def test_assert_parity_passes_on_equal_and_fails_on_diff():
         assert_parity({"a": 1}, {"a": 2}, label="bad")
     with pytest.raises(AssertionError):
         assert_parity({"a": 1, "b": 2}, {"a": 1}, label="extra")
+
+
+@pytest.mark.e2e
+async def test_organization_git_sync_parity(db_session):
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestOrganization
+    from bifrost.manifest_codec import Destination
+
+    org = Organization(id=uuid.uuid4(), name="RT Org Parity", is_active=True, created_by="test")
+    db_session.add(org)
+    await db_session.commit()
+
+    try:
+        expected = {"id": str(org.id), "name": "RT Org Parity", "is_active": True}
+        produced = ManifestOrganization.from_orm(org).view(Destination.GIT_SYNC)
+        assert_parity(produced, expected, label="organization git_sync")
+    finally:
+        await db_session.execute(delete(Organization).where(Organization.id == org.id))
+        await db_session.commit()

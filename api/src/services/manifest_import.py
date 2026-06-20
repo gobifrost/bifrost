@@ -1002,17 +1002,20 @@ class ManifestResolver:
         """
         from uuid import UUID
 
+        from bifrost.manifest_codec import Destination
+
         from src.models.orm.organizations import Organization
         from src.services.sync_ops import SyncOp, Upsert  # noqa: F401
 
         org_id = UUID(morg.id)
+        fields = morg.to_orm_values(Destination.GIT_SYNC).direct
 
         # 1. Try by ID first (handles renames)
         if org_id in cache["org_ids"]:
             return [Upsert(
                 model=Organization,
                 id=org_id,
-                values={"name": morg.name, "is_active": morg.is_active},
+                values={"name": fields["name"], "is_active": fields["is_active"]},
                 match_on="id",
             )]
 
@@ -1022,7 +1025,7 @@ class ManifestResolver:
             return [Upsert(
                 model=Organization,
                 id=org_id,
-                values={"id": org_id, "name": morg.name, "is_active": morg.is_active},
+                values={"id": org_id, "name": fields["name"], "is_active": fields["is_active"]},
                 match_on="name",
             )]
 
@@ -1030,7 +1033,7 @@ class ManifestResolver:
         return [Upsert(
             model=Organization,
             id=org_id,
-            values={"name": morg.name, "is_active": morg.is_active, "created_by": "git-sync"},
+            values={"name": fields["name"], "is_active": fields["is_active"], "created_by": "git-sync"},
             match_on="id",
         )]
 

@@ -21,6 +21,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from bifrost.field_classes import FieldClass, classify
+from bifrost.manifest_codec import Destination, EntityCodec, ImportFields
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +68,18 @@ MANIFEST_LEGACY_FILE = "metadata.yaml"
 # =============================================================================
 
 
-class ManifestOrganization(BaseModel):
+class ManifestOrganization(EntityCodec, BaseModel):
     """Organization entry in manifest."""
     id: str = Field(**classify(FieldClass.IDENTITY))
     name: str = Field(**classify(FieldClass.CONTENT, match_key=True))
     is_active: bool = Field(default=True, **classify(FieldClass.ENVIRONMENT))
+
+    @classmethod
+    def from_orm(cls, org) -> "ManifestOrganization":
+        return cls(id=str(org.id), name=org.name, is_active=org.is_active)
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        return ImportFields(direct={"id": self.id, "name": self.name, "is_active": self.is_active})
 
 
 class ManifestRole(BaseModel):
