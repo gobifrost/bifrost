@@ -37,6 +37,7 @@ def classify(
     match_key: bool = False,
     predicate: str | None = None,
     keep_on_portable: bool = False,
+    import_owner: str = "direct",
 ) -> dict:
     extra: dict[str, Any] = {"bifrost_field_class": field_class.value}
     if match_key:
@@ -46,7 +47,14 @@ def classify(
     if predicate is not None:
         assert predicate in PREDICATES, f"unknown predicate key {predicate!r}"
         extra["bifrost_class_predicate"] = predicate  # a STRING, schema-safe
+    assert import_owner in ("direct", "indexer", "restamp"), f"bad import_owner {import_owner!r}"
+    if import_owner != "direct":
+        extra["bifrost_import_owner"] = import_owner
     return {"json_schema_extra": extra}
+
+
+def import_owner_of(model: type[BaseModel], field: str) -> str:
+    return _extra(model, field).get("bifrost_import_owner", "direct")
 
 
 def iter_manifest_models() -> list[type[BaseModel]]:
