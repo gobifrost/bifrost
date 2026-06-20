@@ -544,7 +544,7 @@ class ManifestConfig(EntityCodec, BaseModel):
         )
 
 
-class ManifestSolutionConfigSchema(BaseModel):
+class ManifestSolutionConfigSchema(EntityCodec, BaseModel):
     """A solution-owned config DECLARATION (portable; never a value)."""
     id: str = Field(description="Config schema UUID", **classify(FieldClass.IDENTITY))
     key: str = Field(description="Config key name", **classify(FieldClass.CONTENT, match_key=True))
@@ -557,6 +557,61 @@ class ManifestSolutionConfigSchema(BaseModel):
     # matching default (mirrors ManifestConfig.value being typed ``object | None``).
     default: object | None = Field(default=None, description="Default value used when none is supplied", **classify(FieldClass.CONTENT))
     position: int = Field(default=0, description="Display ordering within the solution", **classify(FieldClass.CONTENT))
+
+    @classmethod
+    def from_row(cls, cs) -> "ManifestSolutionConfigSchema":
+        """Build from a SolutionConfigSchema ORM row, mirroring capture._config_entries."""
+        return cls(
+            id=str(cs.id),
+            key=cs.key,
+            type=cs.type,
+            required=cs.required,
+            description=cs.description,
+            default=cs.default,
+            position=cs.position,
+        )
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._config_entries key-for-key.
+
+        Allowlist: id, key, type, required, description, default, position.
+        Drop-none. solution_id and organization_id ABSENT (stamped by deploy).
+        """
+        raw: dict = {
+            "id": self.id,
+            "key": self.key,
+            "type": self.type,
+            "required": self.required,
+            "description": self.description,
+            "default": self.default,
+            "position": self.position,
+        }
+        return {k: v for k, v in raw.items() if v is not None}
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        """Column values for ORM upsert — all direct (no indexer split).
+
+        INSTALL: key/type/required/description/default/position (not id — remapped
+          by _remapped_bundle; not solution_id — stamped by caller).
+        GIT_SYNC: raises NotImplementedError (install-only entity; no git-sync path).
+        """
+        if dest is Destination.GIT_SYNC:
+            raise NotImplementedError(
+                "ManifestSolutionConfigSchema has no git-sync path; it is install-only."
+            )
+        # INSTALL
+        return ImportFields(
+            direct={
+                "key": self.key,
+                "type": self.type,
+                "required": self.required,
+                "description": self.description,
+                "default": self.default,
+                "position": self.position,
+            },
+            indexer_content={},
+            restamp={},
+        )
 
 
 class ManifestCustomClaim(EntityCodec, BaseModel):

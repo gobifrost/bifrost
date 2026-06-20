@@ -870,4 +870,60 @@ async def test_mcp_server_git_sync_parity(db_session):
         await db_session.execute(
             delete(Organization).where(Organization.id == org_id)
         )
+
+
+@pytest.mark.e2e
+async def test_solution_config_schema_install_parity(db_session):
+    """INSTALL view of a seeded SolutionConfigSchema matches the committed golden snapshot.
+
+    SolutionConfigSchema is install-only: to_orm_values(GIT_SYNC) raises
+    NotImplementedError. solution_id and organization_id are absent from the view
+    (stamped at deploy time).
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.solutions import Solution
+    from src.models.orm.solution_config_schema import SolutionConfigSchema
+    from bifrost.manifest import ManifestSolutionConfigSchema
+    from bifrost.manifest_codec import Destination
+
+    sol_id = uuid.uuid4()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-sol-cfgschema-{sol_id.hex[:8]}",
+        name="RT CfgSchema Golden Sol",
+    )
+    db_session.add(sol)
+    await db_session.flush()
+
+    cs = SolutionConfigSchema(
+        solution_id=sol_id,
+        key="rt_cfgschema_golden",
+        type="string",
+        required=True,
+        description="Golden test schema",
+        default="default_val",
+        position=0,
+    )
+    db_session.add(cs)
+    await db_session.commit()
+
+    try:
+        produced = ManifestSolutionConfigSchema.from_row(cs).view(Destination.INSTALL)
+        assert_golden(produced, "solution_config_schema_install", volatile_keys={"id"})
+
+        # solution_id and org ABSENT from install view
+        assert "solution_id" not in produced
+        assert "organization_id" not in produced
+        assert produced["default"] == "default_val"
+
+        # GIT_SYNC raises NotImplementedError (install-only entity)
+        with pytest.raises(NotImplementedError):
+            ManifestSolutionConfigSchema.from_row(cs).to_orm_values(Destination.GIT_SYNC)
+    finally:
+        await db_session.execute(
+            delete(SolutionConfigSchema).where(SolutionConfigSchema.solution_id == sol_id)
+        )
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
         await db_session.commit()

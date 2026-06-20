@@ -600,6 +600,9 @@ class SolutionCaptureService:
         return out
 
     async def _config_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestSolutionConfigSchema
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(
                 select(SolutionConfigSchema)
@@ -608,15 +611,7 @@ class SolutionCaptureService:
             )
         ).scalars().all()
         return [
-            _drop_none({
-                "id": str(c.id),
-                "key": c.key,
-                "type": c.type,
-                "required": c.required,
-                "description": c.description,
-                "default": c.default,
-                "position": c.position,
-            })
+            ManifestSolutionConfigSchema.from_row(c).view(Destination.INSTALL)
             for c in rows
         ]
 

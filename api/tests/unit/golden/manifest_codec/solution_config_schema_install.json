@@ -1,0 +1,9 @@
+{
+  "default": "default_val",
+  "description": "Golden test schema",
+  "id": "<volatile>",
+  "key": "rt_cfgschema_golden",
+  "position": 0,
+  "required": true,
+  "type": "string"
+}

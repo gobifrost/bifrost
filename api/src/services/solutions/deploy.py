@@ -1368,18 +1368,14 @@ class SolutionDeployer:
                 )
             seen.add(k)
 
+        from bifrost.manifest import ManifestSolutionConfigSchema
+        from bifrost.manifest_codec import Destination
+
         for entry in config_schemas:
             cid = UUID(entry["id"])
             await self._guard_owner(SolutionConfigSchema, cid, sid)
-            values: dict[str, Any] = {
-                "solution_id": sid,
-                "key": entry["key"],
-                "type": entry["type"],
-                "required": bool(entry.get("required", False)),
-                "description": entry.get("description"),
-                "default": entry.get("default"),
-                "position": int(entry.get("position", 0)),
-            }
+            direct = ManifestSolutionConfigSchema(**entry).to_orm_values(Destination.INSTALL).direct
+            values: dict[str, Any] = {"solution_id": sid, **direct}
             await Upsert(
                 model=SolutionConfigSchema, id=cid, values=values, match_on="id"
             ).execute(self.db)
