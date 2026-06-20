@@ -1,0 +1,9 @@
+{
+  "config_type": "string",
+  "description": "parity test config",
+  "id": "<volatile>",
+  "integration_id": null,
+  "key": "RT_CONFIG_GOLDEN",
+  "organization_id": "<volatile>",
+  "value": "golden-value"
+}

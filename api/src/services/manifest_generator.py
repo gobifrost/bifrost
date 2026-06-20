@@ -248,18 +248,7 @@ def serialize_integration(
 
 
 def serialize_config(cfg: Config) -> ManifestConfig:
-    """Serialize a Config ORM object to ManifestConfig."""
-    from src.models.enums import ConfigType
-
-    return ManifestConfig(
-        id=str(cfg.id),
-        integration_id=str(cfg.integration_id) if cfg.integration_id else None,
-        key=cfg.key,
-        config_type=cfg.config_type.value if cfg.config_type and hasattr(cfg.config_type, 'value') else (cfg.config_type or "string"),
-        description=cfg.description,
-        organization_id=str(cfg.organization_id) if cfg.organization_id else None,
-        value=None if (cfg.config_type == ConfigType.SECRET or str(cfg.config_type) == "secret") else cfg.value,
-    )
+    return ManifestConfig.from_row(cfg)
 
 
 def serialize_custom_claim(claim: CustomClaim) -> ManifestCustomClaim:

@@ -1862,9 +1862,12 @@ class ManifestResolver:
         from src.models.orm.config import Config
         from src.services.sync_ops import SyncOp, Upsert  # noqa: F401
 
-        cfg_id = UUID(mcfg.id)
-        integ_id = UUID(mcfg.integration_id) if mcfg.integration_id else None
-        org_id = UUID(mcfg.organization_id) if mcfg.organization_id else None
+        from bifrost.manifest_codec import Destination
+
+        vals = mcfg.to_orm_values(Destination.GIT_SYNC).direct
+        cfg_id = UUID(vals["id"])
+        integ_id = UUID(vals["integration_id"]) if vals["integration_id"] else None
+        org_id = UUID(vals["organization_id"]) if vals["organization_id"] else None
 
         # Record for post-commit cache invalidation. Only non-integration
         # configs are read through ConfigRepository's cache (merged_for_sdk /
@@ -1872,19 +1875,19 @@ class ManifestResolver:
         # ones whose cache can go stale on a value/key change here.
         if integ_id is None:
             self.configs_touched.add(
-                (str(org_id) if org_id is not None else None, mcfg.key)
+                (str(org_id) if org_id is not None else None, vals["key"])
             )
 
         # Check prefetch cache for existing config by natural key
-        cache_hit = cache["config_by_natural"].get((mcfg.key, integ_id, org_id))
+        cache_hit = cache["config_by_natural"].get((vals["key"], integ_id, org_id))
         schema_id = None
         if integ_id is not None:
-            schema = cache.get("integ_cs", {}).get(integ_id, {}).get(mcfg.key)
+            schema = cache.get("integ_cs", {}).get(integ_id, {}).get(vals["key"])
             schema_id = schema.id if schema is not None else None
 
         # Convert string config_type to enum for proper DB storage
         from src.models.enums import ConfigType
-        ct = ConfigType(mcfg.config_type) if isinstance(mcfg.config_type, str) else mcfg.config_type
+        ct = ConfigType(vals["config_type"]) if isinstance(vals["config_type"], str) else vals["config_type"]
         is_secret = ct == ConfigType.SECRET
 
         if cache_hit is not None:
@@ -1897,9 +1900,9 @@ class ManifestResolver:
             # Update existing row (including ID if it changed)
             update_values: dict = {
                 "id": cfg_id,
-                "key": mcfg.key,
+                "key": vals["key"],
                 "config_type": ct,
-                "description": mcfg.description,
+                "description": vals["description"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
                 "updated_by": "git-sync",
@@ -1907,7 +1910,7 @@ class ManifestResolver:
             if schema_id is not None:
                 update_values["config_schema_id"] = schema_id
             if not is_secret:
-                update_values["value"] = mcfg.value if mcfg.value is not None else {}
+                update_values["value"] = vals["value"] if vals["value"] is not None else {}
 
             return [Upsert(
                 model=Config,
@@ -1918,12 +1921,12 @@ class ManifestResolver:
         else:
             # New config — return Upsert op (uses ON CONFLICT)
             insert_values: dict = {
-                "key": mcfg.key,
+                "key": vals["key"],
                 "config_type": ct,
-                "description": mcfg.description,
+                "description": vals["description"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
-                "value": mcfg.value if mcfg.value is not None else {},
+                "value": vals["value"] if vals["value"] is not None else {},
                 "updated_by": "git-sync",
             }
             if schema_id is not None:

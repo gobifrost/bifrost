@@ -421,6 +421,59 @@ async def test_claim_git_sync_parity(db_session):
 
 
 @pytest.mark.e2e
+async def test_config_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded Config matches the committed golden snapshot.
+
+    Also asserts that the SECRET value-redaction path produces None.
+    Config has no install path — to_orm_values(INSTALL) is explicitly unsupported.
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.config import Config
+    from src.models.enums import ConfigType
+    from bifrost.manifest import ManifestConfig
+    from bifrost.manifest_codec import Destination
+
+    cfg_id = uuid.uuid4()
+    secret_id = uuid.uuid4()
+
+    cfg = Config(
+        id=cfg_id,
+        key="RT_CONFIG_GOLDEN",
+        config_type=ConfigType.STRING,
+        value="golden-value",
+        description="parity test config",
+        organization_id=None,
+        integration_id=None,
+        updated_by="test",
+    )
+    secret_cfg = Config(
+        id=secret_id,
+        key="RT_CONFIG_SECRET_GOLDEN",
+        config_type=ConfigType.SECRET,
+        value="supersecret",
+        description="secret config",
+        organization_id=None,
+        integration_id=None,
+        updated_by="test",
+    )
+    db_session.add(cfg)
+    db_session.add(secret_cfg)
+    await db_session.commit()
+
+    try:
+        produced = ManifestConfig.from_row(cfg).view(Destination.GIT_SYNC)
+        assert_golden(produced, "config_git_sync", volatile_keys={"id", "organization_id"})
+
+        # Secret value must be redacted to None regardless of stored value
+        assert ManifestConfig.from_row(secret_cfg).value is None
+    finally:
+        await db_session.execute(delete(Config).where(Config.id == cfg_id))
+        await db_session.execute(delete(Config).where(Config.id == secret_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
 async def test_claim_install_parity(db_session):
     """INSTALL view of a seeded solution-owned CustomClaim matches the committed golden snapshot."""
     import uuid

@@ -381,7 +381,7 @@ class ManifestIntegration(BaseModel):
     mappings: list[ManifestIntegrationMapping] = Field(default_factory=list, description="Per-org entity mappings", **classify(FieldClass.CONTENT))
 
 
-class ManifestConfig(BaseModel):
+class ManifestConfig(EntityCodec, BaseModel):
     """Config entry in manifest."""
     id: str = Field(description="Config UUID", **classify(FieldClass.IDENTITY))
     integration_id: str | None = Field(default=None, description="Parent integration UUID (if integration config)", **classify(FieldClass.REFERENCE, match_key=True))
@@ -390,6 +390,48 @@ class ManifestConfig(BaseModel):
     description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, match_key=True))
     value: object | None = Field(default=None, description="Config value (null for secret type)", **classify(FieldClass.CONTENT, predicate="config_value"))
+
+    @classmethod
+    def from_row(cls, cfg) -> "ManifestConfig":
+        """Mirror serialize_config in manifest_generator.py."""
+        from src.models.enums import ConfigType
+
+        config_type = (
+            cfg.config_type.value
+            if cfg.config_type and hasattr(cfg.config_type, "value")
+            else (cfg.config_type or "string")
+        )
+        value = (
+            None
+            if (cfg.config_type == ConfigType.SECRET or str(cfg.config_type) == "secret")
+            else cfg.value
+        )
+        return cls(
+            id=str(cfg.id),
+            integration_id=str(cfg.integration_id) if cfg.integration_id else None,
+            key=cfg.key,
+            config_type=config_type,
+            description=cfg.description,
+            organization_id=str(cfg.organization_id) if cfg.organization_id else None,
+            value=value,
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        if dest is not Destination.GIT_SYNC:
+            raise NotImplementedError(f"Config has no install path; dest={dest}")
+        return ImportFields(
+            direct={
+                "id": self.id,
+                "key": self.key,
+                "integration_id": self.integration_id,
+                "organization_id": self.organization_id,
+                "config_type": self.config_type,
+                "value": self.value,
+                "description": self.description,
+            },
+            indexer_content={},
+            restamp={},
+        )
 
 
 class ManifestSolutionConfigSchema(BaseModel):
