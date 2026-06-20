@@ -519,11 +519,11 @@ git commit -m "fix(manifest): close field drops the round-trip harness surfaced 
 
 ---
 
-## Task 8: Final verification + prove the tripwires bite
+## Task 8: Final verification + prove the tripwires bite ✅ COMPLETE (2026-06-20)
 
-- [ ] **Step 1: Full sweep** — `cd api && pyright && ruff check . && cd .. && ./test.sh all` + `./test.sh client unit` (no client changes; confirm clean).
-- [ ] **Step 2: Meta-check (scratch, NOT committed):** (a) drop one field's `**classify(...)` → confirm `test_every_field_is_classified` fails; (b) put a callable in one field's extra → confirm `test_metadata_is_schema_safe` fails; (c) remove one field from a generator → confirm `test_all_fields_populated` fails; (d) make `pair_rows` return on a missing match → confirm an assertion test fails. Revert all four. Document — this proves the net is armed.
-- [ ] **Step 3: Mark plan complete + commit.**
+- [x] **Step 1: Full sweep** — pyright 0 real errors (only pre-existing reportMissingImports for test-only deps); ruff: all checks passed; no client changes. Isolated runs: `tests/roundtrip/` 95/95 unit green; `tests/e2e/roundtrip/` 22/22 e2e green; `test_git_sync_local.py` 81/81 (no regression); `test_solution_deploy_async.py` 2/2.
+- [x] **Step 2: Meta-check (scratch, NOT committed):** All 5 tripwires proven to bite — see report at `.superpowers/sdd/task-8-report.md`.
+- [x] **Step 3: Mark plan complete + commit.**
 ```bash
 git add docs/superpowers/plans/2026-06-19-manifest-roundtrip-harness-phase1.5.md
 git commit -m "docs(plan): mark round-trip harness Phase 1.5 complete"
