@@ -1130,37 +1130,25 @@ class ManifestResolver:
         """
         from uuid import UUID
 
+        from bifrost.manifest_codec import Destination
+
         from src.models.orm.workflow_roles import WorkflowRole
         from src.models.orm.workflows import Workflow
         from src.services.sync_ops import SyncOp, SyncRoles, Upsert  # noqa: F401
 
         wf_id = UUID(mwf.id)
-        org_id = UUID(mwf.organization_id) if mwf.organization_id else None
 
         # Check prefetch cache for existing workflow
         existing_by_natural = cache["wf_by_natural"].get((mwf.path, mwf.function_name))
 
+        # Source column values from the model; fix up organization_id to UUID and
+        # name to the manifest key (resolver logic: the dict key is the canonical name).
+        direct = mwf.to_orm_values(Destination.GIT_SYNC).direct
         wf_values = {
+            **direct,
             "name": manifest_name,
-            "function_name": mwf.function_name,
-            "path": mwf.path,
-            "type": getattr(mwf, "type", "workflow"),
-            "is_active": True,
-            "organization_id": org_id,
-            "endpoint_enabled": getattr(mwf, "endpoint_enabled", False),
-            "timeout_seconds": mwf.timeout_seconds if mwf.timeout_seconds is not None else 1800,
-            "public_endpoint": getattr(mwf, "public_endpoint", False),
-            "category": getattr(mwf, "category", "General"),
-            "tags": getattr(mwf, "tags", []),
+            "organization_id": UUID(direct["organization_id"]) if direct.get("organization_id") else None,
         }
-        if mwf.access_level is not None:
-            wf_values["access_level"] = mwf.access_level
-
-        # Only include description if manifest explicitly provides it
-        if mwf.description is not None:
-            wf_values["description"] = mwf.description
-        if mwf.tool_description is not None:
-            wf_values["tool_description"] = mwf.tool_description
 
         ops: list[SyncOp] = []
 

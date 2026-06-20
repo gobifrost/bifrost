@@ -84,3 +84,116 @@ async def test_role_git_sync_parity(db_session):
     finally:
         await db_session.execute(delete(Role).where(Role.id == role.id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_workflow_git_sync_parity(db_session):
+    """from_row(wf, roles=[...]).view(GIT_SYNC) == serialize_workflow(wf, roles=[...]).model_dump()"""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.workflows import Workflow
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+    from src.services.manifest_generator import serialize_workflow
+
+    wf_id = uuid.uuid4()
+    wf = Workflow(
+        id=wf_id,
+        name="rt_wf_parity",
+        path="workflows/rt_parity.py",
+        function_name="rt_parity",
+        type="workflow",
+        description="parity test desc",
+        tool_description="parity tool desc",
+        access_level="authenticated",
+        endpoint_enabled=True,
+        timeout_seconds=999,
+        public_endpoint=True,
+        category="TestCat",
+        tags=["alpha", "beta"],
+        is_active=True,
+    )
+    db_session.add(wf)
+    await db_session.commit()
+
+    try:
+        roles: list[str] = []
+        expected = serialize_workflow(wf, roles=roles).model_dump()
+        produced = ManifestWorkflow.from_row(wf, roles=roles).view(Destination.GIT_SYNC)
+        assert_parity(produced, expected, label="workflow git_sync")
+    finally:
+        await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_workflow_install_parity(db_session):
+    """from_row(...).view(INSTALL, extras=...) == _workflow_entries(solution_id)[0]"""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.solutions import Solution
+    from src.models.orm.users import Role
+    from src.models.orm.workflow_roles import WorkflowRole
+    from src.models.orm.workflows import Workflow
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol_id = uuid.uuid4()
+    wf_id = uuid.uuid4()
+    role_id = uuid.uuid4()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-sol-{sol_id.hex[:8]}",
+        name="RT Install Parity Sol",
+    )
+    db_session.add(sol)
+
+    wf = Workflow(
+        id=wf_id,
+        name="rt_wf_install_parity",
+        path="workflows/rt_install_parity.py",
+        function_name="rt_install_parity",
+        type="workflow",
+        description="install parity desc",
+        tool_description=None,
+        access_level="role_based",
+        endpoint_enabled=True,
+        timeout_seconds=300,
+        public_endpoint=False,
+        category="InstallCat",
+        tags=["x"],
+        is_active=True,
+        solution_id=sol_id,
+    )
+    db_session.add(wf)
+
+    role = Role(id=role_id, name="rt_install_parity_role", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+
+    wf_role = WorkflowRole(workflow_id=wf_id, role_id=role_id)
+    db_session.add(wf_role)
+    await db_session.commit()
+
+    try:
+        capture = SolutionCaptureService(db_session)
+        # Legacy: the hand-written dict producer.
+        legacy_entries = await capture._workflow_entries(sol_id)
+        assert len(legacy_entries) == 1, f"expected 1 entry, got {legacy_entries}"
+        legacy = legacy_entries[0]
+
+        # New: codec-produced view.
+        role_ids = [str(role_id)]
+        role_names = await capture._role_names(role_ids)
+        produced = ManifestWorkflow.from_row(wf, roles=role_ids).view(
+            Destination.INSTALL, extras={"roles": role_ids, "role_names": role_names}
+        )
+        assert_parity(produced, legacy, label="workflow install")
+    finally:
+        await db_session.execute(delete(WorkflowRole).where(WorkflowRole.workflow_id == wf_id))
+        await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
+        await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
+        await db_session.commit()

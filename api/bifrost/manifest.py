@@ -95,7 +95,7 @@ class ManifestRole(EntityCodec, BaseModel):
         return ImportFields(direct={"id": self.id, "name": self.name})
 
 
-class ManifestWorkflow(BaseModel):
+class ManifestWorkflow(EntityCodec, BaseModel):
     """Workflow entry in manifest."""
     id: str = Field(description="Workflow UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="MCP tool name; defaults to function_name on registration", **classify(FieldClass.CONTENT))
@@ -121,6 +121,107 @@ class ManifestWorkflow(BaseModel):
     )
     category: str = Field(default="General", description="Category for organization", **classify(FieldClass.CONTENT))
     tags: list[str] = Field(default_factory=list, description="Tags for filtering", **classify(FieldClass.CONTENT))
+
+    @classmethod
+    def from_row(cls, wf, *, roles: list[str] | None = None) -> "ManifestWorkflow":
+        """Build from a Workflow ORM row, mirroring serialize_workflow exactly."""
+        return cls(
+            id=str(wf.id),
+            name=wf.name,
+            path=wf.path,
+            function_name=wf.function_name,
+            type=wf.type or "workflow",
+            description=wf.description,
+            tool_description=wf.tool_description,
+            organization_id=str(wf.organization_id) if wf.organization_id else None,
+            roles=roles or [],
+            access_level=wf.access_level or "authenticated",
+            endpoint_enabled=wf.endpoint_enabled or False,
+            # NOT `or 1800` — 0 means "no timeout" and `or` would clobber it.
+            timeout_seconds=wf.timeout_seconds if wf.timeout_seconds is not None else 1800,
+            public_endpoint=wf.public_endpoint or False,
+            category=wf.category or "General",
+            tags=wf.tags or [],
+        )
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._workflow_entries key-for-key.
+
+        Allowlist: id, name, function_name, path, type, description,
+        endpoint_enabled, public_endpoint, timeout_seconds, category,
+        tags (forced to [] — never dropped), access_level, roles, role_names.
+        organization_id is ABSENT (scope is install-inherited).
+        roles + role_names come from extras (capture computes them async).
+        """
+        _ALLOWLIST = {
+            "id", "name", "function_name", "path", "type", "description",
+            "endpoint_enabled", "public_endpoint", "timeout_seconds", "category",
+            "tags", "access_level", "roles", "role_names",
+        }
+        data = self.model_dump(mode="json", by_alias=True)
+        # Merge extras (roles, role_names from capture) before filtering.
+        data.update(extras)
+        out: dict = {}
+        for k, v in data.items():
+            if k not in _ALLOWLIST:
+                continue
+            if k == "tags":
+                # Always emit tags — capture sends `w.tags or []`, never drops it.
+                out[k] = v if v is not None else []
+            elif v is not None:
+                out[k] = v
+        return out
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        """Column values for ORM upsert — all direct (no indexer split).
+
+        GIT_SYNC: mirrors _resolve_workflow's wf_values.
+          description / tool_description omitted when None (resolver only sets
+          them when the manifest explicitly provides them).
+          name supplied as self.name; resolver overrides with manifest_name.
+        INSTALL: mirrors _upsert_workflows values dict.
+          description / tool_description always present (full-replace — clearing
+          is intentional on redeploy).
+          access_level present-only (absent = leave DB column at its default).
+        """
+        if dest is Destination.GIT_SYNC:
+            direct: dict = {
+                "name": self.name,
+                "function_name": self.function_name,
+                "path": self.path,
+                "type": self.type,
+                "is_active": True,
+                "organization_id": self.organization_id,
+                "endpoint_enabled": self.endpoint_enabled,
+                "timeout_seconds": self.timeout_seconds,
+                "public_endpoint": self.public_endpoint,
+                "category": self.category,
+                "tags": self.tags,
+                "access_level": self.access_level,
+            }
+            if self.description is not None:
+                direct["description"] = self.description
+            if self.tool_description is not None:
+                direct["tool_description"] = self.tool_description
+            return ImportFields(direct=direct)
+        # INSTALL
+        direct = {
+            "name": self.name,
+            "function_name": self.function_name,
+            "path": self.path,
+            "type": self.type,
+            "is_active": True,
+            "description": self.description,
+            "tool_description": self.tool_description,
+            "endpoint_enabled": self.endpoint_enabled,
+            "public_endpoint": self.public_endpoint,
+            "timeout_seconds": self.timeout_seconds,
+            "category": self.category,
+            "tags": self.tags or [],
+        }
+        if self.access_level is not None:
+            direct["access_level"] = self.access_level
+        return ImportFields(direct=direct)
 
 
 class ManifestForm(BaseModel):

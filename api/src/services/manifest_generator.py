@@ -81,23 +81,7 @@ def serialize_role(role: Role) -> ManifestRole:
 
 def serialize_workflow(wf: Workflow, roles: list[str] | None = None) -> ManifestWorkflow:
     """Serialize a Workflow ORM object to ManifestWorkflow."""
-    return ManifestWorkflow(
-        id=str(wf.id),
-        name=wf.name,
-        path=wf.path,
-        function_name=wf.function_name,
-        type=wf.type or "workflow",
-        description=wf.description,
-        tool_description=wf.tool_description,
-        organization_id=str(wf.organization_id) if wf.organization_id else None,
-        roles=roles or [],
-        access_level=wf.access_level or "authenticated",
-        endpoint_enabled=wf.endpoint_enabled or False,
-        timeout_seconds=wf.timeout_seconds if wf.timeout_seconds is not None else 1800,
-        public_endpoint=wf.public_endpoint or False,
-        category=wf.category or "General",
-        tags=wf.tags or [],
-    )
+    return ManifestWorkflow.from_row(wf, roles=roles)
 
 
 def _form_field_to_schema_dict(field: FormField) -> dict:

@@ -381,6 +381,9 @@ class SolutionCaptureService:
         )
 
     async def _workflow_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestWorkflow
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(
                 select(Workflow).where(Workflow.solution_id == solution_id)
@@ -388,23 +391,14 @@ class SolutionCaptureService:
         ).scalars().all()
         out: list[dict[str, Any]] = []
         for w in rows:
-            roles = await self._role_ids(WorkflowRole, "workflow_id", w.id)
-            out.append(_drop_none({
-                "id": str(w.id),
-                "name": w.name,
-                "function_name": w.function_name,
-                "path": w.path,
-                "type": w.type,
-                "description": w.description,
-                "endpoint_enabled": w.endpoint_enabled,
-                "public_endpoint": w.public_endpoint,
-                "timeout_seconds": w.timeout_seconds,
-                "category": w.category,
-                "tags": w.tags or [],
-                "access_level": w.access_level,
-                "roles": roles,
-                "role_names": await self._role_names(roles),
-            }))
+            role_ids = await self._role_ids(WorkflowRole, "workflow_id", w.id)
+            role_names = await self._role_names(role_ids)
+            out.append(
+                ManifestWorkflow.from_row(w, roles=role_ids).view(
+                    Destination.INSTALL,
+                    extras={"roles": role_ids, "role_names": role_names},
+                )
+            )
         return out
 
     async def _event_entries(self, solution_id: UUID) -> list[dict[str, Any]]:

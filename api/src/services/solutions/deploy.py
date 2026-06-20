@@ -756,6 +756,9 @@ class SolutionDeployer:
     async def _upsert_workflows(
         self, solution: Solution, workflows: list[dict[str, Any]]
     ) -> None:
+        from bifrost.manifest import ManifestWorkflow
+        from bifrost.manifest_codec import Destination
+
         sid = solution.id
         for mwf in workflows:
             wf_id = UUID(mwf["id"])
@@ -779,27 +782,13 @@ class SolutionDeployer:
                         f"a bundle may not reuse another owner's entity id"
                     )
 
+            mwf_model = ManifestWorkflow(**mwf)
             values = {
-                "name": mwf["name"],
-                "function_name": mwf["function_name"],
-                "path": mwf["path"],
-                "type": mwf.get("type", "workflow"),
-                "is_active": True,
-                # Full-replace deploy-owned metadata so a redeploy that changes
-                # (or clears) these is reflected, not left stale (criteria 10/14).
-                "description": mwf.get("description"),
-                "tool_description": mwf.get("tool_description"),
-                "endpoint_enabled": mwf.get("endpoint_enabled", False),
-                "public_endpoint": mwf.get("public_endpoint", False),
-                "timeout_seconds": mwf.get("timeout_seconds", 1800),
-                "category": mwf.get("category", "General"),
-                "tags": mwf.get("tags") or [],
+                **mwf_model.to_orm_values(Destination.INSTALL).direct,
                 # Scope is inherited from the install — no per-entity binding.
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
-            if mwf.get("access_level") is not None:
-                values["access_level"] = mwf["access_level"]
             # Safe now: the id is either absent or already this install's.
             await Upsert(
                 model=Workflow, id=wf_id, values=values, match_on="id"
