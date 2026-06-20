@@ -25,3 +25,20 @@ def test_predicate_keys_are_registered(model):
         key = extra.get("bifrost_class_predicate")
         if key is not None:
             assert key in PREDICATES, f"{model.__name__}.{f} references unregistered predicate {key!r}"
+
+
+def test_known_match_keys():
+    from bifrost.field_classes import match_keys
+    import bifrost.manifest as m
+    assert set(match_keys(m.ManifestWorkflow)) == {"path", "function_name"}
+    assert set(match_keys(m.ManifestConfig)) == {"key", "integration_id", "organization_id"}
+    assert match_keys(m.ManifestForm) == ()           # id-only
+    assert match_keys(m.ManifestMCPServer) == ()       # id-only / _repo-only
+
+
+def test_config_value_predicate():
+    from types import SimpleNamespace as NS
+    from bifrost.field_classes import field_class_of, FieldClass
+    import bifrost.manifest as m
+    assert field_class_of(m.ManifestConfig, "value", NS(config_type="secret")) == FieldClass.SECRET
+    assert field_class_of(m.ManifestConfig, "value", NS(config_type="string")) == FieldClass.CONTENT
