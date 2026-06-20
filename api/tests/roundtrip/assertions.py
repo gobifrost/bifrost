@@ -87,6 +87,49 @@ def assert_no_secret_leak(text: str, sentinels: list[str]) -> None:
         assert s not in text, f"secret sentinel {s!r} leaked into a non-secret envelope"
 
 
+def model_field_names(model: type[BaseModel]) -> set[str]:
+    """The set of keys a path may legitimately emit for *model*, BY ALIAS.
+
+    A field with an alias (``ManifestTable.table_schema`` alias ``schema``) is
+    emitted under its alias by the real serializers (``by_alias=True``), so the
+    completeness check must accept the alias, not the python name.
+    """
+    names: set[str] = set()
+    for fname, info in model.model_fields.items():
+        names.add(fname)
+        if info.alias:
+            names.add(info.alias)
+    return names
+
+
+def assert_dict_keys_accounted(
+    model: type[BaseModel],
+    emitted: dict[str, Any],
+    extra_keys: set[str],
+) -> None:
+    """Completeness oracle (the "single model" gap, plan Full-dict coverage §).
+
+    The ``Manifest*`` models are NOT a complete description of what every path
+    serializes — capture/generate emit transport keys the model never names
+    (e.g. agent ``max_run_timeout``, form ``workflow_path``, app ``logo_b64``).
+    A field-class-only harness is structurally BLIND to such keys, which is
+    exactly where a Bug-C silent drop hides.
+
+    This asserts that EVERY key the path actually emitted is either (a) a
+    classified ``Manifest*`` field (by name or alias) or (b) a key declared in
+    the path's ``EXTRA_FIELD_POLICY`` (``extra_keys``).  An UNACCOUNTED key is a
+    hard failure — it makes the model/serializer divergence VISIBLE instead of
+    silently uncovered.
+    """
+    known = model_field_names(model) | extra_keys
+    unaccounted = sorted(set(emitted) - known)
+    assert not unaccounted, (
+        f"{model.__name__}: emitted keys not classified and not in EXTRA_FIELD_POLICY: "
+        f"{unaccounted}.  Either they are real ManifestModel fields that should be tagged, "
+        f"or transport extras that must be declared in EXTRA_FIELD_POLICY with a code citation."
+    )
+
+
 def _surviving_key(model: type[BaseModel], policy: Policy) -> tuple[str, ...]:
     """Match-key fields whose class the path does NOT scrub/stamp.
 

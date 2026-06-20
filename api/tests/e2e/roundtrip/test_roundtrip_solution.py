@@ -40,8 +40,14 @@ import bifrost.manifest as m
 from bifrost.field_classes import field_class_of
 from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
-from tests.roundtrip.assertions import assert_field_roundtrip, assert_no_secret_leak, pair_rows
+from tests.roundtrip.assertions import (
+    assert_dict_keys_accounted,
+    assert_field_roundtrip,
+    assert_no_secret_leak,
+    pair_rows,
+)
 from tests.roundtrip.paths import (
+    EXTRA_FIELD_POLICY,
     FIELD_OVERRIDES,
     SOLUTION_FULL_POLICY,
     SOLUTION_SHAREABLE_POLICY,
@@ -51,6 +57,19 @@ from tests.roundtrip.paths import (
     solution_export_zip,
     solution_install_zip,
 )
+
+
+def _extra_keys_for(model: type) -> set[str]:
+    """The EXTRA_FIELD_POLICY keys declared for *model* (the transport extras)."""
+    return {k[1] for k in EXTRA_FIELD_POLICY if k[0] == model.__name__}
+
+
+def _assert_complete(model: type, before: dict, after: dict) -> None:
+    """Completeness oracle: every emitted key (source + installed) is either a
+    classified Manifest field or a declared EXTRA_FIELD_POLICY extra."""
+    extras = _extra_keys_for(model)
+    assert_dict_keys_accounted(model, before, extras)
+    assert_dict_keys_accounted(model, after, extras)
 
 pytestmark = pytest.mark.e2e
 
@@ -239,6 +258,7 @@ async def test_solution_shareable_roundtrip_workflow(db_session: AsyncSession):
     await _assert_env_stamped(db, a["id"], target_org)
 
     in_bundle = {str(src_wf_id)}
+    _assert_complete(m.ManifestWorkflow, b, a)
     reds = _assert_entity_fields(
         m.ManifestWorkflow, b, a, SOLUTION_SHAREABLE_POLICY,
         installed_solution_id=installed.id, in_bundle_ids=in_bundle,
@@ -273,6 +293,238 @@ async def test_solution_full_roundtrip_workflow(db_session: AsyncSession):
         installed_solution_id=installed.id, in_bundle_ids={str(src_wf_id)},
     )
     assert not reds, "ManifestWorkflow SOLUTION_FULL round-trip drops:\n" + "\n".join(reds)
+
+
+# ---------------------------------------------------------------------------
+# Agent — surfaces the EXTRA_FIELD_POLICY completeness layer (max_run_timeout is
+# a captured Agent column ManifestAgent does not name) AND proves the deploy
+# writer fix (deploy now stamps max_run_timeout so it round-trips).
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_agent(db: AsyncSession, sol: Solution) -> tuple[str, int]:
+    """Seed a solution-managed Agent with every content field non-default,
+    including the deploy-owned ``max_run_timeout`` (the headline drop)."""
+    from src.models.enums import AgentAccessLevel
+    from src.models.orm.agents import Agent
+
+    aid = uuid.uuid4()
+    run_timeout = 777
+    agent = Agent(
+        id=aid,
+        name="RoundTrip Agent",
+        description="seeded agent for solution round trip",
+        system_prompt="You are a round-trip test agent.",
+        channels=["chat"],
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        knowledge_sources=["kb-alpha"],
+        system_tools=["search_knowledge"],
+        llm_model="claude-test",
+        llm_max_tokens=2048,
+        max_iterations=11,
+        max_token_budget=22222,
+        max_run_timeout=run_timeout,
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        created_by="roundtrip@test.local",
+    )
+    db.add(agent)
+    await db.flush()
+    return str(aid), run_timeout
+
+
+async def test_solution_shareable_roundtrip_agent(db_session: AsyncSession):
+    """ManifestAgent obeys SOLUTION_SHAREABLE; the completeness layer accounts
+    for max_run_timeout (extra); and the deploy fix round-trips its value."""
+    db = db_session
+    src_sol = await _make_solution(db)
+    src_agent_id, src_timeout = await seed_solution_agent(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "agents")
+    assert len(before_rows) == 1, f"expected 1 source agent, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "agents")
+    assert len(after_rows) == 1, f"expected 1 installed agent, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestAgent, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+
+    # Completeness: max_run_timeout is an EXTRA (not a ManifestAgent field).
+    # Without the EXTRA_FIELD_POLICY entry this is an UNACCOUNTED-key failure.
+    _assert_complete(m.ManifestAgent, b, a)
+
+    # The deploy writer fix: max_run_timeout must survive the round trip (before
+    # the fix, deploy never stamped it → re-capture saw the column default None).
+    assert b["max_run_timeout"] == src_timeout
+    assert a["max_run_timeout"] == src_timeout, (
+        f"max_run_timeout dropped on solution deploy: {a.get('max_run_timeout')!r} "
+        f"!= {src_timeout!r} — the deploy._upsert_agents stamp is missing"
+    )
+
+    reds = _assert_entity_fields(
+        m.ManifestAgent, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids={str(src_agent_id)},
+    )
+    assert not reds, "ManifestAgent SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+
+
+# ---------------------------------------------------------------------------
+# Table — solution path (minimal closure: a solution-owned table, no rows).
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_table(db: AsyncSession, sol: Solution) -> str:
+    from src.models.orm.tables import Table
+
+    tid = uuid.uuid4()
+    table = Table(
+        id=tid,
+        name=f"rt_table_{uuid.uuid4().hex[:6]}",
+        description="seeded table for solution round trip",
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        schema={"columns": [{"name": "title", "type": "string"}]},
+        access={"policies": [
+            {"name": "admin_bypass", "actions": ["read", "create", "update", "delete"], "when": None},
+        ]},
+    )
+    db.add(table)
+    await db.flush()
+    return str(tid)
+
+
+async def test_solution_shareable_roundtrip_table(db_session: AsyncSession):
+    """ManifestTable obeys SOLUTION_SHAREABLE across a real export -> install."""
+    db = db_session
+    src_sol = await _make_solution(db)
+    src_table_id = await seed_solution_table(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "tables")
+    assert len(before_rows) == 1, f"expected 1 source table, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "tables")
+    assert len(after_rows) == 1, f"expected 1 installed table, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestTable, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+    _assert_complete(m.ManifestTable, b, a)
+    reds = _assert_entity_fields(
+        m.ManifestTable, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids={str(src_table_id)},
+    )
+    assert not reds, "ManifestTable SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+
+
+# ---------------------------------------------------------------------------
+# Config schema (SolutionConfigSchema) — solution-only entity, minimal closure.
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_config_schema(db: AsyncSession, sol: Solution) -> str:
+    from src.models.enums import ConfigType
+    from src.models.orm.solution_config_schema import SolutionConfigSchema
+
+    cid = uuid.uuid4()
+    db.add(SolutionConfigSchema(
+        id=cid, solution_id=sol.id, key="RT_SETTING",
+        type=ConfigType.STRING.value, required=True, position=2,
+        description="seeded config schema for round trip", default="dflt",
+    ))
+    await db.flush()
+    return str(cid)
+
+
+async def test_solution_shareable_roundtrip_config_schema(db_session: AsyncSession):
+    """ManifestSolutionConfigSchema obeys SOLUTION_SHAREABLE across export->install."""
+    db = db_session
+    src_sol = await _make_solution(db)
+    src_id = await seed_solution_config_schema(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "config_schemas")
+    assert len(before_rows) == 1, f"expected 1 source config schema, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "config_schemas")
+    assert len(after_rows) == 1, f"expected 1 installed config schema, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestSolutionConfigSchema, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+    _assert_complete(m.ManifestSolutionConfigSchema, b, a)
+    reds = _assert_entity_fields(
+        m.ManifestSolutionConfigSchema, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids={str(src_id)},
+    )
+    assert not reds, (
+        "ManifestSolutionConfigSchema SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Claim — solution path (closure: a solution-owned table the claim queries).
+# ---------------------------------------------------------------------------
+
+
+async def seed_solution_claim(db: AsyncSession, sol: Solution) -> str:
+    from src.models.orm.custom_claims import CustomClaim
+
+    # The claim's query references a table by NAME (org-scoped, resolved at
+    # query time — deploy does not validate the table exists), so a standalone
+    # claim is a valid minimal closure.
+    cid = uuid.uuid4()
+    db.add(CustomClaim(
+        id=cid,
+        name=f"rt_claim_{uuid.uuid4().hex[:6]}",
+        description="seeded claim for solution round trip",
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        type="list",
+        query={"table": "rt_source", "where": None, "select": "value"},
+    ))
+    await db.flush()
+    return str(cid)
+
+
+async def test_solution_shareable_roundtrip_claim(db_session: AsyncSession):
+    """ManifestCustomClaim obeys SOLUTION_SHAREABLE across export->install."""
+    db = db_session
+    src_sol = await _make_solution(db)
+    src_id = await seed_solution_claim(db, src_sol)
+    before_rows = await solution_bundle_entries(db, src_sol, "claims")
+    assert len(before_rows) == 1, f"expected 1 source claim, got {before_rows}"
+
+    zip_bytes = await solution_export_zip(db, src_sol)
+    target_org = await _fresh_org(db)
+    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+
+    after_rows = await solution_bundle_entries(db, installed, "claims")
+    assert len(after_rows) == 1, f"expected 1 installed claim, got {after_rows}"
+
+    (b, a), = pair_rows(
+        m.ManifestCustomClaim, before_rows, after_rows, "by_remap",
+        SOLUTION_SHAREABLE_POLICY, expected_id=expected_solution_id(installed.id),
+    )
+    _assert_complete(m.ManifestCustomClaim, b, a)
+    reds = _assert_entity_fields(
+        m.ManifestCustomClaim, b, a, SOLUTION_SHAREABLE_POLICY,
+        installed_solution_id=installed.id, in_bundle_ids={str(src_id)},
+    )
+    assert not reds, (
+        "ManifestCustomClaim SOLUTION_SHAREABLE round-trip drops:\n" + "\n".join(reds)
+    )
 
 
 # ---------------------------------------------------------------------------

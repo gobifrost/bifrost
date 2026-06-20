@@ -1330,6 +1330,12 @@ class SolutionDeployer:
                 agent_values["max_iterations"] = magent["max_iterations"]
             if magent.get("max_token_budget") is not None:
                 agent_values["max_token_budget"] = magent["max_token_budget"]
+            # max_run_timeout is captured (capture.py:610) but, like the two
+            # limits above, the AgentIndexer does NOT persist it — without
+            # stamping it here a redeploy silently drops the manifest's value
+            # back to the column default. Apply when present.
+            if magent.get("max_run_timeout") is not None:
+                agent_values["max_run_timeout"] = magent["max_run_timeout"]
             await self.db.execute(
                 update(Agent).where(Agent.id == agent_id).values(**agent_values)
             )

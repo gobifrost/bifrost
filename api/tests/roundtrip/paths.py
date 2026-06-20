@@ -116,7 +116,7 @@ FIELD_OVERRIDES: dict[tuple[str, str], str] = {
     ("ManifestApp", "organization_id"): "absent",
     ("ManifestTable", "organization_id"): "absent",
     ("ManifestConfig", "organization_id"): "absent",
-    ("ManifestClaim", "organization_id"): "absent",
+    ("ManifestCustomClaim", "organization_id"): "absent",
     ("ManifestEventSource", "organization_id"): "absent",
     # Agent.mcp_connection_ids are env-scoped MCPConnection GRANTS, deployed
     # full-replace-from-manifest and NOT remapped via solution_entity_id
@@ -125,6 +125,44 @@ FIELD_OVERRIDES: dict[tuple[str, str], str] = {
     # EventSource.webhook_integration_id is reset to None on Solution deploy —
     # the install re-binds its own integration after install (deploy.py:1609).
     ("ManifestEventSource", "webhook_integration_id"): "scrub",
+}
+
+
+# ---------------------------------------------------------------------------
+# EXTRA_FIELD_POLICY — the "single model" gap made visible (plan Full-dict §).
+#
+# Solution capture emits transport keys the ``Manifest*`` model never names.
+# A field-class-only oracle is BLIND to them, which is exactly where a Bug-C
+# silent drop hides.  The completeness assertion (assertions.py
+# ``assert_dict_keys_accounted``) requires every emitted key to be EITHER a
+# classified Manifest field OR declared here — an unaccounted key is a hard
+# failure.  Keyed by (manifest-model-name, emitted-key) -> a note (the value is
+# documentation only; presence is what the completeness check consults).  Each
+# cites the capture.py line that emits it.
+# ---------------------------------------------------------------------------
+EXTRA_FIELD_POLICY: dict[tuple[str, str], str] = {
+    # App: capture emits the source-tree payload + decoded-logo transport tier
+    # (capture.py:541-553).  These are build/upload inputs, NOT row columns the
+    # Manifest names — ``logo`` (a path string) is the portable field; the bytes
+    # tiers ride alongside.  Re-capture of an installed app reads them back off
+    # the persisted row / source store, so they are path-extras, not drops.
+    ("ManifestApp", "repo_path"): "transport: app source dir (capture.py:541)",
+    ("ManifestApp", "logo_b64"): "transport: decoded logo bytes (capture.py:548)",
+    ("ManifestApp", "logo_content_type"): "transport: logo mime (capture.py:549)",
+    ("ManifestApp", "src_files"): "transport: text source files (capture.py:550)",
+    ("ManifestApp", "bin_files"): "transport: binary source files (capture.py:551)",
+    ("ManifestApp", "dist_files"): "transport: prebuilt dist text (capture.py:552)",
+    ("ManifestApp", "bin_dist_files"): "transport: prebuilt dist bin (capture.py:553)",
+    # Form: capture emits the workflow ref BY path::func alongside the UUID
+    # (capture.py:580-581) so a cross-env install can re-resolve the binding by
+    # natural key.  They duplicate workflow_id/launch_workflow_id, are not Form
+    # row content drops, and deploy re-resolves the UUIDs from the bundle.
+    ("ManifestForm", "workflow_path"): "transport: workflow natural ref (capture.py:580)",
+    ("ManifestForm", "workflow_function_name"): "transport: workflow natural ref (capture.py:581)",
+    # Agent: max_run_timeout is an Agent ORM column (agents.py:76) capture emits
+    # (capture.py:610) that ManifestAgent does not name.  Deploy now stamps it
+    # (deploy.py _upsert_agents, mirroring max_iterations) so it round-trips.
+    ("ManifestAgent", "max_run_timeout"): "transport: agent column, deploy-stamped (capture.py:610)",
 }
 
 
