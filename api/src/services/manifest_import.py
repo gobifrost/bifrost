@@ -1045,17 +1045,20 @@ class ManifestResolver:
         """
         from uuid import UUID
 
+        from bifrost.manifest_codec import Destination
+
         from src.models.orm.users import Role
         from src.services.sync_ops import SyncOp, Upsert  # noqa: F401
 
         role_id = UUID(mrole.id)
+        fields = mrole.to_orm_values(Destination.GIT_SYNC).direct
 
         # 1. Try by ID first (handles renames)
         if role_id in cache["role_ids"]:
             return [Upsert(
                 model=Role,
                 id=role_id,
-                values={"name": mrole.name},
+                values={"name": fields["name"]},
                 match_on="id",
             )]
 
@@ -1065,7 +1068,7 @@ class ManifestResolver:
             return [Upsert(
                 model=Role,
                 id=role_id,
-                values={"id": role_id, "name": mrole.name},
+                values={"id": role_id, "name": fields["name"]},
                 match_on="name",
             )]
 
@@ -1073,7 +1076,7 @@ class ManifestResolver:
         return [Upsert(
             model=Role,
             id=role_id,
-            values={"name": mrole.name, "created_by": "git-sync"},
+            values={"name": fields["name"], "created_by": "git-sync"},
             match_on="id",
         )]
 

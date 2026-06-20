@@ -76,7 +76,7 @@ def serialize_organization(org: Organization) -> ManifestOrganization:
 
 def serialize_role(role: Role) -> ManifestRole:
     """Serialize a Role ORM object to ManifestRole."""
-    return ManifestRole(id=str(role.id), name=role.name)
+    return ManifestRole.from_orm(role)
 
 
 def serialize_workflow(wf: Workflow, roles: list[str] | None = None) -> ManifestWorkflow:

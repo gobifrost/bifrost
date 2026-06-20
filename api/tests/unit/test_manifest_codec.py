@@ -63,3 +63,24 @@ async def test_organization_git_sync_parity(db_session):
     finally:
         await db_session.execute(delete(Organization).where(Organization.id == org.id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_role_git_sync_parity(db_session):
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.users import Role
+    from bifrost.manifest import ManifestRole
+    from bifrost.manifest_codec import Destination
+
+    role = Role(id=uuid.uuid4(), name="rt_role_parity", created_by="test")
+    db_session.add(role)
+    await db_session.commit()
+
+    try:
+        expected = {"id": str(role.id), "name": "rt_role_parity"}
+        produced = ManifestRole.from_orm(role).view(Destination.GIT_SYNC)
+        assert_parity(produced, expected, label="role git_sync")
+    finally:
+        await db_session.execute(delete(Role).where(Role.id == role.id))
+        await db_session.commit()

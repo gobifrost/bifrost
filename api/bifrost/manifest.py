@@ -82,10 +82,17 @@ class ManifestOrganization(EntityCodec, BaseModel):
         return ImportFields(direct={"id": self.id, "name": self.name, "is_active": self.is_active})
 
 
-class ManifestRole(BaseModel):
+class ManifestRole(EntityCodec, BaseModel):
     """Role entry in manifest."""
     id: str = Field(**classify(FieldClass.IDENTITY))
     name: str = Field(**classify(FieldClass.CONTENT, match_key=True))
+
+    @classmethod
+    def from_orm(cls, role) -> "ManifestRole":
+        return cls(id=str(role.id), name=role.name)
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        return ImportFields(direct={"id": self.id, "name": self.name})
 
 
 class ManifestWorkflow(BaseModel):
