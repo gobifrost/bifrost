@@ -579,6 +579,20 @@ code line. No pairing/assertion code was weakened to make a red green.
 (`manifest_generator.py`, `indexers/form.py`); ruff clean. The pre-existing `form.py:271` rowcount
 FP and the `tests.roundtrip.*` import FPs are unchanged/ignored per the handoff.
 
+**CI shakeout (PR #391) — two test-isolation defects the full sharded run caught (neither a prod-code
+bug; both in test infra these new tests exercise):**
+1. **Committed-row leak (DB):** the round-trip tests COMMIT (the real import/deploy read state back in a
+   fresh query, so the `db_session` rollback can't undo them). A committed global `RoundTrip Agent`
+   leaked into `test_agent_router_access`. Fixed with `cleanup_roundtrip_rows()` + an autouse teardown
+   in both round-trip e2e modules (delete seeded top-level rows by marker; children cascade).
+2. **Async-deploy read-after-write race (sibling test):** `test_two_installs_same_path` fired
+   `POST /deploy` (async `BackgroundTasks`) then immediately `POST /execute` WITHOUT waiting for the
+   deploy job — a latent flake (confirmed ~2-fail/1-pass) that the round-trip tests' preceding load
+   tipped over. Fixed at source: route its deploy through the canonical `deploy_solution()` helper that
+   blocks until the deploy job is terminal (the other tests in the file already use it).
+3. **CodeQL style:** `bifrost.manifest` was imported both `import … as m` and `from … import` in the
+   `_repo` test — consolidated to a single top-level `import bifrost.manifest as m` (CodeQL → zero).
+
 ---
 
 ## Codex round-3 punch-list (fix DURING execution — code-cited refinements, not design changes)

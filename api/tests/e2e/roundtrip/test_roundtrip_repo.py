@@ -22,6 +22,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import bifrost.manifest as m
 from bifrost.field_classes import field_class_of
 from src.models.orm.workflows import Workflow
 from src.services.manifest_generator import _form_field_to_schema_dict
@@ -418,7 +419,6 @@ async def _run_repo_roundtrip(
 
 async def test_repo_roundtrip_workflow(db_session: AsyncSession, tmp_path: Path):
     """Every ManifestWorkflow field obeys REPO_POLICY across a real _repo round trip."""
-    import bifrost.manifest as m
 
     before, after = await _run_repo_roundtrip(db_session, tmp_path, "workflows")
 
@@ -462,7 +462,6 @@ async def test_repo_roundtrip_entity(
     db_session: AsyncSession, tmp_path: Path, collection: str, model_name: str
 ):
     """Every Manifest* field obeys REPO_POLICY across a real _repo round trip."""
-    import bifrost.manifest as m
 
     model = getattr(m, model_name)
     before, after = await _run_repo_roundtrip(db_session, tmp_path, collection)
@@ -566,7 +565,6 @@ async def test_repo_roundtrip_identity_entity(
     other entities do (github_sync.py:1152 includes them in ``has_entities``; the
     resolver's ``_resolve_organization`` / ``_resolve_role` re-create them).
     """
-    import bifrost.manifest as m
     from src.models.orm.organizations import Organization
     from src.models.orm.users import Role
     from tests.roundtrip.paths import (
@@ -634,7 +632,6 @@ async def test_repo_roundtrip_mcp_server(db_session: AsyncSession, tmp_path: Pat
     encrypted_client_secret is never serialized — secrets stay out of the
     manifest, like Config values (manifest.py ManifestMCPConnection docstring).
     """
-    import bifrost.manifest as m
     from src.models.orm.external_mcp import MCPServer
     from tests.roundtrip.paths import (
         REPO_POLICY,
@@ -667,10 +664,8 @@ async def test_repo_roundtrip_mcp_server(db_session: AsyncSession, tmp_path: Pat
     await db_session.execute(delete(MCPServer).where(MCPServer.id == sid))
     await db_session.commit()
 
-    from bifrost.manifest import read_manifest_from_dir
-
     service = make_repo_sync_service(db_session, tmp_path)
-    manifest = read_manifest_from_dir(tmp_path / ".bifrost")
+    manifest = m.read_manifest_from_dir(tmp_path / ".bifrost")
     await service._resolver.plan_import(manifest, tmp_path, changed_ids={str(sid)})
     await db_session.commit()
 
