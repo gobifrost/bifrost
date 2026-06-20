@@ -124,6 +124,21 @@ class AgentIndexer:
             is_active=agent_data.get("is_active", True),
             llm_model=agent_data.get("llm_model"),
             llm_max_tokens=agent_data.get("llm_max_tokens"),
+            # Autonomous-run limits are portable agent CONTENT (ManifestAgent
+            # fields). Without persisting them here the indexer would reset them
+            # to the column defaults (50 / 100000) on every git-sync import — a
+            # silent drop the round-trip harness surfaced. Omit when absent so
+            # the column default still applies to agents that never set them.
+            **(
+                {"max_iterations": agent_data["max_iterations"]}
+                if agent_data.get("max_iterations") is not None
+                else {}
+            ),
+            **(
+                {"max_token_budget": agent_data["max_token_budget"]}
+                if agent_data.get("max_token_budget") is not None
+                else {}
+            ),
             system_tools=agent_data.get("system_tools", []),
             created_by="file_sync",
         ).on_conflict_do_update(
@@ -138,6 +153,11 @@ class AgentIndexer:
                 "is_active": agent_data.get("is_active", True),
                 "llm_model": agent_data.get("llm_model"),
                 "llm_max_tokens": agent_data.get("llm_max_tokens"),
+                # See the insert branch: limits are portable content; persist
+                # them on update too, falling back to the column default when
+                # the manifest omits them.
+                "max_iterations": agent_data.get("max_iterations", 50),
+                "max_token_budget": agent_data.get("max_token_budget", 100000),
                 "system_tools": agent_data.get("system_tools", []),
                 "updated_at": now,
                 # NOTE: organization_id and access_level are NOT updated

@@ -230,6 +230,34 @@ async def seed_form(db: AsyncSession, work_dir: Path) -> str:
     return str(fid)
 
 
+async def seed_agent(db: AsyncSession, work_dir: Path) -> str:
+    """Seed a minimal global Agent (no tools/delegations/roles) — inline content
+    only, so no dependency closure beyond the agent itself."""
+    from src.models.enums import AgentAccessLevel
+    from src.models.orm.agents import Agent
+
+    aid = uuid4()
+    db.add(Agent(
+        id=aid,
+        name="RoundTrip Agent",
+        description="seeded agent description",
+        system_prompt="You are a round-trip test agent.",
+        channels=["chat"],
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        knowledge_sources=["kb-alpha"],
+        system_tools=["search_knowledge"],
+        llm_model="claude-test",
+        llm_max_tokens=2048,
+        max_iterations=11,
+        max_token_budget=22222,
+        max_run_timeout=777,  # NOT a ManifestAgent field — does not travel via _repo
+        organization_id=None,
+        created_by="roundtrip@test.local",
+    ))
+    await db.commit()
+    return str(aid)
+
+
 async def seed_integration(db: AsyncSession, work_dir: Path) -> str:
     """Seed an Integration with a config-schema item + an OAuth provider.
 
@@ -278,6 +306,7 @@ SEEDERS = {
     "events": seed_event_source,
     "integrations": seed_integration,
     "forms": seed_form,
+    "agents": seed_agent,
 }
 
 
@@ -367,6 +396,7 @@ import pytest as _pytest  # noqa: E402
         ("events", "ManifestEventSource"),
         ("integrations", "ManifestIntegration"),
         ("forms", "ManifestForm"),
+        ("agents", "ManifestAgent"),
     ],
 )
 async def test_repo_roundtrip_entity(
