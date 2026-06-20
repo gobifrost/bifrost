@@ -1538,6 +1538,9 @@ class SolutionDeployer:
         """
         from src.models.enums import ScheduleOverlapPolicy
 
+        from bifrost.manifest import ManifestEventSource
+        from bifrost.manifest_codec import Destination
+
         sid = solution.id
         for mevent in events:
             source_id = UUID(str(mevent["id"]))
@@ -1560,11 +1563,10 @@ class SolutionDeployer:
                 )
             )
 
+            # Source parent field dict from the model; install stamps org/solution/created_by.
+            _direct = ManifestEventSource.model_validate(mevent).to_orm_values(Destination.INSTALL).direct
             source_values: dict[str, Any] = {
-                "name": mevent.get("name") or "",
-                "source_type": mevent["source_type"],
-                "event_type": mevent.get("event_type"),
-                "is_active": mevent.get("is_active", True),
+                **_direct,
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
                 "created_by": "solution-deploy",

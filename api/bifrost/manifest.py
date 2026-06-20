@@ -787,7 +787,7 @@ class ManifestTable(EntityCodec, BaseModel):
         )
 
 
-class ManifestEventSubscription(BaseModel):
+class ManifestEventSubscription(EntityCodec, BaseModel):
     """Event subscription within an event source."""
     id: str = Field(description="Subscription UUID", **classify(FieldClass.IDENTITY))
     target_type: str = Field(default="workflow", description="'workflow' or 'agent'", **classify(FieldClass.CONTENT))
@@ -798,8 +798,25 @@ class ManifestEventSubscription(BaseModel):
     input_mapping: dict | None = Field(default=None, description="Map event fields to workflow params", **classify(FieldClass.CONTENT))
     is_active: bool = Field(default=True, description="Enable/disable this subscription", **classify(FieldClass.ENVIRONMENT))
 
+    @classmethod
+    def from_row(cls, sub) -> "ManifestEventSubscription":
+        """Build from an EventSubscription ORM row."""
+        return cls(
+            id=str(sub.id),
+            target_type=sub.target_type or "workflow",
+            workflow_id=str(sub.workflow_id) if sub.workflow_id else None,
+            agent_id=str(sub.agent_id) if sub.agent_id else None,
+            event_type=sub.event_type,
+            filter_expression=sub.filter_expression,
+            input_mapping=sub.input_mapping,
+            is_active=sub.is_active,
+        )
 
-class ManifestEventSource(BaseModel):
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError("EventSubscription rows are built by the parent resolver/deploy")
+
+
+class ManifestEventSource(EntityCodec, BaseModel):
     """Event source entry in manifest."""
     id: str = Field(description="Event source UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="Event source display name", **classify(FieldClass.CONTENT))
@@ -820,6 +837,69 @@ class ManifestEventSource(BaseModel):
     rate_limit_enabled: bool = Field(default=True, description="Per-source kill switch.", **classify(FieldClass.CONTENT))
     # Subscriptions
     subscriptions: list[ManifestEventSubscription] = Field(default_factory=list, description="Workflow subscriptions", **classify(FieldClass.CONTENT))
+
+    @classmethod
+    def from_row(
+        cls,
+        es,
+        *,
+        schedule=None,
+        webhook=None,
+        subscriptions=None,
+    ) -> "ManifestEventSource":
+        """Build from EventSource ORM row + optional child rows, mirroring serialize_event_source exactly."""
+        cron_expression = schedule.cron_expression if schedule else None
+        tz = schedule.timezone if schedule else None
+        schedule_enabled = schedule.enabled if schedule else None
+        overlap_policy = schedule.overlap_policy.value if schedule and schedule.overlap_policy else None
+
+        adapter_name = webhook.adapter_name if webhook else None
+        webhook_integration_id = str(webhook.integration_id) if webhook and webhook.integration_id else None
+        webhook_config = webhook.config if webhook and webhook.config else None
+        rate_limit_per_minute = webhook.rate_limit_per_minute if webhook else 60
+        rate_limit_window_seconds = webhook.rate_limit_window_seconds if webhook else 60
+        rate_limit_enabled = webhook.rate_limit_enabled if webhook else True
+
+        return cls(
+            id=str(es.id),
+            name=es.name,
+            source_type=es.source_type if isinstance(es.source_type, str) else es.source_type.value,
+            organization_id=str(es.organization_id) if es.organization_id else None,
+            is_active=es.is_active,
+            cron_expression=cron_expression,
+            timezone=tz,
+            schedule_enabled=schedule_enabled,
+            overlap_policy=overlap_policy,
+            adapter_name=adapter_name,
+            webhook_integration_id=webhook_integration_id,
+            webhook_config=webhook_config,
+            rate_limit_per_minute=rate_limit_per_minute,
+            rate_limit_window_seconds=rate_limit_window_seconds,
+            rate_limit_enabled=rate_limit_enabled,
+            subscriptions=[
+                ManifestEventSubscription.from_row(s) for s in (subscriptions or [])
+            ],
+        )
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install view: full model_dump, Nones INCLUDED.
+
+        capture._event_entries emits serialize_event_source(...).model_dump(mode="json")
+        verbatim, which carries adapter_name/webhook_integration_id/etc. as None when
+        absent. The default EntityCodec._install_view drops None and would diverge —
+        override to keep them so view(INSTALL) == view(GIT_SYNC) for EventSource.
+        """
+        return self.model_dump(mode="json", by_alias=True)
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        """Parent EventSource scalar fields only — child rows built by resolver/deploy."""
+        direct: dict = {
+            "name": self.name,
+            "source_type": self.source_type,
+            "organization_id": self.organization_id,
+            "is_active": self.is_active,
+        }
+        return ImportFields(direct=direct, indexer_content={}, restamp={})
 
 
 class ManifestMCPConnectionTool(BaseModel):

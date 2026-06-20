@@ -1,0 +1,31 @@
+{
+  "adapter_name": null,
+  "cron_expression": "0 9 * * 1-5",
+  "id": "<volatile>",
+  "is_active": true,
+  "name": "rt_sched_golden",
+  "organization_id": null,
+  "overlap_policy": "skip",
+  "rate_limit_enabled": true,
+  "rate_limit_per_minute": 60,
+  "rate_limit_window_seconds": 60,
+  "schedule_enabled": true,
+  "source_type": "schedule",
+  "subscriptions": [
+    {
+      "agent_id": null,
+      "event_type": null,
+      "filter_expression": null,
+      "id": "<volatile>",
+      "input_mapping": {
+        "foo": "bar"
+      },
+      "is_active": true,
+      "target_type": "workflow",
+      "workflow_id": null
+    }
+  ],
+  "timezone": "America/New_York",
+  "webhook_config": null,
+  "webhook_integration_id": null
+}

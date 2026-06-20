@@ -406,13 +406,14 @@ class SolutionCaptureService:
 
         Each entry is a ManifestEventSource-shaped dict (source + nested
         schedule/webhook config + subscriptions). Built via the canonical
-        ``serialize_event_source`` (same code git-sync uses), which already
+        ``ManifestEventSource.from_row`` (same code git-sync uses), which already
         OMITS the webhook instance secrets (``state``/``external_id``/
         ``expires_at``) — only the portable ``config`` travels. The instance
         re-establishes the external subscription + binds ``integration_id`` after
         install.
         """
-        from src.services.manifest_generator import serialize_event_source
+        from bifrost.manifest import ManifestEventSource
+        from bifrost.manifest_codec import Destination
 
         sources = (
             await self.db.execute(
@@ -442,8 +443,7 @@ class SolutionCaptureService:
                     )
                 )
             ).scalars().all()
-            manifest = serialize_event_source(es, schedule, webhook, list(subs))
-            out.append(manifest.model_dump(mode="json"))
+            out.append(ManifestEventSource.from_row(es, schedule=schedule, webhook=webhook, subscriptions=list(subs)).view(Destination.INSTALL))
         return out
 
     async def _table_entries(self, solution_id: UUID) -> list[dict[str, Any]]:

@@ -42,7 +42,6 @@ from bifrost.manifest import (
     ManifestConfig,
     ManifestCustomClaim,
     ManifestEventSource,
-    ManifestEventSubscription,
     ManifestForm,
     ManifestIntegration,
     ManifestMCPConnection,
@@ -225,48 +224,7 @@ def serialize_event_source(
     subscriptions: list[EventSubscription] | None = None,
 ) -> ManifestEventSource:
     """Serialize an EventSource ORM object to ManifestEventSource."""
-    cron_expression = schedule.cron_expression if schedule else None
-    tz = schedule.timezone if schedule else None
-    schedule_enabled = schedule.enabled if schedule else None
-    overlap_policy = schedule.overlap_policy.value if schedule and schedule.overlap_policy else None
-
-    adapter_name = webhook.adapter_name if webhook else None
-    webhook_integration_id = str(webhook.integration_id) if webhook and webhook.integration_id else None
-    webhook_config = webhook.config if webhook and webhook.config else None
-    rate_limit_per_minute = webhook.rate_limit_per_minute if webhook else 60
-    rate_limit_window_seconds = webhook.rate_limit_window_seconds if webhook else 60
-    rate_limit_enabled = webhook.rate_limit_enabled if webhook else True
-
-    return ManifestEventSource(
-        id=str(es.id),
-        name=es.name,
-        source_type=es.source_type if isinstance(es.source_type, str) else es.source_type.value,
-        organization_id=str(es.organization_id) if es.organization_id else None,
-        is_active=es.is_active,
-        cron_expression=cron_expression,
-        timezone=tz,
-        schedule_enabled=schedule_enabled,
-        overlap_policy=overlap_policy,
-        adapter_name=adapter_name,
-        webhook_integration_id=webhook_integration_id,
-        webhook_config=webhook_config,
-        rate_limit_per_minute=rate_limit_per_minute,
-        rate_limit_window_seconds=rate_limit_window_seconds,
-        rate_limit_enabled=rate_limit_enabled,
-        subscriptions=[
-            ManifestEventSubscription(
-                id=str(sub.id),
-                target_type=sub.target_type or "workflow",
-                workflow_id=str(sub.workflow_id) if sub.workflow_id else None,
-                agent_id=str(sub.agent_id) if sub.agent_id else None,
-                event_type=sub.event_type,
-                filter_expression=sub.filter_expression,
-                input_mapping=sub.input_mapping,
-                is_active=sub.is_active,
-            )
-            for sub in (subscriptions or [])
-        ],
-    )
+    return ManifestEventSource.from_row(es, schedule=schedule, webhook=webhook, subscriptions=subscriptions)
 
 
 def serialize_mcp_connection_tool(

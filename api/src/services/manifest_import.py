@@ -2236,23 +2236,30 @@ class ManifestResolver:
         from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
         from src.services.sync_ops import SyncOp  # noqa: F401
 
+        from bifrost.manifest_codec import Destination
+
         es_id = UUID(mes.id)
+
+        # Source parent field dict from the model; fix up organization_id to UUID and
+        # name to the manifest key (resolver owns the upsert logic below).
+        _direct = mes.to_orm_values(Destination.GIT_SYNC).direct
+        es_org_id = UUID(_direct["organization_id"]) if _direct.get("organization_id") else None
 
         # Upsert event source
         stmt = insert(EventSource).values(
             id=es_id,
             name=es_name,
-            source_type=mes.source_type,
-            organization_id=UUID(mes.organization_id) if mes.organization_id else None,
-            is_active=mes.is_active,
+            source_type=_direct["source_type"],
+            organization_id=es_org_id,
+            is_active=_direct["is_active"],
             created_by="git-sync",
         ).on_conflict_do_update(
             index_elements=["id"],
             set_={
                 "name": es_name,
-                "source_type": mes.source_type,
-                "organization_id": UUID(mes.organization_id) if mes.organization_id else None,
-                "is_active": mes.is_active,
+                "source_type": _direct["source_type"],
+                "organization_id": es_org_id,
+                "is_active": _direct["is_active"],
                 "updated_at": datetime.now(timezone.utc),
             },
         )

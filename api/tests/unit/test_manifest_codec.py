@@ -631,3 +631,139 @@ async def test_integration_git_sync_parity(db_session):
             delete(Organization).where(Organization.id == org_id)
         )
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_event_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded EventSource (schedule + subscriptions) matches the committed golden snapshot."""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.events import EventSource, EventSubscription, ScheduleSource
+    from src.models.enums import EventSourceType, ScheduleOverlapPolicy
+    from bifrost.manifest import ManifestEventSource
+    from bifrost.manifest_codec import Destination
+
+    es_id = uuid.uuid4()
+    sched_id = uuid.uuid4()
+    sub_id = uuid.uuid4()
+
+    es = EventSource(
+        id=es_id,
+        name="rt_sched_golden",
+        source_type=EventSourceType.SCHEDULE,
+        is_active=True,
+        created_by="test",
+    )
+    db_session.add(es)
+    await db_session.flush()
+
+    sched = ScheduleSource(
+        id=sched_id,
+        event_source_id=es_id,
+        cron_expression="0 9 * * 1-5",
+        timezone="America/New_York",
+        enabled=True,
+        overlap_policy=ScheduleOverlapPolicy.SKIP,
+    )
+    db_session.add(sched)
+
+    sub = EventSubscription(
+        id=sub_id,
+        event_source_id=es_id,
+        target_type="workflow",
+        workflow_id=None,
+        agent_id=None,
+        event_type=None,
+        filter_expression=None,
+        input_mapping={"foo": "bar"},
+        is_active=True,
+        created_by="test",
+    )
+    db_session.add(sub)
+    await db_session.commit()
+
+    try:
+        produced = ManifestEventSource.from_row(
+            es, schedule=sched, subscriptions=[sub]
+        ).view(Destination.GIT_SYNC)
+        assert_golden(
+            produced,
+            "event_git_sync",
+            volatile_keys={"id"},
+        )
+    finally:
+        await db_session.execute(delete(EventSubscription).where(EventSubscription.id == sub_id))
+        await db_session.execute(delete(ScheduleSource).where(ScheduleSource.id == sched_id))
+        await db_session.execute(delete(EventSource).where(EventSource.id == es_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_event_install_parity(db_session):
+    """INSTALL view of an EventSource equals GIT_SYNC (Nones INCLUDED — override confirmed)."""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.events import EventSource, EventSubscription, ScheduleSource
+    from src.models.enums import EventSourceType, ScheduleOverlapPolicy
+    from bifrost.manifest import ManifestEventSource
+    from bifrost.manifest_codec import Destination
+
+    es_id = uuid.uuid4()
+    sched_id = uuid.uuid4()
+    sub_id = uuid.uuid4()
+
+    es = EventSource(
+        id=es_id,
+        name="rt_sched_golden",
+        source_type=EventSourceType.SCHEDULE,
+        is_active=True,
+        created_by="test",
+    )
+    db_session.add(es)
+    await db_session.flush()
+
+    sched = ScheduleSource(
+        id=sched_id,
+        event_source_id=es_id,
+        cron_expression="0 9 * * 1-5",
+        timezone="America/New_York",
+        enabled=True,
+        overlap_policy=ScheduleOverlapPolicy.SKIP,
+    )
+    db_session.add(sched)
+
+    sub = EventSubscription(
+        id=sub_id,
+        event_source_id=es_id,
+        target_type="workflow",
+        workflow_id=None,
+        agent_id=None,
+        event_type=None,
+        filter_expression=None,
+        input_mapping={"foo": "bar"},
+        is_active=True,
+        created_by="test",
+    )
+    db_session.add(sub)
+    await db_session.commit()
+
+    try:
+        model = ManifestEventSource.from_row(es, schedule=sched, subscriptions=[sub])
+        git_sync_view = model.view(Destination.GIT_SYNC)
+        install_view = model.view(Destination.INSTALL)
+
+        # EventSource overrides _install_view to keep Nones — both views must be identical.
+        assert install_view == git_sync_view, (
+            "_install_view override missing: INSTALL dropped Nones but should keep them\n"
+            f"  install={install_view}\n  git_sync={git_sync_view}"
+        )
+        # Confirm Nones ARE present (adapter_name, webhook_integration_id, etc.)
+        assert install_view.get("adapter_name") is None, "adapter_name should be None (not absent)"
+        assert install_view.get("webhook_integration_id") is None
+
+        assert_golden(install_view, "event_install", volatile_keys={"id"})
+    finally:
+        await db_session.execute(delete(EventSubscription).where(EventSubscription.id == sub_id))
+        await db_session.execute(delete(ScheduleSource).where(ScheduleSource.id == sched_id))
+        await db_session.execute(delete(EventSource).where(EventSource.id == es_id))
+        await db_session.commit()
