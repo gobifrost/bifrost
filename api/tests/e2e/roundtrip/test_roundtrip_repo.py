@@ -159,6 +159,37 @@ async def seed_claim(db: AsyncSession, work_dir: Path) -> str:
     return str(cid)
 
 
+async def seed_event_source(db: AsyncSession, work_dir: Path) -> str:
+    """Seed a schedule EventSource + its ScheduleSource (no subscriptions).
+
+    Schedule type avoids the webhook-integration dependency; no subscriptions
+    avoids the workflow dependency.  generate_manifest only serializes
+    is_active sources, so is_active=True is mandatory.
+    """
+    from src.models.enums import ScheduleOverlapPolicy
+    from src.models.orm.events import EventSource, ScheduleSource
+
+    esid = uuid4()
+    db.add(EventSource(
+        id=esid,
+        name=f"rt_schedule_{esid.hex[:6]}",
+        source_type="schedule",
+        organization_id=None,
+        is_active=True,
+        created_by="roundtrip@test.local",
+    ))
+    db.add(ScheduleSource(
+        id=uuid4(),
+        event_source_id=esid,
+        cron_expression="0 9 * * *",
+        timezone="America/New_York",
+        enabled=True,
+        overlap_policy=ScheduleOverlapPolicy.SKIP,
+    ))
+    await db.commit()
+    return str(esid)
+
+
 # Registry: collection -> seeder.  Workflow is proven end-to-end; more entities
 # get added here as their dependency closures are wired (Task 7).
 SEEDERS = {
@@ -166,6 +197,7 @@ SEEDERS = {
     "tables": seed_table,
     "configs": seed_config,
     "claims": seed_claim,
+    "events": seed_event_source,
 }
 
 
@@ -252,6 +284,7 @@ import pytest as _pytest  # noqa: E402
         ("tables", "ManifestTable"),
         ("configs", "ManifestConfig"),
         ("claims", "ManifestCustomClaim"),
+        ("events", "ManifestEventSource"),
     ],
 )
 async def test_repo_roundtrip_entity(

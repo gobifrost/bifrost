@@ -393,9 +393,20 @@ async def delete_claim(db: AsyncSession, entity_id: str) -> None:
     await db.commit()
 
 
+async def delete_event_source(db: AsyncSession, entity_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.events import EventSource
+
+    # ScheduleSource/WebhookSource/EventSubscription cascade via FK ondelete.
+    await db.execute(delete(EventSource).where(EventSource.id == UUID(entity_id)))
+    await db.commit()
+
+
 DELETERS: dict[str, Callable[[AsyncSession, str], Any]] = {
     "workflows": delete_workflow,
     "tables": delete_table,
     "configs": delete_config,
     "claims": delete_claim,
+    "events": delete_event_source,
 }
