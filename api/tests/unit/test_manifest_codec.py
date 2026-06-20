@@ -927,3 +927,123 @@ async def test_solution_config_schema_install_parity(db_session):
         )
         await db_session.execute(delete(Solution).where(Solution.id == sol_id))
         await db_session.commit()
+
+
+
+@pytest.mark.e2e
+async def test_app_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded Application matches the committed golden snapshot."""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.applications import Application
+    from bifrost.manifest import ManifestApp
+    from bifrost.manifest_codec import Destination
+
+    app_id = uuid.uuid4()
+    app = Application(
+        id=app_id,
+        name="RT App Golden",
+        slug="rt-app-golden",
+        repo_path="apps/rt-app-golden",
+        description="parity test app",
+        dependencies={"react": "^18.0.0"},
+        app_model="standalone_v2",
+    )
+    db_session.add(app)
+    await db_session.commit()
+
+    try:
+        roles: list[str] = []
+        produced = ManifestApp.from_row(app, roles=roles).view(Destination.GIT_SYNC)
+        assert_golden(produced, "app_git_sync", volatile_keys={"id", "organization_id"})
+    finally:
+        await db_session.execute(delete(Application).where(Application.id == app_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_app_install_parity(db_session):
+    """INSTALL view of a seeded solution-owned Application matches the committed golden snapshot.
+
+    Exercises the transport extras path: repo_path via extras, logo_b64, src_files, etc.
+    organization_id must be ABSENT from the install view; ``path`` key must NOT appear;
+    ``repo_path`` key must be present.
+    """
+    import base64
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.applications import Application
+    from src.models.orm.solutions import Solution
+    from src.models.orm.users import Role
+    from src.models.orm.app_roles import AppRole
+    from bifrost.manifest import ManifestApp
+    from bifrost.manifest_codec import Destination
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol_id = uuid.uuid4()
+    app_id = uuid.uuid4()
+    role_id = uuid.uuid4()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-app-sol-{sol_id.hex[:8]}",
+        name="RT App Install Parity Sol",
+    )
+    db_session.add(sol)
+    await db_session.commit()
+
+    logo_bytes = b"\x89PNG\r\n\x1a\n"  # minimal PNG header bytes
+    app = Application(
+        id=app_id,
+        name="RT App Install",
+        slug=f"rt-app-install-{app_id.hex[:8]}",
+        repo_path="apps/rt-app-install",
+        description="install parity app",
+        dependencies={"react": "^18.0.0"},
+        app_model="standalone_v2",
+        logo_data=logo_bytes,
+        logo_content_type="image/png",
+        solution_id=sol_id,
+    )
+    db_session.add(app)
+
+    role = Role(id=role_id, name=f"rt_app_install_role_{role_id.hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+
+    app_role = AppRole(app_id=app_id, role_id=role_id)
+    db_session.add(app_role)
+    await db_session.commit()
+
+    try:
+        capture = SolutionCaptureService(db_session)
+        role_ids = [str(role_id)]
+        role_names = await capture._role_names(role_ids)
+        src_files, bin_files = await capture._app_source_files(app)
+        logo_b64 = base64.b64encode(app.logo_data).decode("ascii") if app.logo_data else None
+
+        produced = ManifestApp.from_row(app, roles=role_ids).view(
+            Destination.INSTALL,
+            extras={
+                "repo_path": app.repo_path,
+                "logo_b64": logo_b64,
+                "logo_content_type": app.logo_content_type,
+                "src_files": src_files if src_files else None,
+                "bin_files": bin_files if bin_files else None,
+                "role_names": role_names,
+            },
+        )
+
+        # Structural invariants
+        assert "path" not in produced, "install view must NOT contain 'path' key"
+        assert "repo_path" in produced, "install view must contain 'repo_path' key"
+        assert "organization_id" not in produced, "install view must NOT contain 'organization_id'"
+        assert "logo_b64" in produced, "install view must contain 'logo_b64' (transport extra)"
+
+        assert_golden(produced, "app_install", volatile_keys={"id", "roles", "slug", "role_names"})
+    finally:
+        await db_session.execute(delete(AppRole).where(AppRole.app_id == app_id))
+        await db_session.execute(delete(Application).where(Application.id == app_id))
+        await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
+        await db_session.commit()

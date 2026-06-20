@@ -1,0 +1,16 @@
+{
+  "access_level": "authenticated",
+  "app_model": "standalone_v2",
+  "dependencies": {
+    "react": "^18.0.0"
+  },
+  "description": "parity test app",
+  "id": "<volatile>",
+  "logo": null,
+  "name": "RT App Golden",
+  "organization_id": "<volatile>",
+  "path": "apps/rt-app-golden",
+  "role_names": null,
+  "roles": [],
+  "slug": "rt-app-golden"
+}

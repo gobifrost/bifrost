@@ -516,24 +516,23 @@ class SolutionCaptureService:
                     if binary_dist:
                         bin_dist_files = binary_dist
             roles = await self._role_ids(AppRole, "app_id", app.id)
-            out.append(_drop_none({
-                "id": str(app.id),
-                "name": app.name,
-                "slug": app.slug,
-                "repo_path": app.repo_path,
-                "description": app.description,
-                "dependencies": app.dependencies,
-                "app_model": app.app_model,
-                "access_level": _enum_value(app.access_level),
-                "roles": roles,
-                "role_names": await self._role_names(roles),
-                "logo_b64": logo_b64,
-                "logo_content_type": app.logo_content_type,
-                "src_files": src_files,
-                "bin_files": bin_files,
-                "dist_files": dist_files,
-                "bin_dist_files": bin_dist_files,
-            }))
+            from bifrost.manifest import ManifestApp
+            from bifrost.manifest_codec import Destination
+            out.append(
+                ManifestApp.from_row(app, roles=roles).view(
+                    Destination.INSTALL,
+                    extras={
+                        "repo_path": app.repo_path,
+                        "logo_b64": logo_b64,
+                        "logo_content_type": app.logo_content_type,
+                        "src_files": src_files if src_files else None,
+                        "bin_files": bin_files if bin_files else None,
+                        "dist_files": dist_files,
+                        "bin_dist_files": bin_dist_files,
+                        "role_names": await self._role_names(roles),
+                    },
+                )
+            )
         return out
 
     async def _form_entries(self, solution_id: UUID) -> list[dict[str, Any]]:

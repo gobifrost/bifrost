@@ -1,0 +1,20 @@
+{
+  "access_level": "authenticated",
+  "app_model": "standalone_v2",
+  "dependencies": {
+    "react": "^18.0.0"
+  },
+  "description": "install parity app",
+  "id": "<volatile>",
+  "logo_b64": "iVBORw0KGgo=",
+  "logo_content_type": "image/png",
+  "name": "RT App Install",
+  "repo_path": "apps/rt-app-install",
+  "role_names": [
+    "<volatile>"
+  ],
+  "roles": [
+    "<volatile>"
+  ],
+  "slug": "<volatile>"
+}

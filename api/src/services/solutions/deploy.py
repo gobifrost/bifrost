@@ -1097,20 +1097,24 @@ class SolutionDeployer:
                     f"inline_v1 apps are not supported in a Solution bundle."
                 )
             now = datetime.now(timezone.utc)
+            from bifrost.manifest import ManifestApp
+            from bifrost.manifest_codec import Destination
+            # Build model-field dict; transport extra "repo_path" maps to model field "path".
+            # _collect_apps (CLI zip path) emits neither "path" nor "repo_path" — fall
+            # back to f"apps/{slug}" so to_orm_values can derive repo_path from it.
+            mapp_fields = {k: v for k, v in mapp.items() if k in ManifestApp.model_fields}
+            if "path" not in mapp_fields:
+                mapp_fields["path"] = mapp.get("repo_path") or f"apps/{slug}"
+            mapp_model = ManifestApp(**mapp_fields)
+            _direct = mapp_model.to_orm_values(Destination.INSTALL).direct
             values: dict[str, Any] = {
-                "name": mapp.get("name") or slug,
-                "slug": slug,
-                "repo_path": mapp.get("repo_path") or f"apps/{slug}",
-                "description": mapp.get("description"),
-                "dependencies": mapp.get("dependencies") or None,
-                "app_model": app_model,
+                **_direct,
+                # deploy overrides: org/solution/publish metadata stamped at deploy time.
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
                 "published_snapshot": {"deployed_by": "solution", "app_model": app_model},
                 "published_at": now,
             }
-            if mapp.get("access_level") is not None:
-                values["access_level"] = mapp["access_level"]
             # App LOGO declared in the manifest (`logo:` path), carried by the
             # collector as base64 (the only way a solution-managed app gets a
             # logo — the upload endpoint is blocked for it). Validate + sanitize

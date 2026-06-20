@@ -1970,17 +1970,16 @@ class ManifestResolver:
         # Check prefetch cache for existing app by slug
         existing_id = cache["app_by_slug"].get(slug)
 
+        from bifrost.manifest_codec import Destination
+        _direct = mapp.to_orm_values(Destination.GIT_SYNC).direct
         app_values = {
-            "name": mapp.name or "",
-            "description": mapp.description,
+            **_direct,
+            # resolver overrides: slug derived from path, repo_path defaulted,
+            # organization_id already converted to UUID above.
             "slug": slug,
             "repo_path": repo_path,
             "organization_id": org_id,
-            "dependencies": mapp.dependencies or None,
         }
-        if mapp.access_level is not None:
-            app_values["access_level"] = mapp.access_level
-        app_values["app_model"] = getattr(mapp, "app_model", "inline_v1") or "inline_v1"
 
         ops: list[SyncOp] = []
 

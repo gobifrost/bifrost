@@ -306,7 +306,7 @@ class ManifestAgent(BaseModel):
     max_token_budget: int | None = Field(default=None, description="Max token budget for autonomous runs", **classify(FieldClass.CONTENT))
 
 
-class ManifestApp(BaseModel):
+class ManifestApp(EntityCodec, BaseModel):
     """App entry in manifest."""
     id: str = Field(description="App UUID", **classify(FieldClass.IDENTITY))
     path: str = Field(description="App source directory (e.g. 'apps/my-dashboard'), not app.yaml", **classify(FieldClass.CONTENT))
@@ -328,6 +328,101 @@ class ManifestApp(BaseModel):
         description="Path to a logo image (png/jpeg/svg) relative to the app dir, e.g. 'public/logo.svg'. Shown in BifrostHeader.",
         **classify(FieldClass.CONTENT),
     )
+
+    @classmethod
+    def from_row(cls, app, *, roles: list[str] | None = None) -> "ManifestApp":
+        """Build from an Application ORM row, mirroring serialize_app exactly.
+
+        NOTE: ``path`` is set from ``app.repo_path`` (the manifest field is
+        ``path``; the ORM column is ``repo_path``).  serialize_app does the
+        same mapping.  ``logo`` (the path-string manifest field) is left None —
+        the ORM stores ``logo_data`` bytes, not a path string.  The bytes travel
+        as the transport extra ``logo_b64`` via ``extras=`` in _install_view.
+        """
+        return cls(
+            id=str(app.id),
+            path=app.repo_path.rstrip("/"),
+            slug=app.slug,
+            name=app.name,
+            description=app.description,
+            dependencies=app.dependencies or {},
+            organization_id=str(app.organization_id) if app.organization_id else None,
+            roles=roles or [],
+            access_level=app.access_level if app.access_level else "authenticated",
+            app_model=app.app_model or "inline_v1",
+        )
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._app_entries key-for-key.
+
+        Model-field allowlist (drop-none): id, name, slug, description,
+        dependencies, app_model, access_level, roles, role_names.
+
+        ``path`` is NOT in the allowlist — capture emits ``repo_path`` instead
+        (declared a transport extra in EXTRA_FIELD_POLICY).  organization_id is
+        ABSENT (scope is install-inherited).
+
+        Transport extras (repo_path, logo_b64, logo_content_type, src_files,
+        bin_files, dist_files, bin_dist_files) are merged from extras= drop-none.
+        """
+        _MODEL_ALLOWLIST = {
+            "id", "name", "slug", "description", "dependencies",
+            "app_model", "access_level", "roles", "role_names",
+        }
+        data = self.model_dump(mode="json", by_alias=True)
+        out: dict = {}
+        for k, v in data.items():
+            if k not in _MODEL_ALLOWLIST:
+                continue
+            if v is not None:
+                out[k] = v
+        # Merge transport extras (repo_path, logo_b64, logo_content_type,
+        # src_files, bin_files, dist_files, bin_dist_files, role_names) — drop-none.
+        for k, v in extras.items():
+            if v is not None:
+                out[k] = v
+        return out
+
+    def to_orm_values(self, dest: "Destination") -> "ImportFields":
+        """Column values for ORM upsert — all direct (no indexer split).
+
+        GIT_SYNC: mirrors _resolve_app's app_values dict.
+          ``repo_path`` comes from self.path (manifest field ``path`` maps to
+          ORM column ``repo_path``).  access_level present-only.
+          app_model always present.
+        INSTALL: mirrors _upsert_apps values dict.
+          repo_path = self.path.  description/dependencies always present
+          (full-replace on redeploy).  access_level present-only.
+        """
+        from uuid import UUID
+
+        from bifrost.manifest_codec import Destination, ImportFields
+
+        if dest is Destination.GIT_SYNC:
+            direct: dict = {
+                "name": self.name or "",
+                "description": self.description,
+                "slug": self.slug,
+                "repo_path": self.path,
+                "organization_id": UUID(self.organization_id) if self.organization_id else None,
+                "dependencies": self.dependencies or None,
+                "app_model": self.app_model or "inline_v1",
+            }
+            if self.access_level is not None:
+                direct["access_level"] = self.access_level
+            return ImportFields(direct=direct)
+        # INSTALL
+        direct = {
+            "name": self.name or self.slug or "",
+            "slug": self.slug,
+            "repo_path": self.path or f"apps/{self.slug}",
+            "description": self.description,
+            "dependencies": self.dependencies or None,
+            "app_model": self.app_model or "inline_v1",
+        }
+        if self.access_level is not None:
+            direct["access_level"] = self.access_level
+        return ImportFields(direct=direct)
 
 
 # -- New entity types for manifest expansion --

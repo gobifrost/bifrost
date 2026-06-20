@@ -175,18 +175,7 @@ def serialize_agent(
 
 def serialize_app(app: Application, roles: list[str] | None = None) -> ManifestApp:
     """Serialize an Application ORM object to ManifestApp."""
-    return ManifestApp(
-        id=str(app.id),
-        path=app.repo_path.rstrip("/"),
-        slug=app.slug,
-        name=app.name,
-        description=app.description,
-        dependencies=app.dependencies or {},
-        organization_id=str(app.organization_id) if app.organization_id else None,
-        roles=roles or [],
-        access_level=app.access_level if app.access_level else "authenticated",
-        app_model=app.app_model or "inline_v1",
-    )
+    return ManifestApp.from_row(app, roles=roles)
 
 
 def serialize_integration(
