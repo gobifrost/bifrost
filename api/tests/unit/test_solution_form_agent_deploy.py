@@ -172,6 +172,26 @@ class TestSolutionFormAgentDeploy:
         with pytest.raises(ValueError, match="unknown role"):
             await _resolve_role_names(db_session, [f"Nope {uuid.uuid4().hex[:6]}"])
 
+    async def test_resolve_roles_empty_role_names_is_authoritative(self, db_session):
+        """An explicitly-PRESENT empty role_names means "no roles" and must NOT
+        fall through to a stale `roles` UUID list (Codex review; mirrors the
+        git-sync B3 rule that present-empty is authoritative). A truly absent
+        role_names still defers to `roles`."""
+        db = db_session
+        await self._install(db)
+        deployer = SolutionDeployer(db)
+        stale = str(uuid.uuid4())
+
+        # role_names present-but-empty + stale roles -> resolves to NO roles.
+        empty_wins = await deployer._resolve_roles({"role_names": [], "roles": [stale]})
+        assert empty_wins == [], (
+            "present-empty role_names must clear roles, not use the stale UUID list"
+        )
+
+        # role_names ABSENT -> defers to roles (back-compat).
+        defers = await deployer._resolve_roles({"roles": [stale]})
+        assert defers == [uuid.UUID(stale)], "absent role_names must defer to roles"
+
     async def test_deploy_reuses_existing_role_not_recreated(self, db_session):
         """An already-existing referenced role is reused, not duplicated, and NOT
         listed as created."""

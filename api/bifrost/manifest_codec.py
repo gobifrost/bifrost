@@ -70,10 +70,14 @@ class EntityCodec:
         """Install view derived from each field's FieldClass via ``_INSTALL_EMITS``,
         overridable per field with ``classify(install_view=...)``. Drop-none.
 
-        This is the ONE install serializer for every entity — no per-entity
-        allowlist or override method. A field is emitted when its class (or its
-        per-field override) says keep AND its value is not None. Transport extras
-        the caller passes (repo_path, logo_b64, role_names, …) are merged drop-none.
+        This is the default install serializer, used by every entity EXCEPT
+        ``ManifestEventSource``, which overrides ``_install_view`` to return the
+        full git_sync dump (its install view intentionally keeps nulls — a shape a
+        drop-none policy cannot express; see that class for the rationale). No
+        entity uses a hand-maintained allowlist any more. A field is emitted when
+        its class (or its per-field ``install_view`` override) says keep AND its
+        value is not None; transport extras the caller passes (repo_path, logo_b64,
+        role_names, …) are merged drop-none.
         """
         from typing import cast
 

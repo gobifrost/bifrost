@@ -624,8 +624,12 @@ class SolutionDeployer:
         """
         from src.services.manifest_import import _resolve_role_names
 
+        # role_names is authoritative when the key is PRESENT — including an
+        # explicit empty list, which means "no roles" and must NOT fall through to
+        # a stale `roles` UUID list (mirrors the git-sync B3 rule: present means
+        # authoritative). Only a truly ABSENT role_names defers to `roles`.
         role_names = entry.get("role_names")
-        if role_names:
+        if role_names is not None:
             return [
                 UUID(r)
                 for r in await _resolve_role_names(
