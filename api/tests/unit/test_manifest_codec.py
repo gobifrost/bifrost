@@ -1269,24 +1269,20 @@ async def test_form_to_orm_values_partition(db_session):
         mform = ManifestForm.from_row(form, roles=[], fields=[ff1, ff2])
         parts = mform.to_orm_values(Destination.GIT_SYNC)
 
-        # direct is always empty for Form
+        # Form import is INDEXER-ONLY: only indexer_content is emitted. direct and
+        # restamp are empty — organization_id/access_level are re-stamped by the
+        # importer orchestration (_index_forms_from_manifest / _upsert_forms) AFTER
+        # the indexer, NOT sourced from this method.
         assert parts.direct == {}, f"direct must be empty, got {parts.direct!r}"
+        assert parts.restamp == {}, f"restamp must be empty, got {parts.restamp!r}"
 
-        # indexer_content has all expected keys
+        # indexer_content has all expected keys (id + name always present)
         ic = parts.indexer_content
         assert ic["id"] == str(form_id)
         assert ic["name"] == "rt_form_partition"
         assert ic["description"] == "partition test form"
         assert ic["workflow_id"] == "some-workflow-uuid"
         assert "form_schema" in ic
-
-        # restamp carries org (as UUID) and access_level
-        rs = parts.restamp
-        assert rs["organization_id"] == org_id
-        assert rs["access_level"] == "authenticated"
-
-        # name lands in indexer_content, NOT in direct
-        assert "name" not in parts.direct
 
         # Lock the indexer_content shape to a committed golden. Comparing against
         # _form_content_from_manifest is now CIRCULAR (it delegates to
@@ -1526,19 +1522,14 @@ async def test_agent_to_orm_values_partition(db_session):
         )
         parts = magent.to_orm_values(Destination.GIT_SYNC)
 
-        # direct partition
-        assert parts.direct == {
-            "id": str(agent_id),
-            "name": "rt_agent_partition",
-            "system_prompt": "Partition test prompt.",
-        }, f"direct diverged: {parts.direct!r}"
-
-        # restamp partition
-        assert parts.restamp == {
-            "access_level": "authenticated",
-            "max_iterations": 5,
-            "max_token_budget": 10000,
-        }, f"restamp diverged: {parts.restamp!r}"
+        # Agent import is INDEXER-ONLY: only indexer_content is emitted. direct and
+        # restamp are empty — id/name/system_prompt are resolved on the metadata row
+        # and access_level/max_iterations/max_token_budget (+ max_run_timeout extra)
+        # are re-stamped by the importer orchestration (_resolve_agent /
+        # _index_agents_from_manifest / _upsert_agents) AFTER the indexer, NOT
+        # sourced from this method.
+        assert parts.direct == {}, f"direct must be empty, got {parts.direct!r}"
+        assert parts.restamp == {}, f"restamp must be empty, got {parts.restamp!r}"
 
         # max_run_timeout NOT in indexer_content (transport extra, not a model field)
         assert "max_run_timeout" not in parts.indexer_content, (

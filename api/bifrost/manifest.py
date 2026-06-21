@@ -234,11 +234,13 @@ class ManifestForm(EntityCodec, BaseModel):
     deprecated: content is now inline and ``forms/{uuid}.form.yaml`` is no longer
     written by the manifest generator.
 
-    Import partition (three-way):
+    Import is INDEXER-ONLY (to_orm_values returns only indexer_content):
     - indexer_content: id, name (always), + description/workflow_id/launch_workflow_id/
       default_launch_params/allowed_query_params/form_schema (drop-none) — fed to FormIndexer.
-    - direct: {} — Form has NO direct fields (all content goes through the indexer).
-    - restamp: organization_id, access_level — applied after the indexer.
+    organization_id/access_level are re-stamped on the Form row directly AFTER the
+    indexer by the importers (manifest_import/deploy) — orchestration-owned, NOT
+    sourced from this method. (The ``import_owner="restamp"`` tags on those fields
+    document that import role; the partition dict no longer carries them.)
     """
     id: str = Field(description="Form UUID", **classify(FieldClass.IDENTITY, import_owner="indexer"))
     name: str = Field(default="", description="Form display name", **classify(FieldClass.CONTENT, import_owner="indexer"))
@@ -329,16 +331,15 @@ class ManifestForm(EntityCodec, BaseModel):
         return out
 
     def to_orm_values(self, dest: "Destination") -> "ImportFields":
-        """Column values for the three-way import partition.
+        """Column values for import — INDEXER-ONLY (only indexer_content is emitted).
 
         indexer_content: id + name (always present) + the indexer-owned fields
           drop-none (description, workflow_id, launch_workflow_id, default_launch_params,
           allowed_query_params, form_schema). EXACTLY matches _form_content_from_manifest.
-        direct: {} — Form has no direct fields (all content goes through FormIndexer).
-        restamp: organization_id + access_level — applied AFTER the indexer by both
-          _index_forms_from_manifest and _upsert_forms.
+        organization_id/access_level are re-stamped on the Form row directly AFTER
+        the indexer by _index_forms_from_manifest and _upsert_forms — orchestration
+        owns that, so this method does not carry direct/restamp.
         """
-        from uuid import UUID
 
         indexer: dict = {"id": self.id, "name": self.name or ""}
         if self.description is not None:
@@ -354,12 +355,14 @@ class ManifestForm(EntityCodec, BaseModel):
         if self.form_schema is not None:
             indexer["form_schema"] = self.form_schema
 
-        restamp: dict = {
-            "organization_id": UUID(self.organization_id) if self.organization_id else None,
-            "access_level": self.access_level,
-        }
-
-        return ImportFields(indexer_content=indexer, direct={}, restamp=restamp)
+        # Form import is INDEXER-ONLY: the importers (manifest_import
+        # _index_forms_from_manifest, deploy _upsert_forms) feed indexer_content to
+        # the FormIndexer, then re-stamp organization_id/access_level directly off
+        # the manifest entry AFTER the indexer runs (the values aren't carried in
+        # the indexer YAML). That post-index re-stamp is orchestration-owned — it
+        # is NOT sourced from this method — so direct/restamp stay empty here rather
+        # than expose an authoritative-looking surface nothing consumes.
+        return ImportFields(indexer_content=indexer)
 
 
 class ManifestAgent(EntityCodec, BaseModel):
@@ -371,13 +374,14 @@ class ManifestAgent(EntityCodec, BaseModel):
     artifact. The ``path`` field is deprecated: content is now inline and
     ``agents/{uuid}.agent.yaml`` is no longer written by the manifest generator.
 
-    Import partition (three-way):
+    Import is INDEXER-ONLY (to_orm_values returns only indexer_content):
     - indexer_content: id, name (always), + description/system_prompt/channels/
       tool_ids/delegated_agent_ids/knowledge_sources/system_tools/mcp_connection_ids/
       llm_model/llm_max_tokens (non-empty lists only, drop-none scalars) — fed to AgentIndexer.
-    - direct: id, name, system_prompt — the scalar fields resolved directly.
-    - restamp: access_level, max_iterations, max_token_budget — applied after the indexer.
-      max_run_timeout is a transport extra (not a model field) stamped via extras= on deploy.
+    The importers resolve id/name/system_prompt on the metadata row and re-stamp
+    access_level/max_iterations/max_token_budget (+ the max_run_timeout transport
+    extra) directly AFTER the indexer; that direct-set + re-stamp is
+    orchestration-owned (manifest_import/deploy), NOT sourced from this method.
     """
     id: str = Field(description="Agent UUID", **classify(FieldClass.IDENTITY, import_owner="direct"))
     name: str = Field(default="", description="Agent display name", **classify(FieldClass.CONTENT, import_owner="direct"))
@@ -534,19 +538,15 @@ class ManifestAgent(EntityCodec, BaseModel):
         if self.max_token_budget is not None:
             indexer["max_token_budget"] = self.max_token_budget
 
-        direct: dict = {
-            "id": self.id,
-            "name": self.name or "",
-            "system_prompt": self.system_prompt or "",
-        }
-
-        restamp: dict = {
-            "access_level": self.access_level,
-            "max_iterations": self.max_iterations,
-            "max_token_budget": self.max_token_budget,
-        }
-
-        return ImportFields(indexer_content=indexer, direct=direct, restamp=restamp)
+        # Agent import is INDEXER-ONLY: the importers (manifest_import
+        # _resolve_agent/_index_agents_from_manifest, deploy _upsert_agents) feed
+        # indexer_content to the AgentIndexer, then resolve id/name/system_prompt on
+        # the metadata row and re-stamp access_level/max_iterations/max_token_budget
+        # (and the max_run_timeout transport extra) directly AFTER the indexer. That
+        # direct-set + re-stamp is orchestration-owned — it is NOT sourced from this
+        # method — so direct/restamp stay empty rather than expose an
+        # authoritative-looking surface nothing consumes.
+        return ImportFields(indexer_content=indexer)
 
 
 class ManifestApp(EntityCodec, BaseModel):
