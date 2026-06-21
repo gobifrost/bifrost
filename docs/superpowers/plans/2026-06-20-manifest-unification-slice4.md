@@ -1,5 +1,22 @@
 # Manifest Serialization Unification (Slice 4 of #390) Implementation Plan
 
+> **STATUS (2026-06-21): COMPLETE on branch `390-manifest-unify-spike` (@ `dbb5132c`).**
+> All 16 tasks done; every per-task two-stage review + a whole-branch (opus) review
+> + an independent Codex review triaged. Full backend suite 6378 passed / 0 failures,
+> round-trip detector 25/25, contract-version tripwire green, pyright/ruff clean
+> (CI-equivalent). The model-as-single-source-of-truth IS delivered and
+> byte-identical — there is **no unfinished core unification**.
+>
+> **Open items live in the companion doc
+> [`2026-06-20-manifest-unification-slice4-OPEN-ITEMS.md`](2026-06-20-manifest-unification-slice4-OPEN-ITEMS.md)**:
+> one REAL pre-existing bug the refactor surfaced (B1 — topic EventSources lose
+> their `event_type` topic key; exists on main today, reproduced byte-identically
+> here), six deferred cosmetic polish items (P1–P6, all reviewer-triaged
+> ship-as-is), and the genuinely-separate opt-in Pass 2 (shape cleanups +
+> format-version latch + base+superset model consolidation — the latter is what
+> the word "model-unification" below refers to, NOT the core unification this
+> slice already delivered).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make each `Manifest*` model the single source of truth for its own serialization — `from_row` (DB→model), `view(dest)` (model→the dict each path emits), and `to_orm_values(dest)` (model→importer field dict) — so adding an ORM column is a one-site change, with the existing round-trip detector + per-entity byte-equality proving zero behavior change.
