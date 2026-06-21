@@ -1,0 +1,33 @@
+{
+  "access_level": "role_based",
+  "description": "install parity form",
+  "form_schema": {
+    "fields": [
+      {
+        "label": "Full Name",
+        "name": "name",
+        "position": 0,
+        "required": true,
+        "type": "text"
+      },
+      {
+        "name": "phone",
+        "placeholder": "Phone number",
+        "position": 1,
+        "required": false,
+        "type": "tel"
+      }
+    ]
+  },
+  "id": "<volatile>",
+  "name": "rt_form_install_golden",
+  "role_names": [
+    "<volatile>"
+  ],
+  "roles": [
+    "<volatile>"
+  ],
+  "workflow_function_name": "rt_form_install",
+  "workflow_id": "<volatile>",
+  "workflow_path": "workflows/rt_form_install.py"
+}

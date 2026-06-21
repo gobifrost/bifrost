@@ -1047,3 +1047,254 @@ async def test_app_install_parity(db_session):
         await db_session.execute(delete(Role).where(Role.id == role_id))
         await db_session.execute(delete(Solution).where(Solution.id == sol_id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_form_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded Form (with fields + workflow binding + role) matches the committed golden snapshot."""
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.forms import Form, FormField, FormRole
+    from src.models.orm.users import Role
+    from src.models.orm.workflows import Workflow
+    from bifrost.manifest import ManifestForm
+    from bifrost.manifest_codec import Destination
+    from src.models.enums import FormAccessLevel
+
+    form_id = uuid.uuid4()
+    role_id = uuid.uuid4()
+    wf_id = uuid.uuid4()
+
+    wf = Workflow(
+        id=wf_id,
+        name="rt_form_wf",
+        path="workflows/rt_form_wf.py",
+        function_name="rt_form_wf",
+        type="workflow",
+        is_active=True,
+    )
+    db_session.add(wf)
+
+    form = Form(
+        id=form_id,
+        name="rt_form_golden",
+        description="parity test form",
+        workflow_id=str(wf_id),
+        access_level=FormAccessLevel.ROLE_BASED,
+        created_by="test",
+    )
+    db_session.add(form)
+
+    role = Role(id=role_id, name=f"rt_form_git_role_{role_id.hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+
+    ff1 = FormField(form_id=form_id, name="email", type="email", required=True, position=0, label="Email Address")
+    ff2 = FormField(form_id=form_id, name="notes", type="textarea", required=False, position=1, placeholder="Optional notes")
+    db_session.add(ff1)
+    db_session.add(ff2)
+
+    form_role = FormRole(form_id=form_id, role_id=role_id, assigned_by="test")
+    db_session.add(form_role)
+    await db_session.commit()
+
+    try:
+        roles = [str(role_id)]
+        fields = [ff1, ff2]
+        produced = ManifestForm.from_row(form, roles=roles, fields=fields).view(Destination.GIT_SYNC)
+        assert_golden(produced, "form_git_sync", volatile_keys={"id", "organization_id", "workflow_id", "launch_workflow_id", "roles"})
+    finally:
+        await db_session.execute(delete(FormRole).where(FormRole.form_id == form_id))
+        await db_session.execute(delete(FormField).where(FormField.form_id == form_id))
+        await db_session.execute(delete(Form).where(Form.id == form_id))
+        await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_form_install_parity(db_session):
+    """INSTALL view of a seeded solution-owned Form matches the committed golden snapshot.
+
+    organization_id must be ABSENT. workflow_path/workflow_function_name extras present.
+    form_schema.fields[] include position (via _form_field_entry, not _form_field_to_schema_dict).
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.forms import Form, FormField, FormRole
+    from src.models.orm.solutions import Solution
+    from src.models.orm.users import Role
+    from src.models.orm.workflows import Workflow
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestForm
+    from bifrost.manifest_codec import Destination
+    from src.models.enums import FormAccessLevel
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol_id = uuid.uuid4()
+    form_id = uuid.uuid4()
+    role_id = uuid.uuid4()
+    wf_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+
+    org = Organization(id=org_id, name=f"rt-form-install-org-{org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-form-sol-{sol_id.hex[:8]}",
+        name="RT Form Install Parity Sol",
+    )
+    db_session.add(sol)
+
+    wf = Workflow(
+        id=wf_id,
+        name="rt_form_install_wf",
+        path="workflows/rt_form_install.py",
+        function_name="rt_form_install",
+        type="workflow",
+        is_active=True,
+    )
+    db_session.add(wf)
+    await db_session.flush()
+
+    form = Form(
+        id=form_id,
+        name="rt_form_install_golden",
+        description="install parity form",
+        workflow_id=str(wf_id),
+        workflow_path="workflows/rt_form_install.py",
+        workflow_function_name="rt_form_install",
+        access_level=FormAccessLevel.ROLE_BASED,
+        organization_id=org_id,
+        solution_id=sol_id,
+        created_by="test",
+    )
+    db_session.add(form)
+
+    role = Role(id=role_id, name=f"rt_form_install_role_{role_id.hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+
+    ff1 = FormField(form_id=form_id, name="name", type="text", required=True, position=0, label="Full Name")
+    ff2 = FormField(form_id=form_id, name="phone", type="tel", required=False, position=1, placeholder="Phone number")
+    db_session.add(ff1)
+    db_session.add(ff2)
+
+    form_role = FormRole(form_id=form_id, role_id=role_id, assigned_by="test")
+    db_session.add(form_role)
+    await db_session.commit()
+
+    try:
+        capture = SolutionCaptureService(db_session)
+        roles = [str(role_id)]
+        role_names = await capture._role_names(roles)
+        # form_schema for install uses _form_field_entry (includes position)
+        form_schema = {"fields": [capture._form_field_entry(f) for f in [ff1, ff2]]}
+
+        produced = ManifestForm.from_row(form, roles=roles).view(
+            Destination.INSTALL,
+            extras={
+                "workflow_path": form.workflow_path,
+                "workflow_function_name": form.workflow_function_name,
+                "role_names": role_names,
+                "form_schema": form_schema,
+            },
+        )
+
+        assert "organization_id" not in produced, "install view must NOT contain 'organization_id'"
+        assert "path" not in produced, "install view must NOT contain deprecated 'path'"
+        assert "workflow_path" in produced, "install view must contain 'workflow_path' extra"
+        assert "workflow_function_name" in produced, "install view must contain 'workflow_function_name' extra"
+        assert "form_schema" in produced, "install view must contain 'form_schema'"
+        # position is present in install (from _form_field_entry) but NOT in git_sync
+        assert "position" in produced["form_schema"]["fields"][0], "install form_schema fields must include position"
+
+        assert_golden(produced, "form_install", volatile_keys={"id", "roles", "workflow_id", "role_names"})
+    finally:
+        await db_session.execute(delete(FormRole).where(FormRole.form_id == form_id))
+        await db_session.execute(delete(FormField).where(FormField.form_id == form_id))
+        await db_session.execute(delete(Form).where(Form.id == form_id))
+        await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
+        await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_form_to_orm_values_partition(db_session):
+    """Assert the three-way partition of ManifestForm.to_orm_values.
+
+    - indexer_content has id+name+description+workflow_id+form_schema
+    - direct == {}
+    - restamp == {organization_id: UUID, access_level: str}
+    - indexer_content shape locked to a committed golden (non-circular)
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.forms import Form, FormField
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestForm
+    from bifrost.manifest_codec import Destination
+    from src.models.enums import FormAccessLevel
+
+    form_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+
+    org = Organization(id=org_id, name=f"rt-form-partition-org-{org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    form = Form(
+        id=form_id,
+        name="rt_form_partition",
+        description="partition test form",
+        workflow_id="some-workflow-uuid",
+        access_level=FormAccessLevel.AUTHENTICATED,
+        organization_id=org_id,
+        created_by="test",
+    )
+    db_session.add(form)
+    await db_session.flush()
+
+    ff1 = FormField(form_id=form_id, name="field1", type="text", required=True, position=0)
+    ff2 = FormField(form_id=form_id, name="field2", type="select", required=False, position=1, options={"choices": ["a", "b"]})
+    db_session.add(ff1)
+    db_session.add(ff2)
+    await db_session.commit()
+
+    try:
+        mform = ManifestForm.from_row(form, roles=[], fields=[ff1, ff2])
+        parts = mform.to_orm_values(Destination.GIT_SYNC)
+
+        # direct is always empty for Form
+        assert parts.direct == {}, f"direct must be empty, got {parts.direct!r}"
+
+        # indexer_content has all expected keys
+        ic = parts.indexer_content
+        assert ic["id"] == str(form_id)
+        assert ic["name"] == "rt_form_partition"
+        assert ic["description"] == "partition test form"
+        assert ic["workflow_id"] == "some-workflow-uuid"
+        assert "form_schema" in ic
+
+        # restamp carries org (as UUID) and access_level
+        rs = parts.restamp
+        assert rs["organization_id"] == org_id
+        assert rs["access_level"] == "authenticated"
+
+        # name lands in indexer_content, NOT in direct
+        assert "name" not in parts.direct
+
+        # Lock the indexer_content shape to a committed golden. Comparing against
+        # _form_content_from_manifest is now CIRCULAR (it delegates to
+        # to_orm_values post-swap), so a golden is the non-circular oracle; the
+        # round-trip detector covers the indexer→DB end-to-end path.
+        assert_golden(ic, "form_indexer_content", volatile_keys={"id"})
+    finally:
+        await db_session.execute(delete(FormField).where(FormField.form_id == form_id))
+        await db_session.execute(delete(Form).where(Form.id == form_id))
+        await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.commit()

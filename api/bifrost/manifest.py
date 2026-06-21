@@ -224,7 +224,7 @@ class ManifestWorkflow(EntityCodec, BaseModel):
         return ImportFields(direct=direct)
 
 
-class ManifestForm(BaseModel):
+class ManifestForm(EntityCodec, BaseModel):
     """Form entry in manifest.
 
     Carries portable form content (description, workflow bindings, schema) inline
@@ -233,30 +233,133 @@ class ManifestForm(BaseModel):
     they describe how this environment binds the form. The ``path`` field is
     deprecated: content is now inline and ``forms/{uuid}.form.yaml`` is no longer
     written by the manifest generator.
+
+    Import partition (three-way):
+    - indexer_content: id, name (always), + description/workflow_id/launch_workflow_id/
+      default_launch_params/allowed_query_params/form_schema (drop-none) — fed to FormIndexer.
+    - direct: {} — Form has NO direct fields (all content goes through the indexer).
+    - restamp: organization_id, access_level — applied after the indexer.
     """
-    id: str = Field(description="Form UUID", **classify(FieldClass.IDENTITY))
-    name: str = Field(default="", description="Form display name", **classify(FieldClass.CONTENT))
+    id: str = Field(description="Form UUID", **classify(FieldClass.IDENTITY, import_owner="indexer"))
+    name: str = Field(default="", description="Form display name", **classify(FieldClass.CONTENT, import_owner="indexer"))
     path: str | None = Field(
         default=None,
         description="DEPRECATED: relative path to form YAML. Content is now inline.",
         **classify(FieldClass.CONTENT),
     )
     # -- Environment-specific fields (NOT portable; do not include when sharing) --
-    organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
+    organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, import_owner="restamp"))
     roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this form", **classify(FieldClass.ENVIRONMENT))
     role_names: list[str] | None = Field(
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
         **classify(FieldClass.ENVIRONMENT, keep_on_portable=True),
     )
-    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public", **classify(FieldClass.CONTENT))
+    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public", **classify(FieldClass.CONTENT, import_owner="restamp"))
     # -- Portable content (inline) --
-    description: str | None = Field(default=None, description="Form description", **classify(FieldClass.CONTENT))
-    workflow_id: str | None = Field(default=None, description="Workflow UUID to execute on submit", **classify(FieldClass.REFERENCE))
-    launch_workflow_id: str | None = Field(default=None, description="Workflow UUID to run on form load", **classify(FieldClass.REFERENCE))
-    default_launch_params: dict | None = Field(default=None, description="Default params for launch workflow", **classify(FieldClass.CONTENT))
-    allowed_query_params: list[str] | None = Field(default=None, description="Form fields populatable via URL query params", **classify(FieldClass.CONTENT))
-    form_schema: dict | None = Field(default=None, description="Form schema (fields list, etc.)", **classify(FieldClass.CONTENT))
+    description: str | None = Field(default=None, description="Form description", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    workflow_id: str | None = Field(default=None, description="Workflow UUID to execute on submit", **classify(FieldClass.REFERENCE, import_owner="indexer"))
+    launch_workflow_id: str | None = Field(default=None, description="Workflow UUID to run on form load", **classify(FieldClass.REFERENCE, import_owner="indexer"))
+    default_launch_params: dict | None = Field(default=None, description="Default params for launch workflow", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    allowed_query_params: list[str] | None = Field(default=None, description="Form fields populatable via URL query params", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    form_schema: dict | None = Field(default=None, description="Form schema (fields list, etc.)", **classify(FieldClass.CONTENT, import_owner="indexer"))
+
+    @classmethod
+    def from_row(cls, form, *, roles: list[str] | None = None, fields: list | None = None) -> "ManifestForm":
+        """Build from a Form ORM row, mirroring serialize_form exactly.
+
+        ``fields`` should be the FormField rows for this form, ordered by position.
+        They are inlined into ``form_schema.fields`` via ``_form_field_to_schema_dict``
+        (the manifest_generator helper — same shape as the git_sync writer).
+        """
+        from src.services.manifest_generator import _form_field_to_schema_dict
+
+        schema: dict | None = None
+        if fields:
+            schema = {"fields": [_form_field_to_schema_dict(f) for f in fields]}
+
+        return cls(
+            id=str(form.id),
+            name=form.name,
+            organization_id=str(form.organization_id) if form.organization_id else None,
+            roles=roles or [],
+            access_level=form.access_level.value if form.access_level else "role_based",
+            description=form.description,
+            workflow_id=form.workflow_id,
+            launch_workflow_id=form.launch_workflow_id,
+            default_launch_params=form.default_launch_params,
+            allowed_query_params=form.allowed_query_params,
+            form_schema=schema,
+        )
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._form_entries key-for-key.
+
+        Model-field allowlist (drop-none): id, name, description, workflow_id,
+        launch_workflow_id, default_launch_params, allowed_query_params, access_level,
+        roles, role_names, form_schema.
+
+        organization_id is ABSENT (scope is install-inherited).
+        path is ABSENT (deprecated).
+
+        Transport extras (workflow_path, workflow_function_name, role_names) are merged
+        from extras= drop-none. role_names forced to [] (never dropped) if present.
+        form_schema.fields[] uses the capture helper (with position) via extras.
+        """
+        _ALLOWLIST = {
+            "id", "name", "description", "workflow_id", "launch_workflow_id",
+            "default_launch_params", "allowed_query_params", "access_level",
+            "roles", "role_names", "form_schema",
+            # transport extras from capture (not model fields)
+            "workflow_path", "workflow_function_name",
+        }
+        data = self.model_dump(mode="json", by_alias=True)
+        # Merge extras (workflow_path, workflow_function_name, role_names, form_schema)
+        # before filtering so extras can override model fields (e.g. form_schema with position).
+        data.update(extras)
+        out: dict = {}
+        for k, v in data.items():
+            if k not in _ALLOWLIST:
+                continue
+            if k == "role_names":
+                # Always emit role_names — capture sends `await self._role_names(roles)`, never drops it.
+                out[k] = v if v is not None else []
+            elif v is not None:
+                out[k] = v
+        return out
+
+    def to_orm_values(self, dest: "Destination") -> "ImportFields":
+        """Column values for the three-way import partition.
+
+        indexer_content: id + name (always present) + the indexer-owned fields
+          drop-none (description, workflow_id, launch_workflow_id, default_launch_params,
+          allowed_query_params, form_schema). EXACTLY matches _form_content_from_manifest.
+        direct: {} — Form has no direct fields (all content goes through FormIndexer).
+        restamp: organization_id + access_level — applied AFTER the indexer by both
+          _index_forms_from_manifest and _upsert_forms.
+        """
+        from uuid import UUID
+
+        indexer: dict = {"id": self.id, "name": self.name or ""}
+        if self.description is not None:
+            indexer["description"] = self.description
+        if self.workflow_id is not None:
+            indexer["workflow_id"] = self.workflow_id
+        if self.launch_workflow_id is not None:
+            indexer["launch_workflow_id"] = self.launch_workflow_id
+        if self.default_launch_params is not None:
+            indexer["default_launch_params"] = self.default_launch_params
+        if self.allowed_query_params is not None:
+            indexer["allowed_query_params"] = self.allowed_query_params
+        if self.form_schema is not None:
+            indexer["form_schema"] = self.form_schema
+
+        restamp: dict = {
+            "organization_id": UUID(self.organization_id) if self.organization_id else None,
+            "access_level": self.access_level,
+        }
+
+        return ImportFields(indexer_content=indexer, direct={}, restamp=restamp)
 
 
 class ManifestAgent(BaseModel):

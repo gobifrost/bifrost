@@ -1,0 +1,32 @@
+{
+  "access_level": "role_based",
+  "allowed_query_params": null,
+  "default_launch_params": null,
+  "description": "parity test form",
+  "form_schema": {
+    "fields": [
+      {
+        "label": "Email Address",
+        "name": "email",
+        "required": true,
+        "type": "email"
+      },
+      {
+        "name": "notes",
+        "placeholder": "Optional notes",
+        "required": false,
+        "type": "textarea"
+      }
+    ]
+  },
+  "id": "<volatile>",
+  "launch_workflow_id": "<volatile>",
+  "name": "rt_form_golden",
+  "organization_id": "<volatile>",
+  "path": null,
+  "role_names": null,
+  "roles": [
+    "<volatile>"
+  ],
+  "workflow_id": "<volatile>"
+}

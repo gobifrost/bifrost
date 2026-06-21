@@ -270,19 +270,9 @@ def _agent_has_inline_content(magent) -> bool:
 
 def _form_content_from_manifest(mform) -> bytes:
     """Build the YAML bytes the FormIndexer expects from a manifest form entry."""
-    data: dict = {"id": mform.id, "name": mform.name or ""}
-    if mform.description is not None:
-        data["description"] = mform.description
-    if mform.workflow_id is not None:
-        data["workflow_id"] = mform.workflow_id
-    if mform.launch_workflow_id is not None:
-        data["launch_workflow_id"] = mform.launch_workflow_id
-    if mform.default_launch_params is not None:
-        data["default_launch_params"] = mform.default_launch_params
-    if mform.allowed_query_params is not None:
-        data["allowed_query_params"] = mform.allowed_query_params
-    if mform.form_schema is not None:
-        data["form_schema"] = mform.form_schema
+    from bifrost.manifest_codec import Destination
+
+    data = mform.to_orm_values(Destination.GIT_SYNC).indexer_content
     return (yaml.dump(data, default_flow_style=False, sort_keys=True).rstrip() + "\n").encode("utf-8")
 
 

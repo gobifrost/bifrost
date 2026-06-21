@@ -119,23 +119,7 @@ def serialize_form(
     They are inlined into ``form_schema.fields`` so the form is fully described
     by the manifest entry — no companion ``forms/{uuid}.form.yaml`` needed.
     """
-    schema: dict | None = None
-    if fields:
-        schema = {"fields": [_form_field_to_schema_dict(f) for f in fields]}
-
-    return ManifestForm(
-        id=str(form.id),
-        name=form.name,
-        organization_id=str(form.organization_id) if form.organization_id else None,
-        roles=roles or [],
-        access_level=form.access_level.value if form.access_level else "role_based",
-        description=form.description,
-        workflow_id=form.workflow_id,
-        launch_workflow_id=form.launch_workflow_id,
-        default_launch_params=form.default_launch_params,
-        allowed_query_params=form.allowed_query_params,
-        form_schema=schema,
-    )
+    return ManifestForm.from_row(form, roles=roles, fields=fields)
 
 
 def serialize_agent(

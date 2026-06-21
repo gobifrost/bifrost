@@ -536,6 +536,9 @@ class SolutionCaptureService:
         return out
 
     async def _form_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestForm
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(select(Form).where(Form.solution_id == solution_id))
         ).scalars().all()
@@ -549,23 +552,20 @@ class SolutionCaptureService:
                 )
             ).scalars().all()
             roles = await self._role_ids(FormRole, "form_id", form.id)
-            out.append(_drop_none({
-                "id": str(form.id),
-                "name": form.name,
-                "description": form.description,
-                "workflow_id": form.workflow_id,
-                "launch_workflow_id": form.launch_workflow_id,
-                "default_launch_params": form.default_launch_params,
-                "allowed_query_params": form.allowed_query_params,
-                "access_level": _enum_value(form.access_level),
-                "workflow_path": form.workflow_path,
-                "workflow_function_name": form.workflow_function_name,
-                "roles": roles,
-                "role_names": await self._role_names(roles),
-                "form_schema": {
-                    "fields": [self._form_field_entry(f) for f in fields],
-                },
-            }))
+            # form_schema for install uses _form_field_entry (includes position) — passed
+            # via extras to override the model's schema (built without position).
+            form_schema = {"fields": [self._form_field_entry(f) for f in fields]}
+            out.append(
+                ManifestForm.from_row(form, roles=roles).view(
+                    Destination.INSTALL,
+                    extras={
+                        "workflow_path": form.workflow_path,
+                        "workflow_function_name": form.workflow_function_name,
+                        "role_names": await self._role_names(roles),
+                        "form_schema": form_schema,
+                    },
+                )
+            )
         return out
 
     async def _agent_entries(self, solution_id: UUID) -> list[dict[str, Any]]:

@@ -1,0 +1,26 @@
+{
+  "description": "partition test form",
+  "form_schema": {
+    "fields": [
+      {
+        "name": "field1",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "name": "field2",
+        "options": {
+          "choices": [
+            "a",
+            "b"
+          ]
+        },
+        "required": false,
+        "type": "select"
+      }
+    ]
+  },
+  "id": "<volatile>",
+  "name": "rt_form_partition",
+  "workflow_id": "some-workflow-uuid"
+}
