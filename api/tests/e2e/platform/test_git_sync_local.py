@@ -2458,6 +2458,78 @@ class TestSplitManifestFormat:
         assert str(sub.workflow_id) == wf_id
         assert sub.event_type == "scheduled"
 
+    async def test_pull_topic_event_source_round_trips_event_type(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Pull manifest with a topic event source → the source's event_type (its
+        topic routing key) survives import so get_by_topic() can find it.
+
+        Regression for B1: ManifestEventSource carried no parent event_type, so
+        topic sources imported with event_type=NULL and their triggers never fired.
+        """
+        from src.models.orm.events import EventSource
+        from src.repositories.events import EventSourceRepository
+
+        work_dir = Path(working_clone.working_dir)
+        es_id = str(uuid4())
+        sub_id = str(uuid4())
+        wf_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+
+        wf_dir = work_dir / "workflows"
+        wf_dir.mkdir(exist_ok=True)
+        (wf_dir / "on_ticket.py").write_text(SAMPLE_WORKFLOW_CLEAN)
+
+        (bifrost_dir / "workflows.yaml").write_text(yaml.dump({
+            "workflows": {
+                "on_ticket": {
+                    "id": wf_id,
+                    "path": "workflows/on_ticket.py",
+                    "function_name": "clean_wf",
+                },
+            },
+        }, default_flow_style=False))
+
+        (bifrost_dir / "events.yaml").write_text(yaml.dump({
+            "events": {
+                "Ticket Created": {
+                    "id": es_id,
+                    "source_type": "topic",
+                    "event_type": "ticket.created",
+                    "subscriptions": [
+                        {
+                            "id": sub_id,
+                            "workflow_id": wf_id,
+                            "event_type": "ticket.created",
+                        },
+                    ],
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add(["workflows/on_ticket.py", ".bifrost/workflows.yaml", ".bifrost/events.yaml"])
+        working_clone.index.commit("add topic event source")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+
+        from uuid import UUID as UUIDType
+        es = await db_session.get(EventSource, UUIDType(es_id))
+        assert es is not None
+        # The parent event_type (topic routing key) must round-trip.
+        assert es.event_type == "ticket.created"
+
+        # The repository lookup the dispatcher uses must now resolve the source.
+        found = await EventSourceRepository(db_session).get_by_topic("ticket.created")
+        assert found is not None
+        assert str(found.id) == es_id
+
     async def test_pull_event_source_updates_organization_id(
         self,
         db_session: AsyncSession,

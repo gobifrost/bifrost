@@ -1,6 +1,7 @@
 {
   "adapter_name": null,
   "cron_expression": "0 9 * * 1-5",
+  "event_type": null,
   "id": "<volatile>",
   "is_active": true,
   "name": "rt_sched_golden",

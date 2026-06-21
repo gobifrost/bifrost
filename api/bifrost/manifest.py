@@ -1214,6 +1214,7 @@ class ManifestEventSource(EntityCodec, BaseModel):
     id: str = Field(description="Event source UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="Event source display name", **classify(FieldClass.CONTENT))
     source_type: str = Field(description="webhook | schedule | topic", **classify(FieldClass.CONTENT))
+    event_type: str | None = Field(default=None, description="Topic routing key (e.g. 'ticket.created'); topic sources only", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
     is_active: bool = Field(default=True, description="Enable/disable this source", **classify(FieldClass.ENVIRONMENT))
     # Schedule config
@@ -1257,6 +1258,7 @@ class ManifestEventSource(EntityCodec, BaseModel):
             id=str(es.id),
             name=es.name,
             source_type=es.source_type if isinstance(es.source_type, str) else es.source_type.value,
+            event_type=es.event_type,
             organization_id=str(es.organization_id) if es.organization_id else None,
             is_active=es.is_active,
             cron_expression=cron_expression,
@@ -1289,6 +1291,7 @@ class ManifestEventSource(EntityCodec, BaseModel):
         direct: dict = {
             "name": self.name,
             "source_type": self.source_type,
+            "event_type": self.event_type,
             "organization_id": self.organization_id,
             "is_active": self.is_active,
         }

@@ -2217,6 +2217,7 @@ class ManifestResolver:
             id=es_id,
             name=es_name,
             source_type=_direct["source_type"],
+            event_type=_direct["event_type"],
             organization_id=es_org_id,
             is_active=_direct["is_active"],
             created_by="git-sync",
@@ -2225,6 +2226,7 @@ class ManifestResolver:
             set_={
                 "name": es_name,
                 "source_type": _direct["source_type"],
+                "event_type": _direct["event_type"],
                 "organization_id": es_org_id,
                 "is_active": _direct["is_active"],
                 "updated_at": datetime.now(timezone.utc),
