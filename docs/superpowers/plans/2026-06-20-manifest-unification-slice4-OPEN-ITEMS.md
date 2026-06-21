@@ -73,7 +73,15 @@ fixing on-branch.
 
 ---
 
-## B2 — `Workflow.tool_description` not captured for Solution install (pre-existing)
+> **UPDATE (PR #392):** B2 and B3 below were FIXED on-branch after the Codex
+> review (Jack: "these are all blockers"). A full audit of all 4 install-allowlist
+> entities for the Leak-A class found `tool_description` as the only instance, and
+> a structural guard (`test_install_view_preserves_every_imported_field`) now makes
+> any allowlist/`to_orm_values` divergence un-mergeable. The agent UUID-coercion
+> regression (Codex Finding 2) was also fixed. The descriptions below are retained
+> for history; all three are CLOSED.
+
+## B2 — `Workflow.tool_description` not captured for Solution install (FIXED, was pre-existing)
 
 **Severity:** Medium. **Introduced by this branch?** No — `main`'s legacy
 `SolutionCapture._workflow_entries` hand-list never included `tool_description`,
@@ -92,7 +100,7 @@ install-only.
 
 **Found by:** the adversarial Codex pass on PR #392.
 
-## B3 — git-sync cannot clear role bindings once roles go empty (pre-existing)
+## B3 — git-sync cannot clear role bindings once roles go empty (FIXED, was pre-existing)
 
 **Severity:** Medium. **Introduced by this branch?** No — identical
 `if hasattr(m, "roles") and m.roles:` gating exists on `main` for
