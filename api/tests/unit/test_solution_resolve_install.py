@@ -4,8 +4,11 @@ a slug (success-criteria §3.4, Codex G5)."""
 from __future__ import annotations
 
 import json
+import io
+import zipfile
 
 import pytest
+import yaml
 
 from bifrost.commands.solution import _AmbiguousInstall, _resolve_target_install
 
@@ -138,7 +141,7 @@ class _Resp:
 
 
 class _DeployFakeClient:
-    """Resolves the install by slug and records the deploy request body.
+    """Resolves the install by slug and records the deploy upload.
 
     Deploy is async: the POST returns 202 + a job id, then the CLI polls the
     deploy-jobs status endpoint. ``deploy_resp`` overrides the POST response (to
@@ -154,7 +157,8 @@ class _DeployFakeClient:
         job_status: str = "succeeded",
         job_error: str = "boom",
     ):
-        self.deploy_body: dict | None = None
+        self.deploy_files: dict | None = None
+        self.deploy_params: dict | None = None
         self._deploy_resp = deploy_resp or _Resp(
             202, body={"deploy_job_id": "job-1"}
         )
@@ -184,7 +188,8 @@ class _DeployFakeClient:
 
     async def post(self, path, **kwargs):
         if path == "/api/solutions/inst-1/deploy":
-            self.deploy_body = kwargs.get("json")
+            self.deploy_files = kwargs.get("files")
+            self.deploy_params = kwargs.get("params")
             return self._deploy_resp
         raise AssertionError(f"unexpected POST {path}")
 
@@ -203,6 +208,13 @@ def _deploy_workspace(tmp_path, monkeypatch, fake, descriptor_text: str):
     return CliRunner(), solution_group
 
 
+def _deploy_descriptor(fake: _DeployFakeClient) -> dict:
+    assert fake.deploy_files is not None
+    file_tuple = fake.deploy_files["file"]
+    with zipfile.ZipFile(io.BytesIO(file_tuple[1])) as zf:
+        return yaml.safe_load(zf.read("bifrost.solution.yaml"))
+
+
 def test_deploy_body_includes_descriptor_version(tmp_path, monkeypatch):
     fake = _DeployFakeClient()
     runner, grp = _deploy_workspace(
@@ -210,9 +222,8 @@ def test_deploy_body_includes_descriptor_version(tmp_path, monkeypatch):
     )
     result = runner.invoke(grp, ["deploy"])
     assert result.exit_code == 0, result.output
-    assert fake.deploy_body is not None
-    assert fake.deploy_body["version"] == "1.2.3"
-    assert fake.deploy_body["force"] is False
+    assert _deploy_descriptor(fake)["version"] == "1.2.3"
+    assert fake.deploy_params == {"force": "false"}
 
 
 def test_deploy_force_flag_sets_force_true(tmp_path, monkeypatch):
@@ -222,8 +233,7 @@ def test_deploy_force_flag_sets_force_true(tmp_path, monkeypatch):
     )
     result = runner.invoke(grp, ["deploy", "--force"])
     assert result.exit_code == 0, result.output
-    assert fake.deploy_body is not None
-    assert fake.deploy_body["force"] is True
+    assert fake.deploy_params == {"force": "true"}
 
 
 def test_deploy_no_descriptor_version_sends_null(tmp_path, monkeypatch):
@@ -232,8 +242,7 @@ def test_deploy_no_descriptor_version_sends_null(tmp_path, monkeypatch):
     runner, grp = _deploy_workspace(tmp_path, monkeypatch, fake, "slug: s\nname: S\n")
     result = runner.invoke(grp, ["deploy"])
     assert result.exit_code == 0, result.output
-    assert fake.deploy_body is not None
-    assert fake.deploy_body.get("version") is None
+    assert "version" not in _deploy_descriptor(fake)
 
 
 def test_deploy_downgrade_prints_detail_and_force_hint(tmp_path, monkeypatch):

@@ -17,6 +17,8 @@ Note: pytest_plugins moved to tests/conftest.py (root) as required by pytest.
 """
 
 import os
+import re
+import uuid
 
 import pytest
 import httpx
@@ -28,6 +30,7 @@ from tests.helpers.polling import poll_until  # noqa: F401
 # E2E test API URL (from docker-compose.test.yml)
 # Default to api:8000 since tests run inside Docker network
 E2E_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
+_SOLUTION_DEPLOY_RE = re.compile(r"^/api/solutions/([^/]+)/deploy$")
 
 
 def pytest_configure(config):
@@ -75,6 +78,82 @@ def e2e_api_url():
     return E2E_API_URL
 
 
+def _legacy_deploy_body_to_zip(client: httpx.Client, solution_id: str, headers, body: dict) -> bytes:
+    """Package legacy test deploy JSON as the production workspace zip."""
+    from src.models.orm.solutions import Solution
+    from src.services.solutions.deploy import SolutionBundle
+    from src.services.solutions.export import build_workspace_zip
+
+    listed = client.get("/api/solutions", headers=headers)
+    assert listed.status_code == 200, (
+        f"solution lookup failed: {listed.status_code} {listed.text}"
+    )
+    solution = None
+    for item in listed.json().get("solutions", []):
+        if str(item.get("id")) == solution_id:
+            solution = item
+            break
+    assert solution is not None, f"solution {solution_id} not found"
+
+    org_id = solution.get("organization_id")
+    sol = Solution(
+        id=uuid.UUID(solution_id),
+        slug=solution["slug"],
+        name=solution["name"],
+        version=solution.get("version"),
+        organization_id=uuid.UUID(org_id) if org_id else None,
+        global_repo_access=bool(solution.get("global_repo_access", False)),
+    )
+    bundle = SolutionBundle(
+        solution=sol,
+        python_files=body.get("python_files", {}),
+        workflows=body.get("workflows", []),
+        tables=body.get("tables", []),
+        apps=body.get("apps", []),
+        forms=body.get("forms", []),
+        agents=body.get("agents", []),
+        claims=body.get("claims", []),
+        config_schemas=body.get("config_schemas", []),
+        connection_schemas=body.get("connection_schemas", []),
+        events=body.get("events", []),
+        version=body.get("version"),
+        logo_b64=body.get("logo_b64"),
+        logo_content_type=body.get("logo_content_type"),
+        readme=body.get("readme"),
+    )
+    return build_workspace_zip(bundle)
+
+
+class _E2EClient:
+    def __init__(self, client: httpx.Client) -> None:
+        self._client = client
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+    def post(self, path: str, *args, **kwargs):
+        match = _SOLUTION_DEPLOY_RE.match(path)
+        if match and "json" in kwargs and "files" not in kwargs:
+            body = kwargs.pop("json") or {}
+            solution_id = match.group(1)
+            headers = kwargs.get("headers")
+            zip_bytes = _legacy_deploy_body_to_zip(self._client, solution_id, headers, body)
+            params = dict(kwargs.pop("params", {}) or {})
+            if body.get("force"):
+                params["force"] = "true"
+            if params:
+                kwargs["params"] = params
+            upload_headers = dict(headers or {})
+            for key in list(upload_headers):
+                if key.lower() == "content-type":
+                    upload_headers.pop(key)
+            kwargs["headers"] = upload_headers
+            kwargs["files"] = {
+                "file": ("deploy.zip", zip_bytes, "application/zip"),
+            }
+        return self._client.post(path, *args, **kwargs)
+
+
 @pytest.fixture(scope="session")
 def e2e_client():
     """
@@ -83,7 +162,7 @@ def e2e_client():
     Provides a configured httpx client for making requests to the API.
     """
     with httpx.Client(base_url=E2E_API_URL, timeout=60.0) as client:
-        yield client
+        yield _E2EClient(client)
 
 
 _UNSET = object()
