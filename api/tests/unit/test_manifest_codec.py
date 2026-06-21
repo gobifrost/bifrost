@@ -1636,7 +1636,13 @@ def test_child_models_have_no_standalone_orm_path(dest):
 # install-imported field, plus the set of fields that install INTENTIONALLY strips
 # (env-specific; deploy re-stamps them — organization_id, access_level, etc.).
 def _install_roundtrip_specs():
-    from bifrost.manifest import ManifestWorkflow, ManifestApp
+    from bifrost.manifest import (
+        ManifestWorkflow,
+        ManifestApp,
+        ManifestTable,
+        ManifestSolutionConfigSchema,
+        ManifestEventSource,
+    )
 
     workflow = ManifestWorkflow(
         id="11111111-1111-1111-1111-111111111111",
@@ -1665,9 +1671,46 @@ def _install_roundtrip_specs():
         access_level="role_based",
         organization_id="44444444-4444-4444-4444-444444444444",
     )
+    table = ManifestTable(
+        id="55555555-5555-5555-5555-555555555555",
+        name="tbl_sentinel",
+        description="TBL_DESC_SENTINEL",
+        organization_id="66666666-6666-6666-6666-666666666666",
+        **{"schema": {"columns": ["c_sentinel"]}},  # alias for table_schema
+    )
+    config_schema = ManifestSolutionConfigSchema(
+        id="77777777-7777-7777-7777-777777777777",
+        key="cfg_sentinel",
+        type="string",
+        required=True,
+        description="CFG_DESC_SENTINEL",
+        default="DEFAULT_SENTINEL",
+        position=7,
+    )
+    event_source = ManifestEventSource(
+        id="88888888-8888-8888-8888-888888888888",
+        name="es_sentinel",
+        source_type="topic",
+        event_type="x.sentinel",
+        organization_id="99999999-9999-9999-9999-999999999999",
+        is_active=True,
+    )
+
+    def _field_or_alias_keys(cls):
+        # Pydantic populate_by_name=True accepts BOTH the field name and its alias
+        # (e.g. table_schema / "schema"), which is how deploy's Model(**mtbl) works.
+        keys = set(cls.model_fields)
+        for f in cls.model_fields.values():
+            if f.alias:
+                keys.add(f.alias)
+        return keys
+
     def reconstruct_default(cls, bundle):
-        # What deploy._upsert_workflows does: Model(**view-fields).
-        return cls(**{k: v for k, v in bundle.items() if k in cls.model_fields})
+        # What deploy._upsert_workflows / _upsert_tables / _upsert_config_schemas /
+        # _upsert_events do: Model(**view) (populate_by_name accepts aliases like
+        # "schema"). EventSource uses model_validate — equivalent for the field set.
+        allowed = _field_or_alias_keys(cls)
+        return cls(**{k: v for k, v in bundle.items() if k in allowed})
 
     def reconstruct_app(cls, bundle):
         # What deploy._upsert_apps does: path is NOT in the view (App emits the
@@ -1679,9 +1722,13 @@ def _install_roundtrip_specs():
         return cls(**fields)
 
     return [
-        # (model, reconstruct_fn, install_stripped fields deploy re-stamps and may not survive)
+        # (model, reconstruct_fn, install_stripped fields deploy re-stamps and may not survive).
+        # Covers every entity deploy reconstructs via Model(**view).to_orm_values(INSTALL).
         (workflow, reconstruct_default, {"organization_id", "access_level", "is_active"}),
         (app, reconstruct_app, {"organization_id", "access_level", "is_active", "repo_path"}),
+        (table, reconstruct_default, {"organization_id"}),
+        (config_schema, reconstruct_default, {"organization_id", "solution_id"}),
+        (event_source, reconstruct_default, {"organization_id"}),
     ]
 
 
