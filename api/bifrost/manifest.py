@@ -103,6 +103,7 @@ class ManifestRole(EntityCodec, BaseModel):
 # capture layer merges in via ``extras=``.
 _WORKFLOW_INSTALL_ALLOWLIST = frozenset({
     "id", "name", "function_name", "path", "type", "description",
+    "tool_description",
     "endpoint_enabled", "public_endpoint", "timeout_seconds", "category",
     "tags", "access_level", "roles", "role_names",
 })

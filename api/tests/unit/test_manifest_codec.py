@@ -1616,3 +1616,95 @@ def test_child_models_have_no_standalone_orm_path(dest):
     for child in children:
         with pytest.raises(NotImplementedError):
             child.to_orm_values(dest)
+
+
+# ---------------------------------------------------------------------------
+# Structural guard against "Leak A": a field that to_orm_values(INSTALL) writes
+# from self.X but that view(INSTALL)'s allowlist drops will silently reconstitute
+# to its model DEFAULT on a Solution redeploy (deploy does
+# `Model(**view).to_orm_values(INSTALL)`), clearing the real DB value. The
+# allowlist and to_orm_values are two hand-maintained lists; nothing fails when
+# they disagree. This test makes that disagreement un-mergeable: for each
+# allowlist entity, every install-imported model field must SURVIVE the
+# capture->view->reconstruct->import round-trip (or be explicitly env-stripped).
+#
+# B2 (Workflow.tool_description dropped from the install allowlist) is exactly
+# this class; this guard fails until B2 is fixed.
+# ---------------------------------------------------------------------------
+
+# Per-entity: a factory that builds a model with a NON-DEFAULT sentinel in every
+# install-imported field, plus the set of fields that install INTENTIONALLY strips
+# (env-specific; deploy re-stamps them — organization_id, access_level, etc.).
+def _install_roundtrip_specs():
+    from bifrost.manifest import ManifestWorkflow, ManifestApp
+
+    workflow = ManifestWorkflow(
+        id="11111111-1111-1111-1111-111111111111",
+        name="wf_sentinel",
+        function_name="fn_sentinel",
+        path="workflows/sentinel.py",
+        type="tool",
+        description="DESC_SENTINEL",
+        tool_description="TOOLDESC_SENTINEL",
+        endpoint_enabled=True,
+        public_endpoint=True,
+        timeout_seconds=4242,
+        category="CAT_SENTINEL",
+        tags=["t_sentinel"],
+        access_level="role_based",
+        organization_id="22222222-2222-2222-2222-222222222222",
+    )
+    app = ManifestApp(
+        id="33333333-3333-3333-3333-333333333333",
+        name="app_sentinel",
+        path="apps/app-sentinel",
+        slug="app-sentinel",
+        description="APP_DESC_SENTINEL",
+        dependencies={"left-pad": "1.0.0"},
+        app_model="standalone_v2",
+        access_level="role_based",
+        organization_id="44444444-4444-4444-4444-444444444444",
+    )
+    def reconstruct_default(cls, bundle):
+        # What deploy._upsert_workflows does: Model(**view-fields).
+        return cls(**{k: v for k, v in bundle.items() if k in cls.model_fields})
+
+    def reconstruct_app(cls, bundle):
+        # What deploy._upsert_apps does: path is NOT in the view (App emits the
+        # transport extra repo_path instead); deploy re-derives path from
+        # repo_path or falls back to apps/{slug} before rebuilding the model.
+        fields = {k: v for k, v in bundle.items() if k in cls.model_fields}
+        if "path" not in fields:
+            fields["path"] = bundle.get("repo_path") or f"apps/{bundle['slug']}"
+        return cls(**fields)
+
+    return [
+        # (model, reconstruct_fn, install_stripped fields deploy re-stamps and may not survive)
+        (workflow, reconstruct_default, {"organization_id", "access_level", "is_active"}),
+        (app, reconstruct_app, {"organization_id", "access_level", "is_active", "repo_path"}),
+    ]
+
+
+@pytest.mark.parametrize("model,reconstruct,install_stripped", _install_roundtrip_specs())
+def test_install_view_preserves_every_imported_field(model, reconstruct, install_stripped):
+    """view(INSTALL) must carry every field to_orm_values(INSTALL) reads, so a
+    redeploy reconstructs the real value, not the model default."""
+    cls = type(model)
+    before = model.to_orm_values(Destination.INSTALL).direct
+
+    # Capture -> bundle dict -> reconstruct (exactly as the deployer does) -> import again.
+    bundle = model.view(Destination.INSTALL)
+    reconstructed = reconstruct(cls, bundle)
+    after = reconstructed.to_orm_values(Destination.INSTALL).direct
+
+    dropped = {
+        k for k in before
+        if k not in install_stripped and before.get(k) != after.get(k)
+    }
+    assert not dropped, (
+        f"{cls.__name__}: install round-trip silently changed field(s) {sorted(dropped)} "
+        f"(view(INSTALL) drops them, so redeploy reconstitutes the model default). "
+        f"Add them to the install allowlist, or to install_stripped if deploy re-stamps them.\n"
+        f"  before={ {k: before.get(k) for k in dropped} }\n"
+        f"  after = { {k: after.get(k) for k in dropped} }"
+    )
