@@ -1138,8 +1138,12 @@ class ManifestResolver:
                 match_on="id",
             ))
 
-        # Role sync op
-        if hasattr(mwf, "roles") and mwf.roles:
+        # Role sync op. Fire whenever the entry carries a `roles` key — INCLUDING an
+        # empty list — so emptying roles clears the bindings, matching install deploy
+        # (full role sync). git-sync always serializes `roles` (model default []), so
+        # a present-empty list reliably means "no roles" (B3). `is not None` guards a
+        # hypothetical roles-less model; SyncRoles({}) deletes all rows.
+        if getattr(mwf, "roles", None) is not None:
             role_ids = {UUID(r) for r in mwf.roles}
             ops.append(SyncRoles(
                 junction_model=WorkflowRole,
@@ -1966,8 +1970,8 @@ class ManifestResolver:
                 match_on="id",
             ))
 
-        # Role sync op
-        if hasattr(mapp, "roles") and mapp.roles:
+        # Role sync op — fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
+        if getattr(mapp, "roles", None) is not None:
             role_ids = {UUID(r) for r in mapp.roles}
             ops.append(SyncRoles(
                 junction_model=AppRole,
@@ -2542,8 +2546,9 @@ class ManifestResolver:
                 match_on="id",
             ))
 
-        # Role sync op (FormRole.assigned_by is NOT NULL — pass via extra_fields)
-        if hasattr(mform, "roles") and mform.roles:
+        # Role sync op (FormRole.assigned_by is NOT NULL — pass via extra_fields).
+        # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
+        if getattr(mform, "roles", None) is not None:
             role_ids = {UUID(r) for r in mform.roles}
             ops.append(SyncRoles(
                 junction_model=FormRole,
@@ -2593,8 +2598,9 @@ class ManifestResolver:
                 match_on="id",
             ))
 
-        # Role sync op (AgentRole.assigned_by is NOT NULL — pass via extra_fields)
-        if hasattr(magent, "roles") and magent.roles:
+        # Role sync op (AgentRole.assigned_by is NOT NULL — pass via extra_fields).
+        # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
+        if getattr(magent, "roles", None) is not None:
             role_ids = {UUID(r) for r in magent.roles}
             ops.append(SyncRoles(
                 junction_model=AgentRole,

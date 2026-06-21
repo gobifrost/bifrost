@@ -4314,6 +4314,77 @@ class TestRoleAssignmentSync:
         assert role_a in assigned
         assert role_b not in assigned
 
+    async def test_workflow_all_roles_removed_when_manifest_roles_empty(
+        self, db_session: AsyncSession, sync_service, working_clone,
+    ):
+        """Existing roles A,B; manifest workflow has roles:[] → BOTH removed.
+
+        Regression for B3: the git-sync resolver gated SyncRoles on a truthy
+        roles list, so emptying a manifest entry's roles silently left the old
+        bindings in place — diverging from install deploy, which full-syncs roles
+        (empty list clears them). git-sync always serializes `roles` (the model
+        default is []), so a present-and-empty list reliably means "no roles".
+        """
+        from src.models.orm.users import Role
+        from src.models.orm.workflow_roles import WorkflowRole
+
+        role_a = uuid4()
+        role_b = uuid4()
+        wf_id = uuid4()
+
+        db_session.add(Role(id=role_a, name="EmptyClearRA", created_by="git-sync"))
+        db_session.add(Role(id=role_b, name="EmptyClearRB", created_by="git-sync"))
+        db_session.add(Workflow(
+            id=wf_id, name="role_empty_wf", function_name="git_sync_test",
+            path="workflows/role_empty.py", is_active=True,
+        ))
+        await db_session.flush()
+        db_session.add(WorkflowRole(workflow_id=wf_id, role_id=role_a, assigned_by="test"))
+        db_session.add(WorkflowRole(workflow_id=wf_id, role_id=role_b, assigned_by="test"))
+        await db_session.commit()
+
+        work_dir = Path(working_clone.working_dir)
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+
+        wf_path = work_dir / "workflows" / "role_empty.py"
+        wf_path.parent.mkdir(parents=True, exist_ok=True)
+        wf_path.write_text(SAMPLE_WORKFLOW_PY)
+
+        (bifrost_dir / "roles.yaml").write_text(yaml.dump({
+            "roles": [
+                {"id": str(role_a), "name": "EmptyClearRA"},
+                {"id": str(role_b), "name": "EmptyClearRB"},
+            ]
+        }, default_flow_style=False))
+        (bifrost_dir / "workflows.yaml").write_text(yaml.dump({
+            "workflows": {
+                "role_empty_wf": {
+                    "id": str(wf_id),
+                    "path": "workflows/role_empty.py",
+                    "function_name": "git_sync_test",
+                    "type": "workflow",
+                    "roles": [],  # all roles removed
+                }
+            }
+        }, default_flow_style=False))
+
+        working_clone.index.add([
+            "workflows/role_empty.py",
+            ".bifrost/roles.yaml",
+            ".bifrost/workflows.yaml",
+        ])
+        working_clone.index.commit("Empty workflow roles")
+        working_clone.remotes.origin.push("main")
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success
+
+        rows = (await db_session.execute(
+            select(WorkflowRole.role_id).where(WorkflowRole.workflow_id == wf_id)
+        )).all()
+        assert {row[0] for row in rows} == set(), "empty manifest roles must clear all bindings"
+
     async def test_form_role_assignment_synced(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
