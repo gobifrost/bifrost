@@ -1371,6 +1371,52 @@ async def test_agent_git_sync_parity(db_session):
         await db_session.commit()
 
 
+def test_agent_from_row_coerces_uuid_junction_ids():
+    """from_row must accept raw UUID junction ids and coerce them to strings.
+
+    Solution capture (capture._junction_ids) returns list[UUID] for
+    tool_ids / delegated_agent_ids / mcp_connection_ids, whereas the git-sync
+    generator pre-stringifies them. Both feed ManifestAgent.from_row, whose
+    fields are list[str]. Without coercion, capturing any agent that has tools
+    or delegated agents raises a Pydantic ValidationError (regression vs the
+    pre-unification capture path, which put raw UUIDs straight into the bundle
+    dict and never validated). Pin the coercion here.
+    """
+    import uuid
+    from bifrost.manifest import ManifestAgent
+
+    tool_uuid = uuid.uuid4()
+    deleg_uuid = uuid.uuid4()
+    mcp_uuid = uuid.uuid4()
+
+    class _AgentRow:
+        id = uuid.uuid4()
+        name = "a"
+        description = None
+        system_prompt = "x"
+        channels = []
+        access_level = None
+        knowledge_sources = []
+        system_tools = []
+        llm_model = None
+        llm_max_tokens = None
+        max_iterations = None
+        max_token_budget = None
+        organization_id = None
+
+    m = ManifestAgent.from_row(
+        _AgentRow(),
+        roles=[],
+        tool_ids=[tool_uuid],
+        delegated_agent_ids=[deleg_uuid],
+        mcp_connection_ids=[mcp_uuid],
+    )
+    assert m.tool_ids == [str(tool_uuid)]
+    assert m.delegated_agent_ids == [str(deleg_uuid)]
+    assert m.mcp_connection_ids == [str(mcp_uuid)]
+    assert all(isinstance(x, str) for x in m.tool_ids)
+
+
 @pytest.mark.e2e
 async def test_agent_install_parity(db_session):
     """INSTALL view of a seeded solution-owned Agent matches the committed golden snapshot.

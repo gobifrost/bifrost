@@ -10,6 +10,7 @@ Used for:
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -126,9 +127,9 @@ def serialize_form(
 def serialize_agent(
     agent: Agent,
     roles: list[str] | None = None,
-    tool_ids: list[str] | None = None,
-    delegated_agent_ids: list[str] | None = None,
-    mcp_connection_ids: list[str] | None = None,
+    tool_ids: "Sequence[str | UUID] | None" = None,
+    delegated_agent_ids: "Sequence[str | UUID] | None" = None,
+    mcp_connection_ids: "Sequence[str | UUID] | None" = None,
 ) -> ManifestAgent:
     """Serialize an Agent ORM object to ManifestAgent with inline content.
 

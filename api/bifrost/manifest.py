@@ -14,8 +14,10 @@ Stateless — no DB or S3 dependency.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 import yaml
 from pydantic import BaseModel, Field
@@ -454,9 +456,9 @@ class ManifestAgent(EntityCodec, BaseModel):
         agent,
         *,
         roles: list[str] | None = None,
-        tool_ids: list[str] | None = None,
-        delegated_agent_ids: list[str] | None = None,
-        mcp_connection_ids: list[str] | None = None,
+        tool_ids: Sequence[str | UUID] | None = None,
+        delegated_agent_ids: Sequence[str | UUID] | None = None,
+        mcp_connection_ids: Sequence[str | UUID] | None = None,
     ) -> "ManifestAgent":
         """Build from an Agent ORM row, mirroring serialize_agent exactly.
 
@@ -473,11 +475,14 @@ class ManifestAgent(EntityCodec, BaseModel):
             description=agent.description,
             system_prompt=agent.system_prompt,
             channels=list(agent.channels) if agent.channels else [],
-            tool_ids=tool_ids or [],
-            delegated_agent_ids=delegated_agent_ids or [],
+            # Junction ids arrive as UUIDs from solution capture (_junction_ids)
+            # and as strings from the git-sync generator — coerce so both callers
+            # satisfy the list[str] fields without per-caller stringification.
+            tool_ids=[str(t) for t in (tool_ids or [])],
+            delegated_agent_ids=[str(d) for d in (delegated_agent_ids or [])],
             knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
             system_tools=list(agent.system_tools) if agent.system_tools else [],
-            mcp_connection_ids=mcp_connection_ids or [],
+            mcp_connection_ids=[str(m) for m in (mcp_connection_ids or [])],
             llm_model=agent.llm_model,
             llm_max_tokens=agent.llm_max_tokens,
             max_iterations=agent.max_iterations,
