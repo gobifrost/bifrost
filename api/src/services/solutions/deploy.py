@@ -1344,14 +1344,15 @@ class SolutionDeployer:
             # writer — full-replace from the manifest so a redeploy reflects both
             # adds and removes. connection_ids reference env-scoped MCPConnection
             # rows (NOT solution entities), so they are NOT id-remapped.
-            # Guard: install bundles omit mcp_connection_ids entirely (capture
-            # _agent_entries does not include them). A missing/empty key must NOT
-            # trigger a full-replace-to-[] that wipes existing grants — mirror the
-            # git-sync guard in _index_agents_from_manifest (its `if mcp_ids or
-            # _agent_has_inline_content(...)` gate that skips the sync when there's
-            # nothing to set).
-            mcp_ids = self._parse_uuids(magent.get("mcp_connection_ids") or [])
-            if mcp_ids:
+            # Guard on KEY PRESENCE, not truthiness: install bundles built by
+            # capture._agent_entries OMIT mcp_connection_ids entirely — an ABSENT
+            # key must NOT trigger a full-replace-to-[] that wipes existing grants
+            # (the redeploy bug). But a PRESENT key, even `[]`, is an explicit
+            # intent ("these grants, including none") and must full-replace so an
+            # author can remove all grants. (capture never emits [], so this only
+            # reaches hand-authored / git-sync bundles.)
+            if "mcp_connection_ids" in magent:
+                mcp_ids = self._parse_uuids(magent.get("mcp_connection_ids") or [])
                 await self._sync_agent_mcp_connections(agent_id, mcp_ids)
 
     async def _upsert_config_schemas(

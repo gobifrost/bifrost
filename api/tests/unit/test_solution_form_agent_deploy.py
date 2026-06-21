@@ -456,6 +456,54 @@ class TestAgentScalarAndMCPDeploy:
         # Also confirm the redeploy actually ran (scalar did update).
         assert agent.max_iterations == 9, "max_iterations must update on redeploy"
 
+    async def test_redeploy_with_explicit_empty_mcp_ids_removes_grants(self, db_session):
+        """Counterpart to the absent-key guard: an EXPLICIT mcp_connection_ids=[]
+        is an intentional "remove all grants" and MUST full-replace to empty.
+
+        The guard distinguishes key PRESENCE from truthiness: absent → skip
+        (don't wipe), present-but-empty → full-replace (honor the removal). A
+        hand-authored / git-sync bundle can carry [] even though capture never
+        does. Removing the `"mcp_connection_ids" in magent` presence check (e.g.
+        reverting to `if mcp_ids:`) would make this test fail — the grant would
+        survive instead of being removed."""
+        from sqlalchemy import select as _select
+
+        from src.models.orm.external_mcp import AgentMCPConnection
+
+        db = db_session
+        sol = await self._install(db)
+        conn_a = await self._mcp_connection(db)
+        aid = str(uuid.uuid4())
+
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            agents=[{
+                "id": aid, "name": "a", "system_prompt": "hi",
+                "mcp_connection_ids": [str(conn_a.id)],
+            }],
+        ))
+        await db.flush()
+        agent_id = solution_entity_id(sol.id, uuid.UUID(aid))
+
+        # Redeploy with an EXPLICIT empty list → remove all grants.
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            agents=[{
+                "id": aid, "name": "a", "system_prompt": "hi",
+                "mcp_connection_ids": [],
+            }],
+        ))
+        await db.flush()
+
+        granted = set((await db.execute(
+            _select(AgentMCPConnection.connection_id).where(
+                AgentMCPConnection.agent_id == agent_id
+            )
+        )).scalars().all())
+        assert granted == set(), (
+            "explicit mcp_connection_ids=[] must full-replace and remove all grants"
+        )
+
 
 @pytest.mark.e2e
 class TestSolutionRoleBindingsDeploy:
