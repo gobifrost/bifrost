@@ -5,6 +5,17 @@ git-sync path) and carries: the per-field-class policy that path applies, the
 row-pairing strategy, and thin async wrappers that drive the REAL export/import
 code — NO reimplementation of any serialization logic.
 
+CONFORMANCE FRAMING (post Slice 4 #390): each ``Manifest*`` model now owns its
+own serialization (``from_row`` / ``view(dest)`` / ``to_orm_values(dest)``), and
+the four legacy writer families (``manifest_generator.serialize_*``,
+``capture._*_entries``, ``manifest_import._resolve_*``, ``deploy._upsert_*``)
+delegate to it. So ``FIELD_OVERRIDES`` and ``EXTRA_FIELD_POLICY`` below are no
+longer a babysitter for four hand-written writers that could each drift — they
+are the CONFORMANCE SPEC for the ONE model in charge: the per-path divergences a
+single source-of-truth must reproduce. A new entry here means the model's view /
+partition genuinely differs on that path, not that one of four writers forgot a
+field.
+
 The ``_repo`` path drives:
   - export (DB -> ``.bifrost/*.yaml``): ``GitHubSyncService._regenerate_manifest_to_dir``
     (the split-file writer the importer reads — NOT bare ``generate_manifest``).
