@@ -900,8 +900,12 @@ class TestManifestWorkflowImport:
             {"wf_by_natural": {}, "wf_ids": set()},
         )
 
-        assert len(ops) == 1
-        assert isinstance(ops[0], Upsert)
-        assert ops[0].model is Workflow
-        assert ops[0].values["name"] == "custom_tool_name"
-        assert ops[0].values["function_name"] == "python_function_name"
+        # The resolver emits the workflow Upsert plus a SyncRoles op — the latter
+        # always present now (B3): roles defaults to [] and an empty list clears
+        # bindings, matching install deploy. This test is about the Upsert's name,
+        # so assert on the Upsert op specifically rather than the op count.
+        upserts = [op for op in ops if isinstance(op, Upsert)]
+        assert len(upserts) == 1
+        assert upserts[0].model is Workflow
+        assert upserts[0].values["name"] == "custom_tool_name"
+        assert upserts[0].values["function_name"] == "python_function_name"
