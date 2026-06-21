@@ -1,9 +1,11 @@
 """
-Solution export — rebuild the workspace zip live from owned entities.
+Solution export — serialize Solution workspace zips.
 
-``GET /api/solutions/{id}/export`` calls
+``POST /api/solutions/{id}/export`` calls
 :func:`build_workspace_zip` on every request so the zip always reflects
-current ownership. No zip is cached to S3; the bundle is serialized on demand.
+current ownership unless the install has a deploy-time source artifact. In that
+case shareable export returns the stored artifact, and full export overlays the
+encrypted runtime payload onto that artifact.
 
 The zip is the same shape ``preview_zip``/``install_zip`` consume:
 ``bifrost.solution.yaml`` + ``.bifrost/*.yaml`` manifests + Python source +
@@ -22,6 +24,7 @@ import yaml
 
 if TYPE_CHECKING:
     from src.services.solutions.deploy import SolutionBundle
+    from src.services.solutions.secrets_blob import SolutionContent
 
 # Reverse of the CLI's logo suffix → content-type map (deploy re-validates).
 _LOGO_EXTENSIONS = {
@@ -213,5 +216,41 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     password=password,
                 ),
             )
+
+    return buf.getvalue()
+
+
+def add_encrypted_content_to_workspace_zip(
+    source_zip: bytes,
+    content: "SolutionContent",
+    *,
+    password: str,
+) -> bytes:
+    """Return ``source_zip`` plus a fresh encrypted runtime-content blob.
+
+    The stored source artifact is immutable deploy input. A full backup export
+    should not rebuild that source from DB state; it should copy the artifact and
+    overlay the runtime payload as ``.bifrost/secrets.enc`` in the response zip.
+    If the source already contains that member, replace it so repeated full
+    exports never produce duplicate zip entries.
+    """
+    from src.services.solutions.secrets_blob import encode_secrets_blob
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(source_zip), "r") as src, zipfile.ZipFile(
+        buf, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+
+        def put(path: str, data: bytes | str) -> None:
+            info = zipfile.ZipInfo(path, date_time=_ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            dst.writestr(info, data)
+
+        for name in src.namelist():
+            if name == ".bifrost/secrets.enc":
+                continue
+            put(name, src.read(name))
+
+        put(".bifrost/secrets.enc", encode_secrets_blob(content, password=password))
 
     return buf.getvalue()

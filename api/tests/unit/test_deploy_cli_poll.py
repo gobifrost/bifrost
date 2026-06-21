@@ -61,3 +61,25 @@ def test_poll_surfaces_failure(capsys):
     captured = capsys.readouterr()
     assert rc == 1
     assert "diverged" in (captured.out + captured.err)
+
+
+def test_poll_prints_phase_changes(capsys):
+    class PhaseClient:
+        def __init__(self) -> None:
+            self.payloads = [
+                {"status": "running", "result": {"phase": "storing source artifact"}},
+                {"status": "running", "result": {"phase": "building app dist"}},
+                {"status": "running", "result": {"phase": "building app dist"}},
+                {"status": "succeeded", "result": {}},
+            ]
+
+        async def get(self, path: str, **kwargs):  # noqa: ANN003
+            return _FakeResponse(self.payloads.pop(0))
+
+    rc = _run(_poll_deploy_job(PhaseClient(), "job-3", interval=0.0))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "storing source artifact" in out
+    assert "building app dist" in out
+    assert out.count("building app dist") == 1

@@ -17,7 +17,9 @@ integers agree and fails if a CLI-consumed contract changed without a decision.
 #     organization_id; descriptor no longer carries scope (2026-06-15)
 # v5: Solution deploy is async: POST /deploy returns 202 + deploy_job_id and
 #     callers poll SolutionDeployJobStatus for the deploy summary (2026-06-17)
-CONTRACT_VERSION: int = 5
+# v6: Solution deploy uploads a workspace zip as multipart/form-data instead of
+#     the legacy JSON bundle request body (2026-06-21)
+CONTRACT_VERSION: int = 6
 
 
 def get_contract_version() -> int:

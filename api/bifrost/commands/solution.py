@@ -7,8 +7,8 @@ loop runs headless (criterion 17).
 
 * ``bifrost solution init`` — scaffold a ``bifrost.solution.yaml`` descriptor.
 * ``bifrost solution deploy`` (alias: top-level ``bifrost deploy``) — read the
-  descriptor, ensure the install exists, bundle the workspace's Python source +
-  workflow manifest entries, and POST to ``/api/solutions/{id}/deploy``.
+  descriptor, ensure the install exists, zip the workspace, and POST it to
+  ``/api/solutions/{id}/deploy``.
 
 Apps/forms/agents/tables bundling joins in their sub-plans; Sub-plan 1 wires the
 load-bearing workflow path.
@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import io
 import json
 import os
 import pathlib
 import subprocess
 import time
+import zipfile
 
 import click
 import yaml
@@ -1314,6 +1316,7 @@ async def _poll_deploy_job(client, job_id: str, *, interval: float = 3.0) -> int
     ``succeeded``, 1 on ``failed`` (printing the server-captured error).
     """
     start = time.monotonic()
+    last_phase: str | None = None
     while True:
         resp = await client.get(f"/api/solutions/deploy-jobs/{job_id}")
         if resp.status_code != 200:
@@ -1335,6 +1338,10 @@ async def _poll_deploy_job(client, job_id: str, *, interval: float = 3.0) -> int
                 error = f"{error}\nRe-run with --force to downgrade."
             click.echo(f"Deploy failed: {error}", err=True)
             return 1
+        phase = (body.get("result") or {}).get("phase")
+        if isinstance(phase, str) and phase and phase != last_phase:
+            click.echo(f"Deploy phase: {phase}")
+            last_phase = phase
         elapsed = int(time.monotonic() - start)
         click.echo(f"Still deploying... {elapsed}s")
         await asyncio.sleep(interval)
@@ -1343,6 +1350,7 @@ async def _poll_deploy_job(client, job_id: str, *, interval: float = 3.0) -> int
 # Vendoring modules/ + shared/ into a Solution can balloon the bundle; warn the
 # operator loudly so an accidental dependency tree doesn't ship silently.
 _VENDORED_WARN_THRESHOLD = 200
+_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 
 
 @dataclasses.dataclass
@@ -1376,6 +1384,47 @@ def summarize_bundle(python_files: dict, apps: list, vendored_count: int) -> Bun
     return BundleSummary(count, mb, warn, msg)
 
 
+def _build_deploy_zip(
+    workspace: pathlib.Path,
+    *,
+    extra_text_files: dict[str, str],
+) -> bytes:
+    """Build the workspace zip sent by ``solution deploy``.
+
+    Deploy zips must carry ``.bifrost/`` manifests, unlike normal file sync,
+    but must still skip dependency/build output and local secrets.
+    """
+    import pathspec
+
+    from bifrost.ignore_patterns import DEFAULT_IGNORE_PATTERNS
+
+    patterns = [p for p in DEFAULT_IGNORE_PATTERNS if p != ".bifrost/"]
+    patterns.append(".bifrost/secrets.enc")
+    ignore_spec = pathspec.GitIgnoreSpec.from_lines(patterns)
+    entries: dict[str, bytes] = {}
+    for path in workspace.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(workspace).as_posix()
+        if ignore_spec.match_file(rel):
+            continue
+        entries[rel] = path.read_bytes()
+
+    for rel, content in extra_text_files.items():
+        rel_path = pathlib.PurePosixPath(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            raise click.ClickException(f"refusing unsafe vendored path: {rel}")
+        entries[rel_path.as_posix()] = content.encode("utf-8")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel, data in sorted(entries.items()):
+            info = zipfile.ZipInfo(rel, date_time=_ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, data)
+    return buf.getvalue()
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_id", default=None, help="Target install id (override when ambiguous).")
@@ -1393,32 +1442,12 @@ def deploy_cmd(
         )
     descriptor = load_descriptor(workspace)
 
-    # Solution-level icon: `logo:` in bifrost.solution.yaml points at an image
-    # relative to the workspace root; carried base64 for deploy to stamp on the
-    # install (shown on the /solutions catalog). Errors loudly when missing.
-    solution_logo_b64: str | None = None
-    solution_logo_content_type: str | None = None
-    if descriptor.logo:
-        import base64
-
-        logo_file = workspace / descriptor.logo
-        if not logo_file.is_file():
-            raise click.ClickException(f"solution logo file not found at {logo_file}")
-        solution_logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("ascii")
-        solution_logo_content_type = _LOGO_CONTENT_TYPES.get(logo_file.suffix.lower())
-
     click.echo("Scanning solution files...")
     python_files = _collect_python_files(workspace)
     workflows = _collect_workflows(workspace)
-    tables = _collect_tables(workspace)
     apps = _collect_apps(workspace)
     forms = _collect_forms(workspace)
     agents = _collect_agents(workspace)
-    claims = _collect_claims(workspace)
-    config_schemas = _collect_config_schemas(workspace)
-    connection_schemas = _collect_connection_schemas(workspace)
-    events = _collect_events(workspace)
-    readme = _collect_readme(workspace)
     click.echo(
         f"  found {len(python_files)} python file(s), {len(workflows)} workflow(s), "
         f"{len(apps)} app(s), {len(forms)} form(s), {len(agents)} agent(s)."
@@ -1493,30 +1522,22 @@ def deploy_cmd(
 
         summary = summarize_bundle(bundle_python, apps, len(vendored))
         click.echo(summary.message, err=summary.warn)
+        zip_bytes = _build_deploy_zip(workspace, extra_text_files=vendored)
 
-        click.echo("Uploading bundle...")
+        click.echo("Uploading workspace zip...")
         # Deploy is async server-side; the POST returns a job id quickly. We give
         # the upload itself a generous timeout (large bundles) but never block on
         # the deploy work — that is observed via the poll loop below.
         deploy = await client.post(
             f"/api/solutions/{target_id}/deploy",
-            json={
-                "python_files": bundle_python,
-                "workflows": workflows,
-                "tables": tables,
-                "apps": apps,
-                "forms": forms,
-                "agents": agents,
-                "claims": claims,
-                "config_schemas": config_schemas,
-                "connection_schemas": connection_schemas,
-                "events": events,
-                "readme": readme,
-                "version": descriptor.version,
-                "logo_b64": solution_logo_b64,
-                "logo_content_type": solution_logo_content_type,
-                "force": force,
+            files={
+                "file": (
+                    f"{descriptor.slug}.zip",
+                    zip_bytes,
+                    "application/zip",
+                )
             },
+            params={"force": "true" if force else "false"},
             timeout=600,
         )
         if deploy.status_code != 202:

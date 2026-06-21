@@ -48,6 +48,7 @@ from src.models.enums import ConfigType
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution
 from src.services.solutions.deploy import (
+    DeployResult,
     SolutionBundle,
     SolutionDeployer,
     solution_entity_id,
@@ -538,6 +539,41 @@ async def install_zip(
 
     await db.refresh(solution)
     return solution
+
+
+async def deploy_zip_to_solution(
+    db: AsyncSession,
+    solution: Solution,
+    data: bytes,
+    *,
+    force: bool = False,
+) -> DeployResult:
+    """Deploy an existing install from a workspace zip.
+
+    This is the deploy half of ``install_zip`` without install resolution,
+    config-value application, commits, or S3 finalize. Callers own the write
+    lock, transaction commit, and ``DeployResult.finalize_s3()`` timing.
+    """
+    with tempfile.TemporaryDirectory(prefix="bifrost-zip-deploy-") as tmp:
+        _safe_extract(data, tmp)
+        workspace = Path(tmp)
+        preview = _parse_workspace(workspace)
+        if not preview.slug or not preview.name:
+            raise ValueError(
+                "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
+            )
+        bundle = _build_bundle(solution, preview, workspace)
+
+        from src.services.solutions.dependency_walker import check_install_needs
+
+        needs = check_install_needs(bundle.python_files)
+        if needs:
+            items = ", ".join(
+                f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
+            )
+            raise UnmetDependency(f"Solution has unmet dependencies: {items}")
+
+        return await SolutionDeployer(db).deploy(bundle, force=force)
 
 
 async def _assert_no_unforced_collisions(

@@ -324,6 +324,13 @@ class SolutionDeployer:
         solution = bundle.solution
         sid = solution.id
 
+        # Source portability artifact: the exact workspace shape export/install
+        # consume. Build it from the author-time bundle before per-install UUID
+        # remapping, then store it only after the DB commit in finalize_s3.
+        from src.services.solutions.export import build_workspace_zip
+
+        source_artifact = build_workspace_zip(bundle)
+
         # ── Module-closure backstop — before ANY writes ──────────────────────
         # Primary gate is in zip_install (returns a clean 422). This backstop
         # covers the OTHER deploy callers (the direct /deploy endpoint and
@@ -452,6 +459,10 @@ class SolutionDeployer:
                 from src.core.cache import invalidate_all_config
 
                 await invalidate_all_config(install_org_id_str)
+            await _retry_idempotent(
+                "store source artifact", sid,
+                lambda: self._write_source_artifact(sid, source_artifact),
+            )
             await _retry_idempotent(
                 "write python source", sid,
                 lambda: self._write_python(sid, rb.python_files),
@@ -720,6 +731,11 @@ class SolutionDeployer:
             )
 
     # ── 1. Python source → SolutionStorage (full replace + cache sync) ───────
+    async def _write_source_artifact(self, sid: UUID, source_zip: bytes) -> None:
+        from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
+
+        await SolutionSourceArtifactStorage(sid).write(source_zip)
+
     async def _write_python(self, sid: UUID, python_files: dict[str, str]) -> None:
         """Full-replace this install's Python source and keep the module cache
         consistent.

@@ -5,11 +5,22 @@ from __future__ import annotations
 
 import base64
 import io
+import uuid
 import zipfile
 
+import pytest
+
+from src.core.auth import ExecutionContext
+from src.core.principal import UserPrincipal
 from src.models.orm.solutions import Solution
+from src.routers.solutions import export_solution
 from src.services.solutions.deploy import SolutionBundle
-from src.services.solutions.export import build_workspace_zip
+from src.services.solutions.export import (
+    add_encrypted_content_to_workspace_zip,
+    build_workspace_zip,
+)
+from src.services.solutions.secrets_blob import SolutionContent, decode_secrets_blob
+from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 from src.services.solutions.zip_install import preview_zip
 
 _PNG = base64.b64encode(b"\x89PNG\r\n\x1a\nfakepng").decode("ascii")
@@ -87,6 +98,16 @@ def _bundle() -> SolutionBundle:
             }
         ],
     )
+
+
+def _admin(db) -> tuple[ExecutionContext, UserPrincipal]:
+    user = UserPrincipal(
+        user_id=uuid.uuid4(),
+        email="admin@example.com",
+        organization_id=None,
+        is_superuser=True,
+    )
+    return ExecutionContext(user=user, org_id=None, db=db), user
 
 
 def test_export_round_trips_through_preview() -> None:
@@ -173,3 +194,114 @@ def test_export_descriptor_omits_scope_regardless_of_org() -> None:
     with zipfile.ZipFile(io.BytesIO(build_workspace_zip(b))) as z:
         descriptor = yaml.safe_load(z.read("bifrost.solution.yaml"))
     assert "scope" not in descriptor
+
+
+def test_full_export_overlays_encrypted_content_without_rebuilding_source() -> None:
+    source_zip = build_workspace_zip(_bundle())
+
+    data = add_encrypted_content_to_workspace_zip(
+        source_zip,
+        SolutionContent(
+            config_values={"API_KEY": "secret-value"},
+            table_data={"things": [{"title": "stored row"}]},
+        ),
+        password="pw",
+    )
+
+    assert data != source_zip
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = set(z.namelist())
+        assert "apps/dash/src/App.tsx" in names
+        assert "workflows/main.py" in names
+        blob = z.read(".bifrost/secrets.enc").decode()
+
+    content = decode_secrets_blob(blob, password="pw")
+    assert content.config_values == {"API_KEY": "secret-value"}
+    assert content.table_data == {"things": [{"title": "stored row"}]}
+
+
+def test_full_export_replaces_any_existing_encrypted_content() -> None:
+    source_zip = add_encrypted_content_to_workspace_zip(
+        build_workspace_zip(_bundle()),
+        SolutionContent(config_values={"OLD": "value"}),
+        password="old",
+    )
+
+    data = add_encrypted_content_to_workspace_zip(
+        source_zip,
+        SolutionContent(config_values={"NEW": "value"}),
+        password="new",
+    )
+
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        assert z.namelist().count(".bifrost/secrets.enc") == 1
+        blob = z.read(".bifrost/secrets.enc").decode()
+    content = decode_secrets_blob(blob, password="new")
+    assert content.config_values == {"NEW": "value"}
+
+
+@pytest.mark.e2e
+async def test_shareable_export_returns_stored_source_artifact(db_session) -> None:
+    sol = Solution(
+        id=uuid.uuid4(),
+        slug=f"stored-{uuid.uuid4().hex[:8]}",
+        name="Stored Source",
+        organization_id=None,
+    )
+    db_session.add(sol)
+    await db_session.flush()
+    source_bundle = _bundle()
+    source_bundle.python_files["workflows/main.py"] = "def run():\n    return 'artifact'\n"
+    source_zip = build_workspace_zip(source_bundle)
+    await SolutionSourceArtifactStorage(sol.id).write(source_zip)
+
+    ctx, user = _admin(db_session)
+    response = await export_solution(sol.id, ctx, user, mode="shareable")
+
+    assert response.body == source_zip
+
+
+@pytest.mark.e2e
+async def test_full_export_overlays_live_payload_on_stored_source(
+    db_session,
+    monkeypatch,
+) -> None:
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol = Solution(
+        id=uuid.uuid4(),
+        slug=f"full-{uuid.uuid4().hex[:8]}",
+        name="Full Source",
+        organization_id=None,
+    )
+    db_session.add(sol)
+    await db_session.flush()
+    source_bundle = _bundle()
+    source_bundle.python_files["workflows/main.py"] = "def run():\n    return 'artifact'\n"
+    await SolutionSourceArtifactStorage(sol.id).write(build_workspace_zip(source_bundle))
+
+    async def _fake_bundle_for(self, *_args, **_kwargs):  # noqa: ANN001
+        live_bundle = _bundle()
+        live_bundle.python_files["workflows/main.py"] = "def run():\n    return 'live-db'\n"
+        live_bundle.config_values = {"API_KEY": "secret-value"}
+        live_bundle.table_data = {"things": [{"title": "row"}]}
+        return live_bundle
+
+    monkeypatch.setattr(SolutionCaptureService, "bundle_for", _fake_bundle_for)
+
+    ctx, user = _admin(db_session)
+    response = await export_solution(
+        sol.id,
+        ctx,
+        user,
+        mode="full",
+        include_data=True,
+        password="pw",
+    )
+
+    with zipfile.ZipFile(io.BytesIO(response.body)) as z:
+        assert z.read("workflows/main.py").decode() == "def run():\n    return 'artifact'\n"
+        blob = z.read(".bifrost/secrets.enc").decode()
+    content = decode_secrets_blob(blob, password="pw")
+    assert content.config_values == {"API_KEY": "secret-value"}
+    assert content.table_data == {"things": [{"title": "row"}]}

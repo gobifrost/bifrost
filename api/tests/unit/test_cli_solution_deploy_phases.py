@@ -7,7 +7,7 @@ that gap stays instrumented:
   Scanning solution files...  ->  found N ... file(s)
   Vendoring shared dependencies...  ->  (vendored M | no shared dependencies)
   Bundle: ...
-  Uploading bundle...  ->  Deploying install ...
+  Uploading workspace zip...  ->  Deploying install ...
 
 BifrostClient is mocked so no network/DB is touched. Deploying with --global and
 the default (vendoring-on) descriptor drives the no-shared-deps branch: the
@@ -35,7 +35,7 @@ def _resp(payload, status=200):
     return r
 
 
-def _client():
+def _client(captured: dict | None = None):
     async def get(path, **_kwargs):  # type: ignore[no-untyped-def]
         if path == "/api/solutions":
             return _resp({"solutions": []})
@@ -43,7 +43,9 @@ def _client():
             return _resp({"status": "succeeded", "error": None, "install_id": INSTALL_ID})
         return _resp({}, status=404)
 
-    async def post(path, json=None, **_kwargs):  # type: ignore[no-untyped-def]  # noqa: ARG001
+    async def post(path, json=None, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ARG001
+        if captured is not None:
+            captured.setdefault("posts", []).append((path, {"json": json, **kwargs}))
         if path == "/api/solutions":
             return _resp({"id": INSTALL_ID}, status=201)
         if path == "/api/files/read":
@@ -79,9 +81,9 @@ def _scaffold(tmp_path: pathlib.Path) -> pathlib.Path:
     return ws
 
 
-def _invoke(ws: pathlib.Path):
+def _invoke(ws: pathlib.Path, captured: dict | None = None):
     with mock.patch(
-        "bifrost.client.BifrostClient.get_instance", return_value=_client()
+        "bifrost.client.BifrostClient.get_instance", return_value=_client(captured)
     ):
         return CliRunner().invoke(
             solution_group, ["deploy", str(ws), "--global"], catch_exceptions=False
@@ -97,7 +99,7 @@ def test_deploy_prints_each_phase(tmp_path) -> None:
     assert "found" in out and "python file(s)" in out
     assert "Vendoring shared dependencies..." in out
     assert "Bundle:" in out
-    assert "Uploading bundle..." in out
+    assert "Uploading workspace zip..." in out
     assert "Deploying install" in out
 
 
@@ -106,3 +108,28 @@ def test_deploy_reports_when_nothing_to_vendor(tmp_path) -> None:
     assert result.exit_code == 0, result.output
     # The vendoring announcement always resolves to a result line, even at zero.
     assert "no shared dependencies to vendor." in result.output
+
+
+def test_deploy_uploads_workspace_zip_not_json_bundle(tmp_path) -> None:
+    captured: dict = {}
+    result = _invoke(_scaffold(tmp_path), captured)
+    assert result.exit_code == 0, result.output
+
+    deploy_calls = [
+        kwargs for path, kwargs in captured["posts"] if path.endswith("/deploy")
+    ]
+    assert len(deploy_calls) == 1
+    call = deploy_calls[0]
+    assert call["json"] is None
+    assert "files" in call
+    upload = call["files"]["file"]
+    assert upload[0].endswith(".zip")
+    assert upload[2] == "application/zip"
+
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(upload[1])) as zf:
+        names = set(zf.namelist())
+    assert "bifrost.solution.yaml" in names
+    assert "workflows/hello.py" in names

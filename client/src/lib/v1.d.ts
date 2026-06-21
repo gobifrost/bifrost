@@ -3725,22 +3725,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10688,6 +10688,14 @@ export interface components {
              * @enum {string}
              */
             cost_basis: "history" | "fallback";
+        };
+        /** Body_deploy_solution_api_solutions__solution_id__deploy_post */
+        Body_deploy_solution_api_solutions__solution_id__deploy_post: {
+            /**
+             * File
+             * @description Solution workspace zip
+             */
+            file: string;
         };
         /** Body_export_solution_api_solutions__solution_id__export_post */
         Body_export_solution_api_solutions__solution_id__export_post: {
@@ -20900,71 +20908,6 @@ export interface components {
             updated_at: string;
         };
         /**
-         * SolutionDeployRequest
-         * @description Full-replace deploy bundle for one install.
-         *
-         *     ``python_files`` maps relative paths (e.g. ``workflows/w.py``,
-         *     ``modules/x.py``) to UTF-8 source text, installed verbatim under the
-         *     install's ``_solutions/{id}/`` prefix. ``workflows`` are manifest-shaped
-         *     entity dicts to upsert (apps/forms/agents/tables join in later sub-plans).
-         *     Deploy is non-interactive by contract — it always applies the full bundle.
-         */
-        SolutionDeployRequest: {
-            /** Python Files */
-            python_files?: {
-                [key: string]: string;
-            };
-            /** Workflows */
-            workflows?: {
-                [key: string]: unknown;
-            }[];
-            /** Tables */
-            tables?: {
-                [key: string]: unknown;
-            }[];
-            /** Apps */
-            apps?: {
-                [key: string]: unknown;
-            }[];
-            /** Forms */
-            forms?: {
-                [key: string]: unknown;
-            }[];
-            /** Agents */
-            agents?: {
-                [key: string]: unknown;
-            }[];
-            /** Claims */
-            claims?: {
-                [key: string]: unknown;
-            }[];
-            /** Config Schemas */
-            config_schemas?: {
-                [key: string]: unknown;
-            }[];
-            /** Connection Schemas */
-            connection_schemas?: {
-                [key: string]: unknown;
-            }[];
-            /** Events */
-            events?: {
-                [key: string]: unknown;
-            }[];
-            /** Version */
-            version?: string | null;
-            /** Logo B64 */
-            logo_b64?: string | null;
-            /** Logo Content Type */
-            logo_content_type?: string | null;
-            /** Readme */
-            readme?: string | null;
-            /**
-             * Force
-             * @default false
-             */
-            force: boolean;
-        };
-        /**
          * SolutionEntities
          * @description Everything one install owns + its config declaration/value status.
          */
@@ -29517,7 +29460,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29550,7 +29493,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29583,7 +29526,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -29616,7 +29559,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -36104,7 +36047,9 @@ export interface operations {
     };
     deploy_solution_api_solutions__solution_id__deploy_post: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 solution_id: string;
@@ -36113,7 +36058,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SolutionDeployRequest"];
+                "multipart/form-data": components["schemas"]["Body_deploy_solution_api_solutions__solution_id__deploy_post"];
             };
         };
         responses: {

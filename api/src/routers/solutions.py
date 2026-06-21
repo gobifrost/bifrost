@@ -39,7 +39,6 @@ from src.models.contracts.solutions import (
     SolutionDependencyPreviewRequest,
     SolutionDeployEnqueued,
     SolutionDeployJobStatus,
-    SolutionDeployRequest,
     SolutionEntities,
     SolutionEntitySummary,
     SolutionExistingInstall,
@@ -65,8 +64,6 @@ from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
 from src.services.solutions.deploy import (
-    SolutionBundle,
-    SolutionDeployer,
     SolutionDeployConflict,
     SolutionDowngradeBlocked,
     SolutionFinalizeIncomplete,
@@ -302,17 +299,40 @@ async def export_solution(
         )
 
     from src.services.solutions.capture import SolutionCaptureService
-    from src.services.solutions.export import build_workspace_zip
+    from src.services.solutions.export import (
+        add_encrypted_content_to_workspace_zip,
+        build_workspace_zip,
+    )
+    from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
     include_values = mode == "full"
-    bundle = await SolutionCaptureService(ctx.db).bundle_for(
-        sol, include_imports=True, include_values=include_values, include_data=include_data
-    )
-    data = build_workspace_zip(bundle, password=password if include_values else None)
+    stored_source = await SolutionSourceArtifactStorage(solution_id).read()
+    if stored_source is not None and mode == "shareable":
+        data = stored_source
+    else:
+        bundle = await SolutionCaptureService(ctx.db).bundle_for(
+            sol,
+            include_imports=True,
+            include_values=include_values,
+            include_data=include_data,
+        )
+        if stored_source is not None:
+            from src.services.solutions.secrets_blob import SolutionContent
+
+            data = add_encrypted_content_to_workspace_zip(
+                stored_source,
+                SolutionContent(
+                    config_values=bundle.config_values,
+                    table_data=bundle.table_data,
+                ),
+                password=password or "",
+            )
+        else:
+            data = build_workspace_zip(bundle, password=password if include_values else None)
     filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
     return Response(
         content=data,
@@ -710,6 +730,7 @@ async def delete_solution(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
     from src.services.solutions.app_build import SolutionAppBuilder
+    from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
     from src.services.solutions.storage import SolutionStorage
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
@@ -875,6 +896,7 @@ async def delete_solution(
             storage = SolutionStorage(solution_id)
             for rel in await storage.list(""):
                 await storage.delete(rel)
+            await SolutionSourceArtifactStorage(solution_id).delete()
             builder = SolutionAppBuilder()
             for app_id in app_ids:
                 await builder.delete_dist(app_id)
@@ -886,7 +908,13 @@ async def delete_solution(
     return summary
 
 
-async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployRequest) -> None:
+async def _run_deploy_job(
+    job_id: UUID,
+    solution_id: UUID,
+    zip_data: bytes,
+    *,
+    force: bool,
+) -> None:
     """Execute the deploy under a fresh session (background task).
 
     Flips the job ``running`` → ``succeeded`` / ``failed``. Deploy errors that
@@ -897,6 +925,10 @@ async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployR
     >100s) work no longer blocks the request and times out the CLI (Task 7).
     """
     from src.core.database import get_db_context
+    from src.services.solutions.zip_install import (
+        UnmetDependency,
+        deploy_zip_to_solution,
+    )
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
         solution_write_lock,
@@ -915,6 +947,9 @@ async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployR
             job.error = error
             job.result = result
 
+    async def _set_phase(phase: str) -> None:
+        await _set_status("running", result={"phase": phase})
+
     await _set_status("running")
     deploy_result: dict | None = None
     try:
@@ -923,30 +958,12 @@ async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployR
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
-                deployer = SolutionDeployer(db)
-                result = await deployer.deploy(
-                    SolutionBundle(
-                        solution=solution,
-                        python_files=body.python_files,
-                        workflows=body.workflows,
-                        tables=body.tables,
-                        apps=body.apps,
-                        forms=body.forms,
-                        agents=body.agents,
-                        claims=body.claims,
-                        config_schemas=body.config_schemas,
-                        connection_schemas=body.connection_schemas,
-                        events=body.events,
-                        version=body.version,
-                        logo_b64=body.logo_b64,
-                        logo_content_type=body.logo_content_type,
-                        readme=body.readme,
-                    ),
-                    force=body.force,
-                )
+                await _set_phase("parsing workspace zip and building app dist")
+                result = await deploy_zip_to_solution(db, solution, zip_data, force=force)
                 await db.commit()
                 # S3 only after the DB is durable — a failed commit changes no running
                 # code (P1-c). Still inside the lock so finalize can't race another deploy.
+                await _set_phase("storing source artifact and runtime files")
                 await result.finalize_s3()
                 deploy_result = {
                     "solution_id": str(solution_id),
@@ -982,6 +999,7 @@ async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployR
         SolutionDowngradeBlocked,
         SolutionDeployConflict,
         SolutionWorkflowNameMismatch,
+        UnmetDependency,
     ) as exc:
         # Caller errors (downgrade without force, invalid bundle, workflow-name
         # mismatch). Surfaced as the job error string for the poller to read.
@@ -1001,10 +1019,11 @@ async def _run_deploy_job(job_id: UUID, solution_id: UUID, body: SolutionDeployR
 )
 async def deploy_solution(
     solution_id: UUID,
-    body: SolutionDeployRequest,
+    file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
     user: CurrentSuperuser,
     background_tasks: BackgroundTasks,
+    force: bool = False,
 ) -> SolutionDeployEnqueued:
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
@@ -1018,6 +1037,17 @@ async def deploy_solution(
             detail="This install is git-connected; deploy is disabled (auto-pull is the only writer).",
         )
 
+    from src.services.solutions.zip_install import preview_zip
+
+    data = await file.read()
+    try:
+        preview = preview_zip(data)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid solution zip: {exc}",
+        ) from exc
+
     # Capture round-trip guard: an entity captured (UI/CLI) into this install but
     # not yet pulled into source has a pending_captures row. If such an entity is
     # absent from the incoming full-replace manifest, the reconcile sweep would
@@ -1026,17 +1056,17 @@ async def deploy_solution(
     # demonstrably seen it), and proceeds unchanged. force=True bypasses the block.
     # These are immediate caller-input errors, so they stay synchronous (the
     # caller gets a 409 from the request, not a failed job).
-    if not body.force:
+    if not force:
         from src.models.orm.pending_capture import PendingCaptureORM
         from src.services.solutions.pending import unpulled_blockers
 
         manifest_ids: dict[str, set[str]] = {
-            "table": {str(t["id"]) for t in body.tables if t.get("id")},
-            "form": {str(f["id"]) for f in body.forms if f.get("id")},
-            "agent": {str(a["id"]) for a in body.agents if a.get("id")},
-            "config": {str(c["key"]) for c in body.config_schemas if c.get("key")},
-            "event": {str(e["id"]) for e in body.events if e.get("id")},
-            "claim": {str(c["id"]) for c in body.claims if c.get("id")},
+            "table": {str(t["id"]) for t in preview.tables if t.get("id")},
+            "form": {str(f["id"]) for f in preview.forms if f.get("id")},
+            "agent": {str(a["id"]) for a in preview.agents if a.get("id")},
+            "config": {str(c["key"]) for c in preview.config_schemas if c.get("key")},
+            "event": {str(e["id"]) for e in preview.events if e.get("id")},
+            "claim": {str(c["id"]) for c in preview.claims if c.get("id")},
         }
         pending_rows = (
             await ctx.db.execute(
@@ -1064,7 +1094,7 @@ async def deploy_solution(
     await ctx.db.commit()
     await ctx.db.refresh(job)
 
-    background_tasks.add_task(_run_deploy_job, job.id, solution_id, body)
+    background_tasks.add_task(_run_deploy_job, job.id, solution_id, data, force=force)
     return SolutionDeployEnqueued(deploy_job_id=job.id)
 
 

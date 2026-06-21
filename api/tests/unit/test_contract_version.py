@@ -64,7 +64,6 @@ from src.models.contracts.organizations import (  # noqa: E402
 from src.models.contracts.solutions import (  # noqa: E402
     SolutionDeployEnqueued,
     SolutionDeployJobStatus,
-    SolutionDeployRequest,
 )
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
@@ -109,7 +108,6 @@ _COMMAND_DTOS: list[type] = [
     EventSourceUpdate,
     EventSubscriptionCreate,
     EventSubscriptionUpdate,
-    SolutionDeployRequest,
     SolutionDeployEnqueued,
     SolutionDeployJobStatus,
 ]
@@ -158,7 +156,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Solution deploy now returns 202 + deploy_job_id and the CLI polls
     # SolutionDeployJobStatus for the prior summary shape (2026-06-17).
     # CONTRACT_VERSION bumped to 5.
-    "4d84dfc7b2ae64d8be2aba15ca782467b5b92de256507bcbc4228fb36a336ec3"
+    #
+    # Solution deploy now uploads a workspace zip as multipart/form-data instead
+    # of the legacy JSON bundle request body (2026-06-21).
+    # CONTRACT_VERSION bumped to 6.
+    "574232b44f09b26868559f4346a4bf9f364473d2affe4780fbdef1a767fdb5d6"
 )
 
 
