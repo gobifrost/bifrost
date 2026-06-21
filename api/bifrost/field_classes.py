@@ -38,7 +38,17 @@ def classify(
     predicate: str | None = None,
     keep_on_portable: bool = False,
     import_owner: str = "direct",
+    install_view: str | None = None,
 ) -> dict:
+    """Tag a Manifest* field with its round-trip metadata.
+
+    ``install_view`` is a per-field OVERRIDE of the destination policy's default
+    action for the INSTALL view (``view(Destination.INSTALL)``): the policy maps
+    each FieldClass to keep/drop, and a field can override that one cell. The only
+    two values that affect ``view()`` membership are ``"keep"`` and ``"drop"``.
+    Use sparingly, each with a reason — e.g. ENVIRONMENT roles that install MUST
+    carry ("keep"), or a deprecated CONTENT path install must omit ("drop").
+    """
     extra: dict[str, Any] = {"bifrost_field_class": field_class.value}
     if match_key:
         extra["bifrost_match_key"] = True
@@ -50,7 +60,15 @@ def classify(
     assert import_owner in ("direct", "indexer", "restamp"), f"bad import_owner {import_owner!r}"
     if import_owner != "direct":
         extra["bifrost_import_owner"] = import_owner
+    if install_view is not None:
+        assert install_view in ("keep", "drop", "keep_empty_list"), f"bad install_view {install_view!r}"
+        extra["bifrost_install_view"] = install_view
     return {"json_schema_extra": extra}
+
+
+def install_view_override(model: type[BaseModel], field: str) -> str | None:
+    """The per-field INSTALL view action override ("keep"|"drop"), or None."""
+    return _extra(model, field).get("bifrost_install_view")
 
 
 def import_owner_of(model: type[BaseModel], field: str) -> str:

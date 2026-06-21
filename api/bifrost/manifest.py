@@ -97,37 +97,6 @@ class ManifestRole(EntityCodec, BaseModel):
         return ImportFields(direct={"id": self.id, "name": self.name})
 
 
-# Install-view allowlists — keys each entity's ``_install_view`` emits (mirroring
-# the capture._*_entries shape). Module-level frozensets so they're allocated once
-# rather than rebuilt per call. Includes model fields + the transport extras the
-# capture layer merges in via ``extras=``.
-_WORKFLOW_INSTALL_ALLOWLIST = frozenset({
-    "id", "name", "function_name", "path", "type", "description",
-    "tool_description",
-    "endpoint_enabled", "public_endpoint", "timeout_seconds", "category",
-    "tags", "access_level", "roles", "role_names",
-})
-_FORM_INSTALL_ALLOWLIST = frozenset({
-    "id", "name", "description", "workflow_id", "launch_workflow_id",
-    "default_launch_params", "allowed_query_params", "access_level",
-    "roles", "role_names", "form_schema",
-    # transport extras from capture (not model fields)
-    "workflow_path", "workflow_function_name",
-})
-_AGENT_INSTALL_ALLOWLIST = frozenset({
-    "id", "name", "description", "system_prompt", "channels",
-    "access_level", "knowledge_sources", "system_tools",
-    "llm_model", "llm_max_tokens", "max_iterations", "max_token_budget",
-    "tool_ids", "delegated_agent_ids", "roles", "role_names",
-    # transport extra from capture (not a model field)
-    "max_run_timeout",
-})
-_APP_INSTALL_ALLOWLIST = frozenset({
-    "id", "name", "slug", "description", "dependencies",
-    "app_model", "access_level", "roles", "role_names",
-})
-
-
 class ManifestWorkflow(EntityCodec, BaseModel):
     """Workflow entry in manifest."""
     id: str = Field(description="Workflow UUID", **classify(FieldClass.IDENTITY))
@@ -136,7 +105,10 @@ class ManifestWorkflow(EntityCodec, BaseModel):
     function_name: str = Field(description="Python function name decorated with @workflow/@tool/@data_provider", **classify(FieldClass.CONTENT, match_key=True))
     type: str = Field(default="workflow", description="workflow | tool | data_provider", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
-    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this workflow", **classify(FieldClass.ENVIRONMENT))
+    # roles/role_names are ENVIRONMENT but install MUST carry them — they are the
+    # access grant the deployer re-binds in the target org (capture also passes
+    # them via extras). keep_empty_list mirrors the legacy view's `x or []`.
+    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this workflow", **classify(FieldClass.ENVIRONMENT, install_view="keep_empty_list"))
     role_names: list[str] | None = Field(
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
@@ -153,7 +125,7 @@ class ManifestWorkflow(EntityCodec, BaseModel):
         **classify(FieldClass.CONTENT),
     )
     category: str = Field(default="General", description="Category for organization", **classify(FieldClass.CONTENT))
-    tags: list[str] = Field(default_factory=list, description="Tags for filtering", **classify(FieldClass.CONTENT))
+    tags: list[str] = Field(default_factory=list, description="Tags for filtering", **classify(FieldClass.CONTENT, install_view="keep_empty_list"))
 
     @classmethod
     def from_row(cls, wf, *, roles: list[str] | None = None) -> "ManifestWorkflow":
@@ -176,30 +148,6 @@ class ManifestWorkflow(EntityCodec, BaseModel):
             category=wf.category or "General",
             tags=wf.tags or [],
         )
-
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._workflow_entries key-for-key.
-
-        Allowlist: id, name, function_name, path, type, description,
-        endpoint_enabled, public_endpoint, timeout_seconds, category,
-        tags (forced to [] — never dropped), access_level, roles, role_names.
-        organization_id is ABSENT (scope is install-inherited).
-        roles + role_names come from extras (capture computes them async).
-        """
-        _ALLOWLIST = _WORKFLOW_INSTALL_ALLOWLIST
-        data = self.model_dump(mode="json", by_alias=True)
-        # Merge extras (roles, role_names from capture) before filtering.
-        data.update(extras)
-        out: dict = {}
-        for k, v in data.items():
-            if k not in _ALLOWLIST:
-                continue
-            if k == "tags":
-                # Always emit tags — capture sends `w.tags or []`, never drops it.
-                out[k] = v if v is not None else []
-            elif v is not None:
-                out[k] = v
-        return out
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
         """Column values for ORM upsert — all direct (no indexer split).
@@ -276,11 +224,12 @@ class ManifestForm(EntityCodec, BaseModel):
     path: str | None = Field(
         default=None,
         description="DEPRECATED: relative path to form YAML. Content is now inline.",
-        **classify(FieldClass.CONTENT),
+        **classify(FieldClass.CONTENT, install_view="drop"),  # deprecated; install omits it
     )
     # -- Environment-specific fields (NOT portable; do not include when sharing) --
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, import_owner="restamp"))
-    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this form", **classify(FieldClass.ENVIRONMENT))
+    # roles is ENVIRONMENT but install carries the access grant the deployer re-binds.
+    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this form", **classify(FieldClass.ENVIRONMENT, install_view="keep_empty_list"))
     role_names: list[str] | None = Field(
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
@@ -322,36 +271,6 @@ class ManifestForm(EntityCodec, BaseModel):
             allowed_query_params=form.allowed_query_params,
             form_schema=schema,
         )
-
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._form_entries key-for-key.
-
-        Model-field allowlist (drop-none): id, name, description, workflow_id,
-        launch_workflow_id, default_launch_params, allowed_query_params, access_level,
-        roles, role_names, form_schema.
-
-        organization_id is ABSENT (scope is install-inherited).
-        path is ABSENT (deprecated).
-
-        Transport extras (workflow_path, workflow_function_name, role_names) are merged
-        from extras= drop-none. role_names forced to [] (never dropped) if present.
-        form_schema.fields[] uses the capture helper (with position) via extras.
-        """
-        _ALLOWLIST = _FORM_INSTALL_ALLOWLIST
-        data = self.model_dump(mode="json", by_alias=True)
-        # Merge extras (workflow_path, workflow_function_name, role_names, form_schema)
-        # before filtering so extras can override model fields (e.g. form_schema with position).
-        data.update(extras)
-        out: dict = {}
-        for k, v in data.items():
-            if k not in _ALLOWLIST:
-                continue
-            if k == "role_names":
-                # Always emit role_names — capture sends `await self._role_names(roles)`, never drops it.
-                out[k] = v if v is not None else []
-            elif v is not None:
-                out[k] = v
-        return out
 
     def to_orm_values(self, dest: "Destination") -> "ImportFields":
         """Column values for import — INDEXER-ONLY (only indexer_content is emitted).
@@ -414,15 +333,17 @@ class ManifestAgent(EntityCodec, BaseModel):
         # import_owner is the "direct" default and inert here (to_orm_values is
         # hardcoded and never emits path to import) — stated explicitly for
         # annotation uniformity with the other classified fields.
-        **classify(FieldClass.CONTENT, import_owner="direct"),
+        # install_view="drop": deprecated; the install bundle never carried it.
+        **classify(FieldClass.CONTENT, import_owner="direct", install_view="drop"),
     )
     # -- Environment-specific fields (NOT portable; do not include when sharing) --
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
-    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this agent", **classify(FieldClass.ENVIRONMENT))
+    # roles/role_names are ENVIRONMENT but install carries the access grant.
+    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this agent", **classify(FieldClass.ENVIRONMENT, install_view="keep"))
     role_names: list[str] | None = Field(
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
-        **classify(FieldClass.ENVIRONMENT, keep_on_portable=True),
+        **classify(FieldClass.ENVIRONMENT, keep_on_portable=True, install_view="keep_empty_list"),
     )
     access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public", **classify(FieldClass.CONTENT, import_owner="restamp"))
     # -- Portable content (inline) --
@@ -431,15 +352,17 @@ class ManifestAgent(EntityCodec, BaseModel):
     channels: list[str] = Field(default_factory=list, description="Channels the agent runs on (chat, email, …)", **classify(FieldClass.CONTENT, import_owner="indexer"))
     tool_ids: list[str] = Field(default_factory=list, description="Workflow UUIDs exposed as tools", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     delegated_agent_ids: list[str] = Field(default_factory=list, description="Agent UUIDs this agent can delegate to", **classify(FieldClass.REFERENCE, import_owner="indexer"))
-    knowledge_sources: list[str] = Field(default_factory=list, description="Knowledge namespaces searchable via RAG", **classify(FieldClass.CONTENT, import_owner="indexer"))
-    system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'execute_workflow')", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    knowledge_sources: list[str] = Field(default_factory=list, description="Knowledge namespaces searchable via RAG", **classify(FieldClass.CONTENT, import_owner="indexer", install_view="keep_empty_list"))
+    system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'execute_workflow')", **classify(FieldClass.CONTENT, import_owner="indexer", install_view="keep_empty_list"))
     mcp_connection_ids: list[str] = Field(
         default_factory=list,
         description=(
             "MCP connection UUIDs explicitly granted to this agent. Empty "
             "list means the agent surfaces no external MCP tools."
         ),
-        **classify(FieldClass.REFERENCE, import_owner="indexer"),
+        # install_view="drop": git_sync carries the grants; the install bundle
+        # omits them (env-scoped grants deployed via _sync_agent_mcp_connections).
+        **classify(FieldClass.REFERENCE, import_owner="indexer", install_view="drop"),
     )
     llm_model: str | None = Field(default=None, description="Override LLM model (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
     llm_max_tokens: int | None = Field(default=None, description="Override LLM max tokens (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
@@ -489,36 +412,6 @@ class ManifestAgent(EntityCodec, BaseModel):
             max_iterations=agent.max_iterations,
             max_token_budget=agent.max_token_budget,
         )
-
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._agent_entries key-for-key.
-
-        Model-field allowlist (drop-none): id, name, description, system_prompt,
-        channels, access_level, knowledge_sources (forced []), system_tools (forced []),
-        llm_model, llm_max_tokens, max_iterations, max_token_budget,
-        tool_ids, delegated_agent_ids, roles, role_names (forced []).
-
-        organization_id is ABSENT (scope is install-inherited).
-        mcp_connection_ids is ABSENT — install bundle omits it; only git_sync carries it.
-        max_run_timeout is a transport extra from capture, merged via extras=.
-        """
-        _ALLOWLIST = _AGENT_INSTALL_ALLOWLIST
-        data = self.model_dump(mode="json", by_alias=True)
-        # Merge extras (max_run_timeout, role_names from capture) before filtering.
-        data.update(extras)
-        out: dict = {}
-        for k, v in data.items():
-            if k not in _ALLOWLIST:
-                continue
-            if k in ("knowledge_sources", "system_tools"):
-                # Always emit these lists — capture sends `list(agent.X or [])`, never drops.
-                out[k] = v if v is not None else []
-            elif k == "role_names":
-                # Always emit role_names — capture sends `await self._role_names(roles)`.
-                out[k] = v if v is not None else []
-            elif v is not None:
-                out[k] = v
-        return out
 
     def to_orm_values(self, dest: "Destination") -> "ImportFields":
         """Column values for the three-way import partition.
@@ -574,13 +467,16 @@ class ManifestAgent(EntityCodec, BaseModel):
 class ManifestApp(EntityCodec, BaseModel):
     """App entry in manifest."""
     id: str = Field(description="App UUID", **classify(FieldClass.IDENTITY))
-    path: str = Field(description="App source directory (e.g. 'apps/my-dashboard'), not app.yaml", **classify(FieldClass.CONTENT))
+    # install emits the transport extra `repo_path` instead of `path` — drop the
+    # model field from the install view so it isn't duplicated.
+    path: str = Field(description="App source directory (e.g. 'apps/my-dashboard'), not app.yaml", **classify(FieldClass.CONTENT, install_view="drop"))
     slug: str | None = Field(default=None, description="URL slug (auto-generated from name if omitted)", **classify(FieldClass.CONTENT, match_key=True))
     name: str | None = Field(default=None, description="Display name", **classify(FieldClass.CONTENT))
     description: str | None = Field(default=None, description="App description", **classify(FieldClass.CONTENT))
     dependencies: dict[str, str] = Field(default_factory=dict, description="NPM packages {name: version}", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
-    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this app", **classify(FieldClass.ENVIRONMENT))
+    # roles is ENVIRONMENT but install carries the access grant (drop-none; never None via from_row).
+    roles: list[str] = Field(default_factory=list, description="Role UUIDs that can access this app", **classify(FieldClass.ENVIRONMENT, install_view="keep"))
     role_names: list[str] | None = Field(
         default=None,
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
@@ -591,7 +487,10 @@ class ManifestApp(EntityCodec, BaseModel):
     logo: str | None = Field(
         default=None,
         description="Path to a logo image (png/jpeg/svg) relative to the app dir, e.g. 'public/logo.svg'. Shown in BifrostHeader.",
-        **classify(FieldClass.CONTENT),
+        # install never carried the logo path-string field — the bytes ride as the
+        # logo_b64/logo_content_type transport extras. drop matches the legacy view
+        # and guards against a future from_row that populates logo.
+        **classify(FieldClass.CONTENT, install_view="drop"),
     )
 
     @classmethod
@@ -616,34 +515,6 @@ class ManifestApp(EntityCodec, BaseModel):
             access_level=app.access_level if app.access_level else "authenticated",
             app_model=app.app_model or "inline_v1",
         )
-
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._app_entries key-for-key.
-
-        Model-field allowlist (drop-none): id, name, slug, description,
-        dependencies, app_model, access_level, roles, role_names.
-
-        ``path`` is NOT in the allowlist — capture emits ``repo_path`` instead
-        (declared a transport extra in EXTRA_FIELD_POLICY).  organization_id is
-        ABSENT (scope is install-inherited).
-
-        Transport extras (repo_path, logo_b64, logo_content_type, src_files,
-        bin_files, dist_files, bin_dist_files) are merged from extras= drop-none.
-        """
-        _MODEL_ALLOWLIST = _APP_INSTALL_ALLOWLIST
-        data = self.model_dump(mode="json", by_alias=True)
-        out: dict = {}
-        for k, v in data.items():
-            if k not in _MODEL_ALLOWLIST:
-                continue
-            if v is not None:
-                out[k] = v
-        # Merge transport extras (repo_path, logo_b64, logo_content_type,
-        # src_files, bin_files, dist_files, bin_dist_files, role_names) — drop-none.
-        for k, v in extras.items():
-            if v is not None:
-                out[k] = v
-        return out
 
     def to_orm_values(self, dest: "Destination") -> "ImportFields":
         """Column values for ORM upsert — all direct (no indexer split).
@@ -928,23 +799,6 @@ class ManifestSolutionConfigSchema(EntityCodec, BaseModel):
             position=cs.position,
         )
 
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._config_entries key-for-key.
-
-        Allowlist: id, key, type, required, description, default, position.
-        Drop-none. solution_id and organization_id ABSENT (stamped by deploy).
-        """
-        raw: dict = {
-            "id": self.id,
-            "key": self.key,
-            "type": self.type,
-            "required": self.required,
-            "description": self.description,
-            "default": self.default,
-            "position": self.position,
-        }
-        return {k: v for k, v in raw.items() if v is not None}
-
     def to_orm_values(self, dest: Destination) -> ImportFields:
         """Column values for ORM upsert — all direct (no indexer split).
 
@@ -980,20 +834,10 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
     type: Literal["list", "scalar"] = Field(default="list", description="list | scalar", **classify(FieldClass.CONTENT))
     query: ClaimQuery = Field(description="Source table query that resolves the claim", **classify(FieldClass.CONTENT))
 
-    # Raw query dict from the DB (used by _install_view to mirror capture
-    # byte-for-byte). Stored as a PrivateAttr so it isn't included in
-    # model_dump / serialization; only set via from_row().
-    _raw_query: dict | None = None
-
     @classmethod
     def from_row(cls, claim) -> "ManifestCustomClaim":
-        """Build from a CustomClaim ORM row, mirroring serialize_custom_claim exactly.
-
-        Also stores the raw query dict from the DB on ``_raw_query`` so that
-        ``_install_view`` can emit it byte-for-byte (matching
-        ``capture._claim_entries`` which reads directly from ``c.query``).
-        """
-        obj = cls(
+        """Build from a CustomClaim ORM row, mirroring serialize_custom_claim exactly."""
+        return cls(
             id=str(claim.id),
             name=claim.name,
             description=claim.description,
@@ -1001,28 +845,6 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
             type=claim.type,  # type: ignore[arg-type]
             query=ClaimQuery.model_validate(claim.query),
         )
-        obj._raw_query = claim.query
-        return obj
-
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._claim_entries key-for-key.
-
-        Allowlist: id, name, description, type, query. Drop-none.
-        organization_id is ABSENT (scope is install-inherited via solution.organization_id).
-        query is emitted as the raw dict from the DB (``_raw_query``) to preserve
-        byte-identity with capture._claim_entries which reads c.query directly.
-        """
-        raw: dict = {
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "type": self.type,
-            # Raw DB dict (set in from_row), emitted directly — mirrors
-            # ManifestTable._install_view's _raw_policies. The install path always
-            # runs through from_row, so _raw_query is always populated here.
-            "query": self._raw_query,
-        }
-        return {k: v for k, v in raw.items() if v is not None}
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
         """Column values for ORM upsert — all direct (no indexer split).
@@ -1106,11 +928,6 @@ class ManifestTable(EntityCodec, BaseModel):
 
     model_config = {"populate_by_name": True}
 
-    # Raw policies list from the DB (used by _install_view to mirror capture
-    # byte-for-byte).  Stored as a PrivateAttr so it isn't included in
-    # model_dump / serialization; only set via from_row().
-    _raw_policies: list[dict] | None = None
-
     @classmethod
     def from_row(cls, table) -> "ManifestTable":
         """Build from a Table ORM row, mirroring serialize_table exactly.
@@ -1118,10 +935,6 @@ class ManifestTable(EntityCodec, BaseModel):
         Unwraps the JSONB ``Table.access`` payload (shape: ``{"policies": [...]}``)
         into a flat list of ManifestPolicy. Tables with no access blob serialize
         with ``policies=None``; the importer reseeds those on the next round-trip.
-
-        Also stores the raw policies list from the DB on ``_raw_policies`` so
-        that ``_install_view`` can emit it byte-for-byte (matching
-        ``capture._table_entries`` which reads directly from ``t.access``).
         """
         access = table.access if isinstance(table.access, dict) else None
         raw_policies = access.get("policies") if access else None
@@ -1130,7 +943,7 @@ class ManifestTable(EntityCodec, BaseModel):
             if raw_policies
             else None
         )
-        obj = cls(
+        return cls(
             id=str(table.id),
             name=table.name,
             description=table.description,
@@ -1138,30 +951,6 @@ class ManifestTable(EntityCodec, BaseModel):
             policies=policies,
             **{"schema": table.schema},  # type: ignore[arg-type]  # alias for table_schema
         )
-        # Store the raw list so _install_view can pass it through unmodified,
-        # matching capture._table_entries which reads (t.access or {}).get("policies").
-        obj._raw_policies = raw_policies
-        return obj
-
-    def _install_view(self, extras: dict) -> dict:
-        """Install subset — mirrors capture._table_entries key-for-key.
-
-        Allowlist: id, name, description, schema, policies; drop-none.
-        organization_id is ABSENT (scope is install-inherited).
-
-        ``policies`` is emitted as the raw list from the DB (``_raw_policies``),
-        NOT the model's parsed ManifestPolicy objects, so the output is
-        byte-identical to what ``capture._table_entries`` produces via
-        ``(t.access or {}).get("policies")``.
-        """
-        raw: dict = {
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "schema": self.table_schema,
-            "policies": self._raw_policies,
-        }
-        return {k: v for k, v in raw.items() if v is not None}
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
         """Column values for ORM upsert — all direct (no indexer split).
@@ -1296,14 +1085,18 @@ class ManifestEventSource(EntityCodec, BaseModel):
         )
 
     def _install_view(self, extras: dict) -> dict:
-        """Install view: full model_dump, Nones INCLUDED.
+        """EventSource install view is the FULL git_sync dump (Nones kept), NOT the
+        drop-none class-policy subset every other entity uses.
 
-        capture._event_entries emits serialize_event_source(...).model_dump(mode="json")
-        verbatim, which carries adapter_name/webhook_integration_id/etc. as None when
-        absent. The default EntityCodec._install_view drops None and would diverge —
-        override to keep them so view(INSTALL) == view(GIT_SYNC) for EventSource.
+        This is a deliberate, documented exception: capture._event_entries emits the
+        whole serialized source verbatim (adapter_name/webhook_integration_id/etc.
+        present as None when absent), and deploy/_upsert_events reads those keys back.
+        The generic drop-none install view (EntityCodec._install_view) would omit the
+        null keys and structurally cannot emit a top-level ``key: null``, so
+        EventSource declares its one structural fact — install ≡ git_sync — in one
+        line rather than tagging every nullable field with a keep override.
         """
-        return self.model_dump(mode="json", by_alias=True)
+        return self.view(Destination.GIT_SYNC)
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
         """Parent EventSource scalar fields only — child rows built by resolver/deploy."""

@@ -10,6 +10,7 @@
         "update",
         "delete"
       ],
+      "description": null,
       "name": "admin_bypass",
       "when": null
     }
