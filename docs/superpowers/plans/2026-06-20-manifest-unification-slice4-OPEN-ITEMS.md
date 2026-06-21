@@ -73,6 +73,45 @@ fixing on-branch.
 
 ---
 
+## B2 — `Workflow.tool_description` not captured for Solution install (pre-existing)
+
+**Severity:** Medium. **Introduced by this branch?** No — `main`'s legacy
+`SolutionCapture._workflow_entries` hand-list never included `tool_description`,
+so a workflow's MCP tool-description has never travelled in a Solution bundle.
+Slice 4 preserved this byte-identically (`_WORKFLOW_INSTALL_ALLOWLIST` omits it,
+matching the legacy omission), so `view(INSTALL)` drops it and a redeploy writes
+`tool_description=NULL`.
+
+**Fix (follow-up):** add `tool_description` to `_WORKFLOW_INSTALL_ALLOWLIST` in
+`api/bifrost/manifest.py` (it is already a model field and already written by
+`ManifestWorkflow.to_orm_values(INSTALL)`), then re-capture the
+`workflow_install` golden. Deliberate output change (like B1), so its own commit
++ a capture→deploy round-trip test asserting the description survives. NOTE the
+git-sync path already round-trips it (resolver-conditional emit), so this is
+install-only.
+
+**Found by:** the adversarial Codex pass on PR #392.
+
+## B3 — git-sync cannot clear role bindings once roles go empty (pre-existing)
+
+**Severity:** Medium. **Introduced by this branch?** No — identical
+`if hasattr(m, "roles") and m.roles:` gating exists on `main` for
+workflow/app/form/agent resolvers (`manifest_import.py`). When a manifest entry's
+`roles` list becomes empty, the git-sync importer emits no `SyncRoles` op, so the
+previously-bound roles are left in place — whereas install deploy always
+full-syncs roles (empty list clears them). The two import paths diverge on the
+"all roles removed" case.
+
+**Fix (follow-up):** emit a `SyncRoles` op for an empty `roles` list in the
+git-sync resolvers (so an emptied manifest entry clears bindings, matching
+install), guarded so it only fires when the entry actually carries a `roles` key.
+Needs a git-sync round-trip test: bind a role, then re-import with `roles: []`,
+assert the binding is gone.
+
+**Found by:** the adversarial Codex pass on PR #392.
+
+---
+
 ## P-series — Deferred polish (all "ship-as-is" per the per-task + final reviews)
 
 None affect correctness; all were reviewed and triaged as non-blocking. Batch
