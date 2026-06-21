@@ -124,6 +124,7 @@ def _mock_event_source(source_id=EVENT_SOURCE_ID, name="det_source"):
     es.id = source_id
     es.name = name
     es.source_type = "schedule"
+    es.event_type = None  # schedule sources have no topic key; set so MagicMock auto-attr doesn't bleed in
     es.organization_id = None
     es.is_active = True
     return es
