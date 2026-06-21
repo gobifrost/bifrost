@@ -1,0 +1,31 @@
+{
+  "access_level": "role_based",
+  "channels": [
+    "chat"
+  ],
+  "delegated_agent_ids": [],
+  "description": "parity test agent",
+  "id": "<volatile>",
+  "knowledge_sources": [
+    "kb1"
+  ],
+  "llm_max_tokens": 4096,
+  "llm_model": "claude-sonnet-4-5",
+  "max_iterations": 10,
+  "max_token_budget": 50000,
+  "mcp_connection_ids": [
+    "<volatile>"
+  ],
+  "name": "rt_agent_golden",
+  "organization_id": "<volatile>",
+  "path": null,
+  "role_names": null,
+  "roles": [
+    "<volatile>"
+  ],
+  "system_prompt": "You are a helpful assistant.",
+  "system_tools": [
+    "execute_workflow"
+  ],
+  "tool_ids": []
+}

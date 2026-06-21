@@ -569,33 +569,35 @@ class SolutionCaptureService:
         return out
 
     async def _agent_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestAgent
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(select(Agent).where(Agent.solution_id == solution_id))
         ).scalars().all()
         out: list[dict[str, Any]] = []
         for agent in rows:
             roles = await self._role_ids(AgentRole, "agent_id", agent.id)
-            out.append(_drop_none({
-                "id": str(agent.id),
-                "name": agent.name,
-                "description": agent.description,
-                "system_prompt": agent.system_prompt,
-                "channels": agent.channels,
-                "access_level": _enum_value(agent.access_level),
-                "knowledge_sources": list(agent.knowledge_sources or []),
-                "system_tools": list(agent.system_tools or []),
-                "llm_model": agent.llm_model,
-                "llm_max_tokens": agent.llm_max_tokens,
-                "max_iterations": agent.max_iterations,
-                "max_token_budget": agent.max_token_budget,
-                "max_run_timeout": agent.max_run_timeout,
-                "tool_ids": await self._junction_ids(AgentTool, "agent_id", "workflow_id", agent.id),
-                "delegated_agent_ids": await self._junction_ids(
-                    AgentDelegation, "parent_agent_id", "child_agent_id", agent.id
-                ),
-                "roles": roles,
-                "role_names": await self._role_names(roles),
-            }))
+            tool_ids = await self._junction_ids(AgentTool, "agent_id", "workflow_id", agent.id)
+            delegated_agent_ids = await self._junction_ids(
+                AgentDelegation, "parent_agent_id", "child_agent_id", agent.id
+            )
+            # Install bundle omits mcp_connection_ids — only git_sync carries them.
+            # max_run_timeout is a transport extra (not a model field).
+            out.append(
+                ManifestAgent.from_row(
+                    agent,
+                    roles=roles,
+                    tool_ids=tool_ids,
+                    delegated_agent_ids=delegated_agent_ids,
+                ).view(
+                    Destination.INSTALL,
+                    extras={
+                        "max_run_timeout": agent.max_run_timeout,
+                        "role_names": await self._role_names(roles),
+                    },
+                )
+            )
         return out
 
     async def _config_entries(self, solution_id: UUID) -> list[dict[str, Any]]:

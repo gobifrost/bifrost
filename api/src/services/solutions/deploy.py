@@ -1344,9 +1344,13 @@ class SolutionDeployer:
             # writer — full-replace from the manifest so a redeploy reflects both
             # adds and removes. connection_ids reference env-scoped MCPConnection
             # rows (NOT solution entities), so they are NOT id-remapped.
-            await self._sync_agent_mcp_connections(
-                agent_id, self._parse_uuids(magent.get("mcp_connection_ids"))
-            )
+            # Guard: install bundles omit mcp_connection_ids entirely (capture
+            # _agent_entries does not include them). A missing/empty key must NOT
+            # trigger a full-replace-to-[] that wipes existing grants — mirror the
+            # git-sync guard (_index_agents_from_manifest:969).
+            mcp_ids = self._parse_uuids(magent.get("mcp_connection_ids") or [])
+            if mcp_ids:
+                await self._sync_agent_mcp_connections(agent_id, mcp_ids)
 
     async def _upsert_config_schemas(
         self, solution: Solution, config_schemas: list[dict[str, Any]]

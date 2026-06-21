@@ -278,31 +278,9 @@ def _form_content_from_manifest(mform) -> bytes:
 
 def _agent_content_from_manifest(magent) -> bytes:
     """Build the YAML bytes the AgentIndexer expects from a manifest agent entry."""
-    data: dict = {"id": magent.id, "name": magent.name or ""}
-    if magent.description is not None:
-        data["description"] = magent.description
-    if magent.system_prompt is not None:
-        data["system_prompt"] = magent.system_prompt
-    if magent.channels:
-        data["channels"] = list(magent.channels)
-    if magent.tool_ids:
-        data["tool_ids"] = list(magent.tool_ids)
-    if magent.delegated_agent_ids:
-        data["delegated_agent_ids"] = list(magent.delegated_agent_ids)
-    if magent.knowledge_sources:
-        data["knowledge_sources"] = list(magent.knowledge_sources)
-    if magent.system_tools:
-        data["system_tools"] = list(magent.system_tools)
-    if getattr(magent, "mcp_connection_ids", None):
-        data["mcp_connection_ids"] = list(magent.mcp_connection_ids)
-    if magent.llm_model is not None:
-        data["llm_model"] = magent.llm_model
-    if magent.llm_max_tokens is not None:
-        data["llm_max_tokens"] = magent.llm_max_tokens
-    if magent.max_iterations is not None:
-        data["max_iterations"] = magent.max_iterations
-    if magent.max_token_budget is not None:
-        data["max_token_budget"] = magent.max_token_budget
+    from bifrost.manifest_codec import Destination
+
+    data = magent.to_orm_values(Destination.GIT_SYNC).indexer_content
     return (yaml.dump(data, default_flow_style=False, sort_keys=True).rstrip() + "\n").encode("utf-8")
 
 

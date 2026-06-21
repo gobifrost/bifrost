@@ -1,0 +1,26 @@
+{
+  "access_level": "authenticated",
+  "channels": [
+    "chat",
+    "email"
+  ],
+  "delegated_agent_ids": [],
+  "description": "install parity agent",
+  "id": "<volatile>",
+  "knowledge_sources": [],
+  "max_iterations": 20,
+  "max_run_timeout": 600,
+  "max_token_budget": 100000,
+  "name": "rt_agent_install_golden",
+  "role_names": [
+    "<volatile>"
+  ],
+  "roles": [
+    "<volatile>"
+  ],
+  "system_prompt": "Install test system prompt.",
+  "system_tools": [
+    "execute_workflow"
+  ],
+  "tool_ids": []
+}

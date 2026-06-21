@@ -136,24 +136,12 @@ def serialize_agent(
     eager-loading and ordering — matching the pattern used for workflow/form
     roles.
     """
-    return ManifestAgent(
-        id=str(agent.id),
-        name=agent.name,
-        organization_id=str(agent.organization_id) if agent.organization_id else None,
-        roles=roles or [],
-        access_level=agent.access_level.value if agent.access_level else "role_based",
-        description=agent.description,
-        system_prompt=agent.system_prompt,
-        channels=list(agent.channels) if agent.channels else [],
-        tool_ids=tool_ids or [],
-        delegated_agent_ids=delegated_agent_ids or [],
-        knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
-        system_tools=list(agent.system_tools) if agent.system_tools else [],
-        mcp_connection_ids=mcp_connection_ids or [],
-        llm_model=agent.llm_model,
-        llm_max_tokens=agent.llm_max_tokens,
-        max_iterations=agent.max_iterations,
-        max_token_budget=agent.max_token_budget,
+    return ManifestAgent.from_row(
+        agent,
+        roles=roles,
+        tool_ids=tool_ids,
+        delegated_agent_ids=delegated_agent_ids,
+        mcp_connection_ids=mcp_connection_ids,
     )
 
 

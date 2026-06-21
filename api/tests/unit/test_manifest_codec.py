@@ -1298,3 +1298,256 @@ async def test_form_to_orm_values_partition(db_session):
         await db_session.execute(delete(Form).where(Form.id == form_id))
         await db_session.execute(delete(Organization).where(Organization.id == org_id))
         await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_agent_git_sync_parity(db_session):
+    """GIT_SYNC view of a seeded Agent matches the committed golden snapshot.
+
+    Git sync carries mcp_connection_ids — confirm they appear in the view.
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.agents import Agent
+    from src.models.orm.users import Role
+    from src.models.orm.agents import AgentRole
+    from bifrost.manifest import ManifestAgent
+    from bifrost.manifest_codec import Destination
+    from src.models.enums import AgentAccessLevel
+
+    agent_id = uuid.uuid4()
+    role_id = uuid.uuid4()
+    mcp_conn_id = uuid.uuid4()
+
+    agent = Agent(
+        id=agent_id,
+        name="rt_agent_golden",
+        description="parity test agent",
+        system_prompt="You are a helpful assistant.",
+        channels=["chat"],
+        knowledge_sources=["kb1"],
+        system_tools=["execute_workflow"],
+        llm_model="claude-sonnet-4-5",
+        llm_max_tokens=4096,
+        max_iterations=10,
+        max_token_budget=50000,
+        max_run_timeout=300,
+        access_level=AgentAccessLevel.ROLE_BASED,
+        is_active=True,
+        created_by="test",
+    )
+    db_session.add(agent)
+
+    role = Role(id=role_id, name=f"rt_agent_git_role_{role_id.hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+
+    agent_role = AgentRole(agent_id=agent_id, role_id=role_id, assigned_by="test")
+    db_session.add(agent_role)
+    await db_session.commit()
+
+    try:
+        roles = [str(role_id)]
+        tool_ids: list[str] = []
+        delegated_agent_ids: list[str] = []
+        mcp_connection_ids = [str(mcp_conn_id)]
+        produced = ManifestAgent.from_row(
+            agent,
+            roles=roles,
+            tool_ids=tool_ids,
+            delegated_agent_ids=delegated_agent_ids,
+            mcp_connection_ids=mcp_connection_ids,
+        ).view(Destination.GIT_SYNC)
+
+        # git_sync MUST carry mcp_connection_ids
+        assert "mcp_connection_ids" in produced, "git_sync view must contain mcp_connection_ids"
+        assert produced["mcp_connection_ids"] == mcp_connection_ids
+
+        assert_golden(
+            produced,
+            "agent_git_sync",
+            volatile_keys={"id", "organization_id", "roles", "mcp_connection_ids"},
+        )
+    finally:
+        await db_session.execute(delete(AgentRole).where(AgentRole.agent_id == agent_id))
+        await db_session.execute(delete(Agent).where(Agent.id == agent_id))
+        await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_agent_install_parity(db_session):
+    """INSTALL view of a seeded solution-owned Agent matches the committed golden snapshot.
+
+    Install has max_run_timeout (transport extra) but NOT mcp_connection_ids.
+    organization_id must be ABSENT.
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.agents import Agent
+    from src.models.orm.solutions import Solution
+    from src.models.orm.users import Role
+    from src.models.orm.agents import AgentRole
+    from bifrost.manifest import ManifestAgent
+    from bifrost.manifest_codec import Destination
+    from src.models.enums import AgentAccessLevel
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    role_id = uuid.uuid4()
+
+    sol = Solution(
+        id=sol_id,
+        slug=f"rt-sol-{sol_id.hex[:8]}",
+        name="RT Agent Install Parity Sol",
+    )
+    db_session.add(sol)
+
+    agent = Agent(
+        id=agent_id,
+        name="rt_agent_install_golden",
+        description="install parity agent",
+        system_prompt="Install test system prompt.",
+        channels=["chat", "email"],
+        knowledge_sources=[],
+        system_tools=["execute_workflow"],
+        llm_model=None,
+        llm_max_tokens=None,
+        max_iterations=20,
+        max_token_budget=None,
+        max_run_timeout=600,
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        is_active=True,
+        solution_id=sol_id,
+        created_by="test",
+    )
+    db_session.add(agent)
+
+    role = Role(id=role_id, name=f"rt_agent_install_role_{role_id.hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+
+    agent_role = AgentRole(agent_id=agent_id, role_id=role_id, assigned_by="test")
+    db_session.add(agent_role)
+    await db_session.commit()
+
+    try:
+        capture = SolutionCaptureService(db_session)
+        roles = [str(role_id)]
+        role_names = await capture._role_names(roles)
+
+        produced = ManifestAgent.from_row(
+            agent,
+            roles=roles,
+            tool_ids=[],
+            delegated_agent_ids=[],
+        ).view(
+            Destination.INSTALL,
+            extras={
+                "max_run_timeout": agent.max_run_timeout,
+                "role_names": role_names,
+            },
+        )
+
+        # Structural invariants
+        assert "organization_id" not in produced, "install view must NOT contain 'organization_id'"
+        assert "mcp_connection_ids" not in produced, "install view must NOT contain 'mcp_connection_ids'"
+        assert "max_run_timeout" in produced, "install view must contain 'max_run_timeout' (transport extra)"
+        assert produced["max_run_timeout"] == 600
+
+        assert_golden(
+            produced,
+            "agent_install",
+            volatile_keys={"id", "roles", "role_names"},
+        )
+    finally:
+        await db_session.execute(delete(AgentRole).where(AgentRole.agent_id == agent_id))
+        await db_session.execute(delete(Agent).where(Agent.id == agent_id))
+        await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.execute(delete(Solution).where(Solution.id == sol_id))
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+async def test_agent_to_orm_values_partition(db_session):
+    """Assert the three-way partition of ManifestAgent.to_orm_values.
+
+    - indexer_content has id+name+description+system_prompt+non-empty lists+mcp_connection_ids
+    - direct == {id, name, system_prompt}
+    - restamp == {access_level, max_iterations, max_token_budget}
+    - max_run_timeout NOT in indexer_content (it's a transport extra, not a model field)
+    - indexer_content shape locked to committed golden (non-circular oracle)
+    """
+    import uuid
+    from sqlalchemy import delete
+    from src.models.orm.agents import Agent
+    from src.models.orm.organizations import Organization
+    from bifrost.manifest import ManifestAgent
+    from bifrost.manifest_codec import Destination
+    from src.models.enums import AgentAccessLevel
+
+    agent_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+    mcp_id = uuid.uuid4()
+
+    org = Organization(id=org_id, name=f"rt-agent-partition-org-{org_id.hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+
+    agent = Agent(
+        id=agent_id,
+        name="rt_agent_partition",
+        description="partition test agent",
+        system_prompt="Partition test prompt.",
+        channels=["chat"],
+        knowledge_sources=["kb_partition"],
+        system_tools=["execute_workflow"],
+        llm_model="claude-haiku-4-5",
+        llm_max_tokens=1024,
+        max_iterations=5,
+        max_token_budget=10000,
+        max_run_timeout=120,
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        organization_id=org_id,
+        is_active=True,
+        created_by="test",
+    )
+    db_session.add(agent)
+    await db_session.commit()
+
+    try:
+        magent = ManifestAgent.from_row(
+            agent,
+            roles=[],
+            tool_ids=["tool-uuid-1"],
+            delegated_agent_ids=[],
+            mcp_connection_ids=[str(mcp_id)],
+        )
+        parts = magent.to_orm_values(Destination.GIT_SYNC)
+
+        # direct partition
+        assert parts.direct == {
+            "id": str(agent_id),
+            "name": "rt_agent_partition",
+            "system_prompt": "Partition test prompt.",
+        }, f"direct diverged: {parts.direct!r}"
+
+        # restamp partition
+        assert parts.restamp == {
+            "access_level": "authenticated",
+            "max_iterations": 5,
+            "max_token_budget": 10000,
+        }, f"restamp diverged: {parts.restamp!r}"
+
+        # max_run_timeout NOT in indexer_content (transport extra, not a model field)
+        assert "max_run_timeout" not in parts.indexer_content, (
+            "max_run_timeout must NOT appear in indexer_content"
+        )
+
+        # Lock the indexer_content shape to a committed golden.
+        assert_golden(parts.indexer_content, "agent_indexer_content", volatile_keys={"id", "mcp_connection_ids", "tool_ids"})
+    finally:
+        await db_session.execute(delete(Agent).where(Agent.id == agent_id))
+        await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.commit()

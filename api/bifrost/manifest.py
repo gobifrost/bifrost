@@ -362,7 +362,7 @@ class ManifestForm(EntityCodec, BaseModel):
         return ImportFields(indexer_content=indexer, direct={}, restamp=restamp)
 
 
-class ManifestAgent(BaseModel):
+class ManifestAgent(EntityCodec, BaseModel):
     """Agent entry in manifest.
 
     Carries portable agent content (system prompt, channels, tool bindings, etc.)
@@ -370,9 +370,17 @@ class ManifestAgent(BaseModel):
     roles, access_level) live alongside but are NOT serialized into a portable
     artifact. The ``path`` field is deprecated: content is now inline and
     ``agents/{uuid}.agent.yaml`` is no longer written by the manifest generator.
+
+    Import partition (three-way):
+    - indexer_content: id, name (always), + description/system_prompt/channels/
+      tool_ids/delegated_agent_ids/knowledge_sources/system_tools/mcp_connection_ids/
+      llm_model/llm_max_tokens (non-empty lists only, drop-none scalars) — fed to AgentIndexer.
+    - direct: id, name, system_prompt — the scalar fields resolved directly.
+    - restamp: access_level, max_iterations, max_token_budget — applied after the indexer.
+      max_run_timeout is a transport extra (not a model field) stamped via extras= on deploy.
     """
-    id: str = Field(description="Agent UUID", **classify(FieldClass.IDENTITY))
-    name: str = Field(default="", description="Agent display name", **classify(FieldClass.CONTENT))
+    id: str = Field(description="Agent UUID", **classify(FieldClass.IDENTITY, import_owner="direct"))
+    name: str = Field(default="", description="Agent display name", **classify(FieldClass.CONTENT, import_owner="direct"))
     path: str | None = Field(
         default=None,
         description="DEPRECATED: relative path to agent YAML. Content is now inline.",
@@ -386,27 +394,154 @@ class ManifestAgent(BaseModel):
         description="Role display names (used by portable bundles; resolved to UUIDs on import)",
         **classify(FieldClass.ENVIRONMENT, keep_on_portable=True),
     )
-    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public", **classify(FieldClass.CONTENT))
+    access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public", **classify(FieldClass.CONTENT, import_owner="restamp"))
     # -- Portable content (inline) --
-    description: str | None = Field(default=None, description="Agent description", **classify(FieldClass.CONTENT))
-    system_prompt: str | None = Field(default=None, description="LLM system prompt", **classify(FieldClass.CONTENT))
-    channels: list[str] = Field(default_factory=list, description="Channels the agent runs on (chat, email, …)", **classify(FieldClass.CONTENT))
-    tool_ids: list[str] = Field(default_factory=list, description="Workflow UUIDs exposed as tools", **classify(FieldClass.REFERENCE))
-    delegated_agent_ids: list[str] = Field(default_factory=list, description="Agent UUIDs this agent can delegate to", **classify(FieldClass.REFERENCE))
-    knowledge_sources: list[str] = Field(default_factory=list, description="Knowledge namespaces searchable via RAG", **classify(FieldClass.CONTENT))
-    system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'execute_workflow')", **classify(FieldClass.CONTENT))
+    description: str | None = Field(default=None, description="Agent description", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    system_prompt: str | None = Field(default=None, description="LLM system prompt", **classify(FieldClass.CONTENT, import_owner="direct"))
+    channels: list[str] = Field(default_factory=list, description="Channels the agent runs on (chat, email, …)", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    tool_ids: list[str] = Field(default_factory=list, description="Workflow UUIDs exposed as tools", **classify(FieldClass.REFERENCE, import_owner="indexer"))
+    delegated_agent_ids: list[str] = Field(default_factory=list, description="Agent UUIDs this agent can delegate to", **classify(FieldClass.REFERENCE, import_owner="indexer"))
+    knowledge_sources: list[str] = Field(default_factory=list, description="Knowledge namespaces searchable via RAG", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'execute_workflow')", **classify(FieldClass.CONTENT, import_owner="indexer"))
     mcp_connection_ids: list[str] = Field(
         default_factory=list,
         description=(
             "MCP connection UUIDs explicitly granted to this agent. Empty "
             "list means the agent surfaces no external MCP tools."
         ),
-        **classify(FieldClass.REFERENCE),
+        **classify(FieldClass.REFERENCE, import_owner="indexer"),
     )
-    llm_model: str | None = Field(default=None, description="Override LLM model (null = global default)", **classify(FieldClass.CONTENT))
-    llm_max_tokens: int | None = Field(default=None, description="Override LLM max tokens (null = global default)", **classify(FieldClass.CONTENT))
-    max_iterations: int | None = Field(default=None, description="Max LLM iterations for autonomous runs", **classify(FieldClass.CONTENT))
-    max_token_budget: int | None = Field(default=None, description="Max token budget for autonomous runs", **classify(FieldClass.CONTENT))
+    llm_model: str | None = Field(default=None, description="Override LLM model (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    llm_max_tokens: int | None = Field(default=None, description="Override LLM max tokens (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    max_iterations: int | None = Field(default=None, description="Max LLM iterations for autonomous runs", **classify(FieldClass.CONTENT, import_owner="restamp"))
+    max_token_budget: int | None = Field(default=None, description="Max token budget for autonomous runs", **classify(FieldClass.CONTENT, import_owner="restamp"))
+
+    @classmethod
+    def from_row(
+        cls,
+        agent,
+        *,
+        roles: list[str] | None = None,
+        tool_ids: list[str] | None = None,
+        delegated_agent_ids: list[str] | None = None,
+        mcp_connection_ids: list[str] | None = None,
+    ) -> "ManifestAgent":
+        """Build from an Agent ORM row, mirroring serialize_agent exactly.
+
+        ``tool_ids`` / ``delegated_agent_ids`` / ``mcp_connection_ids`` are passed
+        in (rather than read from relationships) so the caller controls
+        eager-loading and ordering — matching the pattern used for workflow/form roles.
+        """
+        return cls(
+            id=str(agent.id),
+            name=agent.name,
+            organization_id=str(agent.organization_id) if agent.organization_id else None,
+            roles=roles or [],
+            access_level=agent.access_level.value if agent.access_level else "role_based",
+            description=agent.description,
+            system_prompt=agent.system_prompt,
+            channels=list(agent.channels) if agent.channels else [],
+            tool_ids=tool_ids or [],
+            delegated_agent_ids=delegated_agent_ids or [],
+            knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
+            system_tools=list(agent.system_tools) if agent.system_tools else [],
+            mcp_connection_ids=mcp_connection_ids or [],
+            llm_model=agent.llm_model,
+            llm_max_tokens=agent.llm_max_tokens,
+            max_iterations=agent.max_iterations,
+            max_token_budget=agent.max_token_budget,
+        )
+
+    def _install_view(self, extras: dict) -> dict:
+        """Install subset — mirrors capture._agent_entries key-for-key.
+
+        Model-field allowlist (drop-none): id, name, description, system_prompt,
+        channels, access_level, knowledge_sources (forced []), system_tools (forced []),
+        llm_model, llm_max_tokens, max_iterations, max_token_budget,
+        tool_ids, delegated_agent_ids, roles, role_names (forced []).
+
+        organization_id is ABSENT (scope is install-inherited).
+        mcp_connection_ids is ABSENT — install bundle omits it; only git_sync carries it.
+        max_run_timeout is a transport extra from capture, merged via extras=.
+        """
+        _ALLOWLIST = {
+            "id", "name", "description", "system_prompt", "channels",
+            "access_level", "knowledge_sources", "system_tools",
+            "llm_model", "llm_max_tokens", "max_iterations", "max_token_budget",
+            "tool_ids", "delegated_agent_ids", "roles", "role_names",
+            # transport extra from capture (not a model field)
+            "max_run_timeout",
+        }
+        data = self.model_dump(mode="json", by_alias=True)
+        # Merge extras (max_run_timeout, role_names from capture) before filtering.
+        data.update(extras)
+        out: dict = {}
+        for k, v in data.items():
+            if k not in _ALLOWLIST:
+                continue
+            if k in ("knowledge_sources", "system_tools"):
+                # Always emit these lists — capture sends `list(agent.X or [])`, never drops.
+                out[k] = v if v is not None else []
+            elif k == "role_names":
+                # Always emit role_names — capture sends `await self._role_names(roles)`.
+                out[k] = v if v is not None else []
+            elif v is not None:
+                out[k] = v
+        return out
+
+    def to_orm_values(self, dest: "Destination") -> "ImportFields":
+        """Column values for the three-way import partition.
+
+        indexer_content: id + name (always present, name forced "") + indexer-owned
+          fields drop-none; non-empty lists only (channels/tool_ids/etc.).
+          mcp_connection_ids included when non-empty (git_sync carries it).
+          EXACTLY matches _agent_content_from_manifest.
+        direct: id, name, system_prompt — the scalar fields resolved directly by
+          _resolve_agent before the indexer runs.
+        restamp: access_level, max_iterations, max_token_budget — applied AFTER the
+          indexer by both _index_agents_from_manifest and _upsert_agents.
+          max_run_timeout is a transport extra (not a model field) — callers read it
+          from the bundle dict key directly (deploy.py _upsert_agents).
+        """
+        indexer: dict = {"id": self.id, "name": self.name or ""}
+        if self.description is not None:
+            indexer["description"] = self.description
+        if self.system_prompt is not None:
+            indexer["system_prompt"] = self.system_prompt
+        if self.channels:
+            indexer["channels"] = list(self.channels)
+        if self.tool_ids:
+            indexer["tool_ids"] = list(self.tool_ids)
+        if self.delegated_agent_ids:
+            indexer["delegated_agent_ids"] = list(self.delegated_agent_ids)
+        if self.knowledge_sources:
+            indexer["knowledge_sources"] = list(self.knowledge_sources)
+        if self.system_tools:
+            indexer["system_tools"] = list(self.system_tools)
+        if self.mcp_connection_ids:
+            indexer["mcp_connection_ids"] = list(self.mcp_connection_ids)
+        if self.llm_model is not None:
+            indexer["llm_model"] = self.llm_model
+        if self.llm_max_tokens is not None:
+            indexer["llm_max_tokens"] = self.llm_max_tokens
+        if self.max_iterations is not None:
+            indexer["max_iterations"] = self.max_iterations
+        if self.max_token_budget is not None:
+            indexer["max_token_budget"] = self.max_token_budget
+
+        direct: dict = {
+            "id": self.id,
+            "name": self.name or "",
+            "system_prompt": self.system_prompt or "",
+        }
+
+        restamp: dict = {
+            "access_level": self.access_level,
+            "max_iterations": self.max_iterations,
+            "max_token_budget": self.max_token_budget,
+        }
+
+        return ImportFields(indexer_content=indexer, direct=direct, restamp=restamp)
 
 
 class ManifestApp(EntityCodec, BaseModel):

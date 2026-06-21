@@ -1,0 +1,25 @@
+{
+  "channels": [
+    "chat"
+  ],
+  "description": "partition test agent",
+  "id": "<volatile>",
+  "knowledge_sources": [
+    "kb_partition"
+  ],
+  "llm_max_tokens": 1024,
+  "llm_model": "claude-haiku-4-5",
+  "max_iterations": 5,
+  "max_token_budget": 10000,
+  "mcp_connection_ids": [
+    "<volatile>"
+  ],
+  "name": "rt_agent_partition",
+  "system_prompt": "Partition test prompt.",
+  "system_tools": [
+    "execute_workflow"
+  ],
+  "tool_ids": [
+    "<volatile>"
+  ]
+}
