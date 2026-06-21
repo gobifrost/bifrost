@@ -77,9 +77,18 @@ fixing on-branch.
 > review (Jack: "these are all blockers"). A full audit of all 4 install-allowlist
 > entities for the Leak-A class found `tool_description` as the only instance, and
 > a structural guard (`test_install_view_preserves_every_imported_field`) now makes
-> any allowlist/`to_orm_values` divergence un-mergeable. The agent UUID-coercion
+> any view/`to_orm_values` divergence un-mergeable. The agent UUID-coercion
 > regression (Codex Finding 2) was also fixed. The descriptions below are retained
 > for history; all three are CLOSED.
+>
+> **FOLLOW-ON (same PR):** Jack pushed for the root structural fix rather than
+> guarding the symptom — the four hand-maintained install allowlists were the
+> recurrence vector. `view(INSTALL)` is now DERIVED from each field's `FieldClass`
+> (one generic `EntityCodec._install_view` + per-field `classify(install_view=...)`
+> overrides). All 4 frozensets + 8 bespoke `_install_view` methods deleted
+> (manifest.py −207 lines). Byte-identical except a deliberate `table_install`
+> re-capture that UNIFIES install policies with the git_sync policy shape. Design:
+> `docs/superpowers/plans/2026-06-21-view-from-fieldclass.md`.
 
 ## B2 — `Workflow.tool_description` not captured for Solution install (FIXED, was pre-existing)
 

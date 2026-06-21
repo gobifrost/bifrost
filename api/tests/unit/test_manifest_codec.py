@@ -1620,16 +1620,18 @@ def test_child_models_have_no_standalone_orm_path(dest):
 
 # ---------------------------------------------------------------------------
 # Structural guard against "Leak A": a field that to_orm_values(INSTALL) writes
-# from self.X but that view(INSTALL)'s allowlist drops will silently reconstitute
-# to its model DEFAULT on a Solution redeploy (deploy does
-# `Model(**view).to_orm_values(INSTALL)`), clearing the real DB value. The
-# allowlist and to_orm_values are two hand-maintained lists; nothing fails when
-# they disagree. This test makes that disagreement un-mergeable: for each
-# allowlist entity, every install-imported model field must SURVIVE the
-# capture->view->reconstruct->import round-trip (or be explicitly env-stripped).
+# from self.X but that view(INSTALL) drops will silently reconstitute to its
+# model DEFAULT on a Solution redeploy (deploy does
+# `Model(**view).to_orm_values(INSTALL)`), clearing the real DB value.
 #
-# B2 (Workflow.tool_description dropped from the install allowlist) is exactly
-# this class; this guard fails until B2 is fixed.
+# view(INSTALL) is now DERIVED from each field's FieldClass (no hand-maintained
+# allowlist), so a class mistag or a stray install_view="drop" is the remaining
+# way this class can recur. This guard is the second layer: for each entity deploy
+# reconstructs via Model(**view), every install-imported model field must SURVIVE
+# the view->reconstruct->import round-trip (or be explicitly env-stripped).
+#
+# B2 (Workflow.tool_description) was an instance of this class under the old
+# allowlist; this guard caught it (verified RED before the fix).
 # ---------------------------------------------------------------------------
 
 # Per-entity: a factory that builds a model with a NON-DEFAULT sentinel in every
