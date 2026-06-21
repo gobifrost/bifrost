@@ -1347,7 +1347,9 @@ class SolutionDeployer:
             # Guard: install bundles omit mcp_connection_ids entirely (capture
             # _agent_entries does not include them). A missing/empty key must NOT
             # trigger a full-replace-to-[] that wipes existing grants — mirror the
-            # git-sync guard (_index_agents_from_manifest:969).
+            # git-sync guard in _index_agents_from_manifest (its `if mcp_ids or
+            # _agent_has_inline_content(...)` gate that skips the sync when there's
+            # nothing to set).
             mcp_ids = self._parse_uuids(magent.get("mcp_connection_ids") or [])
             if mcp_ids:
                 await self._sync_agent_mcp_connections(agent_id, mcp_ids)

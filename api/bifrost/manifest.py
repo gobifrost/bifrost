@@ -413,8 +413,13 @@ class ManifestAgent(EntityCodec, BaseModel):
     )
     llm_model: str | None = Field(default=None, description="Override LLM model (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
     llm_max_tokens: int | None = Field(default=None, description="Override LLM max tokens (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
-    max_iterations: int | None = Field(default=None, description="Max LLM iterations for autonomous runs", **classify(FieldClass.CONTENT, import_owner="restamp"))
-    max_token_budget: int | None = Field(default=None, description="Max token budget for autonomous runs", **classify(FieldClass.CONTENT, import_owner="restamp"))
+    # indexer-owned (carried in _agent_content_from_manifest / the AgentIndexer
+    # YAML, per the spike's INDEXER_CONTENT_FIELDS); deploy/git-sync ALSO re-stamp
+    # them after the indexer as a belt-and-suspenders safety (the Slice-2 fix), so
+    # they appear in BOTH to_orm_values.indexer_content and .restamp. The tag
+    # reflects their primary classification (indexer); the re-stamp is orchestration.
+    max_iterations: int | None = Field(default=None, description="Max LLM iterations for autonomous runs", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    max_token_budget: int | None = Field(default=None, description="Max token budget for autonomous runs", **classify(FieldClass.CONTENT, import_owner="indexer"))
 
     @classmethod
     def from_row(
