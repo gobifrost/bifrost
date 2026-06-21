@@ -467,6 +467,9 @@ class SolutionCaptureService:
         return [ManifestCustomClaim.from_row(c).view(Destination.INSTALL) for c in rows]
 
     async def _app_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        from bifrost.manifest import ManifestApp
+        from bifrost.manifest_codec import Destination
+
         rows = (
             await self.db.execute(
                 select(Application).where(Application.solution_id == solution_id)
@@ -516,8 +519,6 @@ class SolutionCaptureService:
                     if binary_dist:
                         bin_dist_files = binary_dist
             roles = await self._role_ids(AppRole, "app_id", app.id)
-            from bifrost.manifest import ManifestApp
-            from bifrost.manifest_codec import Destination
             out.append(
                 ManifestApp.from_row(app, roles=roles).view(
                     Destination.INSTALL,

@@ -155,6 +155,14 @@ async def _serialize_entity(entity_type: str, entity_id: str) -> dict[str, Any] 
 
     Opens a fresh DB session, loads the entity + related data, and returns
     the manifest-serialized dict.  Returns None on any failure.
+
+    Note: this deliberately calls ``serialize_X(...).model_dump(mode="json",
+    exclude_defaults=True, by_alias=True)`` rather than the unified
+    ``.view(Destination.GIT_SYNC)`` seam. Change events want a compact diff
+    payload (``exclude_defaults`` drops unchanged-from-default fields), which
+    ``view()`` does not apply — so this is one wire surface intentionally not
+    routed through ``view()``. Keep them aligned if the GIT_SYNC view ever
+    gains an exclude-defaults variant.
     """
     from src.core.database import get_db_context
     from sqlalchemy import select

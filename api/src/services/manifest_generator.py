@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 
 
 def serialize_organization(org: Organization) -> ManifestOrganization:
+    """Serialize an Organization ORM object to ManifestOrganization."""
     return ManifestOrganization.from_row(org)
 
 
@@ -156,6 +157,7 @@ def serialize_integration(
     oauth_provider: OAuthProvider | None = None,
     mappings: list[IntegrationMapping] | None = None,
 ) -> ManifestIntegration:
+    """Serialize an Integration ORM object to ManifestIntegration."""
     return ManifestIntegration.from_row(
         integ,
         config_schema=config_schema,
@@ -165,6 +167,7 @@ def serialize_integration(
 
 
 def serialize_config(cfg: Config) -> ManifestConfig:
+    """Serialize a Config ORM object to ManifestConfig."""
     return ManifestConfig.from_row(cfg)
 
 

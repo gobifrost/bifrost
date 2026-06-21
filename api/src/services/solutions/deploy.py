@@ -1016,6 +1016,9 @@ class SolutionDeployer:
         Ownership guard mirrors workflows/tables: a bundle UUID must not collide
         with a row owned by ``_repo/`` (NULL) or another install.
         """
+        from bifrost.manifest import ManifestApp
+        from bifrost.manifest_codec import Destination
+
         sid = solution.id
         builds: list[dict[str, Any]] = []
         for mapp in apps:
@@ -1097,8 +1100,6 @@ class SolutionDeployer:
                     f"inline_v1 apps are not supported in a Solution bundle."
                 )
             now = datetime.now(timezone.utc)
-            from bifrost.manifest import ManifestApp
-            from bifrost.manifest_codec import Destination
             # Build model-field dict; transport extra "repo_path" maps to model field "path".
             # _collect_apps (CLI zip path) emits neither "path" nor "repo_path" — fall
             # back to f"apps/{slug}" so to_orm_values can derive repo_path from it.

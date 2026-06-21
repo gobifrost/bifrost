@@ -1542,3 +1542,31 @@ async def test_agent_to_orm_values_partition(db_session):
         await db_session.execute(delete(Agent).where(Agent.id == agent_id))
         await db_session.execute(delete(Organization).where(Organization.id == org_id))
         await db_session.commit()
+
+
+# P4: child models that are reconciled by their parent resolver have no standalone
+# orm path — to_orm_values raises NotImplementedError for either destination. The
+# parent cases (Integration/MCPServer/Config/SolutionConfigSchema) are covered
+# above; these lock the leaf children that were previously only covered indirectly.
+@pytest.mark.parametrize("dest", [Destination.GIT_SYNC, Destination.INSTALL])
+def test_child_models_have_no_standalone_orm_path(dest):
+    from bifrost.manifest import (
+        ManifestEventSubscription,
+        ManifestIntegrationConfigSchema,
+        ManifestIntegrationMapping,
+        ManifestMCPConnection,
+        ManifestMCPConnectionTool,
+        ManifestOAuthProvider,
+    )
+
+    children = [
+        ManifestIntegrationConfigSchema(key="k", type="string"),
+        ManifestOAuthProvider(provider_name="acme"),
+        ManifestIntegrationMapping(entity_id="ent-1"),
+        ManifestEventSubscription(id="00000000-0000-0000-0000-000000000001"),
+        ManifestMCPConnectionTool(tool_name="do_thing"),
+        ManifestMCPConnection(organization_id="11111111-1111-1111-1111-111111111111", client_id="cid"),
+    ]
+    for child in children:
+        with pytest.raises(NotImplementedError):
+            child.to_orm_values(dest)

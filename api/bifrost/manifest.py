@@ -95,6 +95,36 @@ class ManifestRole(EntityCodec, BaseModel):
         return ImportFields(direct={"id": self.id, "name": self.name})
 
 
+# Install-view allowlists — keys each entity's ``_install_view`` emits (mirroring
+# the capture._*_entries shape). Module-level frozensets so they're allocated once
+# rather than rebuilt per call. Includes model fields + the transport extras the
+# capture layer merges in via ``extras=``.
+_WORKFLOW_INSTALL_ALLOWLIST = frozenset({
+    "id", "name", "function_name", "path", "type", "description",
+    "endpoint_enabled", "public_endpoint", "timeout_seconds", "category",
+    "tags", "access_level", "roles", "role_names",
+})
+_FORM_INSTALL_ALLOWLIST = frozenset({
+    "id", "name", "description", "workflow_id", "launch_workflow_id",
+    "default_launch_params", "allowed_query_params", "access_level",
+    "roles", "role_names", "form_schema",
+    # transport extras from capture (not model fields)
+    "workflow_path", "workflow_function_name",
+})
+_AGENT_INSTALL_ALLOWLIST = frozenset({
+    "id", "name", "description", "system_prompt", "channels",
+    "access_level", "knowledge_sources", "system_tools",
+    "llm_model", "llm_max_tokens", "max_iterations", "max_token_budget",
+    "tool_ids", "delegated_agent_ids", "roles", "role_names",
+    # transport extra from capture (not a model field)
+    "max_run_timeout",
+})
+_APP_INSTALL_ALLOWLIST = frozenset({
+    "id", "name", "slug", "description", "dependencies",
+    "app_model", "access_level", "roles", "role_names",
+})
+
+
 class ManifestWorkflow(EntityCodec, BaseModel):
     """Workflow entry in manifest."""
     id: str = Field(description="Workflow UUID", **classify(FieldClass.IDENTITY))
@@ -153,11 +183,7 @@ class ManifestWorkflow(EntityCodec, BaseModel):
         organization_id is ABSENT (scope is install-inherited).
         roles + role_names come from extras (capture computes them async).
         """
-        _ALLOWLIST = {
-            "id", "name", "function_name", "path", "type", "description",
-            "endpoint_enabled", "public_endpoint", "timeout_seconds", "category",
-            "tags", "access_level", "roles", "role_names",
-        }
+        _ALLOWLIST = _WORKFLOW_INSTALL_ALLOWLIST
         data = self.model_dump(mode="json", by_alias=True)
         # Merge extras (roles, role_names from capture) before filtering.
         data.update(extras)
@@ -308,13 +334,7 @@ class ManifestForm(EntityCodec, BaseModel):
         from extras= drop-none. role_names forced to [] (never dropped) if present.
         form_schema.fields[] uses the capture helper (with position) via extras.
         """
-        _ALLOWLIST = {
-            "id", "name", "description", "workflow_id", "launch_workflow_id",
-            "default_launch_params", "allowed_query_params", "access_level",
-            "roles", "role_names", "form_schema",
-            # transport extras from capture (not model fields)
-            "workflow_path", "workflow_function_name",
-        }
+        _ALLOWLIST = _FORM_INSTALL_ALLOWLIST
         data = self.model_dump(mode="json", by_alias=True)
         # Merge extras (workflow_path, workflow_function_name, role_names, form_schema)
         # before filtering so extras can override model fields (e.g. form_schema with position).
@@ -388,7 +408,10 @@ class ManifestAgent(EntityCodec, BaseModel):
     path: str | None = Field(
         default=None,
         description="DEPRECATED: relative path to agent YAML. Content is now inline.",
-        **classify(FieldClass.CONTENT),
+        # import_owner is the "direct" default and inert here (to_orm_values is
+        # hardcoded and never emits path to import) — stated explicitly for
+        # annotation uniformity with the other classified fields.
+        **classify(FieldClass.CONTENT, import_owner="direct"),
     )
     # -- Environment-specific fields (NOT portable; do not include when sharing) --
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
@@ -473,14 +496,7 @@ class ManifestAgent(EntityCodec, BaseModel):
         mcp_connection_ids is ABSENT — install bundle omits it; only git_sync carries it.
         max_run_timeout is a transport extra from capture, merged via extras=.
         """
-        _ALLOWLIST = {
-            "id", "name", "description", "system_prompt", "channels",
-            "access_level", "knowledge_sources", "system_tools",
-            "llm_model", "llm_max_tokens", "max_iterations", "max_token_budget",
-            "tool_ids", "delegated_agent_ids", "roles", "role_names",
-            # transport extra from capture (not a model field)
-            "max_run_timeout",
-        }
+        _ALLOWLIST = _AGENT_INSTALL_ALLOWLIST
         data = self.model_dump(mode="json", by_alias=True)
         # Merge extras (max_run_timeout, role_names from capture) before filtering.
         data.update(extras)
@@ -608,10 +624,7 @@ class ManifestApp(EntityCodec, BaseModel):
         Transport extras (repo_path, logo_b64, logo_content_type, src_files,
         bin_files, dist_files, bin_dist_files) are merged from extras= drop-none.
         """
-        _MODEL_ALLOWLIST = {
-            "id", "name", "slug", "description", "dependencies",
-            "app_model", "access_level", "roles", "role_names",
-        }
+        _MODEL_ALLOWLIST = _APP_INSTALL_ALLOWLIST
         data = self.model_dump(mode="json", by_alias=True)
         out: dict = {}
         for k, v in data.items():
