@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-22
 **Branch:** `codex/files-sdk-policies`
-**Status:** Design (awaiting review)
+**Status:** Implemented — see plan `docs/superpowers/plans/2026-06-22-files-explorer-redesign.md`. Backend (seeded admin_bypass, `POST /api/files/structure`, 403-vs-404), frontend (FilesExplorer 3-pane responsive shell + ShareTree/FolderListing/FilePreview/EffectiveAccessPanel/TestAccessModal/PolicyEditorModal/NewShareDialog), and tests (backend e2e, vitest, Playwright desktop+narrow) all green. Live-drive caught two real bugs the unit tests missed: Global scope must send the explicit `"global"` sentinel (not `null`, which the write path reads as the caller's own org), and Test Access must list all users (not just the share's org).
 
 ## Problem
 
