@@ -18,9 +18,21 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 }));
 const shareTreeScopes: Array<string | null> = [];
 vi.mock("./ShareTree", () => ({
-	ShareTree: ({ scope }: { scope: string | null }) => {
+	ShareTree: ({
+		scope,
+		onSelect,
+	}: {
+		scope: string | null;
+		onSelect: (location: string, prefix: string) => void;
+	}) => {
 		shareTreeScopes.push(scope);
-		return <div data-testid="share-tree" />;
+		return (
+			<div data-testid="share-tree">
+				<button type="button" onClick={() => onSelect("gallery", "")}>
+					select-gallery
+				</button>
+			</div>
+		);
 	},
 }));
 vi.mock("./FolderListing", () => ({
@@ -84,6 +96,28 @@ describe("FilesExplorer", () => {
 		render(<FilesExplorer />);
 		fireEvent.click(screen.getByRole("button", { name: /new share/i }));
 		expect(screen.getByTestId("new-share-dialog")).toBeInTheDocument();
+	});
+
+	it("shows the header Upload button only once a writable folder is selected", () => {
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		render(<FilesExplorer />);
+		// At the shares root (no location) there is nothing to upload to.
+		expect(
+			screen.queryByRole("button", { name: /upload/i }),
+		).not.toBeInTheDocument();
+		// Selecting a (writable) share reveals Upload in the header.
+		fireEvent.click(screen.getByText("select-gallery"));
+		expect(
+			screen.getByRole("button", { name: /upload/i }),
+		).toBeInTheDocument();
+	});
+
+	it("labels the New Share button with title case", () => {
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		render(<FilesExplorer />);
+		expect(
+			screen.getByRole("button", { name: "New Share" }),
+		).toBeInTheDocument();
 	});
 
 	it("toggles to the Policies view", async () => {

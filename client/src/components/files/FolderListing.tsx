@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, Eye, FileText, Folder, Trash2, Upload } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -19,6 +18,7 @@ import {
 import { files } from "@/lib/app-sdk/files";
 import { listStructure, type StructureEntry } from "@/services/fileStructure";
 import { EntryMenuItem } from "./fileContextMenu";
+import { useFileUpload } from "./useFileUpload";
 
 export type ListingRowAction =
 	| "preview"
@@ -51,8 +51,13 @@ export function FolderListing({
 	const [entries, setEntries] = useState<StructureEntry[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [dragOver, setDragOver] = useState(false);
-	const [uploading, setUploading] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const { uploading, uploadFiles } = useFileUpload(
+		readOnly ? null : location,
+		scope,
+		prefix,
+		onUploaded,
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -75,25 +80,6 @@ export function FolderListing({
 			cancelled = true;
 		};
 	}, [location, prefix, scope]);
-
-	async function uploadFiles(fileList: FileList | File[]) {
-		if (location === null || readOnly) return;
-		setUploading(true);
-		try {
-			for (const file of Array.from(fileList)) {
-				const targetPath = prefix ? `${prefix.replace(/\/$/, "")}/${file.name}` : file.name;
-				await files.upload(targetPath, file, { location, scope });
-			}
-			toast.success("Upload complete");
-			onUploaded();
-		} catch (err) {
-			toast.error("Upload failed", {
-				description: err instanceof Error ? err.message : String(err),
-			});
-		} finally {
-			setUploading(false);
-		}
-	}
 
 	async function handleDownload(path: string) {
 		if (location === null) return;
@@ -151,18 +137,6 @@ export function FolderListing({
 						<Upload className="h-6 w-6" />
 						Drop to upload to {prefix || "/"}
 					</div>
-				</div>
-			)}
-			{canUpload && entries.length > 0 && (
-				<div className="flex shrink-0 items-center justify-end px-3 pt-3">
-					<Button
-						type="button"
-						size="sm"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={uploading}
-					>
-						<Upload className="h-4 w-4" /> {uploading ? "Uploading…" : "Upload"}
-					</Button>
 				</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-auto p-2">

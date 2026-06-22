@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Menu, Plus } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Menu, Plus, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Sheet,
@@ -22,6 +22,7 @@ import { PoliciesView } from "./PoliciesView";
 import { PolicyEditorModal } from "./PolicyEditorModal";
 import { ShareTree, type ShareTreeAction } from "./ShareTree";
 import { TestAccessModal } from "./TestAccessModal";
+import { useFileUpload } from "./useFileUpload";
 
 const READ_ONLY_LOCATIONS = new Set(["uploads"]);
 // Canonical surface for each explorer pane (matches shadcn Card: rounded-4xl
@@ -61,6 +62,14 @@ export function FilesExplorer() {
 	const [refreshKey, setRefreshKey] = useState(0);
 
 	const readOnly = location !== null && READ_ONLY_LOCATIONS.has(location);
+	const canUpload = view === "browse" && location !== null && !readOnly;
+	const uploadInputRef = useRef<HTMLInputElement>(null);
+	const { uploading, uploadFiles } = useFileUpload(
+		canUpload ? location : null,
+		scope,
+		prefix,
+		() => setRefreshKey((k) => k + 1),
+	);
 	const scopeLabel = useMemo(() => {
 		if (selectorScope === null) return "Global";
 		return (
@@ -235,9 +244,38 @@ export function FilesExplorer() {
 							<TabsTrigger value="policies">Policies</TabsTrigger>
 						</TabsList>
 					</Tabs>
-					<Button type="button" size="sm" onClick={() => setNewShareOpen(true)}>
-						<Plus className="h-4 w-4" /> New share
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => setNewShareOpen(true)}
+					>
+						<Plus className="h-4 w-4" /> New Share
 					</Button>
+					{canUpload && (
+						<>
+							<input
+								ref={uploadInputRef}
+								type="file"
+								multiple
+								className="hidden"
+								onChange={(event) => {
+									if (event.target.files?.length)
+										void uploadFiles(event.target.files);
+									event.target.value = "";
+								}}
+							/>
+							<Button
+								type="button"
+								size="sm"
+								onClick={() => uploadInputRef.current?.click()}
+								disabled={uploading}
+							>
+								<Upload className="h-4 w-4" />{" "}
+								{uploading ? "Uploading…" : "Upload"}
+							</Button>
+						</>
+					)}
 				</div>
 			</header>
 
