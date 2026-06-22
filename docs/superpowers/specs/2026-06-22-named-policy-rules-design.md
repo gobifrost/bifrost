@@ -217,13 +217,44 @@ spans that org). Backs both delete-guard and rename-cascade, and powers the **bl
 - **REST** (`api/src/routers/policy_rules.py`): `POST/GET/PUT/DELETE /api/policy-rules`,
   `GET /api/policy-rules/{name}/usages` (where-used / blast radius). Business logic in
   `api/src/services/policy_rule_service.py`; router stays thin.
-- **CLI**: `bifrost policy-rule {create,list,get,update,delete,usages}`.
+- **CLI**: `bifrost policy-rule {create,list,get,update,delete,usages}` — a new top-level group
+  (named rules are global/org library objects, not bound to a single file location or table, so
+  they get their own group rather than living under `files`/`tables`).
 - **MCP**: thin HTTP wrapper over the REST endpoints (per `_http_bridge.py` pattern; enforced by
   `test_mcp_thin_wrapper.py`). No ORM access.
 
 DTO parity (`test_dto_flags.py`) and the contract-version tripwire (`test_contract_version.py`)
 apply — adding `PolicyRuleCreate`/`Update` to the CLI/SDK contract surface requires a fingerprint
 refresh (additive ⇒ refresh only; no `CONTRACT_VERSION` bump unless a CLI-parsed shape changes).
+
+### CLI for the policy documents themselves (not just the named rules)
+
+Two surfaces edit the *policies* that contain rules. The named-rules feature must keep both able
+to round-trip a `{"$ref": ...}` entry.
+
+**File policies — already exist, must accept refs.**
+`bifrost files policies {list,get,set,delete}` (`api/bifrost/commands/files.py`,
+`policies_group`). `set` loads a policy document (JSON/YAML literal or file) and PUTs it.
+- *Change:* none to the command shape — it already passes the document through verbatim. The
+  server-side `resolve_policy_refs` save-validation (above) is what makes a `{"$ref": ...}` entry
+  in that document valid or `422`. Add a CLI e2e asserting a referenced rule round-trips through
+  `files policies set` / `get`.
+
+**Table policies — partial today, add a dedicated subgroup.**
+`bifrost tables {create,update} --policies <json|file>` embeds the whole `access` document
+(`api/bifrost/commands/tables.py`). There is **no** `tables policies` subgroup mirroring
+`files policies`.
+- *Change:* add `bifrost tables policies {get,set}` for symmetry with `files policies` (get/set
+  the `access` document of one table by name), so a user can edit a table's policy — including a
+  `{"$ref": ...}` entry — without re-sending the whole table create/update payload. `--policies`
+  on create/update stays as the bulk form. Same server-side ref validation applies.
+
+> **Why a `tables policies` subgroup and not just `--policies`:** today editing a table's access
+> means re-supplying it through `tables update`, which is fine for scripted bulk edits but
+> awkward for "tweak the policy on this one table." `files` already drew this line (a `files
+> policies` group distinct from `files write`); `tables` should match so the two policy surfaces
+> are consistent. This is in scope because referencing a named rule is precisely the "tweak one
+> policy" motion we're optimizing for.
 
 ### Portability (manifest / Solutions)
 
@@ -260,9 +291,11 @@ policy's list.
 | where-used helper | scan both JSONB columns for a ref | DB session |
 | `PolicyRuleService` | CRUD + rename-cascade + delete-guard (txn) | ORM, where-used helper |
 | `policy_rules.py` router | thin REST surface | service |
-| CLI `policy-rule` / MCP wrapper | parallel surfaces | REST DTOs |
+| CLI `policy-rule` group + MCP wrapper | parallel surfaces for the named rules | REST DTOs |
+| CLI `tables policies {get,set}` | per-table policy-document edit (mirrors `files policies`) | REST |
 | `ManifestPolicyRule` + generator/sync | portability round-trip | manifest layer |
-| Client: reference mode in "Insert template…" + where-used panel | author refs, show blast radius | REST |
+| Client: reference mode in Tables + Files policy editors | author `{$ref}` in-context | REST |
+| Client: in-context policy-rules manager (list/edit/where-used) | manage shared rules from those views | REST |
 
 The two existing policy services change minimally: each adds **one `await resolve_policy_refs(...)`
 call** between validate and evaluate/compile. The evaluator and the SQL compiler are **unchanged**
@@ -270,13 +303,41 @@ call** between validate and evaluate/compile. The evaluator and the SQL compiler
 
 ## Frontend
 
-- Promote the client `*-policy-templates.ts` catalogs to a **server-backed list** (read from
-  `/api/policy-rules`).
-- The "Insert template…" dropdown gains a **reference mode**: inserts `{"$ref": name}` into the
-  editor buffer (the shared `JsonYamlEditor`) instead of deep-copying the rule body. Copy mode may
-  remain for one-off divergence, but reference is the default for named rules.
-- A small **policy-rules admin** (list / edit / where-used). Before saving a rule edit, show the
-  blast-radius count from `/api/policy-rules/{name}/usages`.
+The named-rules UI lives **inside the existing Tables and Files policy-editing surfaces** — not as
+a separate, disconnected admin page. A user editing a table's or a file prefix's policy is exactly
+where they reach for "apply the shared `admin_bypass`," so authoring and managing named rules
+happens in that same flow.
+
+**1. Editing policies in the Tables and Files views (the primary ask).**
+Both views already edit a policy document through the shared **`JsonYamlEditor`**:
+- **Files:** the policy editor in the Files explorer (`PolicyEditorModal` / Policies tab,
+  `client/src/components/files/`).
+- **Tables:** the table policy editor (`client/src/components/tables/`, the `--policies`/`access`
+  document surface).
+
+Both gain:
+- A **reference mode** on the existing "Insert template…" dropdown: inserts `{"$ref": name}` into
+  the editor buffer instead of deep-copying the rule body. The dropdown is sourced from the
+  server (`/api/policy-rules`, filtered to the domain by the rule's actions). Copy mode stays for
+  intentional one-offs; reference is the default for named rules.
+- Inline **resolve-on-save validation feedback**: a `{"$ref": ...}` to a non-existent rule
+  surfaces the server `422`/`PolicyValidationError` at the offending list index (same channel the
+  editors already use for malformed `when` ASTs).
+
+**2. Managing the named rules themselves (reachable from those same views).**
+A **policy-rules manager** — list / create / edit / delete + where-used — promoted from the
+client `*-policy-templates.ts` catalogs to a server-backed list. It is reachable **from the
+Tables and Files policy editors** (e.g. a "Manage rules…" affordance beside the reference
+dropdown) so the author never leaves the policy-editing context to define a new shared rule. Whether
+it renders as a slideout/modal from those views or also gets a standalone route is an
+implementation detail; the requirement is that it is reachable in-context from both the Tables and
+Files policy surfaces.
+- Before saving a rule edit, show the **blast-radius count** from
+  `/api/policy-rules/{name}/usages` ("used by N file prefixes and M tables") — editing a live rule
+  changes every referencing policy.
+- Rename and delete go through the server (cascade / 409-guard); the UI surfaces the where-used
+  list when a delete is blocked.
+
 - Types via `npm run generate:types` (no hand-written types).
 
 ## Testing
@@ -293,10 +354,15 @@ call** between validate and evaluate/compile. The evaluator and the SQL compiler
   delete (409).
 - **Contract:** `test_dto_flags.py` parity, `test_contract_version.py` fingerprint refresh,
   `test_mcp_thin_wrapper.py` for the MCP tool.
+- **CLI:** a referenced rule round-trips through `bifrost files policies set`/`get`; new
+  `bifrost tables policies get`/`set` round-trips a policy doc including a `{"$ref": ...}` entry;
+  `bifrost policy-rule` group create/list/get/update/delete/usages.
 - **Manifest round-trip:** `test_manifest.py` for `ManifestPolicyRule`; `test_git_sync_local.py`
   for rule-before-policy import ordering and ref preservation; install fails closed on an
   unresolvable ref.
-- **Client:** vitest for the reference-mode insert + the where-used panel; Playwright admin spec
+- **Client:** vitest for the reference-mode insert (Tables editor + Files editor) and the
+  in-context policy-rules manager (list/edit/where-used/blast-radius); Playwright admin spec
+  covering "insert ref in the Files policy editor" and "insert ref in the Tables policy editor"
   (note: `*.admin.spec.ts` is local-only, not in CI).
 
 ## Divergences from the plan's earlier "templates" section
