@@ -14,6 +14,7 @@ import {
 	type FileAccessTestResult,
 	type FilePolicyAction,
 } from "@/services/filePolicies";
+import { InlineLoader } from "./InlineLoader";
 
 interface TestAccessModalProps {
 	open: boolean;
@@ -100,7 +101,7 @@ export function TestAccessModal({
 				</div>
 				{error && <p className="text-xs text-destructive">{error}</p>}
 				{loading && (
-					<p className="text-xs text-muted-foreground">Resolving access…</p>
+					<InlineLoader label="Resolving access…" />
 				)}
 				{results && (
 					<ul className="space-y-1">

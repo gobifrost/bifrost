@@ -18,6 +18,7 @@ import {
 	type StructureEntry,
 } from "@/services/fileStructure";
 import { EntryMenuItem } from "./fileContextMenu";
+import { InlineLoader } from "./InlineLoader";
 
 export type ShareTreeAction =
 	| "effective"
@@ -174,7 +175,7 @@ export function ShareTree({
 	return (
 		<div role="tree" className="min-h-0 flex-1 overflow-auto p-2">
 			{loading && shares.length === 0 && (
-				<p className="px-2 py-1 text-xs text-muted-foreground">Loading shares…</p>
+				<InlineLoader className="px-2 py-1" label="Loading shares…" />
 			)}
 			{!loading && shares.length === 0 && (
 				<p className="px-2 py-1 text-xs text-muted-foreground">

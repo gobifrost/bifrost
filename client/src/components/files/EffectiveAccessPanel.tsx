@@ -3,6 +3,7 @@ import { ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { effectiveAccess, type FilePolicy } from "@/services/filePolicies";
+import { InlineLoader } from "./InlineLoader";
 
 interface EffectiveAccessPanelProps {
 	location: string;
@@ -76,7 +77,7 @@ export function EffectiveAccessPanel({
 						Select an item to see what governs it.
 					</p>
 				)}
-				{loading && <p className="text-muted-foreground">Resolving…</p>}
+				{loading && <InlineLoader label="Resolving…" />}
 				{error && <p className="text-destructive">{error}</p>}
 				{path !== null && !loading && !error && policies.length === 0 && (
 					<p className="text-muted-foreground">

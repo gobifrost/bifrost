@@ -11,6 +11,7 @@ import {
 	DataTableRow,
 } from "@/components/ui/data-table";
 import { listFilePolicies, type FilePolicy } from "@/services/filePolicies";
+import { InlineLoader } from "./InlineLoader";
 
 interface PoliciesViewProps {
 	scope: string | null;
@@ -55,7 +56,7 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 	return (
 		<div className="h-full min-h-0 overflow-auto">
 			{loading && policies.length === 0 ? (
-				<p className="p-4 text-sm text-muted-foreground">Loading…</p>
+				<InlineLoader className="p-4" />
 			) : error ? (
 				<p className="p-4 text-sm text-destructive">{error}</p>
 			) : policies.length === 0 ? (
@@ -78,10 +79,15 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 								clickable
 								onClick={() => onEdit(policy)}
 							>
-								<DataTableCell>
-									<div className="flex min-w-0 items-baseline gap-2">
-										<span className="font-medium">{policy.location}</span>
-										<span className="truncate font-mono text-xs text-muted-foreground">
+								<DataTableCell className="max-w-[16rem]">
+									<div className="flex min-w-0 flex-col">
+										<span className="truncate font-medium" title={policy.location}>
+											{policy.location}
+										</span>
+										<span
+											className="truncate font-mono text-xs text-muted-foreground"
+											title={`/${policy.path || ""}`}
+										>
 											/{policy.path || ""}
 										</span>
 									</div>

@@ -18,6 +18,7 @@ import {
 import { files } from "@/lib/app-sdk/files";
 import { listStructure, type StructureEntry } from "@/services/fileStructure";
 import { EntryMenuItem } from "./fileContextMenu";
+import { InlineLoader } from "./InlineLoader";
 import { useFileUpload } from "./useFileUpload";
 
 export type ListingRowAction =
@@ -145,7 +146,7 @@ export function FolderListing({
 						Choose a share from the tree to browse its files.
 					</p>
 				) : loading ? (
-					<p className="p-4 text-sm text-muted-foreground">Loading…</p>
+					<InlineLoader className="p-4" />
 				) : entries.length === 0 ? (
 					canUpload ? (
 						<button
