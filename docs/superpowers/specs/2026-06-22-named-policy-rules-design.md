@@ -209,6 +209,10 @@ Org-scoped to match the rule's reach (a global rule's where-used spans all orgs;
 spans that org). Backs both delete-guard and rename-cascade, and powers the **blast-radius UX**
 ("this rule is used by N file prefixes and M tables") shown before saving a rule edit.
 
+> **Indexing.** The `@>` containment scan runs on every rename/delete and every blast-radius read.
+> Add a **GIN index** on `file_policies.policies` and `tables.access` (the JSONB policy columns) in
+> the migration so these stay index-backed rather than sequential scans as policy counts grow.
+
 ### CRUD surface (three parallel surfaces — CLAUDE.md rule)
 
 `PolicyRule` is an entity mutation, so it needs all three surfaces fed from one DTO pair
@@ -270,16 +274,41 @@ to round-trip a `{"$ref": ...}` entry.
   validation). If a Solution's policy references a rule the bundle doesn't carry and the target
   env lacks, import **fails closed** (hard-fail, consistent with load).
 
-### Seeded `admin_bypass`
+### Authorization & audit
 
-Today `FilePolicyService` seeds an inline `admin_bypass` rule on first policy create
-(`shared/file_policies_seed.py`). **Decision:** seed a **global `PolicyRule` named
-`admin_bypass`** once (idempotent), and have the first-policy-create seed insert a
-**`{"$ref": "admin_bypass"}`** instead of the inline rule. Consequence — intended and called out:
-editing/deleting the global `admin_bypass` rule changes admin bypass **everywhere** in one edit
-(powerful and dangerous; the blast-radius UX must make the reach obvious before save). The
-existing "revoke admin_bypass on this prefix" still works by removing the ref from that one
-policy's list.
+**Who may write a rule.** There is a single admin role today, so no new per-role gating is
+introduced. Creating/editing/deleting a `PolicyRule` requires admin — the existing bypass check
+(`is_platform_admin OR is_provider_org`, per `api/src/repositories/README.md`). A **global**
+rule (`organization_id = NULL`) reaches every org, so writing one is a bypass-gated operation
+exactly like writing any other global cascade entity; no special concept is added. (Org-scoped
+rules follow the same write path as any org entity.)
+
+**Audit logging.** Rule create / edit / delete / rename are security-sensitive (a single edit can
+change access across many policies and orgs), so each writes an `AuditLog` entry through the
+existing audit path — including, for edits/renames, the **where-used count** at the time of the
+change so the blast radius is captured in the record.
+
+### Built-in `admin_bypass` rule (no migration)
+
+Today `FilePolicyService` seeds an **inline** `admin_bypass` rule on first policy create
+(`shared/file_policies_seed.py`). **Decision:**
+- Seed a **built-in, read-only global `PolicyRule` named `admin_bypass`** once (idempotent). It is
+  flagged read-only (not editable/deletable through the CRUD surface) — it is the platform's
+  bypass primitive, not a user-tunable rule.
+- Have the first-policy-create seed insert a **`{"$ref": "admin_bypass"}`** instead of the inline
+  rule, so newly created policies reference the built-in.
+- **Do NOT migrate existing inline `admin_bypass` rows.** Policies already created keep their
+  inline copy. Consequence — intended and explicitly accepted: editing the built-in `admin_bypass`
+  is moot anyway (it is read-only), and the inline copies on old rows continue to behave exactly as
+  before. No data migration, no fail-closed window, no behavior change for existing policies.
+- The existing "revoke admin_bypass on this prefix" still works by removing the rule (inline or
+  ref) from that one policy's list.
+
+> **Why read-only built-in, not an editable shared rule.** Making `admin_bypass` editable would
+> mean "one edit removes admin bypass everywhere," which is a large, dangerous foot-gun with no
+> requested use case. Read-only keeps the reference ergonomics (new policies point at one canonical
+> rule) without the blast radius. Other named rules authored by admins are fully editable — only
+> the built-in is locked.
 
 ## Components & boundaries
 
@@ -348,7 +377,10 @@ Files policy surfaces.
   global; missing ref raises; cross-domain ref raises; mixed inline+ref order preserved.
 - **Service tests:** rename cascade rewrites file AND table policies in one txn; delete-while-
   referenced returns 409 with targets; delete of unreferenced succeeds; where-used spans orgs for a
-  global rule.
+  global rule; the built-in `admin_bypass` rule rejects edit/delete (read-only) and is seeded
+  idempotently; create/edit/delete/rename each write an `AuditLog` row (with where-used count on
+  edit/rename); writing a **global** rule requires the bypass check (a non-bypass caller is denied);
+  existing inline `admin_bypass` rows are untouched by the feature (no migration).
 - **REST e2e:** create rule → reference it in a file policy and a table policy → evaluate (allow) →
   edit rule body → evaluate reflects the edit (live) → rename → both policies repointed → attempt
   delete (409).
@@ -388,3 +420,7 @@ shape.
 - A dedicated cross-org *shared file pool* (separate known limitation — see
   `project-files-sdk-status`).
 - Copy-mode removal — leaving inline copy available for intentional one-offs.
+- Migrating existing inline `admin_bypass` rows to references (explicitly declined above — old
+  rows stay inline, no migration).
+- Per-role authorization for rule writes — single admin role today; admin (bypass check) gates all
+  rule writes.
