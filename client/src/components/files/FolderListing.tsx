@@ -109,50 +109,63 @@ export function FolderListing({
 
 	const folders = entries.filter((e) => e.kind === "folder");
 	const fileEntries = entries.filter((e) => e.kind === "file");
+	const canUpload = !readOnly && location !== null;
 
 	return (
 		<section
-			className="flex min-h-0 flex-1 flex-col"
+			className="relative flex min-h-0 flex-1 flex-col"
 			onDragOver={(event) => {
 				if (readOnly || location === null) return;
 				event.preventDefault();
 				setDragOver(true);
 			}}
-			onDragLeave={() => setDragOver(false)}
+			onDragLeave={(event) => {
+				// Only clear when the cursor actually leaves the section, not
+				// when it crosses a child element boundary.
+				if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+				setDragOver(false);
+			}}
 			onDrop={(event) => {
 				event.preventDefault();
 				setDragOver(false);
 				if (event.dataTransfer.files.length) void uploadFiles(event.dataTransfer.files);
 			}}
 		>
-			{!readOnly && location !== null && (
+			{canUpload && (
+				<input
+					ref={fileInputRef}
+					type="file"
+					multiple
+					className="hidden"
+					onChange={(event) => {
+						if (event.target.files?.length) void uploadFiles(event.target.files);
+						event.target.value = "";
+					}}
+				/>
+			)}
+			{/* Full-pane drag overlay — visible while dragging files over the
+			    listing, so the whole area reads as a dropzone. */}
+			{dragOver && canUpload && (
+				<div className="pointer-events-none absolute inset-0 z-10 m-1 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-primary/5 backdrop-blur-[1px]">
+					<div className="flex flex-col items-center gap-2 text-sm font-medium text-primary">
+						<Upload className="h-6 w-6" />
+						Drop to upload to {prefix || "/"}
+					</div>
+				</div>
+			)}
+			{canUpload && entries.length > 0 && (
 				<div className="flex shrink-0 items-center justify-end px-3 pt-3">
-					<input
-						ref={fileInputRef}
-						type="file"
-						multiple
-						className="hidden"
-						onChange={(event) => {
-							if (event.target.files?.length) void uploadFiles(event.target.files);
-							event.target.value = "";
-						}}
-					/>
 					<Button
 						type="button"
-						size="xs"
+						size="sm"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={uploading}
 					>
-						<Upload className="h-3 w-3" /> Upload
+						<Upload className="h-4 w-4" /> {uploading ? "Uploading…" : "Upload"}
 					</Button>
 				</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-auto p-2">
-				{dragOver && (
-					<div className="m-2 rounded-md border-2 border-dashed border-primary/50 p-4 text-center text-xs text-muted-foreground">
-						Drop files to upload to {prefix || "/"}
-					</div>
-				)}
 				{location === null ? (
 					<p className="p-4 text-sm text-muted-foreground">
 						Choose a share from the tree to browse its files.
@@ -160,7 +173,22 @@ export function FolderListing({
 				) : loading ? (
 					<p className="p-4 text-sm text-muted-foreground">Loading…</p>
 				) : entries.length === 0 ? (
-					<p className="p-4 text-sm text-muted-foreground">No files here.</p>
+					canUpload ? (
+						<button
+							type="button"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={uploading}
+							className="flex h-full min-h-[12rem] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border p-6 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+						>
+							<Upload className="h-7 w-7" />
+							<span className="font-medium">
+								{uploading ? "Uploading…" : "Drag files here or click to upload"}
+							</span>
+							<span className="text-xs">Uploads to {prefix || "/"}</span>
+						</button>
+					) : (
+						<p className="p-4 text-sm text-muted-foreground">No files here.</p>
+					)
 				) : (
 					<DataTable>
 						<DataTableHeader>

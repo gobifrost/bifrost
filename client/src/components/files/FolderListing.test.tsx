@@ -58,6 +58,45 @@ describe("FolderListing", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("shows a click-to-upload dropzone for an empty writable folder", async () => {
+		vi.mocked(listStructure).mockResolvedValue([]);
+		render(
+			<FolderListing
+				scope={null}
+				location="gallery"
+				prefix=""
+				readOnly={false}
+				onOpenFolder={vi.fn()}
+				onSelectFile={vi.fn()}
+				onRowAction={vi.fn()}
+				onUploaded={vi.fn()}
+			/>,
+		);
+		expect(
+			await screen.findByText(/drag files here or click to upload/i),
+		).toBeInTheDocument();
+	});
+
+	it("shows a plain empty state (no dropzone) for an empty read-only folder", async () => {
+		vi.mocked(listStructure).mockResolvedValue([]);
+		render(
+			<FolderListing
+				scope={null}
+				location="uploads"
+				prefix=""
+				readOnly
+				onOpenFolder={vi.fn()}
+				onSelectFile={vi.fn()}
+				onRowAction={vi.fn()}
+				onUploaded={vi.fn()}
+			/>,
+		);
+		expect(await screen.findByText(/no files here/i)).toBeInTheDocument();
+		expect(
+			screen.queryByText(/drag files here/i),
+		).not.toBeInTheDocument();
+	});
+
 	it("uploads a dropped file via files.upload then fires onUploaded", async () => {
 		vi.mocked(files.upload).mockResolvedValue({
 			url: "u",
