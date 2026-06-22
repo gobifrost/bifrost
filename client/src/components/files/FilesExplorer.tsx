@@ -30,8 +30,14 @@ export function FilesExplorer() {
 	});
 	const isWide = useMediaQuery("(min-width: 1024px)");
 
-	// scope: null = Global, UUID = org. There is no "all scopes".
-	const [scope, setScope] = useState<string | null>(null);
+	// selectorScope is what OrganizationSelect speaks: null = Global, UUID = org.
+	// There is no "all scopes". The data layer needs the EXPLICIT "global"
+	// string (not null/UNSET) so write/upload (`resolve_target_org`) and the
+	// structural list agree — null would resolve to the caller's own org on
+	// the write path while the explorer means literal global. `apiScope` below
+	// is the value passed to every child/SDK call.
+	const [selectorScope, setSelectorScope] = useState<string | null>(null);
+	const scope = selectorScope ?? "global";
 	const [location, setLocation] = useState<string | null>(null);
 	const [prefix, setPrefix] = useState("");
 	const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -50,9 +56,11 @@ export function FilesExplorer() {
 
 	const readOnly = location !== null && READ_ONLY_LOCATIONS.has(location);
 	const scopeLabel = useMemo(() => {
-		if (scope === null) return "Global";
-		return organizations.find((o) => o.id === scope)?.name ?? "Organization";
-	}, [scope, organizations]);
+		if (selectorScope === null) return "Global";
+		return (
+			organizations.find((o) => o.id === selectorScope)?.name ?? "Organization"
+		);
+	}, [selectorScope, organizations]);
 	const segments = prefix ? prefix.replace(/\/$/, "").split("/") : [];
 
 	function resetTo(nextLocation: string | null, nextPrefix: string) {
@@ -62,7 +70,7 @@ export function FilesExplorer() {
 	}
 
 	function handleScopeChange(next: string | null | undefined) {
-		setScope(next ?? null);
+		setSelectorScope(next ?? null);
 		resetTo(null, "");
 	}
 
@@ -196,7 +204,7 @@ export function FilesExplorer() {
 				{isPlatformAdmin && (
 					<div className="w-56">
 						<OrganizationSelect
-							value={scope}
+							value={selectorScope}
 							onChange={handleScopeChange}
 							showGlobal
 							showAll={false}

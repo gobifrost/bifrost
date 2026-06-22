@@ -15,8 +15,12 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 		</button>
 	),
 }));
+const shareTreeScopes: Array<string | null> = [];
 vi.mock("./ShareTree", () => ({
-	ShareTree: () => <div data-testid="share-tree" />,
+	ShareTree: ({ scope }: { scope: string | null }) => {
+		shareTreeScopes.push(scope);
+		return <div data-testid="share-tree" />;
+	},
 }));
 vi.mock("./FolderListing", () => ({
 	FolderListing: () => <div data-testid="folder-listing" />,
@@ -58,6 +62,17 @@ describe("FilesExplorer", () => {
 		expect(screen.getByTestId("share-tree")).toBeInTheDocument();
 		expect(screen.getByTestId("folder-listing")).toBeInTheDocument();
 		expect(screen.getByTestId("detail-pane")).toBeInTheDocument();
+	});
+
+	it("passes the explicit 'global' scope (not null) to children at default", () => {
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		shareTreeScopes.length = 0;
+		render(<FilesExplorer />);
+		// Global must be the literal "global" string so write/upload and the
+		// structural list resolve to the same tree (null would mean the
+		// caller's own org on the write path).
+		expect(shareTreeScopes).toContain("global");
+		expect(shareTreeScopes).not.toContain(null);
 	});
 
 	it("opens the New share dialog", () => {
