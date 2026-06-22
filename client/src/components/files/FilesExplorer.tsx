@@ -8,6 +8,7 @@ import {
 	SheetTitle,
 	SheetTrigger,
 } from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -17,11 +18,15 @@ import { EffectiveAccessPanel } from "./EffectiveAccessPanel";
 import { FilePreview } from "./FilePreview";
 import { FolderListing, type ListingRowAction } from "./FolderListing";
 import { NewShareDialog } from "./NewShareDialog";
+import { PoliciesView } from "./PoliciesView";
 import { PolicyEditorModal } from "./PolicyEditorModal";
 import { ShareTree, type ShareTreeAction } from "./ShareTree";
 import { TestAccessModal } from "./TestAccessModal";
 
 const READ_ONLY_LOCATIONS = new Set(["uploads"]);
+// Canonical surface for each explorer pane (matches shadcn Card: rounded-4xl
+// ring instead of a hard border so it reads as part of the theme).
+const PANE = "flex min-h-0 flex-col overflow-hidden rounded-[min(var(--radius-4xl),24px)] bg-card ring-1 ring-foreground/5 dark:ring-foreground/10";
 
 export function FilesExplorer() {
 	const { isPlatformAdmin } = useAuth();
@@ -41,6 +46,7 @@ export function FilesExplorer() {
 	const [location, setLocation] = useState<string | null>(null);
 	const [prefix, setPrefix] = useState("");
 	const [selectedFile, setSelectedFile] = useState<string | null>(null);
+	const [view, setView] = useState<"browse" | "policies">("browse");
 
 	const [treeOpen, setTreeOpen] = useState(false);
 	const [detailOpen, setDetailOpen] = useState(false);
@@ -211,47 +217,57 @@ export function FilesExplorer() {
 						/>
 					</div>
 				)}
-				<Breadcrumbs
-					scopeLabel={scopeLabel}
-					location={location}
-					segments={segments}
-					onNavigate={handleBreadcrumb}
-				/>
-				<Button
-					type="button"
-					size="sm"
-					className="ml-auto"
-					onClick={() => setNewShareOpen(true)}
-				>
-					<Plus className="h-4 w-4" /> New share
-				</Button>
+				{view === "browse" && (
+					<Breadcrumbs
+						scopeLabel={scopeLabel}
+						location={location}
+						segments={segments}
+						onNavigate={handleBreadcrumb}
+					/>
+				)}
+				<div className="ml-auto flex items-center gap-2">
+					<Tabs
+						value={view}
+						onValueChange={(value) => setView(value as "browse" | "policies")}
+					>
+						<TabsList>
+							<TabsTrigger value="browse">Browse</TabsTrigger>
+							<TabsTrigger value="policies">Policies</TabsTrigger>
+						</TabsList>
+					</Tabs>
+					<Button type="button" size="sm" onClick={() => setNewShareOpen(true)}>
+						<Plus className="h-4 w-4" /> New share
+					</Button>
+				</div>
 			</header>
 
-			<div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)_24rem]">
-				{isWide && (
-					<div className="flex min-h-0 flex-col overflow-hidden rounded-md border">
-						{tree}
-					</div>
-				)}
-				<div className="flex min-h-0 flex-col overflow-hidden rounded-md border">
-					<FolderListing
-						key={`listing-${scope}-${location}-${prefix}-${refreshKey}`}
+			{view === "policies" ? (
+				<div className={`${PANE} flex-1`}>
+					<PoliciesView
 						scope={scope}
-						location={location}
-						prefix={prefix}
-						readOnly={readOnly}
-						onOpenFolder={(next) => resetTo(location, next)}
-						onSelectFile={selectFile}
-						onRowAction={handleRowAction}
-						onUploaded={() => setRefreshKey((k) => k + 1)}
+						refreshKey={refreshKey}
+						onEdit={(policy) => openPolicy(policy.location, policy.path)}
 					/>
 				</div>
-				{isWide && (
-					<div className="flex min-h-0 flex-col overflow-hidden rounded-md border">
-						{detail}
+			) : (
+				<div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)_24rem]">
+					{isWide && <div className={PANE}>{tree}</div>}
+					<div className={PANE}>
+						<FolderListing
+							key={`listing-${scope}-${location}-${prefix}-${refreshKey}`}
+							scope={scope}
+							location={location}
+							prefix={prefix}
+							readOnly={readOnly}
+							onOpenFolder={(next) => resetTo(location, next)}
+							onSelectFile={selectFile}
+							onRowAction={handleRowAction}
+							onUploaded={() => setRefreshKey((k) => k + 1)}
+						/>
 					</div>
-				)}
-			</div>
+					{isWide && <div className={PANE}>{detail}</div>}
+				</div>
+			)}
 
 			{!isWide && (
 				<Sheet open={detailOpen} onOpenChange={setDetailOpen}>

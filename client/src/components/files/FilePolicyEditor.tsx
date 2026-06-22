@@ -60,12 +60,12 @@ export function FilePolicyEditor({
 	}
 
 	return (
-		<section className="flex min-h-0 flex-col gap-3 border-l bg-background px-4 py-3">
+		<section className="flex min-h-0 flex-col gap-3">
 			<div className="flex items-center justify-between gap-3">
-				<div className="min-w-0">
-					<h2 className="truncate text-sm font-semibold">Policy editor</h2>
-					<p className="truncate text-xs text-muted-foreground">{path || value.path || "/"}</p>
-				</div>
+				<p className="truncate text-xs text-muted-foreground">
+					{value.location}
+					{(path || value.path) ? ` / ${path || value.path}` : " / (root)"}
+				</p>
 				<Badge variant="outline">{value.location}</Badge>
 			</div>
 

@@ -51,7 +51,7 @@ describe("PolicyEditorModal", () => {
 		);
 		// Editor renders once the best policy resolves.
 		await waitFor(() =>
-			expect(screen.getByText(/policy editor/i)).toBeInTheDocument(),
+			expect(screen.getByLabelText(/policy json/i)).toBeInTheDocument(),
 		);
 		fireEvent.click(screen.getByRole("button", { name: /save policy/i }));
 		await waitFor(() => expect(saveFilePolicy).toHaveBeenCalled());

@@ -1,19 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import {
-	Download,
-	Eye,
-	FileText,
-	Folder,
-	ShieldCheck,
-	Trash2,
-	Upload,
-} from "lucide-react";
+import { Download, Eye, FileText, Folder, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
 	ContextMenuContent,
-	ContextMenuItem,
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -27,6 +18,7 @@ import {
 } from "@/components/ui/data-table";
 import { files } from "@/lib/app-sdk/files";
 import { listStructure, type StructureEntry } from "@/services/fileStructure";
+import { EntryMenuItem } from "./fileContextMenu";
 
 export type ListingRowAction =
 	| "preview"
@@ -256,27 +248,14 @@ export function FolderListing({
 										</DataTableRow>
 									</ContextMenuTrigger>
 									<ContextMenuContent>
-										<ContextMenuItem onSelect={() => onRowAction("preview", file.path)}>
-											<Eye className="h-4 w-4" /> Preview
-										</ContextMenuItem>
-										<ContextMenuItem onSelect={() => onRowAction("test", file.path)}>
-											<ShieldCheck className="h-4 w-4" /> Test access
-										</ContextMenuItem>
-										<ContextMenuItem onSelect={() => onRowAction("policy", file.path)}>
-											<ShieldCheck className="h-4 w-4" /> Manage policy
-										</ContextMenuItem>
-										<ContextMenuItem onSelect={() => void handleDownload(file.path)}>
-											<Download className="h-4 w-4" /> Download
-										</ContextMenuItem>
+										<EntryMenuItem action="preview" onSelect={() => onRowAction("preview", file.path)} />
+										<EntryMenuItem action="test" onSelect={() => onRowAction("test", file.path)} />
+										<EntryMenuItem action="policy" onSelect={() => onRowAction("policy", file.path)} />
+										<EntryMenuItem action="download" onSelect={() => void handleDownload(file.path)} />
 										{!readOnly && (
 											<>
 												<ContextMenuSeparator />
-												<ContextMenuItem
-													variant="destructive"
-													onSelect={() => onRowAction("delete", file.path)}
-												>
-													<Trash2 className="h-4 w-4" /> Delete
-												</ContextMenuItem>
+												<EntryMenuItem action="delete" destructive onSelect={() => onRowAction("delete", file.path)} />
 											</>
 										)}
 									</ContextMenuContent>

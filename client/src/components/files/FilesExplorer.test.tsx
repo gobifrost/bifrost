@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: vi.fn() }));
@@ -34,6 +35,9 @@ vi.mock("./PolicyEditorModal", () => ({ PolicyEditorModal: () => <div /> }));
 vi.mock("./NewShareDialog", () => ({
 	NewShareDialog: ({ open }: { open: boolean }) =>
 		open ? <div data-testid="new-share-dialog" /> : null,
+}));
+vi.mock("./PoliciesView", () => ({
+	PoliciesView: () => <div data-testid="policies-view" />,
 }));
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -80,6 +84,16 @@ describe("FilesExplorer", () => {
 		render(<FilesExplorer />);
 		fireEvent.click(screen.getByRole("button", { name: /new share/i }));
 		expect(screen.getByTestId("new-share-dialog")).toBeInTheDocument();
+	});
+
+	it("toggles to the Policies view", async () => {
+		const user = userEvent.setup();
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		render(<FilesExplorer />);
+		expect(screen.getByTestId("folder-listing")).toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: /policies/i }));
+		expect(await screen.findByTestId("policies-view")).toBeInTheDocument();
+		expect(screen.queryByTestId("folder-listing")).not.toBeInTheDocument();
 	});
 
 	it("exposes a hamburger to reach the tree on narrow screens", () => {

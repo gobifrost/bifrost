@@ -9,7 +9,6 @@ import {
 import {
 	ContextMenu,
 	ContextMenuContent,
-	ContextMenuItem,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -18,6 +17,7 @@ import {
 	type ShareEntry,
 	type StructureEntry,
 } from "@/services/fileStructure";
+import { EntryMenuItem } from "./fileContextMenu";
 
 export type ShareTreeAction =
 	| "effective"
@@ -113,20 +113,12 @@ function FolderNode({
 					</div>
 				</ContextMenuTrigger>
 				<ContextMenuContent>
-					<ContextMenuItem onSelect={() => onContextAction("effective", location, prefix)}>
-						Effective access
-					</ContextMenuItem>
-					<ContextMenuItem onSelect={() => onContextAction("test", location, prefix)}>
-						Test access
-					</ContextMenuItem>
+					<EntryMenuItem action="effective" onSelect={() => onContextAction("effective", location, prefix)} />
+					<EntryMenuItem action="test" onSelect={() => onContextAction("test", location, prefix)} />
 					{!readOnly && (
 						<>
-							<ContextMenuItem onSelect={() => onContextAction("upload", location, prefix)}>
-								Upload here
-							</ContextMenuItem>
-							<ContextMenuItem onSelect={() => onContextAction("newPolicy", location, prefix)}>
-								New policy here
-							</ContextMenuItem>
+							<EntryMenuItem action="upload" onSelect={() => onContextAction("upload", location, prefix)} />
+							<EntryMenuItem action="newPolicy" onSelect={() => onContextAction("newPolicy", location, prefix)} />
 						</>
 					)}
 				</ContextMenuContent>
@@ -190,8 +182,8 @@ export function ShareTree({
 				</p>
 			)}
 			{shares.map((share) => {
-				const selected =
-					selectedLocation === share.location && selectedPrefix === "";
+				const locationActive = selectedLocation === share.location;
+				const selected = locationActive && selectedPrefix === "";
 				return (
 					<div key={share.location}>
 						<ContextMenu>
@@ -217,25 +209,17 @@ export function ShareTree({
 								</div>
 							</ContextMenuTrigger>
 							<ContextMenuContent>
-								<ContextMenuItem onSelect={() => onContextAction("effective", share.location, "")}>
-									Effective access
-								</ContextMenuItem>
-								<ContextMenuItem onSelect={() => onContextAction("test", share.location, "")}>
-									Test access
-								</ContextMenuItem>
+								<EntryMenuItem action="effective" onSelect={() => onContextAction("effective", share.location, "")} />
+								<EntryMenuItem action="test" onSelect={() => onContextAction("test", share.location, "")} />
 								{!share.readOnly && (
 									<>
-										<ContextMenuItem onSelect={() => onContextAction("upload", share.location, "")}>
-											Upload here
-										</ContextMenuItem>
-										<ContextMenuItem onSelect={() => onContextAction("newPolicy", share.location, "")}>
-											New policy here
-										</ContextMenuItem>
+										<EntryMenuItem action="upload" onSelect={() => onContextAction("upload", share.location, "")} />
+										<EntryMenuItem action="newPolicy" onSelect={() => onContextAction("newPolicy", share.location, "")} />
 									</>
 								)}
 							</ContextMenuContent>
 						</ContextMenu>
-						{selected && (
+						{locationActive && (
 							<ShareChildren
 								location={share.location}
 								scope={scope}
