@@ -2526,6 +2526,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/files/policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List File Policies
+         * @description List file policies for a location and optional org scope.
+         */
+        get: operations["list_file_policies_api_files_policies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/policies/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test File Policy Access
+         * @description Evaluate effective access for a path using the real file policy service.
+         */
+        post: operations["test_file_policy_access_api_files_policies_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/structure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List File Structure
+         * @description Admin-only STRUCTURAL listing (not policy-gated): what physically exists
+         *     in a scope, so the explorer tree never orphans a file. Excludes reserved
+         *     workspace/temp; flags uploads read-only. Omit `location` to discover shares.
+         */
+        post: operations["list_file_structure_api_files_structure_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/policies/{policy_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get File Policy
+         * @description Get the exact file policy for a location/path prefix.
+         */
+        get: operations["get_file_policy_api_files_policies__policy_path__get"];
+        /**
+         * Set File Policy
+         * @description Create or replace the file policy for a location/path prefix.
+         */
+        put: operations["set_file_policy_api_files_policies__policy_path__put"];
+        post?: never;
+        /**
+         * Delete File Policy
+         * @description Delete the exact file policy for a location/path prefix.
+         */
+        delete: operations["delete_file_policy_api_files_policies__policy_path__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/read": {
         parameters: {
             query?: never;
@@ -2644,6 +2734,46 @@ export interface paths {
          *     `(location, scope, path)`.
          */
         post: operations["get_signed_url_api_files_signed_url_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/complete-upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete Signed Upload
+         * @description Finalize a successful direct browser upload.
+         */
+        post: operations["complete_signed_upload_api_files_complete_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/signed-urls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get Signed Urls
+         * @description Generate presigned URLs with per-path allow/deny results.
+         */
+        post: operations["get_signed_urls_api_files_signed_urls_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -14350,6 +14480,19 @@ export interface components {
             exists: boolean;
         };
         /**
+         * FileExpr
+         * @description File policy expression AST.
+         *
+         *     Reuses the same operator/function/user/claims validation as table
+         *     policies, with one additional reference namespace: ``{file: ...}``.
+         *     Unknown file fields are accepted here and resolve to null at evaluation
+         *     time, which makes persisted policy JSON fail closed instead of widening
+         *     access.
+         */
+        FileExpr: {
+            [key: string]: unknown;
+        };
+        /**
          * FileListMetadataItem
          * @description File metadata item with path, etag, and last_modified.
          */
@@ -14469,6 +14612,84 @@ export interface components {
          * @enum {string}
          */
         FileMode: "draft" | "live";
+        /** FilePolicies */
+        FilePolicies: {
+            /** Policies */
+            policies?: components["schemas"]["FilePolicyRule"][];
+        };
+        /** FilePolicyAccessTestRequest */
+        FilePolicyAccessTestRequest: {
+            /** Path */
+            path: string;
+            /**
+             * Location
+             * @default workspace
+             */
+            location: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "read" | "write" | "delete" | "list";
+            /** Scope */
+            scope?: string | null;
+            /** User Id */
+            user_id?: string | null;
+        };
+        /** FilePolicyAccessTestResponse */
+        FilePolicyAccessTestResponse: {
+            /** Allowed */
+            allowed: boolean;
+            /** Path */
+            path: string;
+            /** Location */
+            location: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "read" | "write" | "delete" | "list";
+            /** Matched Policy */
+            matched_policy?: string | null;
+            /** Matched Rule */
+            matched_rule?: string | null;
+            /** Denial Reason */
+            denial_reason?: string | null;
+        };
+        /** FilePolicyListResponse */
+        FilePolicyListResponse: {
+            /** Policies */
+            policies?: components["schemas"]["FilePolicyPublic"][];
+        };
+        /** FilePolicyPublic */
+        FilePolicyPublic: {
+            /** Id */
+            id: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Location */
+            location: string;
+            /** Path */
+            path: string;
+            policies: components["schemas"]["FilePolicies"];
+        };
+        /** FilePolicyRule */
+        FilePolicyRule: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Actions */
+            actions: ("read" | "write" | "delete" | "list")[];
+            when?: components["schemas"]["FileExpr"] | null;
+        };
+        /** FilePolicySetRequest */
+        FilePolicySetRequest: {
+            /** Policies */
+            policies: components["schemas"]["FilePolicies"] | {
+                [key: string]: unknown;
+            }[];
+        };
         /**
          * FilePullRequest
          * @description Request to pull files from server.
@@ -14563,6 +14784,42 @@ export interface components {
              * @default false
              */
             binary: boolean;
+        };
+        /**
+         * FileStructureRequest
+         * @description Request for the admin-only structural listing endpoint.
+         */
+        FileStructureRequest: {
+            /**
+             * Location
+             * @description Location to list; omit to discover shares
+             */
+            location?: string | null;
+            /**
+             * Prefix
+             * @description Prefix under the location
+             * @default
+             */
+            prefix: string;
+            /**
+             * Scope
+             * @description Org scope: None/'global' or a UUID
+             */
+            scope?: string | null;
+        };
+        /**
+         * FileStructureResponse
+         * @description Structural listing result. `shares` for discover mode, `entries` for a prefix.
+         */
+        FileStructureResponse: {
+            /** Shares */
+            shares?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Entries */
+            entries?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /**
          * FileType
@@ -20427,6 +20684,89 @@ export interface components {
              * @default bearer
              */
             token_type: string;
+        };
+        /**
+         * SignedUploadCompleteRequest
+         * @description Request to finalize metadata after a successful browser presigned PUT.
+         */
+        SignedUploadCompleteRequest: {
+            /**
+             * Path
+             * @description File path relative to location root
+             */
+            path: string;
+            /**
+             * Content Type
+             * @description Uploaded MIME type
+             * @default application/octet-stream
+             */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             * @default uploads
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope. Required for non-workspace, non-uploads locations.
+             */
+            scope?: string | null;
+        };
+        /**
+         * SignedUrlBatchRequest
+         * @description Request to generate several presigned URLs.
+         */
+        SignedUrlBatchRequest: {
+            /** Requests */
+            requests: components["schemas"]["SignedUrlRequest"][];
+        };
+        /**
+         * SignedUrlBatchResponse
+         * @description Batch presigned URL response.
+         */
+        SignedUrlBatchResponse: {
+            /** Results */
+            results: components["schemas"]["SignedUrlBatchResult"][];
+        };
+        /**
+         * SignedUrlBatchResult
+         * @description Per-path presigned URL result.
+         */
+        SignedUrlBatchResult: {
+            /**
+             * Path
+             * @description Original request path
+             */
+            path: string;
+            /**
+             * Resolved Path
+             * @description Resolved S3 path
+             */
+            resolved_path?: string | null;
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "PUT" | "GET";
+            /** Url */
+            url?: string | null;
+            /**
+             * Expires In
+             * @default 600
+             */
+            expires_in: number;
+            /** Error */
+            error?: string | null;
+            /**
+             * Status Code
+             * @default 200
+             */
+            status_code: number;
         };
         /**
          * SignedUrlRequest
@@ -27570,6 +27910,209 @@ export interface operations {
             };
         };
     };
+    list_file_policies_api_files_policies_get: {
+        parameters: {
+            query?: {
+                location?: string | null;
+                scope?: string | null;
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePolicyListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_file_policy_access_api_files_policies_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilePolicyAccessTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePolicyAccessTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_file_structure_api_files_structure_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileStructureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileStructureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_policy_api_files_policies__policy_path__get: {
+        parameters: {
+            query?: {
+                location?: string;
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                policy_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePolicyPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_file_policy_api_files_policies__policy_path__put: {
+        parameters: {
+            query?: {
+                location?: string;
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                policy_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilePolicySetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePolicyPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_file_policy_api_files_policies__policy_path__delete: {
+        parameters: {
+            query?: {
+                location?: string;
+                scope?: string | null;
+            };
+            header?: never;
+            path: {
+                policy_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_file_api_files_read_post: {
         parameters: {
             query?: never;
@@ -27751,6 +28294,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SignedUrlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_signed_upload_api_files_complete_upload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignedUploadCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_signed_urls_api_files_signed_urls_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignedUrlBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedUrlBatchResponse"];
                 };
             };
             /** @description Validation Error */
