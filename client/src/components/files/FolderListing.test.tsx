@@ -30,6 +30,7 @@ describe("FolderListing", () => {
 				onOpenFolder={onOpenFolder}
 				onSelectFile={vi.fn()}
 				onRowAction={vi.fn()}
+				onFolderAction={vi.fn()}
 				onUploaded={vi.fn()}
 			/>,
 		);
@@ -37,6 +38,26 @@ describe("FolderListing", () => {
 		expect(screen.getByText("a.png")).toBeInTheDocument();
 		fireEvent.click(screen.getByText("team"));
 		expect(onOpenFolder).toHaveBeenCalledWith("team");
+	});
+
+	it("opens a folder context menu with folder actions", async () => {
+		const onFolderAction = vi.fn();
+		render(
+			<FolderListing
+				scope={null}
+				location="gallery"
+				prefix=""
+				readOnly={false}
+				onOpenFolder={vi.fn()}
+				onSelectFile={vi.fn()}
+				onRowAction={vi.fn()}
+				onFolderAction={onFolderAction}
+				onUploaded={vi.fn()}
+			/>,
+		);
+		fireEvent.contextMenu(await screen.findByText("team"));
+		fireEvent.click(await screen.findByText("New Policy"));
+		expect(onFolderAction).toHaveBeenCalledWith("newPolicy", "team");
 	});
 
 	it("hides the upload button when read-only", async () => {
@@ -49,6 +70,7 @@ describe("FolderListing", () => {
 				onOpenFolder={vi.fn()}
 				onSelectFile={vi.fn()}
 				onRowAction={vi.fn()}
+				onFolderAction={vi.fn()}
 				onUploaded={vi.fn()}
 			/>,
 		);
@@ -69,6 +91,7 @@ describe("FolderListing", () => {
 				onOpenFolder={vi.fn()}
 				onSelectFile={vi.fn()}
 				onRowAction={vi.fn()}
+				onFolderAction={vi.fn()}
 				onUploaded={vi.fn()}
 			/>,
 		);
@@ -88,6 +111,7 @@ describe("FolderListing", () => {
 				onOpenFolder={vi.fn()}
 				onSelectFile={vi.fn()}
 				onRowAction={vi.fn()}
+				onFolderAction={vi.fn()}
 				onUploaded={vi.fn()}
 			/>,
 		);
@@ -113,6 +137,7 @@ describe("FolderListing", () => {
 				onOpenFolder={vi.fn()}
 				onSelectFile={vi.fn()}
 				onRowAction={vi.fn()}
+				onFolderAction={vi.fn()}
 				onUploaded={onUploaded}
 			/>,
 		);

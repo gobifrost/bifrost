@@ -20,12 +20,12 @@ import {
  */
 export const ENTRY_ACTION_META = {
 	preview: { label: "Preview", icon: Eye },
-	effective: { label: "Effective access", icon: ShieldCheck },
-	test: { label: "Test access", icon: FlaskConical },
-	policy: { label: "Manage policy", icon: ShieldCheck },
-	newPolicy: { label: "New policy here", icon: ShieldPlus },
-	upload: { label: "Upload here", icon: Upload },
-	newFolder: { label: "New folder", icon: FolderPlus },
+	effective: { label: "Effective Access", icon: ShieldCheck },
+	test: { label: "Test Access", icon: FlaskConical },
+	policy: { label: "Manage Policy", icon: ShieldCheck },
+	newPolicy: { label: "New Policy", icon: ShieldPlus },
+	upload: { label: "Upload", icon: Upload },
+	newFolder: { label: "New Folder", icon: FolderPlus },
 	download: { label: "Download", icon: Download },
 	delete: { label: "Delete", icon: Trash2 },
 } as const;

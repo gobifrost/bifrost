@@ -9,7 +9,12 @@ import {
 	SheetTrigger,
 } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import {
+	deleteFilePolicy,
+	type FilePolicy,
+} from "@/services/filePolicies";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
@@ -112,6 +117,18 @@ export function FilesExplorer() {
 	function openPolicy(loc: string, path: string) {
 		setModalTarget({ location: loc, path });
 		setPolicyOpen(true);
+	}
+
+	async function handleDeletePolicy(policy: FilePolicy) {
+		try {
+			await deleteFilePolicy(policy);
+			toast.success("File policy deleted");
+			setRefreshKey((k) => k + 1);
+		} catch (err) {
+			toast.error("Failed to delete file policy", {
+				description: err instanceof Error ? err.message : String(err),
+			});
+		}
 	}
 
 	function handleTreeAction(
@@ -285,6 +302,7 @@ export function FilesExplorer() {
 						scope={scope}
 						refreshKey={refreshKey}
 						onEdit={(policy) => openPolicy(policy.location, policy.path)}
+						onDelete={(policy) => void handleDeletePolicy(policy)}
 					/>
 				</div>
 			) : (
@@ -302,6 +320,10 @@ export function FilesExplorer() {
 							onOpenFolder={(next) => resetTo(location, next)}
 							onSelectFile={selectFile}
 							onRowAction={handleRowAction}
+							onFolderAction={(action, folderPrefix) =>
+								location !== null &&
+								handleTreeAction(action, location, folderPrefix)
+							}
 							onUploaded={() => setRefreshKey((k) => k + 1)}
 						/>
 					</div>

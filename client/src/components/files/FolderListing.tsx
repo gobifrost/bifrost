@@ -28,6 +28,8 @@ export type ListingRowAction =
 	| "policy"
 	| "test";
 
+export type ListingFolderAction = "effective" | "test" | "newPolicy" | "upload";
+
 interface FolderListingProps {
 	scope: string | null;
 	location: string | null;
@@ -36,6 +38,7 @@ interface FolderListingProps {
 	onOpenFolder: (prefix: string) => void;
 	onSelectFile: (path: string) => void;
 	onRowAction: (action: ListingRowAction, path: string) => void;
+	onFolderAction: (action: ListingFolderAction, prefix: string) => void;
 	onUploaded: () => void;
 }
 
@@ -47,6 +50,7 @@ export function FolderListing({
 	onOpenFolder,
 	onSelectFile,
 	onRowAction,
+	onFolderAction,
 	onUploaded,
 }: FolderListingProps) {
 	const [entries, setEntries] = useState<StructureEntry[]>([]);
@@ -174,19 +178,44 @@ export function FolderListing({
 						</DataTableHeader>
 						<DataTableBody>
 							{folders.map((folder) => (
-								<DataTableRow
-									key={folder.path}
-									clickable
-									onClick={() => onOpenFolder(folder.path)}
-								>
-									<DataTableCell>
-										<div className="flex min-w-0 items-center gap-2">
-											<Folder className="h-4 w-4 text-muted-foreground" />
-											<span className="truncate">{folder.name}</span>
-										</div>
-									</DataTableCell>
-									<DataTableCell />
-								</DataTableRow>
+								<ContextMenu key={folder.path}>
+									<ContextMenuTrigger asChild>
+										<DataTableRow
+											clickable
+											onClick={() => onOpenFolder(folder.path)}
+										>
+											<DataTableCell>
+												<div className="flex min-w-0 items-center gap-2">
+													<Folder className="h-4 w-4 text-muted-foreground" />
+													<span className="truncate">{folder.name}</span>
+												</div>
+											</DataTableCell>
+											<DataTableCell />
+										</DataTableRow>
+									</ContextMenuTrigger>
+									<ContextMenuContent>
+										<EntryMenuItem
+											action="effective"
+											onSelect={() => onFolderAction("effective", folder.path)}
+										/>
+										<EntryMenuItem
+											action="test"
+											onSelect={() => onFolderAction("test", folder.path)}
+										/>
+										{!readOnly && (
+											<>
+												<EntryMenuItem
+													action="upload"
+													onSelect={() => onFolderAction("upload", folder.path)}
+												/>
+												<EntryMenuItem
+													action="newPolicy"
+													onSelect={() => onFolderAction("newPolicy", folder.path)}
+												/>
+											</>
+										)}
+									</ContextMenuContent>
+								</ContextMenu>
 							))}
 							{fileEntries.map((file) => (
 								<ContextMenu key={file.path}>

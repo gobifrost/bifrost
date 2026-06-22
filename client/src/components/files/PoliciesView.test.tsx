@@ -28,7 +28,7 @@ describe("PoliciesView", () => {
 			],
 		});
 		const onEdit = vi.fn();
-		render(<PoliciesView scope={null} refreshKey={0} onEdit={onEdit} />);
+		render(<PoliciesView scope={null} refreshKey={0} onEdit={onEdit} onDelete={vi.fn()} />);
 
 		expect(await screen.findByText("gallery")).toBeInTheDocument();
 		expect(screen.getByText("reports")).toBeInTheDocument();
@@ -42,9 +42,40 @@ describe("PoliciesView", () => {
 		);
 	});
 
+	it("fires onDelete from the row delete button", async () => {
+		vi.mocked(listFilePolicies).mockResolvedValue({
+			policies: [
+				{
+					id: "p1",
+					location: "gallery",
+					path: "",
+					organizationId: null,
+					policies: { policies: [] },
+				},
+			],
+		});
+		const onDelete = vi.fn();
+		render(
+			<PoliciesView
+				scope={null}
+				refreshKey={0}
+				onEdit={vi.fn()}
+				onDelete={onDelete}
+			/>,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /delete policy for gallery/i }),
+		);
+		await waitFor(() =>
+			expect(onDelete).toHaveBeenCalledWith(
+				expect.objectContaining({ location: "gallery" }),
+			),
+		);
+	});
+
 	it("shows an empty state when there are no policies", async () => {
 		vi.mocked(listFilePolicies).mockResolvedValue({ policies: [] });
-		render(<PoliciesView scope={null} refreshKey={0} onEdit={vi.fn()} />);
+		render(<PoliciesView scope={null} refreshKey={0} onEdit={vi.fn()} onDelete={vi.fn()} />);
 		expect(await screen.findByText(/no policies in this scope/i)).toBeInTheDocument();
 	});
 });

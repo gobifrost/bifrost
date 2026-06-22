@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,7 @@ interface PoliciesViewProps {
 	/** Bump to force a refetch after a policy mutation elsewhere. */
 	refreshKey: number;
 	onEdit: (policy: FilePolicy) => void;
+	onDelete: (policy: FilePolicy) => void;
 }
 
 /**
@@ -26,7 +27,12 @@ interface PoliciesViewProps {
  * across all locations; each row opens the policy editor for that exact
  * (location, path).
  */
-export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
+export function PoliciesView({
+	scope,
+	refreshKey,
+	onEdit,
+	onDelete,
+}: PoliciesViewProps) {
 	const [policies, setPolicies] = useState<FilePolicy[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -80,7 +86,7 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 								clickable
 								onClick={() => onEdit(policy)}
 							>
-								<DataTableCell className="w-px whitespace-nowrap align-top">
+								<DataTableCell className="w-px whitespace-nowrap align-middle">
 									<div className="flex flex-col">
 										<span className="font-medium">{policy.location}</span>
 										<span className="font-mono text-xs text-muted-foreground">
@@ -88,7 +94,7 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 										</span>
 									</div>
 								</DataTableCell>
-								<DataTableCell className="align-top">
+								<DataTableCell className="align-middle">
 									<div className="flex flex-wrap gap-1">
 										{policy.policies.policies.length === 0 ? (
 											<span className="text-xs text-muted-foreground">
@@ -107,19 +113,33 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 										)}
 									</div>
 								</DataTableCell>
-								<DataTableCell className="w-px whitespace-nowrap align-top">
-									<div className="flex justify-end">
+								<DataTableCell className="w-px whitespace-nowrap align-middle">
+									<div className="flex items-center justify-end gap-1">
 										<Button
 											type="button"
 											variant="outline"
-											size="xs"
+											size="icon-xs"
+											title="Edit policy"
 											aria-label={`Edit policy for ${policy.location}/${policy.path}`}
 											onClick={(event) => {
 												event.stopPropagation();
 												onEdit(policy);
 											}}
 										>
-											<Pencil className="h-3 w-3" /> Edit
+											<Pencil className="h-3 w-3" />
+										</Button>
+										<Button
+											type="button"
+											variant="outline"
+											size="icon-xs"
+											title="Delete policy"
+											aria-label={`Delete policy for ${policy.location}/${policy.path}`}
+											onClick={(event) => {
+												event.stopPropagation();
+												onDelete(policy);
+											}}
+										>
+											<Trash2 className="h-3 w-3" />
 										</Button>
 									</div>
 								</DataTableCell>
