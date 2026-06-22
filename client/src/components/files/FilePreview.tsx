@@ -98,12 +98,16 @@ export function FilePreview({ location, scope, path }: FilePreviewProps) {
 					</pre>
 				)}
 				{kind === "image" && (
-					<div className="flex h-full items-center justify-center">
+					<div className="flex h-full items-center justify-center p-3">
 						{imageUrl ? (
 							<img
 								src={imageUrl}
 								alt={path}
-								className="max-h-full max-w-full object-contain"
+								// Bordered + muted backdrop so tiny or transparent
+								// images are still visibly framed (seed/placeholder
+								// images can be 1×1 and would otherwise look blank).
+								className="max-h-full max-w-full rounded-md bg-muted object-contain ring-1 ring-border"
+								style={{ minWidth: "2.5rem", minHeight: "2.5rem" }}
 							/>
 						) : (
 							<span className="text-muted-foreground">Loading image…</span>

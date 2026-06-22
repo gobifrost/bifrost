@@ -92,7 +92,7 @@ function FolderNode({
 						role="treeitem"
 						aria-selected={selected}
 						className={
-							"flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-sm hover:bg-muted " +
+							"flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-sm hover:bg-muted " +
 							(selected ? "bg-muted font-medium" : "")
 						}
 						style={{ paddingLeft: `${depth * 12 + 4}px` }}
@@ -192,7 +192,7 @@ export function ShareTree({
 									role="treeitem"
 									aria-selected={selected}
 									className={
-										"flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-sm hover:bg-muted " +
+										"flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-sm hover:bg-muted " +
 										(selected ? "bg-muted font-medium" : "")
 									}
 									onClick={() => onSelect(share.location, "")}

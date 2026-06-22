@@ -242,7 +242,7 @@ export function FilesExplorer() {
 			</header>
 
 			{view === "policies" ? (
-				<div className={`${PANE} flex-1`}>
+				<div className="min-h-0 flex-1 overflow-hidden">
 					<PoliciesView
 						scope={scope}
 						refreshKey={refreshKey}
@@ -252,7 +252,9 @@ export function FilesExplorer() {
 			) : (
 				<div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)_24rem]">
 					{isWide && <div className={PANE}>{tree}</div>}
-					<div className={PANE}>
+					{/* No PANE here: FolderListing's DataTable is its own card —
+					    wrapping it in PANE would nest a card in a card. */}
+					<div className="flex min-h-0 flex-col overflow-hidden">
 						<FolderListing
 							key={`listing-${scope}-${location}-${prefix}-${refreshKey}`}
 							scope={scope}

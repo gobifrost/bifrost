@@ -54,7 +54,7 @@ export function EffectiveAccessPanel({
 			<div className="flex items-center justify-between border-b px-3 py-2">
 				<div className="flex items-center gap-2">
 					<ShieldCheck className="h-4 w-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">Effective access</h2>
+					<h2 className="text-sm font-semibold">Effective Access</h2>
 				</div>
 				<div className="flex gap-1">
 					<Button type="button" variant="outline" size="xs" onClick={onManagePolicy}>
@@ -66,7 +66,7 @@ export function EffectiveAccessPanel({
 						onClick={onOpenTest}
 						disabled={path === null}
 					>
-						Test access…
+						Test access
 					</Button>
 				</div>
 			</div>

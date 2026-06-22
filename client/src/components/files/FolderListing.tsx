@@ -125,34 +125,29 @@ export function FolderListing({
 				if (event.dataTransfer.files.length) void uploadFiles(event.dataTransfer.files);
 			}}
 		>
-			<div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
-				<p className="truncate text-sm text-muted-foreground" title={prefix}>
-					{location === null ? "Select a share" : prefix || "/"}
-				</p>
-				{!readOnly && location !== null && (
-					<>
-						<input
-							ref={fileInputRef}
-							type="file"
-							multiple
-							className="hidden"
-							onChange={(event) => {
-								if (event.target.files?.length) void uploadFiles(event.target.files);
-								event.target.value = "";
-							}}
-						/>
-						<Button
-							type="button"
-							size="xs"
-							onClick={() => fileInputRef.current?.click()}
-							disabled={uploading}
-						>
-							<Upload className="h-3 w-3" /> Upload
-						</Button>
-					</>
-				)}
-			</div>
-			<div className="min-h-0 flex-1 overflow-auto">
+			{!readOnly && location !== null && (
+				<div className="flex shrink-0 items-center justify-end px-3 pt-3">
+					<input
+						ref={fileInputRef}
+						type="file"
+						multiple
+						className="hidden"
+						onChange={(event) => {
+							if (event.target.files?.length) void uploadFiles(event.target.files);
+							event.target.value = "";
+						}}
+					/>
+					<Button
+						type="button"
+						size="xs"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={uploading}
+					>
+						<Upload className="h-3 w-3" /> Upload
+					</Button>
+				</div>
+			)}
+			<div className="min-h-0 flex-1 overflow-auto p-2">
 				{dragOver && (
 					<div className="m-2 rounded-md border-2 border-dashed border-primary/50 p-4 text-center text-xs text-muted-foreground">
 						Drop files to upload to {prefix || "/"}

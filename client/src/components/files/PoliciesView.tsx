@@ -53,76 +53,79 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 	}, [scope, refreshKey]);
 
 	return (
-		<div className="flex h-full min-h-0 flex-col">
-			<div className="flex shrink-0 items-center justify-between px-3 py-2">
-				<p className="text-sm font-medium">Policies</p>
-				<Badge variant="secondary">{policies.length}</Badge>
-			</div>
-			<div className="min-h-0 flex-1 overflow-auto">
-				{loading && policies.length === 0 ? (
-					<p className="p-4 text-sm text-muted-foreground">Loading…</p>
-				) : error ? (
-					<p className="p-4 text-sm text-destructive">{error}</p>
-				) : policies.length === 0 ? (
-					<p className="p-4 text-sm text-muted-foreground">
-						No policies in this scope yet.
-					</p>
-				) : (
-					<DataTable>
-						<DataTableHeader>
-							<DataTableRow>
-								<DataTableHead>Location</DataTableHead>
-								<DataTableHead>Path</DataTableHead>
-								<DataTableHead>Rules</DataTableHead>
-								<DataTableHead className="w-16 text-right">Edit</DataTableHead>
-							</DataTableRow>
-						</DataTableHeader>
-						<DataTableBody>
-							{policies.map((policy) => (
-								<DataTableRow
-									key={policy.id ?? `${policy.location}:${policy.path}`}
-									clickable
-									onClick={() => onEdit(policy)}
-								>
-									<DataTableCell>
-										<span className="font-mono text-xs">{policy.location}</span>
-									</DataTableCell>
-									<DataTableCell>
-										<span className="font-mono text-xs">
-											{policy.path || "(root)"}
+		<div className="h-full min-h-0 overflow-auto">
+			{loading && policies.length === 0 ? (
+				<p className="p-4 text-sm text-muted-foreground">Loading…</p>
+			) : error ? (
+				<p className="p-4 text-sm text-destructive">{error}</p>
+			) : policies.length === 0 ? (
+				<p className="p-4 text-sm text-muted-foreground">
+					No policies in this scope yet.
+				</p>
+			) : (
+				<DataTable>
+					<DataTableHeader>
+						<DataTableRow>
+							<DataTableHead>Policy</DataTableHead>
+							<DataTableHead>Rules</DataTableHead>
+							<DataTableHead className="w-16 text-right">Edit</DataTableHead>
+						</DataTableRow>
+					</DataTableHeader>
+					<DataTableBody>
+						{policies.map((policy) => (
+							<DataTableRow
+								key={policy.id ?? `${policy.location}:${policy.path}`}
+								clickable
+								onClick={() => onEdit(policy)}
+							>
+								<DataTableCell>
+									<div className="flex min-w-0 items-baseline gap-2">
+										<span className="font-medium">{policy.location}</span>
+										<span className="truncate font-mono text-xs text-muted-foreground">
+											/{policy.path || ""}
 										</span>
-									</DataTableCell>
-									<DataTableCell>
-										<div className="flex flex-wrap gap-1">
-											{policy.policies.policies.map((rule) => (
-												<Badge key={rule.name} variant="outline">
+									</div>
+								</DataTableCell>
+								<DataTableCell>
+									<div className="flex flex-wrap gap-1">
+										{policy.policies.policies.length === 0 ? (
+											<span className="text-xs text-muted-foreground">
+												no rules
+											</span>
+										) : (
+											policy.policies.policies.map((rule) => (
+												<Badge
+													key={rule.name}
+													variant="secondary"
+													className="font-normal"
+												>
 													{rule.name}
 												</Badge>
-											))}
-										</div>
-									</DataTableCell>
-									<DataTableCell>
-										<div className="flex justify-end">
-											<Button
-												type="button"
-												variant="ghost"
-												size="icon-xs"
-												aria-label={`Edit policy for ${policy.location}/${policy.path}`}
-												onClick={(event) => {
-													event.stopPropagation();
-													onEdit(policy);
-												}}
-											>
-												<Pencil className="h-3 w-3" />
-											</Button>
-										</div>
-									</DataTableCell>
-								</DataTableRow>
-							))}
-						</DataTableBody>
-					</DataTable>
-				)}
-			</div>
+											))
+										)}
+									</div>
+								</DataTableCell>
+								<DataTableCell>
+									<div className="flex justify-end">
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon-xs"
+											aria-label={`Edit policy for ${policy.location}/${policy.path}`}
+											onClick={(event) => {
+												event.stopPropagation();
+												onEdit(policy);
+											}}
+										>
+											<Pencil className="h-3 w-3" />
+										</Button>
+									</div>
+								</DataTableCell>
+							</DataTableRow>
+						))}
+					</DataTableBody>
+				</DataTable>
+			)}
 		</div>
 	);
 }
