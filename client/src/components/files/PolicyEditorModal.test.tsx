@@ -7,6 +7,27 @@ vi.mock("@/services/filePolicies", () => ({
 	deleteFilePolicy: vi.fn(),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Monaco can't run in the test DOM — stub it to a textarea labelled by `path`.
+vi.mock("@monaco-editor/react", () => ({
+	default: ({
+		value,
+		onChange,
+		path,
+	}: {
+		value?: string;
+		onChange?: (v: string | undefined) => void;
+		path?: string;
+	}) => (
+		<textarea
+			aria-label={path ?? "monaco-editor"}
+			value={value ?? ""}
+			onChange={(e) => onChange?.(e.target.value)}
+		/>
+	),
+}));
+vi.mock("@/contexts/ThemeContext", () => ({
+	useTheme: () => ({ theme: "light" }),
+}));
 import {
 	listFilePolicies,
 	saveFilePolicy,
@@ -49,9 +70,9 @@ describe("PolicyEditorModal", () => {
 				onSaved={onSaved}
 			/>,
 		);
-		// Editor renders once the best policy resolves.
+		// Editor renders once the best policy resolves (YAML view by default).
 		await waitFor(() =>
-			expect(screen.getByLabelText(/policy json/i)).toBeInTheDocument(),
+			expect(screen.getByLabelText("file-policies.yaml")).toBeInTheDocument(),
 		);
 		fireEvent.click(screen.getByRole("button", { name: /save policy/i }));
 		await waitFor(() => expect(saveFilePolicy).toHaveBeenCalled());

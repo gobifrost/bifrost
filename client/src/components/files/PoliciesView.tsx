@@ -67,9 +67,10 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 				<DataTable>
 					<DataTableHeader>
 						<DataTableRow>
-							<DataTableHead>Policy</DataTableHead>
+							{/* Policy sizes to its content; Rules grows to fill. */}
+							<DataTableHead className="w-px whitespace-nowrap">Policy</DataTableHead>
 							<DataTableHead>Rules</DataTableHead>
-							<DataTableHead className="w-16 text-right">Edit</DataTableHead>
+							<DataTableHead className="w-px whitespace-nowrap text-right">Actions</DataTableHead>
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
@@ -79,20 +80,15 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 								clickable
 								onClick={() => onEdit(policy)}
 							>
-								<DataTableCell className="max-w-[16rem]">
-									<div className="flex min-w-0 flex-col">
-										<span className="truncate font-medium" title={policy.location}>
-											{policy.location}
-										</span>
-										<span
-											className="truncate font-mono text-xs text-muted-foreground"
-											title={`/${policy.path || ""}`}
-										>
+								<DataTableCell className="w-px whitespace-nowrap align-top">
+									<div className="flex flex-col">
+										<span className="font-medium">{policy.location}</span>
+										<span className="font-mono text-xs text-muted-foreground">
 											/{policy.path || ""}
 										</span>
 									</div>
 								</DataTableCell>
-								<DataTableCell>
+								<DataTableCell className="align-top">
 									<div className="flex flex-wrap gap-1">
 										{policy.policies.policies.length === 0 ? (
 											<span className="text-xs text-muted-foreground">
@@ -111,19 +107,19 @@ export function PoliciesView({ scope, refreshKey, onEdit }: PoliciesViewProps) {
 										)}
 									</div>
 								</DataTableCell>
-								<DataTableCell>
+								<DataTableCell className="w-px whitespace-nowrap align-top">
 									<div className="flex justify-end">
 										<Button
 											type="button"
-											variant="ghost"
-											size="icon-xs"
+											variant="outline"
+											size="xs"
 											aria-label={`Edit policy for ${policy.location}/${policy.path}`}
 											onClick={(event) => {
 												event.stopPropagation();
 												onEdit(policy);
 											}}
 										>
-											<Pencil className="h-3 w-3" />
+											<Pencil className="h-3 w-3" /> Edit
 										</Button>
 									</div>
 								</DataTableCell>

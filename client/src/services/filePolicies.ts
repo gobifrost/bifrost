@@ -9,6 +9,11 @@ export interface FilePolicyRule {
 	when?: unknown;
 }
 
+/** The portable policy document (the inner `{ policies: [...] }`). */
+export interface FilePolicies {
+	policies: FilePolicyRule[];
+}
+
 export interface FilePolicy {
 	id?: string;
 	location: string;
