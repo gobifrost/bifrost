@@ -39,6 +39,17 @@ Full-height, space-maximizing 3-pane explorer. Replaces the monolithic `FileBrow
 
 New components: `FilesExplorer` (page shell: scope + breadcrumbs + layout), `ShareTree`, `FolderListing`, `FilePreview`, `EffectiveAccessPanel`, `TestAccessModal`, `PolicyEditorModal`, `NewShareDialog`. Remove `FileBrowser.tsx` and the inline tester/editor wiring in `Files.tsx` that the new components replace.
 
+## Responsive behavior (required, not an afterthought)
+
+The 3-pane layout must adapt down to small/narrow screens without any pane or control being clipped or losing functionality. Treat this as a first-class acceptance criterion.
+
+- **Wide (≥ `lg`):** all three panes side by side (tree | listing | preview/ACL). Panes use a min-height-0 flex/grid so each scrolls internally and the page never overflows the viewport (follow the project's table-scroll pattern — take min height needed, cap at page, scroll internally).
+- **Medium (`md`):** drop to two panes — tree + listing — with the preview/ACL pane becoming a collapsible right drawer (toggled when a file is selected or Effective Access is opened). The tree may collapse to a narrower rail.
+- **Small (`< md`):** single-pane, navigation-stack model. The tree collapses behind a hamburger/sheet; selecting a folder shows the listing full-width; selecting a file opens preview/ACL as a full-screen sheet/drawer with a back affordance. Breadcrumbs remain the primary "where am I / go up" control. Upload, Test Access, and the denied helper all remain reachable (via toolbar overflow / sheet, never hidden off-screen).
+- **Modals** (`TestAccessModal`, `PolicyEditorModal`, `NewShareDialog`) size to viewport on small screens (full-screen sheet rather than a fixed-width dialog that overflows); their content scrolls internally.
+- No horizontal page scroll at any breakpoint; long paths/filenames truncate with title/tooltip rather than forcing width.
+- Use the project's existing responsive primitives (Tailwind breakpoints, the shadcn `Sheet`/`Drawer` components, the established `min-h-0` flex scroll pattern) — do not hand-roll a new responsive system.
+
 ## Effective Access & Test Access (Windows-ACL inspired)
 
 For a selected share/folder/file, one panel (right pane) + modal (`TestAccessModal`) with two parts:
@@ -62,6 +73,7 @@ Scope resolution continues to use the canonical `_file_org_id` → `resolve_targ
 - **Vitest** per new component: `ShareTree` (lazy nav, expand), `FolderListing` (upload button + drag-drop, row actions), `EffectiveAccessPanel` (renders resolved cascade), `TestAccessModal` (user dropdown, per-action results + deciding rule), `NewShareDialog`.
 - **Backend unit + e2e:** structural-list endpoint (admin sees un-policied files; non-admin does not get this endpoint), seeded `admin_bypass` (created on first policy; admin allowed via it; revoking it denies the admin), 403-vs-404 distinction on read/list, discover-locations excludes reserved + flags uploads read-only.
 - **Playwright happy-path** (`*.admin.spec.ts`): select scope → browse a share → upload a file → preview it → open Test Access, pick a user, see per-action results → navigate to an un-policied prefix → see the structural listing (not a dead "denied") → see the denied helper on a content read where policy denies.
+- **Responsive:** the Playwright happy-path runs at desktop and a narrow (mobile-width) viewport, asserting no pane/control is clipped — tree reachable (sheet), listing usable, preview/ACL openable, upload + Test Access reachable, no horizontal page overflow. Capture `--screenshots` at both widths for visual review.
 - The existing `files-app-direct.admin.spec.ts` (SDK upload/list/read/download/delete + no-workflow-execution) stays as-is — the SDK surface is unaffected.
 
 ## Out of scope / non-goals
