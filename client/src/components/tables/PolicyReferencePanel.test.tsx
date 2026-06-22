@@ -131,30 +131,44 @@ describe("PolicyReferencePanel — worked examples", () => {
 		expect(copyButtons.length).toBe(exampleHeadings.length);
 	});
 
-	it("wraps each example JSON with the {policies: [...]} document so paste-into-fresh-JSON works", () => {
-		// Each pretty-printed example must be a parseable TablePolicies
-		// document (i.e. starts with the wrapper) — the plan calls this out
-		// explicitly so users can copy → paste into the JSON tab without
-		// hand-editing the wrapper.
+	it("wraps each example with the {policies: [...]} document (YAML by default) so paste-into-fresh works", async () => {
+		// Examples default to YAML now (matching the editor's default tab) and
+		// expose a JSON/YAML toggle. Each must be a parseable TablePolicies
+		// document so users can copy → paste without hand-editing the wrapper.
 		//
 		// Examples render through CodeEditor (mocked to a textarea labelled
-		// `example-<idx>.json`); pull each textarea by its label and parse.
+		// `example-<idx>.<format>`). The default editors are `.yaml`.
+		const yaml = (await import("js-yaml")).default;
 		renderAndOpen();
 		const headings = screen.getAllByRole("heading", { level: 5 });
-		const editors = screen.getAllByLabelText(/^example-\d+\.json$/);
+		const editors = screen.getAllByLabelText(/^example-\d+\.yaml$/);
 		expect(editors.length).toBe(headings.length);
 		for (let i = 0; i < headings.length; i++) {
 			const heading = headings[i]!;
 			const editor = screen.getByLabelText(
-				`example-${i}.json`,
+				`example-${i}.yaml`,
 			) as HTMLTextAreaElement;
-			const parsed = JSON.parse(editor.value);
+			const parsed = yaml.load(editor.value) as {
+				policies: { name: string }[];
+			};
 			expect(parsed).toHaveProperty("policies");
 			expect(Array.isArray(parsed.policies)).toBe(true);
 			expect(parsed.policies.length).toBeGreaterThan(0);
-			// Heading matches the inner policy's name.
 			expect(parsed.policies[0].name).toBe(heading.textContent);
 		}
+	});
+
+	it("toggles an example to JSON", async () => {
+		const { default: userEvent } = await import(
+			"@testing-library/user-event"
+		);
+		const user = userEvent.setup();
+		renderAndOpen();
+		// Each example starts as YAML; clicking its JSON toggle swaps the editor.
+		expect(screen.getByLabelText("example-0.yaml")).toBeInTheDocument();
+		const jsonToggles = screen.getAllByRole("button", { name: /^json$/i });
+		await user.click(jsonToggles[0]!);
+		expect(screen.getByLabelText("example-0.json")).toBeInTheDocument();
 	});
 
 	it("flips Copy button to Copied! on click and resets", async () => {

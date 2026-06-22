@@ -7,10 +7,8 @@
  * FileExpr, _ALL_OPS) and `api/shared/file_policies.py` (FilePolicyContext).
  */
 
-import { useState } from "react";
 import { HelpSlideout } from "@/components/shared/HelpSlideout";
-import { Button } from "@/components/ui/button";
-import { CodeEditor } from "@/components/tables/CodeEditor";
+import { PolicyExampleBlock } from "@/components/shared/PolicyExampleBlock";
 import type { FilePolicies } from "@/services/filePolicies";
 
 interface RefRow {
@@ -202,56 +200,17 @@ function RefTable({ title, rows }: { title: string; rows: RefRow[] }) {
 	);
 }
 
-function ExampleBlock({
-	example,
-	index,
-	copied,
-	onCopy,
-}: {
-	example: WorkedExample;
-	index: number;
-	copied: boolean;
-	onCopy: () => void;
-}) {
-	const json = JSON.stringify(example.policy, null, 2);
-	return (
-		<div className="space-y-1">
-			<div className="flex items-center justify-between">
-				<h5 className="font-mono text-sm font-semibold">{example.heading}</h5>
-				<Button type="button" variant="ghost" size="xs" onClick={onCopy}>
-					{copied ? "Copied!" : "Copy"}
-				</Button>
-			</div>
-			<p className="text-xs text-muted-foreground">{example.description}</p>
-			<CodeEditor
-				mode="json"
-				text={json}
-				onChange={() => {}}
-				path={`file-example-${index}.json`}
-				height="170px"
-				readOnly
-			/>
-		</div>
-	);
-}
-
 function ExamplesSection() {
-	const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 	return (
 		<section className="space-y-3">
 			<h4 className="text-sm font-semibold">Worked examples</h4>
 			{EXAMPLES.map((example, index) => (
-				<ExampleBlock
+				<PolicyExampleBlock
 					key={example.heading}
-					example={example}
+					heading={example.heading}
+					description={example.description}
+					policy={example.policy}
 					index={index}
-					copied={copiedIndex === index}
-					onCopy={() => {
-						void navigator.clipboard?.writeText(
-							JSON.stringify(example.policy, null, 2),
-						);
-						setCopiedIndex(index);
-					}}
 				/>
 			))}
 		</section>

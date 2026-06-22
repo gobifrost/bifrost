@@ -10,10 +10,8 @@
  * Keep this in sync if those constants change.
  */
 
-import { useState } from "react";
 import { HelpSlideout } from "@/components/shared/HelpSlideout";
-import { Button } from "@/components/ui/button";
-import { CodeEditor } from "./CodeEditor";
+import { PolicyExampleBlock } from "@/components/shared/PolicyExampleBlock";
 import { POLICY_TEMPLATES } from "./policy-templates";
 import type { components } from "@/lib/v1";
 
@@ -396,68 +394,7 @@ function RefSection({ title, rows }: { title: string; rows: RefRow[] }) {
 	);
 }
 
-function ExampleBlock({
-	example,
-	index,
-	copied,
-	onCopy,
-}: {
-	example: WorkedExample;
-	index: number;
-	copied: boolean;
-	onCopy: () => void;
-}) {
-	const json = JSON.stringify(example.policy, null, 2);
-	return (
-		<div className="space-y-1">
-			<div className="flex items-center justify-between gap-2">
-				<h5 className="text-sm font-semibold font-mono">
-					{example.heading}
-				</h5>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="h-6 px-2 text-xs"
-					onClick={onCopy}
-				>
-					{copied ? "Copied!" : "Copy"}
-				</Button>
-			</div>
-			<p className="text-xs text-muted-foreground">
-				{example.description}
-			</p>
-			<CodeEditor
-				mode="json"
-				text={json}
-				onChange={() => {}}
-				path={`example-${index}.json`}
-				height="180px"
-				readOnly
-			/>
-		</div>
-	);
-}
-
 function ExamplesSection({ examples }: { examples: WorkedExample[] }) {
-	const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-
-	function handleCopy(idx: number, policy: TablePolicies) {
-		const text = JSON.stringify(policy, null, 2);
-		// Guard the clipboard call so jsdom (which omits navigator.clipboard)
-		// doesn't blow up the visual feedback. The button still flips to
-		// "Copied!" so users get immediate confirmation either way.
-		try {
-			void navigator.clipboard?.writeText(text);
-		} catch {
-			// no-op; the user-visible state still updates
-		}
-		setCopiedIdx(idx);
-		setTimeout(() => {
-			setCopiedIdx((current) => (current === idx ? null : current));
-		}, 1500);
-	}
-
 	return (
 		<section className="space-y-3">
 			<h4 className="text-sm font-semibold">Worked examples</h4>
@@ -467,12 +404,12 @@ function ExamplesSection({ examples }: { examples: WorkedExample[] }) {
 			</p>
 			<div className="space-y-4">
 				{examples.map((ex, idx) => (
-					<ExampleBlock
+					<PolicyExampleBlock
 						key={ex.heading}
-						example={ex}
+						heading={ex.heading}
+						description={ex.description}
+						policy={ex.policy}
 						index={idx}
-						copied={copiedIdx === idx}
-						onCopy={() => handleCopy(idx, ex.policy)}
 					/>
 				))}
 			</div>
