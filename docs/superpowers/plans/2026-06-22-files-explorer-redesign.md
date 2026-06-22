@@ -2,6 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+---
+
+## STATUS — Files explorer SHIPPED ✅ (branch `codex/files-sdk-policies`, 18 commits, all green)
+
+The original plan below (Tasks 1–22) is **done**: backend (seeded `admin_bypass`, `POST /api/files/structure`, 403-vs-404), the full 3-pane responsive `FilesExplorer`, and tests (backend e2e, vitest, Playwright). On top of that, several live-driven UX rounds shipped — all committed, all tests green, none pushed/merged:
+
+- **Two real bugs caught by live-drive** (unit tests missed both): Global scope must send the explicit `"global"` sentinel (not `null`, which the write path reads as the caller's own org); Test Access must list all users, not just the share's org.
+- **Debug-stack S3 fix:** `BIFROST_S3_PUBLIC_ENDPOINT_URL=/s3` in `docker-compose.debug.yml` so presigned URLs route through the Vite `/s3` proxy (browser uploads/previews work). Image preview also switched to authenticated bytes (`files.readBytes` → blob URL) so it no longer depends on S3 host reachability.
+- **Upload UX:** moved to the header next to **New Share** (outline secondary vs Upload primary — no blue-on-blue); empty-folder click-to-upload dropzone + full-pane drag overlay.
+- **Policies surface:** Browse/Policies tab toggle + flat `PoliciesView` table (Policy auto-sizes, Rules grows, icon Edit + Delete actions, responsive). The policy editor is now the shared **`JsonYamlEditor`** (colored YAML default + JSON tab) with an **Insert template…** dropdown and a **`FilePolicyReferencePanel`** slideout (via shared `HelpSlideout`) documenting file actions, `{user:…}`/`{file:…}` fields, operators, worked examples, footguns.
+- **Reference examples are YAML-first** with a per-example JSON toggle — extracted a shared `PolicyExampleBlock` now used by both the Tables and Files reference panels.
+- **Polish:** spinner loaders (`InlineLoader`), friendly preview errors (no raw "Forbidden"), title-case context-menu labels (no "...here"), folder context menus in the listing, canonical shadcn pane theming.
+
+**Verification note for the next session:** Jack asked to **stop using headless Chrome** to drive the debug stack — rely on the vitest/e2e suites (and ask before any browser drive).
+
+### NEXT UP → see the new section at the end: **"Reusable / named policy templates"**
+
+---
+
 **Goal:** Replace the admin Files page with a full-height, responsive 3-pane "mapped-drives" explorer (shares → folders → preview/ACL) backed by an admin-only structural-list endpoint, a seeded `admin_bypass` policy on policy creation, and clean 403-vs-404 semantics.
 
 **Architecture:** Backend gains (1) a `seed_admin_bypass` step in `FilePolicyService.upsert_policy`'s create path mirroring Tables' `make_seed_admin_bypass`, (2) an admin-only **structural** list/discover endpoint (`POST /api/files/structure`) that lists what physically exists in a scope *regardless of policy* (powers the tree so nothing is orphaned), and (3) a 403-vs-404 distinction on the policy-gated read/list path. Frontend replaces `FileBrowser.tsx` + the inline tester/editor wiring in `Files.tsx` with a `FilesExplorer` shell (org-scope selector + breadcrumbs + responsive layout) composed of `ShareTree`, `FolderListing`, `FilePreview`, `EffectiveAccessPanel`, plus `TestAccessModal`, `PolicyEditorModal`, `NewShareDialog`.
@@ -1319,3 +1338,65 @@ git commit -m "feat(files): mount FilesExplorer; remove legacy FileBrowser + Eff
 **Placeholder scan:** No TBD/TODO; every code step has concrete code. Real harness fixtures confirmed and used: async unit DB `db_session` (`api/tests/conftest.py:134`); sync e2e `e2e_client` + actor fixtures `platform_admin` / `org1_user` / `org1` (each `.headers`), defined in `api/tests/e2e/fixtures/setup.py`; policy-grant helper `grant_file_policy` at `api/tests/e2e/file_policy_helpers.py`. E2E tests are synchronous methods (no `await`). The only remaining "confirm against a neighbor" note is the exact `grant_file_policy` import path — a one-line verification, not a placeholder.
 
 **Type consistency:** `ShareEntry`/`StructureEntry` field names match between `file_structure_service.py` (snake `read_only`/`has_policy`) and `fileStructure.ts` (camel `readOnly`/`hasPolicy`) with the mapping in Task 7. `effectiveAccess`/`testAllActions`/`listShares`/`listStructure` names are stable across producer and consumer tasks. `FileAction` vocabulary (`read/write/delete/list`) is consistent everywhere (NOT the table `create/update`).
+
+---
+
+# NEXT: Reusable / named policy templates (design — next session)
+
+**Status:** Design brainstorm, NOT yet a task plan. Start the next session by brainstorming this with Jack (use `superpowers:brainstorming`) before writing tasks.
+
+## The ask (Jack, verbatim intent)
+
+> "Make policies things you can template out so we can have one `admin_bypass` for example and apply it to many different places."
+
+Today there is no notion of a *named, reusable* policy. The same rule (e.g. `admin_bypass`, `everyone_read`) is **copied inline** everywhere it's used. Jack wants to **define a policy once and apply/reference it across many targets** (many file prefixes, many tables, …), so editing the canonical one updates everywhere — or at least so you stop hand-copying the same JSON.
+
+## Current state (what "a policy" is today)
+
+- **File policies:** `FilePolicy` row (`file_policies` table) keyed by `(organization_id, location, path)`, with a `policies: JSONB` column holding `{policies: [ {name, description, actions, when}, ... ]}`. Resolution: org→global cascade + longest-prefix (`FilePolicyService.load_policy`). Seeded `admin_bypass` is **copied inline** on first create (`shared/file_policies_seed.py`).
+- **Table policies:** `Table.access: JSONB` column (contract field `policies`) holding the same shape with table actions (`read/create/update/delete`). Templates exist only as a **client-side insert helper** (`client/src/components/tables/policy-templates.ts` → deep-copies a rule into the doc) — there is no server entity.
+- **Shared AST:** both use the same when-expression validator (`api/src/models/contracts/policies.py`), file policies add the `{file:…}` namespace. Functions: `has_role`. User namespace + operators are shared.
+- **Frontend templates today** (just-shipped): `client/src/components/{tables,files}/*-policy-templates.ts` + the "Insert template…" dropdown — these **copy** a rule into the editor buffer. That's the "poor man's template" we want to replace/upgrade with something real and reusable.
+
+## The core design question: **reference vs. snapshot**
+
+This is the decision the whole feature hinges on — brainstorm it first.
+
+1. **Insert-time snapshot (copy).** "Apply template X" deep-copies its rules into the target's inline doc (what the client does now, but promote the catalog to the server so it's shared/named/governed). 
+   - **Pros:** zero change to evaluation (rules stay inline; the cascade/longest-prefix engine is untouched); no new resolution path; trivially safe.
+   - **Cons:** editing the canonical template does NOT propagate — you'd "re-apply" to update, and drift is invisible. Doesn't fully satisfy "edit once, applies everywhere."
+2. **Live reference (named policy resolved at evaluation).** The target stores a *reference* (e.g. a rule of the form `{template: "admin_bypass"}` or a separate binding row), resolved against a `PolicyTemplate` catalog when access is evaluated.
+   - **Pros:** true "edit once → applies everywhere."
+   - **Cons:** new resolution path in BOTH evaluators (file + table); versioning/`when`-namespace compatibility (a table template can't reference `{file:…}` and vice-versa); a referenced template that's edited can silently widen/narrow access across many targets (blast radius — needs an "affected targets" view); validation must expand references; export/Solutions portability (do templates travel with a Solution? are they org-scoped or global?).
+3. **Hybrid.** Reference by default, with a "snapshot/detach" action that inlines a copy when someone wants to diverge. (Salesforce-ish: managed vs. customized.)
+
+**Recommendation to pursue in brainstorming:** start at option 2 (live reference) since it's the only one that truly satisfies the ask, but scope it tightly (see MVP below) and design the blast-radius/affected-targets surface up front.
+
+## Open questions to resolve in the brainstorm (before any tasks)
+
+1. **Scope of the catalog.** Org-scoped templates, global templates, or both (cascade like everything else)? Who can create/edit a global template (platform admin / provider org)?
+2. **One catalog for files + tables, or per-domain?** They share the AST but differ in actions (`read/write/delete/list` vs `read/create/update/delete`) and the `{file:…}` namespace. A single catalog needs a "kind/applies-to" tag and validation that rejects applying a file-only template to a table (and vice-versa). Likely: one `PolicyTemplate` entity with a `kind: file | table | both` + action-set validation.
+3. **Reference shape.** How does a target point at a template? Options: a reserved rule `{template: "<name|id>"}` inside the existing `policies` list (keeps one column, evaluator expands it), OR a separate binding table `(template_id, target_kind, target_key)`. The inline-rule form is less invasive; the binding table is cleaner for "list all targets using template X".
+4. **Versioning + propagation semantics.** Live (edits propagate instantly) vs. pinned-version-with-opt-in-upgrade. Live is simpler to build but riskier; pinned needs a version column + an upgrade action.
+5. **Blast radius UX (required).** Before saving an edit to a referenced template, show "this affects N targets across M tables / K file prefixes." Need an efficient "where is template X used" query — informs the reference-shape decision (#3).
+6. **The seeded `admin_bypass`.** Today it's inlined on create. If templates land, should the seed become a *reference* to the canonical `admin_bypass` template? That'd make "revoke admin_bypass everywhere" a single edit — powerful and dangerous. Decide whether the seed references or keeps copying.
+7. **Solutions / export portability.** Do templates travel inside a Solution bundle? If a Solution references a global template the target env doesn't have, install must either carry it or fail closed. ([[project_solutions_implementation]] context.)
+8. **Evaluation safety.** A missing/deleted referenced template must **fail closed** (deny), consistent with "unknown file field → null → deny". Cycles (template referencing template) — disallow or bound depth like the AST `_DEPTH_LIMIT`.
+
+## Likely shape of an MVP (to pressure-test in brainstorming — not committed)
+
+- New entity `PolicyTemplate` (org→global cascade): `{ id, organization_id|null, name, kind: file|table|both, description, rules: [ {name, description, actions, when}, ... ], created_by, version? }`. Seed the built-ins (`admin_bypass`, `everyone_read`, …) as global templates.
+- **Reference form:** a rule `{ template: "<id>" }` allowed inside the existing `policies` list. Both evaluators expand it at load time (resolve template → splice its rules in) with fail-closed on missing + cycle guard.
+- **CRUD surface:** templates are entity mutations → CLI (`bifrost policy-template …`) + MCP thin wrapper + REST, per the "three parallel surfaces" rule (CLAUDE.md). A `GET …/templates/{id}/usages` for blast radius.
+- **UI:** the existing "Insert template…" dropdown gains a "reference" mode (insert `{template: id}` instead of a copy) sourced from the server catalog; a small templates admin (list/edit/where-used) — possibly a tab on the Tables and Files policy surfaces, or a dedicated page.
+- **Tests:** evaluator expansion (file + table), fail-closed on missing template, cycle guard, cascade resolution, the three-surface DTO parity + contract-version tripwire, where-used query, Solutions round-trip if in scope.
+
+## Files the next session will touch (orientation)
+
+- Backend AST/contracts: `api/src/models/contracts/policies.py` (reference rule shape + validation), new `api/src/models/orm/policy_template.py`, migration.
+- Evaluators: `api/src/services/file_policy_service.py` (`load_policy`/`is_allowed` expansion) + the table-policy evaluation path (find via `Table.access` consumers / `api/shared/policies/`).
+- Seed: `api/shared/file_policies_seed.py` + `api/shared/policies/probe.py::make_seed_admin_bypass` (decide reference vs copy).
+- Surfaces: new router + CLI command + MCP thin wrapper (mirror `roles.py`/`configs.py` pattern); skill-truth regen.
+- Frontend: promote `client/src/components/{tables,files}/*-policy-templates.ts` to a server-backed catalog; reference mode in the "Insert template…" dropdown; a where-used / templates admin surface; reuse the shared `JsonYamlEditor` + `PolicyExampleBlock`.
+
+**Do first in the next session:** `superpowers:brainstorming` on reference-vs-snapshot (the §"core design question") and the open questions, THEN `superpowers:writing-plans` for a task-by-task plan. Don't start coding until the reference/versioning/blast-radius semantics are decided with Jack.
