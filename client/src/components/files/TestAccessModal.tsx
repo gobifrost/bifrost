@@ -32,7 +32,11 @@ export function TestAccessModal({
 	scope,
 	path,
 }: TestAccessModalProps) {
-	const { data: users } = useUsersFiltered(scope ?? undefined);
+	// List ALL users (admin-only modal): an admin tests any principal against
+	// this path regardless of the share's scope. The backend resolves the
+	// picked user's real org/roles when evaluating access. Scoping the list to
+	// the share's org would hide valid principals (e.g. every user in Global).
+	const { data: users } = useUsersFiltered(undefined);
 	const [userId, setUserId] = useState("");
 	const [results, setResults] = useState<Record<
 		FilePolicyAction,
