@@ -245,6 +245,38 @@ def test_files_list_with_solution_flag(
 
 
 @pytest.mark.e2e
+def test_files_list_solution_defaults_location(
+    e2e_client, platform_admin, cli_client
+):
+    """``bifrost files list --solution <slug>`` WITHOUT ``--location`` defaults to
+    'solutions' and finds the written file (verifies the advertised UX)."""
+    from bifrost.commands.files import files_group
+
+    headers = platform_admin.headers
+    slug = f"cli-flsdef-{uuid.uuid4().hex[:8]}"
+    sol = _create_solution(e2e_client, headers, slug)
+    sol_id = sol["id"]
+    org_id = sol.get("organization_id")
+    _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+
+    subdir = uuid.uuid4().hex[:8]
+    file_path = f"{subdir}/default-loc.txt"
+    _write_solution_file(e2e_client, headers, sol_id, file_path, "default-loc-content")
+
+    # Deliberately omit --location; the command must default to 'solutions'.
+    result = _invoke_cli(
+        files_group,
+        ["--json", "list", subdir, "--solution", slug],
+    )
+    assert result.exit_code == 0, f"list failed: {result.output}"
+    items = json.loads(result.output)
+    assert isinstance(items, list), f"expected a list, got: {items!r}"
+    assert any("default-loc.txt" in item for item in items), (
+        f"default-loc.txt not in listing (location default may not have applied): {items}"
+    )
+
+
+@pytest.mark.e2e
 def test_files_list_with_solution_id_flag(
     e2e_client, platform_admin, cli_client
 ):

@@ -132,6 +132,8 @@ async def read_cmd(
     Text files only. The SDK has `read_bytes` for binary; this CLI verb does not.
     Pass ``--solution`` to target a solution install's file scope.
     """
+    if solution_ref is not None and location == "workspace":
+        location = "solutions"
     if solution_ref is not None:
         install_id = await _resolve_solution_install_id(client, solution_ref)
         resp = await client.post(
@@ -202,6 +204,8 @@ async def write_cmd(
             "Positional content must be `-` for stdin. Use --content or --from-file otherwise."
         )
 
+    if solution_ref is not None and location == "workspace":
+        location = "solutions"
     if solution_ref is not None:
         install_id = await _resolve_solution_install_id(client, solution_ref)
         resp = await client.post(
@@ -236,6 +240,8 @@ async def list_cmd(
 
     Pass ``--solution`` to target a solution install's file scope.
     """
+    if solution_ref is not None and location == "workspace":
+        location = "solutions"
     if solution_ref is not None:
         install_id = await _resolve_solution_install_id(client, solution_ref)
         resp = await client.post(
