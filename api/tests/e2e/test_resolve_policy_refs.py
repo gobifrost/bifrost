@@ -9,7 +9,7 @@ import pytest_asyncio
 from src.models.orm.organizations import Organization
 from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.solutions import Solution
-from src.models.contracts.policies import FilePolicies, FilePolicyRule, TablePolicies
+from src.models.contracts.policies import FilePolicies, FilePolicyRule
 from src.repositories.policy_rule import PolicyRuleRepository
 from shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
 

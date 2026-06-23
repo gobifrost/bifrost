@@ -884,6 +884,33 @@ class SolutionDeployer:
                     )
                 except ValueError as exc:
                     raise SolutionDeployConflict(str(exc)) from exc
+
+                # Fail closed: resolve $ref entries against real rules.  Validate
+                # on a deep copy so the PERSISTED `access` dict retains the
+                # {"$ref": "name"} form (resolving mutates in-place).
+                from shared.policy_rules import (
+                    PolicyRuleDomainMismatch,
+                    PolicyRuleNotFound,
+                    resolve_policy_refs,
+                )
+                from src.repositories.policy_rule import PolicyRuleRepository
+
+                ref_repo = PolicyRuleRepository(
+                    self.db,
+                    org_id=solution.organization_id,
+                    is_superuser=True,
+                )
+                try:
+                    await resolve_policy_refs(
+                        policy_model.model_copy(deep=True),
+                        repo=ref_repo,
+                        action_domain="table",
+                        solution_id=solution.id,
+                    )
+                except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+                    raise SolutionDeployConflict(
+                        f"table {name!r} policy ref unresolvable: {exc}"
+                    ) from exc
             else:
                 # None / absent -> seed admin_bypass, matching API-created tables
                 # and manifest import; without it RLS denies all table I/O.

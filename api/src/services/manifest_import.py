@@ -2079,9 +2079,38 @@ class ManifestResolver:
         # closed at the reader (load_resolved_table_policies in table_policy_loader.py).
         policies = src["policies"]
         if policies is not None:
-            policies_list = [p.model_dump(mode="json") for p in policies]
+            policies_list = [p.model_dump(mode="json", by_alias=True) for p in policies]
             access = {"policies": policies_list}
-            TablePolicies(**access)  # raises ValidationError on bad AST
+            # Validate AST shape — raises ValidationError on a malformed when-clause.
+            policy_model = TablePolicies(**access)
+            # ORDERING NOTE (Task 10): _resolve_policy_rule will run BEFORE this
+            # validation in the import ordering, so manifest-shipped rules will
+            # already exist in the DB by the time we reach this check. Until Task 10
+            # lands, only pre-existing rules (built-ins or already imported) resolve.
+            #
+            # Fail closed: resolve $ref entries against real rules. Validate on a
+            # deep copy so the WRITTEN `access` dict retains {"$ref": "name"} form
+            # (resolve_policy_refs mutates in-place).
+            from shared.policy_rules import (
+                PolicyRuleDomainMismatch,
+                PolicyRuleNotFound,
+                resolve_policy_refs,
+            )
+            from src.repositories.policy_rule import PolicyRuleRepository
+
+            ref_repo = PolicyRuleRepository(
+                self.db, org_id=org_id, is_superuser=True
+            )
+            try:
+                await resolve_policy_refs(
+                    policy_model.model_copy(deep=True),
+                    repo=ref_repo,
+                    action_domain="table",
+                )
+            except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+                raise ValueError(
+                    f"table {table_name!r} policy ref unresolvable: {exc}"
+                ) from exc
         else:
             access = make_seed_admin_bypass()
 
@@ -2177,6 +2206,35 @@ class ManifestResolver:
         natural = (org_id, src["location"], src["path"])
         policy_document = {"policies": src["policies"]}
         now = datetime.now(timezone.utc)
+
+        # ORDERING NOTE (Task 10): _resolve_policy_rule will run BEFORE this
+        # validation in the import ordering, so manifest-shipped rules will
+        # already exist in the DB by the time we reach this check. Until Task 10
+        # lands, only pre-existing rules (built-ins or already imported) resolve.
+        #
+        # Fail closed: resolve $ref entries against real rules. Validate on a
+        # deep copy so the WRITTEN policy_document retains {"$ref": "name"} form
+        # (resolve_policy_refs mutates in-place).
+        from src.models.contracts.policies import FilePolicies
+        from shared.policy_rules import (
+            PolicyRuleDomainMismatch,
+            PolicyRuleNotFound,
+            resolve_policy_refs,
+        )
+        from src.repositories.policy_rule import PolicyRuleRepository
+
+        file_policy_model = FilePolicies.model_validate(policy_document)
+        ref_repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
+        try:
+            await resolve_policy_refs(
+                file_policy_model.model_copy(deep=True),
+                repo=ref_repo,
+                action_domain="file",
+            )
+        except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+            raise ValueError(
+                f"file policy {src['location']!r}/{src['path']!r} ref unresolvable: {exc}"
+            ) from exc
 
         if cache is not None:
             existing_by_natural = cache["file_policy_by_natural"].get(natural)

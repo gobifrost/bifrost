@@ -20,7 +20,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from bifrost.field_classes import FieldClass, classify
 from bifrost.manifest_codec import Destination, EntityCodec, ImportFields
@@ -905,6 +905,20 @@ class ManifestPolicy(BaseModel):
     )
 
 
+class ManifestPolicyRef(BaseModel):
+    """A named-rule reference within a table or file policy list.
+
+    Stored as ``{"$ref": "rule_name"}`` in manifest YAML and preserved verbatim
+    in the JSONB column (never expanded/inlined at write time). Resolution happens
+    at read time (websocket policy load) and at write-time validation (deploy,
+    manifest import) to fail closed on unresolvable refs.
+
+    Mirrors :class:`src.models.contracts.policies.PolicyRuleRef`.
+    """
+    ref: str = Field(alias="$ref", min_length=1, max_length=100)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
 class ManifestTable(EntityCodec, BaseModel):
     """Table entry in manifest.
 
@@ -921,9 +935,9 @@ class ManifestTable(EntityCodec, BaseModel):
     description: str | None = Field(default=None, description="Table description", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, match_key=True))
     table_schema: dict | None = Field(default=None, alias="schema", description="Column definitions and validation hints", **classify(FieldClass.CONTENT))
-    policies: list[ManifestPolicy] | None = Field(
+    policies: list[ManifestPolicy | ManifestPolicyRef] | None = Field(
         default=None,
-        description="Access policies (flat list). When null on import, the seed admin_bypass policy is written.",
+        description="Access policies (flat list). Entries may be inline policies or named-rule refs ({\"$ref\": name}). When null on import, the seed admin_bypass policy is written.",
         **classify(FieldClass.CONTENT),
     )
 
@@ -939,11 +953,18 @@ class ManifestTable(EntityCodec, BaseModel):
         """
         access = table.access if isinstance(table.access, dict) else None
         raw_policies = access.get("policies") if access else None
-        policies = (
-            [ManifestPolicy.model_validate(p) for p in raw_policies]
-            if raw_policies
-            else None
-        )
+        if raw_policies:
+            entries: list[ManifestPolicy | ManifestPolicyRef] = []
+            for p in raw_policies:
+                if isinstance(p, dict) and ("$ref" in p or "ref" in p):
+                    # Stored as a named-rule ref — preserve the $ref form.
+                    ref_val = p.get("$ref") or p.get("ref")
+                    entries.append(ManifestPolicyRef(**{"$ref": ref_val}))
+                else:
+                    entries.append(ManifestPolicy.model_validate(p))
+            policies: list[ManifestPolicy | ManifestPolicyRef] | None = entries
+        else:
+            policies = None
         return cls(
             id=str(table.id),
             name=table.name,
