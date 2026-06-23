@@ -1,0 +1,284 @@
+"""E2E: solution-aware file scope resolver + presign O2 hardening.
+
+Task 2 of the solution-scoped-files plan:
+- H6: ctx.solution_id wins over request.scope (even for superusers).
+- C2: solution_id is stored in FileMetadata.solution_id, NOT in
+  organization_id (install UUID never lands in organization_id).
+- O2 failure modes: presign rejects foreign scope, path traversal, PUT into
+  foreign scope.
+- Isolation: solution A's file is not visible to solution B at the same path.
+"""
+
+from __future__ import annotations
+
+import uuid
+from uuid import UUID
+
+import pytest
+
+pytestmark = pytest.mark.e2e
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _create_solution(e2e_client, headers, slug: str, org_id: str | None = None) -> dict:
+    """Create a solution and return the full response dict (id + organization_id).
+
+    Pass ``org_id`` to create an org-scoped solution, or None for global.
+    """
+    r = e2e_client.post("/api/solutions", headers=headers, json={
+        "slug": slug, "name": slug.upper(), "organization_id": org_id,
+    })
+    assert r.status_code in (200, 201), f"create solution failed: {r.text}"
+    return r.json()
+
+
+def _seed_solutions_policy(e2e_client, headers, *, org_id: str | None) -> None:
+    """Seed an allow-all policy for location=solutions under the given org.
+
+    Platform-admin superusers are allowed by the admin_bypass policy that is
+    auto-seeded on first upsert — this call ensures that row exists so that
+    is_allowed() finds a policy and returns True for the admin-token tests.
+
+    PUT /api/files/policies/{path}?location=<loc>&scope=<scope>
+    """
+    params: dict = {"location": "solutions"}
+    if org_id is not None:
+        params["scope"] = org_id
+    r = e2e_client.put(
+        "/api/files/policies/",
+        headers=headers,
+        params=params,
+        json={
+            "policies": {
+                "policies": [
+                    {
+                        "name": "allow_all",
+                        "actions": ["read", "write", "delete", "list"],
+                    }
+                ]
+            }
+        },
+    )
+    assert r.status_code in (200, 201, 204), f"seed policy failed: {r.status_code} {r.text}"
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.e2e
+def test_solution_write_then_read_isolated(e2e_client, platform_admin):
+    """A solution write lands under solutions/{install_id}/; readable by that
+    solution; solution B CANNOT read solution A's file at the same logical path.
+    """
+    headers = platform_admin.headers
+    slug_a = f"file-scope-a-{uuid.uuid4().hex[:8]}"
+    slug_b = f"file-scope-b-{uuid.uuid4().hex[:8]}"
+
+    sol_a = _create_solution(e2e_client, headers, slug_a)
+    sol_b = _create_solution(e2e_client, headers, slug_b)
+    sid_a = sol_a["id"]
+    sid_b = sol_b["id"]
+    org_id_a = sol_a.get("organization_id")
+    org_id_b = sol_b.get("organization_id")
+
+    _seed_solutions_policy(e2e_client, headers, org_id=org_id_a)
+    _seed_solutions_policy(e2e_client, headers, org_id=org_id_b)
+
+    test_path = f"r/{uuid.uuid4().hex}/x.txt"
+
+    # Write via solution A's context.
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid_a}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": test_path,
+            "content": "hello from A",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 204, f"solution A write failed: {write_r.status_code} {write_r.text}"
+
+    # Readable by solution A.
+    read_a = e2e_client.post(
+        f"/api/files/read?solution={sid_a}",
+        headers=headers,
+        json={"location": "solutions", "path": test_path, "mode": "cloud"},
+    )
+    assert read_a.status_code == 200, f"solution A read failed: {read_a.text}"
+    assert read_a.json()["content"] == "hello from A"
+
+    # Solution B CANNOT read solution A's file at the same logical path —
+    # their scopes are different install UUIDs, so they target different S3 keys.
+    # Expect 403 (policy denied) or 404 (different scope → different S3 key).
+    read_b = e2e_client.post(
+        f"/api/files/read?solution={sid_b}",
+        headers=headers,
+        json={"location": "solutions", "path": test_path, "mode": "cloud"},
+    )
+    assert read_b.status_code in (403, 404), (
+        f"solution B should not read solution A's file: {read_b.status_code} {read_b.text}"
+    )
+
+
+@pytest.mark.e2e
+def test_presign_rejects_client_supplied_foreign_scope(e2e_client, platform_admin):
+    """O2 #1: a client cannot presign into a foreign scope by passing scope=<other org>.
+
+    The server ignores / overrides the supplied scope — the signed URL
+    targets the caller's own solution scope, NOT the foreign org.
+    """
+    headers = platform_admin.headers
+    slug = f"file-presign-o2-1-{uuid.uuid4().hex[:8]}"
+    sol = _create_solution(e2e_client, headers, slug)
+    sid = sol["id"]
+    org_id = sol.get("organization_id")
+    _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+
+    # Use a different org UUID as the "foreign" scope.
+    foreign_org = str(uuid.uuid4())
+
+    r = e2e_client.post(
+        f"/api/files/signed-url?solution={sid}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": "secret.txt",
+            "method": "GET",
+            "scope": foreign_org,
+        },
+    )
+    # Server ignores/overrides the supplied scope → URL targets the caller's
+    # own solution scope (200), or policy denied (403). Must NOT be 200 with
+    # the foreign_org in the resolved path.
+    assert r.status_code in (200, 403), f"unexpected status: {r.status_code} {r.text}"
+    if r.status_code == 200:
+        resolved_path = r.json().get("path", "")
+        assert foreign_org not in resolved_path, (
+            f"signed URL landed in foreign scope: path={resolved_path}"
+        )
+        # The URL must target the caller's own install, not the foreign org.
+        assert sid in resolved_path, (
+            f"signed URL did not target caller's install: path={resolved_path}"
+        )
+
+
+@pytest.mark.e2e
+def test_presign_rejects_path_traversal(e2e_client, platform_admin):
+    """O2 #2: path traversal in the presign path is rejected with 400."""
+    headers = platform_admin.headers
+    slug = f"file-presign-o2-2-{uuid.uuid4().hex[:8]}"
+    sol = _create_solution(e2e_client, headers, slug)
+    sid = sol["id"]
+    org_id = sol.get("organization_id")
+    _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+
+    r = e2e_client.post(
+        f"/api/files/signed-url?solution={sid}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": "../../other/x",
+            "method": "GET",
+        },
+    )
+    assert r.status_code == 400, f"expected 400 for path traversal, got {r.status_code}: {r.text}"
+
+
+@pytest.mark.e2e
+def test_presign_put_cannot_plant_in_foreign_scope(e2e_client, platform_admin):
+    """O2 #3: presign PUT with a foreign scope cannot plant in the foreign scope."""
+    headers = platform_admin.headers
+    slug = f"file-presign-o2-3-{uuid.uuid4().hex[:8]}"
+    sol = _create_solution(e2e_client, headers, slug)
+    sid = sol["id"]
+    org_id = sol.get("organization_id")
+    _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+
+    foreign_org = str(uuid.uuid4())
+
+    r = e2e_client.post(
+        f"/api/files/signed-url?solution={sid}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": "plant.txt",
+            "method": "PUT",
+            "content_type": "text/plain",
+            "scope": foreign_org,
+        },
+    )
+    assert r.status_code in (200, 403), f"unexpected status: {r.status_code} {r.text}"
+    if r.status_code == 200:
+        resolved_path = r.json().get("path", "")
+        assert foreign_org not in resolved_path, (
+            f"signed PUT landed in foreign scope: path={resolved_path}"
+        )
+        assert sid in resolved_path, (
+            f"signed PUT did not target caller's install: path={resolved_path}"
+        )
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_write_metadata_c2_correct_columns(e2e_client, platform_admin, org1, db_session):
+    """C2: a solution write stores solution_id in FileMetadata.solution_id,
+    and organization_id = the install's org — NOT the install UUID in organization_id.
+
+    Uses an org-scoped solution so organization_id is a real org UUID (not None),
+    making the "install UUID != organization_id" assertion non-trivially provable.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    slug = f"file-meta-c2-{uuid.uuid4().hex[:8]}"
+    org_id_str = org1["id"]
+    sol = _create_solution(e2e_client, headers, slug, org_id=org_id_str)
+    sid = sol["id"]
+    actual_org_id_str = sol.get("organization_id")
+    assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+    org_id = UUID(actual_org_id_str)
+    _seed_solutions_policy(e2e_client, headers, org_id=actual_org_id_str)
+
+    test_path = f"meta-c2/{uuid.uuid4().hex}.txt"
+
+    # Write a file through the solutions location with this install's context.
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": test_path,
+            "content": "c2 test",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 204, f"write failed: {write_r.status_code} {write_r.text}"
+
+    # Inspect the DB row directly.
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(sid),
+            FileMetadata.location == "solutions",
+            FileMetadata.path == test_path,
+        )
+    )
+    row = result.scalar_one_or_none()
+    assert row is not None, "FileMetadata row not found for solution write"
+    # C2 assertion: install UUID must be in solution_id, NOT in organization_id.
+    assert row.solution_id == UUID(sid), (
+        f"solution_id not set: {row.solution_id}"
+    )
+    assert row.organization_id == org_id, (
+        f"organization_id should be install's org {org_id}, got {row.organization_id}"
+    )
+    # Ensure the install UUID did NOT land in organization_id (the C2 bug).
+    assert row.organization_id != UUID(sid), (
+        f"install UUID {sid} mistakenly written to organization_id (C2 bug)"
+    )

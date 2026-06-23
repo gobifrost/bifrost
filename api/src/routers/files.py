@@ -253,6 +253,10 @@ def _file_org_id(ctx: Context, location: str, requested_scope: str | None) -> UU
     `"global"` → None, a UUID → that org). `workspace` is the one unscoped
     location (shared codebase), so it always resolves to None/global.
 
+    NOTE: for `solutions` location with an active solution context, use
+    `_resolve_effective_scope` instead — it returns the install UUID as the
+    storage scope, which is NOT an org UUID.
+
     Returns the policy/DB org key: `UUID` for an org, `None` for global.
     """
     if location == "workspace":
@@ -266,6 +270,52 @@ def _storage_scope(org_id: UUID | None) -> str | None:
     get their own `{location}/global/` tree rather than colliding at the root).
     `workspace` callers pass this through unused (that location is unscoped)."""
     return str(org_id) if org_id is not None else "global"
+
+
+def _resolve_effective_scope(
+    ctx: Context, location: str, requested_scope: str | None
+) -> str | None:
+    """Return the storage-scope string for use in `resolve_s3_key` and policy
+    evaluation, with solution-context taking priority over every other signal
+    (including a superuser's explicit `requested_scope`).
+
+    - ``solutions`` location + ``ctx.solution_id`` → ``str(install_id)``
+      (H6: ctx.solution_id wins over requested_scope, even for superusers).
+    - All other cases → ``_storage_scope(_file_org_id(ctx, location, requested_scope))``.
+    """
+    if location == "solutions" and ctx.solution_id is not None:
+        return ctx.solution_id
+    return _storage_scope(_file_org_id(ctx, location, requested_scope))
+
+
+def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
+    """Return the install UUID from context when operating on the ``solutions``
+    location; None otherwise.  Used to forward solution_id to policy and
+    metadata helpers so the solution-tier policy cascade (Task 3) and the C2
+    metadata column are both correct."""
+    if location == "solutions" and ctx.solution_id is not None:
+        try:
+            return UUID(ctx.solution_id)
+        except (ValueError, AttributeError):
+            return None
+    return None
+
+
+async def _install_org_id(ctx: Context, solution_id: UUID | None) -> UUID | None:
+    """Look up the Solution install's ``organization_id`` from the DB.
+
+    Used when recording file metadata for solution writes (C2): the install's
+    org must be stored in ``FileMetadata.organization_id``, not ``ctx.org_id``
+    which may be None for platform-admin callers.  Returns ``ctx.org_id`` as
+    fallback if the install row is not found.
+    """
+    if solution_id is None:
+        return ctx.org_id
+    from src.models.orm.solutions import Solution as SolutionORM
+    row = (await ctx.db.execute(
+        select(SolutionORM).where(SolutionORM.id == solution_id)
+    )).scalar_one_or_none()
+    return row.organization_id if row is not None else ctx.org_id
 
 
 def _organization_id_for_policy(location: str, scope: str | None) -> UUID | None:
@@ -287,20 +337,30 @@ async def _authorize_file_policy(
     scope: str | None,
     path: str,
     content_type: str | None = None,
+    solution_id: UUID | None = None,
 ) -> bool:
     """Evaluate file policy access. `scope` is the storage-scope string the
-    caller already derived from the canonically-resolved org via
-    `_storage_scope` (a UUID string or `"global"`), so a non-superuser can
-    never reach another org's tree here — `_file_org_id` pinned them to their
-    own org upstream. We only translate that trusted string back to the policy
-    org key."""
+    caller already derived via `_resolve_effective_scope` (a UUID string,
+    install-id string, or `"global"`), so a non-superuser can never reach
+    another org's tree here. `solution_id` is forwarded to the policy service
+    so Task 3's own-solution cascade can resolve correctly.
+
+    For `solutions` location, `scope` is the install UUID string (not an org
+    UUID), so we derive `organization_id` from `ctx.org_id` and forward
+    `solution_id` separately rather than coercing the install UUID into org."""
     from src.services.file_policy_service import FilePolicyService
 
     organization_id: UUID | None = None
+    resolved_solution_id = solution_id
     if location != "workspace":
         if scope is None:
             return False
-        if scope == "global":
+        if location == "solutions" and resolved_solution_id is not None:
+            # scope == str(install_id) — look up the install's org from DB so
+            # the policy check uses the install's scope (not the caller's JWT
+            # org, which may be None for a platform admin making test calls).
+            organization_id = await _install_org_id(ctx, resolved_solution_id)
+        elif scope == "global":
             organization_id = None
         else:
             try:
@@ -321,6 +381,7 @@ async def _authorize_file_policy(
         location=location,
         path=path,
         user=ctx.user,
+        solution_id=resolved_solution_id,
     )
 
 
@@ -332,6 +393,7 @@ async def _require_file_policy(
     scope: str | None,
     path: str,
     content_type: str | None = None,
+    solution_id: UUID | None = None,
 ) -> None:
     allowed = await _authorize_file_policy(
         ctx,
@@ -340,6 +402,7 @@ async def _require_file_policy(
         scope=scope,
         path=path,
         content_type=content_type,
+        solution_id=solution_id,
     )
     if not allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
@@ -365,6 +428,7 @@ async def _filter_listed_paths(
     scope: str | None,
     action: str = "list",
 ) -> list[str]:
+    solution_id = _ctx_solution_id(ctx, location)
     allowed_paths = []
     for listed_path in paths:
         policy_path = _relative_list_path(listed_path, location=location, scope=scope)
@@ -374,6 +438,7 @@ async def _filter_listed_paths(
             location=location,
             scope=scope,
             path=policy_path,
+            solution_id=solution_id,
         ):
             allowed_paths.append(listed_path)
     return allowed_paths
@@ -650,7 +715,7 @@ async def _build_signed_url(
     """Policy-check and generate a single presigned URL."""
     from shared.file_paths import resolve_s3_key
 
-    effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+    effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
     try:
         s3_path = resolve_s3_key(request.location, effective_scope, request.path)
     except ValueError as e:
@@ -664,6 +729,7 @@ async def _build_signed_url(
         scope=effective_scope,
         path=request.path,
         content_type=request.content_type if request.method == "PUT" else None,
+        solution_id=_ctx_solution_id(ctx, request.location),
     )
 
     file_storage = FileStorageService(db)
@@ -692,7 +758,8 @@ async def _record_completed_signed_upload(
     """Record file metadata and publish changes after a browser PUT succeeds."""
     from shared.file_paths import resolve_s3_key
 
-    effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+    effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+    solution_id = _ctx_solution_id(ctx, request.location)
     await _require_file_policy(
         ctx,
         action="write",
@@ -700,6 +767,7 @@ async def _record_completed_signed_upload(
         scope=effective_scope,
         path=request.path,
         content_type=request.content_type,
+        solution_id=solution_id,
     )
     try:
         s3_path = resolve_s3_key(request.location, effective_scope, request.path)
@@ -720,6 +788,8 @@ async def _record_completed_signed_upload(
         sha256=request.sha256,
         updated_by=ctx.user.email,
         user_id=str(ctx.user.user_id),
+        solution_id=solution_id,
+        org_id=await _install_org_id(ctx, solution_id),
     )
     await db.commit()
 
@@ -747,13 +817,14 @@ async def read_file(
 ) -> FileReadResponse:
     """Read a file from a managed or custom location."""
     try:
-        effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
         await _require_file_policy(
             ctx,
             action="read",
             location=request.location,
             scope=effective_scope,
             path=request.path,
+            solution_id=_ctx_solution_id(ctx, request.location),
         )
         backend = get_backend(request.mode, db)
         content = await backend.read(request.path, request.location, scope=effective_scope)
@@ -788,13 +859,15 @@ async def write_file(
 ) -> None:
     """Write a file to a managed or custom location."""
     try:
-        effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+        solution_id = _ctx_solution_id(ctx, request.location)
         await _require_file_policy(
             ctx,
             action="write",
             location=request.location,
             scope=effective_scope,
             path=request.path,
+            solution_id=solution_id,
         )
         backend = get_backend(request.mode, db)
 
@@ -821,6 +894,8 @@ async def write_file(
                 sha256=hashlib.sha256(content).hexdigest(),
                 updated_by=updated_by,
                 user_id=str(ctx.user.user_id),
+                solution_id=solution_id,
+                org_id=await _install_org_id(ctx, solution_id),
             )
             await publish_file_change(
                 location=request.location,
@@ -847,13 +922,14 @@ async def delete_file(
 ) -> None:
     """Delete a file from a managed or custom location."""
     try:
-        effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
         await _require_file_policy(
             ctx,
             action="delete",
             location=request.location,
             scope=effective_scope,
             path=request.path,
+            solution_id=_ctx_solution_id(ctx, request.location),
         )
         backend = get_backend(request.mode, db)
         await backend.delete(request.path, request.location, scope=effective_scope)
@@ -897,13 +973,14 @@ async def list_files_simple(
 ) -> FileListResponse:
     """List files in a directory (simple SDK-focused endpoint)."""
     try:
-        effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
         directory_allowed = await _authorize_file_policy(
             ctx,
             action="list",
             location=request.location,
             scope=effective_scope,
             path=request.directory,
+            solution_id=_ctx_solution_id(ctx, request.location),
         )
         if request.include_metadata and request.mode == "cloud" and request.location == "workspace":
             # Return ETags + last_modified via RepoStorage
@@ -985,13 +1062,14 @@ async def file_exists(
 ) -> FileExistsResponse:
     """Check if a file exists."""
     try:
-        effective_scope = _storage_scope(_file_org_id(ctx, request.location, request.scope))
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
         allowed = await _authorize_file_policy(
             ctx,
             action="exists",
             location=request.location,
             scope=effective_scope,
             path=request.path,
+            solution_id=_ctx_solution_id(ctx, request.location),
         )
         if not allowed:
             return FileExistsResponse(exists=False)

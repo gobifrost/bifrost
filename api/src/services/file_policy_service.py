@@ -48,12 +48,25 @@ class FilePolicyService:
         sha256: str | None = None,
         created_by: UUID | str | None = None,
         updated_by: UUID | str | None = None,
+        solution_id: UUID | None = None,
     ) -> FileMetadata:
-        existing = await self.get_metadata(
-            organization_id=organization_id,
-            location=location,
-            path=path,
-        )
+        """Upsert file metadata. When `solution_id` is provided (solution-scoped
+        write), it is stored in `FileMetadata.solution_id` and `organization_id`
+        must be the install's org — NOT the install UUID (C2 fix)."""
+        # For solution rows, look up by solution_id + location + path (the
+        # unique index uq_file_metadata_solution_location_path).
+        if solution_id is not None:
+            existing = await self._get_solution_metadata(
+                solution_id=solution_id,
+                location=location,
+                path=path,
+            )
+        else:
+            existing = await self.get_metadata(
+                organization_id=organization_id,
+                location=location,
+                path=path,
+            )
         if existing is None:
             row = FileMetadata(
                 organization_id=organization_id,
@@ -65,6 +78,7 @@ class FilePolicyService:
                 sha256=sha256,
                 created_by=_coerce_uuid(created_by),
                 updated_by=_coerce_uuid(updated_by),
+                solution_id=solution_id,
             )
             self.db.add(row)
             await self.db.flush()
@@ -79,6 +93,20 @@ class FilePolicyService:
         existing.updated_by = _coerce_uuid(updated_by)
         await self.db.flush()
         return existing
+
+    async def _get_solution_metadata(
+        self,
+        *,
+        solution_id: UUID,
+        location: str,
+        path: str,
+    ) -> "FileMetadata | None":
+        stmt = select(FileMetadata).where(
+            FileMetadata.solution_id == solution_id,
+            FileMetadata.location == location,
+            FileMetadata.path == path,
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def delete_metadata(
         self,
@@ -246,7 +274,11 @@ class FilePolicyService:
         location: str,
         path: str,
         user: Any,
+        solution_id: UUID | None = None,
     ) -> bool:
+        # solution_id is forwarded for Task 3 (own-solution policy cascade).
+        # Currently unused in this evaluation; accepted here so callers can
+        # thread it through without a Task 3 dependency.
         if not self._principal_matches_org(user, organization_id):
             return False
 

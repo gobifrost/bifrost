@@ -33,6 +33,32 @@ from .indexers import WorkflowIndexer
 
 logger = logging.getLogger(__name__)
 
+# Sentinel — returned by _scope_to_org_id to signal "no metadata to write".
+_SCOPE_SKIP = object()
+
+
+def _scope_to_org_id(location: str, scope: str | None) -> "UUID | None | object":
+    """Coerce a storage-scope string to the org UUID for FileMetadata writes.
+
+    Returns:
+        ``None``       — global (org IS NULL)
+        ``UUID(scope)`` — org-scoped write
+        ``_SCOPE_SKIP`` — caller should skip metadata write (missing scope)
+
+    This is the NON-solution path.  Solution writes use their own path so
+    the install UUID never ends up in organization_id (C2).
+    """
+    if location == "workspace":
+        return None
+    if scope is None:
+        return _SCOPE_SKIP
+    if scope == "global":
+        return None
+    try:
+        return UUID(scope)
+    except ValueError:
+        return _SCOPE_SKIP
+
 
 class FileStorageService:
     """
@@ -228,8 +254,16 @@ class FileStorageService:
         sha256: str | None = None,
         updated_by: str,
         user_id: str,
+        solution_id: UUID | None = None,
+        org_id: UUID | None = None,
     ) -> None:
-        """Record metadata after a presigned PUT has completed."""
+        """Record metadata after a presigned PUT has completed.
+
+        `solution_id` + `org_id` are provided when the write is solution-scoped
+        (C2 fix): `solution_id` lands in `FileMetadata.solution_id`, `org_id`
+        in `organization_id`.  Without them, `scope` is coerced to an org UUID
+        (existing behaviour for non-solution writes).
+        """
         if location == "workspace":
             await self._file_ops.record_signed_upload_metadata(
                 path,
@@ -238,17 +272,14 @@ class FileStorageService:
 
         from src.services.file_policy_service import FilePolicyService
 
-        organization_id: UUID | None = None
-        if location != "workspace":
-            if scope is None:
+        # C2: when a solution_id is present, use the install's org, not the
+        # install UUID, for organization_id.
+        if solution_id is not None:
+            organization_id = org_id
+        else:
+            organization_id = _scope_to_org_id(location, scope)
+            if organization_id is _SCOPE_SKIP:
                 return
-            if scope == "global":
-                organization_id = None
-            else:
-                try:
-                    organization_id = UUID(scope)
-                except ValueError:
-                    return
 
         service = FilePolicyService(self.db)
         await service.upsert_metadata(
@@ -261,6 +292,7 @@ class FileStorageService:
             sha256=sha256,
             updated_by=user_id,
             created_by=user_id,
+            solution_id=solution_id,
         )
 
     async def record_file_write_metadata(
@@ -275,21 +307,25 @@ class FileStorageService:
         sha256: str,
         updated_by: str,
         user_id: str,
+        solution_id: UUID | None = None,
+        org_id: UUID | None = None,
     ) -> None:
-        """Record file metadata for policy predicates after a normal write."""
+        """Record file metadata for policy predicates after a normal write.
+
+        `solution_id` + `org_id` are provided when the write is solution-scoped
+        (C2 fix): `solution_id` lands in `FileMetadata.solution_id`, `org_id`
+        in `organization_id`.  Without them, `scope` is coerced to an org UUID.
+        """
         from src.services.file_policy_service import FilePolicyService
 
-        organization_id: UUID | None = None
-        if location != "workspace":
-            if scope is None:
+        # C2: when a solution_id is present, use the install's org, not the
+        # install UUID, for organization_id.
+        if solution_id is not None:
+            organization_id = org_id
+        else:
+            organization_id = _scope_to_org_id(location, scope)
+            if organization_id is _SCOPE_SKIP:
                 return
-            if scope == "global":
-                organization_id = None
-            else:
-                try:
-                    organization_id = UUID(scope)
-                except ValueError:
-                    return
 
         service = FilePolicyService(self.db)
         await service.upsert_metadata(
@@ -302,6 +338,7 @@ class FileStorageService:
             sha256=sha256,
             created_by=user_id,
             updated_by=user_id,
+            solution_id=solution_id,
         )
 
     async def read_uploaded_file(self, path: str) -> bytes:
