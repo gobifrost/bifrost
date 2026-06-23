@@ -53,6 +53,7 @@ from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.models.orm.file_index import FileIndex
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
+from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.worker_metric import WorkerMetric
 
 __all__ = [
@@ -137,6 +138,8 @@ __all__ = [
     "FileIndex",
     "FileMetadata",
     "FilePolicy",
+    # Policy Rules
+    "PolicyRule",
     # Worker Metrics
     "WorkerMetric",
     # Events
