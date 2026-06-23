@@ -23,6 +23,7 @@
 - **No dead code / no unrequested fallbacks.**
 - **Tests use `./test.sh`** (Dockerized). JUnit at `/tmp/bifrost-<project>/test-results.xml`.
 - **No migration of existing inline `admin_bypass` rows.** All rule writes require admin (the bypass check `is_platform_admin OR is_provider_org`); a global rule is a bypass-gated write.
+- **`PolicyRule` is solution-scopable (Codex R2/C1).** `PolicyRule` carries `solution_id` from the start so a solution can ship its own named rules. Resolution is **own-solution → org → global** (mirroring workflows/tables). The resolver, where-used, rename, delete-guard, and manifest import are all solution-scope-aware. Built-ins stay global (`solution_id` NULL). See Task 1 (column) + Task 4/5 (resolver threading). The actual *wiring of solution context into file/table policy evaluation* for solution-managed policies is owned by the **solution-scoped-files plan** (`2026-06-22-solution-scoped-files.md`), which runs after this one — but the column + resolver signature + repo support land HERE so that plan has them.
 
 ---
 
@@ -66,7 +67,8 @@
 - Test: `api/tests/unit/test_policy_rule_model.py`
 
 **Interfaces:**
-- Produces: `PolicyRule` with `id, organization_id|NULL, name, domain('file'|'table'), description|NULL, body:JSONB({actions,when}), is_builtin:bool, created_by|NULL, created_at, updated_at`; partial unique `(name,domain) WHERE org IS NULL` + `(organization_id,name,domain) WHERE org IS NOT NULL`.
+- Produces: `PolicyRule` with `id, organization_id|NULL, solution_id|NULL, name, domain('file'|'table'), description|NULL, body:JSONB({actions,when}), is_builtin:bool, created_by|NULL, created_at, updated_at`; partial unique indexes per scope tier (global / org / solution — see step 3).
+- **`solution_id` (Codex R2/C1):** a solution can ship its own named rules; resolution is own-solution→org→global. Built-ins are global (`solution_id` NULL).
 
 > **Why `domain` (correction #7):** `read`/`delete` are valid in both file and table vocabularies, so the domain can't be inferred from actions. An explicit column lets write-validation and `resolve_policy_refs` reject cross-domain use, and lets the two `admin_bypass` built-ins coexist by name.
 
@@ -114,6 +116,8 @@ class PolicyRule(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id"), default=None)
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"), default=None)  # Codex R2/C1: solution-shippable rules
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     domain: Mapped[str] = mapped_column(String(8), nullable=False)  # 'file' | 'table'
     description: Mapped[str | None] = mapped_column(Text, default=None)
@@ -125,12 +129,16 @@ class PolicyRule(Base):
         default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        # Partial unique indexes — NULLs don't compare equal, so a plain UNIQUE(org,name)
-        # would allow duplicate globals and break scalar_one_or_none() (correction #4).
-        Index("uq_policy_rules_global_name_domain", "name", "domain",
-              unique=True, postgresql_where=text("organization_id IS NULL")),
-        Index("uq_policy_rules_org_name_domain", "organization_id", "name", "domain",
-              unique=True, postgresql_where=text("organization_id IS NOT NULL")),
+        # Partial unique indexes per scope tier — NULLs don't compare equal, so a plain
+        # UNIQUE would allow duplicate globals and break scalar_one_or_none() (correction #4).
+        # Three mutually-exclusive tiers: global (both NULL), org (org set, sol NULL),
+        # solution (sol set). Codex R2/C1 adds the solution tier.
+        Index("uq_policy_rules_global_name_domain", "name", "domain", unique=True,
+              postgresql_where=text("organization_id IS NULL AND solution_id IS NULL")),
+        Index("uq_policy_rules_org_name_domain", "organization_id", "name", "domain", unique=True,
+              postgresql_where=text("organization_id IS NOT NULL AND solution_id IS NULL")),
+        Index("uq_policy_rules_solution_name_domain", "solution_id", "name", "domain", unique=True,
+              postgresql_where=text("solution_id IS NOT NULL")),
     )
 ```
 
@@ -494,7 +502,8 @@ git commit -m "feat(policy-rules): cascade repo + override-aware where-used"
 - Test: `api/tests/e2e/test_resolve_policy_refs.py`
 
 **Interfaces:**
-- Produces: `async resolve_policy_refs(policies, *, repo, action_domain) -> None` (mutates in place; replaces each `PolicyRuleRef` with the resolved inline rule of the domain's type); raises `PolicyRuleNotFound`, `PolicyRuleDomainMismatch`. Requires the resolved rule's `domain == action_domain`.
+- Produces: `async resolve_policy_refs(policies, *, repo, action_domain, solution_id=None) -> None` (mutates in place; replaces each `PolicyRuleRef` with the resolved inline rule of the domain's type); raises `PolicyRuleNotFound`, `PolicyRuleDomainMismatch`. Requires the resolved rule's `domain == action_domain`.
+- **`solution_id` (Codex R2/C1):** when set, `repo.get` resolves **own-solution → org → global**; when `None`, the existing org→global cascade. The repo's `get(name=, domain=, solution_id=None)` adds the solution arm: query `solution_id == solution_id` first, then fall through to `OrgScopedRepository`'s org→global. The named-rules plan lands the parameter + own-first arm; the solution-files plan passes a real `solution_id` from solution-policy evaluation.
 
 - [ ] **Step 1: Write the failing tests**
 

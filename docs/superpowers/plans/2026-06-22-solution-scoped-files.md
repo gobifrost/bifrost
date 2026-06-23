@@ -10,11 +10,49 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-22-solutions-files-open-decisions.md` (decided items D1, D2, D3-revised, D4, D6, O1, O2, O3-revised, O4, O5).
 
+## Codex round-2 corrections (folded in)
+
+Verified against real code; each is reflected in the tasks below:
+
+- **C2 — metadata write path stamps the wrong column.** `record_file_write_metadata`
+  (`file_storage/service.py:282`) coerces any UUID `scope` → `organization_id`, and
+  `FilePolicyService.upsert_metadata` only accepts `organization_id`. A `scope=<install_id>` write
+  would stamp the **install UUID into `organization_id`** — corrupt. **Task 2/4 must extend
+  `upsert_metadata` + `record_file_write_metadata` + the signed-upload metadata path to carry
+  `solution_id`**, and route solution writes so the install_id lands in `solution_id`, not
+  `organization_id`.
+- **C3 — uninstall job must not cascade away / must query durably.** If `SolutionFileJob` copies
+  `SolutionDeployJob`'s `install_id FK ondelete=CASCADE` (`solution_deploy_jobs.py:31`), deleting the
+  Solution deletes the job row mid-flight; and after re-stamp the job can't query by `solution_id`.
+  **The orphan job's FK must NOT cascade from `solutions` (nullable, no cascade), and the job
+  queries by `origin_solution_id` or a captured old-key list** passed at enqueue.
+- **H4 — existing org/global unique indexes must exclude solution rows.** `file_metadata`/
+  `file_policies` org+global unique indexes (`file_metadata.py:48,95`) don't exclude solution rows.
+  **Task 1 must add `solution_id IS NULL` to the existing org/global unique predicates** (mirror the
+  table migration), then add the solution-tier unique.
+- **H5 — the read-only guard misses `session.new`.** `guard.py:77` checks `dirty`/`deleted`, not
+  `new`. Core-write is still required, but **tests must assert the Core path directly** (don't rely
+  on the guard tripping on an ORM insert), and solution write paths must NOT reuse the ORM helpers
+  (`file_policy_service.py:55,149,192`) unchanged.
+- **H6 — presign: superusers honor arbitrary `scope`; policy auth collapses scope→org.** Non-supers
+  are pinned, but a superuser can pass any `scope` (`org_filter.py:164`), and `_authorize_file_policy`
+  (`files.py:299`) turns scope back into an org UUID only. **Task 2: the solution branch resolves
+  BEFORE org resolution, and policy auth receives BOTH `organization_id` and `solution_id`.**
+- **M7 — file bytes ride the ENCRYPTED export tier.** `include_data` requires full-mode + password
+  and table data goes into encrypted `.bifrost/secrets.enc` (`export.py:202`). **Decision: solution
+  file sidecars + index are encrypted into the same `secrets.enc` tier** (NOT plaintext zip members),
+  matching table-data confidentiality. The zip is written by `export.py:64` (NOT `capture.py`) —
+  Task 6 wires capture to produce the bytes+index; **export.py** places them into the encrypted tier.
+- **M8 — Contents UI needs backend.** `SolutionEntities` (`contracts/solutions.py:159`) has no
+  `files` list and `FilesExplorer` has no scope param. **Task 12 must add a `files` entry to the
+  solution-entities API response AND make `FilesExplorer` scope-param-aware** — an href alone won't
+  surface a row or scope the explorer.
+
 ## Global Constraints
 
 - **Worktree only** (`/home/jack/GitHub/bifrost/.claude/worktrees/files-sdk-policies`, branch `codex/files-sdk-policies`). Build on the named-rules commits.
 - **Freeform `solutions` location** → `solutions/{scope}/{path}`; a solution's `scope = str(install_id)`. Files must NOT use `workspace` (unscoped → `_repo/`, no isolation). `install_id` is `Solution.id` = the `solution_id` stamped on entities.
-- **Core writes for solution-managed file rows.** `FileMetadata`/`FilePolicy` with `solution_id` trip the `before_flush` read-only guard under ORM mutation. Deploy/uninstall/cascade writes use Core `insert()/update()/delete()`. Install the guard in tests.
+- **Core writes for solution-managed file rows.** `FileMetadata`/`FilePolicy` with `solution_id` trip the `before_flush` read-only guard under ORM *update/delete*. Deploy/uninstall/cascade writes use Core `insert()/update()/delete()`. **H5: the guard does NOT check `session.new`** (only `dirty`/`deleted`, `guard.py:77`) — so an ORM *insert* of a solution row slips past it. Therefore tests must **assert the Core path directly** (e.g. patch the ORM helper to fail, or assert no ORM object is added), not merely rely on the guard tripping; and solution write paths must not reuse the existing ORM helpers (`file_policy_service.py:55,149,192`) unchanged.
 - **Resolution precedence (D4):** own-solution → org → global, for both file content scope and file policy cascade. Mirrors the workflow/table own-first resolver. Content isolation is structural (prefix) — NO content fallback to the org pool (O5); only policy cascades.
 - **Presign scope is server-resolved (O2).** `_file_org_id` derives the scope from context (incl. solution); the signed key goes through `resolve_s3_key`; policy check precedes signing. Client never names a foreign scope. Three failure-mode tests required.
 - **No mirror-delete (O1).** Update writes bundle files with a whole-bundle replace-or-skip choice; never deletes a file absent from the new bundle. Same on import.
@@ -90,13 +128,25 @@ On `FileMetadata` and `FilePolicy`, add (mirroring the existing partial-unique p
     orphaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 ```
 
-Add to each `__table_args__` (use the table-specific name `file_metadata`/`file_policies`):
+**H4 — fix the EXISTING org/global uniques first, then add the solution tier.** The current
+`uq_*_org_location_path` (`WHERE organization_id IS NOT NULL`) and `uq_*_global_location_path`
+(`WHERE organization_id IS NULL`) don't exclude solution rows → a solution row collides with / is
+ambiguous against org/global. Add `solution_id IS NULL` to BOTH existing predicates, then add the
+solution tier. For each table (`file_metadata`/`file_policies`):
 
 ```python
+        # MODIFY the two existing predicates to exclude solution rows:
+        Index("uq_file_metadata_org_location_path", "organization_id", "location", "path", unique=True,
+              postgresql_where=text("organization_id IS NOT NULL AND solution_id IS NULL")),
+        Index("uq_file_metadata_global_location_path", "location", "path", unique=True,
+              postgresql_where=text("organization_id IS NULL AND solution_id IS NULL")),
+        # ADD the solution tier:
         Index("uq_file_metadata_solution_location_path", "solution_id", "location", "path",
               unique=True, postgresql_where=text("solution_id IS NOT NULL")),
         Index("ix_file_metadata_solution_id", "solution_id"),
 ```
+
+The migration must `DROP` + recreate the two existing unique indexes with the new predicate (not just add the third), or old rows still collide. Add a test asserting all three predicates are mutually exclusive.
 
 - [ ] **Step 4: Run model test → PASS**
 
@@ -169,9 +219,13 @@ async def test_presign_put_cannot_plant_in_foreign_scope(solution_client, other_
 
 - [ ] **Step 2: Run → FAIL** — `./test.sh e2e tests/e2e/platform/test_solution_file_scope.py -v`
 
-- [ ] **Step 3: Make `_file_org_id` solution-aware**
+- [ ] **Step 3: Make `_file_org_id` solution-aware (H6)**
 
-Read `_file_org_id` / `_storage_scope` in `files.py`. Extend so that when the request/context carries a solution install (the same signal `sdk.tables` uses — `?solution=` or `ctx.solution_id`), the `solutions` location resolves `scope = str(install_id)` instead of the org. Keep the non-solution path identical. Crucially the scope is taken from the **resolved context**, never from `request.scope` when a solution context is present — `request.scope` for a solution caller is ignored (matching how `resolve_target_org` ignores a non-superuser's scope). The existing `_build_signed_url` then signs the correct key for free.
+Read `_file_org_id` / `_storage_scope` / `_authorize_file_policy` in `files.py`. Extend so that when the context carries a solution install (`ctx.solution_id`, set from `?solution=` per `auth.py:312`), the `solutions` location resolves `scope = str(install_id)`. **The solution branch must run BEFORE org resolution** — `ctx.solution_id` wins over any `request.scope`, including for a superuser (who otherwise honors arbitrary `scope` per `org_filter.py:164`). **`_authorize_file_policy` must receive BOTH `organization_id` AND `solution_id`** (it currently collapses scope→org only at `files.py:299`) so the policy cascade (Task 3) can resolve own-solution. `request.scope` is ignored whenever a solution context is present. The existing `_build_signed_url` then signs the correct key for free.
+
+- [ ] **Step 3b: Metadata write path carries solution_id (C2)**
+
+`record_file_write_metadata` (`file_storage/service.py:282`) currently coerces any UUID `scope`→`organization_id` and calls `upsert_metadata(organization_id=...)`. For a solution write this would stamp the **install_id into `organization_id`** — corrupt. Extend `upsert_metadata` (`file_policy_service.py:37`) and `record_file_write_metadata` + the signed-upload metadata path to accept `solution_id`, and when the resolved scope is a solution install, write `solution_id=<install_id>, organization_id=<install's org>` via the **Core** path (Task 4's service), NOT the ORM helper. Add a test: a `location=solutions` write lands `solution_id` set, `organization_id` = the install's org (never the install UUID in `organization_id`).
 
 - [ ] **Step 4: Run → PASS** (all four). Then own-first read/list: a solution read with no own file falls back to org/global **for policy authorization** but NOT for content (O5) — assert a solution can't read an org file by content path unless explicitly granted. Add that assertion.
 
@@ -229,7 +283,14 @@ git commit -m "feat(solution-files): solution-aware file scope + presign O2 hard
 - Modify: `api/src/routers/solutions.py` (enqueue + poll endpoints, mirroring `SolutionDeployJob`)
 - Test: `api/tests/e2e/platform/test_solution_file_jobs.py`
 
-**Interfaces:** a `SolutionFileJob{id, install_id, kind('restore'|'orphan'|'bulk_delete'), status, error, result, timestamps}`; `POST` enqueues via `BackgroundTasks.add_task`, `GET /api/solutions/file-jobs/{id}` polls. Worker runs under a fresh session.
+**Interfaces:** a `SolutionFileJob{id, install_id, origin_solution_id, kind('restore'|'orphan'|'bulk_delete'), status, error, result, timestamps}`; `POST` enqueues via `BackgroundTasks.add_task`, `GET /api/solutions/file-jobs/{id}` polls. Worker runs under a fresh session.
+
+> **C3 — FK must NOT cascade, query durably.** Unlike `SolutionDeployJob` (which has
+> `install_id FK ondelete=CASCADE`, `solution_deploy_jobs.py:31`), an **orphan** job runs *while the
+> Solution is being deleted* — a cascading FK would delete the job row mid-flight. So `install_id`
+> here is **nullable with NO cascade** (or just a plain UUID column, no FK), and the job carries
+> `origin_solution_id` + (for orphan) a **captured old-key list** passed at enqueue, because after
+> the in-txn re-stamp the rows no longer have `solution_id == install_id` to query by.
 
 - [ ] **Step 1: Failing test** (enqueue an orphan job → poll → succeeded with a count).
 - [ ] **Step 2: Run → FAIL.**
@@ -242,10 +303,12 @@ git commit -m "feat(solution-files): solution-aware file scope + presign O2 hard
 ## Task 6: Bundle capture — file sidecars + manifest index (D3-revised)
 
 **Files:**
-- Modify: `api/src/services/solutions/capture.py` (`SolutionBundle.solution_files`, `_solution_file_entries`, zip writing), `api/bifrost/manifest.py` (`ManifestSolutionFile`)
+- Modify: `api/src/services/solutions/capture.py` (`SolutionBundle.solution_files`, `_solution_file_entries` — DATA only), `api/src/services/solutions/export.py` (place bytes+index into the ENCRYPTED tier), `api/bifrost/manifest.py` (`ManifestSolutionFile`)
 - Test: `api/tests/unit/test_solution_file_capture.py`, `api/tests/e2e/platform/test_solution_export_files.py`
 
-**Interfaces:** `bundle_for(..., include_data=True)` populates `SolutionBundle.solution_files: list[SolutionFileEntry]` and writes bytes into the zip under `files/{location}/{path}`; the manifest gains a `solution_files` index (`ManifestSolutionFile{location, path, sha256, size}`). Row/file cap + loud warning + omit-empty per `_table_data`.
+**Interfaces:** `bundle_for(..., include_data=True)` populates `SolutionBundle.solution_files: list[SolutionFileEntry{location, path, sha256, size, content_bytes}]`; **`export.py` places the bytes + the `ManifestSolutionFile` index into the encrypted `.bifrost/secrets.enc` tier** alongside `table_data` (M7), NOT as plaintext zip members. File cap + loud warning + omit-empty per `_table_data`.
+
+> **M7 + correct file locations.** `capture.py::bundle_for` ASSEMBLES data; **`export.py:64` writes the zip members** and `export.py:202` is where `include_data` content goes into the encrypted `secrets.enc` (gated on full-mode + password). So: Task 6 adds `_solution_file_entries` to capture (enumerate+read bytes); the **export.py** change places those bytes + index into the encrypted tier — file bytes get the SAME confidentiality as table rows. Do NOT write plaintext `files/` members.
 
 - [ ] **Step 1: Failing tests** (export a solution with 2 files → bundle has both sidecars + index entries with correct sha; empty → omitted; cap warning logged).
 - [ ] **Step 2: Run → FAIL.**
@@ -336,10 +399,19 @@ git commit -m "feat(solution-files): solution-aware file scope + presign O2 hard
 ## Task 12: Frontend — Files entry on the Solution Contents list → standard Files page
 
 **Files:**
-- Modify: `client/src/pages/SolutionDetail.tsx` (`EntityKind` + `ENTITY_TABS` + `entityHref`), `client/src/components/files/FilesExplorer.tsx` (accept `install` param), `client/src/pages/Files.tsx`
-- Test: `client/src/pages/SolutionDetail.test.tsx`, a vitest for FilesExplorer param, Playwright
+- Modify (backend, M8): `api/src/models/contracts/solutions.py` (`SolutionEntities` gains a `files` list), the solution-entities endpoint that fills it (enumerate solution files for the install)
+- Modify (frontend): `client/src/pages/SolutionDetail.tsx` (`EntityKind` + `ENTITY_TABS` + `entityHref`), `client/src/components/files/FilesExplorer.tsx` (accept `install` param → scope), `client/src/pages/Files.tsx`
+- Test: backend e2e for the `files` entities field; `client/src/pages/SolutionDetail.test.tsx`, a vitest for FilesExplorer param, Playwright
 
 **Interfaces:** the Contents list shows a **Files** row (icon `FolderOpen`) linking to `/files?install=<solution_id>&from=solution:<id>`; the standard Files page reads `install` and scopes `FilesExplorer` to `location="solutions"`, `scope=<install_id>`, with a "Solution › {name} › Files" breadcrumb + back link.
+
+> **M8 — the href alone is insufficient.** `SolutionEntities` (`contracts/solutions.py:159`) has no
+> `files` list, `SolutionDetail` hard-codes six entity kinds (`SolutionDetail.tsx:132`), and
+> `FilesExplorer` uses local org/global state with **no scope param** (`FilesExplorer.tsx:44`). This
+> task therefore has THREE parts: (1) backend — add `files` to the solution-entities response
+> (enumerate `FileMetadata WHERE solution_id == install`); (2) `FilesExplorer` accepts an `install`
+> prop/param and, when set, pins `location="solutions"` + `scope=install` + disables the org/global
+> selector; (3) `SolutionDetail` renders the row + href. All three are required for a working row.
 
 - [ ] **Step 1: Failing tests** (SolutionDetail renders a Files row with the right href; FilesExplorer given `install` requests `location=solutions&scope=<id>`).
 - [ ] **Step 2: Run → FAIL.**
