@@ -29,7 +29,7 @@ class TestAdminBypassSeed:
         )
         assert r.status_code == 200, r.text
         assert any(
-            p["name"] == "admin_bypass" for p in r.json()["policies"]["policies"]
+            p.get("$ref") == "admin_bypass" for p in r.json()["policies"]["policies"]
         )
 
         # 2. Admin is allowed to read under it.
@@ -45,7 +45,7 @@ class TestAdminBypassSeed:
             location="gallery", scope="global", policies=[],
         )
         assert not any(
-            p["name"] == "admin_bypass" for p in r2.json()["policies"]["policies"]
+            p.get("$ref") == "admin_bypass" for p in r2.json()["policies"]["policies"]
         )
 
         # 4. Admin now denied.

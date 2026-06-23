@@ -10,16 +10,5 @@ from __future__ import annotations
 
 
 def make_seed_admin_bypass_file() -> dict:
-    return {
-        "policies": [
-            {
-                "name": "admin_bypass",
-                "description": (
-                    "Platform admins bypass all checks. "
-                    "Edit or delete to enforce stricter access."
-                ),
-                "actions": ["read", "write", "delete", "list"],
-                "when": {"user": "is_platform_admin"},
-            }
-        ]
-    }
+    """New file prefixes reference the built-in admin_bypass (file domain)."""
+    return {"policies": [{"$ref": "admin_bypass"}]}

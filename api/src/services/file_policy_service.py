@@ -132,7 +132,7 @@ class FilePolicyService:
             # by a hardcoded evaluator bypass. Prepend only when absent, so a
             # later update that drops the rule sticks.
             if seed_admin_bypass and not any(
-                rule.get("name") == "admin_bypass"
+                rule.get("name") == "admin_bypass" or rule.get("$ref") == "admin_bypass"
                 for rule in doc.get("policies", [])
             ):
                 seed = make_seed_admin_bypass_file()["policies"][0]
