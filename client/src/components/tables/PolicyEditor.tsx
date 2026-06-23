@@ -36,6 +36,7 @@ import {
 	validatePolicies,
 	type PolicyValidationError,
 } from "@/services/tables";
+import { listPolicyRules, type PolicyRule } from "@/services/policyRules";
 import type { components } from "@/lib/v1";
 
 type TablePolicies = components["schemas"]["TablePolicies"];
@@ -70,9 +71,19 @@ function asTablePolicies(parsed: unknown): TablePolicies {
 
 export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 	const [templateKey, setTemplateKey] = useState<string>("");
+	const [refKey, setRefKey] = useState<string>("");
+	const [rules, setRules] = useState<PolicyRule[]>([]);
 	const [activeParseError, setActiveParseError] = useState<string | null>(
 		null,
 	);
+
+	useEffect(() => {
+		listPolicyRules("table")
+			.then(setRules)
+			.catch(() => {
+				// Best-effort — if the fetch fails the dropdown is just empty.
+			});
+	}, []);
 
 	// `null` = haven't validated yet OR a parse error wiped any prior result.
 	// `[]` = the server validated and found nothing wrong.
@@ -159,6 +170,13 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		setTemplateKey("");
 	}
 
+	function handleRef(name: string) {
+		if (!name) return;
+		const current = value?.policies ?? [];
+		emit({ policies: [...current, { $ref: name } as unknown as NonNullable<TablePolicies["policies"]>[number]] });
+		setRefKey("");
+	}
+
 	function handleParseErrorChange(error: string | null) {
 		setActiveParseError(error);
 		// Buffer is now invalid. Wipe any prior validation errors so the
@@ -208,6 +226,29 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 							))}
 						</SelectContent>
 					</Select>
+					{rules.length > 0 && (
+						<Select
+							value={refKey}
+							onValueChange={handleRef}
+							disabled={mutationsDisabled}
+						>
+							<SelectTrigger
+								className="w-[200px]"
+								aria-label="Insert reference"
+								disabled={mutationsDisabled}
+								title={mutationsDisabledTitle}
+							>
+								<SelectValue placeholder="Insert reference..." />
+							</SelectTrigger>
+							<SelectContent>
+								{rules.map((r) => (
+									<SelectItem key={r.name} value={r.name}>
+										{r.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					)}
 					<PolicyReferencePanel />
 				</div>
 			</div>
