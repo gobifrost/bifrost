@@ -36,8 +36,12 @@ vi.mock("./ShareTree", () => ({
 		);
 	},
 }));
+const folderListingLocations: Array<string | null> = [];
 vi.mock("./FolderListing", () => ({
-	FolderListing: () => <div data-testid="folder-listing" />,
+	FolderListing: ({ location }: { location: string | null }) => {
+		folderListingLocations.push(location);
+		return <div data-testid="folder-listing" />;
+	},
 }));
 vi.mock("./FilePreview", () => ({ FilePreview: () => <div /> }));
 vi.mock("./EffectiveAccessPanel", () => ({
@@ -150,6 +154,19 @@ describe("FilesExplorer", () => {
 			);
 			// scope must be the install id, not "global" or an org id.
 			expect(shareTreeScopes).toContain("sol-abc");
+		});
+
+		it("pins location to 'solutions' and passes it to FolderListing", () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			folderListingLocations.length = 0;
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" />
+				</MemoryRouter>,
+			);
+			// location must be "solutions" — not null/undefined — so the read/write
+			// API calls target the correct location bucket.
+			expect(folderListingLocations).toContain("solutions");
 		});
 
 		it("hides the org/global selector when install is set", () => {

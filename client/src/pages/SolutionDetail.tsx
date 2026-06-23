@@ -160,7 +160,7 @@ const ENTITY_TABS: {
 /** Per-entity-page link target, carrying the `?from` so the entity page can
  * offer a "back to this Solution" affordance (consumed in Task 19b). */
 function entityHref(
-	kind: EntityKind,
+	kind: Exclude<EntityKind, "files">,
 	entity: EntitySummary,
 	solutionId: string,
 ): string {
@@ -179,8 +179,6 @@ function entityHref(
 		case "workflows":
 			// The execute route is keyed by workflow NAME, not id.
 			return `/workflows/${encodeURIComponent(entity.name)}/execute${from}`;
-		case "files":
-			return `/files?install=${solutionId}&from=solution:${solutionId}`;
 	}
 }
 
@@ -294,7 +292,7 @@ function SolutionEntityGrid({
 	items,
 	solutionId,
 }: {
-	kind: EntityKind;
+	kind: Exclude<EntityKind, "files">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
@@ -514,7 +512,7 @@ function SolutionEntityTable({
 	items,
 	solutionId,
 }: {
-	kind: EntityKind;
+	kind: Exclude<EntityKind, "files">;
 	items: EntitySummary[];
 	solutionId: string;
 }) {
