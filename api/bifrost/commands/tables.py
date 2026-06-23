@@ -45,6 +45,7 @@ from bifrost.contracts import TableCreate, TableUpdate
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
 
 tables_group = entity_group("tables", "Manage tables.")
+table_policies_group = click.Group("policies", help="Manage table access policies.")
 
 
 _CREATE_FLAGS = build_cli_flags(
@@ -200,6 +201,91 @@ async def delete_table(
     response = await client.delete(f"/api/tables/{table_uuid}")
     response.raise_for_status()
     output_result({"deleted": table_uuid}, ctx=ctx)
+
+
+# ---------------------------------------------------------------------------
+# tables policies subgroup — get/set table access policies (including $ref)
+# ---------------------------------------------------------------------------
+
+
+@table_policies_group.command("get")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def get_table_policy(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Get the access policies for a table.
+
+    ``REF`` is a UUID or table name. Returns the ``policies`` field from the
+    table record, which may contain inline policy objects and/or
+    ``{"$ref": "rule-name"}`` references to named policy rules.
+    """
+    table_uuid = await resolver.resolve("table", ref)
+    response = await client.get(f"/api/tables/{table_uuid}")
+    response.raise_for_status()
+    data = response.json()
+    output_result(data.get("policies"), ctx=ctx)
+
+
+@table_policies_group.command("set")
+@click.argument("ref")
+@click.option(
+    "--file",
+    "policy_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON/YAML policy document to store. May contain ``{\"$ref\": \"rule-name\"}`` entries.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def set_table_policy(
+    ctx: click.Context,
+    ref: str,
+    policy_file: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Set the access policies for a table.
+
+    ``REF`` is a UUID or table name. ``--file`` must be a JSON or YAML document
+    whose ``policies`` key (or top-level list) contains policy objects and/or
+    ``{"$ref": "rule-name"}`` references to named policy rules. The document is
+    round-tripped unchanged — ``$ref`` entries are stored and later resolved at
+    query time.
+    """
+    table_uuid = await resolver.resolve("table", ref)
+    from pathlib import Path as _Path
+    import yaml as _yaml
+    raw_text = _Path(policy_file).read_text(encoding="utf-8")
+    loaded = _yaml.safe_load(raw_text)
+    # Normalise: accept either a bare list or a wrapper object.
+    # The TablePolicies wire shape is {"policies": [...]}, so we always
+    # normalise to that wrapper regardless of input format.
+    if isinstance(loaded, list):
+        policies_payload = {"policies": loaded}
+    elif isinstance(loaded, dict) and "policies" in loaded:
+        policies_payload = {"policies": loaded["policies"]}
+    else:
+        raise click.BadParameter(
+            "policy file must contain a policies list or an object with a policies key"
+        )
+    response = await client.patch(
+        f"/api/tables/{table_uuid}",
+        json={"policies": policies_payload},
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+tables_group.add_command(table_policies_group)
 
 
 __all__ = ["tables_group"]

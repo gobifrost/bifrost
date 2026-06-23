@@ -97,6 +97,13 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # surface with validation), not through the generic create/update flow.
     "ApplicationCreate": {"icon"},
     "ApplicationUpdate": {"icon"},
+    # Policy rules: ``organization_id`` is handled by the unified --org/--global
+    # standard (org_option / resolve_org_target) in the ``create`` command, and by
+    # a plain ``--scope`` query-param option for the other verbs (get/update/delete).
+    # domain is required on create but passed as a positional argument on the
+    # update/delete/usages verbs — handled manually, not via the DTO flag generator.
+    "PolicyRuleCreate": set(_ORG_TARGET_EXCLUDE),
+    "PolicyRuleUpdate": set(),
     # Event sources: the nested ``webhook`` / ``schedule`` objects are
     # surfaced by ``bifrost events create-source`` / ``update-source`` as
     # flat flags (``--cron`` / ``--timezone`` / ``--schedule-enabled``
@@ -147,6 +154,8 @@ DTO_REF_LOOKUPS: dict[str, dict[str, str]] = {
     "EventSourceCreate": {},
     "EventSourceUpdate": {},
     "EventSubscriptionCreate": {"workflow_id": "workflow", "agent_id": "agent"},
+    "PolicyRuleCreate": {},
+    "PolicyRuleUpdate": {},
 }
 
 

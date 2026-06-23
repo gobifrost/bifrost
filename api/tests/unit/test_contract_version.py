@@ -65,6 +65,7 @@ from src.models.contracts.solutions import (  # noqa: E402
     SolutionDeployEnqueued,
     SolutionDeployJobStatus,
 )
+from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
@@ -110,6 +111,8 @@ _COMMAND_DTOS: list[type] = [
     EventSubscriptionUpdate,
     SolutionDeployEnqueued,
     SolutionDeployJobStatus,
+    PolicyRuleCreate,
+    PolicyRuleUpdate,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -164,7 +167,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # TablePolicies policies union widened to list[Policy | PolicyRuleRef] (2026-06-23).
     # ADDITIVE: old CLIs send plain inline rules; PolicyRuleRef is a new optional
     # variant — no old client is broken. Fingerprint refreshed only.
-    "9f33dba1856eb4d6cbcd42789915734df99c033a867a4996bb4de540e4214764"
+    #
+    # PolicyRuleCreate + PolicyRuleUpdate added to CLI contract surface (2026-06-23).
+    # ADDITIVE: new entity group (policy-rule), no existing DTOs changed.
+    # Fingerprint refreshed only.
+    "4b9e5c8786bb8555000cb02744c501ef28b3dcf6e40257e4b0e7f7405177e12a"
 )
 
 

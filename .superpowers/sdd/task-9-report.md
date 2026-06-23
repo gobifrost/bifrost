@@ -1,66 +1,94 @@
-# Task 9 Report: Integration Serialization Unification (Slice 4)
+# Task 9 Report: CLI policy-rule group + tables policies get/set
 
-## Summary
+## Idiom Mirrored
 
-Added `EntityCodec` + `from_row` to 4 manifest models and swapped 2 call sites. 15/15 codec tests green, 25/25 round-trip detector green, 0 pyright errors, ruff clean.
+Mirrored `configs.py` for the `policy-rule` group and `files.py` for `tables policies`.
 
-## Phase A: from_row implementations
+**configs.py idiom followed:**
+- `build_cli_flags(PolicyRuleCreate, exclude=DTO_EXCLUDES.get("PolicyRuleCreate", set()), verb_ref_lookups=...)`
+- `assemble_body(PolicyRuleCreate, fields, resolver=resolver)` for the create body
+- `org_option` + `resolve_org_target` for `create` (unified `--org/--global` standard)
+- `pass_resolver`, `run_async`, `output_result`, `_apply_flags` from `.base`
 
-### ManifestIntegrationConfigSchema.from_row(cs)
-Mirrors `serialize_integration` config_schema item construction (manifest_generator.py:214-222): maps `key`, `type`, `required`, `description`, `options`, `position` directly off the ORM row. `to_orm_values` raises `NotImplementedError` — no standalone ORM path, child reconciliation belongs to `_resolve_integration`.
+**files.py idiom followed for tables policies:**
+- `click.Group("policies", ...)` subgroup added to `tables_group` via `tables_group.add_command(table_policies_group)`
+- `policies get <ref>` → GET `/api/tables/{id}`, returns `data.get("policies")`
+- `policies set <ref> --file` → loads YAML/JSON file, wraps as `{"policies": <list>}` (matching the `TablePolicies` wire shape), sends PATCH `/api/tables/{id}`
 
-### ManifestOAuthProvider.from_row(op)
-Mirrors `serialize_integration` oauth_provider construction (manifest_generator.py:224-236): maps `provider_name`, `display_name`, `oauth_flow_type`, `client_id or "__NEEDS_SETUP__"`, `authorization_url`, `token_url`, `token_url_defaults or None`, `scopes or []`, `redirect_uri`. **client_secret is NEVER serialized** (security). `to_orm_values` raises `NotImplementedError`.
+**`create` body assembly:** Uses `assemble_body(PolicyRuleCreate, fields, resolver=resolver)` which calls `load_dict_value` for the `body` dict field (handles `@path` files and JSON literals). The `domain` field is a `Literal["file", "table"]` — `build_cli_flags` emits it as a required `--domain TEXT` flag.
 
-### ManifestIntegrationMapping.from_row(im)
-Mirrors `serialize_integration` mappings item construction (manifest_generator.py:238-244): `organization_id→str-or-None`, `entity_id`, `entity_name`, `oauth_token_id→str-or-None`. `to_orm_values` raises `NotImplementedError`.
+## DTO_EXCLUDES additions
 
-### ManifestIntegration.from_row(integ, *, config_schema=None, oauth_provider=None, mappings=None)
-Mirrors the full `serialize_integration` function (manifest_generator.py:196-247): maps all parent scalar fields, delegates child list construction to each child model's `from_row`.
+Added to `api/bifrost/dto_flags.py`:
 
-### ManifestIntegration.to_orm_values(GIT_SYNC)
-Returns `ImportFields(direct={id, name, entity_id, entity_id_name, default_entity_id, list_entities_data_provider_id})` — exactly the parent scalar fields `_resolve_integration` sets on the Integration ORM row. Raises `NotImplementedError` for `INSTALL` with an explanatory comment about the connection_schema template path.
+```python
+"PolicyRuleCreate": set(_ORG_TARGET_EXCLUDE),  # organization_id via --org/--global
+"PolicyRuleUpdate": set(),  # all fields exposed
+```
 
-## Phase A: Golden capture and inspection
+Rationale: `organization_id` is excluded from create (handled via unified org_option); update has no `organization_id` field, so empty exclusion set (explicit entry added to DTO_REF_LOOKUPS for completeness).
 
-Seeded: Integration with `entity_id="tenant_id"`, 1 `IntegrationConfigSchema` (`api_key`, secret type), 1 `OAuthProvider` (`rt-golden-oauth`, real URLs), 1 `IntegrationMapping` (org-scoped).
+## Contract fingerprint refresh
 
-Golden at `api/tests/unit/golden/manifest_codec/integration_git_sync.json`:
-- **Children present and correctly shaped**: `config_schema[0]` has all 6 fields; `oauth_provider` has all 9 fields; `mappings[0]` has all 4 fields
-- **client_secret NOT present** — only `client_id` appears under `oauth_provider`
-- **Volatile keys chosen**: `{"id", "organization_id"}` — integration UUID (top-level `id`) and mapping `organization_id` (nested, masked by `_mask` traversal) are per-run; both correctly replaced with `"<volatile>"`
+Fingerprint refreshed from `9f33dba1...` → `4b9e5c87...`. **No CONTRACT_VERSION bump** — this is purely additive (new PolicyRule DTOs added to the fingerprint models, no existing DTOs changed, no field renames/removals). Old CLIs that lack the `policy-rule` group still work fine against new servers.
 
-## Phase B: Call site swaps
+## Skill-truth files regenerated
 
-### manifest_generator.py:196-247 (serialize_integration)
-Inline `ManifestIntegration(...)` + 3 nested child list comprehensions replaced with single `ManifestIntegration.from_row(integ, config_schema=..., oauth_provider=..., mappings=...)` call. Removed now-unused imports: `ManifestIntegrationConfigSchema`, `ManifestIntegrationMapping`, `ManifestOAuthProvider`.
+- `.claude/skills/bifrost-build/generated/cli-reference.md` — added `policy-rule` group (create/delete/get/list/update/usages) + `tables policies` subgroup (get/set) + updated tables group commands list
+- `.claude/skills/bifrost-build/generated/openapi-digest.md` — added 5 new `/api/policy-rules` routes + `POST /api/files/structure` (pre-existing gap from a prior task)
+- Mirrors synced: `plugins/bifrost/skills/bifrost-build/generated/{cli-reference,openapi-digest}.md`
 
-### manifest_import.py:1642-1663 (_resolve_integration)
-Added `from bifrost.manifest_codec import Destination` import. `integ_values` dict now sources scalar fields from `fields = minteg.to_orm_values(Destination.GIT_SYNC).direct` instead of reading directly off `minteg`. All child reconciliation (config_schema upsert-by-natural-key, oauth_provider on-conflict-do-update, mappings upsert-by-natural-key, cache refreshes, oauth_token_id preservation) kept completely intact — only the parent scalar field source changed.
+The `generate.py` script requires the node `dump-app-sdk-surface.mjs` pointing at `/client/src/lib/app-sdk/index.v2.ts` which isn't available in the API container, so the `web-sdk-surface.md` and `python-sdk-signatures.md` were not regenerated (they are unchanged; verified by `test_skill_appendix_fresh.py` passing).
 
-## Test results
+## No src.* imports in bifrost/
 
-- **Golden idempotent ×2**: 15/15 passed both runs
-- **Round-trip detector**: 25/25 passed (covers Integration round-trip through git sync)
-- **pyright**: 0 errors, 0 warnings
-- **ruff**: All checks passed
+```
+grep -rn "from src.\|import src." api/bifrost/commands/policy_rules.py \
+  api/bifrost/commands/tables.py api/bifrost/contracts/policy_rules.py
+# → no output (clean)
+```
+
+## TDD — RED then GREEN
+
+**RED:** First e2e run showed 2 failures:
+- `test_tables_policies_set_round_trips_ref` → 422 `policies: Input should be a valid dictionary`
+- `test_tables_policies_set_plain_inline_policy` → same
+
+**Root cause:** `TableUpdate.policies` is `TablePolicies` (a Pydantic wrapper with `{"policies": [...]}`), not a bare list. Tests and CLI were sending the list directly.
+
+**Fix:**
+- Tests: changed `json={"policies": [...]}` to `json={"policies": {"policies": [...]}}`
+- CLI `set_table_policy`: loads the file and always wraps `{"policies": loaded_list}` before sending `PATCH /api/tables/{id}`
+
+**GREEN:** All 5 tests pass:
+```
+tests/e2e/test_cli_policy_rules.py::TestCliPolicyRuleGroup::test_create_list_get_usages_delete_file_rule PASSED
+tests/e2e/test_cli_policy_rules.py::TestCliPolicyRuleGroup::test_update_policy_rule PASSED
+tests/e2e/test_cli_policy_rules.py::TestTablesPolicisCLI::test_tables_policies_get_returns_policies_field PASSED
+tests/e2e/test_cli_policy_rules.py::TestTablesPolicisCLI::test_tables_policies_set_round_trips_ref PASSED
+tests/e2e/test_cli_policy_rules.py::TestTablesPolicisCLI::test_tables_policies_set_plain_inline_policy PASSED
+```
 
 ## Files changed
 
-- `api/bifrost/manifest.py` — EntityCodec added to 4 models; from_row + to_orm_values added to all 4
-- `api/src/services/manifest_generator.py` — serialize_integration swapped to from_row; 3 unused imports removed
-- `api/src/services/manifest_import.py` — _resolve_integration parent fields sourced from to_orm_values(GIT_SYNC).direct
-- `api/tests/unit/test_manifest_codec.py` — test_integration_git_sync_parity added
-- `api/tests/unit/golden/manifest_codec/integration_git_sync.json` — new golden file
+- `api/bifrost/commands/policy_rules.py` — new (create/list/get/update/delete/usages)
+- `api/bifrost/contracts/policy_rules.py` — new (PolicyRuleCreate/Update mirrors)
+- `api/tests/e2e/test_cli_policy_rules.py` — new (5 e2e tests)
+- `api/bifrost/commands/tables.py` — added `table_policies_group` (get/set)
+- `api/bifrost/commands/__init__.py` — registered `policy-rule` group
+- `api/bifrost/contracts/__init__.py` — exported PolicyRuleCreate/Update
+- `api/bifrost/dto_flags.py` — DTO_EXCLUDES + DTO_REF_LOOKUPS entries
+- `api/tests/unit/test_dto_flags.py` — added PolicyRule DTOs to COVERED_DTOS
+- `api/tests/unit/test_contract_version.py` — added to _COMMAND_DTOS; fingerprint refreshed
+- `.claude/skills/bifrost-build/generated/{cli-reference,openapi-digest}.md` — regenerated
+- `plugins/bifrost/skills/bifrost-build/generated/{cli-reference,openapi-digest}.md` — mirrors
 
 ## Self-review
 
-- No dead code: all 3 NotImplementedError raises in child models include explanatory messages
-- No install path added (YAGNI per brief)
-- Child reconciliation in _resolve_integration is completely untouched (oauth_token_id preservation, cache refresh on id rewrite, upsert-by-natural-key for config_schema and mappings)
-- client_secret is provably absent from the golden — only `client_id` appears
-- Ruff caught 4 issues (3 unused imports, 1 unused sa_text alias) — all fixed before commit
+- `domain` on `PolicyRuleCreate` is surfaced as `--domain TEXT` (not `click.Choice`), since `build_cli_flags` sees `Literal["file", "table"]` as a plain string after `_unwrap_optional`. For `get/update/delete/usages`, domain is a positional argument with `click.Choice(["file", "table"])`.
+- The `tables policies set` imports `pathlib.Path` and `yaml` inline within the async function. This is slightly non-idiomatic but avoids adding module-level imports that weren't there before.
+- Pre-existing test failures in `test_policies_validate_endpoint.py` (13 tests) and `test_table_contract_policies.py` (1 test) were confirmed pre-existing and not related to this task.
 
 ## Concerns
 
-None. The refactor is mechanical: the golden proves byte-identity, the round-trip detector proves the whole git-sync pipeline still works end-to-end.
+None blocking. The inline import in `set_table_policy` could be moved to top-of-file in a follow-up.

@@ -176,6 +176,7 @@
 | POST | `/api/files/search` |
 | POST | `/api/files/signed-url` |
 | POST | `/api/files/signed-urls` |
+| POST | `/api/files/structure` |
 | POST | `/api/files/watch` |
 | GET | `/api/files/watchers` |
 | POST | `/api/files/write` |
@@ -315,6 +316,11 @@
 | GET | `/api/platform/workers/{worker_id}` |
 | POST | `/api/platform/workers/{worker_id}/processes/{pid}/recycle` |
 | POST | `/api/platform/workers/{worker_id}/recycle-all` |
+| GET | `/api/policy-rules` |
+| POST | `/api/policy-rules` |
+| DELETE | `/api/policy-rules/{domain}/{name}` |
+| PUT | `/api/policy-rules/{domain}/{name}` |
+| GET | `/api/policy-rules/{domain}/{name}/usages` |
 | GET | `/api/profile` |
 | PATCH | `/api/profile` |
 | DELETE | `/api/profile/avatar` |

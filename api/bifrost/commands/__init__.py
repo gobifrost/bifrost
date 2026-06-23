@@ -26,6 +26,7 @@ from .files import files_group
 from .forms import forms_group
 from .integrations import integrations_group
 from .orgs import orgs_group
+from .policy_rules import policy_rule_group
 from .requirements import requirements_group
 from .roles import roles_group
 from .tables import tables_group
@@ -47,6 +48,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "events": events_group,
     "files": files_group,
     "requirements": requirements_group,
+    "policy-rule": policy_rule_group,
 }
 
 
