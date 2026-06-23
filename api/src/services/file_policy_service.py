@@ -114,14 +114,27 @@ class FilePolicyService:
         organization_id: UUID | None,
         location: str,
         path: str,
+        solution_id: UUID | None = None,
     ) -> None:
-        await self.db.execute(
-            delete(FileMetadata).where(
+        """Delete a FileMetadata row. When ``solution_id`` is set (solution-scoped
+        delete), match by ``(solution_id, location, path)`` — mirroring the write
+        path in ``upsert_metadata`` — so the row is found even though
+        ``organization_id`` is the install's org UUID, not the install UUID itself.
+        Non-solution deletes match by ``(organization_id, location, path)``
+        unchanged."""
+        if solution_id is not None:
+            stmt = delete(FileMetadata).where(
+                FileMetadata.solution_id == solution_id,
+                FileMetadata.location == location,
+                FileMetadata.path == path,
+            )
+        else:
+            stmt = delete(FileMetadata).where(
                 FileMetadata.organization_id == organization_id,
                 FileMetadata.location == location,
                 FileMetadata.path == path,
             )
-        )
+        await self.db.execute(stmt)
         await self.db.flush()
 
     async def get_metadata(

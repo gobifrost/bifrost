@@ -282,3 +282,77 @@ async def test_solution_write_metadata_c2_correct_columns(e2e_client, platform_a
     assert row.organization_id != UUID(sid), (
         f"install UUID {sid} mistakenly written to organization_id (C2 bug)"
     )
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_delete_removes_metadata_row(e2e_client, platform_admin, org1, db_session):
+    """C2 delete path: deleting a solution file removes its FileMetadata row.
+
+    Before the fix, delete_metadata matched by organization_id=<install_uuid>
+    but the row was stored with organization_id=<install_org>, so the DB row
+    survived the delete (orphaned metadata).  After the fix it matches by
+    solution_id and the row is gone.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    slug = f"file-del-c2-{uuid.uuid4().hex[:8]}"
+    org_id_str = org1["id"]
+    sol = _create_solution(e2e_client, headers, slug, org_id=org_id_str)
+    sid = sol["id"]
+    actual_org_id_str = sol.get("organization_id")
+    assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+    _seed_solutions_policy(e2e_client, headers, org_id=actual_org_id_str)
+
+    test_path = f"del-c2/{uuid.uuid4().hex}.txt"
+
+    # Write a file to create the FileMetadata row.
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": test_path,
+            "content": "delete-me",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 204, f"write failed: {write_r.status_code} {write_r.text}"
+
+    # Confirm the row exists.
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(sid),
+            FileMetadata.location == "solutions",
+            FileMetadata.path == test_path,
+        )
+    )
+    assert result.scalar_one_or_none() is not None, "FileMetadata row missing after write"
+
+    # Delete the file.
+    del_r = e2e_client.post(
+        f"/api/files/delete?solution={sid}",
+        headers=headers,
+        json={
+            "location": "solutions",
+            "path": test_path,
+            "mode": "cloud",
+        },
+    )
+    assert del_r.status_code == 204, f"delete failed: {del_r.status_code} {del_r.text}"
+
+    # Row must be gone — prove the C2 delete-path fix works.
+    db_session.expire_all()
+    result2 = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(sid),
+            FileMetadata.location == "solutions",
+            FileMetadata.path == test_path,
+        )
+    )
+    assert result2.scalar_one_or_none() is None, (
+        "FileMetadata row survived delete — C2 delete-path bug not fixed"
+    )

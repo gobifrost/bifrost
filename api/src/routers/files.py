@@ -539,7 +539,8 @@ async def test_file_policy_access(
     from src.services.file_policy_service import FilePolicyService
 
     try:
-        org_id = _file_org_id(ctx, request.location, request.scope)
+        solution_id = _ctx_solution_id(ctx, request.location)
+        org_id = await _install_org_id(ctx, solution_id) if solution_id is not None else _file_org_id(ctx, request.location, request.scope)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -556,6 +557,7 @@ async def test_file_policy_access(
         location=request.location,
         path=request.path,
         user=principal,
+        solution_id=solution_id,
     )
     return FilePolicyAccessTestResponse(
         allowed=allowed,
@@ -943,10 +945,12 @@ async def delete_file(
                 path=request.path,
                 action="delete",
             )
+            solution_id = _ctx_solution_id(ctx, request.location)
             await FilePolicyService(db).delete_metadata(
-                organization_id=_organization_id_for_policy(request.location, effective_scope),
+                organization_id=await _install_org_id(ctx, solution_id),
                 location=request.location,
                 path=request.path,
+                solution_id=solution_id,
             )
             await db.flush()
 
