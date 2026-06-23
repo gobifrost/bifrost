@@ -4,23 +4,25 @@
 
 **Goal:** Let file and table policies reference reusable named rules by `{"$ref": name}` so a rule (e.g. `admin_bypass`) is defined once and applied across many policies.
 
-**Architecture:** A shared org-scoped `PolicyRule` entity (cascade org→global via `OrgScopedRepository`) holds a single `{actions, when}` body. Both policy documents' rule lists become a `Rule | PolicyRuleRef` union; a `resolve_policy_refs` pre-pass inlines refs **before** the existing pure evaluator / SQL compiler runs (called right next to the existing `preresolve_for_policies`). Integrity via hard-fail-on-missing, server-side rename cascade, and delete-while-referenced guard.
+**Architecture:** A shared org-scoped `PolicyRule` entity (cascade org→global via `OrgScopedRepository`, with an explicit `domain` discriminator) holds a single `{actions, when}` body. Both policy documents' rule lists become a `Rule | PolicyRuleRef` union. A **single resolving loader per domain** validates the document and inlines refs **before** the pure evaluator / SQL compiler / claim pre-resolution runs — every evaluation site routes through it, so a missed site is impossible by construction. Integrity via hard-fail-on-missing, Core-write override-aware rename cascade, and a delete-while-referenced guard.
 
 **Tech Stack:** Python 3.11 / FastAPI / SQLAlchemy (async) / Pydantic v2 / Alembic / PostgreSQL JSONB; Click CLI; React/TypeScript client.
 
-**Spec:** `docs/superpowers/specs/2026-06-22-named-policy-rules-design.md`
+**Spec:** `docs/superpowers/specs/2026-06-22-named-policy-rules-design.md` (incl. the "Codex pre-implementation review — corrections" section, which this plan implements).
 
 ## Global Constraints
 
 - **Worktree only.** All work in `/home/jack/GitHub/bifrost/.claude/worktrees/files-sdk-policies` (branch `codex/files-sdk-policies`). Never touch the primary checkout.
-- **Org scoping is canonical.** `PolicyRule` resolves through `OrgScopedRepository` — never hand-roll `WHERE organization_id == x OR IS NULL` (lint test catches it). Read `api/src/repositories/README.md` first.
-- **Resolution before evaluation.** Refs MUST be inlined before `evaluate_file_action` / `compile_read_filter`. The pure evaluator and SQL compiler stay unchanged.
-- **Hard-fail on missing ref** — raise, consistent with the evaluator's `unknown operator`. Never silently drop.
-- **Three parallel surfaces** for entity mutations: REST + CLI + MCP, fed from one `PolicyRuleCreate`/`PolicyRuleUpdate` DTO pair. MCP tools are thin HTTP bridges (no ORM) — `test_mcp_thin_wrapper.py` enforces.
+- **Org scoping is canonical.** `PolicyRule` resolves through `OrgScopedRepository` — never hand-roll `WHERE organization_id == x OR IS NULL`. Read `api/src/repositories/README.md` first.
+- **Single choke point.** Every policy load *for evaluation* goes through the domain's resolving loader (`load_resolved_table_policies` / the file `is_allowed` path). A raw `TablePolicies.model_validate` / `FilePolicies.model_validate` used for evaluation is a bug. Refs MUST be inlined before `evaluate_*` / `compile_read_filter` / `preresolve_for_policies`.
+- **Resolve before claim pre-resolution.** A `PolicyRuleRef` has no `.when`; `preresolve_for_policies` would `AttributeError`. The resolving loader runs resolution first.
+- **Hard-fail on missing/mismatched ref** — raise, never silently drop. At enforcement sites a raise is caught → deny + log; at save/import/deploy a raise → structured 422 / import failure.
+- **Two `admin_bypass` built-ins** — one per domain (file vs table action sets). Read-only, seeded idempotently before any `{"$ref":"admin_bypass"}` can resolve.
+- **Core writes for the rename cascade** — solution-managed rows trip the `before_flush` guard under ORM mutation. Use Core `update()`. Install the guard in cascade tests to be prod-faithful.
+- **Three parallel surfaces** for entity mutations: REST + CLI + MCP, fed from one `PolicyRuleCreate`/`PolicyRuleUpdate` DTO pair. MCP tools are thin HTTP bridges (no ORM).
 - **No dead code / no unrequested fallbacks.**
-- **Tests use `./test.sh`** (Dockerized). Backend logic → `api/tests/unit/`; endpoints → `api/tests/e2e/`. JUnit at `/tmp/bifrost-<project>/test-results.xml`.
-- **`admin_bypass` built-in is read-only; do NOT migrate existing inline rows.**
-- **All rule writes require admin** (the bypass check `is_platform_admin OR is_provider_org`); a global rule (`organization_id=NULL`) is a bypass-gated write.
+- **Tests use `./test.sh`** (Dockerized). JUnit at `/tmp/bifrost-<project>/test-results.xml`.
+- **No migration of existing inline `admin_bypass` rows.** All rule writes require admin (the bypass check `is_platform_admin OR is_provider_org`); a global rule is a bypass-gated write.
 
 ---
 
@@ -28,31 +30,35 @@
 
 | File | Responsibility | New/Mod |
 |------|----------------|---------|
-| `api/src/models/orm/policy_rule.py` | `PolicyRule` ORM | New |
-| `api/alembic/versions/<rev>_policy_rule.py` | table + GIN indexes on JSONB policy columns | New |
-| `api/src/models/contracts/policy_rule.py` | `PolicyRuleCreate/Update/Public` | New |
-| `api/src/models/contracts/policies.py` | add `PolicyRuleRef`; widen both policy unions | Mod |
+| `api/src/models/orm/policy_rule.py` | `PolicyRule` ORM (+ `domain`, partial unique indexes) | New |
+| `api/alembic/versions/<rev>_policy_rule.py` | table + partial unique indexes + expression GIN on JSONB policy arrays | New |
+| `api/src/models/contracts/policy_rule.py` | `PolicyRuleCreate/Update/Public` (domain, validated body) | New |
+| `api/src/models/contracts/policies.py` | `PolicyRuleRef` (+`extra=forbid`); widen unions; `extra=forbid` + mixed-field validator on inline rules | Mod |
 | `api/src/repositories/policy_rule.py` | `PolicyRuleRepository(OrgScopedRepository)` | New |
-| `api/shared/policy_rules.py` | `resolve_policy_refs`, exceptions, where-used query | New |
+| `api/shared/policy_rules.py` | `resolve_policy_refs`, exceptions, override-aware where-used, Core-update rename cascade helper | New |
+| `api/src/services/table_policy_loader.py` | `load_resolved_table_policies(table, db)` choke point | New |
 | `api/shared/file_policies_seed.py` | seed as `{"$ref":"admin_bypass"}` | Mod |
-| `api/src/services/policy_rule_service.py` | CRUD + rename-cascade + delete-guard + seed built-in + audit | New |
-| `api/src/services/file_policy_service.py` | call `resolve_policy_refs` in `is_allowed` | Mod |
-| `api/src/routers/tables.py` | call `resolve_policy_refs` before compile/eval | Mod |
-| `api/src/routers/policy_rules.py` | REST CRUD + `/usages` | New |
-| `api/src/routers/files.py` / table policy save | ref save-validation | Mod |
+| `api/src/services/policy_rule_service.py` | CRUD + write-time body validation + rename cascade + delete-guard + seed two built-ins + audit | New |
+| `api/src/services/file_policy_service.py` | resolve refs in `is_allowed` (before preresolve) | Mod |
+| `api/src/routers/tables.py` | route `_load_policies` + save-validate through resolver | Mod |
+| `api/src/routers/websocket.py` | route its `TablePolicies` load through resolver + invalidate cache on rule edit | Mod |
+| `api/shared/claims/preresolve.py` | `_load_source_policies` resolves refs before compile | Mod |
+| `api/src/routers/policy_rules.py` | REST CRUD + `/usages` (structured validation errors) | New |
+| `api/src/routers/files.py` | file-policy save ref-validation (structured) | Mod |
+| `api/src/services/solutions/deploy.py` | table-policy deploy validation resolves refs | Mod |
+| `api/src/services/manifest_import.py` | file + table policy import ref-validation; rule-before-policy | Mod |
 | `api/bifrost/commands/policy_rules.py` | `bifrost policy-rule` group | New |
 | `api/bifrost/commands/tables.py` | `tables policies {get,set}` subgroup | Mod |
 | `api/bifrost/commands/__init__.py` | register groups | Mod |
 | `api/src/services/mcp_server/tools/policy_rules.py` | thin MCP wrapper | New |
-| `api/bifrost/manifest.py` | `ManifestPolicyRule` | Mod |
-| `api/src/services/manifest_generator.py` | serialize rules | Mod |
-| `api/src/services/manifest_import.py` | `_resolve_policy_rule` (before policies) | Mod |
+| `api/bifrost/manifest.py` | `ManifestPolicyRule` + table `ManifestPolicy` inline-or-ref union | Mod |
+| `api/src/services/manifest_generator.py` | serialize rules; preserve `$ref` in policies | Mod |
 | `client/src/services/policyRules.ts` | API wrapper | New |
 | `client/src/components/{files,tables}/` policy editors | reference mode + rules manager | Mod |
 
 ---
 
-## Task 1: `PolicyRule` ORM model + migration
+## Task 1: `PolicyRule` ORM model + migration (domain + partial unique + expression GIN)
 
 **Files:**
 - Create: `api/src/models/orm/policy_rule.py`
@@ -60,34 +66,34 @@
 - Test: `api/tests/unit/test_policy_rule_model.py`
 
 **Interfaces:**
-- Produces: `PolicyRule` ORM with columns `id, organization_id|NULL, name, description|NULL, body:JSONB({actions,when}), is_builtin:bool, created_by|NULL, created_at, updated_at`; `UNIQUE(organization_id, name)`.
+- Produces: `PolicyRule` with `id, organization_id|NULL, name, domain('file'|'table'), description|NULL, body:JSONB({actions,when}), is_builtin:bool, created_by|NULL, created_at, updated_at`; partial unique `(name,domain) WHERE org IS NULL` + `(organization_id,name,domain) WHERE org IS NOT NULL`.
+
+> **Why `domain` (correction #7):** `read`/`delete` are valid in both file and table vocabularies, so the domain can't be inferred from actions. An explicit column lets write-validation and `resolve_policy_refs` reject cross-domain use, and lets the two `admin_bypass` built-ins coexist by name.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # api/tests/unit/test_policy_rule_model.py
-from uuid import uuid4
 from src.models.orm.policy_rule import PolicyRule
 
-def test_policy_rule_columns_and_defaults():
-    r = PolicyRule(name="ops_write", body={"actions": ["write"], "when": {"user": "is_platform_admin"}})
-    assert r.organization_id is None          # global by default
-    assert r.is_builtin is False
-    # columns exist
-    for col in ("id", "name", "description", "body", "is_builtin", "created_by", "created_at", "updated_at"):
+def test_columns_and_defaults():
+    r = PolicyRule(name="ops", domain="file", body={"actions": ["write"], "when": None})
+    assert r.organization_id is None and r.is_builtin is False
+    for col in ("id","name","domain","description","body","is_builtin","created_by","created_at","updated_at"):
         assert hasattr(r, col)
 
-def test_unique_org_name_constraint_declared():
-    cols = {c.name for c in PolicyRule.__table__.indexes for c in c.columns} if PolicyRule.__table__.indexes else set()
-    uniques = [c for c in PolicyRule.__table__.constraints if c.__class__.__name__ == "UniqueConstraint"]
-    names = {tuple(col.name for col in u.columns) for u in uniques} | {tuple(i.columns.keys()) for i in PolicyRule.__table__.indexes if i.unique}
-    assert ("organization_id", "name") in names
+def test_partial_unique_indexes_declared():
+    idx = {i.name: i for i in PolicyRule.__table__.indexes}
+    assert "uq_policy_rules_global_name_domain" in idx
+    assert "uq_policy_rules_org_name_domain" in idx
+    assert idx["uq_policy_rules_global_name_domain"].unique
+    assert idx["uq_policy_rules_org_name_domain"].unique
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `./test.sh tests/unit/test_policy_rule_model.py -v`
-Expected: FAIL with `ModuleNotFoundError: src.models.orm.policy_rule`.
+Expected: FAIL (`ModuleNotFoundError`).
 
 - [ ] **Step 3: Write the ORM model**
 
@@ -95,45 +101,40 @@ Expected: FAIL with `ModuleNotFoundError: src.models.orm.policy_rule`.
 # api/src/models/orm/policy_rule.py
 """Reusable named policy rule, referenced by {"$ref": name} from file/table policies."""
 from __future__ import annotations
-
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
-
-from sqlalchemy import Boolean, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
-
 from src.models.orm.base import Base
 
-
 class PolicyRule(Base):
-    """A named, reusable policy rule body ({actions, when}). Cascade org→global."""
-
+    """A named, reusable policy rule body ({actions, when}). Cascade org→global; per-domain."""
     __tablename__ = "policy_rules"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    organization_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("organizations.id"), default=None
-    )
+    organization_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id"), default=None)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    domain: Mapped[str] = mapped_column(String(8), nullable=False)  # 'file' | 'table'
     description: Mapped[str | None] = mapped_column(Text, default=None)
     body: Mapped[dict] = mapped_column(JSONB, nullable=False)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by: Mapped[UUID | None] = mapped_column(default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc)
-    )
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
+        default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        Index("ix_policy_rules_org_name", "organization_id", "name", unique=True),
+        # Partial unique indexes — NULLs don't compare equal, so a plain UNIQUE(org,name)
+        # would allow duplicate globals and break scalar_one_or_none() (correction #4).
+        Index("uq_policy_rules_global_name_domain", "name", "domain",
+              unique=True, postgresql_where=text("organization_id IS NULL")),
+        Index("uq_policy_rules_org_name_domain", "organization_id", "name", "domain",
+              unique=True, postgresql_where=text("organization_id IS NOT NULL")),
     )
 ```
 
-Then register the model where ORM models are imported (find the orm `__init__.py` or model registry and add `from src.models.orm.policy_rule import PolicyRule`).
+Register in the ORM model import location (grep where `from src.models.orm.config import Config` is collected; add `PolicyRule`).
 
 - [ ] **Step 4: Run model test to verify it passes**
 
@@ -143,10 +144,8 @@ Expected: PASS.
 - [ ] **Step 5: Create the migration**
 
 ```bash
-cd api && alembic revision -m "policy_rules table + GIN on policy JSONB"
+cd api && alembic revision -m "policy_rules + partial unique + expression GIN on policy arrays"
 ```
-
-Edit the new file's `upgrade()`/`downgrade()`:
 
 ```python
 def upgrade() -> None:
@@ -155,6 +154,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("organization_id", sa.Uuid(), sa.ForeignKey("organizations.id"), nullable=True),
         sa.Column("name", sa.String(length=100), nullable=False),
+        sa.Column("domain", sa.String(length=8), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("body", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("is_builtin", sa.Boolean(), nullable=False, server_default=sa.false()),
@@ -162,92 +162,113 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index("ix_policy_rules_org_name", "policy_rules", ["organization_id", "name"], unique=True)
-    # GIN for the where-used @> containment scans (rename/delete/blast-radius)
-    op.create_index("ix_file_policies_policies_gin", "file_policies", ["policies"], postgresql_using="gin")
-    op.create_index("ix_tables_access_gin", "tables", ["access"], postgresql_using="gin")
+    op.create_index("uq_policy_rules_global_name_domain", "policy_rules", ["name", "domain"],
+                    unique=True, postgresql_where=sa.text("organization_id IS NULL"))
+    op.create_index("uq_policy_rules_org_name_domain", "policy_rules",
+                    ["organization_id", "name", "domain"],
+                    unique=True, postgresql_where=sa.text("organization_id IS NOT NULL"))
+    # Expression GIN matching the where-used query shape `(col -> 'policies') @> [...]`
+    # (correction #8 — a GIN on the whole column would NOT serve the extracted-array query).
+    op.create_index("ix_file_policies_rules_gin", "file_policies",
+                    [sa.text("(policies -> 'policies') jsonb_path_ops")], postgresql_using="gin")
+    op.create_index("ix_tables_access_rules_gin", "tables",
+                    [sa.text("(access -> 'policies') jsonb_path_ops")], postgresql_using="gin")
 
 def downgrade() -> None:
-    op.drop_index("ix_tables_access_gin", table_name="tables")
-    op.drop_index("ix_file_policies_policies_gin", table_name="file_policies")
-    op.drop_index("ix_policy_rules_org_name", table_name="policy_rules")
+    op.drop_index("ix_tables_access_rules_gin", table_name="tables")
+    op.drop_index("ix_file_policies_rules_gin", table_name="file_policies")
+    op.drop_index("uq_policy_rules_org_name_domain", table_name="policy_rules")
+    op.drop_index("uq_policy_rules_global_name_domain", table_name="policy_rules")
     op.drop_table("policy_rules")
 ```
 
-Add `from alembic import op` / `import sqlalchemy as sa` / `from sqlalchemy.dialects import postgresql` imports if the template lacks them.
+Add `from alembic import op` / `import sqlalchemy as sa` / `from sqlalchemy.dialects import postgresql` if the template lacks them.
 
-- [ ] **Step 6: Apply migration to the test stack and verify**
+- [ ] **Step 6: Apply migration + verify**
 
 Run: `./test.sh stack reset && ./test.sh tests/unit/test_policy_rule_model.py -v`
-(The test stack's init applies alembic on reset.) Expected: PASS, no migration error.
+Expected: PASS, no migration error.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add api/src/models/orm/policy_rule.py api/alembic/versions/*policy_rule*.py api/tests/unit/test_policy_rule_model.py
-git commit -m "feat(policy-rules): PolicyRule ORM + migration + GIN on policy JSONB"
+git commit -m "feat(policy-rules): PolicyRule ORM (domain, partial-unique) + expression GIN migration"
 ```
 
 ---
 
-## Task 2: Contracts — `PolicyRuleRef` + widened policy unions + DTOs
+## Task 2: Contracts — `PolicyRuleRef` (forbid-extra) + hardened unions + validated DTOs
 
 **Files:**
-- Modify: `api/src/models/contracts/policies.py` (add `PolicyRuleRef`, widen `FilePolicies.policies` and `TablePolicies.policies`)
-- Create: `api/src/models/contracts/policy_rule.py` (`PolicyRuleCreate/Update/Public`)
+- Modify: `api/src/models/contracts/policies.py` (add `PolicyRuleRef`; widen unions; `extra="forbid"` + mixed-field validator on `FilePolicyRule`/`Policy`)
+- Create: `api/src/models/contracts/policy_rule.py`
 - Test: `api/tests/unit/test_policy_rule_contracts.py`
 
 **Interfaces:**
-- Produces: `PolicyRuleRef(ref: str)` (alias `$ref`); `FilePolicies.policies: list[FilePolicyRule | PolicyRuleRef]`; `TablePolicies.policies: list[Policy | PolicyRuleRef]`; `PolicyRuleCreate(name, description, body)`, `PolicyRuleUpdate(name?, description?, body?)`, `PolicyRulePublic(...)`.
+- Produces: `PolicyRuleRef(ref)` (alias `$ref`, `extra="forbid"`); hardened `FilePolicies`/`TablePolicies` unions; `PolicyRuleCreate(name, domain, description?, body)`, `PolicyRuleUpdate(name?, description?, body?)`, `PolicyRulePublic`, with **body validated** (actions non-empty/unique, parseable `when`, domain-consistent).
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing test (incl. the F7 drop bug)**
 
 ```python
 # api/tests/unit/test_policy_rule_contracts.py
+import pytest
+from pydantic import ValidationError
 from src.models.contracts.policies import FilePolicies, TablePolicies, PolicyRuleRef
-from src.models.contracts.policy_rule import PolicyRuleCreate
 
 def test_ref_parses_via_dollar_alias():
-    ref = PolicyRuleRef.model_validate({"$ref": "admin_bypass"})
-    assert ref.ref == "admin_bypass"
-    assert ref.model_dump(by_alias=True) == {"$ref": "admin_bypass"}
+    assert PolicyRuleRef.model_validate({"$ref": "ab"}).ref == "ab"
 
-def test_file_policies_accepts_mixed_inline_and_ref():
+def test_mixed_ref_plus_inline_is_rejected():
+    # F7: an entry carrying BOTH $ref and inline fields must NOT silently parse as inline.
+    with pytest.raises(ValidationError):
+        FilePolicies.model_validate({"policies": [
+            {"$ref": "ab", "name": "r", "actions": ["read"], "when": None}]})
+
+def test_ref_with_extra_key_is_rejected():
+    with pytest.raises(ValidationError):
+        FilePolicies.model_validate({"policies": [{"$ref": "ab", "actions": ["read"]}]})
+
+def test_clean_mixed_list_ok():
     doc = FilePolicies.model_validate({"policies": [
-        {"$ref": "admin_bypass"},
-        {"name": "r", "actions": ["read"], "when": None},
-    ]})
+        {"$ref": "ab"}, {"name": "r", "actions": ["read"], "when": None}]})
     assert isinstance(doc.policies[0], PolicyRuleRef)
     assert doc.policies[1].name == "r"
 
-def test_table_policies_accepts_ref():
-    doc = TablePolicies.model_validate({"policies": [{"$ref": "shared"}]})
-    assert isinstance(doc.policies[0], PolicyRuleRef)
-
-def test_policy_rule_create_body_shape():
-    c = PolicyRuleCreate(name="ops", body={"actions": ["write"], "when": {"user": "is_platform_admin"}})
-    assert c.body["actions"] == ["write"]
+def test_table_ref_ok():
+    assert isinstance(TablePolicies.model_validate({"policies": [{"$ref": "x"}]}).policies[0], PolicyRuleRef)
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./test.sh tests/unit/test_policy_rule_contracts.py -v`
-Expected: FAIL (`ImportError: PolicyRuleRef`).
+Expected: FAIL.
 
-- [ ] **Step 3: Add `PolicyRuleRef` and widen the unions in `policies.py`**
-
-In `api/src/models/contracts/policies.py`, add near `FilePolicies`/`TablePolicies`:
+- [ ] **Step 3: Add `PolicyRuleRef` and harden the inline models in `policies.py`**
 
 ```python
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 
 class PolicyRuleRef(BaseModel):
     """A reference to a named PolicyRule, spliced inline at resolution time."""
     ref: str = Field(alias="$ref", min_length=1, max_length=100)
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 ```
 
-Change the two list types (keep `PolicyRuleRef` **last** so Pydantic tries the structurally-richer inline rule first):
+On BOTH `FilePolicyRule` and `Policy`, add `extra="forbid"` and a guard so an inline rule can't carry `$ref`:
+
+```python
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_ref_field(cls, data):
+        if isinstance(data, dict) and "$ref" in data:
+            raise ValueError("an inline rule must not carry $ref; use a bare {\"$ref\": name} entry")
+        return data
+```
+
+Widen the unions (ref **last** so the structurally-richer inline rule is tried first, and `extra=forbid` rejects the ambiguous overlap):
 
 ```python
 class FilePolicies(BaseModel):
@@ -257,42 +278,54 @@ class TablePolicies(BaseModel):
     policies: list[Policy | PolicyRuleRef] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Create `policy_rule.py` DTOs**
+> Verify no existing stored policy has unknown extra keys that `extra="forbid"` would now reject. Grep tests/fixtures for policy docs; if any carry stray keys, that's a pre-existing data issue to surface, not silently allow.
+
+- [ ] **Step 4: Create `policy_rule.py` DTOs with validated body**
 
 ```python
 # api/src/models/contracts/policy_rule.py
 from __future__ import annotations
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from src.models.contracts.policies import FilePolicyRule, Policy
 
-class PolicyRuleBody(BaseModel):
-    """The portable rule body — actions + when AST. Domain-validated at resolve time."""
-    actions: list[str] = Field(min_length=1)
-    when: dict | None = None
+Domain = Literal["file", "table"]
+
+def _validate_body(body: dict, domain: str) -> dict:
+    """Validate a rule body against its domain by round-tripping through the inline model."""
+    probe = {"name": "_probe", "actions": body.get("actions"), "when": body.get("when")}
+    (FilePolicyRule if domain == "file" else Policy).model_validate(probe)  # raises on bad actions/when
+    return body
 
 class PolicyRuleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    domain: Domain
     description: str | None = None
     body: dict
     organization_id: UUID | None = None
+    @model_validator(mode="after")
+    def _check_body(self):
+        _validate_body(self.body, self.domain); return self
 
 class PolicyRuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
     body: dict | None = None
+    # domain is immutable; body re-validated against the stored domain in the service.
 
 class PolicyRulePublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     organization_id: UUID | None
     name: str
+    domain: Domain
     description: str | None
     body: dict
     is_builtin: bool
     created_at: datetime
     updated_at: datetime
-
     @field_serializer("created_at", "updated_at")
     def _dt(self, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
@@ -305,60 +338,65 @@ Expected: PASS.
 
 - [ ] **Step 6: Regenerate client types + commit**
 
-Run (dev stack must be up): `cd client && npm run generate:types`
+Run (dev stack up): `cd client && npm run generate:types`
 
 ```bash
 git add api/src/models/contracts/policies.py api/src/models/contracts/policy_rule.py api/tests/unit/test_policy_rule_contracts.py client/src/lib/v1.d.ts
-git commit -m "feat(policy-rules): PolicyRuleRef union member + Create/Update/Public DTOs"
+git commit -m "feat(policy-rules): forbid-extra ref union (no \$ref drop) + domain-validated DTOs"
 ```
 
 ---
 
-## Task 3: `PolicyRuleRepository` (cascade) + where-used query
+## Task 3: `PolicyRuleRepository` + override-aware where-used
 
 **Files:**
 - Create: `api/src/repositories/policy_rule.py`
-- Create part of: `api/shared/policy_rules.py` (the where-used query only)
+- Create part of: `api/shared/policy_rules.py` (where-used only)
 - Test: `api/tests/e2e/test_policy_rule_repo.py`
 
 **Interfaces:**
-- Consumes: `PolicyRule` (Task 1), `OrgScopedRepository`.
-- Produces: `PolicyRuleRepository(session, org_id, user_id=None, is_superuser=False)` with inherited `get(name=...)` (cascade) and `list()`; `find_policy_rule_usages(db, name, *, org_id) -> PolicyRuleUsages` (counts + targets across `file_policies` and `tables`).
+- Produces: `PolicyRuleRepository(session, org_id, ...)` with inherited cascade `get(name=..., domain=...)`; `find_policy_rule_usages(db, name, domain, *, org_id) -> PolicyRuleUsages` — **override-aware** (a global rule's scan excludes orgs that define their own `(name, domain)`).
 
-- [ ] **Step 1: Write the failing e2e test**
+- [ ] **Step 1: Write failing tests (cascade + override-aware where-used)**
 
 ```python
 # api/tests/e2e/test_policy_rule_repo.py
 import pytest
-from uuid import uuid4
 from src.models.orm.policy_rule import PolicyRule
+from src.models.orm.file_metadata import FilePolicy
 from src.repositories.policy_rule import PolicyRuleRepository
+from api.shared.policy_rules import find_policy_rule_usages
 
 @pytest.mark.asyncio
-async def test_get_name_cascades_org_over_global(db_session, seed_org):
-    db_session.add(PolicyRule(name="r", body={"actions": ["read"], "when": None}))  # global
-    db_session.add(PolicyRule(name="r", organization_id=seed_org, body={"actions": ["write"], "when": None}))
+async def test_get_cascades_org_over_global(db_session, seed_org):
+    db_session.add(PolicyRule(name="r", domain="file", body={"actions": ["read"], "when": None}))
+    db_session.add(PolicyRule(name="r", domain="file", organization_id=seed_org, body={"actions": ["write"], "when": None}))
     await db_session.flush()
     repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
-    got = await repo.get(name="r")
-    assert got.body["actions"] == ["write"]   # org overrides global
+    assert (await repo.get(name="r", domain="file")).body["actions"] == ["write"]
 
 @pytest.mark.asyncio
-async def test_get_name_falls_back_to_global(db_session, seed_org):
-    db_session.add(PolicyRule(name="g", body={"actions": ["read"], "when": None}))
+async def test_where_used_for_global_skips_org_with_override(db_session, seed_org, other_org):
+    # global rule "ops" + an org override of "ops" in seed_org.
+    db_session.add(PolicyRule(name="ops", domain="file", body={"actions": ["read"], "when": None}))
+    db_session.add(PolicyRule(name="ops", domain="file", organization_id=seed_org, body={"actions": ["read"], "when": None}))
+    # seed_org policy references "ops" → resolves to the OVERRIDE, not the global.
+    db_session.add(FilePolicy(organization_id=seed_org, location="shared", path="a/", policies={"policies": [{"$ref": "ops"}]}))
+    # other_org policy references "ops" → resolves to the GLOBAL.
+    db_session.add(FilePolicy(organization_id=other_org, location="shared", path="b/", policies={"policies": [{"$ref": "ops"}]}))
     await db_session.flush()
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
-    assert (await repo.get(name="g")).body["actions"] == ["read"]
+    u = await find_policy_rule_usages(db_session, "ops", "file", org_id=None)  # global rule
+    locs = {f["location"]+f["path"] for f in u.file_policies}
+    assert "shareda/" not in locs            # seed_org overrides → NOT a usage of the global
+    assert "sharedb/" in locs                # other_org → genuine usage of the global
 ```
-
-(Use the project's existing e2e fixtures for `db_session`/`seed_org`; mirror an existing repo e2e test's fixtures — grep `tests/e2e` for `OrgScopedRepository` usage.)
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./test.sh e2e tests/e2e/test_policy_rule_repo.py -v`
-Expected: FAIL (`ImportError: PolicyRuleRepository`).
+Expected: FAIL (`ImportError`).
 
-- [ ] **Step 3: Write the repository**
+- [ ] **Step 3: Repository**
 
 ```python
 # api/src/repositories/policy_rule.py
@@ -371,260 +409,280 @@ class PolicyRuleRepository(OrgScopedRepository[PolicyRule]):
     role_table = None
 ```
 
-- [ ] **Step 4: Add the where-used query to `api/shared/policy_rules.py`**
+- [ ] **Step 4: Override-aware where-used in `api/shared/policy_rules.py`**
 
 ```python
-# api/shared/policy_rules.py  (where-used portion; resolver added in Task 4)
+# api/shared/policy_rules.py  (where-used portion)
 from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.tables import Table
+from src.models.orm.policy_rule import PolicyRule
 
 @dataclass
 class PolicyRuleUsages:
-    file_policies: list[dict] = field(default_factory=list)   # {id, location, path}
-    tables: list[dict] = field(default_factory=list)          # {id, name}
+    file_policies: list[dict] = field(default_factory=list)
+    tables: list[dict] = field(default_factory=list)
     @property
     def total(self) -> int:
         return len(self.file_policies) + len(self.tables)
 
-async def find_policy_rule_usages(
-    db: AsyncSession, name: str, *, org_id: UUID | None
-) -> PolicyRuleUsages:
-    """Find every file/table policy whose `policies` list contains {"$ref": name}.
+async def find_policy_rule_usages(db: AsyncSession, name: str, domain: str, *, org_id: UUID | None) -> PolicyRuleUsages:
+    """Find file/table policies that reference {"$ref": name} and resolve to THIS rule.
 
-    org_id=None (a global rule) scans all orgs; an org-scoped rule scans that org.
-    Uses the JSONB @> containment operator (GIN-indexed).
+    org-scoped rule (org_id set): exact scan within that org.
+    global rule (org_id None): scan all orgs, BUT exclude any org that defines its own
+      (name, domain) override — there a {"$ref": name} resolves to the override, not this
+      global (correction #6/#5).
     """
     ref_json = [{"$ref": name}]
-    fp = select(FilePolicy.id, FilePolicy.location, FilePolicy.path).where(
-        FilePolicy.policies["policies"].contains(ref_json)
-    )
-    tb = select(Table.id, Table.name).where(Table.access["policies"].contains(ref_json))
+    fp = select(FilePolicy.id, FilePolicy.organization_id, FilePolicy.location, FilePolicy.path).where(
+        FilePolicy.policies["policies"].contains(ref_json))
+    tb = select(Table.id, Table.organization_id, Table.name).where(
+        Table.access["policies"].contains(ref_json))
+    if domain == "file":
+        tb = tb.where(False)  # a file rule can only be referenced by file policies
+    if domain == "table":
+        fp = fp.where(False)
     if org_id is not None:
         fp = fp.where(FilePolicy.organization_id == org_id)
         tb = tb.where(Table.organization_id == org_id)
+        override_orgs: set = set()
+    else:
+        override_orgs = {
+            o for (o,) in (await db.execute(
+                select(PolicyRule.organization_id).where(
+                    PolicyRule.name == name, PolicyRule.domain == domain,
+                    PolicyRule.organization_id.isnot(None))
+            )).all()
+        }
     usages = PolicyRuleUsages()
-    for row in (await db.execute(fp)).all():
-        usages.file_policies.append({"id": str(row.id), "location": row.location, "path": row.path})
-    for row in (await db.execute(tb)).all():
-        usages.tables.append({"id": str(row.id), "name": row.name})
+    for r in (await db.execute(fp)).all():
+        if r.organization_id in override_orgs:  # global rule shadowed here
+            continue
+        usages.file_policies.append({"id": str(r.id), "location": r.location, "path": r.path,
+                                     "organization_id": str(r.organization_id) if r.organization_id else None})
+    for r in (await db.execute(tb)).all():
+        if r.organization_id in override_orgs:
+            continue
+        usages.tables.append({"id": str(r.id), "name": r.name,
+                              "organization_id": str(r.organization_id) if r.organization_id else None})
     return usages
 ```
 
-- [ ] **Step 5: Run to verify repo test passes**
+- [ ] **Step 5: Run to verify it passes**
 
 Run: `./test.sh e2e tests/e2e/test_policy_rule_repo.py -v`
 Expected: PASS.
 
-- [ ] **Step 6: Add a where-used e2e test + run**
-
-```python
-# append to api/tests/e2e/test_policy_rule_repo.py
-@pytest.mark.asyncio
-async def test_find_usages_scans_file_policies(db_session, seed_org):
-    from src.models.orm.file_metadata import FilePolicy
-    from api.shared.policy_rules import find_policy_rule_usages  # adjust import path
-    db_session.add(FilePolicy(organization_id=seed_org, location="shared", path="x/",
-                              policies={"policies": [{"$ref": "ops"}]}))
-    await db_session.flush()
-    u = await find_policy_rule_usages(db_session, "ops", org_id=seed_org)
-    assert u.total == 1 and u.file_policies[0]["location"] == "shared"
-```
-
-Run: `./test.sh e2e tests/e2e/test_policy_rule_repo.py -v`
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add api/src/repositories/policy_rule.py api/shared/policy_rules.py api/tests/e2e/test_policy_rule_repo.py
-git commit -m "feat(policy-rules): cascade repository + JSONB where-used query"
+git commit -m "feat(policy-rules): cascade repo + override-aware where-used"
 ```
 
 ---
 
-## Task 4: `resolve_policy_refs` pre-pass + exceptions
+## Task 4: `resolve_policy_refs` (domain-checked, hard-fail) + exceptions
 
 **Files:**
-- Modify: `api/shared/policy_rules.py` (add resolver + exceptions)
+- Modify: `api/shared/policy_rules.py` (resolver + exceptions)
 - Test: `api/tests/e2e/test_resolve_policy_refs.py`
 
 **Interfaces:**
-- Consumes: `PolicyRuleRepository`, `PolicyRuleRef`, `FilePolicies`/`TablePolicies`.
-- Produces: `async resolve_policy_refs(policies, *, repo, action_domain) -> None` (mutates `policies.policies` in place, replacing each `PolicyRuleRef` with the resolved inline rule of the domain's type); raises `PolicyRuleNotFound`, `PolicyRuleDomainMismatch`.
-- Domain action sets: file = `{read, write, delete, list}`; table = `{read, create, update, delete}`.
+- Produces: `async resolve_policy_refs(policies, *, repo, action_domain) -> None` (mutates in place; replaces each `PolicyRuleRef` with the resolved inline rule of the domain's type); raises `PolicyRuleNotFound`, `PolicyRuleDomainMismatch`. Requires the resolved rule's `domain == action_domain`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 # api/tests/e2e/test_resolve_policy_refs.py
 import pytest
 from src.models.orm.policy_rule import PolicyRule
-from src.models.contracts.policies import FilePolicies, FilePolicyRule, PolicyRuleRef
+from src.models.contracts.policies import FilePolicies, FilePolicyRule, TablePolicies
 from src.repositories.policy_rule import PolicyRuleRepository
 from api.shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
 
 @pytest.mark.asyncio
-async def test_resolves_ref_to_inline_rule(db_session, seed_org):
-    db_session.add(PolicyRule(name="ab", organization_id=seed_org,
-                              body={"actions": ["read", "write", "delete", "list"], "when": {"user": "is_platform_admin"}}))
+async def test_resolves_inline(db_session, seed_org):
+    db_session.add(PolicyRule(name="ab", domain="file", organization_id=seed_org,
+        body={"actions": ["read","write","delete","list"], "when": {"user": "is_platform_admin"}}))
     await db_session.flush()
     repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
-    doc = FilePolicies.model_validate({"policies": [{"$ref": "ab"}, {"name": "x", "actions": ["read"], "when": None}]})
+    doc = FilePolicies.model_validate({"policies": [{"$ref": "ab"}, {"name":"x","actions":["read"],"when":None}]})
     await resolve_policy_refs(doc, repo=repo, action_domain="file")
-    assert all(isinstance(p, FilePolicyRule) for p in doc.policies)   # no refs left
-    assert doc.policies[0].name == "ab" and "write" in doc.policies[0].actions
-    assert doc.policies[1].name == "x"                                # order preserved
+    assert all(isinstance(p, FilePolicyRule) for p in doc.policies)
+    assert doc.policies[0].name == "ab" and doc.policies[1].name == "x"  # order preserved
 
 @pytest.mark.asyncio
-async def test_missing_ref_raises(db_session, seed_org):
+async def test_missing_raises(db_session, seed_org):
     repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "nope"}]})
     with pytest.raises(PolicyRuleNotFound):
         await resolve_policy_refs(doc, repo=repo, action_domain="file")
 
 @pytest.mark.asyncio
-async def test_cross_domain_ref_raises(db_session, seed_org):
-    db_session.add(PolicyRule(name="filey", organization_id=seed_org,
-                              body={"actions": ["list"], "when": None}))   # 'list' invalid for table
+async def test_cross_domain_raises(db_session, seed_org):
+    db_session.add(PolicyRule(name="t", domain="table", organization_id=seed_org,
+        body={"actions": ["create"], "when": None}))
     await db_session.flush()
-    from src.models.contracts.policies import TablePolicies
     repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
-    doc = TablePolicies.model_validate({"policies": [{"$ref": "filey"}]})
+    doc = FilePolicies.model_validate({"policies": [{"$ref": "t"}]})  # table rule in a file policy
     with pytest.raises(PolicyRuleDomainMismatch):
-        await resolve_policy_refs(doc, repo=repo, action_domain="table")
+        await resolve_policy_refs(doc, repo=repo, action_domain="file")
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./test.sh e2e tests/e2e/test_resolve_policy_refs.py -v`
-Expected: FAIL (`ImportError: resolve_policy_refs`).
+Expected: FAIL (`ImportError`).
 
 - [ ] **Step 3: Implement the resolver**
 
-Append to `api/shared/policy_rules.py`:
-
 ```python
+# append to api/shared/policy_rules.py
 from typing import Literal
-from src.models.contracts.policies import (
-    FilePolicies, FilePolicyRule, Policy, PolicyRuleRef, TablePolicies,
-)
+from src.models.contracts.policies import FilePolicies, FilePolicyRule, Policy, PolicyRuleRef, TablePolicies
 
-class PolicyRuleNotFound(Exception):
-    """A {"$ref"} pointed at a rule that does not resolve in (org → global)."""
+class PolicyRuleNotFound(Exception): ...
+class PolicyRuleDomainMismatch(Exception): ...
 
-class PolicyRuleDomainMismatch(Exception):
-    """A referenced rule's actions are not valid for the referencing domain."""
+async def resolve_policy_refs(policies: FilePolicies | TablePolicies, *, repo,
+                              action_domain: Literal["file", "table"]) -> None:
+    """Replace each PolicyRuleRef with the resolved inline rule. Mutates in place.
 
-_DOMAIN_ACTIONS = {
-    "file": {"read", "write", "delete", "list"},
-    "table": {"read", "create", "update", "delete"},
-}
-
-async def resolve_policy_refs(
-    policies: FilePolicies | TablePolicies,
-    *,
-    repo,                                   # PolicyRuleRepository
-    action_domain: Literal["file", "table"],
-) -> None:
-    """Replace each PolicyRuleRef in `policies.policies` with the resolved inline rule.
-
-    Mutates in place. Raises PolicyRuleNotFound / PolicyRuleDomainMismatch.
-    Runs BEFORE evaluation/compilation so the evaluator only ever sees inline rules.
+    Resolution is by (name, domain=action_domain) so a {"$ref": "admin_bypass"} in a file
+    policy picks the FILE admin_bypass and in a table policy the TABLE one (correction #3).
+    Raises on missing or domain-mismatched ref. Runs BEFORE evaluation/compilation/preresolve.
     """
-    valid = _DOMAIN_ACTIONS[action_domain]
     rule_cls = FilePolicyRule if action_domain == "file" else Policy
     resolved: list = []
     for entry in policies.policies:
         if not isinstance(entry, PolicyRuleRef):
-            resolved.append(entry)
-            continue
-        row = await repo.get(name=entry.ref)
+            resolved.append(entry); continue
+        row = await repo.get(name=entry.ref, domain=action_domain)
         if row is None:
             raise PolicyRuleNotFound(entry.ref)
+        if row.domain != action_domain:
+            raise PolicyRuleDomainMismatch(f"{entry.ref!r} is a {row.domain} rule, not {action_domain}")
         body = row.body or {}
-        actions = body.get("actions", [])
-        if not set(actions) <= valid:
-            raise PolicyRuleDomainMismatch(
-                f"rule {entry.ref!r} actions {actions} invalid for {action_domain}"
-            )
         try:
             resolved.append(rule_cls.model_validate({
-                "name": row.name,
-                "description": row.description,
-                "actions": actions,
-                "when": body.get("when"),
-            }))
-        except Exception as exc:
-            # The target domain's `when` validator rejects a foreign namespace
-            # (e.g. a {file:...} expr validated into a table Policy whose Expr
-            # forbids the file namespace). Normalize to the domain-mismatch error.
-            raise PolicyRuleDomainMismatch(
-                f"rule {entry.ref!r} body invalid for {action_domain}: {exc}"
-            ) from exc
+                "name": row.name, "description": row.description,
+                "actions": body.get("actions"), "when": body.get("when")}))
+        except Exception as exc:  # foreign when-namespace etc. → domain mismatch
+            raise PolicyRuleDomainMismatch(f"rule {entry.ref!r} body invalid for {action_domain}: {exc}") from exc
     policies.policies = resolved
 ```
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `./test.sh e2e tests/e2e/test_resolve_policy_refs.py -v`
-Expected: PASS (all three).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add api/shared/policy_rules.py api/tests/e2e/test_resolve_policy_refs.py
-git commit -m "feat(policy-rules): resolve_policy_refs pre-pass (hard-fail, domain-validated)"
+git commit -m "feat(policy-rules): resolve_policy_refs (domain-checked, hard-fail)"
 ```
 
 ---
 
-## Task 5: Wire resolver into file + table evaluation paths
+## Task 5: Single resolving loader (choke point) + wire ALL table eval sites
 
 **Files:**
-- Modify: `api/src/services/file_policy_service.py` (`is_allowed`, after `model_validate`)
-- Modify: `api/src/routers/tables.py` (before `compile_read_filter` / eval, next to `preresolve_for_policies`)
-- Test: `api/tests/e2e/test_policy_ref_enforced.py`
+- Create: `api/src/services/table_policy_loader.py` (`load_resolved_table_policies`)
+- Modify: `api/src/routers/tables.py` (`_load_policies` callers → resolving loader)
+- Modify: `api/src/routers/websocket.py` (its `TablePolicies` load → resolving loader + cache note)
+- Modify: `api/shared/claims/preresolve.py` (`_load_source_policies` resolves before compile)
+- Test: `api/tests/e2e/test_table_ref_enforced.py`
 
 **Interfaces:**
-- Consumes: `resolve_policy_refs`, `PolicyRuleRepository`.
+- Produces: `async load_resolved_table_policies(table, db) -> TablePolicies` — validates `table.access`, resolves refs (`action_domain="table"`), returns inlined `TablePolicies`; on unresolvable ref returns an **empty** doc (default-deny for evaluation) and logs. **This is the only function eval paths call.**
 
-- [ ] **Step 1: Write the failing e2e test (file path enforcement via ref)**
+> **Order matters (correction #2):** the loader resolves refs *before* the caller hands the doc to `preresolve_for_policies` / `compile_read_filter`. A `PolicyRuleRef` reaching `preresolve` would `AttributeError`.
+
+- [ ] **Step 1: Write the failing test (table list enforced via ref, across eval paths)**
 
 ```python
-# api/tests/e2e/test_policy_ref_enforced.py
+# api/tests/e2e/test_table_ref_enforced.py
 import pytest
 from src.models.orm.policy_rule import PolicyRule
-from src.models.orm.file_metadata import FilePolicy
-from src.services.file_policy_service import FilePolicyService
 
 @pytest.mark.asyncio
-async def test_file_read_allowed_via_referenced_rule(db_session, seed_org, admin_user):
-    db_session.add(PolicyRule(name="ab", organization_id=seed_org,
-        body={"actions": ["read", "write", "delete", "list"], "when": {"user": "is_platform_admin"}}))
-    db_session.add(FilePolicy(organization_id=seed_org, location="shared", path="docs/",
-        policies={"policies": [{"$ref": "ab"}]}))
+async def test_table_list_allowed_via_referenced_rule(admin_client, db_session, seed_org):
+    db_session.add(PolicyRule(name="ab", domain="table", organization_id=seed_org,
+        body={"actions": ["read","create","update","delete"], "when": {"user": "is_platform_admin"}}))
     await db_session.flush()
-    svc = FilePolicyService(db_session)
-    allowed = await svc.is_allowed("read", organization_id=seed_org,
-                                   location="shared", path="docs/file.txt", user=admin_user)
-    assert allowed is True
+    # create a table whose access references the rule, then list rows as admin → allowed.
+    # (use the existing table-create + document-list e2e fixtures; assert 200 + rows visible.)
 ```
 
-(Reuse existing file-policy e2e fixtures for `admin_user`; grep `tests/e2e` for `FilePolicyService` usage to copy the setup.)
+(Grep `tests/e2e` for the table list/documents fixture; model the assertion on an existing table-policy e2e.)
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `./test.sh e2e tests/e2e/test_policy_ref_enforced.py -v`
-Expected: FAIL — the `{"$ref":"ab"}` entry is a `PolicyRuleRef`, not yet resolved, so `evaluate_file_action` sees no matching inline rule → `False`.
+Run: `./test.sh e2e tests/e2e/test_table_ref_enforced.py -v`
+Expected: FAIL — the `{"$ref"}` entry isn't resolved on the list path yet.
 
-- [ ] **Step 3: Wire into `file_policy_service.is_allowed`**
+- [ ] **Step 3: Write the resolving loader**
 
-In `api/src/services/file_policy_service.py`, immediately after the `FilePolicies.model_validate(...)` try/except block and before `preresolve_for_policies(...)`, add:
+```python
+# api/src/services/table_policy_loader.py
+import logging
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.models.orm.tables import Table
+from src.models.contracts.policies import TablePolicies
+from src.repositories.policy_rule import PolicyRuleRepository
+from api.shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
+
+logger = logging.getLogger(__name__)
+
+async def load_resolved_table_policies(table: Table, db: AsyncSession) -> TablePolicies:
+    """THE table-policy load path for evaluation. Validates + inlines refs (before preresolve/compile)."""
+    if table.access is None:
+        return TablePolicies()
+    try:
+        policies = TablePolicies.model_validate(table.access)
+    except Exception as exc:
+        logger.warning("malformed table policies for %s; denying: %s", table.id, exc)
+        return TablePolicies()
+    repo = PolicyRuleRepository(db, org_id=table.organization_id, is_superuser=True)
+    try:
+        await resolve_policy_refs(policies, repo=repo, action_domain="table")
+    except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+        logger.warning("unresolvable policy ref on table %s; denying: %s", table.id, exc)
+        return TablePolicies()
+    return policies
+```
+
+- [ ] **Step 4: Route `tables.py::_load_policies` callers through it**
+
+`_load_policies` is sync and used at 5 sites (`tables.py:163,1155,1288,1343,1456`). Replace the sync `_load_policies(table)` calls in the **evaluation** paths with `await load_resolved_table_policies(table, ctx.db)`. Keep the raw sync `_load_policies` ONLY for the save-validation path (Task 7 uses `resolve_policy_refs` directly there). Confirm every eval site (count, list, read-one, subscribe gate) now uses the resolving loader.
+
+- [ ] **Step 5: Route websocket + preresolve through resolution**
+
+`websocket.py:199`: replace the inline `TablePolicies.model_validate(row[0])` with `await load_resolved_table_policies(table, db)` (fetch the `Table` it already has, or adapt the loader to take `access`+`org_id`+`id`). Note the `_table_policy_cache`: a policy-rule **edit** must invalidate cached entries — add a cache-bust hook called from `PolicyRuleService.update` (Task 6) or document the cache TTL makes it eventually consistent (decide and record; do not leave stale-forever).
+
+`preresolve.py:_load_source_policies` (line 204): after building the `TablePolicies`, resolve refs before the `compile_read_filter` at line 148:
+
+```python
+    repo = PolicyRuleRepository(db, org_id=source.organization_id, is_superuser=True)
+    try:
+        await resolve_policy_refs(source_policies, repo=repo, action_domain="table")
+    except (PolicyRuleNotFound, PolicyRuleDomainMismatch):
+        return TablePolicies()  # source unreadable → claim resolves to [] (fail-closed)
+```
+
+(`_load_source_policies` becomes async, or the resolution happens at its call site at line 143 which is already in an async function — pick the smaller diff and keep it consistent.)
+
+- [ ] **Step 6: Wire file enforcement (`file_policy_service.is_allowed`)**
+
+In `file_policy_service.py::is_allowed`, after `FilePolicies.model_validate(...)` and **before** `preresolve_for_policies(...)`:
 
 ```python
         from api.shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
@@ -633,62 +691,37 @@ In `api/src/services/file_policy_service.py`, immediately after the `FilePolicie
         try:
             await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
-            logger.warning("unresolvable policy ref for %s/%s; denying: %s",
-                           organization_id, location, exc)
+            logger.warning("unresolvable file policy ref %s/%s; denying: %s", organization_id, location, exc)
             return False
 ```
 
-> Note: at the **enforcement** call site a missing ref denies (fail-closed *for that request*) and logs — the loud hard-fail surfaces at **save** time (Task 7) where the user can act. This matches the existing `malformed policies → deny` handling two lines up.
+- [ ] **Step 7: Run + regression sweep**
 
-- [ ] **Step 4: Wire into the table list/eval path**
+Run: `./test.sh e2e tests/e2e/test_table_ref_enforced.py -v`
+Then: `./test.sh e2e tests/e2e -k "policy or table or file or websocket or claim" -v`
+Expected: PASS (existing inline policies untouched; refs now resolve on every path).
 
-In `api/src/routers/tables.py`, right after the existing `await preresolve_for_policies(...)` call (and before `compile_read_filter` / per-row eval), add the same resolver call with `action_domain="table"`:
-
-```python
-    from api.shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
-    from src.repositories.policy_rule import PolicyRuleRepository
-    if policies is not None:
-        rule_repo = PolicyRuleRepository(ctx.db, org_id=table.organization_id, is_superuser=True)
-        try:
-            await resolve_policy_refs(policies, repo=rule_repo, action_domain="table")
-        except (PolicyRuleNotFound, PolicyRuleDomainMismatch):
-            policies.policies = []   # unresolvable → default-deny for this request
-```
-
-Apply the same two lines at any **other** table-policy eval site (grep `tables.py` for every `preresolve_for_policies` call and add the resolver after each).
-
-- [ ] **Step 5: Run to verify it passes**
-
-Run: `./test.sh e2e tests/e2e/test_policy_ref_enforced.py -v`
-Expected: PASS.
-
-- [ ] **Step 6: Run the existing policy suites to confirm no regression**
-
-Run: `./test.sh e2e tests/e2e -k "policy or table or file" -v`
-Expected: PASS (existing inline-rule policies untouched).
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add api/src/services/file_policy_service.py api/src/routers/tables.py api/tests/e2e/test_policy_ref_enforced.py
-git commit -m "feat(policy-rules): resolve refs before file + table policy evaluation"
+git add api/src/services/table_policy_loader.py api/src/routers/tables.py api/src/routers/websocket.py api/shared/claims/preresolve.py api/src/services/file_policy_service.py api/tests/e2e/test_table_ref_enforced.py
+git commit -m "feat(policy-rules): single resolving loader; wire all table+file eval sites (ws, preresolve, claims)"
 ```
 
 ---
 
-## Task 6: `PolicyRuleService` — CRUD + rename cascade + delete guard + built-in seed + audit
+## Task 6: `PolicyRuleService` — CRUD + body validation + Core-update rename cascade + delete guard + two built-ins + audit
 
 **Files:**
 - Create: `api/src/services/policy_rule_service.py`
-- Modify: `api/shared/file_policies_seed.py` (seed as ref)
+- Modify: `api/shared/file_policies_seed.py`
 - Test: `api/tests/e2e/test_policy_rule_service.py`
 
 **Interfaces:**
-- Consumes: `PolicyRuleRepository`, `find_policy_rule_usages`, `emit_audit`, `PolicyRuleCreate/Update`.
-- Produces: `PolicyRuleService(db)` with `create`, `update` (renames cascade), `delete` (guarded), `seed_builtin_admin_bypass()`, `usages(name, org_id)`.
-- Built-in: a global `PolicyRule(name="admin_bypass", is_builtin=True, body={actions:[read,write,delete,list], when:{user:is_platform_admin}})`.
+- Produces: `PolicyRuleService(db)` with `create`, `update` (Core-update rename cascade, override-aware), `delete` (guarded), `seed_builtin_admin_bypass()` (seeds BOTH domains), `usages(name, domain, org_id)`.
+- Built-ins: `PolicyRule(name="admin_bypass", domain="file", is_builtin=True, body={actions:[read,write,delete,list], when:{user:is_platform_admin}})` AND the same with `domain="table", actions:[read,create,update,delete]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write failing tests (incl. Core-update under the guard)**
 
 ```python
 # api/tests/e2e/test_policy_rule_service.py
@@ -698,66 +731,60 @@ from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.file_metadata import FilePolicy
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate
 from src.services.policy_rule_service import PolicyRuleService, PolicyRuleInUse, PolicyRuleReadOnly
+from src.services.solutions.guard import install_solution_write_guard
 
 @pytest.mark.asyncio
-async def test_rename_cascades_to_referencing_file_policies(db_session, seed_org, admin_actor):
+async def test_rename_cascades_via_core_update_under_guard(db_session, seed_org, admin_actor):
+    install_solution_write_guard()  # prod-faithful: guard active
     svc = PolicyRuleService(db_session)
-    await svc.create(PolicyRuleCreate(name="ops", organization_id=seed_org,
+    await svc.create(PolicyRuleCreate(name="ops", domain="file", organization_id=seed_org,
                      body={"actions": ["read"], "when": None}), actor=admin_actor)
     db_session.add(FilePolicy(organization_id=seed_org, location="shared", path="d/",
                               policies={"policies": [{"$ref": "ops"}]}))
     await db_session.flush()
-    await svc.update("ops", PolicyRuleUpdate(name="operations"), org_id=seed_org, actor=admin_actor)
+    await svc.update("ops", "file", PolicyRuleUpdate(name="operations"), org_id=seed_org, actor=admin_actor)
     fp = (await db_session.execute(select(FilePolicy))).scalar_one()
-    assert fp.policies["policies"] == [{"$ref": "operations"}]   # ref rewritten
+    assert fp.policies["policies"] == [{"$ref": "operations"}]
 
 @pytest.mark.asyncio
 async def test_delete_blocked_while_referenced(db_session, seed_org, admin_actor):
     svc = PolicyRuleService(db_session)
-    await svc.create(PolicyRuleCreate(name="ops", organization_id=seed_org,
+    await svc.create(PolicyRuleCreate(name="ops", domain="file", organization_id=seed_org,
                      body={"actions": ["read"], "when": None}), actor=admin_actor)
     db_session.add(FilePolicy(organization_id=seed_org, location="shared", path="d/",
                               policies={"policies": [{"$ref": "ops"}]}))
     await db_session.flush()
     with pytest.raises(PolicyRuleInUse):
-        await svc.delete("ops", org_id=seed_org, actor=admin_actor)
+        await svc.delete("ops", "file", org_id=seed_org, actor=admin_actor)
 
 @pytest.mark.asyncio
-async def test_builtin_admin_bypass_is_readonly(db_session, admin_actor):
+async def test_seeds_both_domains_idempotent_and_readonly(db_session, admin_actor):
     svc = PolicyRuleService(db_session)
-    await svc.seed_builtin_admin_bypass()
-    with pytest.raises(PolicyRuleReadOnly):
-        await svc.update("admin_bypass", PolicyRuleUpdate(description="x"), org_id=None, actor=admin_actor)
-
-@pytest.mark.asyncio
-async def test_seed_is_idempotent(db_session):
-    svc = PolicyRuleService(db_session)
-    await svc.seed_builtin_admin_bypass()
-    await svc.seed_builtin_admin_bypass()
+    await svc.seed_builtin_admin_bypass(); await svc.seed_builtin_admin_bypass()
     rows = (await db_session.execute(select(PolicyRule).where(PolicyRule.name == "admin_bypass"))).scalars().all()
-    assert len(rows) == 1
+    assert {r.domain for r in rows} == {"file", "table"} and len(rows) == 2
+    with pytest.raises(PolicyRuleReadOnly):
+        await svc.update("admin_bypass", "file", PolicyRuleUpdate(description="x"), org_id=None, actor=admin_actor)
 ```
-
-(Use the project's e2e actor fixture for `admin_actor`; grep for `actor_override` / `ActorContext` in tests.)
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./test.sh e2e tests/e2e/test_policy_rule_service.py -v`
-Expected: FAIL (`ImportError: PolicyRuleService`).
+Expected: FAIL (`ImportError`).
 
-- [ ] **Step 3: Implement the service**
+- [ ] **Step 3: Implement the service (Core-update cascade)**
 
 ```python
 # api/src/services/policy_rule_service.py
 from __future__ import annotations
 from typing import Any
 from uuid import UUID
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.tables import Table
-from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate
+from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate, _validate_body
 from src.repositories.policy_rule import PolicyRuleRepository
 from api.shared.policy_rules import find_policy_rule_usages
 from src.services.audit import emit_audit
@@ -766,143 +793,136 @@ class PolicyRuleInUse(Exception): ...
 class PolicyRuleReadOnly(Exception): ...
 class PolicyRuleNotFoundError(Exception): ...
 
-_ADMIN_BYPASS = {
-    "name": "admin_bypass",
-    "description": "Platform admins bypass all checks. Built-in, read-only.",
-    "body": {"actions": ["read", "write", "delete", "list"], "when": {"user": "is_platform_admin"}},
-}
+_BUILTINS = [
+    {"name": "admin_bypass", "domain": "file",
+     "description": "Platform admins bypass all file checks. Built-in, read-only.",
+     "body": {"actions": ["read","write","delete","list"], "when": {"user": "is_platform_admin"}}},
+    {"name": "admin_bypass", "domain": "table",
+     "description": "Platform admins bypass all table checks. Built-in, read-only.",
+     "body": {"actions": ["read","create","update","delete"], "when": {"user": "is_platform_admin"}}},
+]
 
 class PolicyRuleService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def seed_builtin_admin_bypass(self) -> None:
-        existing = (await self.db.execute(
-            select(PolicyRule).where(PolicyRule.name == "admin_bypass",
-                                     PolicyRule.organization_id.is_(None))
-        )).scalar_one_or_none()
-        if existing is not None:
-            return
-        self.db.add(PolicyRule(organization_id=None, is_builtin=True, **_ADMIN_BYPASS))
+        for b in _BUILTINS:
+            exists = (await self.db.execute(select(PolicyRule).where(
+                PolicyRule.name == b["name"], PolicyRule.domain == b["domain"],
+                PolicyRule.organization_id.is_(None)))).scalar_one_or_none()
+            if exists is None:
+                self.db.add(PolicyRule(organization_id=None, is_builtin=True, **b))
         await self.db.flush()
 
     async def create(self, data: PolicyRuleCreate, *, actor: Any) -> PolicyRule:
         row = PolicyRule(organization_id=data.organization_id, name=data.name,
-                         description=data.description, body=data.body)
-        self.db.add(row)
-        await self.db.flush()
+                         domain=data.domain, description=data.description, body=data.body)
+        self.db.add(row); await self.db.flush()
         await emit_audit(self.db, "policy_rule.create", resource_type="policy_rule",
-                         resource_id=row.id, details={"name": row.name}, actor_override=actor)
+                         resource_id=row.id, details={"name": row.name, "domain": row.domain}, actor_override=actor)
         return row
 
-    async def _get(self, name: str, org_id: UUID | None) -> PolicyRule:
+    async def _get(self, name: str, domain: str, org_id: UUID | None) -> PolicyRule:
         repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
-        row = await repo.get(name=name)
+        row = await repo.get(name=name, domain=domain)
         if row is None:
             raise PolicyRuleNotFoundError(name)
         return row
 
-    async def update(self, name: str, data: PolicyRuleUpdate, *, org_id: UUID | None, actor: Any) -> PolicyRule:
-        row = await self._get(name, org_id)
+    async def update(self, name: str, domain: str, data: PolicyRuleUpdate, *, org_id: UUID | None, actor: Any) -> PolicyRule:
+        row = await self._get(name, domain, org_id)
         if row.is_builtin:
             raise PolicyRuleReadOnly(name)
-        renamed_to = data.name if data.name and data.name != row.name else None
-        usages = await find_policy_rule_usages(self.db, row.name, org_id=row.organization_id)
-        if renamed_to:
-            await self._cascade_rename(row.name, renamed_to, row.organization_id)
-            row.name = renamed_to
+        usages = await find_policy_rule_usages(self.db, row.name, row.domain, org_id=row.organization_id)
+        renamed = data.name if data.name and data.name != row.name else None
+        if renamed:
+            await self._cascade_rename(row.name, renamed, row.domain, row.organization_id, usages)
+            row.name = renamed
         if data.description is not None:
             row.description = data.description
         if data.body is not None:
-            row.body = data.body
+            _validate_body(data.body, row.domain); row.body = data.body
         await self.db.flush()
-        await emit_audit(self.db, "policy_rule.update", resource_type="policy_rule",
-                         resource_id=row.id,
-                         details={"name": row.name, "renamed_to": renamed_to, "usages": usages.total},
+        await emit_audit(self.db, "policy_rule.update", resource_type="policy_rule", resource_id=row.id,
+                         details={"name": row.name, "domain": row.domain, "renamed_to": renamed, "usages": usages.total},
                          actor_override=actor)
         return row
 
-    async def delete(self, name: str, *, org_id: UUID | None, actor: Any) -> None:
-        row = await self._get(name, org_id)
+    async def delete(self, name: str, domain: str, *, org_id: UUID | None, actor: Any) -> None:
+        row = await self._get(name, domain, org_id)
         if row.is_builtin:
             raise PolicyRuleReadOnly(name)
-        usages = await find_policy_rule_usages(self.db, row.name, org_id=row.organization_id)
+        usages = await find_policy_rule_usages(self.db, row.name, row.domain, org_id=row.organization_id)
         if usages.total > 0:
             raise PolicyRuleInUse(name)
-        await self.db.delete(row)
-        await self.db.flush()
-        await emit_audit(self.db, "policy_rule.delete", resource_type="policy_rule",
-                         resource_id=row.id, details={"name": row.name}, actor_override=actor)
+        await self.db.delete(row); await self.db.flush()
+        await emit_audit(self.db, "policy_rule.delete", resource_type="policy_rule", resource_id=row.id,
+                         details={"name": row.name, "domain": row.domain}, actor_override=actor)
 
-    async def usages(self, name: str, *, org_id: UUID | None):
-        row = await self._get(name, org_id)
-        return await find_policy_rule_usages(self.db, row.name, org_id=row.organization_id)
+    async def usages(self, name: str, domain: str, *, org_id: UUID | None):
+        row = await self._get(name, domain, org_id)
+        return await find_policy_rule_usages(self.db, row.name, row.domain, org_id=row.organization_id)
 
-    async def _cascade_rename(self, old: str, new: str, org_id: UUID | None) -> None:
-        """Rewrite {"$ref": old} → {"$ref": new} in every referencing file/table policy."""
-        ref_json = [{"$ref": old}]
-        fp_q = select(FilePolicy).where(FilePolicy.policies["policies"].contains(ref_json))
-        tb_q = select(Table).where(Table.access["policies"].contains(ref_json))
-        if org_id is not None:
-            fp_q = fp_q.where(FilePolicy.organization_id == org_id)
-            tb_q = tb_q.where(Table.organization_id == org_id)
-        for fp in (await self.db.execute(fp_q)).scalars().all():
-            fp.policies = _rewrite_ref(fp.policies, old, new)
-        for tb in (await self.db.execute(tb_q)).scalars().all():
-            tb.access = _rewrite_ref(tb.access, old, new)
+    async def _cascade_rename(self, old: str, new: str, domain: str, org_id: UUID | None, usages) -> None:
+        """Rewrite {"$ref": old}→{"$ref": new} via CORE updates (not ORM) so the solution
+        read-only guard does not reject solution-managed targets (correction #8). Only the
+        override-aware usage set is touched (correction #6)."""
+        for fp in usages.file_policies:  # already override-filtered
+            row = (await self.db.execute(select(FilePolicy).where(FilePolicy.id == fp["id"]))).scalar_one()
+            await self.db.execute(sa_update(FilePolicy).where(FilePolicy.id == fp["id"])
+                                  .values(policies=_rewrite_ref(row.policies, old, new)))
+        for tb in usages.tables:
+            row = (await self.db.execute(select(Table).where(Table.id == tb["id"]))).scalar_one()
+            await self.db.execute(sa_update(Table).where(Table.id == tb["id"])
+                                  .values(access=_rewrite_ref(row.access, old, new)))
         await self.db.flush()
 
 def _rewrite_ref(doc: dict, old: str, new: str) -> dict:
-    rules = [{"$ref": new} if r.get("$ref") == old else r for r in doc.get("policies", [])]
-    return {**doc, "policies": rules}
+    rules = [{"$ref": new} if (isinstance(r, dict) and r.get("$ref") == old) else r
+             for r in (doc or {}).get("policies", [])]
+    return {**(doc or {}), "policies": rules}
 ```
 
-> **JSONB mutation note:** reassign `fp.policies = ...` / `tb.access = ...` to a NEW dict so SQLAlchemy marks the column dirty (in-place mutation of a JSONB dict is not tracked). `_rewrite_ref` returns a fresh dict for this reason.
+> Core `update()` writes bypass the ORM unit-of-work, so the `before_flush` guard never sees a dirty solution-managed object — matching how `deploy.py` writes. Reading the row first (`select`) does not make it dirty.
 
-- [ ] **Step 4: Update the file seed to reference the built-in**
-
-In `api/shared/file_policies_seed.py`, change `make_seed_admin_bypass_file` to return a ref:
+- [ ] **Step 4: Seed file prefixes with the ref**
 
 ```python
+# api/shared/file_policies_seed.py
 def make_seed_admin_bypass_file() -> dict:
-    """New file prefixes reference the built-in admin_bypass rule."""
+    """New file prefixes reference the built-in admin_bypass (file domain)."""
     return {"policies": [{"$ref": "admin_bypass"}]}
 ```
 
-> Existing inline rows are NOT migrated (spec decision). Ensure `seed_builtin_admin_bypass()` runs at app startup / first-policy-create so the ref resolves — wire a call into the existing startup seed path (grep for where other built-ins seed, e.g. a `seed_*` startup hook) OR call it lazily in `FilePolicyService.upsert_policy`'s create branch before inserting the seed.
+Wire `PolicyRuleService(db).seed_builtin_admin_bypass()` into the startup seed hook (grep for the existing idempotent boot seeds, e.g. where roles/configs seed at startup) so BOTH built-ins exist before any file prefix is created. If no boot hook exists, seed lazily in `FilePolicyService.upsert_policy`'s create branch *before* inserting the seed doc. (Document which; the ref must resolve at create time or file creation hard-fails.)
 
-- [ ] **Step 5: Run to verify it passes**
+- [ ] **Step 5: Run + file-create regression**
 
-Run: `./test.sh e2e tests/e2e/test_policy_rule_service.py -v`
-Expected: PASS (all four).
+Run: `./test.sh e2e tests/e2e/test_policy_rule_service.py -v && ./test.sh e2e tests/e2e -k "file_polic" -v`
+Expected: PASS — seeded prefixes resolve `{"$ref":"admin_bypass"}`.
 
-- [ ] **Step 6: Confirm the file-policy create flow still works end to end**
-
-Run: `./test.sh e2e tests/e2e -k "file_polic" -v`
-Expected: PASS — newly seeded prefixes resolve `{"$ref":"admin_bypass"}` against the seeded built-in.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add api/src/services/policy_rule_service.py api/shared/file_policies_seed.py api/tests/e2e/test_policy_rule_service.py
-git commit -m "feat(policy-rules): service (CRUD, rename cascade, delete guard, built-in seed, audit)"
+git commit -m "feat(policy-rules): service (validated body, Core-update override-aware rename, delete guard, 2 built-ins, audit)"
 ```
 
 ---
 
-## Task 7: REST router — CRUD + `/usages` + save-time ref validation
+## Task 7: REST router — CRUD + `/usages` + structured save-time validation (file + table)
 
 **Files:**
 - Create: `api/src/routers/policy_rules.py`
-- Modify: the file-policy save handler (`api/src/routers/files.py` policies `set`) and table-policy save handler to validate refs on write
-- Register the router in the app (find `main.py` / router registry)
+- Modify: file-policy save (`api/src/routers/files.py`) + table-policy save (`tables.py:863`) → structured ref validation
+- Register router in the app
 - Test: `api/tests/e2e/test_policy_rules_api.py`
 
 **Interfaces:**
-- Consumes: `PolicyRuleService`, `PolicyRulePublic`.
-- Produces: `POST/GET/PUT/DELETE /api/policy-rules`, `GET /api/policy-rules/{name}/usages`. All admin-gated (`CurrentSuperuser`-equivalent).
+- Produces: `POST/GET/PUT/DELETE /api/policy-rules` (admin-gated), `GET /api/policy-rules/{domain}/{name}/usages`. Save failures return `PolicyValidationResponse` (structured, with `path`).
 
-- [ ] **Step 1: Write the failing API e2e test**
+- [ ] **Step 1: Write the failing API test**
 
 ```python
 # api/tests/e2e/test_policy_rules_api.py
@@ -911,451 +931,152 @@ import pytest
 @pytest.mark.asyncio
 async def test_crud_and_usages(admin_client):
     r = await admin_client.post("/api/policy-rules", json={
-        "name": "ops", "body": {"actions": ["read"], "when": None}})
+        "name": "ops", "domain": "file", "body": {"actions": ["read"], "when": None}})
     assert r.status_code == 201
-    assert (await admin_client.get("/api/policy-rules")).status_code == 200
-    u = await admin_client.get("/api/policy-rules/ops/usages")
+    u = await admin_client.get("/api/policy-rules/file/ops/usages")
     assert u.status_code == 200 and u.json()["total"] == 0
-    assert (await admin_client.delete("/api/policy-rules/ops")).status_code == 204
+    assert (await admin_client.delete("/api/policy-rules/file/ops")).status_code == 204
 
 @pytest.mark.asyncio
-async def test_saving_file_policy_with_missing_ref_is_422(admin_client):
-    r = await admin_client.put("/api/files/policies/docs%2F",
-        params={"location": "shared"},
-        json={"policies": [{"$ref": "does_not_exist"}]})
+async def test_file_policy_missing_ref_is_structured_422(admin_client):
+    r = await admin_client.put("/api/files/policies/docs%2F", params={"location": "shared"},
+        json={"policies": [{"$ref": "nope"}]})
     assert r.status_code == 422
+    body = r.json()
+    assert "errors" in body or "detail" in body  # structured PolicyValidationResponse shape
 
 @pytest.mark.asyncio
-async def test_non_admin_cannot_create_rule(user_client):
-    r = await user_client.post("/api/policy-rules", json={
-        "name": "x", "body": {"actions": ["read"], "when": None}})
+async def test_non_admin_cannot_create(user_client):
+    r = await user_client.post("/api/policy-rules", json={"name": "x", "domain": "file", "body": {"actions": ["read"], "when": None}})
     assert r.status_code in (401, 403)
 ```
-
-(Use existing `admin_client` / `user_client` e2e fixtures; grep `tests/e2e` for them.)
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./test.sh e2e tests/e2e/test_policy_rules_api.py -v`
-Expected: FAIL (404 — router not mounted).
+Expected: FAIL (404 — not mounted).
 
-- [ ] **Step 3: Write the router (thin)**
+- [ ] **Step 3: Router** (thin; mirror `config.py` deps + admin gate)
 
-```python
-# api/src/routers/policy_rules.py
-from uuid import UUID
-from fastapi import APIRouter, HTTPException, status
-from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRulePublic, PolicyRuleUpdate
-from src.services.policy_rule_service import (
-    PolicyRuleService, PolicyRuleInUse, PolicyRuleReadOnly, PolicyRuleNotFoundError,
-)
-# Context / CurrentSuperuser deps: import the same ones config.py uses.
-from src.routers.config import Context, CurrentSuperuser  # or wherever these live
+Build `POST/GET/PUT/DELETE /api/policy-rules` and `GET /api/policy-rules/{domain}/{name}/usages` calling `PolicyRuleService`. Map `PolicyRuleReadOnly`→409, `PolicyRuleNotFoundError`→404, `PolicyRuleInUse`→409 with the usages payload. Use the same `Context`/admin dependency `config.py` uses (the bypass gate). Register in `main.py` next to the other `include_router` calls.
 
-router = APIRouter()
+- [ ] **Step 4: Structured save-time validation (both domains)**
 
-@router.get("/api/policy-rules", response_model=list[PolicyRulePublic])
-async def list_rules(ctx: Context, user: CurrentSuperuser):
-    from src.repositories.policy_rule import PolicyRuleRepository
-    repo = PolicyRuleRepository(ctx.db, org_id=ctx.org_id, is_superuser=True)
-    return await repo.list()
+> **VERIFIED shapes (don't guess):** `PolicyValidationResponse` is `{ok: bool, errors: list[PolicyValidationError(path, message)]}` (`policies.py:331-353`). The table **validate** endpoint deliberately returns **HTTP 200 with `ok=false`** on failure (its docstring: "Endpoint always returns 200 — callers parse this body"), NOT a 422. So ref-validation must surface the SAME way: `ok=false` + an error entry, not a raised 422. (The *file-policy `set`* path may differ — match whatever that handler already does for a malformed doc; if it raises 422, ref failures raise 422 there too. Read each handler and mirror its existing failure mode rather than imposing one.)
 
-@router.post("/api/policy-rules", response_model=PolicyRulePublic, status_code=status.HTTP_201_CREATED)
-async def create_rule(data: PolicyRuleCreate, ctx: Context, user: CurrentSuperuser):
-    return await PolicyRuleService(ctx.db).create(data, actor=user)
-
-@router.put("/api/policy-rules/{name}", response_model=PolicyRulePublic)
-async def update_rule(name: str, data: PolicyRuleUpdate, ctx: Context, user: CurrentSuperuser):
-    try:
-        return await PolicyRuleService(ctx.db).update(name, data, org_id=ctx.org_id, actor=user)
-    except PolicyRuleReadOnly:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"{name} is a read-only built-in rule")
-    except PolicyRuleNotFoundError:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, name)
-
-@router.delete("/api/policy-rules/{name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_rule(name: str, ctx: Context, user: CurrentSuperuser):
-    try:
-        await PolicyRuleService(ctx.db).delete(name, org_id=ctx.org_id, actor=user)
-    except PolicyRuleInUse:
-        svc = PolicyRuleService(ctx.db)
-        u = await svc.usages(name, org_id=ctx.org_id)
-        raise HTTPException(status.HTTP_409_CONFLICT,
-                            {"message": f"{name} is referenced", "usages": u.__dict__})
-    except (PolicyRuleReadOnly, PolicyRuleNotFoundError) as exc:
-        code = status.HTTP_409_CONFLICT if isinstance(exc, PolicyRuleReadOnly) else status.HTTP_404_NOT_FOUND
-        raise HTTPException(code, name)
-
-@router.get("/api/policy-rules/{name}/usages")
-async def rule_usages(name: str, ctx: Context, user: CurrentSuperuser):
-    u = await PolicyRuleService(ctx.db).usages(name, org_id=ctx.org_id)
-    return {"file_policies": u.file_policies, "tables": u.tables, "total": u.total}
-```
-
-Register it where other routers mount (grep `main.py` for `include_router(config`): add `app.include_router(policy_rules.router)`.
-
-- [ ] **Step 4: Add save-time ref validation to the policy save handlers**
-
-In the file-policy `set` handler (`api/src/routers/files.py`) and the table-policy save path, after parsing the incoming `FilePolicies`/`TablePolicies` and before persisting, resolve refs against a repo to validate (discard the result — this call only validates):
+For the table validate path (`tables.py:863`), extend the existing try/except so an unresolvable ref becomes an `ok=false` error rather than escaping:
 
 ```python
-    from api.shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
-    from src.repositories.policy_rule import PolicyRuleRepository
-    rule_repo = PolicyRuleRepository(ctx.db, org_id=<target_org>, is_superuser=True)
     try:
-        # validate against a COPY so the stored doc keeps its {$ref} entries
-        await resolve_policy_refs(parsed.model_copy(deep=True), repo=rule_repo, action_domain="file")  # "table" in tables.py
+        parsed = TablePolicies.model_validate(body)
+        # NEW: resolve refs as part of validation (same 200/ok=false contract).
+        from api.shared.policy_rules import resolve_policy_refs, PolicyRuleNotFound, PolicyRuleDomainMismatch
+        from src.repositories.policy_rule import PolicyRuleRepository
+        repo = PolicyRuleRepository(ctx.db, org_id=<target_org>, is_superuser=True)
+        await resolve_policy_refs(parsed.model_copy(deep=True), repo=repo, action_domain="table")
+        return PolicyValidationResponse(ok=True)
     except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+        return PolicyValidationResponse(ok=False, errors=[PolicyValidationError(path="$.policies", message=str(exc))])
+    except ValidationError as e:
+        ...  # existing AST-error handling unchanged
 ```
 
-- [ ] **Step 5: Run to verify it passes**
+For the file-policy `set` handler, add the same `resolve_policy_refs(..., action_domain="file")` validation against a deep copy and convert a raise into that handler's existing failure shape (read it first; do not assume 422 vs 200).
 
-Run: `./test.sh e2e tests/e2e/test_policy_rules_api.py -v`
-Expected: PASS (all three).
+- [ ] **Step 5: Run + regen types + commit**
 
-- [ ] **Step 6: Regenerate client types + commit**
-
-Run: `cd client && npm run generate:types`
+Run: `./test.sh e2e tests/e2e/test_policy_rules_api.py -v && cd client && npm run generate:types`
 
 ```bash
-git add api/src/routers/policy_rules.py api/src/routers/files.py api/src/main.py api/tests/e2e/test_policy_rules_api.py client/src/lib/v1.d.ts
-git commit -m "feat(policy-rules): REST CRUD + /usages + save-time ref validation (422)"
+git add api/src/routers/policy_rules.py api/src/routers/files.py api/src/routers/tables.py api/src/main.py api/tests/e2e/test_policy_rules_api.py client/src/lib/v1.d.ts
+git commit -m "feat(policy-rules): REST CRUD + /usages + structured save-time ref validation"
 ```
 
 ---
 
-## Task 8: CLI — `policy-rule` group + `tables policies {get,set}`
+## Task 8: Solution deploy + manifest import ref validation
 
 **Files:**
-- Create: `api/bifrost/commands/policy_rules.py`
-- Modify: `api/bifrost/commands/tables.py` (add `policies` subgroup)
-- Modify: `api/bifrost/commands/__init__.py` (register `policy-rule`)
-- Test: `api/tests/e2e/test_cli_policy_rules.py`
+- Modify: `api/src/services/solutions/deploy.py` (table-policy validation at :875 resolves refs)
+- Modify: `api/src/services/manifest_import.py` (table import :2084 + file import :2172 validate refs; rule-before-policy ordering)
+- Test: `api/tests/e2e/platform/test_git_sync_local.py`, `api/tests/e2e/test_solution_deploy_policy_ref.py`
 
-**Interfaces:**
-- Consumes: REST endpoints (Task 7). `files policies set/get` already exist and round-trip refs unchanged.
+**Interfaces:** consumes `resolve_policy_refs`. Ensures a bundle/manifest with a `{"$ref"}` policy fails closed if the rule is absent, and that rules import before the policies that reference them.
 
-- [ ] **Step 1: Write the failing CLI e2e test**
+- [ ] **Step 1: Failing tests**
 
 ```python
-# api/tests/e2e/test_cli_policy_rules.py
-import pytest, json
-
-@pytest.mark.asyncio
-async def test_policy_rule_create_list_via_cli(run_cli):   # run_cli: existing CLI harness fixture
-    out = await run_cli(["policy-rule", "create", "--name", "ops",
-                         "--body", json.dumps({"actions": ["read"], "when": None})])
-    assert "ops" in out
-    listed = await run_cli(["policy-rule", "list"])
-    assert "ops" in listed
-
-@pytest.mark.asyncio
-async def test_tables_policies_set_get_roundtrips_ref(run_cli, seed_table):
-    doc = {"policies": [{"$ref": "ops"}]}
-    await run_cli(["policy-rule", "create", "--name", "ops",
-                   "--body", json.dumps({"actions": ["read"], "when": None})])
-    await run_cli(["tables", "policies", "set", seed_table, "--policies", json.dumps(doc)])
-    got = await run_cli(["tables", "policies", "get", seed_table])
-    assert "$ref" in got and "ops" in got
+# api/tests/e2e/test_solution_deploy_policy_ref.py
+# Deploy a bundle whose table access references {"$ref":"x"} with NO such rule → deploy fails (422/error),
+# does NOT silently install an unresolvable policy.
+# Then deploy a bundle that DOES carry the rule → succeeds and the table lists rows under the rule.
 ```
 
-(Grep `tests/e2e` for the existing CLI invocation fixture — likely `test_cli_files.py` shows the pattern.)
+- [ ] **Step 2: Run to verify it fails** — `./test.sh e2e tests/e2e/test_solution_deploy_policy_ref.py -v` → FAIL.
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 3:** In `deploy.py` (~:875) `TablePolicies.model_validate(access)` is **already followed by** `_validate_table_policy_claim_refs` (an existing claim-ref validator) — add the `resolve_policy_refs(..., action_domain="table")` call **right alongside it** (same try-block, scoped to the install's org via `PolicyRuleRepository`); a raise aborts that entity's deploy with a clear error. In `manifest_import.py` apply the same to table (:2084) and file (:2172) policy writes. Ensure `_resolve_policy_rule` (Task 10) runs **before** policy/table resolution in the import ordering. The `domain` for the rule lookup is `"table"` for `Table.access` / `"file"` for `FilePolicy.policies`.
 
-Run: `./test.sh e2e tests/e2e/test_cli_policy_rules.py -v`
-Expected: FAIL (`Unknown entity subgroup: policy-rule`).
+- [ ] **Step 4: Run + commit** — `./test.sh e2e tests/e2e/test_solution_deploy_policy_ref.py tests/e2e/platform/test_git_sync_local.py -v`
 
-- [ ] **Step 3: Write the `policy-rule` CLI group**
-
-Mirror `api/bifrost/commands/configs.py` exactly (entity_group, build_cli_flags from `PolicyRuleCreate`/`PolicyRuleUpdate`, `pass_resolver`/`run_async`/`output_result`):
-
-```python
-# api/bifrost/commands/policy_rules.py
-import click
-from bifrost.contracts import PolicyRuleCreate, PolicyRuleUpdate
-from bifrost.dto_flags import DTO_EXCLUDES, build_cli_flags
-from .base import entity_group, output_result, pass_resolver, run_async
-
-policy_rules_group = entity_group("policy-rule", "Manage reusable named policy rules.")
-
-@policy_rules_group.command("list")
-@click.pass_context
-@pass_resolver
-@run_async
-async def list_rules(ctx, *, client, resolver):  # noqa: ARG001
-    resp = await client.get("/api/policy-rules"); resp.raise_for_status()
-    output_result(resp.json(), ctx=ctx)
-
-@policy_rules_group.command("get")
-@click.argument("name")
-@click.pass_context
-@pass_resolver
-@run_async
-async def get_rule(ctx, name, *, client, resolver):  # noqa: ARG001
-    resp = await client.get("/api/policy-rules"); resp.raise_for_status()
-    match = next((r for r in resp.json() if r["name"] == name), None)
-    output_result(match or {"error": f"{name} not found"}, ctx=ctx)
-
-@policy_rules_group.command("usages")
-@click.argument("name")
-@click.pass_context
-@pass_resolver
-@run_async
-async def usages(ctx, name, *, client, resolver):  # noqa: ARG001
-    resp = await client.get(f"/api/policy-rules/{name}/usages"); resp.raise_for_status()
-    output_result(resp.json(), ctx=ctx)
+```bash
+git add api/src/services/solutions/deploy.py api/src/services/manifest_import.py api/tests/e2e/test_solution_deploy_policy_ref.py
+git commit -m "feat(policy-rules): fail-closed ref validation in solution deploy + manifest import"
 ```
 
-Add `create` / `update` / `delete` commands following the `configs.py` create/update pattern (flags via `build_cli_flags`, POST/PUT/DELETE to `/api/policy-rules[/{name}]`). Register in `__init__.py`: `from .policy_rules import policy_rules_group` and `"policy-rule": policy_rules_group` in `ENTITY_GROUPS`. Export `PolicyRuleCreate/Update` from `bifrost.contracts` (mirror how `ConfigCreate` is exported).
+---
 
-- [ ] **Step 4: Add `tables policies {get,set}` mirroring `files policies`**
+## Task 9: CLI — `policy-rule` group + `tables policies {get,set}`
 
-In `api/bifrost/commands/tables.py`, add a `policies` subgroup (copy the shape of `policies_group` in `files.py`):
+**Files:** Create `api/bifrost/commands/policy_rules.py`; modify `tables.py`, `commands/__init__.py`; test `api/tests/e2e/test_cli_policy_rules.py`.
 
-```python
-tables_policies = click.Group("policies", help="Get/set a table's access policy document.")
+(Same as the prior draft — mirror `configs.py`; `policy-rule create/list/get/update/delete/usages` with a `--domain` flag; `tables policies get/set` mirroring `files policies`. `files policies set/get` already round-trip refs unchanged.)
 
-@tables_policies.command("get")
-@click.argument("name")
-@click.pass_context
-@pass_resolver
-@run_async
-async def get_table_policies(ctx, name, *, client, resolver):
-    table_id = await resolver.resolve("table", name)
-    resp = await client.get(f"/api/tables/{table_id}"); resp.raise_for_status()
-    output_result(resp.json().get("policies"), ctx=ctx)
-
-@tables_policies.command("set")
-@click.argument("name")
-@click.option("--policies", required=True, help="JSON literal or @file path.")
-@click.pass_context
-@pass_resolver
-@run_async
-async def set_table_policies(ctx, name, policies, *, client, resolver):
-    table_id = await resolver.resolve("table", name)
-    doc = _load_policy_document_like_files(policies)   # reuse files.py loader shape
-    resp = await client.put(f"/api/tables/{table_id}", json={"policies": doc})
-    resp.raise_for_status()
-    output_result(resp.json().get("policies"), ctx=ctx)
-
-tables_group.add_command(tables_policies)
-```
-
-- [ ] **Step 5: Run to verify it passes**
-
-Run: `./test.sh e2e tests/e2e/test_cli_policy_rules.py -v`
-Expected: PASS.
-
-- [ ] **Step 6: Run DTO parity + contract tripwire**
+- [ ] **Step 1–5:** Write failing CLI e2e (create rule with `--domain file`; `tables policies set` round-trips a `$ref`), implement the group + subgroup, register, run.
+- [ ] **Step 6: DTO parity + contract tripwire + skill-truth**
 
 Run: `./test.sh tests/unit/test_dto_flags.py tests/unit/test_contract_version.py -v`
-Expected: PASS — if the contract fingerprint test fails, refresh `EXPECTED_CONTRACT_FINGERPRINT` (additive change → fingerprint refresh only, no `CONTRACT_VERSION` bump). Regenerate skill appendices: `python api/scripts/skill-truth/generate.py`.
+If the fingerprint test fails: additive change → refresh `EXPECTED_CONTRACT_FINGERPRINT` only (no `CONTRACT_VERSION` bump). Then `python api/scripts/skill-truth/generate.py`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add api/bifrost/commands/policy_rules.py api/bifrost/commands/tables.py api/bifrost/commands/__init__.py api/tests/e2e/test_cli_policy_rules.py api/.../contract_fingerprint* api/.../generated
-git commit -m "feat(policy-rules): CLI policy-rule group + tables policies get/set"
+git add api/bifrost/commands/policy_rules.py api/bifrost/commands/tables.py api/bifrost/commands/__init__.py api/tests/e2e/test_cli_policy_rules.py api/.../generated
+git commit -m "feat(policy-rules): CLI policy-rule group (--domain) + tables policies get/set"
 ```
 
 ---
 
-## Task 9: MCP thin wrapper
+## Task 10: MCP thin wrapper + Manifest round-trip (rules + table inline-or-ref union)
 
 **Files:**
-- Create: `api/src/services/mcp_server/tools/policy_rules.py`
-- Register it in the MCP tool registry (mirror `configs.py` registration)
-- Test: `api/tests/unit/test_mcp_thin_wrapper.py` already enforces the no-ORM rule; add a tool-level test if the entity has a dedicated MCP test pattern.
+- Create: `api/src/services/mcp_server/tools/policy_rules.py` (+ register)
+- Modify: `api/bifrost/manifest.py` (`ManifestPolicyRule`; **widen table `ManifestPolicy` to inline-or-ref**), `manifest_generator.py` (serialize rules; preserve `$ref`), `manifest_import.py` (`_resolve_policy_rule` before policies)
+- Test: `api/tests/unit/test_manifest.py`, `api/tests/unit/test_mcp_thin_wrapper.py`, `api/tests/e2e/platform/test_git_sync_local.py`
 
-**Interfaces:**
-- Consumes: REST endpoints via `call_rest` / `rest_client` (no ORM).
+> **Correction #11:** table policies serialize through `ManifestPolicy` (`manifest.py:889`) which requires inline `name/actions/when`. A `{"$ref"}` entry won't round-trip until that model becomes an inline-or-ref union (file policies are loose dicts and already pass refs through).
 
-- [ ] **Step 1: Write the tool (mirror `tools/configs.py`)**
-
-```python
-# api/src/services/mcp_server/tools/policy_rules.py
-from typing import Any
-from ._http_bridge import call_rest
-from .base import ToolResult, error_result, success_result  # match configs.py imports
-
-async def list_policy_rules(context: Any) -> ToolResult:
-    status_code, body = await call_rest(context, "GET", "/api/policy-rules")
-    if status_code != 200:
-        return error_result(f"list_policy_rules failed: HTTP {status_code}", {"body": body})
-    items = body if isinstance(body, list) else []
-    return success_result(f"Found {len(items)} policy rule(s)", {"policy_rules": items, "count": len(items)})
-
-async def create_policy_rule(context: Any, name: str, body: dict,
-                             description: str | None = None,
-                             organization_id: str | None = None) -> ToolResult:
-    payload = {"name": name, "body": body, "description": description, "organization_id": organization_id}
-    status_code, resp = await call_rest(context, "POST", "/api/policy-rules", json=payload)
-    if status_code != 201:
-        return error_result(f"create_policy_rule failed: HTTP {status_code}", {"body": resp})
-    return success_result(f"Created policy rule {name}", resp)
-
-async def delete_policy_rule(context: Any, name: str) -> ToolResult:
-    status_code, resp = await call_rest(context, "DELETE", f"/api/policy-rules/{name}")
-    if status_code != 204:
-        return error_result(f"delete_policy_rule failed: HTTP {status_code}", {"body": resp})
-    return success_result(f"Deleted policy rule {name}", {})
-```
-
-Register in the MCP tool list exactly as `configs` tools are registered (grep the registry for `list_configs`).
-
-- [ ] **Step 2: Run the thin-wrapper enforcement test**
-
-Run: `./test.sh tests/unit/test_mcp_thin_wrapper.py -v`
-Expected: PASS (no ORM imports in the new tool).
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 1: Failing tests** — `ManifestPolicyRule` round-trip; a table manifest policy list containing `{"$ref":"ops"}` round-trips (currently rejected); MCP thin-wrapper passes.
+- [ ] **Step 2: Run** → FAIL.
+- [ ] **Step 3:** Add `ManifestPolicyRule` (mirror `ManifestConfig` `classify`/`from_row`/`to_orm_values`, including `domain`). Widen the table `ManifestPolicy` rule entries to `inline | {"$ref"}`. MCP tool mirrors `tools/configs.py` (thin `call_rest` bridge, no ORM): `list/create/delete_policy_rule`.
+- [ ] **Step 4:** Serialize rules in `manifest_generator.py` (exclude `is_builtin` rows from export — built-ins are seeded, not shipped). Import `_resolve_policy_rule` upsert by `(organization_id, name, domain)`, ordered **before** policy/table resolution.
+- [ ] **Step 5: Run + commit** — `./test.sh tests/unit/test_manifest.py tests/unit/test_mcp_thin_wrapper.py -v && ./test.sh e2e tests/e2e/platform/test_git_sync_local.py -v`
 
 ```bash
-git add api/src/services/mcp_server/tools/policy_rules.py api/src/services/mcp_server/tools/__init__.py
-git commit -m "feat(policy-rules): MCP thin HTTP-bridge tool"
-```
-
----
-
-## Task 10: Manifest round-trip (`ManifestPolicyRule`, rule-before-policy import)
-
-**Files:**
-- Modify: `api/bifrost/manifest.py` (add `ManifestPolicyRule`)
-- Modify: `api/src/services/manifest_generator.py` (serialize)
-- Modify: `api/src/services/manifest_import.py` (`_resolve_policy_rule`, ordered before policies)
-- Test: `api/tests/unit/test_manifest.py` (round-trip), `api/tests/e2e/platform/test_git_sync_local.py` (ordering)
-
-**Interfaces:**
-- Consumes: `PolicyRule`, the `EntityCodec`/`classify` manifest patterns.
-- Produces: `ManifestPolicyRule(name, description, body, organization_id?)`; serializer; `_resolve_policy_rule` upsert by `(organization_id, name)`.
-
-- [ ] **Step 1: Write the failing round-trip test**
-
-```python
-# add to api/tests/unit/test_manifest.py
-def test_policy_rule_manifest_roundtrip():
-    from api.bifrost.manifest import ManifestPolicyRule
-    m = ManifestPolicyRule(name="ops", description="d",
-                           body={"actions": ["read"], "when": None}, organization_id=None)
-    again = ManifestPolicyRule.model_validate(m.model_dump())
-    assert again.name == "ops" and again.body["actions"] == ["read"]
-```
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `./test.sh tests/unit/test_manifest.py -k policy_rule -v`
-Expected: FAIL (`ImportError: ManifestPolicyRule`).
-
-- [ ] **Step 3: Add `ManifestPolicyRule`** (mirror `ManifestConfig`'s `classify`/`from_row`/`to_orm_values`)
-
-```python
-# api/bifrost/manifest.py
-class ManifestPolicyRule(EntityCodec, BaseModel):
-    name: str = Field(**classify(FieldClass.CONTENT, match_key=True))
-    description: str | None = Field(default=None, **classify(FieldClass.CONTENT))
-    body: dict = Field(**classify(FieldClass.CONTENT))
-    organization_id: str | None = Field(default=None, **classify(FieldClass.ENVIRONMENT, match_key=True))
-
-    @classmethod
-    def from_row(cls, r) -> "ManifestPolicyRule":
-        return cls(name=r.name, description=r.description, body=r.body,
-                   organization_id=str(r.organization_id) if r.organization_id else None)
-
-    def to_orm_values(self, dest) -> "ImportFields":
-        return ImportFields(direct={
-            "name": self.name, "description": self.description, "body": self.body,
-            "organization_id": self.organization_id,
-        }, indexer_content={}, restamp={})
-```
-
-- [ ] **Step 4: Serialize in `manifest_generator.py`** (add `policy_rules` collection to the manifest, sourced from `PolicyRule` rows where `is_builtin == False`).
-
-- [ ] **Step 5: Import in `manifest_import.py`** — add `_resolve_policy_rule` upserting by `(organization_id, name)`, and ensure it runs **before** policy/table resolution in the import ordering (so a `{$ref}` resolves at validation). Builtin `admin_bypass` is excluded from export and seeded separately, so it is never imported.
-
-- [ ] **Step 6: Add the git-sync ordering e2e test** in `test_git_sync_local.py`: export a rule + a file policy referencing it, re-import into a clean DB, assert both land and the ref resolves.
-
-- [ ] **Step 7: Run + commit**
-
-Run: `./test.sh tests/unit/test_manifest.py -k policy_rule -v && ./test.sh e2e tests/e2e/platform/test_git_sync_local.py -k policy_rule -v`
-Expected: PASS.
-
-```bash
-git add api/bifrost/manifest.py api/src/services/manifest_generator.py api/src/services/manifest_import.py api/tests/unit/test_manifest.py api/tests/e2e/platform/test_git_sync_local.py
-git commit -m "feat(policy-rules): ManifestPolicyRule round-trip + rule-before-policy import"
+git add api/src/services/mcp_server/tools/policy_rules.py api/bifrost/manifest.py api/src/services/manifest_generator.py api/src/services/manifest_import.py api/tests/unit/test_manifest.py
+git commit -m "feat(policy-rules): MCP tool + manifest round-trip (rules + table inline-or-ref policy union)"
 ```
 
 ---
 
 ## Task 11: Frontend — reference mode in Files + Tables policy editors
 
-**Files:**
-- Create: `client/src/services/policyRules.ts` (+ `policyRules.test.ts`)
-- Modify: `client/src/components/files/` policy editor (`PolicyEditorModal`) — reference-mode insert
-- Modify: `client/src/components/tables/` policy editor — reference-mode insert
-- Test: vitest siblings + `client/e2e/files-explorer.admin.spec.ts` (or new `policy-rules.admin.spec.ts`)
+**Files:** Create `client/src/services/policyRules.ts` (+ test); modify Files `PolicyEditorModal` + Tables policy editor; test vitest + Playwright.
 
-**Interfaces:**
-- Consumes: `/api/policy-rules` (typed via generated `v1.d.ts`).
-- Produces: `listPolicyRules()`, `policyRuleUsages(name)` service fns; an "Insert reference…" action in both editors.
+(Same as the prior draft. Service `listPolicyRules()` / `policyRuleUsages(domain,name)`; "Insert reference…" option in both editors sourced from `/api/policy-rules` filtered by `domain`, inserting `{"$ref": name}`; surface the structured `422` inline.)
 
-- [ ] **Step 1: Write the failing service test**
-
-```ts
-// client/src/services/policyRules.test.ts
-import { describe, it, expect, vi } from "vitest";
-import { listPolicyRules } from "./policyRules";
-
-describe("policyRules service", () => {
-  it("GETs /api/policy-rules", async () => {
-    const spy = vi.fn().mockResolvedValue({ data: [{ name: "ops" }] });
-    // mock apiClient.get per the project's existing service test pattern
-    expect((await listPolicyRules(spy as any))[0].name).toBe("ops");
-  });
-});
-```
-
-(Match the existing `client/src/services/*.test.ts` mocking pattern — grep for one, e.g. `filePolicies.test.ts`.)
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `./test.sh client unit policyRules`
-Expected: FAIL (module missing).
-
-- [ ] **Step 3: Write the service** (mirror `client/src/services/filePolicies.ts`)
-
-```ts
-// client/src/services/policyRules.ts
-import { apiClient } from "@/lib/api-client";
-import type { components } from "@/lib/v1";
-export type PolicyRule = components["schemas"]["PolicyRulePublic"];
-
-export async function listPolicyRules() {
-  return apiClient.get<PolicyRule[]>("/api/policy-rules");
-}
-export async function policyRuleUsages(name: string) {
-  return apiClient.get(`/api/policy-rules/${name}/usages`);
-}
-```
-
-- [ ] **Step 4: Add "Insert reference…" to both editors**
-
-In the Files `PolicyEditorModal` and the Tables policy editor, extend the existing "Insert template…" dropdown with a **reference** option sourced from `listPolicyRules()` (filtered to the domain by each rule's `body.actions`), inserting `{"$ref": name}` into the `JsonYamlEditor` buffer instead of a deep copy. Surface the server `422` (unresolvable ref) inline at the offending index using the editors' existing `PolicyValidationError` channel.
-
-- [ ] **Step 5: Run vitest + add a Playwright assertion**
-
-Run: `./test.sh client unit policyRules`
-Expected: PASS.
-
-Add to `client/e2e/files-explorer.admin.spec.ts` (and a tables policy spec): open the policy editor, choose "Insert reference… → admin_bypass", save, assert the document contains `$ref`.
-
-- [ ] **Step 6: tsc + lint + commit**
-
-Run: `cd client && npm run tsc && npm run lint`
+- [ ] **Steps:** failing service test → service → editor wiring → vitest + Playwright (insert ref in Files editor; insert ref in Tables editor) → tsc/lint → commit.
 
 ```bash
-git add client/src/services/policyRules.ts client/src/services/policyRules.test.ts client/src/components/files client/src/components/tables client/e2e
 git commit -m "feat(policy-rules): reference mode in Files + Tables policy editors"
 ```
 
@@ -1363,45 +1084,13 @@ git commit -m "feat(policy-rules): reference mode in Files + Tables policy edito
 
 ## Task 12: Frontend — in-context policy-rules manager (list/edit/where-used)
 
-**Files:**
-- Create: `client/src/components/policy-rules/PolicyRulesManager.tsx` (+ test)
-- Modify: both policy editors to add a "Manage rules…" affordance opening the manager
-- Test: vitest sibling + Playwright
+**Files:** Create `client/src/components/policy-rules/PolicyRulesManager.tsx` (+ test); wire "Manage rules…" into both editors.
 
-**Interfaces:**
-- Consumes: `policyRules.ts` service.
+(Same as the prior draft. List/create/edit/delete; blast-radius from `/usages` before save; 409 delete shows usages; built-in `admin_bypass` (both domains) read-only.)
 
-- [ ] **Step 1: Write the failing component test**
-
-```tsx
-// client/src/components/policy-rules/PolicyRulesManager.test.tsx
-import { render, screen } from "@testing-library/react";
-import { PolicyRulesManager } from "./PolicyRulesManager";
-// mock listPolicyRules to return [{name:"ops", body:{actions:["read"]}}]
-it("lists rules", async () => {
-  render(<PolicyRulesManager />);
-  expect(await screen.findByText("ops")).toBeInTheDocument();
-});
-```
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `./test.sh client unit PolicyRulesManager`
-Expected: FAIL.
-
-- [ ] **Step 3: Build the manager** — list rules, create/edit (the `JsonYamlEditor` body), delete. Before saving an edit, fetch `policyRuleUsages(name)` and show "used by N file prefixes and M tables". On a blocked delete (409), render the returned usages list. Built-in `admin_bypass` shows read-only (no edit/delete).
-
-- [ ] **Step 4: Wire "Manage rules…" into both editors** (a button beside the reference dropdown opening the manager as a slideout/modal — reachable in-context from Files and Tables policy surfaces).
-
-- [ ] **Step 5: Run vitest + Playwright; tsc + lint**
-
-Run: `./test.sh client unit PolicyRulesManager && cd client && npm run tsc && npm run lint`
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
+- [ ] **Steps:** failing component test → manager → wire into editors → vitest + Playwright → tsc/lint → commit.
 
 ```bash
-git add client/src/components/policy-rules client/src/components/files client/src/components/tables
 git commit -m "feat(policy-rules): in-context policy-rules manager with blast-radius"
 ```
 
@@ -1409,27 +1098,11 @@ git commit -m "feat(policy-rules): in-context policy-rules manager with blast-ra
 
 ## Task 13: Full verification sweep
 
-- [ ] **Step 1: Backend**
-
-Run: `cd api && pyright && ruff check .`
-Expected: 0 errors.
-
-- [ ] **Step 2: Regenerate types + frontend checks**
-
-Run: `cd client && npm run generate:types && npm run tsc && npm run lint`
-Expected: PASS.
-
-- [ ] **Step 3: Full backend suite**
-
-Run: `./test.sh all`
-Expected: green (parse `/tmp/bifrost-<project>/test-results.xml`). Confirm existing policy/table/file e2e unaffected and the new policy-rule tests pass.
-
-- [ ] **Step 4: Client suites**
-
-Run: `./test.sh client unit && ./test.sh client e2e files-explorer.admin.spec.ts`
-Expected: PASS.
-
-- [ ] **Step 5: Final commit if any fixups**
+- [ ] **Backend:** `cd api && pyright && ruff check .` → 0 errors.
+- [ ] **Types + frontend:** `cd client && npm run generate:types && npm run tsc && npm run lint` → PASS.
+- [ ] **Full backend suite:** `./test.sh all` → green (parse `/tmp/bifrost-<project>/test-results.xml`). Confirm websocket, claims, deploy, manifest, and file/table policy suites all pass with refs in play.
+- [ ] **Client:** `./test.sh client unit && ./test.sh client e2e files-explorer.admin.spec.ts` → PASS.
+- [ ] **Lint smell check (choke point):** grep for any `TablePolicies.model_validate` / `FilePolicies.model_validate` used in an evaluation path that does NOT go through the resolving loader — there should be none outside the loader + the explicit save/import/deploy validators.
 
 ```bash
 git add -A && git commit -m "chore(policy-rules): verification fixups"
@@ -1439,7 +1112,10 @@ git add -A && git commit -m "chore(policy-rules): verification fixups"
 
 ## Notes for the implementer
 
-- **Import paths:** the codebase imports shared utilities as `from api.shared.policy_rules import ...` in some places and `from shared.policy_rules import ...` in others depending on the package root. Match the style of the file you're editing (e.g. `file_policy_service.py` uses `from shared.claims.preresolve import ...`). Use the same root as neighboring imports.
-- **`ctx.org_id` vs target org:** for the policy-rules router, rules are org-scoped to the caller's org by default; a superuser/provider creating a **global** rule passes `organization_id=None` in the body. Honor `resolve_target_org`/`resolve_effective_scope` if the existing entity routers do — mirror `config.py`'s scope handling rather than inventing one.
-- **Where the built-in gets seeded:** find the existing startup seed hook (grep for other idempotent seeds run at boot) and add `PolicyRuleService(db).seed_builtin_admin_bypass()` there, so `{"$ref":"admin_bypass"}` always resolves. If no global seed hook exists, seed lazily in the file-policy create branch before inserting the seed doc.
-- **JSONB dirty tracking:** always reassign the whole `policies`/`access` dict on mutation (Task 6 `_rewrite_ref`), never mutate in place.
+- **Import root:** match neighboring imports (`from shared.…` vs `from api.shared.…`) per the file you edit; `file_policy_service.py` uses `from shared.claims.preresolve import …`.
+- **The choke point is the whole point.** If you find yourself adding `resolve_policy_refs` at a new eval call site by hand, prefer routing that site through `load_resolved_table_policies` (table) or the `is_allowed` resolution (file). New eval paths must go through the loader.
+- **Order:** refs resolve BEFORE `preresolve_for_policies` and BEFORE `compile_read_filter`/`evaluate_*`. A ref reaching preresolve is an `AttributeError`.
+- **Core writes** for the rename cascade (and any solution-managed policy mutation). Read the row with `select`, write with Core `update()`. Install the guard in cascade tests.
+- **Two built-ins, seeded before first use.** Confirm the seed hook runs at boot (or lazily before the first file-prefix create) so `{"$ref":"admin_bypass"}` always resolves; otherwise file creation hard-fails.
+- **JSONB dirty tracking:** always reassign the whole dict (`_rewrite_ref` returns fresh) — though the cascade uses Core `update().values(...)` which sidesteps ORM tracking entirely.
+- **Match `PolicyValidationResponse` exactly** (`policies.py:343`) — read it before constructing one.

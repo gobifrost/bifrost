@@ -33,6 +33,72 @@ many tables) so that editing the canonical rule updates everywhere it is used.
 | Portability | **First-class manifest entity** (`ManifestPolicyRule`); policies export with `{"$ref": name}` preserved |
 | Where it lives | **Approach A** — shared module + one ORM table; both policy services call the same resolver |
 
+## Codex pre-implementation review — corrections (2026-06-22)
+
+A pre-code Codex review (verified against the real code, subagent-assisted) found that the
+first draft under-counted policy eval sites and had concrete bugs. These corrections are now part
+of the design and are reflected in the plan:
+
+1. **Single resolving choke point (closes the whole missed-site class).** There is **not** one
+   table-policy eval site — there are *three independent loaders* that
+   `TablePolicies.model_validate` for evaluation: `tables.py::_load_policies` (used at 5 call
+   sites), `websocket.py:199` (its own cache), and `preresolve.py::_load_source_policies` (custom-
+   claim source tables, then `compile_read_filter`). Hand-wiring a resolver at each is fragile.
+   **Decision:** introduce ONE async resolving loader per domain —
+   `load_resolved_table_policies(table, db)` and the file equivalent inside `is_allowed` — that
+   validates **and** resolves refs, and route every evaluation loader through it. A raw
+   `model_validate` for *evaluation* becomes a lint-able smell. Refs are guaranteed inlined before
+   any evaluator/compiler by construction, not by remembering each site.
+2. **Resolve BEFORE claim pre-resolution, everywhere.** `preresolve_for_policies` iterates
+   `policy.when` on every entry (`preresolve.py:40`); a `PolicyRuleRef` has no `.when` → it would
+   `AttributeError` (a crash, not a silent skip). So resolution must precede `preresolve_for_policies`
+   at every site (the resolving loader does this).
+3. **`admin_bypass` needs a per-domain body — two built-ins, not one.** Table actions are
+   `read/create/update/delete`; file actions are `read/write/delete/list`. A single shared body
+   fails its own domain check. Seed **two** read-only built-ins: `admin_bypass` (file actions, for
+   file policies) and `admin_bypass` (table actions) — same name, distinguished by which domain's
+   policy references it and validated by the domain action-set. The *mechanism* (entity, resolver,
+   ref shape) is still shared; only the built-in **body** is per-domain.
+4. **Partial unique index for global rules.** `UNIQUE(organization_id, name)` permits multiple
+   `NULL`-org rows in Postgres (NULLs don't compare equal) → duplicate globals →
+   `scalar_one_or_none()` raises. Use the `Solution` pattern: a partial unique index
+   `(name) WHERE organization_id IS NULL` **plus** `(organization_id, name) WHERE organization_id IS
+   NOT NULL`.
+5. **Union must reject mixed/extra fields.** With default Pydantic config, an inline rule that also
+   carries `$ref` parses as inline and **silently drops the ref** (empirically reproduced). Add
+   `model_config = ConfigDict(extra="forbid")` to `PolicyRuleRef` AND to the inline rule models, and
+   a validator that rejects an entry carrying both `$ref` and inline fields. Union order alone does
+   not fix this.
+6. **Override-aware where-used (rename/delete).** A blind `@>` scan for `{"$ref": name}` rewrites
+   refs that, at a given org, actually resolve to an **org override** of a global rule — silently
+   changing access. The where-used / rename-cascade for a **global** rule must skip a policy in an
+   org that has its own override of that name. (For an org-scoped rule the scan is exact and safe.)
+7. **Write-time body validation on the rule itself.** `body` must not be a bare `dict` stored
+   unchecked. Validate at create/update: non-empty `actions`, no duplicates, a parseable `when`
+   AST, and a declared **domain** so a file-only body can't be saved then fail only when a table
+   references it. (See "Rule domain" below — we add an explicit `domain` discriminator rather than
+   inferring from actions, because `read`/`delete` are valid in both.)
+8. **Core writes for the rename cascade.** The cascade mutates `Table.access`/`FilePolicy.policies`
+   ORM rows; a **solution-managed** table/policy would trip the always-on `before_flush` read-only
+   guard. The cascade MUST use Core `update()` (the deploy pattern), not ORM dirty-tracking. See
+   [[project_solution_managed_guard_deploy_core]].
+9. **Structured validation errors.** Ref-validation failures on policy save must return the
+   existing structured `PolicyValidationResponse` (`policies.py:343`, with `path`/`message`), not a
+   bare `HTTPException(422, str(exc))`, matching the table policy save path (`tables.py:814`).
+10. **All policy load/validate sites, not two.** Beyond the two in the first draft, the resolver/
+    validation must reach: `websocket.py` (eval + cache invalidation on rule edit),
+    `preresolve.py` source-table compile, the table-policy **save** validator (`tables.py:863`),
+    **solution deploy** table-policy validation (`deploy.py:875`), **file-policy manifest import**
+    (`manifest_import.py:2172`), and **table-policy manifest import** (`manifest_import.py:2084`).
+
+### Rule domain (added per correction #7)
+
+`PolicyRule` carries an explicit `domain: "file" | "table"` column (not inferred from actions —
+`read`/`delete` overlap both vocabularies). `resolve_policy_refs(action_domain=...)` requires the
+resolved rule's `domain` to match the referencing policy's domain (raising
+`PolicyRuleDomainMismatch` otherwise), and write-time validation checks the body's actions against
+that domain's action-set. The two `admin_bypass` built-ins differ by `domain`.
+
 ## Background: the current policy shape (verified)
 
 File and table policy rules are **structurally identical** — both are a `name` + `description` +

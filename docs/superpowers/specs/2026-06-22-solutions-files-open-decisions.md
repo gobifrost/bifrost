@@ -34,9 +34,13 @@ These are not open — the current code forces them.
 
 ### D1. Prefix = `{location}/{install_id}/{path}` — install_id IS the scope
 
-`resolve_s3_key(location, scope, path)` (`api/shared/file_paths.py`) already composes
-`{location}/{scope}/{path}`. A solution's files use **`scope = str(install_id)`** instead of
-`scope = str(org_id)`. No new top-level `solution/` prefix, no change to `resolve_s3_key`.
+`resolve_s3_key(location, scope, path)` (`api/shared/file_paths.py`) composes
+`{location}/{scope}/{path}` **for freeform locations only** — the reserved locations differ
+(`workspace`→`_repo/{path}` unscoped, `uploads`→`uploads/{scope}/…`, `temp`→`_tmp/{scope}/…`,
+`file_paths.py:72`). Solution files therefore live under a **freeform** location, where a solution's
+files use **`scope = str(install_id)`** instead of `scope = str(org_id)`. No new top-level
+`solution/` prefix, no change to `resolve_s3_key`. (Solution files must NOT use `workspace`, which
+is unscoped and maps straight to `_repo/` — there'd be no install isolation.)
 
 - `install_id` is the `Solution.id` (`api/src/models/orm/solutions.py`) — the same UUID stamped as
   `solution_id` on every managed entity. There is no separate install_id concept.
