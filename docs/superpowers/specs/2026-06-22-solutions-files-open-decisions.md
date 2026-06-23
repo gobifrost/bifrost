@@ -65,8 +65,27 @@ cap with a **loud** warning (`TABLE_ROW_CAP`), omit-empty, ride the bundle **onl
   FileBackend `list()` and reads each via `read()`.
 - A `SolutionBundle.solution_files: dict[str, bytes]` (or `{location: {path: bytes}}`) field, keyed
   by relative path, present only when `include_data=True`.
-- Re-import writes via `backend.write(path, content, location=…, scope=str(install_id))`.
+- Re-import writes via `backend.write(path, content, location=…, scope=str(install_id))`, honoring
+  the **replace/skip** choice (D6) — **no mirror-delete on import or update** (O1).
 - The field-class `classify()` machinery does **not** apply — files aren't DB columns.
+
+### D6 (DECIDED). Mass file operations run in a background job, never inline
+
+Any operation that touches **many** files — restoring files from a bundle (install/update with
+`include_data`), deleting a folder above a threshold (`> N` files), an uninstall S3 sweep (O3) —
+**must run as a background job**, not synchronously in an HTTP request (browser or CLI). A single
+request may not fan out into hundreds/thousands of S3 calls.
+
+- The request **enqueues** a job and returns a job/operation id; the client polls/streams progress
+  (mirror the existing async-deploy UX — see [[project_cli_solution_ux_plan]] for the
+  observable-deploy pattern already shipped for solution deploy).
+- Threshold for "mass": a folder delete (or any bulk op) over a fixed `FILE_BULK_INLINE_CAP` runs
+  as a job; under it may run inline. Bundle restore is **always** a job regardless of count.
+- This is consistent with how solution **deploy** already works (async, observable). File bulk ops
+  are the same class of operation and get the same treatment.
+- Implication for O1/O3: replace-vs-skip merge and the uninstall prefix sweep are **job bodies**,
+  not request handlers. The replace/skip *choice* is captured at enqueue time and carried into the
+  job.
 
 ### D4. Policy resolution gains a second cascade axis — precedence must be declared
 
@@ -90,43 +109,114 @@ even though it's free in concept.
 
 ---
 
-## Genuinely open decisions
+## Decisions taken here + still-open questions
 
-### O1 (biggest): shipped files vs. runtime/user files on update
+O1 (update semantics) is **decided** below — kept in this section for context. O2–O4 remain open;
+O5 is a deliberate "no." (D6, the mass-ops-as-jobs rule, is also decided — recorded up in the
+"already decides" block since it's forced by existing infra.)
 
-Deploy is **full-replace** for entities (`DELETE … WHERE solution_id == sid AND id NOT IN bundle`).
-Applied naively to S3, a solution **update would wipe customer-generated files**.
+### O1 (DECIDED): file update is copy-paste merge, not full-replace
 
-Solution files therefore split into two classes:
-- **Shipped** — part of the bundle (seed data, templates). Replaced on update, like entities.
-- **Runtime/user** — created post-install by the solution's users/workflows. Must **survive** an
-  update untouched.
+**Decision (2026-06-22).** Files do **not** follow the entity full-replace/mirror-delete model.
+On a solution update, shipped files apply like a **copy-paste into a folder**:
 
-Open: how to distinguish them. Options —
-1. **Sub-prefix split:** `{location}/{install_id}/_shipped/…` vs `{location}/{install_id}/…`.
-   Update full-replaces only under `_shipped/`. Simple, visible, no metadata needed.
-2. **Metadata flag:** `FileMetadata.source = shipped|runtime`. Update sweeps only `shipped`.
-   Flexible, but relies on the guard/Core-write discipline and a correct flag on every write.
-3. **Manifest-listed shipped set:** the bundle names its shipped paths; update replaces exactly
-   that set, never touches anything else. Most precise; bundle carries the authority.
+- The installer chooses **once, for the whole bundle**: **Replace existing** (overwrite files at
+  colliding paths) or **Skip existing** (only write files whose path doesn't already exist). No
+  per-file prompting; it's an "apply to all" choice.
+- **No mirror-delete, ever.** If bundle v2 omits a file v1 shipped, the v1 copy **stays** in the
+  install. Update never deletes. Cleaning up a dropped file is the installer's manual task if they
+  want it.
+- **No shipped-vs-runtime tracking needed.** Because update never deletes, runtime/user-created
+  files are never at risk regardless of prefix — the distinction that motivated the original
+  sub-prefix/flag options is **moot**. The only real collision (a shipped file landing on an
+  existing path) is handled by the replace/skip choice. This is strictly simpler than any
+  tracking scheme.
+- **No mirror on *import* either.** Same rule for a fresh install from a bundle: write the bundle's
+  files; if something already occupies a path, honor the replace/skip choice. Import does not
+  reconcile-delete.
 
-Recommendation to explore first: **(1) sub-prefix** — it makes the invariant structural (you can't
-accidentally full-replace user data because it's not under the swept prefix) and needs no flag
-plumbed through every write. Decide before any implementation.
+Consequence to accept: a long-lived install accumulates orphaned shipped files across versions
+(dropped-but-never-removed). That's the deliberate trade for safety + simplicity — never risking
+user data beats automatic tidiness. Uninstall (O3) still sweeps the whole install prefix, so
+orphans don't outlive the install.
 
-### O2: presigned-URL scope (correctness hole if wrong)
+> Contrast with entities: entity deploy **does** mirror-delete (`id NOT IN bundle`) because entity
+> identity is a UUID the bundle owns end-to-end. File identity is a user-meaningful *path* that the
+> install's own users also write to — so the safe default flips to never-delete-on-update.
 
-The Files SDK mints presigned S3 URLs that **bypass the policy layer** (raw S3). A solution's
-presign must be minted against `{location}/{install_id}/…` and must **not** be mintable for the org
-pool. The install scope has to be baked into the presign at mint time, or a solution can presign a
-cross-scope read the cascade never sees. Treat as a security-review item, not a nicety.
+### O2: presigned-URL scope (the highest-leverage correctness item)
 
-### O3: S3 orphan sweep on uninstall
+**The mechanism.** For large files the SDK doesn't stream bytes through the API — it asks the API
+to **presign** an S3 URL: a URL carrying an S3 signature that grants the *bearer* direct
+`GET`/`PUT` on **one specific S3 key** for a few minutes. The client then talks straight to
+SeaweedFS. The decisive property: **once minted, the presigned URL is the authority.** S3 honors
+the signature and consults **no** `FilePolicy`, `organization_id`, or `solution_id` — the entire
+policy layer lives in the API, and a presigned URL routes *around* it by design.
+
+This is already true for non-solution files and already fine, because the API checks the policy
+**before** signing and signs a key **inside the caller's own scope**. The presign is safe *only
+because the key it points at was scope-checked at mint time.*
+
+**Why Solutions breaks it.** `{location}/{install_id}/{path}` creates sibling scopes that differ
+only by the UUID in the middle:
+
+```
+shared/{org_id}/financials.xlsx        ← org pool
+shared/{installA}/financials.xlsx      ← solution A
+shared/{installB}/financials.xlsx      ← solution B
+```
+
+The hole opens whenever the **signed key derives from client input** instead of the
+**server-resolved** scope. Three failure modes:
+
+1. **Client picks the scope.** If the presign endpoint accepts `scope` (or a raw `path` containing
+   the scope segment) and signs what it's handed, a caller in solution A requests `scope=<org_id>`
+   or `scope=<installB>` and gets a valid presigned URL into a pool it must never touch. The
+   cascade never runs on the signed key — it's in the API; the bytes come from S3. Silent
+   cross-scope access.
+2. **Traversal across the boundary.** Even with `scope` server-pinned, a `path` of
+   `../../{org_id}/financials.xlsx` re-targets the key out of the install prefix. `resolve_s3_key`
+   already rejects traversal (`_validate_path`) — **but only if the presign path routes through
+   that same resolver.** A string-concat key-builder re-opens it.
+3. **PUT presigns are worse than GET.** A mis-scoped write-presign lets a solution *plant* a file
+   in the org pool or a sibling install, which then resolves for other readers. Cross-scope
+   **write**, not just read.
+
+**The fix — server-resolved scope, baked in at mint time:**
+
+- The presign endpoint **never accepts a scope / install_id from the client.** It derives the scope
+  from the authenticated context: a solution app's context carries `solution_id` (the install),
+  exactly as `sdk.tables` derives `?solution=` today (see O4). Server computes
+  `scope = str(install_id)` (or the user's `org_id` for non-solution callers). The client cannot
+  name the scope.
+- The key is built by the **same `resolve_s3_key(location, scope, path)`** used by read/write/list,
+  so traversal validation + prefix composition are identical. **No second key-builder.**
+- The policy check (`is_allowed` — `read` for GET, `write` for PUT) runs **before** signing,
+  against the resolved key's `(location, scope, path)`. Signing is the **last** step, only on
+  success.
+- Result: a presigned URL is only ever valid for a key inside the caller's resolved scope. A
+  solution **physically cannot** obtain a signature for `{org_id}` or a sibling install — not
+  because a policy denies it, but because the API never signs anything outside the scope it
+  resolved from the token.
+
+**Why it's a security-review item, not a nicety.** Every other Solutions isolation is enforced in
+the API after the fact (guard, cascade, `solution_id` filters). The presign is the **one** path
+where bytes leave through a door the API doesn't stand in front of afterward. Get the mint-time
+scope wrong and the FilePolicy / cascade / guard work is **bypassed by construction** for presigned
+access. Highest-leverage correctness item in the files-in-solutions surface — must be on the
+security-review checklist with explicit tests for all three failure modes (client-scope override,
+traversal, PUT into a foreign scope).
+
+### O3: S3 orphan sweep on uninstall (runs as a job — D6)
 
 Entity uninstall is DB-cascaded; S3 is not. Uninstall must explicitly sweep
 `{location}/{install_id}/` across every location the install used (and the `FileMetadata` rows, via
 Core delete). Without it: leaked, still-billed objects + dangling metadata. Table data avoids this
 (DB cascade); files cannot.
+
+Because the sweep is unbounded in size, it **runs as a background job** (D6), enqueued by the
+uninstall flow — not inline. The whole-prefix sweep is what makes O1's never-delete-on-update
+orphans safe: they don't outlive the install.
 
 ### O4: app-relative auto-scoping (ergonomics)
 
@@ -149,17 +239,20 @@ cascade.
 ## Rough shape if/when scheduled (not a plan)
 
 1. Add `solution_id` to `FileMetadata` + `FilePolicy` (+ migration, partial unique indexes per the
-   solution pattern). Core-write only.
-2. Own-first file resolver: file endpoints accept a solution scope; `WHERE solution_id == scope OR
-   IS NULL`; precedence per D4.
+   solution pattern). Core-write only (D2).
+2. Own-first file resolver: file endpoints derive solution scope from context; `WHERE solution_id
+   == scope OR IS NULL`; precedence per D4.
 3. Policy cascade precedence own-solution→org→global; thread solution scope into
    `resolve_policy_refs` (D5).
-4. Decide O1 (shipped vs runtime) → bundle capture/install of file bytes under `include_data` (D3),
-   modeled on `_table_data`.
-5. Uninstall S3 sweep (O3) + presign scope hardening (O2).
+4. Bundle capture/install of file bytes under `include_data` (D3), modeled on `_table_data`, with
+   **replace/skip merge, no mirror** (O1) — restore runs as a **job** (D6).
+5. Uninstall S3 sweep as a **job** (O3, D6) + presign scope hardening + the three presign tests
+   (O2).
 6. App SDK auto-scoping (O4).
+7. Background-job plumbing for mass file ops (D6): enqueue + observable progress (reuse the
+   async-deploy pattern); `FILE_BULK_INLINE_CAP` threshold for folder deletes.
 
-Each is a real slice; O1 gates 4. None block the named-policy-rules plan, which ships independently.
+Each is a real slice. None block the named-policy-rules plan, which ships independently.
 
 ---
 
@@ -171,3 +264,7 @@ Each is a real slice; O1 gates 4. None block the named-policy-rules plan, which 
   reimport pair and their own uninstall sweep.
 - `install_id` is `Solution.id` is `solution_id`; it is the file scope.
 - Content isolation is structural (prefix); only policy cascades. [[project-file-policies-cascade]]
+- File update is **copy-paste merge (replace/skip), never mirror-delete** — entities mirror, files
+  don't, because a file's identity is a user-writable path. Same rule on import.
+- **Mass file ops are jobs, never inline requests** (bundle restore always; folder delete above a
+  cap; uninstall sweep). Reuse the observable async-deploy pattern. [[project_cli_solution_ux_plan]]
