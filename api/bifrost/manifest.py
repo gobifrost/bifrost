@@ -956,9 +956,11 @@ class ManifestTable(EntityCodec, BaseModel):
         if raw_policies:
             entries: list[ManifestPolicy | ManifestPolicyRef] = []
             for p in raw_policies:
-                if isinstance(p, dict) and ("$ref" in p or "ref" in p):
+                if isinstance(p, dict) and "$ref" in p:
                     # Stored as a named-rule ref — preserve the $ref form.
-                    ref_val = p.get("$ref") or p.get("ref")
+                    ref_val = p.get("$ref")
+                    if not ref_val:
+                        raise ValueError(f"malformed policy ref entry (null or empty $ref): {p!r}")
                     entries.append(ManifestPolicyRef(**{"$ref": ref_val}))
                 else:
                     entries.append(ManifestPolicy.model_validate(p))
