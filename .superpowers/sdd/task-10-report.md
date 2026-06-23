@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implemented `ManifestPolicyRule` entity model, manifest generator/import for named policy rules (is_builtin excluded, `_resolve_policy_rule` ordered before tables/file policies), and the `policy_rules.py` MCP thin wrapper.
+Implemented `ManifestPolicyRule` entity model, manifest generator/import for named policy rules (is_builtin excluded, `_resolve_policy_rule` ordered before tables/file policies), and the `policy_rules.py` MCP thin wrapper. All unit and e2e tests pass.
 
 ## ManifestPolicyRef / Union NOT Re-added
 
@@ -32,6 +32,14 @@ manifest_import.py step ordering:
 
 Also added: prefetch cache (`policy_rule_by_natural`, `policy_rule_ids`), stale-entity cleanup (deletes non-builtin rules not in manifest), `present_policy_rule_uuids`.
 
+### Bug fixes during implementation
+
+1. **`PolicyRule.created_at/updated_at` have Python-side defaults only** (no `server_default`). Core INSERT must supply them explicitly — added `created_at` and `updated_at` to the INSERT path in `_resolve_policy_rule`.
+
+2. **`has_entities` check in `_import_all_entities` omitted `policy_rules`**. When the `.bifrost/` dir contained ONLY `policy-rules.yaml`, `has_entities` evaluated to `False` and import was skipped entirely. Fixed by adding `or manifest.policy_rules` to the check.
+
+3. **Test used name `"admin_bypass"` that conflicts with a seeded builtin**. The natural-key lookup matched the builtin rule (with a different UUID), causing the manifest's UUID to point to the builtin row. Fixed by using a unique name `"ops_read_only"` in the test.
+
 ## MCP Tool (policy_rules.py)
 
 `api/src/services/mcp_server/tools/policy_rules.py` — thin HTTP bridge:
@@ -49,7 +57,7 @@ GREEN after fix to `Destination.INSTALL`: **140 passed, 0 failed**.
 
 ```
 ./test.sh tests/unit/test_manifest.py tests/unit/test_mcp_thin_wrapper.py -v
-→ 140 passed in 3.26s
+→ 140 passed in 3.09s
 ```
 
 ## Git-Sync Round-Trip E2E
@@ -58,13 +66,16 @@ Two tests in `TestPolicyRuleRoundTrip`:
 1. `test_pull_policy_rule_from_manifest` — manifest commit → sync → PolicyRule row verified in DB
 2. `test_policy_rule_runs_before_table_in_import` — rule + table with `{"$ref": "ops_access"}` → both exist after sync
 
-E2E test run was in progress at report-writing time (stack healthy, test runner active).
+```
+./test.sh tests/e2e/platform/test_git_sync_local.py::TestPolicyRuleRoundTrip -v
+→ 2 passed in 2.78s
+```
 
 ## Gates
 
 ```
 ./test.sh tests/unit/test_dto_flags.py tests/unit/test_contract_version.py -v
-→ 64 passed in 0.65s  ✓
+→ 64 passed in 0.53s  ✓
 ```
 
 No CONTRACT_VERSION bump — only MCP tool added, no CLI/SDK DTOs changed.
@@ -73,19 +84,16 @@ No CONTRACT_VERSION bump — only MCP tool added, no CLI/SDK DTOs changed.
 
 ## Files Changed
 
-- `api/bifrost/manifest.py`
-- `api/src/services/manifest_generator.py`
-- `api/src/services/manifest_import.py`
-- `api/src/services/mcp_server/tools/policy_rules.py` (new)
-- `api/src/services/mcp_server/tools/__init__.py`
-- `api/tests/unit/test_manifest.py` (5 new tests in TestManifestPolicyRule)
-- `api/tests/unit/test_mcp_thin_wrapper.py` (policy_rules in PARITY_HANDLERS + MODULES)
-- `api/tests/e2e/platform/test_git_sync_local.py` (TestPolicyRuleRoundTrip — 2 tests)
+- `api/bifrost/manifest.py` — ManifestPolicyRule class + MANIFEST_FILES + Manifest.policy_rules
+- `api/src/services/manifest_generator.py` — serialize_policy_rule + is_builtin exclusion
+- `api/src/services/manifest_import.py` — _resolve_policy_rule (step 5), prefetch cache, stale cleanup
+- `api/src/services/github_sync.py` — has_entities check includes policy_rules
+- `api/src/services/mcp_server/tools/policy_rules.py` (new) — 3 thin HTTP wrappers
+- `api/src/services/mcp_server/tools/__init__.py` — policy_rules registered
+- `api/tests/unit/test_manifest.py` — TestManifestPolicyRule (5 tests)
+- `api/tests/unit/test_mcp_thin_wrapper.py` — policy_rules in PARITY_HANDLERS + MODULES
+- `api/tests/e2e/platform/test_git_sync_local.py` — TestPolicyRuleRoundTrip (2 tests)
 
 ## Self-Review
 
 All constraints met: ManifestPolicyRef/union not re-added; ManifestPolicyRule mirrors ManifestConfig pattern; is_builtin excluded from generator; _resolve_policy_rule before _resolve_table/_resolve_file_policy; MCP tool ORM-free; gates green.
-
-## Concerns
-
-None.
