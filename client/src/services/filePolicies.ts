@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/api-client";
+import type { components } from "@/lib/v1";
 
 export type FilePolicyAction = "read" | "write" | "delete" | "list";
 
@@ -9,9 +10,11 @@ export interface FilePolicyRule {
 	when?: unknown;
 }
 
+export type PolicyRuleRef = components["schemas"]["PolicyRuleRef"];
+
 /** The portable policy document (the inner `{ policies: [...] }`). */
 export interface FilePolicies {
-	policies: FilePolicyRule[];
+	policies: (FilePolicyRule | PolicyRuleRef)[];
 }
 
 export interface FilePolicy {
@@ -19,9 +22,7 @@ export interface FilePolicy {
 	location: string;
 	path: string;
 	organizationId?: string | null;
-	policies: {
-		policies: FilePolicyRule[];
-	};
+	policies: FilePolicies;
 }
 
 export interface FilePolicyListResponse {

@@ -21,5 +21,6 @@ export async function policyRuleUsages(domain: string, name: string): Promise<Po
 		},
 	});
 	if (error) throw new Error(typeof error === "object" && "detail" in error ? String((error as { detail: unknown }).detail) : "Failed to get policy rule usages");
-	return data!;
+	if (data === undefined) throw new Error("No data returned for policy rule usages");
+	return data;
 }

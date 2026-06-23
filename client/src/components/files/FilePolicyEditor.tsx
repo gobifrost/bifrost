@@ -98,7 +98,7 @@ export function FilePolicyEditor({
 	function handleRef(name: string) {
 		if (!name) return;
 		const current = doc?.policies ?? [];
-		setDoc({ policies: [...current, { $ref: name } as unknown as FilePolicies["policies"][number]] });
+		setDoc({ policies: [...current, { $ref: name }] });
 		setRefKey("");
 	}
 

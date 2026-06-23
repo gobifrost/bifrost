@@ -101,15 +101,15 @@ export function PoliciesView({
 												no rules
 											</span>
 										) : (
-											policy.policies.policies.map((rule) => (
-												<Badge
-													key={rule.name}
-													variant="secondary"
-													className="font-normal"
-												>
-													{rule.name}
-												</Badge>
-											))
+											policy.policies.policies.map((rule, i) => (
+											<Badge
+												key={"$ref" in rule ? rule.$ref : (rule.name ?? i)}
+												variant="secondary"
+												className="font-normal"
+											>
+												{"$ref" in rule ? `ref:${rule.$ref}` : rule.name}
+											</Badge>
+										))
 										)}
 									</div>
 								</DataTableCell>

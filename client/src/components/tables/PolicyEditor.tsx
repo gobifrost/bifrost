@@ -173,7 +173,8 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 	function handleRef(name: string) {
 		if (!name) return;
 		const current = value?.policies ?? [];
-		emit({ policies: [...current, { $ref: name } as unknown as NonNullable<TablePolicies["policies"]>[number]] });
+		const ref: components["schemas"]["PolicyRuleRef"] = { $ref: name };
+		emit({ policies: [...current, ref] });
 		setRefKey("");
 	}
 

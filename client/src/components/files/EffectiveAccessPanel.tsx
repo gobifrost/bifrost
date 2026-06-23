@@ -97,14 +97,22 @@ export function EffectiveAccessPanel({
 								{index === 0 && <Badge variant="secondary">winning</Badge>}
 							</div>
 							<ul className="mt-1 space-y-0.5">
-								{policy.policies.policies.map((rule) => (
-									<li key={rule.name} className="text-muted-foreground">
-										<span className="font-medium text-foreground">
-											{rule.name}
-										</span>{" "}
-										→ {rule.actions.join(", ")}
-									</li>
-								))}
+								{policy.policies.policies.map((rule, i) =>
+									"$ref" in rule ? (
+										<li key={rule.$ref} className="text-muted-foreground">
+											<span className="font-medium text-foreground font-mono">
+												ref: {rule.$ref}
+											</span>
+										</li>
+									) : (
+										<li key={rule.name ?? i} className="text-muted-foreground">
+											<span className="font-medium text-foreground">
+												{rule.name}
+											</span>{" "}
+											→ {rule.actions.join(", ")}
+										</li>
+									)
+								)}
 							</ul>
 						</li>
 					))}
