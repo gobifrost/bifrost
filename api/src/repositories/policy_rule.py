@@ -1,7 +1,7 @@
 """PolicyRule cascade repository."""
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from src.models.orm.policy_rule import PolicyRule
 from src.repositories.org_scoped import OrgScopedRepository
@@ -43,28 +43,9 @@ class PolicyRuleRepository(OrgScopedRepository[PolicyRule]):
         row = await self.get(name=name, domain=domain)
         if row is not None:
             return row
-        # Cross-domain detection: direct org-cascade query, name only, no domain filter.
-        # The unique index ensures at most one non-solution row per (org, name, domain),
-        # but same-name rules CAN exist for different domains in the same org. We use
-        # .limit(1) + .first() instead of scalar_one_or_none() to avoid
-        # MultipleResultsFound in that edge case — the caller only needs to know that
-        # A rule of this name exists (to raise PolicyRuleDomainMismatch vs PolicyRuleNotFound).
-        scope_filter = (
-            or_(
-                PolicyRule.organization_id == self.org_id,
-                PolicyRule.organization_id.is_(None),
-            )
-            if self.org_id is not None
-            else PolicyRule.organization_id.is_(None)
-        )
-        cross_q = (
-            select(PolicyRule)
-            .where(
-                PolicyRule.name == name,
-                PolicyRule.solution_id.is_(None),
-                scope_filter,
-            )
-            .limit(1)
-        )
-        result = await self.session.execute(cross_q)
-        return result.scalars().first()
+        # Cross-domain detection via the canonical cascade (no inline org filter):
+        # list() applies _apply_cascade_scope (org→global). The solution_id IS NULL
+        # exclusion lives in get(), not list(), so we pass it explicitly here so a
+        # different solution's rule can't leak into cross-domain detection.
+        rows = await self.list(name=name, solution_id=None)
+        return rows[0] if rows else None

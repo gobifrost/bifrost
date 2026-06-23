@@ -119,3 +119,33 @@ async def test_solution_falls_back_to_org_global(db_session, seed_org, seed_solu
     await resolve_policy_refs(doc, repo=repo, action_domain="file", solution_id=seed_solution)
     assert isinstance(doc.policies[0], FilePolicyRule)
     assert doc.policies[0].actions == ["list"]
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_does_not_leak_foreign_solution_rule(db_session, seed_org):
+    """Cross-domain detection (step 3 of get_for_ref) must NOT surface a rule owned by a
+    different solution_id — only solution_id IS NULL rows are in-scope for cross-domain detection."""
+    # Seed a real Solution row (FK constraint requires it)
+    other_sol = Solution(
+        id=uuid4(),
+        slug=f"other-sol-{uuid4().hex[:8]}",
+        name="Other Solution",
+        organization_id=seed_org,
+    )
+    db_session.add(other_sol)
+    await db_session.flush()
+
+    # A rule named "x" owned by the other solution — must NOT be visible via cross-domain detection
+    db_session.add(PolicyRule(
+        name="x", domain="file", organization_id=seed_org,
+        solution_id=other_sol.id,
+        body={"actions": ["read"], "when": None},
+    ))
+    await db_session.flush()
+
+    # Caller resolves with solution_id=None (no solution context) — the foreign-solution
+    # rule above must be invisible; the resolver should raise PolicyRuleNotFound.
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    doc = FilePolicies.model_validate({"policies": [{"$ref": "x"}]})
+    with pytest.raises(PolicyRuleNotFound):
+        await resolve_policy_refs(doc, repo=repo, action_domain="file")
