@@ -1122,9 +1122,6 @@ async def get_deploy_job(
 # File job: enqueue + poll
 # ---------------------------------------------------------------------------
 
-FILE_JOB_ORPHAN_THRESHOLD = timedelta(minutes=15)
-
-
 async def _run_file_job(
     job_id: UUID,
     kind: str,
@@ -1224,7 +1221,7 @@ async def enqueue_file_job(
 
     job = SolutionFileJob(
         install_id=body.install_id,
-        origin_solution_id=body.install_id,
+        origin_solution_id=body.install_id,  # install_id == the Solution's own id in this model; origin_* is provenance for the orphan flow
         kind=body.kind,
         status="queued",
         captured_keys=captured,
