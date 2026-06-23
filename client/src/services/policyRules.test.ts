@@ -29,7 +29,7 @@ const RULE = {
 	domain: "file" as const,
 	description: "Platform admins bypass all file policies",
 	body: { policies: [] },
-	read_only: true,
+	is_builtin: false,
 	created_at: "2024-01-01T00:00:00Z",
 	updated_at: "2024-01-01T00:00:00Z",
 };

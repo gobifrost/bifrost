@@ -96,8 +96,11 @@ export function PolicyRulesManager({ domain }: PolicyRulesManagerProps) {
 	const [deleteTarget, setDeleteTarget] = useState<PolicyRule | null>(null);
 	const [deleting, setDeleting] = useState(false);
 
-	// Blast-radius state: populated when DELETE returns 409 or on edit pre-fetch
+	// Blast-radius state: populated when DELETE returns 409
 	const [blastRadius, setBlastRadius] = useState<PolicyRuleInUseError | null>(null);
+
+	// Edit usages: informational — shows impact before saving, does NOT block editing
+	const [editUsages, setEditUsages] = useState<{ file_policies: PolicyRuleInUseError["usages"]["file_policies"]; tables: PolicyRuleInUseError["usages"]["tables"]; total: number } | null>(null);
 
 	async function reload() {
 		try {
@@ -131,12 +134,14 @@ export function PolicyRulesManager({ domain }: PolicyRulesManagerProps) {
 			bodyJson: JSON.stringify(rule.body, null, 2),
 		});
 		setFormError(null);
+		setEditUsages(null);
 		setFormTarget({ mode: "edit", rule });
 	}
 
 	function closeForm() {
 		setFormTarget(null);
 		setFormError(null);
+		setEditUsages(null);
 	}
 
 	async function handleSave() {
@@ -208,12 +213,10 @@ export function PolicyRulesManager({ domain }: PolicyRulesManagerProps) {
 		try {
 			const usages = await policyRuleUsages(rule.domain, rule.name);
 			if (usages.total > 0) {
-				setDeleteTarget(rule);
-				setBlastRadius({
-					type: "in_use",
-					message: `Rule '${rule.name}' is referenced by ${usages.total} item(s)`,
-					usages,
-				});
+				// Informational only — editing a referenced rule IS allowed.
+				// Store usages separately so the edit dialog can show an impact banner
+				// without triggering the delete/blast-radius AlertDialog.
+				setEditUsages(usages);
 			}
 		} catch {
 			// Best-effort — if usages fetch fails, just proceed with the edit.
@@ -359,6 +362,24 @@ export function PolicyRulesManager({ domain }: PolicyRulesManagerProps) {
 							/>
 						</div>
 
+						{formTarget?.mode === "edit" && editUsages && editUsages.total > 0 && (
+							<div
+								className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+								role="status"
+								data-testid="edit-usages-banner"
+							>
+								This rule is referenced by{" "}
+								{editUsages.file_policies.length > 0 && (
+									<span>{editUsages.file_policies.length} file {editUsages.file_policies.length === 1 ? "policy" : "policies"}</span>
+								)}
+								{editUsages.file_policies.length > 0 && editUsages.tables.length > 0 && " and "}
+								{editUsages.tables.length > 0 && (
+									<span>{editUsages.tables.length} {editUsages.tables.length === 1 ? "table" : "tables"}</span>
+								)}
+								. Saving changes will apply everywhere it&apos;s used.
+							</div>
+						)}
+
 						{formError && (
 							<p className="text-sm text-destructive" role="alert" data-testid="form-error">
 								{formError}
@@ -407,7 +428,7 @@ export function PolicyRulesManager({ domain }: PolicyRulesManagerProps) {
 				</AlertDialogContent>
 			</AlertDialog>
 
-			{/* Blast-radius dialog: shown when DELETE returns 409 OR when a used rule is opened */}
+			{/* Blast-radius dialog: shown when DELETE returns 409 (delete-flow only) */}
 			<AlertDialog
 				open={blastRadius !== null}
 				onOpenChange={(open) => { if (!open) { setBlastRadius(null); setDeleteTarget(null); } }}

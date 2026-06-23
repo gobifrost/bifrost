@@ -153,6 +153,37 @@ describe("PolicyRulesManager", () => {
 		});
 	});
 
+	it("edit with usages: shows inline info banner, does NOT open blast-radius delete dialog", async () => {
+		const user = userEvent.setup();
+		mockList.mockResolvedValue([RULE_CUSTOM]);
+		mockUsages.mockResolvedValue({
+			file_policies: [{ id: "fp-1", location: "workspace", path: "reports/", organization_id: null }],
+			tables: [{ id: "tb-1", name: "my_table", organization_id: null }],
+			total: 2,
+		});
+
+		render(<PolicyRulesManager domain="file" />);
+		await waitFor(() => screen.getByTestId("policy-rule-edit-btn"));
+
+		await user.click(screen.getByTestId("policy-rule-edit-btn"));
+
+		// (a) edit dialog is open
+		await waitFor(() => screen.getByRole("dialog"));
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+		// (b) informational usages banner is visible inside the dialog with the count
+		await waitFor(() => screen.getByTestId("edit-usages-banner"));
+		const banner = screen.getByTestId("edit-usages-banner");
+		expect(banner).toBeInTheDocument();
+		expect(banner).toHaveTextContent("1 file polic");
+		expect(banner).toHaveTextContent("1 table");
+		expect(banner).toHaveTextContent("Saving changes will apply everywhere it");
+
+		// (c) blast-radius / delete AlertDialog is NOT open
+		expect(screen.queryByTestId("blast-radius-dialog")).toBeNull();
+		expect(screen.queryByText("You must remove all references first")).toBeNull();
+	});
+
 	it("delete: shows confirmation dialog, deletes on confirm", async () => {
 		const user = userEvent.setup();
 		mockList.mockResolvedValue([RULE_CUSTOM]);
