@@ -29,6 +29,7 @@ from src.models.orm.external_mcp import (
     MCPConnectionTool,
     MCPServer,
 )
+from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
 from src.models.orm.oauth import OAuthProvider
@@ -54,6 +55,7 @@ from bifrost.manifest import (
     ManifestOrganization,
     ManifestPolicyRule,
     ManifestRole,
+    ManifestSolutionFile,
     ManifestTable,
     ManifestWorkflow,
 )
@@ -452,14 +454,44 @@ async def generate_manifest(
     # File policies
     # ------------------------------------------------------------------
     FilePolicy = _load_file_policy_model()
-    file_policy_result = await db.execute(
-        select(FilePolicy).order_by(
-            FilePolicy.organization_id,
-            FilePolicy.location,
-            FilePolicy.path,
-        )
+    fp_query = select(FilePolicy).order_by(
+        FilePolicy.organization_id,
+        FilePolicy.location,
+        FilePolicy.path,
     )
+    if solution_id is not None:
+        # Solution-scoped export: only this solution's file policies.
+        fp_query = fp_query.where(FilePolicy.solution_id == solution_id)
+    else:
+        # Workspace export: only non-solution rows (solution rows are deploy-owned).
+        fp_query = fp_query.where(FilePolicy.solution_id.is_(None))
+    file_policy_result = await db.execute(fp_query)
     file_policies_list = file_policy_result.scalars().all()
+
+    # ------------------------------------------------------------------
+    # Solution file index (solution-scoped export only, metadata-only — no bytes)
+    # ------------------------------------------------------------------
+    solution_files_list: list[ManifestSolutionFile] = []
+    if solution_id is not None:
+        sf_result = await db.execute(
+            select(
+                FileMetadata.location,
+                FileMetadata.path,
+                FileMetadata.sha256,
+                FileMetadata.size_bytes,
+            )
+            .where(FileMetadata.solution_id == solution_id)
+            .order_by(FileMetadata.location, FileMetadata.path)
+        )
+        for row in sf_result.all():
+            solution_files_list.append(
+                ManifestSolutionFile(
+                    location=row.location,
+                    path=row.path,
+                    sha256=row.sha256 or "",
+                    size=row.size_bytes or 0,
+                )
+            )
 
     # ------------------------------------------------------------------
     # Event sources + subscriptions
@@ -599,6 +631,7 @@ async def generate_manifest(
             )
             for server in mcp_servers_list
         },
+        solution_files=solution_files_list,
     )
 
     logger.info(
@@ -610,7 +643,8 @@ async def generate_manifest(
         f"{len(manifest.tables)} tables, "
         f"{len(manifest.file_policies)} file_policies, "
         f"{len(manifest.events)} events, "
-        f"{len(manifest.mcp_servers)} mcp_servers"
+        f"{len(manifest.mcp_servers)} mcp_servers, "
+        f"{len(manifest.solution_files)} solution_files"
     )
 
     return manifest

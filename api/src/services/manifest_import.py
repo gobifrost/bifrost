@@ -577,7 +577,17 @@ class ManifestResolver:
                 await op.execute(self.db)
         all_ops.extend(ops)
 
-    async def plan_import(self, manifest: "Manifest", work_dir: Path | None = None, progress_fn=None, repo: "RepoStorage | None" = None, dry_run: bool = False, changed_ids: set[str] | None = None) -> "list[SyncOp]":
+    async def plan_import(
+        self,
+        manifest: "Manifest",
+        work_dir: Path | None = None,
+        progress_fn=None,
+        repo: "RepoStorage | None" = None,
+        dry_run: bool = False,
+        changed_ids: set[str] | None = None,
+        sidecar_content: Any = None,
+        install_id: "UUID | None" = None,
+    ) -> "list[SyncOp]":
         """Build and execute SyncOps for importing a manifest (entities only).
 
         Resolves and immediately executes ops in dependency order.
@@ -590,6 +600,13 @@ class ManifestResolver:
         ``work_dir`` (local filesystem).  At least one must be provided for
         entities that reference source files (workflows, forms, agents).
 
+        ``sidecar_content`` (optional): a decoded ``SolutionContent`` instance
+        carrying the encrypted file bytes.  When provided alongside
+        ``install_id``, solution files in ``manifest.solution_files`` are
+        written via ``_resolve_solution_files`` after entity resolution.
+        Import is fail-closed: a manifest index entry with no matching sidecar
+        bytes raises before any file is written.
+
         Import order:
         0a. Organizations (no deps)
         0b. Roles (no deps)
@@ -601,6 +618,7 @@ class ManifestResolver:
         6.  Event Sources + Subscriptions (refs integration + workflow UUIDs)
         7.  Forms (refs workflow + org UUIDs) — metadata only
         8.  Agents (refs workflow + org UUIDs) — metadata only
+        N.  Solution files (bytes from sidecar, AFTER entities, BEFORE finalize)
 
         Returns the collected ops for callers that want to inspect them
         (e.g. for entity change tracking or dry-run analysis).
@@ -830,6 +848,15 @@ class ManifestResolver:
                     await self._resolve_mcp_connection(
                         conn_id, mconn, imported_server_ids, server_id=mserver.id
                     )
+
+        # N. Resolve solution files — AFTER entities, BEFORE finalize.
+        # Only runs when the caller provides both install_id and sidecar_content
+        # (full-backup import path). git-sync callers pass neither, so this is
+        # a no-op for normal manifest imports.
+        if install_id is not None and not dry_run:
+            await self._resolve_solution_files(
+                manifest, install_id=install_id, sidecar_content=sidecar_content
+            )
 
         return all_ops
 
@@ -2351,6 +2378,8 @@ class ManifestResolver:
                 )
             ).scalar_one_or_none()
 
+        solution_id_val = UUID(src["solution_id"]) if src.get("solution_id") else None
+
         if existing_by_id is not None:
             await self.db.execute(
                 update(FilePolicy)
@@ -2360,6 +2389,7 @@ class ManifestResolver:
                     location=src["location"],
                     path=src["path"],
                     policies=policy_document,
+                    solution_id=solution_id_val,
                     updated_at=now,
                 )
             )
@@ -2371,11 +2401,74 @@ class ManifestResolver:
             location=src["location"],
             path=src["path"],
             policies=policy_document,
+            solution_id=solution_id_val,
             created_by=None,
         ).on_conflict_do_nothing()
         await self.db.execute(stmt)
 
         return []
+
+    async def _resolve_solution_files(
+        self,
+        manifest: "Manifest",
+        *,
+        install_id: "UUID",
+        sidecar_content: "Any | None",
+    ) -> None:
+        """Write solution-owned file sidecars from the encrypted bundle.
+
+        Called AFTER entity resolution, BEFORE finalize.
+
+        Behaviour:
+        - When ``sidecar_content`` is ``None`` (no encrypted tier): no-op.
+          This happens for shareable (no-password) bundles that carry no files.
+        - When ``manifest.solution_files`` is empty: no-op even if the sidecar
+          has bytes (nothing declared → nothing written).
+        - FAIL CLOSED: every entry in ``manifest.solution_files`` MUST have
+          matching bytes in ``sidecar_content``. If any entry is missing, the
+          entire import raises before writing a single file — no partial writes.
+
+        ``mode`` is always ``"replace"`` here (manifest import is a full-replace
+        install path). The NO-MIRROR contract (files absent from the bundle
+        survive) is preserved by the caller — nothing here deletes existing files.
+        """
+        if not manifest.solution_files:
+            return
+
+        if sidecar_content is None:
+            return
+
+        from src.services.solution_files import write_solution_file
+        import base64 as _b64
+
+        # Build lookup: (location, path) → dict entry from sidecar
+        sidecar_by_key: dict[tuple[str, str], dict] = {
+            (sf["location"], sf["path"]): sf
+            for sf in sidecar_content.solution_files
+        }
+
+        # FAIL CLOSED: verify ALL manifest entries have sidecar bytes FIRST
+        for mf in manifest.solution_files:
+            key = (mf.location, mf.path)
+            if key not in sidecar_by_key:
+                raise ValueError(
+                    f"solution file {mf.path!r} is in the manifest index but has no "
+                    f"matching sidecar bytes — refusing partial import (fail closed)"
+                )
+            entry = sidecar_by_key[key]
+            if not entry.get("content_b64"):
+                raise ValueError(
+                    f"solution file {mf.path!r} sidecar entry has no content_b64 "
+                    f"— refusing partial import (fail closed)"
+                )
+
+        # All entries validated — now write
+        for mf in manifest.solution_files:
+            entry = sidecar_by_key[(mf.location, mf.path)]
+            content = _b64.b64decode(entry["content_b64"])
+            await write_solution_file(
+                self.db, install_id, mf.location, mf.path, content, mode="replace"
+            )
 
     async def _resolve_custom_claim(self, claim_name: str, mclaim, cache: dict | None = None) -> "list[SyncOp]":
         """Resolve a custom claim from manifest into the DB.

@@ -5444,6 +5444,234 @@ class TestDeleteConfirmation:
         assert deleted_wf is None or deleted_wf.is_active is False
 
 
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestSolutionFilesManifestRoundTrip:
+    """Task 22: solution_files manifest + import round-trip (files + sha256 match).
+
+    Uses ManifestResolver._resolve_solution_files directly rather than the full
+    git-sync path, since file bytes travel via the encrypted sidecar (not git).
+    The generator side is verified by confirming generate_manifest(solution_id=…)
+    emits a non-empty solution_files list matching the installed files.
+    """
+
+    async def test_solution_files_round_trip(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        """Export solution → generate_manifest emits index → import restores files.
+
+        Flow:
+        1. Create a Solution install and write two files via write_solution_file.
+        2. Call generate_manifest(solution_id=…) and verify solution_files index.
+        3. Call _resolve_solution_files with a SolutionContent sidecar on a
+           fresh install (simulating a clean-DB import).
+        4. Verify both files are present with matching sha256.
+        """
+        import base64
+        import hashlib
+        from uuid import uuid4 as _uuid4
+
+        from src.models.orm.organizations import Organization
+        from src.models.orm.solutions import Solution
+        from src.services.manifest_generator import generate_manifest
+        from src.services.manifest_import import ManifestResolver
+        from src.services.solution_files import (
+            enumerate_solution_files,
+            write_solution_file,
+        )
+        from src.services.solutions.secrets_blob import SolutionContent
+
+        # 1. Create org + Solution install
+        org = Organization(name=f"test-org-{_uuid4().hex[:6]}", created_by="test")
+        db_session.add(org)
+        await db_session.flush()
+
+        sol = Solution(
+            slug=f"test-sol-{_uuid4().hex[:6]}",
+            name="Test Solution",
+            organization_id=org.id,
+            version="1.0.0",
+        )
+        db_session.add(sol)
+        await db_session.flush()
+
+        content_a = b"hello from file A"
+        content_b = b"hello from file B"
+        sha_a = hashlib.sha256(content_a).hexdigest()
+        sha_b = hashlib.sha256(content_b).hexdigest()
+
+        await write_solution_file(db_session, sol.id, "shared", "docs/a.txt", content_a, mode="replace")
+        await write_solution_file(db_session, sol.id, "shared", "docs/b.txt", content_b, mode="replace")
+        await db_session.commit()
+
+        # 2. Generate manifest and check solution_files index
+        manifest = await generate_manifest(db_session, solution_id=sol.id)
+        assert len(manifest.solution_files) == 2, (
+            f"Expected 2 solution_files in manifest, got {len(manifest.solution_files)}: "
+            f"{[sf.path for sf in manifest.solution_files]}"
+        )
+        paths_in_index = {sf.path for sf in manifest.solution_files}
+        assert "docs/a.txt" in paths_in_index
+        assert "docs/b.txt" in paths_in_index
+
+        sf_a = next(sf for sf in manifest.solution_files if sf.path == "docs/a.txt")
+        sf_b = next(sf for sf in manifest.solution_files if sf.path == "docs/b.txt")
+        assert sf_a.sha256 == sha_a
+        assert sf_b.sha256 == sha_b
+
+        # 3. Import into a new solution install (clean-DB import simulation)
+        new_install = Solution(
+            slug=f"test-sol-import-{_uuid4().hex[:6]}",
+            name="Test Solution Import",
+            organization_id=org.id,
+            version="1.0.0",
+        )
+        db_session.add(new_install)
+        await db_session.flush()
+
+        sidecar = SolutionContent(
+            solution_files=[
+                {
+                    "location": "shared",
+                    "path": "docs/a.txt",
+                    "sha256": sha_a,
+                    "size": len(content_a),
+                    "content_b64": base64.b64encode(content_a).decode(),
+                },
+                {
+                    "location": "shared",
+                    "path": "docs/b.txt",
+                    "sha256": sha_b,
+                    "size": len(content_b),
+                    "content_b64": base64.b64encode(content_b).decode(),
+                },
+            ]
+        )
+
+        resolver = ManifestResolver(db_session)
+        await resolver._resolve_solution_files(
+            manifest, install_id=new_install.id, sidecar_content=sidecar
+        )
+        await db_session.commit()
+
+        # 4. Verify files are present with matching sha256
+        imported_entries = await enumerate_solution_files(db_session, new_install.id)
+        assert len(imported_entries) == 2
+        imported_by_path = {e.path: e for e in imported_entries}
+        assert imported_by_path["docs/a.txt"].sha256 == sha_a
+        assert imported_by_path["docs/b.txt"].sha256 == sha_b
+
+    async def test_solution_files_missing_sidecar_fails_closed(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        """Import with a manifest entry but no matching sidecar must raise, not partial-write."""
+        import pytest
+        from uuid import uuid4 as _uuid4
+
+        from bifrost.manifest import Manifest, ManifestSolutionFile
+        from src.models.orm.organizations import Organization
+        from src.models.orm.solutions import Solution
+        from src.services.manifest_import import ManifestResolver
+        from src.services.solution_files import enumerate_solution_files
+        from src.services.solutions.secrets_blob import SolutionContent
+
+        org = Organization(name=f"test-fail-org-{_uuid4().hex[:6]}", created_by="test")
+        db_session.add(org)
+        await db_session.flush()
+
+        sol = Solution(
+            slug=f"test-fail-sol-{_uuid4().hex[:6]}",
+            name="Test Fail Solution",
+            organization_id=org.id,
+            version="1.0.0",
+        )
+        db_session.add(sol)
+        await db_session.flush()
+
+        manifest = Manifest(
+            solution_files=[
+                ManifestSolutionFile(
+                    location="shared",
+                    path="secret.txt",
+                    sha256="00" * 32,
+                    size=5,
+                )
+            ]
+        )
+
+        # Sidecar has no matching file → must fail closed
+        sidecar = SolutionContent(solution_files=[])
+
+        resolver = ManifestResolver(db_session)
+        with pytest.raises(ValueError, match="secret.txt"):
+            await resolver._resolve_solution_files(
+                manifest, install_id=sol.id, sidecar_content=sidecar
+            )
+
+        # No files should have been written
+        entries = await enumerate_solution_files(db_session, sol.id)
+        assert len(entries) == 0, "Fail-closed: no files should be written on partial import"
+
+    async def test_file_policy_solution_id_round_trips_in_generate_manifest(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        """FilePolicy.solution_id survives generate_manifest round-trip."""
+        from uuid import uuid4 as _uuid4
+
+        from sqlalchemy.dialects.postgresql import insert
+        from src.models.orm.file_metadata import FilePolicy
+        from src.models.orm.organizations import Organization
+        from src.models.orm.solutions import Solution
+        from src.services.manifest_generator import generate_manifest
+
+        org = Organization(name=f"test-fp-org-{_uuid4().hex[:6]}", created_by="test")
+        db_session.add(org)
+        await db_session.flush()
+
+        sol = Solution(
+            slug=f"test-fp-sol-{_uuid4().hex[:6]}",
+            name="Test FP Solution",
+            organization_id=org.id,
+            version="1.0.0",
+        )
+        db_session.add(sol)
+        await db_session.flush()
+
+        fp_id = _uuid4()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        await db_session.execute(
+            insert(FilePolicy).values(
+                id=fp_id,
+                organization_id=org.id,
+                location="shared",
+                path="reports",
+                policies={"policies": [{"name": "allow_all", "actions": ["read"], "when": None}]},
+                solution_id=sol.id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.flush()
+
+        # When generating a solution-scoped manifest, the file policy's solution_id
+        # should be preserved in the serialized entry.
+        manifest = await generate_manifest(db_session, solution_id=sol.id)
+        assert fp_id.__str__() in manifest.file_policies, (
+            "FilePolicy should appear in solution-scoped manifest"
+        )
+        mfp = manifest.file_policies[str(fp_id)]
+        assert mfp.solution_id == str(sol.id), (
+            f"Expected solution_id={sol.id}, got {mfp.solution_id}"
+        )
+
+
 @pytest.mark.asyncio
 class TestPolicyRuleRoundTrip:
     """Task 10: PolicyRule export → import round-trip via git sync."""

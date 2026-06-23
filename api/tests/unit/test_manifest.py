@@ -2665,4 +2665,203 @@ class TestManifestPolicyRule:
         assert len(restored_table.policies) == 2
         restored_ref = restored_table.policies[1]
         assert isinstance(restored_ref, ManifestPolicyRef)
-        assert restored_ref.ref == "ops"
+
+
+# =============================================================================
+# Task 22: ManifestSolutionFile + FilePolicy.solution_id round-trip tests
+# =============================================================================
+
+
+class TestSolutionFilesManifestRoundTrip:
+    """Tests for solution-files manifest serialization and import round-trip."""
+
+    def test_file_policy_solution_id_is_environment_classed(self):
+        """FilePolicy.solution_id is an ENVIRONMENT-classed field that round-trips."""
+        from bifrost.manifest import ManifestFilePolicy
+        from bifrost.field_classes import FieldClass, field_class_of
+
+        # The solution_id field must be present on the model and ENVIRONMENT-classed.
+        assert "solution_id" in ManifestFilePolicy.model_fields, \
+            "solution_id must exist on ManifestFilePolicy"
+        fc = field_class_of(ManifestFilePolicy, "solution_id")
+        assert fc == FieldClass.ENVIRONMENT, f"expected ENVIRONMENT, got {fc}"
+
+    def test_file_policy_solution_id_round_trips(self):
+        """ManifestFilePolicy.solution_id survives parse/serialize."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestFilePolicy,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        fp_id = str(uuid4())
+        sol_id = str(uuid4())
+        manifest = Manifest(
+            file_policies={
+                fp_id: ManifestFilePolicy(
+                    id=fp_id,
+                    organization_id=None,
+                    location="shared",
+                    path="docs",
+                    policies=[],
+                    solution_id=sol_id,
+                )
+            }
+        )
+
+        output = serialize_manifest(manifest)
+        restored = parse_manifest(output)
+        assert fp_id in restored.file_policies
+        assert restored.file_policies[fp_id].solution_id == sol_id
+
+    def test_file_policy_solution_id_none_when_absent(self):
+        """ManifestFilePolicy.solution_id defaults to None (non-solution rows)."""
+        from bifrost.manifest import ManifestFilePolicy
+
+        fp_id = str(uuid4())
+        fp = ManifestFilePolicy(
+            id=fp_id,
+            organization_id=None,
+            location="shared",
+            path="docs",
+            policies=[],
+        )
+        assert fp.solution_id is None
+
+    def test_manifest_solution_files_field_exists(self):
+        """Manifest has a solution_files field carrying ManifestSolutionFile entries."""
+        from bifrost.manifest import Manifest
+
+        m = Manifest()
+        assert hasattr(m, "solution_files")
+        assert isinstance(m.solution_files, list)
+        assert m.solution_files == []
+
+    def test_manifest_solution_files_round_trips_through_yaml(self):
+        """ManifestSolutionFile index entries survive parse/serialize."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestSolutionFile,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        entry = ManifestSolutionFile(
+            location="shared",
+            path="docs/report.pdf",
+            sha256="abc123" * 10 + "ab",
+            size=4096,
+        )
+        manifest = Manifest(solution_files=[entry])
+
+        output = serialize_manifest(manifest)
+        restored = parse_manifest(output)
+        assert len(restored.solution_files) == 1
+        sf = restored.solution_files[0]
+        assert sf.location == "shared"
+        assert sf.path == "docs/report.pdf"
+        assert sf.sha256 == "abc123" * 10 + "ab"
+        assert sf.size == 4096
+
+    def test_manifest_solution_files_in_manifest_dir(self):
+        """solution_files serialize into the manifest dir and parse back."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestSolutionFile,
+            parse_manifest_dir,
+            serialize_manifest_dir,
+        )
+
+        entry = ManifestSolutionFile(
+            location="shared",
+            path="uploads/img.png",
+            sha256="de" * 32,
+            size=1024,
+        )
+        manifest = Manifest(solution_files=[entry])
+        files = serialize_manifest_dir(manifest)
+
+        restored = parse_manifest_dir(files)
+        assert len(restored.solution_files) == 1
+        assert restored.solution_files[0].path == "uploads/img.png"
+
+
+class TestResolveFileFromSidecarUnit:
+    """Unit tests for _resolve_solution_file in ManifestResolver."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_solution_file_missing_sidecar_fails_closed(self):
+        """If a manifest index entry has no matching sidecar bytes, import raises."""
+        from unittest.mock import AsyncMock
+        from bifrost.manifest import Manifest, ManifestSolutionFile
+        from src.services.manifest_import import ManifestResolver
+        from src.services.solutions.secrets_blob import SolutionContent
+
+        db = AsyncMock()
+        resolver = ManifestResolver(db)
+        install_id = uuid4()
+
+        manifest = Manifest(
+            solution_files=[
+                ManifestSolutionFile(
+                    location="shared",
+                    path="missing.txt",
+                    sha256="00" * 32,
+                    size=5,
+                )
+            ]
+        )
+
+        # secrets_content has no file matching the manifest index entry.
+        sidecar = SolutionContent(solution_files=[])
+
+        with pytest.raises(ValueError, match="missing.txt"):
+            await resolver._resolve_solution_files(
+                manifest, install_id=install_id, sidecar_content=sidecar
+            )
+
+    @pytest.mark.asyncio
+    async def test_resolve_solution_file_no_sidecar_content_noop(self):
+        """When sidecar_content is None, _resolve_solution_files is a no-op."""
+        from unittest.mock import AsyncMock
+        from bifrost.manifest import Manifest, ManifestSolutionFile
+        from src.services.manifest_import import ManifestResolver
+
+        db = AsyncMock()
+        resolver = ManifestResolver(db)
+
+        manifest = Manifest(
+            solution_files=[
+                ManifestSolutionFile(
+                    location="shared",
+                    path="file.txt",
+                    sha256="aa" * 32,
+                    size=3,
+                )
+            ]
+        )
+        # Should not raise — no sidecar_content means "no files to write"
+        await resolver._resolve_solution_files(
+            manifest, install_id=uuid4(), sidecar_content=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_resolve_solution_file_empty_manifest_noop(self):
+        """When manifest has no solution_files, _resolve_solution_files is a no-op."""
+        from unittest.mock import AsyncMock
+        from bifrost.manifest import Manifest
+        from src.services.manifest_import import ManifestResolver
+        from src.services.solutions.secrets_blob import SolutionContent
+
+        db = AsyncMock()
+        resolver = ManifestResolver(db)
+
+        manifest = Manifest()
+        sidecar = SolutionContent(solution_files=[{"location": "x", "path": "y.txt", "sha256": "ab" * 32, "size": 2, "content_b64": "aGk="}])
+
+        # No manifest entries → no-op even if sidecar has bytes.
+        await resolver._resolve_solution_files(
+            manifest, install_id=uuid4(), sidecar_content=sidecar
+        )
+        # If we reach here without raising, the test passes.

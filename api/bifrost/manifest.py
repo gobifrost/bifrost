@@ -63,6 +63,7 @@ MANIFEST_FILES: dict[str, str] = {
     "agents": "agents.yaml",
     "apps": "apps.yaml",
     "mcp_servers": "mcp-servers.yaml",
+    "solution_files": "solution-files.yaml",
 }
 MANIFEST_LEGACY_FILE = "metadata.yaml"
 
@@ -1108,10 +1109,16 @@ class ManifestFilePolicy(EntityCodec, BaseModel):
         description="File access policy documents for this location/path",
         **classify(FieldClass.CONTENT),
     )
+    solution_id: str | None = Field(
+        default=None,
+        description="Solution install UUID (null = workspace-scoped row)",
+        **classify(FieldClass.ENVIRONMENT),
+    )
 
     @classmethod
     def from_row(cls, file_policy) -> "ManifestFilePolicy":
         raw_policies = file_policy.policies if isinstance(file_policy.policies, dict) else {}
+        raw_solution_id = getattr(file_policy, "solution_id", None)
         return cls(
             id=str(file_policy.id),
             organization_id=(
@@ -1122,6 +1129,7 @@ class ManifestFilePolicy(EntityCodec, BaseModel):
             location=file_policy.location,
             path=file_policy.path,
             policies=raw_policies.get("policies", []),
+            solution_id=str(raw_solution_id) if raw_solution_id else None,
         )
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
@@ -1132,6 +1140,7 @@ class ManifestFilePolicy(EntityCodec, BaseModel):
                 "location": self.location,
                 "path": self.path,
                 "policies": self.policies,
+                "solution_id": self.solution_id,
             },
             indexer_content={},
             restamp={},
@@ -1421,6 +1430,10 @@ class Manifest(BaseModel):
     agents: dict[str, ManifestAgent] = Field(default_factory=dict)
     apps: dict[str, ManifestApp] = Field(default_factory=dict)
     mcp_servers: dict[str, ManifestMCPServer] = Field(default_factory=dict)
+    solution_files: list[ManifestSolutionFile] = Field(
+        default_factory=list,
+        description="Index of solution-owned files (bytes travel in encrypted secrets.enc).",
+    )
 
 
 # =============================================================================
@@ -1475,6 +1488,8 @@ def filter_manifest_by_ids(manifest: Manifest, entity_ids: set[str]) -> Manifest
         agents={k: v for k, v in manifest.agents.items() if k in entity_ids},
         apps={k: v for k, v in manifest.apps.items() if k in entity_ids},
         mcp_servers={k: v for k, v in manifest.mcp_servers.items() if k in entity_ids},
+        # solution_files has no UUID key for filtering; carry all entries through.
+        solution_files=list(manifest.solution_files),
     )
 
 
