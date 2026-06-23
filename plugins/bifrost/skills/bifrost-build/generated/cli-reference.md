@@ -356,7 +356,7 @@ Usage: claims create [OPTIONS]
 Options:
   --name TEXT                     name  [required]
   --description TEXT              description
-  --type TEXT                     type
+  --type [list|scalar]            type
   --query TEXT                    query as JSON literal or @path to a
                                   YAML/JSON file.  [required]
   --global                        Target global scope (org=NULL). Alias for
@@ -432,7 +432,7 @@ Usage: claims update [OPTIONS] NAME
 
 Options:
   --description TEXT              description
-  --type TEXT                     type
+  --type [list|scalar]            type
   --query TEXT                    query as JSON literal or @path to a
                                   YAML/JSON file.
   --global                        Target global scope (org=NULL). Alias for
@@ -869,10 +869,15 @@ Usage: files list [OPTIONS] [DIRECTORY]
 
   List files in a directory (default: location root).
 
+  Pass ``--solution`` to target a solution install's file scope.
+
 Options:
   --location TEXT  Storage location. Special: "workspace" (default), "temp",
                    "uploads". Custom names (e.g. "reports") are accepted;
                    "_repo", "_tmp", and "_apps" are blocked.
+  --solution TEXT  Solution install slug or UUID. When given, targets that
+                   install's file scope (location defaults to "solutions").
+                   Slug resolved via GET /api/solutions.
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
 ```
@@ -964,12 +969,15 @@ Usage: files read [OPTIONS] PATH
   Read a workspace file and write its contents to stdout.
 
   Text files only. The SDK has `read_bytes` for binary; this CLI verb does
-  not.
+  not. Pass ``--solution`` to target a solution install's file scope.
 
 Options:
   --location TEXT  Storage location. Special: "workspace" (default), "temp",
                    "uploads". Custom names (e.g. "reports") are accepted;
                    "_repo", "_tmp", and "_apps" are blocked.
+  --solution TEXT  Solution install slug or UUID. When given, targets that
+                   install's file scope (location defaults to "solutions").
+                   Slug resolved via GET /api/solutions.
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
 ```
@@ -999,7 +1007,8 @@ Usage: files write [OPTIONS] PATH [SOURCE]
 
   Write to a workspace file. Source: --content, --from-file, or `-` for stdin.
 
-  Text files only. Pass --content "" to truncate an existing file.
+  Text files only. Pass --content "" to truncate an existing file. Pass
+  ``--solution`` to target a solution install's file scope.
 
 Options:
   --content TEXT    Inline content to write.
@@ -1007,6 +1016,9 @@ Options:
   --location TEXT   Storage location. Special: "workspace" (default), "temp",
                     "uploads". Custom names (e.g. "reports") are accepted;
                     "_repo", "_tmp", and "_apps" are blocked.
+  --solution TEXT   Solution install slug or UUID. When given, targets that
+                    install's file scope (location defaults to "solutions").
+                    Slug resolved via GET /api/solutions.
   --json            Emit JSON instead of human-readable output.
   --help            Show this message and exit.
 ```
@@ -1425,7 +1437,7 @@ Usage: policy-rule create [OPTIONS]
 
 Options:
   --name TEXT                     name  [required]
-  --domain TEXT                   domain  [required]
+  --domain [file|table]           domain  [required]
   --description TEXT              description
   --body TEXT                     body as JSON literal or @path to a YAML/JSON
                                   file.  [required]
@@ -1750,6 +1762,8 @@ Options:
                            shareable]
   --password TEXT          Required for --mode full; encrypts the secrets
                            blob.
+  --include-data           Include table row data and solution files in the
+                           encrypted tier. Requires --mode full.
   --out TEXT               Output zip path (default: <slug>-<version>.zip in
                            the current directory).
   --help                   Show this message and exit.

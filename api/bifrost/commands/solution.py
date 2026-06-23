@@ -1680,19 +1680,37 @@ def install_cmd(
     help="Required for --mode full; encrypts the secrets blob.",
 )
 @click.option(
+    "--include-data",
+    "include_data",
+    is_flag=True,
+    default=False,
+    help="Include table row data and solution files in the encrypted tier. Requires --mode full.",
+)
+@click.option(
     "--out",
     "out_path",
     default=None,
     help="Output zip path (default: <slug>-<version>.zip in the current directory).",
 )
-def export_cmd(solution_ref: str, mode: str, password: str | None, out_path: str | None) -> None:
+def export_cmd(
+    solution_ref: str,
+    mode: str,
+    password: str | None,
+    include_data: bool,
+    out_path: str | None,
+) -> None:
     """GET /api/solutions/{id}/export and write the zip to disk.
 
     SOLUTION_REF may be a solution id (UUID) or a slug.  Slugs are resolved
     via the solutions list endpoint.
+
+    Use ``--include-data`` with ``--mode full`` to include table row data and
+    solution-owned file sidecars in the encrypted tier.
     """
     if mode == "full" and not password:
         raise click.UsageError("--mode full requires --password")
+    if include_data and mode != "full":
+        raise click.UsageError("--include-data requires --mode full")
 
     async def _run() -> int:
         import uuid as _uuid
@@ -1727,7 +1745,10 @@ def export_cmd(solution_ref: str, mode: str, password: str | None, out_path: str
 
         # Password rides in the POST body, never the URL query (query-string
         # secrets leak into access logs / proxies / history). mode is not secret.
+        # include_data is also not sensitive so it stays in the query.
         params: dict[str, str] = {"mode": mode}
+        if include_data:
+            params["include_data"] = "true"
         body: dict[str, str] = {}
         if password is not None:
             body["password"] = password

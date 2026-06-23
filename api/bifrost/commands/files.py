@@ -6,15 +6,18 @@ matching ``/api/files/*`` HTTP endpoint.
 
 Verbs:
 
-* ``bifrost files read <path> [--location LOC]`` -> SDK ``files.read``
-* ``bifrost files write <path> (--content S | --from-file F | -) [--location LOC]``
-  -> SDK ``files.write``
-* ``bifrost files list [directory] [--location LOC]`` -> SDK ``files.list``
+* ``bifrost files read <path> [--location LOC] [--solution SLUG|ID]``
+* ``bifrost files write <path> (--content S | --from-file F | -) [--location LOC] [--solution SLUG|ID]``
+* ``bifrost files list [directory] [--location LOC] [--solution SLUG|ID]``
 * ``bifrost files delete <path> [--location LOC]`` -> SDK ``files.delete``
 * ``bifrost files exists <path> [--location LOC]`` -> SDK ``files.exists``;
   exits 0 if exists, 1 if not
 * ``bifrost files search <query> [--regex] [--case-sensitive]
   [--include GLOB] [--max-results N]`` -> SDK ``files.search``
+
+The ``--solution`` flag targets the install scope for a solution install (by
+slug or UUID).  It passes ``?solution=<install_id>`` to the API so the server
+resolves the correct install-scoped storage prefix.
 
 There is no ``stat`` verb -- the SDK only surfaces ``exists``. There is no
 ``mode`` flag -- workers always run in cloud mode; local mode is for the
@@ -30,6 +33,8 @@ from urllib.parse import quote
 import click
 import yaml
 
+import uuid as _uuid_module
+
 from bifrost.client import BifrostClient
 from bifrost.files import files as files_sdk
 
@@ -43,6 +48,42 @@ _LOCATION_HELP = (
     'Storage location. Special: "workspace" (default), "temp", "uploads". '
     'Custom names (e.g. "reports") are accepted; "_repo", "_tmp", and "_apps" are blocked.'
 )
+
+_SOLUTION_HELP = (
+    "Solution install slug or UUID. When given, targets that install's file scope "
+    '(location defaults to "solutions"). Slug resolved via GET /api/solutions.'
+)
+
+
+async def _resolve_solution_install_id(client: BifrostClient, solution_ref: str) -> str:
+    """Resolve a solution slug or UUID to the install id.
+
+    If ``solution_ref`` is a valid UUID it is returned unchanged.  Otherwise the
+    solutions list is fetched and matched by slug (first match wins — slugs are
+    unique per scope/org).
+
+    Raises :class:`click.ClickException` if resolution fails.
+    """
+    try:
+        _uuid_module.UUID(solution_ref)
+        return solution_ref
+    except (ValueError, AttributeError):
+        pass
+    # Not a UUID — resolve by slug.
+    resp = await client.get("/api/solutions")
+    if resp.status_code != 200:
+        raise click.ClickException(
+            f"Failed to list solutions while resolving --solution "
+            f"({resp.status_code}): {resp.text[:200]}"
+        )
+    installs = resp.json().get("solutions", [])
+    match = next((s for s in installs if s.get("slug") == solution_ref), None)
+    if match is None:
+        raise click.ClickException(
+            f"No solution install found with slug {solution_ref!r}. "
+            "Pass the install UUID directly or check `bifrost solutions list`."
+        )
+    return match["id"]
 
 
 def _policy_path(path: str) -> str:
@@ -73,6 +114,7 @@ def _load_policy_document(path: str) -> list[dict] | dict:
 @files_group.command("read")
 @click.argument("path")
 @click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--solution", "solution_ref", default=None, help=_SOLUTION_HELP)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -80,15 +122,29 @@ async def read_cmd(
     ctx: click.Context,
     path: str,
     location: str,
+    solution_ref: str | None,
     *,
-    client: BifrostClient,  # noqa: ARG001
+    client: BifrostClient,
     resolver,  # noqa: ARG001
 ) -> None:
     """Read a workspace file and write its contents to stdout.
 
     Text files only. The SDK has `read_bytes` for binary; this CLI verb does not.
+    Pass ``--solution`` to target a solution install's file scope.
     """
-    content = await files_sdk.read(path, location=location)
+    if solution_ref is not None:
+        install_id = await _resolve_solution_install_id(client, solution_ref)
+        resp = await client.post(
+            f"/api/files/read?solution={install_id}",
+            json={"path": path, "location": location, "mode": "cloud", "binary": False},
+        )
+        if resp.status_code != 200:
+            raise click.ClickException(
+                f"read failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        content = resp.json()["content"]
+    else:
+        content = await files_sdk.read(path, location=location)
     # Avoid output_result()'s key:value dict formatting; raw stdout is what
     # shell pipelines and agents expect from a `read` verb.
     click.echo(content, nl=False)
@@ -106,6 +162,7 @@ async def read_cmd(
     help="Read content from a local file.",
 )
 @click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--solution", "solution_ref", default=None, help=_SOLUTION_HELP)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -116,13 +173,15 @@ async def write_cmd(
     content_flag: str | None,
     from_file: str | None,
     location: str,
+    solution_ref: str | None,
     *,
-    client: BifrostClient,  # noqa: ARG001
+    client: BifrostClient,
     resolver,  # noqa: ARG001
 ) -> None:
     """Write to a workspace file. Source: --content, --from-file, or `-` for stdin.
 
     Text files only. Pass --content "" to truncate an existing file.
+    Pass ``--solution`` to target a solution install's file scope.
     """
     sources = [s for s in (content_flag, from_file, source) if s is not None]
     if len(sources) != 1:
@@ -143,12 +202,24 @@ async def write_cmd(
             "Positional content must be `-` for stdin. Use --content or --from-file otherwise."
         )
 
-    await files_sdk.write(path, content, location=location)
+    if solution_ref is not None:
+        install_id = await _resolve_solution_install_id(client, solution_ref)
+        resp = await client.post(
+            f"/api/files/write?solution={install_id}",
+            json={"path": path, "content": content, "location": location, "mode": "cloud", "binary": False},
+        )
+        if resp.status_code not in (200, 204):
+            raise click.ClickException(
+                f"write failed ({resp.status_code}): {resp.text[:200]}"
+            )
+    else:
+        await files_sdk.write(path, content, location=location)
 
 
 @files_group.command("list")
 @click.argument("directory", required=False, default="")
 @click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--solution", "solution_ref", default=None, help=_SOLUTION_HELP)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -156,12 +227,28 @@ async def list_cmd(
     ctx: click.Context,
     directory: str,
     location: str,
+    solution_ref: str | None,
     *,
-    client: BifrostClient,  # noqa: ARG001
+    client: BifrostClient,
     resolver,  # noqa: ARG001
 ) -> None:
-    """List files in a directory (default: location root)."""
-    items = await files_sdk.list(directory=directory, location=location)
+    """List files in a directory (default: location root).
+
+    Pass ``--solution`` to target a solution install's file scope.
+    """
+    if solution_ref is not None:
+        install_id = await _resolve_solution_install_id(client, solution_ref)
+        resp = await client.post(
+            f"/api/files/list?solution={install_id}",
+            json={"directory": directory, "location": location, "mode": "cloud"},
+        )
+        if resp.status_code != 200:
+            raise click.ClickException(
+                f"list failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        items = resp.json()["files"]
+    else:
+        items = await files_sdk.list(directory=directory, location=location)
     output_result(items, ctx=ctx)
 
 

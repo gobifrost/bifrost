@@ -729,6 +729,38 @@ async def _apply_content(
             deployer_email=deployer_email,
         )
 
+    if content.solution_files:
+        await _apply_solution_files(
+            db,
+            solution=solution,
+            solution_files=content.solution_files,
+        )
+
+
+async def _apply_solution_files(
+    db: AsyncSession,
+    *,
+    solution: Solution,
+    solution_files: list[Any],
+) -> None:
+    """Restore solution-owned file sidecars from the decrypted secrets blob.
+
+    Each entry is a dict with keys ``location``, ``path``, ``content_b64``.
+    Files are written in ``replace`` mode so a reinstall refreshes the bytes.
+    """
+    import base64 as _b64
+
+    from src.services.solution_files import write_solution_file
+
+    for sf in solution_files:
+        b64 = sf.get("content_b64")
+        if not b64:
+            continue
+        content_bytes = _b64.b64decode(b64)
+        location = sf["location"]
+        path = sf["path"]
+        await write_solution_file(db, solution.id, location, path, content_bytes, mode="replace")
+
 
 async def _apply_table_data(
     db: AsyncSession,
