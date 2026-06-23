@@ -31,7 +31,7 @@ import enum
 import json
 from pathlib import Path
 from types import UnionType
-from typing import Any, Callable, Union, get_args, get_origin
+from typing import Any, Callable, Literal, Union, get_args, get_origin
 from uuid import UUID
 
 import click
@@ -188,6 +188,15 @@ def _is_enum_type(tp: Any) -> bool:
 def _enum_choices(tp: Any) -> list[str]:
     inner = _unwrap_optional(tp)
     return [str(member.value) for member in inner]  # type: ignore[union-attr]
+
+
+def _is_literal(tp: Any) -> bool:
+    """Return True when the (unwrapped) type is a ``Literal[...]``."""
+    return get_origin(_unwrap_optional(tp)) is Literal
+
+
+def _literal_choices(tp: Any) -> list[str]:
+    return [str(a) for a in get_args(_unwrap_optional(tp))]
 
 
 def _is_list_str(tp: Any) -> bool:
@@ -376,6 +385,19 @@ def build_cli_flags(
                     help=(
                         f"{name} as JSON literal or @path to a YAML/JSON file."
                     ),
+                )
+            )
+            continue
+
+        if _is_literal(annotation):
+            decorators.append(
+                click.option(
+                    f"--{_kebab(name)}",
+                    name,
+                    type=click.Choice(_literal_choices(annotation)),
+                    **scalar_default,
+                    required=required,
+                    help=name,
                 )
             )
             continue

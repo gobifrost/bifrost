@@ -37,6 +37,7 @@ from src.models.contracts import integrations as server_integrations  # noqa: E4
 from src.models.contracts import organizations as server_organizations  # noqa: E402
 from src.models.contracts import tables as server_tables  # noqa: E402
 from src.models.contracts import users as server_users  # noqa: E402
+from src.models.contracts import policy_rule as server_policy_rule  # noqa: E402
 from src.models.contracts import workflows as server_workflows  # noqa: E402
 
 
@@ -79,6 +80,8 @@ DTO_PAIRS: list[tuple[type, type]] = [
         cli_contracts.EventSubscriptionUpdate,
         server_events.EventSubscriptionUpdate,
     ),
+    (cli_contracts.PolicyRuleCreate, server_policy_rule.PolicyRuleCreate),
+    (cli_contracts.PolicyRuleUpdate, server_policy_rule.PolicyRuleUpdate),
 ]
 
 
