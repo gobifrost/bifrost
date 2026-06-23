@@ -193,6 +193,7 @@ def _build_side_effects(
         _make_result(mappings_order or []),  # integration_mappings
         empty,                        # configs
         empty,                        # custom_claims
+        empty,                        # policy_rules
         empty,                        # tables
         empty,                        # file_policies
         _make_result([es]),           # event_sources

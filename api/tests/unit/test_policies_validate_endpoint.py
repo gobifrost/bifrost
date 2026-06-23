@@ -1,17 +1,34 @@
 """Unit tests for the `POST /api/tables/policies/validate` endpoint logic.
 
-The handler is intentionally a thin shell around ``TablePolicies.model_validate``
-plus a path-translation pass; we exercise it directly (without the FastAPI
-test client) since none of the validation logic touches DB / auth state.
-The handler returns ``PolicyValidationResponse`` either way — there is no
-404/422 branch to cover.
+The handler is a thin shell around ``TablePolicies.model_validate`` plus a
+path-translation pass and a ``$ref`` resolution step.  We exercise it directly
+(without the FastAPI test client) by constructing a lightweight stub context
+whose ``.db`` is never actually called for the ref-free bodies tested here.
+
+Note: ``validate_policies`` gained a ``ctx: Context`` parameter (Task 7) so
+it can build a ``PolicyRuleRepository(ctx.db, ...)`` to resolve ``{"$ref":…}``
+entries.  The existing tests all use ref-free inline policies, so ``ctx.db`` is
+never reached — a ``MagicMock`` stub suffices.  To test ``$ref`` resolution
+itself you would need a real (or async-capable) DB session; that coverage lives
+in the e2e suite.
 """
 
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import MagicMock
 
 from src.routers.tables import _loc_to_path, validate_policies
+
+
+def _make_ctx():
+    """Return a minimal stub context for ref-free validation tests.
+
+    ``ctx.db`` is a MagicMock that will raise if unexpectedly called, making
+    any accidental DB access visible rather than silently ignored.
+    """
+    ctx = MagicMock()
+    return ctx
 
 
 def _run(body):
@@ -19,8 +36,9 @@ def _run(body):
 
     We pass ``user=None`` because the handler doesn't use it for anything;
     the dependency only exists to gate access at the FastAPI layer.
+    A stub ``ctx`` is provided; its ``.db`` is never reached for ref-free bodies.
     """
-    return asyncio.run(validate_policies(user=None, body=body))  # type: ignore[arg-type]
+    return asyncio.run(validate_policies(ctx=_make_ctx(), user=None, body=body))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

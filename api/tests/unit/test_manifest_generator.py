@@ -117,9 +117,11 @@ async def test_generate_manifest_with_workflow(mock_db):
         empty_result,  # oauth_providers
         empty_result,  # integration_mappings
         empty_result,  # configs
+        empty_result,  # custom_claims
+        empty_result,  # policy_rules
         empty_result,  # tables
         empty_result,  # file_policies
-        empty_result,  # knowledge_namespace_roles
+        empty_result,  # agent_mcp_connections
         empty_result,  # knowledge_store namespaces
         empty_result,  # event_sources
         empty_result,  # schedule_sources
@@ -217,6 +219,7 @@ async def test_generate_manifest_with_roles(mock_db):
         empty_result,       # oauth_providers
         empty_result,       # integration_mappings
         empty_result,       # configs
+        empty_result,       # policy_rules
         empty_result,       # tables
         empty_result,       # file_policies
         empty_result,       # knowledge_namespace_roles
@@ -287,6 +290,7 @@ async def test_generate_manifest_with_organizations(mock_db):
         empty_result,  # oauth_providers
         empty_result,  # integration_mappings
         empty_result,  # configs
+        empty_result,  # policy_rules
         empty_result,  # tables
         empty_result,  # file_policies
         empty_result,  # knowledge_namespace_roles
@@ -347,6 +351,7 @@ async def test_generate_manifest_access_levels(mock_db):
         empty_result,   # oauth_providers
         empty_result,   # integration_mappings
         empty_result,   # configs
+        empty_result,   # policy_rules
         empty_result,   # tables
         empty_result,   # file_policies
         empty_result,   # knowledge_namespace_roles
