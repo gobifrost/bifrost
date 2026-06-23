@@ -872,6 +872,30 @@ class ManifestSolutionConfigSchema(EntityCodec, BaseModel):
         )
 
 
+class ManifestSolutionFile(EntityCodec, BaseModel):
+    """Index entry for one solution-owned file in the encrypted export bundle.
+
+    Mirrors ManifestConfig's classify approach: location/path/sha256/size are
+    CONTENT fields (portable, environment-independent). No env fields — file
+    ownership is established at install time via the solution_id.
+
+    The content_bytes are NOT stored in the manifest entry itself; they are
+    embedded in the encrypted secrets.enc blob alongside this index. The index
+    entry lets the installer enumerate what files are present without decrypting.
+    """
+
+    location: str = Field(description="File location bucket (e.g. 'shared')", **classify(FieldClass.CONTENT, match_key=True))
+    path: str = Field(description="File path relative to location (e.g. 'docs/foo.txt')", **classify(FieldClass.CONTENT, match_key=True))
+    sha256: str = Field(description="SHA-256 hex digest of file content", **classify(FieldClass.CONTENT))
+    size: int = Field(description="File size in bytes", **classify(FieldClass.CONTENT))
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        raise NotImplementedError(
+            "ManifestSolutionFile has no standalone orm path; "
+            "install restores via write_solution_file from the encrypted blob."
+        )
+
+
 class ManifestCustomClaim(EntityCodec, BaseModel):
     """Custom Claim entry in manifest."""
     id: str = Field(description="Custom Claim UUID", **classify(FieldClass.IDENTITY))

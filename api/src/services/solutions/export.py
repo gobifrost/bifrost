@@ -200,7 +200,25 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
             put(".bifrost/apps.yaml", _manifest_yaml("apps", app_bodies))
 
         # ── Encrypted secrets blob (full-mode export only) ───────────────────
-        if password and (bundle.config_values or bundle.table_data):
+        # File sidecars join config_values and table_data in the encrypted tier.
+        # Content bytes are base64-encoded for JSON serialization; the index
+        # (location/path/sha256/size) travels alongside for enumeration.
+        # All three are CONFIDENTIAL — never written as plaintext zip members.
+        file_sidecar_entries: list[dict[str, Any]] = []
+        if password and bundle.solution_files:
+            for sf in bundle.solution_files:
+                if sf.content_bytes is None:
+                    continue
+                file_sidecar_entries.append(
+                    {
+                        "location": sf.location,
+                        "path": sf.path,
+                        "sha256": sf.sha256,
+                        "size": sf.size,
+                        "content_b64": base64.b64encode(sf.content_bytes).decode("ascii"),
+                    }
+                )
+        if password and (bundle.config_values or bundle.table_data or file_sidecar_entries):
             from src.services.solutions.secrets_blob import (
                 SolutionContent,
                 encode_secrets_blob,
@@ -212,6 +230,7 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     SolutionContent(
                         config_values=bundle.config_values,
                         table_data=bundle.table_data,
+                        solution_files=file_sidecar_entries,
                     ),
                     password=password,
                 ),

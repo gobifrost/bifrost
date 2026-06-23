@@ -26,12 +26,18 @@ _FileIdList = list[str]
 
 @dataclass
 class SolutionFileEntry:
-    """Lightweight summary of one file belonging to a solution install."""
+    """Summary of one file belonging to a solution install.
+
+    ``content_bytes`` is populated during bundle capture (include_data=True) and
+    carries the raw file content for encryption into the export bundle.  It is
+    None when the entry comes from a metadata-only enumerate (no S3 read).
+    """
 
     location: str
     path: str
     sha256: str | None
     size: int | None
+    content_bytes: bytes | None = None
 
 
 async def enumerate_solution_files(

@@ -80,6 +80,11 @@ logger = logging.getLogger(__name__)
 # and only the first TABLE_ROW_CAP rows are included — no silent truncation.
 TABLE_ROW_CAP = 50_000
 
+# Hard cap on files exported per solution to keep the encrypted blob bounded.
+# If a solution exceeds this, a WARNING is logged (solution slug + actual count)
+# and only the first FILE_CAP files are included — no silent truncation.
+FILE_CAP = 1_000
+
 
 def _enum_value(value: Any) -> Any:
     return getattr(value, "value", value)
@@ -362,6 +367,9 @@ class SolutionCaptureService:
         table_data: dict[str, list[dict[str, Any]]] = {}
         if include_data:
             table_data = await self._table_data(solution)
+        solution_files: list[Any] = []
+        if include_data:
+            solution_files = await self._solution_file_entries(solution)
         return SolutionBundle(
             solution=solution,
             python_files=python_files,
@@ -378,6 +386,7 @@ class SolutionCaptureService:
             version=solution.version,
             config_values=config_values,
             table_data=table_data,
+            solution_files=solution_files,
         )
 
     async def _workflow_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
@@ -824,6 +833,68 @@ class SolutionCaptureService:
             out[tbl.name] = [doc.data for doc in docs]
 
         return out
+
+    async def _solution_file_entries(
+        self, solution: Solution
+    ) -> list[Any]:
+        """Read each solution-owned file's bytes for a full-backup export.
+
+        Enumerates via the Task-17 service (metadata-only, no S3) then reads
+        each file's bytes from S3. Only files that can be read are included.
+
+        File cap: if a solution exceeds FILE_CAP files, a WARNING is logged
+        naming the solution slug and actual count, and only the first FILE_CAP
+        files are returned — no silent truncation.
+
+        Empty → returns [] (omit from encrypted blob when empty).
+        """
+        from src.services.solution_files import (
+            SolutionFileEntry,
+            enumerate_solution_files,
+            read_solution_file,
+        )
+
+        entries = await enumerate_solution_files(self.db, solution.id)
+        if not entries:
+            return []
+
+        if len(entries) > FILE_CAP:
+            logger.warning(
+                "bundle_for: solution %r has more than %d files; "
+                "only the first %d files are included in the export bundle.",
+                solution.slug,
+                FILE_CAP,
+                FILE_CAP,
+            )
+            entries = entries[:FILE_CAP]
+
+        result: list[SolutionFileEntry] = []
+        for entry in entries:
+            try:
+                content_bytes = await read_solution_file(
+                    self.db, solution.id, entry.location, entry.path
+                )
+            except Exception:
+                # File disappeared between enumerate and read — skip rather than
+                # fail the whole capture.
+                logger.warning(
+                    "bundle_for: could not read file %r/%r for solution %r; skipping.",
+                    entry.location,
+                    entry.path,
+                    solution.slug,
+                )
+                continue
+            result.append(
+                SolutionFileEntry(
+                    location=entry.location,
+                    path=entry.path,
+                    sha256=entry.sha256,
+                    size=entry.size,
+                    content_bytes=content_bytes,
+                )
+            )
+
+        return result
 
     async def _python_files(
         self, workflows: list[dict[str, Any]], *, include_imports: bool = False

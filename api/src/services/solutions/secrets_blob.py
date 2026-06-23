@@ -33,12 +33,18 @@ _KEY_LEN = 32
 
 @dataclass
 class SolutionContent:
-    """The sensitive tier of a full-backup export: secret/config values and
-    table rows. Travels only inside the password-encrypted .bifrost/secrets.enc
-    blob — never in plaintext."""
+    """The sensitive tier of a full-backup export: secret/config values,
+    table rows, and solution-owned file sidecars.  Travels only inside the
+    password-encrypted .bifrost/secrets.enc blob — never in plaintext.
+
+    ``solution_files`` is a list of dicts with keys:
+      ``location``, ``path``, ``sha256``, ``size``, ``content_b64``
+    (content bytes are base64-encoded for JSON serialization).
+    """
 
     config_values: dict[str, str] = field(default_factory=dict)
     table_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    solution_files: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _derive_fernet_key(password: str, salt: bytes, *, n: int, r: int, p: int) -> bytes:
@@ -57,12 +63,13 @@ def encode_secrets_blob(content: SolutionContent, *, password: str) -> str:
     exports of identical content+password produce different blobs."""
     salt = os.urandom(_SALT_BYTES)
     key = _derive_fernet_key(password, salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
-    inner = json.dumps(
-        {
-            "config_values": content.config_values,
-            "table_data": content.table_data,
-        }
-    )
+    payload: dict[str, Any] = {
+        "config_values": content.config_values,
+        "table_data": content.table_data,
+    }
+    if content.solution_files:
+        payload["solution_files"] = content.solution_files
+    inner = json.dumps(payload)
     token = Fernet(key).encrypt(inner.encode())
     envelope = {
         "v": BLOB_VERSION,
@@ -93,4 +100,5 @@ def decode_secrets_blob(blob: str, *, password: str) -> SolutionContent:
     return SolutionContent(
         config_values=payload.get("config_values", {}),
         table_data=payload.get("table_data", {}),
+        solution_files=payload.get("solution_files", []),
     )

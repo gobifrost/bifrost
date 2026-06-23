@@ -295,6 +295,9 @@ class SolutionBundle:
     # Travels as password-encrypted .bifrost/secrets.enc; never in plaintext export.
     config_values: dict[str, str] = field(default_factory=dict)
     table_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # Solution-owned file sidecars — only populated when include_data=True (full mode).
+    # Each entry carries content_bytes loaded from S3; travels encrypted in secrets.enc.
+    solution_files: list[Any] = field(default_factory=list)
 
 
 class SolutionDeployer:
