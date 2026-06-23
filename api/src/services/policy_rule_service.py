@@ -100,6 +100,13 @@ class PolicyRuleService:
         repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
         row = await repo.get(name=name, domain=domain)
         if row is None:
+            # A solution-managed rule is excluded from the default name-cascade
+            # (solution_id IS NULL filter). Look it up explicitly so update/delete
+            # can surface the 409 "solution-managed" guard rather than a bare 404.
+            row = await repo.get(
+                name=name, domain=domain, include_solution_managed=True
+            )
+        if row is None:
             raise PolicyRuleNotFoundError(name)
         return row
 
