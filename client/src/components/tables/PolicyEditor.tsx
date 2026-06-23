@@ -24,9 +24,17 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import {
+	Dialog,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 import { JsonYamlEditor } from "@/components/shared/JsonYamlEditor";
 import { PolicyReferencePanel } from "./PolicyReferencePanel";
+import { PolicyRulesManager } from "@/components/policy-rules/PolicyRulesManager";
 import {
 	POLICY_TEMPLATES,
 	instantiateTemplate,
@@ -76,6 +84,7 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 	const [activeParseError, setActiveParseError] = useState<string | null>(
 		null,
 	);
+	const [showRulesManager, setShowRulesManager] = useState(false);
 
 	useEffect(() => {
 		listPolicyRules("table")
@@ -202,6 +211,7 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 		: undefined;
 
 	return (
+		<>
 		<div className="space-y-3">
 			<div className="flex justify-between items-center">
 				<h3 className="text-sm font-medium">Policies</h3>
@@ -250,6 +260,15 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 							</SelectContent>
 						</Select>
 					)}
+					<Button
+						size="sm"
+						variant="ghost"
+						className="text-xs"
+						onClick={() => setShowRulesManager(true)}
+						data-testid="manage-rules-btn"
+					>
+						Manage rules…
+					</Button>
 					<PolicyReferencePanel />
 				</div>
 			</div>
@@ -299,5 +318,15 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 				)}
 
 		</div>
+
+		<Dialog open={showRulesManager} onOpenChange={setShowRulesManager}>
+			<DialogContent className="max-h-[90vh] overflow-auto sm:max-w-2xl">
+				<DialogHeader>
+					<DialogTitle>Table policy rules</DialogTitle>
+				</DialogHeader>
+				<PolicyRulesManager domain="table" />
+			</DialogContent>
+		</Dialog>
+		</>
 	);
 }
