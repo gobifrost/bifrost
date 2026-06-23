@@ -257,6 +257,10 @@ IDENTITY_MODELS: set[str] = {
     # resolved by exact (org, location, path) — it carries no policy of its own.
     "FileMetadata",
     "FilePolicy",
+    # Named reusable policy rules ({"$ref": name} spliced into file/table policies).
+    # Cascades org→global but resolution is handled by the service layer (not
+    # OrgScopedRepository.get) — same classification rationale as FilePolicy.
+    "PolicyRule",
 }
 
 

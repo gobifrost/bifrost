@@ -863,9 +863,37 @@ async def validate_policies(
         TablePolicies.model_validate(body)
         return PolicyValidationResponse(ok=True)
     except ValidationError as e:
+        raw_errors = e.errors()
+        # When the policies list union (Policy | PolicyRuleRef) fails, Pydantic
+        # v2 emits errors from BOTH arms.  The arm name appears as a string
+        # segment in loc immediately after the list index, e.g.
+        # ('policies', 0, 'Policy', 'when') vs ('policies', 0, 'PolicyRuleRef', '$ref').
+        # We want to surface only the inline-model arm (Policy) errors when
+        # both arms fail for the same element, so the caller sees exactly the
+        # meaningful failures instead of ref-arm noise.
+        inline_arm = "Policy"
+        ref_arm = "PolicyRuleRef"
+        # Collect the element indices that have an inline-arm error.
+        inline_arm_indices: set[int] = set()
+        for err in raw_errors:
+            loc = err.get("loc", ())
+            if len(loc) >= 3 and isinstance(loc[1], int) and loc[2] == inline_arm:
+                inline_arm_indices.add(loc[1])
         errors: list[PolicyValidationError] = []
-        for err in e.errors():
-            path = _loc_to_path(err.get("loc", ()))
+        for err in raw_errors:
+            loc = err.get("loc", ())
+            # Skip ref-arm errors for items that also have an inline-arm error.
+            if (
+                len(loc) >= 3
+                and isinstance(loc[1], int)
+                and loc[2] == ref_arm
+                and loc[1] in inline_arm_indices
+            ):
+                continue
+            # Strip the union arm type-name segment from loc before path conversion.
+            if len(loc) >= 3 and isinstance(loc[1], int) and loc[2] in (inline_arm, ref_arm):
+                loc = (loc[0], loc[1]) + loc[3:]
+            path = _loc_to_path(loc)
             msg = err.get("msg", "validation error")
             # ``Expr``'s recursive ``_validate_operand`` raises ``ValueError``
             # with messages already prefixed by their AST path

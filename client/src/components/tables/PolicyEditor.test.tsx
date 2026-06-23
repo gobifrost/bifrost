@@ -208,7 +208,11 @@ describe("PolicyEditor — templates", () => {
 		select.dispatchEvent(new Event("change", { bubbles: true }));
 		const emitted = lastEmitted();
 		expect(emitted!.policies).toHaveLength(1);
-		const inserted = emitted!.policies![0]!;
+		const inserted = emitted!.policies![0] as {
+			name: string;
+			actions: string[];
+			when: unknown;
+		};
 		expect(inserted.name).toBe("own_row");
 		expect(inserted.actions).toEqual(["read", "update", "delete"]);
 		expect(inserted.when).toEqual({
@@ -269,7 +273,8 @@ describe("PolicyEditor — JSON tab", () => {
 		const emitted = lastEmitted();
 		expect(emitted).not.toBeNull();
 		expect(emitted!.policies).toHaveLength(1);
-		expect(emitted!.policies![0]!.name).toBe("p1");
+		const p0 = emitted!.policies![0] as { name: string; when: unknown };
+		expect(p0.name).toBe("p1");
 	});
 
 	it("clearing the JSON buffer collapses to null", () => {
@@ -382,8 +387,9 @@ describe("PolicyEditor — YAML tab", () => {
 		const emitted = lastEmitted();
 		expect(emitted).not.toBeNull();
 		expect(emitted!.policies).toHaveLength(1);
-		expect(emitted!.policies![0]!.name).toBe("p1");
-		expect(emitted!.policies![0]!.when).toBeNull();
+		const p0yaml = emitted!.policies![0] as { name: string; when: unknown };
+		expect(p0yaml.name).toBe("p1");
+		expect(p0yaml.when).toBeNull();
 	});
 
 	it("clearing the YAML buffer collapses to null", async () => {

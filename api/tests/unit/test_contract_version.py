@@ -160,7 +160,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Solution deploy now uploads a workspace zip as multipart/form-data instead
     # of the legacy JSON bundle request body (2026-06-21).
     # CONTRACT_VERSION bumped to 6.
-    "574232b44f09b26868559f4346a4bf9f364473d2affe4780fbdef1a767fdb5d6"
+    #
+    # TablePolicies policies union widened to list[Policy | PolicyRuleRef] (2026-06-23).
+    # ADDITIVE: old CLIs send plain inline rules; PolicyRuleRef is a new optional
+    # variant — no old client is broken. Fingerprint refreshed only.
+    "9f33dba1856eb4d6cbcd42789915734df99c033a867a4996bb4de540e4214764"
 )
 
 

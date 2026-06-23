@@ -30,7 +30,6 @@ import { PolicyReferencePanel } from "./PolicyReferencePanel";
 import {
 	POLICY_TEMPLATES,
 	instantiateTemplate,
-	type Policy,
 	type PolicyTemplateKey,
 } from "./policy-templates";
 import {
@@ -154,7 +153,7 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 	function handleTemplate(key: string) {
 		if (!key) return;
 		const tpl = instantiateTemplate(key as PolicyTemplateKey);
-		const current: Policy[] = value?.policies ?? [];
+		const current = value?.policies ?? [];
 		emit({ policies: [...current, tpl] });
 		// Reset the trigger so the same template can be re-inserted next time.
 		setTemplateKey("");

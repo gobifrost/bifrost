@@ -3855,22 +3855,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
         options?: never;
         head?: never;
         patch?: never;
@@ -14615,7 +14615,7 @@ export interface components {
         /** FilePolicies */
         FilePolicies: {
             /** Policies */
-            policies?: components["schemas"]["FilePolicyRule"][];
+            policies?: (components["schemas"]["FilePolicyRule"] | components["schemas"]["PolicyRuleRef"])[];
         };
         /** FilePolicyAccessTestRequest */
         FilePolicyAccessTestRequest: {
@@ -18813,6 +18813,14 @@ export interface components {
             when?: components["schemas"]["Expr"] | null;
         };
         /**
+         * PolicyRuleRef
+         * @description A reference to a named PolicyRule, spliced inline at resolution time.
+         */
+        PolicyRuleRef: {
+            /** $Ref */
+            $ref: string;
+        };
+        /**
          * PolicyValidationError
          * @description Single structured validation error for a policy document.
          *
@@ -21684,7 +21692,7 @@ export interface components {
         /** TablePolicies */
         TablePolicies: {
             /** Policies */
-            policies?: components["schemas"]["Policy"][];
+            policies?: (components["schemas"]["Policy"] | components["schemas"]["PolicyRuleRef"])[];
         };
         /**
          * TablePublic
@@ -30067,7 +30075,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30100,7 +30108,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30133,7 +30141,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {
@@ -30166,7 +30174,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__put: {
         parameters: {
             query?: never;
             header: {

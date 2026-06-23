@@ -7,6 +7,7 @@ from typing import Any, Final, Literal
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     RootModel,
     field_validator,
@@ -292,11 +293,27 @@ Action = Literal["read", "create", "update", "delete"]
 FileAction = Literal["read", "write", "delete", "list"]
 
 
+class PolicyRuleRef(BaseModel):
+    """A reference to a named PolicyRule, spliced inline at resolution time."""
+
+    ref: str = Field(alias="$ref", min_length=1, max_length=100)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
 class Policy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=100)
     description: str | None = None
     actions: list[Action] = Field(min_length=1)
     when: Expr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_ref_field(cls, data):
+        if isinstance(data, dict) and "$ref" in data:
+            raise ValueError('an inline rule must not carry $ref; use a bare {"$ref": name} entry')
+        return data
 
     @field_validator("actions")
     @classmethod
@@ -307,14 +324,23 @@ class Policy(BaseModel):
 
 
 class TablePolicies(BaseModel):
-    policies: list[Policy] = Field(default_factory=list)
+    policies: list[Policy | PolicyRuleRef] = Field(default_factory=list)
 
 
 class FilePolicyRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=100)
     description: str | None = None
     actions: list[FileAction] = Field(min_length=1)
     when: FileExpr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_ref_field(cls, data):
+        if isinstance(data, dict) and "$ref" in data:
+            raise ValueError('an inline rule must not carry $ref; use a bare {"$ref": name} entry')
+        return data
 
     @field_validator("actions")
     @classmethod
@@ -325,7 +351,7 @@ class FilePolicyRule(BaseModel):
 
 
 class FilePolicies(BaseModel):
-    policies: list[FilePolicyRule] = Field(default_factory=list)
+    policies: list[FilePolicyRule | PolicyRuleRef] = Field(default_factory=list)
 
 
 class PolicyValidationError(BaseModel):
