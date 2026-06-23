@@ -32,6 +32,7 @@ from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter, resolve_target_org
 from src.models.contracts.policies import (
+    PolicyRuleRef,
     PolicyValidationError,
     PolicyValidationResponse,
     TablePolicies,
@@ -571,6 +572,8 @@ async def _validate_table_policy_claim_refs(
         return
     known = await _known_claim_names_for_org(db, organization_id, solution_id)
     for policy in policies.policies:
+        if isinstance(policy, PolicyRuleRef):
+            continue
         _validate_policy_claim_refs(policy.when, known)
 
 
