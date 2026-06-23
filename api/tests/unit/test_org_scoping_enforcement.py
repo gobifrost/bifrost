@@ -257,13 +257,6 @@ IDENTITY_MODELS: set[str] = {
     # resolved by exact (org, location, path) — it carries no policy of its own.
     "FileMetadata",
     "FilePolicy",
-    # Named reusable policy rules. TEMPORARY allow-list entry: PolicyRule IS an
-    # execution-resolution entity (cascade org→global→solution via
-    # PolicyRuleRepository(OrgScopedRepository)). The repository lands in the
-    # next task; until it exists this model has no repo subclass, so it sits here.
-    # MUST be removed from IDENTITY_MODELS once PolicyRuleRepository is added
-    # (the overlap check forbids a model being in both buckets).
-    "PolicyRule",
 }
 
 
