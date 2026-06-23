@@ -88,3 +88,20 @@ None beyond the brief. All 5 briefed `_load_policies` sites + the 3 explicitly m
 1. **Websocket double DB session:** Cache-hit path opens 1 DB session (resolution only). Cache-miss path opens 2 sequential sessions (raw fetch + resolution). This is unavoidable with `get_db_context()` closing on `async with` exit. A future optimization: combine both into one session on cache miss.
 
 2. **`preresolve.py` note:** `_load_source_policies` does NOT pass `solution_id` to `resolve_policy_refs` — it uses `solution_id=None` (the default). The `source` table's `organization_id` is used for the repo scope, which gives org→global cascade. If a claim references a solution-scoped source table whose policy uses a solution-scoped rule, the ref may not resolve. This is a pre-existing design question about cross-solution claim resolution; flagged but not changed here.
+
+---
+
+## Review Fix: Remove Dead `_load_policies` Function
+
+**Commit:** `3409e0020` — `refactor(policy-rules): remove dead _load_policies (all eval sites use the resolving loader)`
+
+**Grep confirmation (no caller):**
+- `grep -rn "_load_policies" api/src api/shared` returned exactly one hit: the definition itself at `api/src/routers/tables.py:71` (now deleted). The websocket hits are `_load_policies_for_table` — a different function, untouched. Two comments in `manifest_import.py` referenced it; line 2079 was updated to name `load_resolved_table_policies` in `table_policy_loader.py` instead.
+
+**Imports:** `ValidationError` retained (still used at line 869); `Table` ORM import retained (used in 10+ other places). No imports removed.
+
+**Ruff:** `All checks passed!` on `src/routers/tables.py`.
+
+**Focused tests:**
+- `tests/unit/test_policies_validate_endpoint.py` — **16/16 passed** (3.76 s)
+- `tests/e2e/test_table_ref_enforced.py` — **1/1 passed** (5.00 s)

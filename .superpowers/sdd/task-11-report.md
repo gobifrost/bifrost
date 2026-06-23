@@ -113,9 +113,33 @@ Written but **not run** — the debug stack is not running in this environment a
 
 ---
 
+## Review Fixes Applied (commit efdd6f912)
+
+Three review findings addressed after the initial commit (ccf41013b):
+
+**Fix 1 — PolicyEditor.tsx (Important):** Removed `{ $ref: name } as unknown as NonNullable<TablePolicies["policies"]>[number]`. Replaced with `const ref: components["schemas"]["PolicyRuleRef"] = { $ref: name }` then spreading `ref` into the array. `TablePolicies.policies` is `(Policy | PolicyRuleRef)[]` in v1.d.ts, so `PolicyRuleRef` is directly assignable — no cast needed.
+
+**Fix 2 — filePolicies.ts + FilePolicyEditor.tsx (Important):** Root cause was that `FilePolicies.policies` was typed as `FilePolicyRule[]` (narrower than the v1 schema). Fixed by:
+- Adding `import type { components } from "@/lib/v1"` to `filePolicies.ts`
+- Exporting `PolicyRuleRef = components["schemas"]["PolicyRuleRef"]`
+- Widening `FilePolicies.policies` to `(FilePolicyRule | PolicyRuleRef)[]`
+- Widening `FilePolicy.policies` from `{ policies: FilePolicyRule[] }` to `FilePolicies` (same shape, uses the interface)
+- Removing `as unknown as FilePolicies["policies"][number]` in `FilePolicyEditor.tsx`
+- Adding `"$ref" in rule` narrowing guards in `EffectiveAccessPanel.tsx` and `PoliciesView.tsx` (two consumers that accessed `.name`/`.actions` directly — both flagged by tsc after the widening)
+
+**Fix 3 — policyRules.ts (Minor):** Replaced `return data!` with an explicit `if (data === undefined) throw new Error("No data returned for policy rule usages"); return data;` — matches the explicit-guard pattern consistent with how `error` is checked on the same line above.
+
+No `as unknown as` for `$ref` entries remains anywhere in the codebase.
+
+**tsc:** 0 new errors (5 pre-existing errors in FilePreview.tsx + TestAccessModal.test.tsx unchanged)
+**lint:** 0 errors, 1 pre-existing warning (FormRenderer.tsx) — clean
+**vitest:** 47/47 passed across the 4 affected test files
+
+---
+
 ## Self-Review / Concerns
 
-1. **`$ref` type cast** — `{ $ref: name }` is cast via `as unknown as ...` in both editors. The `FilePolicies["policies"][number]` and `TablePolicies["policies"][number]` types don't include `$ref` in their TypeScript definitions (the backend accepts it at runtime but v1.d.ts doesn't model it). The cast is intentional and minimal. If the types are updated to include `$ref` variants, the cast can be removed.
+1. **`$ref` type cast (resolved)** — both cast sites have been removed. `TablePolicies` uses `components["schemas"]["PolicyRuleRef"]` directly; `FilePolicies` was widened to include `PolicyRuleRef` in the union, eliminating the cast in `FilePolicyEditor`.
 
 2. **Rules list is fetched once on mount** — there's no refresh after a rule is created elsewhere. For the current use case (admin editing a policy right after creating rules) this is fine. If live refresh is needed, a `useCallback`-wrapped refetch trigger can be added later.
 

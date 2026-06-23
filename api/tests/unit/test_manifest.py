@@ -2551,7 +2551,7 @@ class TestManifestPolicyRule:
     def test_from_row_drops_env_fields(self):
         """from_row excludes is_builtin, created_by, solution_id, timestamps."""
         from types import SimpleNamespace
-        from uuid import UUID, uuid4 as u4
+        from uuid import uuid4 as u4
         from datetime import datetime, timezone
 
         from bifrost.manifest import ManifestPolicyRule
@@ -2627,7 +2627,6 @@ class TestManifestPolicyRule:
         """A table manifest policy list containing a {$ref: ops} ref round-trips."""
         from bifrost.manifest import (
             ManifestPolicyRef,
-            ManifestTable,
             parse_manifest,
             serialize_manifest,
         )

@@ -1,5 +1,51 @@
 # Task 7 Report: REST router — CRUD + /usages + structured save-time validation
 
+---
+
+## Review Fix Report (commit 7a2771978)
+
+**Three review findings applied:**
+
+### Fix 1 (CRITICAL): `by_alias=True` on file-policy save
+`file_policy_service.py` lines 129 and 151: both `policies.model_dump(mode="json")` calls now pass `by_alias=True`. Without this, `PolicyRuleRef.ref` (aliased as `$ref`) was stored as `{"ref": name}` not `{"$ref": name}`, causing `find_policy_rule_usages` JSONB containment queries to find nothing — breaking delete-in-use guard and rename cascade for API-created file policies.
+
+### Fix 2 (Important): 409 carries usages payload
+`PolicyRuleInUse.__init__` now accepts `(name, usages)` and stores `self.usages`. `policy_rule_service.delete` raises `PolicyRuleInUse(name, usages)`. The router's except block builds a `PolicyRuleUsagesPublic` from `exc.usages` and puts it in `HTTPException.detail` as `{"message": "...", "usages": {...}}`.
+
+### Fix 3 (Minor): typed usages response
+Added three Pydantic models to `api/src/models/contracts/policy_rule.py`: `PolicyRuleUsagesFilePolicyItem`, `PolicyRuleUsagesTableItem`, `PolicyRuleUsagesPublic`. `GET /{domain}/{name}/usages` now has `response_model=PolicyRuleUsagesPublic` and returns `PolicyRuleUsagesPublic` instead of `dict`.
+
+### Restored delete-in-use test
+`test_delete_in_use_returns_409_with_usages` in `test_policy_rules_api.py`:
+1. Creates a policy rule ("ops_in_use_e2e")
+2. PUTs a file policy with `{"$ref": "ops_in_use_e2e"}`
+3. GETs /usages → asserts `total >= 1` (proves by_alias fix — without it this would be 0)
+4. DELETEs the rule → asserts 409 AND `detail.usages.total >= 1`
+5. Cleans up
+
+**This test would FAIL without the by_alias fix** — with `{"ref": name}` stored, the JSONB `contains([{"$ref": name}])` query finds zero file_policies, usages.total stays 0, and the delete succeeds (204 not 409).
+
+### Test run result
+```
+7 passed in 8.51s
+tests/e2e/test_policy_rules_api.py::TestPolicyRulesCRUD::test_crud_and_usages PASSED
+tests/e2e/test_policy_rules_api.py::TestPolicyRulesCRUD::test_list_returns_created_rule PASSED
+tests/e2e/test_policy_rules_api.py::TestPolicyRulesCRUD::test_readonly_builtin_cannot_be_deleted PASSED
+tests/e2e/test_policy_rules_api.py::TestPolicyRulesCRUD::test_delete_unknown_returns_404 PASSED
+tests/e2e/test_policy_rules_api.py::TestPolicyRulesCRUD::test_delete_in_use_returns_409_with_usages PASSED
+tests/e2e/test_policy_rules_api.py::TestFilePolicyMissingRef::test_file_policy_missing_ref_is_structured_422 PASSED
+tests/e2e/test_policy_rules_api.py::TestNonAdminCannotCreate::test_non_admin_cannot_create PASSED
+```
+
+### Types regen
+`cd client && OPENAPI_URL=http://localhost:34212/openapi.json npm run generate:types` confirmed `PolicyRuleUsagesPublic`, `PolicyRuleUsagesFilePolicyItem`, `PolicyRuleUsagesTableItem` present in `v1.d.ts` (line 18949+).
+
+### Lint
+`ruff check` on all changed files: all checks passed.
+
+---
+
+
 ## Status
 COMPLETE. All 6 e2e tests pass. Types regenerated. 8 pre-existing TypeScript errors unchanged.
 
