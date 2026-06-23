@@ -242,17 +242,33 @@ class FilePolicyService:
         organization_id: UUID | None,
         location: str,
         path: str,
+        solution_id: UUID | None = None,
     ) -> FilePolicy | None:
-        """Resolve the governing policy with org→global cascade + override.
+        """Resolve the governing policy with own-solution → org → global cascade.
 
-        Mirrors ``OrgScopedRepository.get`` ("org-specific first, then global"):
-        an org-specific policy whose prefix matches the path overrides the
-        global (org=NULL) policy, and a global policy applies when the org has
-        none — so a global ``shared/pictures`` policy cascades to every org's
-        users, and an org's own ``pictures`` policy overrides it for that org.
-        The longest-prefix selection runs *within* each scope before the
-        override, so org/global specificity is compared independently.
+        When ``solution_id`` is provided (solution context), the solution's own
+        prefix policies are consulted first (longest-prefix within the solution
+        tier).  A solution-scoped policy that covers the path wins; if none
+        matches, resolution falls through to the existing org → global arm
+        unchanged.
+
+        For non-solution callers (``solution_id=None``) the original org →
+        global cascade applies with no change.
         """
+        # Step 0: solution-own arm — only when a solution context is active.
+        if solution_id is not None:
+            solution_rows = (
+                await self.db.execute(
+                    select(FilePolicy).where(
+                        FilePolicy.solution_id == solution_id,
+                        FilePolicy.location == location,
+                    )
+                )
+            ).scalars().all()
+            solution_match = select_longest_prefix(solution_rows, location, path)  # type: ignore[arg-type]
+            if solution_match is not None:
+                return cast(FilePolicy, solution_match)
+
         # Step 1: org-specific (override) — longest-prefix among the org's rows.
         if organization_id is not None:
             org_rows = (
@@ -260,6 +276,7 @@ class FilePolicyService:
                     select(FilePolicy).where(
                         FilePolicy.organization_id == organization_id,
                         FilePolicy.location == location,
+                        FilePolicy.solution_id.is_(None),
                     )
                 )
             ).scalars().all()
@@ -273,6 +290,7 @@ class FilePolicyService:
                 select(FilePolicy).where(
                     FilePolicy.organization_id.is_(None),
                     FilePolicy.location == location,
+                    FilePolicy.solution_id.is_(None),
                 )
             )
         ).scalars().all()
@@ -289,9 +307,6 @@ class FilePolicyService:
         user: Any,
         solution_id: UUID | None = None,
     ) -> bool:
-        # solution_id is forwarded for Task 3 (own-solution policy cascade).
-        # Currently unused in this evaluation; accepted here so callers can
-        # thread it through without a Task 3 dependency.
         if not self._principal_matches_org(user, organization_id):
             return False
 
@@ -299,6 +314,7 @@ class FilePolicyService:
             organization_id=organization_id,
             location=location,
             path=path,
+            solution_id=solution_id,
         )
         if policy_row is None:
             return False
