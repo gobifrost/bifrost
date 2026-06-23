@@ -18,10 +18,12 @@ def _policy_path(path: str) -> str:
     return quote(path.strip("/"), safe="")
 
 
-def _policy_params(location: str, scope: str | None) -> dict[str, str]:
+def _policy_params(location: str, scope: str | None, solution: str | None = None) -> dict[str, str]:
     params = {"location": location}
     if scope is not None:
         params["scope"] = scope
+    if solution is not None:
+        params["solution"] = solution
     return params
 
 
@@ -29,6 +31,7 @@ async def list_file_policies(
     context: Any,
     location: str = "workspace",
     scope: str | None = None,
+    solution: str | None = None,
 ) -> ToolResult:
     """List file policies — thin wrapper over ``GET /api/files/policies``."""
     logger.info("MCP list_file_policies (HTTP bridge)")
@@ -36,7 +39,7 @@ async def list_file_policies(
         context,
         "GET",
         "/api/files/policies",
-        params=_policy_params(location, scope),
+        params=_policy_params(location, scope, solution),
     )
     if status_code != 200:
         return error_result(
@@ -55,6 +58,7 @@ async def get_file_policy(
     path: str,
     location: str = "workspace",
     scope: str | None = None,
+    solution: str | None = None,
 ) -> ToolResult:
     """Get a file policy — thin wrapper over ``GET /api/files/policies/{path}``."""
     if not path:
@@ -63,7 +67,7 @@ async def get_file_policy(
         context,
         "GET",
         f"/api/files/policies/{_policy_path(path)}",
-        params=_policy_params(location, scope),
+        params=_policy_params(location, scope, solution),
     )
     if status_code != 200:
         return error_result(f"get_file_policy failed: HTTP {status_code}", {"body": body})
@@ -79,6 +83,7 @@ async def set_file_policy(
     policies: list[dict[str, Any]] | dict[str, Any],
     location: str = "workspace",
     scope: str | None = None,
+    solution: str | None = None,
 ) -> ToolResult:
     """Set a file policy — thin wrapper over ``PUT /api/files/policies/{path}``."""
     if not path:
@@ -89,7 +94,7 @@ async def set_file_policy(
         context,
         "PUT",
         f"/api/files/policies/{_policy_path(path)}",
-        params=_policy_params(location, scope),
+        params=_policy_params(location, scope, solution),
         json_body={"policies": policies},
     )
     if status_code not in (200, 201):
@@ -105,6 +110,7 @@ async def delete_file_policy(
     path: str,
     location: str = "workspace",
     scope: str | None = None,
+    solution: str | None = None,
 ) -> ToolResult:
     """Delete a file policy — thin wrapper over ``DELETE /api/files/policies/{path}``."""
     if not path:
@@ -113,7 +119,7 @@ async def delete_file_policy(
         context,
         "DELETE",
         f"/api/files/policies/{_policy_path(path)}",
-        params=_policy_params(location, scope),
+        params=_policy_params(location, scope, solution),
     )
     if status_code not in (200, 204):
         return error_result(
