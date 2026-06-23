@@ -59,7 +59,26 @@ mutation/delete of them outside deploy.
 - The runtime file-write path must not let a solution mutate its own *managed policy* rows through
   the ORM (it would 500 in prod, false-green in isolated unit tests — install the guard in tests).
 
-### D3. File content export = the `table_data` analog, `include_data`-gated
+### D3 (REVISED). File content export = sidecar files in the zip + manifest index, `include_data`-gated
+
+**Decision (2026-06-22):** unlike table rows (which travel as JSON in the bundle dict), file **bytes
+travel as real sidecar files inside the solution zip** under a `files/` directory, and the manifest
+carries an **index** (one entry per file: `location`, `path`, `sha256`, `size`, `solution`-relative
+zip path) — NOT base64-inline in YAML. Rationale: git-diff-friendly, no manifest bloat, mirrors how
+`python_files`/app source already travel. Still `include_data`-gated.
+
+- Capture: `_solution_file_entries(solution)` enumerates `FileMetadata WHERE solution_id == sid`,
+  reads each via the backend, writes the bytes into the zip under `files/{location}/{path}`, and
+  emits a `ManifestSolutionFile` index entry.
+- Install: read the index, write each sidecar back via `backend.write(path, content,
+  location=…, scope=str(install_id))`, honoring **replace/skip merge, no mirror** (O1).
+- The `_table_data` row cap + loud-warning + omit-empty discipline still applies (a per-file count
+  cap with a logged warning).
+
+The old `_table_data`-analog framing below remains the closest *precedent* for enumerate/serialize/
+reimport, but the transport is sidecar-in-zip, not inline dict.
+
+### D3-legacy note. (superseded transport — kept for the enumerate/reimport precedent)
 
 `capture.py::_table_data` is the template: enumerate by `solution_id`, key by name/relative-path,
 cap with a **loud** warning (`TABLE_ROW_CAP`), omit-empty, ride the bundle **only under
@@ -211,16 +230,29 @@ access. Highest-leverage correctness item in the files-in-solutions surface — 
 security-review checklist with explicit tests for all three failure modes (client-scope override,
 traversal, PUT into a foreign scope).
 
-### O3: S3 orphan sweep on uninstall (runs as a job — D6)
+### O3 (DECIDED — REVISED): uninstall ORPHANS files, does not sweep
 
-Entity uninstall is DB-cascaded; S3 is not. Uninstall must explicitly sweep
-`{location}/{install_id}/` across every location the install used (and the `FileMetadata` rows, via
-Core delete). Without it: leaked, still-billed objects + dangling metadata. Table data avoids this
-(DB cascade); files cannot.
+The first sketch said "sweep `{install_id}/` on uninstall." **That contradicts the real
+`delete_solution`** (`solutions.py:687-908`), which is deliberately **non-destructive**: it
+*detaches* owned tables (`solution_id→NULL`, `origin_solution_slug`/`orphaned_at` stamped, moved to
+the org) and orphans config values so **customer data survives a uninstall**. Files are data-bearing
+like tables, so they follow the SAME pattern, not a sweep:
 
-Because the sweep is unbounded in size, it **runs as a background job** (D6), enqueued by the
-uninstall flow — not inline. The whole-prefix sweep is what makes O1's never-delete-on-update
-orphans safe: they don't outlive the install.
+- On uninstall, solution files are **re-stamped to the org**: `FileMetadata.solution_id→NULL`,
+  `organization_id = install.organization_id`, `origin_solution_slug`/`origin_solution_id`/
+  `orphaned_at` set — and the **S3 objects are moved** from `solutions/{install_id}/…` to the org
+  scope (`solutions/{org_id}/…` or the chosen org-scoped location) so the surviving metadata still
+  resolves. A reinstall can reattach by `origin_solution_id` (mirroring tables).
+- **No hard delete on uninstall.** This supersedes the D6 "uninstall sweep job." The only deletes
+  are the existing cascade for pure-code entities.
+- The S3 **move** is potentially large → it still runs as a **background job** (D6), enqueued after
+  the DB commit (where the existing S3 work already happens), using the `SolutionDeployJob`-style
+  orchestration row + poll endpoint (see D6).
+
+> Net: O1 (no mirror-delete on update) + O3-orphan (no delete on uninstall) means solution files are
+> never destroyed by the platform — fully consistent with tables/configs. The "leaked billed
+> objects" risk the original O3 cited is handled by the move-to-org (objects are retained on
+> purpose, under the org, not orphaned in a dead install prefix).
 
 ### O4: app-relative auto-scoping (ergonomics)
 
