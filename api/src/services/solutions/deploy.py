@@ -309,8 +309,19 @@ class SolutionDeployer:
         # _resolve_roles). Surfaced on DeployResult.roles_created.
         self._created_roles: set[str] = set()
 
-    async def deploy(self, bundle: SolutionBundle, force: bool = False) -> DeployResult:
+    async def deploy(
+        self,
+        bundle: SolutionBundle,
+        force: bool = False,
+        file_mode: str = "replace",
+    ) -> DeployResult:
         """Full-replace this install from ``bundle`` — DB phase + app COMPILE.
+
+        ``file_mode`` controls how bundle file sidecars are written on deploy:
+          ``"replace"`` (default) — always overwrite; ``"skip"`` — preserve an
+          existing (e.g. user-modified) file.  Files absent from the bundle are
+          NEVER deleted regardless of ``file_mode`` (O1 no-mirror: unlike
+          entities, dropped files survive across redeployments).
 
         Everything that can fail on bad input runs BEFORE the caller's commit, so
         a failure rolls the deploy back with ZERO durable side effects:
@@ -478,6 +489,19 @@ class SolutionDeployer:
                 "sweep stale dist", sid,
                 lambda: self._delete_stale_app_dist(stale_app_dist),
             )
+            # ── Bundle file sidecars (O1: no mirror-delete) ───────────────────
+            # Write each sidecar that carries content_bytes.  Files absent from
+            # the bundle are INTENTIONALLY left untouched — unlike entities there
+            # is no reconcile-delete sweep for files.  A redeploy with a file
+            # dropped from the bundle must NOT delete the previously-installed
+            # file (user may have modified it).
+            if bundle.solution_files:
+                await _retry_idempotent(
+                    "write bundle file sidecars", sid,
+                    lambda: self._write_bundle_files(
+                        sid, bundle.solution_files, file_mode
+                    ),
+                )
 
         return DeployResult(
             workflows_upserted=len(rb.workflows),
@@ -1276,6 +1300,46 @@ class SolutionDeployer:
         builder = SolutionAppBuilder()
         for app_id in app_ids:
             await builder.delete_dist(app_id)
+
+    async def _write_bundle_files(
+        self, install_id: UUID, solution_files: list[Any], file_mode: str
+    ) -> None:
+        """POST-COMMIT: write file sidecars from the bundle (S3 + metadata row).
+
+        Only entries with ``content_bytes`` populated are written — metadata-only
+        entries (from enumerate without a read) are skipped.
+
+        O1 no-mirror: there is NO reconcile-delete for files.  Files absent from
+        the bundle survive — a redeploy that drops a file must never delete a
+        previously-installed (potentially user-modified) file.  This is an
+        intentional divergence from entity reconcile which does sweep stale rows.
+        """
+        import base64 as _b64
+
+        from src.services.solution_files import write_solution_file
+
+        for sf in solution_files:
+            # Support both SolutionFileEntry dataclass instances (from capture)
+            # and plain dicts (from the secrets_blob JSON tier: content_b64 key).
+            if hasattr(sf, "content_bytes"):
+                content = sf.content_bytes
+                location = sf.location
+                path = sf.path
+            else:
+                # Dict form from secrets_blob: content travels as base64.
+                b64 = sf.get("content_b64")
+                if not b64:
+                    continue
+                content = _b64.b64decode(b64)
+                location = sf["location"]
+                path = sf["path"]
+
+            if content is None:
+                continue
+
+            await write_solution_file(
+                self.db, install_id, location, path, content, mode=file_mode
+            )
 
     async def _upsert_forms(
         self, solution: Solution, forms: list[dict[str, Any]]
