@@ -17,8 +17,10 @@ from shared.file_policies import (
     evaluate_file_action,
     select_longest_prefix,
 )
+from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
 from src.models.contracts.policies import FileAction, FilePolicies
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
+from src.repositories.policy_rule import PolicyRuleRepository
 from src.services.audit import emit_audit
 
 logger = logging.getLogger(__name__)
@@ -264,6 +266,18 @@ class FilePolicyService:
                 organization_id,
                 location,
                 policy_row.path,
+                exc,
+            )
+            return False
+
+        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, is_superuser=True)
+        try:
+            await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
+        except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+            logger.warning(
+                "unresolvable file policy ref %s/%s; denying: %s",
+                organization_id,
+                location,
                 exc,
             )
             return False

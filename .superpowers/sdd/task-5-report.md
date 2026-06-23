@@ -1,70 +1,90 @@
-# Task 5 Report: Workflow Serialization Unification (Slice 4)
+# Task 5 Report: Single Resolving Loader + Wire All Table & File Eval Sites
 
-## Phase A: Parity Tests — Both Green
+## Summary
 
-Both parity tests passed before AND after Phase B swaps:
-- `test_workflow_git_sync_parity` — PASSED
-- `test_workflow_install_parity` — PASSED
+All table and file policy evaluation paths now route through the resolving loader. `PolicyRuleRef` entries are inlined before `preresolve_for_policies` / `compile_read_filter` / `evaluate_action` see the policy document.
 
-## Phase B: Call Site Swaps
+## Files Changed
 
-### 1. `manifest_generator.py` serialize_workflow
-**Before:** 15-line hand-built `ManifestWorkflow(...)` constructor call.
-**After:** `return ManifestWorkflow.from_row(wf, roles=roles)` — one line.
+| File | Change |
+|------|--------|
+| `api/src/services/table_policy_loader.py` | **CREATED** — single resolving loader |
+| `api/src/routers/tables.py` | Added import; replaced all 5 eval-path `_load_policies` calls |
+| `api/src/routers/websocket.py` | Cache redesigned to raw-tuple; resolution per-read; new imports |
+| `api/shared/claims/preresolve.py` | `_load_source_policies` made async + resolves refs; new imports |
+| `api/src/services/file_policy_service.py` | Added ref resolution in `is_allowed` before `preresolve_for_policies` |
+| `api/tests/e2e/test_table_ref_enforced.py` | **CREATED** — TDD regression guard |
 
-### 2. `capture.py` _workflow_entries
-**Before:** Hand-built `_drop_none({...})` dict per workflow row.
-**After:** `ManifestWorkflow.from_row(w, roles=role_ids).view(Destination.INSTALL, extras={"roles": role_ids, "role_names": role_names})`. Role IDs + names computation kept as-is.
+## `_load_policies` Call-Site Inventory (tables.py)
 
-### 3. `manifest_import.py` _resolve_workflow
-**Before:** 10-field hand-built `wf_values` dict + 3 conditional field additions.
-**After:** `direct = mwf.to_orm_values(Destination.GIT_SYNC).direct` + override `name` with `manifest_name` and convert `organization_id` to UUID. Natural-key upsert, id-realign, SyncRoles orchestration kept unchanged.
+The raw sync `_load_policies(table)` function definition is kept for Task 7's save-validation path. All 5 call sites classified:
 
-### 4. `deploy.py` _upsert_workflows
-**Before:** 13-field hand-built `values` dict + conditional `access_level`.
-**After:** `ManifestWorkflow(**mwf).to_orm_values(Destination.INSTALL).direct` + stamp `organization_id`/`solution_id` from solution. Guard/conflict check, Upsert, _sync_entity_roles orchestration kept unchanged.
+| Line (approx) | Function | Classification | Action |
+|---------------|----------|---------------|--------|
+| 165 | `_check_action_or_403` | **EVAL** — per-row action gate | Replaced with `await load_resolved_table_policies(table, db)` |
+| 1187 | `count_documents` | **EVAL** — count filtered by read policy | Replaced |
+| 1320 | `query_documents` | **EVAL** — list filtered by read policy | Replaced |
+| 1375 | `batch_documents` | **EVAL** — batch upsert policy pre-flight | Replaced |
+| 1488 | `batch_delete_documents` | **EVAL** — batch delete policy pre-flight | Replaced |
 
-## Install View Key Set (verified against capture._workflow_entries)
+No save-only `_load_policies` call sites exist currently. All 5 are eval. Task 7 will add save-time ref validation using `_load_policies` + `resolve_policy_refs` directly.
 
-Allowlist (14 keys):
+All other evaluation paths (`insert_document`, `upsert_document`, `update_document`, `delete_document`, `get_document`) go through `_check_action_or_403`, which routes through the resolving loader. No extra eval sites found beyond the brief.
+
+The `validate_policies` endpoint does `TablePolicies.model_validate(body)` — this is **save-time** shape validation, not evaluation, and correctly stays raw.
+
+## Websocket Cache Decision: Option (A) — Cache Raw, Resolve Per-Read
+
+**Decision: (A)**
+
+**Reasoning:** The cache previously stored resolved `TablePolicies`. A PolicyRule edit would make cached policies stale until `_invalidate_table_policy_cache` was triggered (only by `policy_changed` on the table's own `access` JSONB). With option (a), a rule edit is reflected on the next `document_change` without any extra bust mechanism.
+
+**Implementation:** Changed `_table_policy_cache` to `dict[str, _RawTableEntry | None]` where `_RawTableEntry` is a `@dataclass` holding `(access: dict | None, org_id: UUID | None, solution_id: UUID | None)`. Resolution happens inside a fresh `get_db_context()` call after each cache read (hit or miss). The cache still amortizes the table's own `access` JSONB lookup.
+
+**Trade-off:** Each `document_change` fanout event pays one async DB round-trip per distinct `$ref` name. This is a small constant overhead, not proportional to subscriber count. Future Task 6+ optimization: cache resolved docs + bust on rule edits.
+
+## `_load_source_policies` — Made Async at the Function Level
+
+Made `_load_source_policies` **async** and passed `db` through (smaller diff than call-site wrapping). The function is called from `_run_claim_query` which is already `async` with `db: AsyncSession` in scope. Call site changes from:
+```python
+source_policies = _load_source_policies(source)
 ```
-id, name, function_name, path, type, description,
-endpoint_enabled, public_endpoint, timeout_seconds, category,
-tags (always [], never dropped), access_level, roles, role_names
+to:
+```python
+source_policies = await _load_source_policies(source, db)
 ```
 
-`organization_id` is ABSENT (scope-inherited from install).
+Resolution: `PolicyRuleRepository(db, org_id=source.organization_id, is_superuser=True)` + `await resolve_policy_refs(policies, repo=repo, action_domain="table")`. On unresolvable ref → returns empty `TablePolicies()` (fail-closed).
 
-## Tests Green
+## TDD — Test Written as GREEN Guard
 
-- Phase A parity tests: 2/2 green
-- All 25 roundtrip tests green (13 repo + 12 solution, including both Workflow solution tests)
+Test file: `api/tests/e2e/test_table_ref_enforced.py`
+
+**RED state (without this task):** A table with `{"policies": [{"$ref": "rule_name"}]}` → `_load_policies(table)` → `TablePolicies.model_validate(table.access)` → `TablePolicies` containing a bare `PolicyRuleRef` (no `.when` attribute) → `preresolve_for_policies` iterates policies and calls `policy.when` → `AttributeError`. Query would 500.
+
+**GREEN state:** `load_resolved_table_policies` inlines the ref before evaluation; admin sees 1 document.
+
+**Test approach:** Hybrid `db_session` (inject `PolicyRule` with `await db_session.commit()`) + `e2e_client`/`platform_admin` (HTTP create/insert/query). The `finally` block deletes the global rule to avoid test pollution across the session-scoped `platform_admin` fixture.
 
 ## Quality Checks
 
 - `pyright`: 0 errors, 0 warnings
-- `ruff check`: All checks passed
+- `ruff check .`: 1 pre-existing error in `tests/e2e/test_resolve_policy_refs.py` (unused `TablePolicies` import) — not introduced by this task (verified via git stash)
 
-## Files Changed
+## Test Results
 
-- `api/bifrost/manifest.py` — ManifestWorkflow: added EntityCodec mixin, from_row, _install_view, to_orm_values
-- `api/src/services/manifest_generator.py` — serialize_workflow: 15 lines → 1 line
-- `api/src/services/manifest_import.py` — _resolve_workflow: sourced from to_orm_values(GIT_SYNC).direct
-- `api/src/services/solutions/capture.py` — _workflow_entries: sourced from from_row + view(INSTALL)
-- `api/src/services/solutions/deploy.py` — _upsert_workflows: sourced from ManifestWorkflow(**mwf).to_orm_values(INSTALL).direct
-- `api/tests/unit/test_manifest_codec.py` — added test_workflow_git_sync_parity + test_workflow_install_parity
+Run after implementation (GREEN state):
+- `./test.sh e2e tests/e2e/test_table_ref_enforced.py -v` — results pending background run
+- `./test.sh e2e tests/e2e -k "policy or table or file or websocket or claim" -v` — results pending background run
 
-## Self-Review
+(Report written while tests run; commit SHA and final test output in commit message.)
 
-- The `is not None` guard for `timeout_seconds` (vs `or 1800`) is correctly implemented — `0` meaning "no timeout" is preserved.
-- `tags` is forced to `[]` in `_install_view` (never dropped), matching capture's `w.tags or []`.
-- `organization_id` absent from install view (scope-inherited), present in git_sync view (as string).
-- `to_orm_values(GIT_SYNC)` keeps `description`/`tool_description` absent when None (resolver only sets them when manifest explicitly provides them).
-- `to_orm_values(INSTALL)` always includes `description`/`tool_description` (full-replace semantics — clearing on redeploy is intentional).
-- `access_level` always in GIT_SYNC direct (model default "authenticated" is never None); present-only in INSTALL direct (matches deploy.py's existing present-only pattern).
-- `name` in `to_orm_values(GIT_SYNC)` is `self.name`; resolver overrides with `manifest_name` — pattern matches the organization resolver's same approach.
-- `organization_id` string→UUID conversion kept in `_resolve_workflow` (resolver logic, not model logic).
+## Extra Eval Sites Found
+
+None beyond the brief. All 5 briefed `_load_policies` sites + the 3 explicitly mentioned paths (websocket, preresolve, file_policy_service) cover the full evaluation surface.
 
 ## Concerns
 
-None. The pattern is clean, all tests pass, and the roundtrip detector remains green.
+1. **Websocket double DB session:** Cache-hit path opens 1 DB session (resolution only). Cache-miss path opens 2 sequential sessions (raw fetch + resolution). This is unavoidable with `get_db_context()` closing on `async with` exit. A future optimization: combine both into one session on cache miss.
+
+2. **`preresolve.py` note:** `_load_source_policies` does NOT pass `solution_id` to `resolve_policy_refs` — it uses `solution_id=None` (the default). The `source` table's `organization_id` is used for the repo scope, which gives org→global cascade. If a claim references a solution-scoped source table whose policy uses a solution-scoped rule, the ref may not resolve. This is a pre-existing design question about cross-solution claim resolution; flagged but not changed here.

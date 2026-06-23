@@ -14,10 +14,12 @@ from pydantic import ValidationError
 from shared.claims.registry import referenced_claim_names
 from shared.policies.compile import compile_to_sql
 from shared.policies.probe import compile_read_filter
+from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
 from src.models.contracts.claims import CustomClaim
 from src.models.contracts.policies import Expr, TablePolicies
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Document, Table
+from src.repositories.policy_rule import PolicyRuleRepository
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +142,7 @@ async def _run_claim_query(
     # any claims the source table's read policy itself depends on (a cycle
     # back to the in-progress claim resolves to [] via the existing `resolving`
     # set, which compiles to `IN ()` → false → fail-closed).
-    source_policies = _load_source_policies(source)
+    source_policies = await _load_source_policies(source, db)
     for dep_name in _read_policy_claim_deps(source_policies):
         dep_claim = claims.get(dep_name)
         if dep_claim is not None:
@@ -201,12 +203,16 @@ async def _resolve_claim_source_table(
     ).scalar_one_or_none()
 
 
-def _load_source_policies(source: Table) -> TablePolicies:
-    """Mirror tables._load_policies — fail-closed on malformed JSONB."""
+async def _load_source_policies(source: Table, db: AsyncSession) -> TablePolicies:
+    """Load and resolve source-table policies for claim evaluation.
+
+    Fail-closed on malformed JSONB or unresolvable $ref — an unresolvable
+    source policy means the claim cannot safely expose any rows.
+    """
     if not source.access:
         return TablePolicies()
     try:
-        return TablePolicies.model_validate(source.access)
+        policies = TablePolicies.model_validate(source.access)
     except ValidationError as exc:
         logger.warning(
             "malformed policies on source table %s; defaulting to deny: %s",
@@ -214,6 +220,14 @@ def _load_source_policies(source: Table) -> TablePolicies:
             exc,
         )
         return TablePolicies()
+
+    repo = PolicyRuleRepository(db, org_id=source.organization_id, is_superuser=True)
+    try:
+        await resolve_policy_refs(policies, repo=repo, action_domain="table")
+    except (PolicyRuleNotFound, PolicyRuleDomainMismatch):
+        return TablePolicies()  # source unreadable → claim resolves to [] (fail-closed)
+
+    return policies
 
 
 def _read_policy_claim_deps(policies: TablePolicies) -> set[str]:

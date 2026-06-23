@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from shared.policies.probe import is_subscribe_authorized
+from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
+from src.repositories.policy_rule import PolicyRuleRepository
 from shared.policies.subscription import decide_visibility_change
 from shared.role_cache import get_user_roles
 from src.core.auth import get_current_user_ws
@@ -142,7 +144,21 @@ async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
 # they also won't be evaluating that table's policies, so the staleness is
 # moot. (When a new subscriber arrives, the subscribe path goes through
 # `is_subscribe_authorized` with a fresh load, sidestepping the cache.)
-_table_policy_cache: dict[str, TablePolicies | None] = {}
+#
+# We cache the RAW (access, org_id, solution_id) triple rather than a resolved
+# TablePolicies. Resolution happens on every read (one DB lookup per $ref).
+# This means a policy-RULE edit is reflected on the next `document_change`
+# without requiring explicit cache-busting of the rule layer — only the table
+# row itself (access JSONB) needs a `policy_changed` invalidation.
+@dataclass
+class _RawTableEntry:
+    """Raw table data cached for resolution at read time."""
+    access: dict | None
+    org_id: UUID | None
+    solution_id: UUID | None
+
+
+_table_policy_cache: dict[str, _RawTableEntry | None] = {}
 # Bounded to keep memory predictable under high table churn. Eviction is
 # FIFO — for a hot working set of <_POLICY_CACHE_MAX tables, every read is
 # a hit; cold reads pay one DB load.
@@ -155,11 +171,16 @@ def _invalidate_table_policy_cache(table_id: str) -> None:
 
 
 async def _load_policies_for_table(table_id: str) -> TablePolicies | None:
-    """Load policies for a table by id (UUID) or name. Returns None if missing.
+    """Load and resolve policies for a table by id (UUID) or name.
+
+    Returns None if the table doesn't exist.
 
     Cache-first for UUID lookups (the hot path during `document_change`
-    fanout). Name lookups bypass the cache because the same name can resolve
-    to different tables in different orgs; UUIDs are unambiguous.
+    fanout). The cache stores the raw (access, org_id, solution_id) triple;
+    resolution of $ref entries happens on every read so that rule edits are
+    reflected without a separate cache-bust on the rule layer.
+    Name lookups bypass the cache because the same name can resolve to
+    different tables in different orgs; UUIDs are unambiguous.
     """
     # UUID lookups go through the cache. Name lookups bypass it because the
     # same name can resolve to different tables in different orgs.
@@ -173,36 +194,68 @@ async def _load_policies_for_table(table_id: str) -> TablePolicies | None:
         # the signal.
         pass
 
+    raw: _RawTableEntry | None
     if is_uuid and table_id in _table_policy_cache:
-        return _table_policy_cache[table_id]
-
-    async with get_db_context() as db:
-        if is_uuid:
-            stmt = select(TableOrm.access).where(TableOrm.id == UUID(table_id))
-        else:
-            stmt = select(TableOrm.access).where(
-                TableOrm.name == table_id,
-                # By-name resolution is the live _repo/ namespace — mirror
-                # OrgScopedRepository.get(): solution-managed rows resolve by
-                # id (or ?solution=), orphaned rows don't resolve by name.
-                TableOrm.solution_id.is_(None),
-                TableOrm.orphaned_at.is_(None),
-            )
-        result = await db.execute(stmt)
-        row = result.one_or_none()
-
-    if row is None:
-        policies: TablePolicies | None = None
-    elif row[0] is None:
-        policies = TablePolicies()
+        raw = _table_policy_cache[table_id]
     else:
-        policies = TablePolicies.model_validate(row[0])
+        async with get_db_context() as db:
+            if is_uuid:
+                stmt = select(
+                    TableOrm.access, TableOrm.organization_id, TableOrm.solution_id
+                ).where(TableOrm.id == UUID(table_id))
+            else:
+                stmt = select(
+                    TableOrm.access, TableOrm.organization_id, TableOrm.solution_id
+                ).where(
+                    TableOrm.name == table_id,
+                    # By-name resolution is the live _repo/ namespace — mirror
+                    # OrgScopedRepository.get(): solution-managed rows resolve by
+                    # id (or ?solution=), orphaned rows don't resolve by name.
+                    TableOrm.solution_id.is_(None),
+                    TableOrm.orphaned_at.is_(None),
+                )
+            result = await db.execute(stmt)
+            row = result.one_or_none()
 
-    if is_uuid:
-        # Bounded FIFO eviction — pop arbitrary entry when full.
-        if len(_table_policy_cache) >= _POLICY_CACHE_MAX:
-            _table_policy_cache.pop(next(iter(_table_policy_cache)), None)
-        _table_policy_cache[table_id] = policies
+        raw = (
+            None
+            if row is None
+            else _RawTableEntry(access=row[0], org_id=row[1], solution_id=row[2])
+        )
+
+        if is_uuid:
+            # Bounded FIFO eviction — pop arbitrary entry when full.
+            if len(_table_policy_cache) >= _POLICY_CACHE_MAX:
+                _table_policy_cache.pop(next(iter(_table_policy_cache)), None)
+            _table_policy_cache[table_id] = raw
+
+    if raw is None:
+        return None
+    if not raw.access:
+        return TablePolicies()
+
+    try:
+        policies = TablePolicies.model_validate(raw.access)
+    except ValidationError:
+        return TablePolicies()
+
+    # Resolve $ref entries using a fresh DB session. Resolution is cheap
+    # (one DB lookup per distinct ref name) and must happen after every cache
+    # hit so that rule edits are visible without a cache invalidation.
+    async with get_db_context() as db:
+        repo = PolicyRuleRepository(db, org_id=raw.org_id, is_superuser=True)
+        try:
+            await resolve_policy_refs(
+                policies,
+                repo=repo,
+                action_domain="table",
+                solution_id=raw.solution_id,
+            )
+        except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+            logger.warning(
+                "unresolvable policy ref on table %s; denying: %s", table_id, exc
+            )
+            return TablePolicies()
 
     return policies
 

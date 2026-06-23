@@ -58,6 +58,7 @@ from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
+from src.services.table_policy_loader import load_resolved_table_policies
 from src.repositories.tables import TableRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
 from src.services.audit import emit_audit
@@ -161,7 +162,7 @@ async def _check_action_or_403(
     of the deny. All current call sites either run this before any
     mutation or only after read-only operations.
     """
-    policies = _load_policies(table)
+    policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
         user,
         policies,
@@ -1183,7 +1184,7 @@ async def count_documents(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
 
-    policies = _load_policies(table)
+    policies = await load_resolved_table_policies(table, ctx.db)
     await preresolve_for_policies(
         ctx.user,
         policies,
@@ -1316,7 +1317,7 @@ async def query_documents(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
 
-    policies = _load_policies(table)
+    policies = await load_resolved_table_policies(table, ctx.db)
     await preresolve_for_policies(
         ctx.user,
         policies,
@@ -1371,7 +1372,7 @@ async def batch_documents(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
-    policies = _load_policies(table)
+    policies = await load_resolved_table_policies(table, ctx.db)
     await preresolve_for_policies(
         ctx.user,
         policies,
@@ -1484,7 +1485,7 @@ async def batch_delete_documents(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     repo = DocumentRepository(ctx.db, table)
-    policies = _load_policies(table)
+    policies = await load_resolved_table_policies(table, ctx.db)
     await preresolve_for_policies(
         ctx.user,
         policies,
