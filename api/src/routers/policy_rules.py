@@ -15,6 +15,9 @@ from src.models.contracts.policy_rule import (
     PolicyRuleCreate,
     PolicyRulePublic,
     PolicyRuleUpdate,
+    PolicyRuleUsagesFilePolicyItem,
+    PolicyRuleUsagesPublic,
+    PolicyRuleUsagesTableItem,
 )
 from src.repositories.policy_rule import PolicyRuleRepository
 from src.services.policy_rule_service import (
@@ -118,9 +121,14 @@ async def delete_policy_rule(
     except PolicyRuleReadOnly:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Policy rule '{name}' is read-only (built-in)")
     except PolicyRuleInUse as exc:
+        usages_payload = PolicyRuleUsagesPublic(
+            file_policies=[PolicyRuleUsagesFilePolicyItem(**fp) for fp in exc.usages.file_policies],
+            tables=[PolicyRuleUsagesTableItem(**tb) for tb in exc.usages.tables],
+            total=exc.usages.total,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Policy rule '{name}' is in use and cannot be deleted",
+            detail={"message": f"Policy rule '{name}' is in use and cannot be deleted", "usages": usages_payload.model_dump()},
         ) from exc
     await ctx.db.commit()
 
@@ -132,6 +140,7 @@ async def delete_policy_rule(
 
 @router.get(
     "/{domain}/{name}/usages",
+    response_model=PolicyRuleUsagesPublic,
     summary="Get usages of a named policy rule",
 )
 async def get_policy_rule_usages(
@@ -140,15 +149,15 @@ async def get_policy_rule_usages(
     ctx: Context,
     user: CurrentSuperuser,
     organization_id: UUID | None = Query(default=None),
-) -> dict:
+) -> PolicyRuleUsagesPublic:
     """Return all file-policies and tables that reference this rule."""
     svc = PolicyRuleService(ctx.db)
     try:
         usages = await svc.usages(name, domain, org_id=organization_id)
     except PolicyRuleNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Policy rule '{name}' not found")
-    return {
-        "total": usages.total,
-        "file_policies": usages.file_policies,
-        "tables": usages.tables,
-    }
+    return PolicyRuleUsagesPublic(
+        file_policies=[PolicyRuleUsagesFilePolicyItem(**fp) for fp in usages.file_policies],
+        tables=[PolicyRuleUsagesTableItem(**tb) for tb in usages.tables],
+        total=usages.total,
+    )

@@ -8,6 +8,25 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_valid
 
 from src.models.contracts.policies import FilePolicyRule, Policy
 
+
+class PolicyRuleUsagesFilePolicyItem(BaseModel):
+    id: str
+    location: str
+    path: str
+    organization_id: str | None
+
+
+class PolicyRuleUsagesTableItem(BaseModel):
+    id: str
+    name: str
+    organization_id: str | None
+
+
+class PolicyRuleUsagesPublic(BaseModel):
+    file_policies: list[PolicyRuleUsagesFilePolicyItem]
+    tables: list[PolicyRuleUsagesTableItem]
+    total: int
+
 Domain = Literal["file", "table"]
 
 

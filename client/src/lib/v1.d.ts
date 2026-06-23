@@ -3855,22 +3855,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__put"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -18946,6 +18946,35 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** PolicyRuleUsagesFilePolicyItem */
+        PolicyRuleUsagesFilePolicyItem: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Path */
+            path: string;
+            /** Organization Id */
+            organization_id: string | null;
+        };
+        /** PolicyRuleUsagesPublic */
+        PolicyRuleUsagesPublic: {
+            /** File Policies */
+            file_policies: components["schemas"]["PolicyRuleUsagesFilePolicyItem"][];
+            /** Tables */
+            tables: components["schemas"]["PolicyRuleUsagesTableItem"][];
+            /** Total */
+            total: number;
+        };
+        /** PolicyRuleUsagesTableItem */
+        PolicyRuleUsagesTableItem: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Organization Id */
+            organization_id: string | null;
+        };
         /**
          * PolicyValidationError
          * @description Single structured validation error for a policy document.
@@ -30201,7 +30230,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30234,7 +30263,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30267,7 +30296,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30300,7 +30329,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__put: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -40087,9 +40116,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PolicyRuleUsagesPublic"];
                 };
             };
             /** @description Validation Error */

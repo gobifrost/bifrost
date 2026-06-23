@@ -61,6 +61,62 @@ class TestPolicyRulesCRUD:
         r = e2e_client.delete("/api/policy-rules/file/definitely_does_not_exist_xyz", headers=platform_admin.headers)
         assert r.status_code == 404, r.text
 
+    def test_delete_in_use_returns_409_with_usages(self, e2e_client, platform_admin):
+        """Deleting a rule referenced by a file policy returns 409 with usages payload."""
+        rule_name = "ops_in_use_e2e"
+
+        # Create the policy rule
+        r = e2e_client.post(
+            "/api/policy-rules",
+            headers=platform_admin.headers,
+            json={"name": rule_name, "domain": "file", "body": {"actions": ["read"], "when": None}},
+        )
+        assert r.status_code == 201, r.text
+
+        # Create a file policy that references it via {"$ref": rule_name}
+        # This exercises the by_alias fix — without by_alias=True the ref is stored as
+        # {"ref": rule_name} (no $) and find_policy_rule_usages misses it entirely.
+        fp = e2e_client.put(
+            "/api/files/policies/ops_test%2F",
+            headers=platform_admin.headers,
+            params={"location": "shared"},
+            json={"policies": {"policies": [{"$ref": rule_name}]}},
+        )
+        assert fp.status_code == 200, fp.text
+
+        # GET /usages must show the file policy (proves by_alias fix on storage side)
+        u = e2e_client.get(
+            f"/api/policy-rules/file/{rule_name}/usages",
+            headers=platform_admin.headers,
+        )
+        assert u.status_code == 200, u.text
+        usages_body = u.json()
+        assert usages_body["total"] >= 1, f"Expected >= 1 usage, got: {usages_body}"
+        assert len(usages_body["file_policies"]) >= 1
+
+        # DELETE must return 409 with usages payload
+        d = e2e_client.delete(
+            f"/api/policy-rules/file/{rule_name}",
+            headers=platform_admin.headers,
+        )
+        assert d.status_code == 409, d.text
+        body = d.json()
+        assert "detail" in body
+        detail = body["detail"]
+        assert "usages" in detail, f"409 detail missing 'usages': {detail}"
+        assert detail["usages"]["total"] >= 1
+
+        # Cleanup — remove file policy first, then the rule
+        e2e_client.delete(
+            "/api/files/policies/ops_test%2F",
+            headers=platform_admin.headers,
+            params={"location": "shared"},
+        )
+        e2e_client.delete(
+            f"/api/policy-rules/file/{rule_name}",
+            headers=platform_admin.headers,
+        )
+
 
 class TestFilePolicyMissingRef:
     def test_file_policy_missing_ref_is_structured_422(self, e2e_client, platform_admin):

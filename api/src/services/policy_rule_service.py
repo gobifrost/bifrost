@@ -21,6 +21,10 @@ from src.services.solutions.guard import assert_not_solution_managed
 class PolicyRuleInUse(Exception):
     """Raised when a deletion is attempted on a rule that has active references."""
 
+    def __init__(self, name: str, usages: "PolicyRuleUsages") -> None:
+        super().__init__(name)
+        self.usages = usages
+
 
 class PolicyRuleReadOnly(Exception):
     """Raised when a mutation is attempted on a built-in rule."""
@@ -145,7 +149,7 @@ class PolicyRuleService:
             self.db, row.name, row.domain, org_id=row.organization_id
         )
         if usages.total > 0:
-            raise PolicyRuleInUse(name)
+            raise PolicyRuleInUse(name, usages)
         await self.db.delete(row)
         await self.db.flush()
         await emit_audit(

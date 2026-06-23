@@ -126,7 +126,7 @@ class FilePolicyService:
             path=path,
         )
         if existing is None:
-            doc = policies.model_dump(mode="json")
+            doc = policies.model_dump(mode="json", by_alias=True)
             # On first creation, seed a VISIBLE, revocable admin_bypass rule
             # (mirroring Tables) so a platform admin is allowed by policy — not
             # by a hardcoded evaluator bypass. Prepend only when absent, so a
@@ -148,7 +148,7 @@ class FilePolicyService:
             await self.db.flush()
             return row
 
-        existing.policies = policies.model_dump(mode="json")
+        existing.policies = policies.model_dump(mode="json", by_alias=True)
         await self.db.flush()
         return existing
 
