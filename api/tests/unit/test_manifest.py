@@ -2665,6 +2665,7 @@ class TestManifestPolicyRule:
         assert len(restored_table.policies) == 2
         restored_ref = restored_table.policies[1]
         assert isinstance(restored_ref, ManifestPolicyRef)
+        assert restored_ref.ref == "ops"
 
 
 # =============================================================================
