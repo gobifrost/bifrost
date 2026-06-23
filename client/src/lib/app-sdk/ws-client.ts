@@ -16,6 +16,16 @@ export type TableChangeMessage = {
   message?: string;
 };
 
+export type FileChangeMessage =
+  | {
+      type: "file_change";
+      path?: string;
+      action?: "write" | "delete" | "rename" | "upload";
+      channel?: string;
+    }
+  | { type: "subscription_revoked"; channel: string }
+  | { type: "error"; channel?: string; message: string };
+
 /**
  * Build the `/ws/connect` URL through the installed transport. With a
  * provider transport (npm-dev / `solution start` — possibly cross-origin),
@@ -63,6 +73,45 @@ export function subscribeToTable(
   ws.addEventListener("close", (e) => {
     if (!closedByClient) {
       console.warn("[bifrost-sdk] table subscription closed", e.code);
+    }
+  });
+  return () => {
+    closedByClient = true;
+    ws.close();
+  };
+}
+
+export function subscribeToFiles(
+  location: string,
+  prefix: string,
+  scope: string | null | undefined,
+  onEvent: (evt: FileChangeMessage) => void,
+): () => void {
+  const ws = new WebSocket(buildWsUrl());
+  let closedByClient = false;
+  const channel = `files:${location}:${prefix}`;
+  ws.addEventListener("open", () => {
+    ws.send(
+      JSON.stringify({
+        type: "subscribe",
+        channels: [{ name: channel, scope: scope ?? undefined }],
+      }),
+    );
+  });
+  ws.addEventListener("message", (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      onEvent(msg);
+    } catch {
+      // ignore unparseable messages
+    }
+  });
+  ws.addEventListener("error", () => {
+    console.warn("[bifrost-sdk] file subscription socket error");
+  });
+  ws.addEventListener("close", (e) => {
+    if (!closedByClient) {
+      console.warn("[bifrost-sdk] file subscription closed", e.code);
     }
   });
   return () => {

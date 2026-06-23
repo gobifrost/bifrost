@@ -193,8 +193,12 @@ class S3Backend(FileBackend):
         if location == "workspace":
             files = await self.storage.list_files(directory)
             return [f.path for f in files]
-        s3_dir = resolve_s3_key(location, scope, directory)
-        return await self.storage.list_raw_s3(s3_dir)
+        clean_directory = directory.strip("/")
+        list_prefix = f"{clean_directory}/" if clean_directory else ""
+        s3_dir = resolve_s3_key(location, scope, list_prefix)
+        location_root = resolve_s3_key(location, scope, "")
+        files = await self.storage.list_raw_s3(s3_dir)
+        return [f[len(location_root):] if f.startswith(location_root) else f for f in files]
 
     async def exists(self, path: str, location: Location, scope: str | None = None) -> bool:
         """Check if file exists in S3."""

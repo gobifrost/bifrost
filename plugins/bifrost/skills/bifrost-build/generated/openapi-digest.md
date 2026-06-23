@@ -155,6 +155,7 @@
 | POST | `/api/export-import/import/integrations` |
 | POST | `/api/export-import/import/knowledge` |
 | POST | `/api/export-import/import/tables` |
+| POST | `/api/files/complete-upload` |
 | POST | `/api/files/delete` |
 | DELETE | `/api/files/editor` |
 | GET | `/api/files/editor` |
@@ -165,10 +166,16 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
+| GET | `/api/files/policies` |
+| POST | `/api/files/policies/test` |
+| DELETE | `/api/files/policies/{policy_path}` |
+| GET | `/api/files/policies/{policy_path}` |
+| PUT | `/api/files/policies/{policy_path}` |
 | POST | `/api/files/pull` |
 | POST | `/api/files/read` |
 | POST | `/api/files/search` |
 | POST | `/api/files/signed-url` |
+| POST | `/api/files/signed-urls` |
 | POST | `/api/files/watch` |
 | GET | `/api/files/watchers` |
 | POST | `/api/files/write` |

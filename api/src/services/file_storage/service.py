@@ -8,6 +8,7 @@ as the original monolithic FileStorageService.
 import ast
 import logging
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -213,6 +214,94 @@ class FileStorageService:
         return await self._s3_storage.generate_presigned_download_url(
             path=path,
             expires_in=expires_in,
+        )
+
+    async def record_signed_upload_metadata(
+        self,
+        *,
+        location: str,
+        scope: str | None,
+        path: str,
+        s3_path: str,
+        content_type: str,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        updated_by: str,
+        user_id: str,
+    ) -> None:
+        """Record metadata after a presigned PUT has completed."""
+        if location == "workspace":
+            await self._file_ops.record_signed_upload_metadata(
+                path,
+                updated_by=updated_by,
+            )
+
+        from src.services.file_policy_service import FilePolicyService
+
+        organization_id: UUID | None = None
+        if location != "workspace":
+            if scope is None:
+                return
+            if scope == "global":
+                organization_id = None
+            else:
+                try:
+                    organization_id = UUID(scope)
+                except ValueError:
+                    return
+
+        service = FilePolicyService(self.db)
+        await service.upsert_metadata(
+            organization_id=organization_id,
+            location=location,
+            path=path,
+            content_type=content_type,
+            s3_key=s3_path,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            updated_by=user_id,
+            created_by=user_id,
+        )
+
+    async def record_file_write_metadata(
+        self,
+        *,
+        location: str,
+        scope: str | None,
+        path: str,
+        s3_path: str,
+        content_type: str,
+        size_bytes: int,
+        sha256: str,
+        updated_by: str,
+        user_id: str,
+    ) -> None:
+        """Record file metadata for policy predicates after a normal write."""
+        from src.services.file_policy_service import FilePolicyService
+
+        organization_id: UUID | None = None
+        if location != "workspace":
+            if scope is None:
+                return
+            if scope == "global":
+                organization_id = None
+            else:
+                try:
+                    organization_id = UUID(scope)
+                except ValueError:
+                    return
+
+        service = FilePolicyService(self.db)
+        await service.upsert_metadata(
+            organization_id=organization_id,
+            location=location,
+            path=path,
+            s3_key=s3_path,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            created_by=user_id,
+            updated_by=user_id,
         )
 
     async def read_uploaded_file(self, path: str) -> bytes:

@@ -1577,6 +1577,71 @@ export default function Contacts() {
 
 Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both wire live updates the same way.
 
+### files
+
+Web SDK for the Bifrost Files API. Direct browser-to-API file reads/writes, no workflow required — the mirror of `tables.*` for blob storage.
+
+Surface (one-line each):
+- `files.read(path, options?)` — read a text file, returns the decoded string
+- `files.readBytes(path, options?)` — read a file as a `Uint8Array`
+- `files.write(path, text, options?)` — write a text file
+- `files.writeBytes(path, bytes, options?)` — write binary content
+- `files.delete(path, options?)` — delete a file
+- `files.list(prefix, options?)` — list files under a prefix (optionally with metadata)
+- `files.exists(path, options?)` — existence check
+- `files.signedUrl(path, options?)` — one presigned `PUT`/`GET` URL for direct-to-storage transfer
+- `files.signedUrls(paths, options?)` — batch presigned URLs
+- `files.upload(path, blob, options?)` — presign + PUT + finalize an upload in one call
+- `files.download(path, options?)` — presign + GET a file as a `Blob`
+
+`options` carries `location` (`"workspace"` default, plus `"uploads"`, `"temp"`, `"shared"`, …), `mode` (`"local"` | `"cloud"`), and `scope` (org id; defaults to the app's org inside an org-scoped app, same convention as `useTable`).
+
+```tsx
+import { files, useFiles } from "bifrost";
+
+// Direct upload to shared storage (presign → PUT → finalize)
+await files.upload("gallery/logo.png", fileBlob, { location: "shared" });
+
+// Read it back as text
+const readme = await files.read("gallery/README.md", { location: "shared" });
+
+// Live listing — preferred React surface
+const { files: names, loading, denied } = useFiles("gallery", { location: "shared" });
+```
+
+**Prerequisite:** the location/prefix must have a **file policy** that grants the action. Files are **default-deny** — with no matching policy the API returns 403 (read/write/delete/list) so an un-policied app surface fails closed. Create policies in the admin UI (Files → Policies) or via `bifrost files policies` / the REST endpoint. Policies reuse the same evaluator as table policies (`{user}`, `{claims}`, `has_role`, Custom Claims) plus a `{file: …}` resolver.
+
+**SDK vs Workflow:** same trade-off as tables — use `files.*` / `useFiles` when policies allow the user directly (lower latency, no execution record); use a workflow for multi-step logic or side effects. Direct SDK file operations do **not** create workflow executions.
+
+### useFiles
+
+Signature: `useFiles(prefix: string, options?: { location?: string; mode?: "local" | "cloud"; scope?: string | null; includeMetadata?: boolean }): { files: string[]; filesMetadata: FileListMetadataItem[]; loading: boolean; error: Error | null; denied: boolean; empty: boolean; refetch: () => Promise<void> }`.
+
+Live-updating file-listing hook — the files mirror of `useTable`. Loads the listing under `prefix` via `files.list` and subscribes to live change events (`files:{location}:{prefix}`) so uploads/deletes by anyone the policy permits refresh the list in place.
+
+Returns:
+- `files` — file paths under the prefix.
+- `filesMetadata` — per-file metadata (etag, size, …) when `includeMetadata` is set.
+- `denied` — `true` when the policy denies listing (distinct from `empty`, an allowed-but-empty folder).
+- `empty` — `true` for an allowed folder with no files.
+- `loading`, `error`, `refetch`.
+
+```tsx
+import { useFiles } from "bifrost";
+
+export default function Gallery() {
+  const { files, loading, denied, empty } = useFiles("gallery", { location: "shared" });
+  if (loading) return <div>Loading…</div>;
+  if (denied) return <div>You don't have access to this folder.</div>;
+  if (empty) return <div>No files yet.</div>;
+  return <ul>{files.map((f) => <li key={f}>{f}</li>)}</ul>;
+}
+```
+
+**Scope.** Same convention as `useTable`: inside an org-scoped app `scope` defaults to the app's org; pass `scope` explicitly to override (provider admins only).
+
+**Subscribe errors / revocation.** If the server rejects or revokes the file subscription (policy denied), `denied` flips and the listing stops — a visible failure rather than a silently-stale list.
+
 ## Global Built-ins
 
 JavaScript built-in constructors are exposed on the bifrost scope to win the spread order over Lucide icons of the same name. Without this, a bare `new Map()` in user code would resolve to the Lucide `Map` icon (a React component, not a constructor) and crash at runtime with `TypeError: Map2 is not a constructor`.

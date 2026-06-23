@@ -11,7 +11,7 @@
  * Replaces the deleted `tables-app-direct.admin.spec.ts` (Task 1 reset).
  */
 
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import type { Page } from "@playwright/test";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -96,10 +96,14 @@ test.describe("Policies — App Direct REST", () => {
 				slug: APP_SLUG,
 				access_level: "authenticated",
 				role_ids: [],
+				// `POST /api/applications` now defaults to standalone_v2 (which requires
+				// a Solution deploy); pin the legacy inline model this suite relies on.
+				app_model: "inline_v1",
 			},
 		});
 		expect(createApp.ok(), await createApp.text()).toBe(true);
 		appId = (await createApp.json()).id;
+		await grantWorkspaceAppPolicy(api, APP_SLUG);
 
 		// 2. Create a table with admin_bypass + own_row policies.
 		// admin_bypass lets the platform-admin user do everything; own_row

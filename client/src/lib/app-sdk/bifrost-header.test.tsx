@@ -4,11 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { BifrostHeader } from "./bifrost-header";
 import { BifrostProvider } from "./provider";
 
+// BifrostHeader fires an authed `GET /api/auth/me` on mount. Without a stub
+// fetchImpl the provider's authedFetch hits the REAL global fetch against the
+// fake `https://dev.example` base, leaking a live DNS lookup (getaddrinfo
+// ENOTFOUND) per render. Those pending lookups pile up on the worker's event
+// loop and can starve a co-scheduled test file (a dynamic import() then exceeds
+// its timeout) — surfacing as a spurious cross-file failure. Resolve every
+// header fetch locally so the suite never touches the network.
+const noNetwork: typeof fetch = async () => new Response(null, { status: 404 });
+
 describe("BifrostHeader (SDK, self-contained)", () => {
   it("renders the title + back-to-Bifrost link and logs out via the user menu", () => {
     const onLogout = vi.fn();
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="t" onLogout={onLogout}>
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} onLogout={onLogout}>
         <BifrostHeader title="My Dashboard" />
       </BifrostProvider>,
     );
@@ -26,7 +35,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
 
   it("shows the theme toggle ONLY when the app opts in via supportsTheme", () => {
     const { rerender } = render(
-      <BifrostProvider baseUrl="https://dev.example" token="t">
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
         <BifrostHeader title="X" />
       </BifrostProvider>,
     );
@@ -34,7 +43,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     expect(screen.queryByRole("button", { name: /theme/i })).toBeNull();
 
     rerender(
-      <BifrostProvider baseUrl="https://dev.example" token="t" supportsTheme>
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} supportsTheme>
         <BifrostHeader title="X" />
       </BifrostProvider>,
     );
@@ -43,7 +52,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
 
   it("renders an optional action slot", () => {
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="t">
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
         <BifrostHeader title="X" action={<span>extra</span>} />
       </BifrostProvider>,
     );
@@ -56,7 +65,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     // is not unstyled there. Pin that the chrome comes from inline styles, not
     // semantic Tailwind utility classes that would resolve to nothing.
     const { container } = render(
-      <BifrostProvider baseUrl="https://dev.example" token="t">
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
         <BifrostHeader title="Styled" />
       </BifrostProvider>,
     );
@@ -83,7 +92,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     localStorage.setItem("theme", "dark");
     try {
       const { container } = render(
-        <BifrostProvider baseUrl="https://dev.example" token="t" supportsTheme theme="dark">
+        <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} supportsTheme theme="dark">
           <BifrostHeader title="Dark" />
         </BifrostProvider>,
       );
@@ -102,7 +111,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     localStorage.setItem("theme", "dark");
     try {
       const { container } = render(
-        <BifrostProvider baseUrl="https://dev.example" token="t">
+        <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
           <BifrostHeader title="Light" />
         </BifrostProvider>,
       );
@@ -118,12 +127,12 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     // theme-suffixed sheet AND theme-qualified selectors, so the last-appended
     // sheet can't set hover colors for the other (Codex finding).
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="t">
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
         <BifrostHeader title="Light one" />
       </BifrostProvider>,
     );
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="t" supportsTheme theme="dark">
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} supportsTheme theme="dark">
         <BifrostHeader title="Dark one" />
       </BifrostProvider>,
     );
@@ -140,7 +149,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
 
   it("still allows author className overrides (applied alongside inline styles)", () => {
     const { container } = render(
-      <BifrostProvider baseUrl="https://dev.example" token="t">
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
         <BifrostHeader title="X" className="my-custom-class" />
       </BifrostProvider>,
     );

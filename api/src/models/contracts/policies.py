@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Final, Literal
 
 from pydantic import (
@@ -36,7 +37,12 @@ _ALL_OPS: Final[frozenset[str]] = _LOGIC_OPS | _COMPARE_OPS | _OTHER_OPS
 _DEPTH_LIMIT: Final[int] = 64
 
 
-def _validate_operand(node: Any, depth: int = 0, path: str = "$") -> None:
+def _validate_operand(
+    node: Any,
+    depth: int = 0,
+    path: str = "$",
+    extra_ref_namespaces: Mapping[str, frozenset[str] | None] | None = None,
+) -> None:
     """Recursively validate that a node is a literal, reference, or expression."""
     if depth >= _DEPTH_LIMIT:
         raise ValueError(
@@ -46,12 +52,33 @@ def _validate_operand(node: Any, depth: int = 0, path: str = "$") -> None:
         return
     if isinstance(node, list):
         for i, item in enumerate(node):
-            _validate_operand(item, depth + 1, f"{path}[{i}]")
+            _validate_operand(
+                item,
+                depth + 1,
+                f"{path}[{i}]",
+                extra_ref_namespaces=extra_ref_namespaces,
+            )
         return
     if not isinstance(node, dict):
         raise ValueError(f"{path}: unexpected operand type: {type(node).__name__}")
 
     keys = set(node.keys())
+    if extra_ref_namespaces and len(keys) == 1:
+        namespace = next(iter(keys))
+        allowed_fields = extra_ref_namespaces.get(namespace)
+        if namespace in extra_ref_namespaces:
+            ref = node[namespace]
+            if not isinstance(ref, str) or not ref:
+                raise ValueError(
+                    f"{path}: {namespace} reference must be a non-empty string, "
+                    f"got {ref!r}"
+                )
+            if allowed_fields is not None and ref not in allowed_fields:
+                raise ValueError(
+                    f"{path}: unknown {namespace} field {ref!r}; "
+                    f"available: {sorted(allowed_fields)}"
+                )
+            return
     if keys == {"row"}:
         ref = node["row"]
         if not isinstance(ref, str) or not ref:
@@ -68,7 +95,12 @@ def _validate_operand(node: Any, depth: int = 0, path: str = "$") -> None:
             )
         return
     if keys == {"call", "args"} or keys == {"call"}:
-        _validate_call(node, depth=depth, path=path)
+        _validate_call(
+            node,
+            depth=depth,
+            path=path,
+            extra_ref_namespaces=extra_ref_namespaces,
+        )
         return
     # Any other operator dict
     if len(keys) != 1:
@@ -78,22 +110,44 @@ def _validate_operand(node: Any, depth: int = 0, path: str = "$") -> None:
     op = next(iter(keys))
     if op not in _ALL_OPS:
         raise ValueError(f"{path}: unknown operator {op!r}")
-    _validate_op_node(op, node[op], depth=depth, path=path)
+    _validate_op_node(
+        op,
+        node[op],
+        depth=depth,
+        path=path,
+        extra_ref_namespaces=extra_ref_namespaces,
+    )
 
 
-def _validate_op_node(op: str, value: Any, depth: int, path: str) -> None:
+def _validate_op_node(
+    op: str,
+    value: Any,
+    depth: int,
+    path: str,
+    extra_ref_namespaces: Mapping[str, frozenset[str] | None] | None = None,
+) -> None:
     if op in _LOGIC_OPS - {"not"}:
         if not isinstance(value, list) or len(value) < 2:
             raise ValueError(f"{path}.{op}: {op} requires at least two operands")
         for i, item in enumerate(value):
-            _validate_operand(item, depth + 1, f"{path}.{op}[{i}]")
+            _validate_operand(
+                item,
+                depth + 1,
+                f"{path}.{op}[{i}]",
+                extra_ref_namespaces=extra_ref_namespaces,
+            )
         return
     if op == "not":
         if isinstance(value, list):
             raise ValueError(
                 f"{path}.{op}: not requires exactly one operand (not a list)"
             )
-        _validate_operand(value, depth + 1, f"{path}.{op}")
+        _validate_operand(
+            value,
+            depth + 1,
+            f"{path}.{op}",
+            extra_ref_namespaces=extra_ref_namespaces,
+        )
         return
     if op in _COMPARE_OPS:
         if not isinstance(value, list) or len(value) != 2:
@@ -107,16 +161,26 @@ def _validate_op_node(op: str, value: Any, depth: int, path: str) -> None:
                         "pushdown); use is_null instead"
                     )
         for i, item in enumerate(value):
-            _validate_operand(item, depth + 1, f"{path}.{op}[{i}]")
+            _validate_operand(
+                item,
+                depth + 1,
+                f"{path}.{op}[{i}]",
+                extra_ref_namespaces=extra_ref_namespaces,
+            )
         return
     if op == "in":
         if not isinstance(value, list) or len(value) != 2:
             raise ValueError(
                 f"{path}.{op}: in requires [operand, [literal, ...]] or "
                 f"[operand, {{claims: <name>}}]"
-            )
+        )
         left, right = value
-        _validate_operand(left, depth + 1, f"{path}.{op}[0]")
+        _validate_operand(
+            left,
+            depth + 1,
+            f"{path}.{op}[0]",
+            extra_ref_namespaces=extra_ref_namespaces,
+        )
 
         # Claims reference RHS: {claims: <name>} — scoped to in-RHS only.
         if isinstance(right, dict) and set(right.keys()) == {"claims"}:
@@ -145,11 +209,21 @@ def _validate_op_node(op: str, value: Any, depth: int, path: str) -> None:
             raise ValueError(
                 f"{path}.{op}: is_null requires exactly one operand (not a list)"
             )
-        _validate_operand(value, depth + 1, f"{path}.{op}")
+        _validate_operand(
+            value,
+            depth + 1,
+            f"{path}.{op}",
+            extra_ref_namespaces=extra_ref_namespaces,
+        )
         return
 
 
-def _validate_call(node: dict, depth: int, path: str) -> None:
+def _validate_call(
+    node: dict,
+    depth: int,
+    path: str,
+    extra_ref_namespaces: Mapping[str, frozenset[str] | None] | None = None,
+) -> None:
     target = node.get("call")
     args = node.get("args", [])
     if not isinstance(target, str):
@@ -170,7 +244,12 @@ def _validate_call(node: dict, depth: int, path: str) -> None:
         # their resolved value is only known at evaluate time. The evaluator
         # is responsible for handling type mismatches at the row.
         if isinstance(arg, dict):
-            _validate_operand(arg, depth + 1, f"{path}.args[{i}]")
+            _validate_operand(
+                arg,
+                depth + 1,
+                f"{path}.args[{i}]",
+                extra_ref_namespaces=extra_ref_namespaces,
+            )
             continue
         if not isinstance(arg, t):
             raise ValueError(
@@ -188,7 +267,29 @@ class Expr(RootModel[dict]):
         return self
 
 
+class FileExpr(RootModel[dict]):
+    """File policy expression AST.
+
+    Reuses the same operator/function/user/claims validation as table
+    policies, with one additional reference namespace: ``{file: ...}``.
+    Unknown file fields are accepted here and resolve to null at evaluation
+    time, which makes persisted policy JSON fail closed instead of widening
+    access.
+    """
+
+    @model_validator(mode="after")
+    def _validate(self):
+        _validate_operand(
+            self.root,
+            depth=0,
+            path="$",
+            extra_ref_namespaces={"file": None},
+        )
+        return self
+
+
 Action = Literal["read", "create", "update", "delete"]
+FileAction = Literal["read", "write", "delete", "list"]
 
 
 class Policy(BaseModel):
@@ -207,6 +308,24 @@ class Policy(BaseModel):
 
 class TablePolicies(BaseModel):
     policies: list[Policy] = Field(default_factory=list)
+
+
+class FilePolicyRule(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = None
+    actions: list[FileAction] = Field(min_length=1)
+    when: FileExpr | None = None
+
+    @field_validator("actions")
+    @classmethod
+    def _no_dup_actions(cls, v: list[FileAction]) -> list[FileAction]:
+        if len(set(v)) != len(v):
+            raise ValueError("actions must not contain duplicates")
+        return v
+
+
+class FilePolicies(BaseModel):
+    policies: list[FilePolicyRule] = Field(default_factory=list)
 
 
 class PolicyValidationError(BaseModel):

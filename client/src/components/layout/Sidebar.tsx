@@ -19,6 +19,7 @@ import {
 	Activity,
 	Webhook,
 	Database,
+	FolderOpen,
 	AppWindow,
 	Network,
 	BookOpen,
@@ -121,6 +122,12 @@ const navSections: NavSection[] = [
 				title: "Tables",
 				href: "/tables",
 				icon: Database,
+				requiresPlatformAdmin: true,
+			},
+			{
+				title: "Files",
+				href: "/files",
+				icon: FolderOpen,
 				requiresPlatformAdmin: true,
 			},
 			{

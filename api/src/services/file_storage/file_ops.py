@@ -311,6 +311,34 @@ class FileOperationsService:
             diagnostics=diagnostics if diagnostics else None,
         )
 
+    async def record_signed_upload_metadata(
+        self,
+        path: str,
+        *,
+        updated_by: str,
+    ) -> None:
+        """Record a workspace metadata marker for a presigned PUT.
+
+        Direct S3 PUTs do not call ``write_file`` after upload completion, so
+        there is no content available to index at signing time.
+        """
+        now = datetime.now(timezone.utc)
+        stmt = insert(FileIndex).values(
+            path=path,
+            content=None,
+            content_hash="",
+            updated_at=now,
+            updated_by=updated_by,
+        ).on_conflict_do_update(
+            index_elements=[FileIndex.path],
+            set_={
+                "updated_at": now,
+                "updated_by": updated_by,
+            },
+        )
+        await self.db.execute(stmt)
+        await self.db.flush()
+
     async def delete_file(self, path: str) -> None:
         """
         Delete a file from storage.

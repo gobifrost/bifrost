@@ -114,6 +114,11 @@ export { useUser } from "./app-code-platform/useUser";
 export { RequireRole } from "./app-code-platform/RequireRole";
 export { useAppState } from "./app-code-platform/useAppState";
 export { Link, NavLink, Navigate } from "./app-code-platform/navigation";
+export { tables } from "./app-sdk/tables";
+export { useTable } from "./app-sdk/use-table";
+export { useInfiniteTable } from "./app-sdk/use-infinite-table";
+export { files } from "./app-sdk/files";
+export { useFiles } from "./app-sdk/use-files";
 
 // Utilities
 export * from "./utils";

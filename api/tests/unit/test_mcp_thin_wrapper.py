@@ -38,6 +38,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from src.services.mcp_server.tools import (  # noqa: E402
     claims as claims_mod,
     configs as configs_mod,
+    files as files_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
     roles as roles_mod,
@@ -73,6 +74,12 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "grant_workflow_role",
         "revoke_workflow_role",
     },
+    "files": {
+        "list_file_policies",
+        "get_file_policy",
+        "set_file_policy",
+        "delete_file_policy",
+    },
 }
 
 
@@ -83,6 +90,7 @@ MODULES = {
     "organizations": organizations_mod,
     "integrations": integrations_mod,
     "workflow": workflow_mod,
+    "files": files_mod,
 }
 
 

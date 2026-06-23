@@ -8,7 +8,7 @@
  * covered by api/tests/e2e/platform/test_cli_apps_replace.py.
  */
 
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const APP_SLUG = `e2e-replace-${UNIQUE}`;
@@ -26,11 +26,15 @@ test.describe("Apps Replace", () => {
 				slug: APP_SLUG,
 				access_level: "authenticated",
 				role_ids: [],
+				// `POST /api/applications` now defaults to standalone_v2 (which requires
+				// a Solution deploy); pin the legacy inline model this suite relies on.
+				app_model: "inline_v1",
 			},
 		});
 		expect(response.ok(), await response.text()).toBe(true);
 		const app = await response.json();
 		appId = app.id;
+		await grantWorkspaceAppPolicy(api, APP_SLUG);
 		expect(app.repo_path).toBe(ORIGIN_PATH);
 	});
 

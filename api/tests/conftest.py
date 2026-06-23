@@ -210,6 +210,46 @@ async def isolate_redis_module_cache(request) -> AsyncGenerator[None, None]:
     yield
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def isolate_file_policies(request) -> AsyncGenerator[None, None]:
+    """Wipe file policies + metadata before every async test that touches them.
+
+    File policies are global session state keyed by (org, location, path). A
+    test that grants a broad/root-prefix policy (e.g. a `workspace` root grant
+    for a CLI write) would otherwise leak an allow-everything rule into later
+    tests — flipping a sibling's default-deny assertion from 403 to 404. Mirror
+    the S3/redis isolation fixtures: best-effort sweep, skipped for unit tests.
+    """
+    if "unit" in request.fspath.strpath:
+        yield
+        return
+
+    try:
+        from sqlalchemy import delete
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from src.models.orm.file_metadata import FileMetadata, FilePolicy
+
+        # Use a throwaway NullPool engine bound to THIS test's event loop — the
+        # cached app session factory is bound to a different (possibly closed)
+        # loop under pytest-asyncio's function-scoped loops, which raises
+        # "Event loop is closed". Mirrors the `async_engine` fixture.
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                await session.execute(delete(FilePolicy))
+                await session.execute(delete(FileMetadata))
+                await session.commit()
+        finally:
+            await engine.dispose()
+    except Exception as e:
+        # DB not reachable / models unavailable — fixture is best-effort
+        logger.debug(f"isolate_file_policies sweep skipped: {e}")
+
+    yield
+
+
 # ==================== MOCK FIXTURES ====================
 
 

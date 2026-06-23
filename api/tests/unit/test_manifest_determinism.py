@@ -194,6 +194,7 @@ def _build_side_effects(
         empty,                        # configs
         empty,                        # custom_claims
         empty,                        # tables
+        empty,                        # file_policies
         _make_result([es]),           # event_sources
         _make_result([ss]),           # schedule_sources
         empty,                        # webhook_sources

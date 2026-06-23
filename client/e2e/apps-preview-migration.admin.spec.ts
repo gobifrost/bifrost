@@ -24,7 +24,7 @@
  * react-router-dom and broke in-app navigation.
  */
 
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import type { Page } from "@playwright/test";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -110,11 +110,15 @@ test.describe("Apps Preview — auto-migration", () => {
 				slug: APP_SLUG,
 				access_level: "authenticated",
 				role_ids: [],
+				// `POST /api/applications` now defaults to standalone_v2 (which requires
+				// a Solution deploy); pin the legacy inline model this suite relies on.
+				app_model: "inline_v1",
 			},
 		});
 		expect(createResp.ok(), await createResp.text()).toBe(true);
 		const app = await createResp.json();
 		appId = app.id;
+		await grantWorkspaceAppPolicy(api, APP_SLUG);
 
 		// Seed the un-migrated legacy source. The bundler's save path will
 		// run auto-migration before the first bundle build (because

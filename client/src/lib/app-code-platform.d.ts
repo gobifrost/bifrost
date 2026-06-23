@@ -385,6 +385,13 @@ export declare const tables: typeof import("./app-sdk/tables").tables;
 export declare const useTable: typeof import("./app-sdk/use-table").useTable;
 
 // =============================================================================
+// File Access SDK
+// =============================================================================
+
+export declare const files: typeof import("./app-sdk/files").files;
+export declare const useFiles: typeof import("./app-sdk/use-files").useFiles;
+
+// =============================================================================
 // Platform Utilities
 // =============================================================================
 
@@ -723,6 +730,11 @@ export interface PlatformScope {
 	// Table access
 	tables: typeof import("./app-sdk/tables").tables;
 	useTable: typeof import("./app-sdk/use-table").useTable;
+	useInfiniteTable: typeof import("./app-sdk/use-infinite-table").useInfiniteTable;
+
+	// File access
+	files: typeof import("./app-sdk/files").files;
+	useFiles: typeof import("./app-sdk/use-files").useFiles;
 
 	// Platform utilities
 	navigate: typeof navigate;

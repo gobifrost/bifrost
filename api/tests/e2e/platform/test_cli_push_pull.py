@@ -1,6 +1,14 @@
 """E2E tests for CLI push/pull endpoints and manifest round-tripping."""
 import base64
 import hashlib
+import pytest
+
+from tests.e2e.file_policy_helpers import grant_file_policy
+
+
+@pytest.fixture(autouse=True)
+def _grant_workspace_file_policy(e2e_client, platform_admin):
+    grant_file_policy(e2e_client, platform_admin.headers, location="workspace")
 
 
 
@@ -289,5 +297,4 @@ def test_per_file_push_pull_roundtrip(e2e_client, platform_admin):
         })
         assert resp.status_code == 200
         assert resp.json()["content"] == expected_content
-
 

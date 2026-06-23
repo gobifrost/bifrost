@@ -667,7 +667,15 @@ class TestCodeEngineApps:
         layout must survive — losing it to the default Welcome scaffold is
         the bug this guards against.
         """
+        from tests.e2e.file_policy_helpers import grant_file_policy
+
         slug = "preserve-local-source"
+        grant_file_policy(
+            e2e_client,
+            platform_admin.headers,
+            location="workspace",
+            prefix=f"apps/{slug}",
+        )
 
         # Pre-stage a user-authored file at apps/<slug>/_layout.tsx,
         # mimicking a `bifrost watch` push that ran before `apps create`.

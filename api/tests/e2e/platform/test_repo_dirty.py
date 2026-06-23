@@ -1,5 +1,7 @@
 """E2E tests for repo dirty flag and repo-status endpoint."""
 
+from tests.e2e.file_policy_helpers import grant_file_policy
+
 
 def test_repo_status_default(e2e_client, platform_admin):
     """Repo status endpoint should return expected shape."""
@@ -25,6 +27,8 @@ def test_repo_status_dirty_after_editor_write(e2e_client, platform_admin):
 
 def test_cli_push_does_not_set_dirty(e2e_client, platform_admin):
     """CLI per-file write should not mark repo as dirty."""
+    grant_file_policy(e2e_client, platform_admin.headers, location="workspace")
+
     # Get current dirty state
     before = e2e_client.get("/api/github/repo-status", headers=platform_admin.headers).json()
 

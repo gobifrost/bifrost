@@ -12,7 +12,7 @@
  * which had used the now-removed `useTableSubscription` low-level hook.
  */
 
-import { test, expect, csrfHeader } from "./fixtures/api-fixture";
+import { test, expect, csrfHeader, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import type { BrowserContext, Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
@@ -133,10 +133,14 @@ test.describe("Policies — App Realtime via useTable", () => {
 				slug: APP_SLUG,
 				access_level: "authenticated",
 				role_ids: [],
+				// `POST /api/applications` now defaults to standalone_v2 (which requires
+				// a Solution deploy); pin the legacy inline model this suite relies on.
+				app_model: "inline_v1",
 			},
 		});
 		expect(createApp.ok(), await createApp.text()).toBe(true);
 		appId = (await createApp.json()).id;
+		await grantWorkspaceAppPolicy(api, APP_SLUG);
 
 		// 2. Create a table with admin_bypass + everyone_read.
 		// `when: null` is the "always-allow" / everyone policy — every
@@ -274,10 +278,14 @@ test.describe("Policies — Visibility-gain via reassignment", () => {
 				organization_id: null,
 				access_level: "authenticated",
 				role_ids: [],
+				// `POST /api/applications` now defaults to standalone_v2 (which requires
+				// a Solution deploy); pin the legacy inline model this suite relies on.
+				app_model: "inline_v1",
 			},
 		});
 		expect(createApp.ok(), await createApp.text()).toBe(true);
 		appId = (await createApp.json()).id;
+		await grantWorkspaceAppPolicy(api, VIS_APP_SLUG);
 
 		// 2. Create the table.
 		// admin_bypass: lets admin perform the PATCH at the end.

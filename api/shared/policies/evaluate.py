@@ -7,30 +7,43 @@ per-row decisions and at websocket fanout for per-message filtering.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
 from shared.policies.functions import FUNCTIONS
 from src.models.contracts.policies import Expr
 
+Resolver = Callable[[str], Any]
 
-def evaluate(expr: Expr, row: dict | None, user: Any) -> bool:
+
+def evaluate(
+    expr: Expr,
+    row: dict | None,
+    user: Any,
+    resolvers: Mapping[str, Resolver] | None = None,
+) -> bool:
     """Evaluate an expression against a row + user, return bool.
 
     `row` may be a dict (the typical case) or None (e.g., DELETE events
     with no payload). Missing keys resolve to None. UUID-typed values
     in user are stringified before comparison.
     """
-    return bool(_eval_node(expr.root, row, user))
+    return bool(_eval_node(expr.root, row, user, resolvers or {}))
 
 
-def _eval_node(node: Any, row: dict | None, user: Any) -> Any:
+def _eval_node(
+    node: Any,
+    row: dict | None,
+    user: Any,
+    resolvers: Mapping[str, Resolver],
+) -> Any:
     """Resolve a node to its value (literal, reference, or operator result)."""
     # Literals
     if isinstance(node, (str, int, float, bool)) or node is None:
         return node
     if isinstance(node, list):
-        return [_eval_node(item, row, user) for item in node]
+        return [_eval_node(item, row, user, resolvers) for item in node]
 
     # References
     if isinstance(node, dict):
@@ -41,12 +54,17 @@ def _eval_node(node: Any, row: dict | None, user: Any) -> Any:
             return _resolve_user_field(user, node["user"])
         if keys == {"claims"}:
             return _resolve_claims_field(user, node["claims"])
+        if len(keys) == 1:
+            namespace = next(iter(keys))
+            resolver = resolvers.get(namespace)
+            if resolver is not None:
+                return resolver(node[namespace])
         if "call" in keys:
-            return _eval_call(node, row, user)
+            return _eval_call(node, row, user, resolvers)
         # Operators: single-key dict
         if len(keys) == 1:
             op = next(iter(keys))
-            return _eval_op(op, node[op], row, user)
+            return _eval_op(op, node[op], row, user, resolvers)
 
     raise ValueError(f"unevaluatable node: {node!r}")
 
@@ -88,33 +106,50 @@ def _resolve_claims_field(user: Any, name: str) -> Any:
     return cache[name]
 
 
-def _eval_call(node: dict, row: dict | None, user: Any) -> bool:
+def _eval_call(
+    node: dict,
+    row: dict | None,
+    user: Any,
+    resolvers: Mapping[str, Resolver],
+) -> bool:
     target = node["call"]
-    args = [_eval_node(a, row, user) for a in node.get("args", [])]
+    args = [_eval_node(a, row, user, resolvers) for a in node.get("args", [])]
     fn = FUNCTIONS[target]
     return fn.evaluate(args, user, row or {})
 
 
-def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
+def _eval_op(
+    op: str,
+    value: Any,
+    row: dict | None,
+    user: Any,
+    resolvers: Mapping[str, Resolver],
+) -> bool:
     if op == "and":
         for item in value:
-            if not _eval_node(item, row, user):
+            if not _eval_node(item, row, user, resolvers):
                 return False
         return True
     if op == "or":
         for item in value:
-            if _eval_node(item, row, user):
+            if _eval_node(item, row, user, resolvers):
                 return True
         return False
     if op == "not":
-        return not _eval_node(value, row, user)
+        return not _eval_node(value, row, user, resolvers)
     if op == "eq":
-        return _scalar_eq(_eval_node(value[0], row, user), _eval_node(value[1], row, user))
+        return _scalar_eq(
+            _eval_node(value[0], row, user, resolvers),
+            _eval_node(value[1], row, user, resolvers),
+        )
     if op == "neq":
-        return not _scalar_eq(_eval_node(value[0], row, user), _eval_node(value[1], row, user))
+        return not _scalar_eq(
+            _eval_node(value[0], row, user, resolvers),
+            _eval_node(value[1], row, user, resolvers),
+        )
     if op in ("lt", "lte", "gt", "gte"):
-        a = _eval_node(value[0], row, user)
-        b = _eval_node(value[1], row, user)
+        a = _eval_node(value[0], row, user, resolvers)
+        b = _eval_node(value[1], row, user, resolvers)
         if a is None or b is None:
             return False
         try:
@@ -129,15 +164,15 @@ def _eval_op(op: str, value: Any, row: dict | None, user: Any) -> bool:
         except TypeError:
             return False
     if op == "in":
-        a = _eval_node(value[0], row, user)
+        a = _eval_node(value[0], row, user, resolvers)
         if a is None:
             return False
-        b = _eval_node(value[1], row, user)
+        b = _eval_node(value[1], row, user, resolvers)
         if not isinstance(b, list):
             return False
         return a in b
     if op == "is_null":
-        return _eval_node(value, row, user) is None
+        return _eval_node(value, row, user, resolvers) is None
     raise ValueError(f"unknown operator {op!r}")
 
 

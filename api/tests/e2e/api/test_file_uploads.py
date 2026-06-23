@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import write_and_register, execute_workflow_sync
+from tests.e2e.file_policy_helpers import grant_file_policy
 
 
 @pytest.mark.e2e
@@ -151,6 +152,15 @@ class TestFileUploads:
         # straight to `files.read(..., location="uploads")` and the SDK adds
         # the `uploads/{scope}/` prefix.
         file_path_for_workflow = upload_data["blob_uri"]
+        grant_file_policy(
+            e2e_client,
+            platform_admin.headers,
+            location="uploads",
+            scope=test_form["organization_id"] or "global",
+            prefix=file_path_for_workflow.rsplit("/", 1)[0],
+            actions=["read"],
+            allow_all=True,
+        )
 
         # Upload file content
         file_content = b"Test file content for E2E upload test.\nLine 2."

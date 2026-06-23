@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import click
+import yaml
 
 from bifrost.client import BifrostClient
 from bifrost.files import files as files_sdk
@@ -34,12 +36,38 @@ from bifrost.files import files as files_sdk
 from .base import entity_group, output_result, pass_resolver, run_async
 
 files_group = entity_group("files", "Read, write, list, search workspace files.")
+policies_group = click.Group("policies", help="Manage file access policies.")
 
 
 _LOCATION_HELP = (
     'Storage location. Special: "workspace" (default), "temp", "uploads". '
     'Custom names (e.g. "reports") are accepted; "_repo", "_tmp", and "_apps" are blocked.'
 )
+
+
+def _policy_path(path: str) -> str:
+    """Encode a policy path for the REST route while preserving no slashes."""
+    return quote(path.strip("/"), safe="")
+
+
+def _policy_params(location: str, scope: str | None) -> dict[str, str]:
+    params = {"location": location}
+    if scope is not None:
+        params["scope"] = scope
+    return params
+
+
+def _load_policy_document(path: str) -> list[dict] | dict:
+    loaded = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if isinstance(loaded, dict) and "policies" in loaded:
+        policies = loaded["policies"]
+    else:
+        policies = loaded
+    if not isinstance(policies, (list, dict)):
+        raise click.BadParameter(
+            "policy file must contain a policies list or an object with a policies key"
+        )
+    return policies
 
 
 @files_group.command("read")
@@ -216,6 +244,116 @@ async def search_cmd(
         max_results=max_results,
     )
     output_result(result, ctx=ctx)
+
+
+@policies_group.command("list")
+@click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--scope", default=None, help="Organization UUID for org-scoped policies.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def list_policies_cmd(
+    ctx: click.Context,
+    location: str,
+    scope: str | None,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """List file policies for a location and optional org scope."""
+    response = await client.get(
+        "/api/files/policies",
+        params=_policy_params(location, scope),
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@policies_group.command("get")
+@click.argument("path")
+@click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--scope", default=None, help="Organization UUID for org-scoped policies.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def get_policy_cmd(
+    ctx: click.Context,
+    path: str,
+    location: str,
+    scope: str | None,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """Get the file policy for a path prefix."""
+    response = await client.get(
+        f"/api/files/policies/{_policy_path(path)}",
+        params=_policy_params(location, scope),
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@policies_group.command("set")
+@click.argument("path")
+@click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--scope", default=None, help="Organization UUID for org-scoped policies.")
+@click.option(
+    "--file",
+    "policy_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON/YAML policy document to store.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def set_policy_cmd(
+    ctx: click.Context,
+    path: str,
+    location: str,
+    scope: str | None,
+    policy_file: str,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """Create or replace the file policy for a path prefix."""
+    response = await client.put(
+        f"/api/files/policies/{_policy_path(path)}",
+        params=_policy_params(location, scope),
+        json={"policies": _load_policy_document(policy_file)},
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@policies_group.command("delete")
+@click.argument("path")
+@click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--scope", default=None, help="Organization UUID for org-scoped policies.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def delete_policy_cmd(
+    ctx: click.Context,
+    path: str,
+    location: str,
+    scope: str | None,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """Delete the file policy for a path prefix."""
+    response = await client.delete(
+        f"/api/files/policies/{_policy_path(path)}",
+        params=_policy_params(location, scope),
+    )
+    response.raise_for_status()
+    output_result({"deleted": path, "location": location, "scope": scope}, ctx=ctx)
+
+
+files_group.add_command(policies_group)
 
 
 __all__ = ["files_group"]

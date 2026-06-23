@@ -39,3 +39,23 @@ export { useInfiniteTable } from "./use-infinite-table";
 
 export { tables, TableAccessDeniedError, TableNotFoundError } from "./tables";
 export type { TableChangeEvent } from "./tables";
+
+export {
+	files,
+	FileAccessDeniedError,
+	FileNotFoundError,
+	FilePolicyError,
+} from "./files";
+export type {
+	FileListMetadataItem,
+	FileListOptions,
+	FileListResult,
+	FileMode,
+	FileOptions,
+	SignedUrlMethod,
+	SignedUrlOptions,
+	SignedUrlResult,
+} from "./files";
+
+export { useFiles } from "./use-files";
+export type { UseFilesOptions, UseFilesResult } from "./use-files";

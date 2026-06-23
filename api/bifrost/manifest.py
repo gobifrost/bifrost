@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 import yaml
@@ -56,6 +56,7 @@ MANIFEST_FILES: dict[str, str] = {
     "configs": "configs.yaml",
     "claims": "claims.yaml",
     "tables": "tables.yaml",
+    "file_policies": "file-policies.yaml",
     "events": "events.yaml",
     "forms": "forms.yaml",
     "agents": "agents.yaml",
@@ -988,6 +989,62 @@ class ManifestTable(EntityCodec, BaseModel):
         )
 
 
+class ManifestFilePolicy(EntityCodec, BaseModel):
+    """File policy entry in manifest.
+
+    File policy rows are keyed by UUID and scoped by ``(organization_id,
+    location, path)``. ``organization_id=None`` represents the global policy
+    row; an org UUID represents an org-scoped override.
+    """
+
+    id: str = Field(description="File policy UUID", **classify(FieldClass.IDENTITY))
+    organization_id: str | None = Field(
+        description="Org UUID (null = global)",
+        **classify(FieldClass.ENVIRONMENT, match_key=True),
+    )
+    location: str = Field(
+        description="File storage location, e.g. workspace or shared",
+        **classify(FieldClass.CONTENT, match_key=True),
+    )
+    path: str = Field(
+        description="Path prefix relative to the location root",
+        **classify(FieldClass.CONTENT, match_key=True),
+    )
+    policies: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="File access policy documents for this location/path",
+        **classify(FieldClass.CONTENT),
+    )
+
+    @classmethod
+    def from_row(cls, file_policy) -> "ManifestFilePolicy":
+        raw_policies = file_policy.policies if isinstance(file_policy.policies, dict) else {}
+        return cls(
+            id=str(file_policy.id),
+            organization_id=(
+                str(file_policy.organization_id)
+                if file_policy.organization_id
+                else None
+            ),
+            location=file_policy.location,
+            path=file_policy.path,
+            policies=raw_policies.get("policies", []),
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        return ImportFields(
+            direct={
+                "id": self.id,
+                "organization_id": self.organization_id,
+                "location": self.location,
+                "path": self.path,
+                "policies": self.policies,
+            },
+            indexer_content={},
+            restamp={},
+        )
+
+
 class ManifestEventSubscription(EntityCodec, BaseModel):
     """Event subscription within an event source."""
     id: str = Field(description="Subscription UUID", **classify(FieldClass.IDENTITY))
@@ -1264,6 +1321,7 @@ class Manifest(BaseModel):
     configs: dict[str, ManifestConfig] = Field(default_factory=dict)
     claims: dict[str, ManifestCustomClaim] = Field(default_factory=dict)
     tables: dict[str, ManifestTable] = Field(default_factory=dict)
+    file_policies: dict[str, ManifestFilePolicy] = Field(default_factory=dict)
     events: dict[str, ManifestEventSource] = Field(default_factory=dict)
     forms: dict[str, ManifestForm] = Field(default_factory=dict)
     agents: dict[str, ManifestAgent] = Field(default_factory=dict)
@@ -1314,6 +1372,9 @@ def filter_manifest_by_ids(manifest: Manifest, entity_ids: set[str]) -> Manifest
         configs={k: v for k, v in manifest.configs.items() if k in entity_ids},
         claims={k: v for k, v in manifest.claims.items() if k in entity_ids},
         tables={k: v for k, v in manifest.tables.items() if k in entity_ids},
+        file_policies={
+            k: v for k, v in manifest.file_policies.items() if k in entity_ids
+        },
         events={k: v for k, v in manifest.events.items() if k in entity_ids},
         forms={k: v for k, v in manifest.forms.items() if k in entity_ids},
         agents={k: v for k, v in manifest.agents.items() if k in entity_ids},
@@ -1514,6 +1575,15 @@ def validate_manifest(manifest: Manifest) -> list[str]:
         if table.organization_id and table.organization_id not in org_ids:
             errors.append(f"Table '{table_label}' references unknown organization: {table.organization_id}")
 
+    # File policies: organization_id only
+    for _key, file_policy in manifest.file_policies.items():
+        policy_label = f"{file_policy.location}/{file_policy.path}".rstrip("/")
+        if file_policy.organization_id and file_policy.organization_id not in org_ids:
+            errors.append(
+                f"File policy '{policy_label}' references unknown organization: "
+                f"{file_policy.organization_id}"
+            )
+
     # MCP Servers: organization_id refs and per-connection org refs
     for _key, server in manifest.mcp_servers.items():
         server_label = server.name or server.id
@@ -1574,6 +1644,8 @@ def get_all_entity_ids(manifest: Manifest) -> set[str]:
         ids.add(claim.id)
     for table in manifest.tables.values():
         ids.add(table.id)
+    for file_policy in manifest.file_policies.values():
+        ids.add(file_policy.id)
     for evt in manifest.events.values():
         ids.add(evt.id)
         for sub in evt.subscriptions:

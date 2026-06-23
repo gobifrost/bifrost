@@ -198,15 +198,29 @@ class TestCLIContextOrgOverride:
 class TestCLIFileOperations:
     """Test SDK file operation endpoints via /api/files."""
 
+    def _scope(self, e2e_client, platform_admin, org1) -> str:
+        from tests.e2e.file_policy_helpers import grant_file_policy
+
+        scope = org1["id"]
+        grant_file_policy(
+            e2e_client,
+            platform_admin.headers,
+            location="temp",
+            scope=scope,
+        )
+        return scope
+
     def test_write_and_read_file(
         self,
         e2e_client,
         platform_admin,
+        org1,
     ):
         """Test writing and reading a file via unified files API."""
         test_path = "sdk-test-file.txt"
         test_content = "Hello from SDK E2E test!"
         headers = platform_admin.headers
+        scope = self._scope(e2e_client, platform_admin, org1)
 
         # Write file (using cloud mode which uses S3)
         response = e2e_client.post(
@@ -215,7 +229,7 @@ class TestCLIFileOperations:
                 "path": test_path,
                 "content": test_content,
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,
@@ -228,7 +242,7 @@ class TestCLIFileOperations:
             json={
                 "path": test_path,
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,
@@ -240,7 +254,7 @@ class TestCLIFileOperations:
         # Cleanup
         e2e_client.post(
             "/api/files/delete",
-            json={"path": test_path, "location": "temp", "scope": "test-scope", "mode": "cloud"},
+            json={"path": test_path, "location": "temp", "scope": scope, "mode": "cloud"},
             headers=headers,
         )
 
@@ -248,9 +262,11 @@ class TestCLIFileOperations:
         self,
         e2e_client,
         platform_admin,
+        org1,
     ):
         """Test listing files in a directory."""
         headers = platform_admin.headers
+        scope = self._scope(e2e_client, platform_admin, org1)
 
         # Create a test file first
         write_response = e2e_client.post(
@@ -259,7 +275,7 @@ class TestCLIFileOperations:
                 "path": "list-test.txt",
                 "content": "test content",
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,
@@ -272,7 +288,7 @@ class TestCLIFileOperations:
             json={
                 "directory": "",
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,
@@ -284,7 +300,7 @@ class TestCLIFileOperations:
         # Cleanup
         e2e_client.post(
             "/api/files/delete",
-            json={"path": "list-test.txt", "location": "temp", "scope": "test-scope", "mode": "cloud"},
+            json={"path": "list-test.txt", "location": "temp", "scope": scope, "mode": "cloud"},
             headers=headers,
         )
 
@@ -292,10 +308,12 @@ class TestCLIFileOperations:
         self,
         e2e_client,
         platform_admin,
+        org1,
     ):
         """Test deleting a file via unified files API."""
         test_path = "delete-test.txt"
         headers = platform_admin.headers
+        scope = self._scope(e2e_client, platform_admin, org1)
 
         # Create file
         write_response = e2e_client.post(
@@ -304,7 +322,7 @@ class TestCLIFileOperations:
                 "path": test_path,
                 "content": "to be deleted",
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,
@@ -314,7 +332,7 @@ class TestCLIFileOperations:
         # Delete file
         response = e2e_client.post(
             "/api/files/delete",
-            json={"path": test_path, "location": "temp", "scope": "test-scope", "mode": "cloud"},
+            json={"path": test_path, "location": "temp", "scope": scope, "mode": "cloud"},
             headers=headers,
         )
         assert response.status_code == 204, f"Delete failed: {response.text}"
@@ -322,7 +340,7 @@ class TestCLIFileOperations:
         # Verify deleted
         response = e2e_client.post(
             "/api/files/read",
-            json={"path": test_path, "location": "temp", "scope": "test-scope", "mode": "cloud"},
+            json={"path": test_path, "location": "temp", "scope": scope, "mode": "cloud"},
             headers=headers,
         )
         assert response.status_code == 404
@@ -331,16 +349,18 @@ class TestCLIFileOperations:
         self,
         e2e_client,
         platform_admin,
+        org1,
     ):
         """Test reading a file that doesn't exist."""
         headers = platform_admin.headers
+        scope = self._scope(e2e_client, platform_admin, org1)
 
         response = e2e_client.post(
             "/api/files/read",
             json={
                 "path": "nonexistent-file-12345.txt",
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,
@@ -351,9 +371,11 @@ class TestCLIFileOperations:
         self,
         e2e_client,
         platform_admin,
+        org1,
     ):
         """Test that path traversal is blocked."""
         headers = platform_admin.headers
+        scope = self._scope(e2e_client, platform_admin, org1)
 
         # Try to escape the sandbox
         response = e2e_client.post(
@@ -361,7 +383,7 @@ class TestCLIFileOperations:
             json={
                 "path": "../../../etc/passwd",
                 "location": "temp",
-                "scope": "test-scope",
+                "scope": scope,
                 "mode": "cloud",
             },
             headers=headers,

@@ -24,11 +24,14 @@ _SDK_SERVICE = Path("/app/src/services/sdk_package")
 _SRC_FILES = [
     "provider.tsx",
     "tables.ts",
+    "transport.ts",
     "use-table.ts",
     "use-infinite-table.ts",
     "ws-client.ts",
     "use-workflow.ts",
     "use-workflow-hooks.ts",
+    "files.ts",
+    "use-files.ts",
     "bifrost-header.tsx",
 ]
 

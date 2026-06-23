@@ -823,12 +823,13 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  delete  Delete a workspace file.
-  exists  Check if a file exists.
-  list    List files in a directory (default: location root).
-  read    Read a workspace file and write its contents to stdout.
-  search  Search workspace file contents.
-  write   Write to a workspace file.
+  delete    Delete a workspace file.
+  exists    Check if a file exists.
+  list      List files in a directory (default: location root).
+  policies  Manage file access policies.
+  read      Read a workspace file and write its contents to stdout.
+  search    Search workspace file contents.
+  write     Write to a workspace file.
 ```
 
 ### `files delete`
@@ -873,6 +874,85 @@ Options:
                    "uploads". Custom names (e.g. "reports") are accepted;
                    "_repo", "_tmp", and "_apps" are blocked.
   --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
+```
+
+### `files policies`
+
+```
+Usage: files policies [OPTIONS] COMMAND [ARGS]...
+
+  Manage file access policies.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  delete  Delete the file policy for a path prefix.
+  get     Get the file policy for a path prefix.
+  list    List file policies for a location and optional org scope.
+  set     Create or replace the file policy for a path prefix.
+```
+
+#### `files policies delete`
+
+```
+Usage: files policies delete [OPTIONS] PATH
+
+  Delete the file policy for a path prefix.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.
+  --scope TEXT     Organization UUID for org-scoped policies.
+  --help           Show this message and exit.
+```
+
+#### `files policies get`
+
+```
+Usage: files policies get [OPTIONS] PATH
+
+  Get the file policy for a path prefix.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.
+  --scope TEXT     Organization UUID for org-scoped policies.
+  --help           Show this message and exit.
+```
+
+#### `files policies list`
+
+```
+Usage: files policies list [OPTIONS]
+
+  List file policies for a location and optional org scope.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.
+  --scope TEXT     Organization UUID for org-scoped policies.
+  --help           Show this message and exit.
+```
+
+#### `files policies set`
+
+```
+Usage: files policies set [OPTIONS] PATH
+
+  Create or replace the file policy for a path prefix.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.
+  --scope TEXT     Organization UUID for org-scoped policies.
+  --file FILE      JSON/YAML policy document to store.  [required]
   --help           Show this message and exit.
 ```
 

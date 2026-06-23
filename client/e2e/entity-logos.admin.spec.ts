@@ -10,7 +10,7 @@
  * This spec is the wire-up test.
  */
 
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,11 +33,15 @@ test.describe("Entity logos", () => {
 					slug: APP_SLUG,
 					access_level: "authenticated",
 					role_ids: [],
+					// `POST /api/applications` now defaults to standalone_v2 (which requires
+					// a Solution deploy); pin the legacy inline model this suite relies on.
+					app_model: "inline_v1",
 				},
 			});
 			expect(resp.ok(), await resp.text()).toBe(true);
 			const app = await resp.json();
 			appId = app.id;
+			await grantWorkspaceAppPolicy(api, APP_SLUG);
 		});
 
 		test.afterAll(async ({ api }) => {

@@ -53,6 +53,44 @@ export interface AuthedApi {
 	csrfHeader(): Promise<Record<string, string>>;
 }
 
+/**
+ * Grant the admin a workspace file policy covering an app's source directory.
+ *
+ * Files are default-deny: `POST /api/files/write` to `workspace`/`apps/<slug>`
+ * is 403 without a matching policy. Specs that seed app source via the file API
+ * (preview/migration/replace, policy SDK apps, logos) must grant this in their
+ * `beforeAll` before the first write. Mirrors `grant_file_policy` in
+ * `api/tests/e2e/file_policy_helpers.py`.
+ */
+export async function grantWorkspaceAppPolicy(
+	api: AuthedApi,
+	slug: string,
+): Promise<void> {
+	const prefix = `apps/${slug}`;
+	const response = await api.put(
+		`/api/files/policies/${encodeURIComponent(prefix)}`,
+		{
+			params: { location: "workspace" },
+			data: {
+				policies: {
+					policies: [
+						{
+							name: "e2e_admin_app_source",
+							actions: ["read", "write", "delete", "list"],
+							when: { user: "is_platform_admin" },
+						},
+					],
+				},
+			},
+		},
+	);
+	if (!response.ok()) {
+		throw new Error(
+			`grantWorkspaceAppPolicy(${slug}) failed: ${response.status()} ${await response.text()}`,
+		);
+	}
+}
+
 export async function csrfHeader(
 	context: BrowserContext,
 ): Promise<Record<string, string>> {

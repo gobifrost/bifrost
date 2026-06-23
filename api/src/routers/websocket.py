@@ -8,7 +8,7 @@ Replaces Azure Web PubSub with native FastAPI WebSockets.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -26,6 +26,7 @@ from src.core.log_safety import log_safe
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
 from src.models.contracts.policies import Expr, TablePolicies
+from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
@@ -48,6 +49,7 @@ class ChannelSpec:
 
     name: str
     filter: Expr | None
+    scope: str | None = None
 
 
 def _parse_channels(channels_raw: list) -> list[ChannelSpec]:
@@ -64,7 +66,14 @@ def _parse_channels(channels_raw: list) -> list[ChannelSpec]:
                     filter_expr = Expr.model_validate(filter_dict)
                 except ValidationError as e:
                     raise WSError(f"invalid filter: {e}")
-            out.append(ChannelSpec(name=ch["name"], filter=filter_expr))
+            scope = ch.get("scope")
+            out.append(
+                ChannelSpec(
+                    name=ch["name"],
+                    filter=filter_expr,
+                    scope=scope if isinstance(scope, str) else None,
+                )
+            )
         else:
             raise WSError("channel must be a string or {name, filter} object")
     return out
@@ -231,6 +240,15 @@ def _make_table_dispatcher(websocket: WebSocket, user: UserPrincipal) -> Any:
     return dispatcher
 
 
+def _make_file_dispatcher(websocket: WebSocket, user: UserPrincipal) -> Any:
+    """Return an async dispatcher that filters file-channel messages."""
+
+    async def dispatcher(channel_name: str, payload: dict[str, Any]) -> None:
+        await _handle_file_message(websocket, user, channel_name, payload)
+
+    return dispatcher
+
+
 async def _handle_table_message(
     websocket: WebSocket,
     user: UserPrincipal,
@@ -368,6 +386,217 @@ async def _authorize_table_subscribe(
     if not hasattr(websocket, "_table_dispatcher"):
         websocket._table_dispatcher = _make_table_dispatcher(websocket, user)  # type: ignore[attr-defined]
     return canonical_channel
+
+
+def _parse_file_channel(name: str) -> tuple[str, str] | None:
+    parts = name.split(":", 2)
+    if len(parts) != 3 or parts[0] != "files":
+        return None
+    return parts[1], parts[2].strip("/")
+
+
+def _path_matches(prefix: str, path: str) -> bool:
+    normalized_prefix = prefix.strip("/")
+    normalized_path = path.strip("/")
+    if normalized_prefix == "":
+        return True
+    return (
+        normalized_path == normalized_prefix
+        or normalized_path.startswith(f"{normalized_prefix}/")
+    )
+
+
+def _file_org_and_scope(
+    *,
+    user: UserPrincipal,
+    location: str,
+    requested_scope: str | None,
+) -> tuple[UUID | None, str | None] | None:
+    if location == "workspace":
+        return None, None
+
+    scope = requested_scope or (str(user.organization_id) if user.organization_id else None)
+    if scope is None:
+        return None
+    if scope == "global":
+        if not user.is_platform_admin:
+            return None
+        return None, scope
+    if not user.is_platform_admin and str(user.organization_id) != scope:
+        return None
+    try:
+        org_id = UUID(scope)
+    except ValueError:
+        return None
+    return org_id, scope
+
+
+def _file_channel(location: str, scope: str | None) -> str:
+    return f"files:{location}:{scope or 'GLOBAL'}"
+
+
+async def _file_allowed(
+    *,
+    user: UserPrincipal,
+    action: str,
+    organization_id: UUID | None,
+    location: str,
+    path: str,
+) -> bool:
+    from src.services.file_policy_service import FilePolicyService
+
+    async with get_db_context() as db:
+        service = FilePolicyService(db)
+        return await service.is_allowed(
+            cast(FileAction, action),
+            organization_id=organization_id,
+            location=location,
+            path=path,
+            user=user,
+        )
+
+
+async def _file_has_applicable_policy(
+    *,
+    organization_id: UUID | None,
+    location: str,
+    path: str,
+) -> bool:
+    from src.services.file_policy_service import FilePolicyService
+
+    async with get_db_context() as db:
+        service = FilePolicyService(db)
+        return (
+            await service.load_policy(
+                organization_id=organization_id,
+                location=location,
+                path=path,
+            )
+        ) is not None
+
+
+async def _authorize_file_subscribe(
+    websocket: WebSocket,
+    user: UserPrincipal,
+    spec: ChannelSpec,
+) -> str | None:
+    parsed = _parse_file_channel(spec.name)
+    if parsed is None:
+        await websocket.send_json({
+            "type": "error",
+            "channel": spec.name,
+            "message": "Invalid file channel",
+        })
+        return None
+
+    location, prefix = parsed
+    scope_result = _file_org_and_scope(
+        user=user,
+        location=location,
+        requested_scope=spec.scope,
+    )
+    if scope_result is None:
+        await websocket.send_json({
+            "type": "error",
+            "channel": spec.name,
+            "message": "Access denied",
+        })
+        return None
+    organization_id, scope = scope_result
+
+    await _populate_user_roles(user)
+    if not await _file_has_applicable_policy(
+        organization_id=organization_id,
+        location=location,
+        path=prefix,
+    ):
+        await websocket.send_json({
+            "type": "error",
+            "channel": spec.name,
+            "message": "Access denied",
+        })
+        return None
+
+    canonical_channel = _file_channel(location, scope)
+    sub_key = f"{canonical_channel}:{prefix}"
+    file_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "file_subscriptions", None) or {}
+    file_subs[sub_key] = {
+        "channel_name": canonical_channel,
+        "requested_channel": spec.name,
+        "location": location,
+        "scope": scope,
+        "organization_id": organization_id,
+        "prefix": prefix,
+    }
+    websocket.state.file_subscriptions = file_subs
+
+    if not hasattr(websocket, "_file_dispatcher"):
+        websocket._file_dispatcher = _make_file_dispatcher(websocket, user)  # type: ignore[attr-defined]
+    return canonical_channel
+
+
+async def _handle_file_message(
+    websocket: WebSocket,
+    user: UserPrincipal,
+    channel_name: str,
+    payload: dict[str, Any],
+) -> None:
+    file_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "file_subscriptions", {})
+    matching = [
+        (sub_key, sub)
+        for sub_key, sub in file_subs.items()
+        if sub.get("channel_name") == channel_name
+    ]
+    if not matching:
+        return
+
+    msg_type = payload.get("type")
+    if msg_type == "file_policy_changed":
+        for sub_key, sub in list(matching):
+            has_policy = await _file_has_applicable_policy(
+                organization_id=sub["organization_id"],
+                location=sub["location"],
+                path=sub["prefix"],
+            )
+            if not has_policy:
+                await websocket.send_json({
+                    "type": "subscription_revoked",
+                    "channel": sub["requested_channel"],
+                })
+                file_subs.pop(sub_key, None)
+        return
+
+    if msg_type != "file_change":
+        return
+
+    changed_path = str(payload.get("path") or "").strip("/")
+    if not changed_path:
+        return
+
+    delivered_prefixes: set[str] = set()
+    for _, sub in matching:
+        prefix = sub["prefix"]
+        if prefix in delivered_prefixes:
+            continue
+        if not _path_matches(prefix, changed_path):
+            continue
+        if not await _file_allowed(
+            user=user,
+            action="read",
+            organization_id=sub["organization_id"],
+            location=sub["location"],
+            path=changed_path,
+        ):
+            continue
+        delivered_prefixes.add(prefix)
+        await websocket.send_json({
+            "type": "file_change",
+            "channel": sub["requested_channel"],
+            "location": payload.get("location"),
+            "scope": payload.get("scope"),
+            "path": changed_path,
+            "action": payload.get("action"),
+        })
 
 
 async def can_access_conversation(user: UserPrincipal, conversation_id: str) -> tuple[bool, Conversation | None]:
@@ -615,6 +844,11 @@ async def websocket_connect(
             # File activity channel - platform admins only
             if user.is_superuser:
                 allowed_channels.append(channel)
+        elif channel.startswith("files:"):
+            # File channels need runtime subscribe metadata (scope) and
+            # per-connection policy filtering. Query-string subscription is
+            # intentionally not supported.
+            continue
         elif channel.startswith("table:"):
             # Table channels carry a per-connection user filter that cannot be
             # expressed in a query string. Require runtime `subscribe` messages
@@ -650,6 +884,7 @@ async def websocket_connect(
     # Per-connection state for policy-driven table subscriptions.
     # Populated by `_authorize_table_subscribe`; consulted by the dispatcher.
     websocket.state.table_subscriptions = {}
+    websocket.state.file_subscriptions = {}
 
     try:
         await manager.connect(websocket, allowed_channels)
@@ -841,6 +1076,19 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": canonical_channel
                         })
+                    elif channel.startswith("files:"):
+                        canonical_channel = await _authorize_file_subscribe(
+                            websocket, user, spec
+                        )
+                        if canonical_channel is None:
+                            continue
+                        if canonical_channel not in manager.connections:
+                            manager.connections[canonical_channel] = set()
+                        manager.connections[canonical_channel].add(websocket)
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "channel": spec.name
+                        })
 
             elif data.get("type") == "unsubscribe":
                 channel = data.get("channel")
@@ -864,6 +1112,28 @@ async def websocket_connect(
                         await websocket.send_json({
                             "type": "unsubscribed",
                             "channel": canonical_channel,
+                        })
+                    elif channel.startswith("files:"):
+                        parsed = _parse_file_channel(channel)
+                        if parsed is not None:
+                            location, prefix = parsed
+                            file_subs = getattr(websocket.state, "file_subscriptions", None)
+                            if file_subs is not None:
+                                for sub_key, sub in list(file_subs.items()):
+                                    if (
+                                        sub.get("requested_channel") == channel
+                                        or (
+                                            sub.get("location") == location
+                                            and sub.get("prefix") == prefix
+                                        )
+                                    ):
+                                        canonical_channel = sub.get("channel_name")
+                                        if canonical_channel in manager.connections:
+                                            manager.connections[canonical_channel].discard(websocket)
+                                        file_subs.pop(sub_key, None)
+                        await websocket.send_json({
+                            "type": "unsubscribed",
+                            "channel": channel,
                         })
                     elif channel in manager.connections:
                         manager.connections[channel].discard(websocket)

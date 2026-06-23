@@ -246,6 +246,17 @@ IDENTITY_MODELS: set[str] = {
     # A Solution install belongs to a scope (organization_id) but is never
     # resolved by name with cascade — it is identity, like Organization.
     "Solution",
+    # File policies resolve with the SAME org→global cascade-and-override as
+    # OrgScopedRepository (org-specific prefix wins; fall back to the global
+    # (org=NULL) prefix), so a global `shared/<prefix>` policy cascades to every
+    # org's users. They are allow-listed rather than routed through
+    # OrgScopedRepository because the resolution key is a *longest-path-prefix*
+    # match (FilePolicyService.load_policy), not the repo's exact by-name `get`;
+    # the cascade ARM itself reuses the canonical `org_id == X OR org_id IS NULL`
+    # shape. FileMetadata is the per-file companion row (created_by/timestamps),
+    # resolved by exact (org, location, path) — it carries no policy of its own.
+    "FileMetadata",
+    "FilePolicy",
 }
 
 

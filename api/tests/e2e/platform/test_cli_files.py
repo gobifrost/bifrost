@@ -33,6 +33,19 @@ import uuid
 
 import pytest
 
+from tests.e2e.file_policy_helpers import grant_file_policy
+
+
+@pytest.fixture(autouse=True)
+def _grant_workspace_e2e_policy(e2e_client, platform_admin):
+    """Files are default-deny, so the engine-authenticated CLI needs an explicit
+    `workspace`/`e2e` policy to write/read under `e2e/`. Grant it per-test rather
+    than relying on a policy leaked by a sibling test — the autouse
+    `isolate_file_policies` fixture wipes all file policies before each test."""
+    grant_file_policy(
+        e2e_client, platform_admin.headers, location="workspace", prefix="e2e"
+    )
+
 
 @pytest.fixture
 def engine_creds():

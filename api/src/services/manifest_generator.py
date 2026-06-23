@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -43,6 +44,7 @@ from bifrost.manifest import (
     ManifestConfig,
     ManifestCustomClaim,
     ManifestEventSource,
+    ManifestFilePolicy,
     ManifestForm,
     ManifestIntegration,
     ManifestMCPConnection,
@@ -55,6 +57,12 @@ from bifrost.manifest import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_file_policy_model() -> Any:
+    from src.models.orm.file_metadata import FilePolicy
+
+    return FilePolicy
 
 
 # =============================================================================
@@ -180,6 +188,11 @@ def serialize_custom_claim(claim: CustomClaim) -> ManifestCustomClaim:
 def serialize_table(table: Table) -> ManifestTable:
     """Serialize a Table ORM object to ManifestTable."""
     return ManifestTable.from_row(table)
+
+
+def serialize_file_policy(file_policy) -> ManifestFilePolicy:
+    """Serialize a file policy ORM object to ManifestFilePolicy."""
+    return ManifestFilePolicy.from_row(file_policy)
 
 
 def serialize_event_source(
@@ -419,6 +432,19 @@ async def generate_manifest(
     tables_list = table_result.scalars().all()
 
     # ------------------------------------------------------------------
+    # File policies
+    # ------------------------------------------------------------------
+    FilePolicy = _load_file_policy_model()
+    file_policy_result = await db.execute(
+        select(FilePolicy).order_by(
+            FilePolicy.organization_id,
+            FilePolicy.location,
+            FilePolicy.path,
+        )
+    )
+    file_policies_list = file_policy_result.scalars().all()
+
+    # ------------------------------------------------------------------
     # Event sources + subscriptions
     # ------------------------------------------------------------------
     event_source_result = await db.execute(
@@ -509,6 +535,10 @@ async def generate_manifest(
             str(table.id): serialize_table(table)
             for table in tables_list
         },
+        file_policies={
+            str(file_policy.id): serialize_file_policy(file_policy)
+            for file_policy in file_policies_list
+        },
         events={
             str(es.id): serialize_event_source(
                 es,
@@ -556,6 +586,7 @@ async def generate_manifest(
         f"{len(manifest.apps)} apps, {len(manifest.integrations)} integrations, "
         f"{len(manifest.configs)} configs, {len(manifest.claims)} claims, "
         f"{len(manifest.tables)} tables, "
+        f"{len(manifest.file_policies)} file_policies, "
         f"{len(manifest.events)} events, "
         f"{len(manifest.mcp_servers)} mcp_servers"
     )

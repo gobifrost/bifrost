@@ -24,6 +24,8 @@ import { Link, NavLink, Navigate } from "./navigation";
 import { tables } from "../app-sdk/tables";
 import { useTable } from "../app-sdk/use-table";
 import { useInfiniteTable } from "../app-sdk/use-infinite-table";
+import { files } from "../app-sdk/files";
+import { useFiles } from "../app-sdk/use-files";
 
 /**
  * Platform scope object containing all platform APIs
@@ -76,5 +78,9 @@ export function createPlatformScope(): Record<string, unknown> {
 		tables,
 		useTable,
 		useInfiniteTable,
+
+		// File access
+		files,
+		useFiles,
 	};
 }

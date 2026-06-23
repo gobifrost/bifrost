@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import yaml
@@ -27,6 +27,12 @@ from bifrost.manifest import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_file_policy_model() -> Any:
+    from src.models.orm.file_metadata import FilePolicy
+
+    return FilePolicy
 
 
 # =============================================================================
@@ -85,6 +91,7 @@ def _diff_and_collect(
         ("configs", "configs"),
         ("claims", "claims"),
         ("tables", "tables"),
+        ("file_policies", "file_policies"),
         ("events", "events"),
         ("forms", "forms"),
         ("agents", "agents"),
@@ -495,6 +502,22 @@ class ManifestResolver:
             cache["table_ids"].add(row[0])
             cache["table_by_natural"][(row[1], row[2])] = row[0]
 
+        # File policies: {(org_id, location, path): id} + {id} set.
+        cache["file_policy_ids"] = set()
+        cache["file_policy_by_natural"] = {}
+        FilePolicy = _load_file_policy_model()
+        fp_result = await self.db.execute(
+            select(
+                FilePolicy.id,
+                FilePolicy.organization_id,
+                FilePolicy.location,
+                FilePolicy.path,
+            )
+        )
+        for row in fp_result.all():
+            cache["file_policy_ids"].add(row[0])
+            cache["file_policy_by_natural"][(row[1], row[2], row[3])] = row[0]
+
         # Configs: {(key, integ_id, org_id): (id, value, config_schema_id)}
         cfg_result = await self.db.execute(
             select(Config.id, Config.key, Config.integration_id, Config.organization_id, Config.value, Config.config_schema_id)
@@ -607,6 +630,7 @@ class ManifestResolver:
             total += sum(1 for mclaim in manifest.claims.values() if mclaim.id in changed_ids)
             total += sum(1 for mapp in manifest.apps.values() if mapp.id in changed_ids)
             total += sum(1 for mtable in manifest.tables.values() if mtable.id in changed_ids)
+            total += sum(1 for mfp in manifest.file_policies.values() if mfp.id in changed_ids)
             total += sum(1 for mes in manifest.events.values() if mes.id in changed_ids)
             total += sum(1 for mform in manifest.forms.values() if mform.id in changed_ids)
             total += sum(1 for magent in manifest.agents.values() if magent.id in changed_ids)
@@ -614,7 +638,8 @@ class ManifestResolver:
             total = (len(manifest.organizations) + len(manifest.roles)
                      + len(manifest.workflows) + len(manifest.integrations)
                      + len(manifest.configs) + len(manifest.claims) + len(manifest.apps)
-                     + len(manifest.tables) + len(manifest.events)
+                     + len(manifest.tables) + len(manifest.file_policies)
+                     + len(manifest.events)
                      + len(manifest.forms) + len(manifest.agents))
         current = 0
 
@@ -712,7 +737,20 @@ class ManifestResolver:
             table_ops = await self._resolve_table(mtable.name or key, mtable, cache)
             await self._apply_ops(table_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("table_ids", set()))
 
-        # 6. Resolve custom claims (refs org + source table by name)
+        # 6. Resolve file policies (refs org)
+        for key, mfp in manifest.file_policies.items():
+            if changed_ids is not None and mfp.id not in changed_ids:
+                continue
+            await _prog(f"Importing file policy: {mfp.location}/{mfp.path or key}")
+            fp_ops = await self._resolve_file_policy(mfp, cache)
+            await self._apply_ops(
+                fp_ops,
+                all_ops,
+                dry_run=dry_run,
+                existing_ids=cache.get("file_policy_ids", set()),
+            )
+
+        # 7. Resolve custom claims (refs org + source table by name)
         for key, mclaim in manifest.claims.items():
             if changed_ids is not None and mclaim.id not in changed_ids:
                 continue
@@ -720,7 +758,7 @@ class ManifestResolver:
             claim_ops = await self._resolve_custom_claim(mclaim.name or key, mclaim, cache)
             await self._apply_ops(claim_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("claim_ids", set()))
 
-        # 7. Resolve event sources + subscriptions
+        # 8. Resolve event sources + subscriptions
         for key, mes in manifest.events.items():
             if changed_ids is not None and mes.id not in changed_ids:
                 continue
@@ -729,7 +767,7 @@ class ManifestResolver:
             # No event-source cache; everything reads as "inserted".
             await self._apply_ops(es_ops, all_ops, dry_run=dry_run, existing_ids=frozenset())
 
-        # 8. Resolve forms (metadata ops only — indexer called in _import_all_entities)
+        # 9. Resolve forms (metadata ops only — indexer called in _import_all_entities)
         for _form_name, mform in manifest.forms.items():
             if changed_ids is not None and mform.id not in changed_ids:
                 continue
@@ -1340,6 +1378,9 @@ class ManifestResolver:
         present_config_uuids = [UUID(m.id) for m in manifest.configs.values()]
         present_claim_uuids = [UUID(m.id) for m in manifest.claims.values()]
         present_table_uuids = [UUID(m.id) for m in manifest.tables.values()]
+        present_file_policy_uuids = [
+            UUID(m.id) for m in manifest.file_policies.values()
+        ]
         present_event_uuids = [UUID(m.id) for m in manifest.events.values()]
         present_sub_uuids: list[UUID] = []
         for mes in manifest.events.values():
@@ -1494,6 +1535,15 @@ class ManifestResolver:
                 entity_type="tables",
                 name=row[1] or str(row[0]),
             ))
+
+        # Delete file policies not in manifest.
+        FilePolicy = _load_file_policy_model()
+        await _bulk_delete(
+            FilePolicy,
+            [],
+            present_file_policy_uuids,
+            "file_policies",
+        )
 
         # Delete custom claims not in manifest.
         from src.models.orm.custom_claims import CustomClaim
@@ -2096,6 +2146,92 @@ class ManifestResolver:
             schema=src["schema"],
             access=access,
             created_by="git-sync",
+        ).on_conflict_do_nothing()
+        await self.db.execute(stmt)
+
+        return []
+
+    async def _resolve_file_policy(self, mpolicy, cache: dict | None = None) -> "list[SyncOp]":
+        """Resolve a file policy definition from manifest into the DB.
+
+        Uses upsert-by-natural-key ``(organization_id, location, path)`` so
+        global and org-scoped policy rows round-trip without duplicating when
+        IDs differ across environments.
+        """
+        from uuid import UUID
+
+        from sqlalchemy import update
+        from sqlalchemy.dialects.postgresql import insert
+
+        from bifrost.manifest import ManifestFilePolicy
+        from bifrost.manifest_codec import Destination
+        from src.services.sync_ops import SyncOp  # noqa: F401
+
+        FilePolicy = _load_file_policy_model()
+
+        src = ManifestFilePolicy.model_validate(mpolicy).to_orm_values(
+            Destination.GIT_SYNC
+        ).direct
+        policy_id = UUID(src["id"])
+        org_id = UUID(src["organization_id"]) if src["organization_id"] else None
+        natural = (org_id, src["location"], src["path"])
+        policy_document = {"policies": src["policies"]}
+        now = datetime.now(timezone.utc)
+
+        if cache is not None:
+            existing_by_natural = cache["file_policy_by_natural"].get(natural)
+        else:
+            natural_q = select(FilePolicy.id).where(
+                FilePolicy.organization_id == org_id,
+                FilePolicy.location == src["location"],
+                FilePolicy.path == src["path"],
+            )
+            existing_by_natural = (
+                await self.db.execute(natural_q)
+            ).scalar_one_or_none()
+
+        if existing_by_natural is not None:
+            await self.db.execute(
+                update(FilePolicy)
+                .where(FilePolicy.id == existing_by_natural)
+                .values(
+                    id=policy_id,
+                    policies=policy_document,
+                    updated_at=now,
+                )
+            )
+            return []
+
+        if cache is not None:
+            existing_by_id = policy_id if policy_id in cache["file_policy_ids"] else None
+        else:
+            existing_by_id = (
+                await self.db.execute(
+                    select(FilePolicy.id).where(FilePolicy.id == policy_id)
+                )
+            ).scalar_one_or_none()
+
+        if existing_by_id is not None:
+            await self.db.execute(
+                update(FilePolicy)
+                .where(FilePolicy.id == policy_id)
+                .values(
+                    organization_id=org_id,
+                    location=src["location"],
+                    path=src["path"],
+                    policies=policy_document,
+                    updated_at=now,
+                )
+            )
+            return []
+
+        stmt = insert(FilePolicy).values(
+            id=policy_id,
+            organization_id=org_id,
+            location=src["location"],
+            path=src["path"],
+            policies=policy_document,
+            created_by=None,
         ).on_conflict_do_nothing()
         await self.db.execute(stmt)
 

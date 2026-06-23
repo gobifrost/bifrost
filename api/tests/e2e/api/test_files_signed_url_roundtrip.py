@@ -15,6 +15,8 @@ import uuid
 import httpx
 import pytest
 
+from tests.e2e.file_policy_helpers import grant_file_policy
+
 
 @pytest.mark.e2e
 class TestSignedUrlRoundTrip:
@@ -43,6 +45,7 @@ class TestSignedUrlRoundTrip:
     def test_workspace_roundtrip(self, e2e_client, platform_admin):
         path = f"e2e/{uuid.uuid4().hex}.bin"
         content = secrets.token_bytes(64)
+        grant_file_policy(e2e_client, platform_admin.headers, location="workspace", prefix="e2e")
 
         write = self._write(e2e_client, platform_admin.headers, path, "workspace", content)
         assert write.status_code == 204, f"write failed: {write.text}"
@@ -66,10 +69,17 @@ class TestSignedUrlRoundTrip:
             json={"path": path, "location": "workspace"},
         )
 
-    def test_temp_roundtrip(self, e2e_client, platform_admin):
+    def test_temp_roundtrip(self, e2e_client, platform_admin, org1):
         path = f"e2e/{uuid.uuid4().hex}.bin"
         content = secrets.token_bytes(64)
-        scope = "e2e-org"
+        scope = org1["id"]
+        grant_file_policy(
+            e2e_client,
+            platform_admin.headers,
+            location="temp",
+            scope=scope,
+            prefix="e2e",
+        )
 
         write = self._write(e2e_client, platform_admin.headers, path, "temp", content, scope=scope)
         assert write.status_code == 204, f"write failed: {write.text}"
@@ -86,10 +96,17 @@ class TestSignedUrlRoundTrip:
         assert r.status_code == 200, f"download failed: {r.status_code} {r.text[:200]}"
         assert r.content == content
 
-    def test_uploads_roundtrip(self, e2e_client, platform_admin):
+    def test_uploads_roundtrip(self, e2e_client, platform_admin, org1):
         path = f"e2e-{uuid.uuid4().hex}/upload.bin"
         content = secrets.token_bytes(64)
-        scope = "e2e-org"
+        scope = org1["id"]
+        grant_file_policy(
+            e2e_client,
+            platform_admin.headers,
+            location="uploads",
+            scope=scope,
+            prefix=path.rsplit("/", 1)[0],
+        )
 
         write = self._write(e2e_client, platform_admin.headers, path, "uploads", content, scope=scope)
         assert write.status_code == 204, f"write failed: {write.text}"
@@ -106,11 +123,18 @@ class TestSignedUrlRoundTrip:
         assert r.status_code == 200, f"download failed: {r.status_code} {r.text[:200]}"
         assert r.content == content
 
-    def test_freeform_location_roundtrip(self, e2e_client, platform_admin):
+    def test_freeform_location_roundtrip(self, e2e_client, platform_admin, org1):
         path = f"e2e-{uuid.uuid4().hex}/q1.bin"
         content = secrets.token_bytes(64)
         location = "reports"
-        scope = "e2e-org"
+        scope = org1["id"]
+        grant_file_policy(
+            e2e_client,
+            platform_admin.headers,
+            location=location,
+            scope=scope,
+            prefix=path.rsplit("/", 1)[0],
+        )
 
         write = self._write(e2e_client, platform_admin.headers, path, location, content, scope=scope)
         assert write.status_code == 204, f"write failed: {write.text}"
@@ -172,7 +196,7 @@ class TestSignedUrlValidation:
         assert r.status_code == 400
         assert "traversal" in r.text.lower()
 
-    def test_temp_requires_scope(self, e2e_client, platform_admin):
+    def test_temp_without_policy_is_denied_when_scope_defaults(self, e2e_client, platform_admin):
         r = e2e_client.post(
             "/api/files/signed-url",
             headers=platform_admin.headers,
@@ -184,5 +208,4 @@ class TestSignedUrlValidation:
                 "scope": None,
             },
         )
-        assert r.status_code == 400
-        assert "scope" in r.text.lower()
+        assert r.status_code == 403

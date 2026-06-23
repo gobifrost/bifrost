@@ -97,24 +97,28 @@ class ConnectionManager:
     async def _send_local(self, channel: str, message: dict[str, Any]) -> None:
         """Send message to local WebSocket connections.
 
-        For `table:` channels, the connection MUST have a per-message dispatcher
-        attached (via the websocket router for policy-driven filtering). The
-        dispatcher receives the raw message and decides what — if anything — to
-        deliver to the client. Without a dispatcher, the connection simply does
-        not receive table updates: subscribing to `table:` outside the
-        policy-aware router is not supported.
+        For policy-filtered channels (`table:` and `files:`), the connection
+        MUST have a per-message dispatcher attached by the websocket router.
+        The dispatcher receives the raw message and decides what, if anything,
+        to deliver to the client.
         """
         if channel not in self.connections:
             return
 
         dead_connections = set()
         is_table_channel = channel.startswith("table:")
-        message_json = json.dumps(message) if not is_table_channel else None
+        is_file_channel = channel.startswith("files:")
+        message_json = json.dumps(message) if not (is_table_channel or is_file_channel) else None
 
         for websocket in self.connections[channel]:
             try:
                 if is_table_channel:
                     dispatcher = getattr(websocket, "_table_dispatcher", None)
+                    if dispatcher is None:
+                        continue
+                    await dispatcher(channel, message)
+                elif is_file_channel:
+                    dispatcher = getattr(websocket, "_file_dispatcher", None)
                     if dispatcher is None:
                         continue
                     await dispatcher(channel, message)
@@ -969,3 +973,47 @@ async def publish_policy_changed(table_id: str) -> None:
     """
     channel = f"table:{table_id}"
     await publisher.publish(channel, payload={"type": "policy_changed", "table_id": table_id})
+
+
+# =============================================================================
+# File Pub/Sub
+# =============================================================================
+
+
+def _file_channel(location: str, scope: str | None) -> str:
+    scope_segment = scope or "GLOBAL"
+    return f"files:{location}:{scope_segment}"
+
+
+async def publish_file_change(
+    *,
+    location: str,
+    scope: str | None,
+    path: str,
+    action: Literal["write", "delete", "upload"],
+) -> None:
+    """Emit a policy-filtered file-change event for SDK file browsers."""
+    payload = {
+        "type": "file_change",
+        "location": location,
+        "scope": scope,
+        "path": path,
+        "action": action,
+    }
+    await publisher.publish(_file_channel(location, scope), payload=payload)
+
+
+async def publish_file_policy_changed(
+    *,
+    location: str,
+    scope: str | None,
+    path: str,
+) -> None:
+    """Notify file subscribers that a policy prefix changed."""
+    payload = {
+        "type": "file_policy_changed",
+        "location": location,
+        "scope": scope,
+        "path": path,
+    }
+    await publisher.publish(_file_channel(location, scope), payload=payload)

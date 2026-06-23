@@ -4,7 +4,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.core.pubsub import publish_document_change
+from src.core.pubsub import (
+    publish_document_change,
+    publish_file_change,
+    publish_file_policy_changed,
+)
 
 
 @pytest.mark.asyncio
@@ -50,3 +54,42 @@ async def test_publish_delete_carries_old_row_only():
         assert payload["action"] == "delete"
         assert payload["old_row"]["id"] == "r1"
         assert payload.get("new_row") is None
+
+
+@pytest.mark.asyncio
+async def test_publish_file_change_uses_scoped_channel():
+    with patch("src.core.pubsub.publisher.publish", new=AsyncMock()) as mock_pub:
+        await publish_file_change(
+            location="shared",
+            scope="00000000-0000-0000-0000-000000000001",
+            path="gallery/a.png",
+            action="write",
+        )
+        args = mock_pub.await_args
+        assert args.args[0] == "files:shared:00000000-0000-0000-0000-000000000001"
+        payload = args.kwargs["payload"]
+        assert payload == {
+            "type": "file_change",
+            "location": "shared",
+            "scope": "00000000-0000-0000-0000-000000000001",
+            "path": "gallery/a.png",
+            "action": "write",
+        }
+
+
+@pytest.mark.asyncio
+async def test_publish_file_policy_changed_uses_global_workspace_channel():
+    with patch("src.core.pubsub.publisher.publish", new=AsyncMock()) as mock_pub:
+        await publish_file_policy_changed(
+            location="workspace",
+            scope=None,
+            path="docs",
+        )
+        args = mock_pub.await_args
+        assert args.args[0] == "files:workspace:GLOBAL"
+        assert args.kwargs["payload"] == {
+            "type": "file_policy_changed",
+            "location": "workspace",
+            "scope": None,
+            "path": "docs",
+        }
