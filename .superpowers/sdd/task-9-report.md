@@ -92,3 +92,20 @@ tests/e2e/test_cli_policy_rules.py::TestTablesPolicisCLI::test_tables_policies_s
 ## Concerns
 
 None blocking. The inline import in `set_table_policy` could be moved to top-of-file in a follow-up.
+
+---
+
+## Review Fix Commit (`3408517d0`)
+
+**Fix 1 (Important) — Parity pairs added:**
+
+Added to `test_contracts_parity.py`:
+- Import: `from src.models.contracts import policy_rule as server_policy_rule`
+- Two `DTO_PAIRS` entries: `(cli_contracts.PolicyRuleCreate, server_policy_rule.PolicyRuleCreate)` and `(cli_contracts.PolicyRuleUpdate, server_policy_rule.PolicyRuleUpdate)`
+- Mirrors are field-identical; both new tests pass (94/94 green).
+
+**Fix 2 (Minor) — `--domain` as click.Choice on create:**
+
+The root cause: `build_cli_flags` had no handler for `Literal[...]` types — `domain: Literal["file","table"]` fell through to plain `str`. Rather than a manual override in `policy_rules.py` (which would conflict with `_apply_flags`), added `_is_literal`/`_literal_choices` helpers in `dto_flags.py` and a new branch before `_is_enum_type`. Now any `Literal[str, ...]` field auto-generates as `click.Choice`. The fix was in `dto_flags.py`, not `policy_rules.py` — no changes to the command file were needed. `test_dto_flags.py`: 94/94 pass.
+
+**Ruff:** clean on all changed files.
