@@ -9,6 +9,7 @@ import pytest_asyncio
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
 from src.models.orm.policy_rule import PolicyRule
+from src.models.orm.tables import Table
 from src.repositories.policy_rule import PolicyRuleRepository
 from shared.policy_rules import find_policy_rule_usages
 
@@ -56,3 +57,41 @@ async def test_where_used_for_global_skips_org_with_override(db_session, seed_or
     locs = {f["location"] + f["path"] for f in u.file_policies}
     assert "shareda/" not in locs  # seed_org overrides → NOT a usage of the global
     assert "sharedb/" in locs  # other_org → genuine usage of the global
+
+
+@pytest.mark.asyncio
+async def test_domain_filter_excludes_cross_domain(db_session, seed_org):
+    """Domain filter (.where(false())) must exclude cross-domain entities.
+
+    A named rule referenced as {"$ref": "shared_name"} in BOTH a Table.access
+    and a FilePolicy.policies must be hidden from the wrong domain search.
+    """
+    ref_json = [{"$ref": "shared_name"}]
+    # Seed a Table whose access references "shared_name" in seed_org.
+    db_session.add(
+        Table(
+            name=f"t-{uuid4().hex[:6]}",
+            organization_id=seed_org,
+            access={"policies": ref_json},
+        )
+    )
+    # Seed a FilePolicy that also references "shared_name" in seed_org.
+    db_session.add(
+        FilePolicy(
+            organization_id=seed_org,
+            location="shared",
+            path="x/",
+            policies={"policies": ref_json},
+        )
+    )
+    await db_session.flush()
+
+    # domain="file": table must be excluded (false() filter), file policy must appear.
+    u_file = await find_policy_rule_usages(db_session, "shared_name", "file", org_id=seed_org)
+    assert u_file.tables == [], "domain=file should exclude tables via WHERE false()"
+    assert len(u_file.file_policies) == 1, "domain=file should include the matching file policy"
+
+    # domain="table": file policy must be excluded, table must appear.
+    u_table = await find_policy_rule_usages(db_session, "shared_name", "table", org_id=seed_org)
+    assert u_table.file_policies == [], "domain=table should exclude file policies via WHERE false()"
+    assert len(u_table.tables) == 1, "domain=table should include the matching table"

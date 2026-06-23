@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.file_metadata import FilePolicy
@@ -40,13 +40,13 @@ async def find_policy_rule_usages(
         Table.access["policies"].contains(ref_json)
     )
     if domain == "file":
-        tb = tb.where(False)  # a file rule can only be referenced by file policies
+        tb = tb.where(false())  # a file rule can only be referenced by file policies
     if domain == "table":
-        fp = fp.where(False)
+        fp = fp.where(false())
     if org_id is not None:
         fp = fp.where(FilePolicy.organization_id == org_id)
         tb = tb.where(Table.organization_id == org_id)
-        override_orgs: set = set()
+        override_orgs: set[UUID] = set()
     else:
         override_orgs = {
             o
