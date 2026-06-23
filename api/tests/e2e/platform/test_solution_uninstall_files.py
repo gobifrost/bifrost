@@ -231,3 +231,80 @@ async def test_uninstall_enqueues_s3_move_job(
     assert row.s3_key == new_s3_key, (
         f"s3_key not updated by job: expected {new_s3_key!r}, got {row.s3_key!r}"
     )
+
+
+@pytest_asyncio.fixture
+async def global_solution_with_file(db_session):
+    """A global (org_id=None) Solution with one written file."""
+    s = Solution(
+        id=uuid.uuid4(),
+        slug=f"global-uninstall-{uuid.uuid4().hex[:6]}",
+        name="Global Uninstall Files Test",
+        organization_id=None,
+    )
+    db_session.add(s)
+    await db_session.flush()
+
+    location = "shared"
+    path = f"test/{uuid.uuid4().hex}.txt"
+    content = b"global solution uninstall test content"
+
+    await write_solution_file(db_session, s.id, location, path, content, mode="replace")
+    await db_session.commit()
+    return s, location, path, content
+
+
+@pytest.mark.asyncio
+async def test_global_solution_uninstall_deletes_file_metadata(
+    e2e_client, platform_admin, db_session, global_solution_with_file
+):
+    """Uninstalling a global solution (org_id=None) deletes FileMetadata rows.
+
+    A global solution has no target org to orphan files to.  The S3 bytes
+    are swept by the install-prefix delete.  The FileMetadata rows must be
+    DELETED (not left as phantoms) so there are no dangling rows whose
+    s3_key points at now-deleted bytes.
+    """
+    sol, location, path, content = global_solution_with_file
+    headers = platform_admin.headers
+    sol_id = str(sol.id)
+    file_id_query = select(FileMetadata.id).where(
+        FileMetadata.solution_id == sol.id,
+        FileMetadata.location == location,
+        FileMetadata.path == path,
+    )
+
+    # Pre-condition: row exists and is solution-scoped.
+    row_before = (await db_session.execute(file_id_query)).scalar_one_or_none()
+    assert row_before is not None, "pre-condition: FileMetadata row must exist before delete"
+
+    # DELETE the solution.
+    del_resp = e2e_client.delete(f"/api/solutions/{sol_id}", headers=headers)
+    assert del_resp.status_code in (200, 204), (
+        f"delete failed: {del_resp.status_code} {del_resp.text}"
+    )
+
+    summary = del_resp.json()
+    assert summary["solution_id"] == sol_id
+    assert summary["files_orphaned"] == 1, (
+        f"expected files_orphaned=1 in delete summary, got: {summary}"
+    )
+
+    # Expire the session cache so we see committed DB state.
+    await db_session.rollback()
+
+    # The FileMetadata row MUST be gone — no phantom survivor.
+    row_after = (
+        await db_session.execute(
+            select(FileMetadata).where(
+                FileMetadata.location == location,
+                FileMetadata.path == path,
+            )
+        )
+    ).scalar_one_or_none()
+    assert row_after is None, (
+        f"FileMetadata row survived global-solution uninstall — dangling phantom: "
+        f"id={row_after.id if row_after else None}, "
+        f"solution_id={row_after.solution_id if row_after else None}, "
+        f"organization_id={row_after.organization_id if row_after else None}"
+    )

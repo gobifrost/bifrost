@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.file_paths import resolve_s3_key
@@ -223,6 +223,29 @@ async def restamp_solution_files_metadata(
     )
 
     return [str(row) for row in rows]
+
+
+async def delete_solution_files_metadata(
+    db: AsyncSession,
+    install_id: UUID,
+) -> int:
+    """Delete all FileMetadata rows owned by *install_id*.
+
+    Used during uninstall of a **global** solution (org_id is None).  For
+    global installs there is no target org to orphan files to, and the S3
+    bytes are swept by the existing ``_solutions/{install_id}/`` prefix
+    delete in ``delete_solution``.  Deleting the metadata rows BEFORE the
+    Solution delete prevents the ondelete=CASCADE FK from racing with this
+    call, and leaves no dangling phantom rows whose ``s3_key`` points to
+    already-deleted bytes.
+
+    Uses a Core DELETE to bypass the ORM unit-of-work guard.
+    Returns the number of rows deleted.
+    """
+    result = await db.execute(
+        delete(FileMetadata).where(FileMetadata.solution_id == install_id)
+    )
+    return result.rowcount or 0
 
 
 async def orphan_solution_files(

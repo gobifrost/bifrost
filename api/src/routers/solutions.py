@@ -864,19 +864,35 @@ async def delete_solution(
                 config_values_orphaned = result.rowcount or 0
 
             # DETACH FILES (before the Solution delete, mirroring the table detach
-            # above).  Re-stamp metadata in-txn: null solution_id so the
-            # ondelete=CASCADE FK can no longer reach these rows.  s3_key is NOT
-            # updated here — bytes still live at the install-scoped path; the
-            # post-commit S3-move job (kind='orphan') moves them using the
-            # captured IDs.
-            from src.services.solution_files import restamp_solution_files_metadata
+            # above).  Branch on global vs org-scoped:
+            #
+            # • Org-scoped install: re-stamp metadata in-txn (null solution_id so
+            #   the ondelete=CASCADE FK can no longer reach these rows), then enqueue
+            #   an S3-move job to migrate bytes to the org-scoped key.  s3_key is NOT
+            #   updated here — the job worker does it.
+            #
+            # • Global install (org_id is None): there is no target org to orphan
+            #   files to.  The S3 bytes are swept by the _solutions/{install_id}/
+            #   prefix delete below; deleting the metadata rows here (before the
+            #   Solution delete) prevents the ondelete=CASCADE from racing and leaves
+            #   no dangling phantom rows whose s3_key points to deleted bytes.
+            if sol.organization_id is not None:
+                from src.services.solution_files import restamp_solution_files_metadata
 
-            captured_file_ids = await restamp_solution_files_metadata(
-                ctx.db,
-                install_id=solution_id,
-                org_id=sol.organization_id,
-                slug=sol.slug,
-            )
+                captured_file_ids = await restamp_solution_files_metadata(
+                    ctx.db,
+                    install_id=solution_id,
+                    org_id=sol.organization_id,
+                    slug=sol.slug,
+                )
+                files_count = len(captured_file_ids)
+            else:
+                from src.services.solution_files import delete_solution_files_metadata
+
+                captured_file_ids = []
+                files_count = await delete_solution_files_metadata(
+                    ctx.db, install_id=solution_id
+                )
 
             summary = SolutionDeleteSummary(
                 solution_id=solution_id,
@@ -888,7 +904,7 @@ async def delete_solution(
                 config_declarations_deleted=len(decl_keys),
                 tables_orphaned=len(table_ids),
                 config_values_orphaned=config_values_orphaned,
-                files_orphaned=len(captured_file_ids),
+                files_orphaned=files_count,
             )
 
             # Capture the org before the delete — accessing attributes on a
@@ -921,9 +937,9 @@ async def delete_solution(
             # job only needs to move bytes from the install-scoped S3 key to the
             # org-scoped key.  captured_file_ids were snapshotted before the
             # restamp so the worker can query by ID regardless of solution_id state.
-            # Enqueue S3-move only for org-scoped solutions — a global (no org)
-            # solution has nowhere to move the bytes to; their s3_key is left
-            # pointing at the now-gone install scope (acceptable edge case).
+            # Global solutions (org_id is None) have no target org; their metadata
+            # rows were already deleted above, so captured_file_ids is empty and
+            # this branch is a no-op.
             if captured_file_ids and sol_org_id is not None:
                 file_job = SolutionFileJob(
                     install_id=solution_id,
