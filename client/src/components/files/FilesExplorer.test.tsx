@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -136,5 +137,40 @@ describe("FilesExplorer", () => {
 		expect(
 			screen.getByRole("button", { name: /open shares/i }),
 		).toBeInTheDocument();
+	});
+
+	describe("install prop (solution-scoped mode)", () => {
+		it("pins scope to the install id and passes it to ShareTree", () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			shareTreeScopes.length = 0;
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" />
+				</MemoryRouter>,
+			);
+			// scope must be the install id, not "global" or an org id.
+			expect(shareTreeScopes).toContain("sol-abc");
+		});
+
+		it("hides the org/global selector when install is set", () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" />
+				</MemoryRouter>,
+			);
+			expect(screen.queryByText("scope-select")).not.toBeInTheDocument();
+		});
+
+		it("shows a back link to the solution detail page", () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" />
+				</MemoryRouter>,
+			);
+			const back = screen.getByTestId("files-solution-back");
+			expect(back).toHaveAttribute("href", "/solutions/sol-abc");
+		});
 	});
 });

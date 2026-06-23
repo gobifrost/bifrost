@@ -3855,22 +3855,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7493,6 +7493,50 @@ export interface paths {
         };
         /** Poll the status of an async deploy job (admin only) */
         get: operations["get_deploy_job_api_solutions_deploy_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/file-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enqueue a background file mass-op (admin only)
+         * @description Enqueue a file mass-operation as a background job.
+         *
+         *     The job row is persisted before the task is scheduled so the caller can
+         *     poll ``GET /api/solutions/file-jobs/{id}`` the instant it has the id.
+         *
+         *     For ``orphan`` jobs the caller must supply ``org_id`` and ``slug``; the
+         *     endpoint snapshots the current file IDs into ``captured_keys`` at enqueue
+         *     time so the worker is immune to post-restamp DB state (C3).
+         */
+        post: operations["enqueue_file_job_api_solutions_file_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/file-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll the status of an async file job (admin only) */
+        get: operations["get_file_job_api_solutions_file_jobs__job_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21314,6 +21358,11 @@ export interface components {
              * @default 0
              */
             config_values_orphaned: number;
+            /**
+             * Files Orphaned
+             * @default 0
+             */
+            files_orphaned: number;
         };
         /**
          * SolutionDependencyPreview
@@ -21428,6 +21477,8 @@ export interface components {
             claims?: components["schemas"]["SolutionEntitySummary"][];
             /** Tables */
             tables?: components["schemas"]["SolutionEntitySummary"][];
+            /** Files */
+            files?: components["schemas"]["SolutionFileSummary"][];
             /** Configs */
             configs?: components["schemas"]["SolutionConfigStatus"][];
             /** Required Configs Unset */
@@ -21501,6 +21552,90 @@ export interface components {
             name: string;
             /** Version */
             version?: string | null;
+        };
+        /**
+         * SolutionFileJobEnqueue
+         * @description Request body for ``POST /api/solutions/file-jobs``.
+         */
+        SolutionFileJobEnqueue: {
+            /**
+             * Install Id
+             * Format: uuid
+             */
+            install_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "restore" | "orphan" | "bulk_delete";
+            /** Org Id */
+            org_id?: string | null;
+            /** Slug */
+            slug?: string | null;
+        };
+        /**
+         * SolutionFileJobEnqueued
+         * @description Returned by ``POST /api/solutions/file-jobs``.
+         */
+        SolutionFileJobEnqueued: {
+            /**
+             * File Job Id
+             * Format: uuid
+             */
+            file_job_id: string;
+        };
+        /**
+         * SolutionFileJobStatus
+         * @description Current state of an async file job.
+         */
+        SolutionFileJobStatus: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Install Id */
+            install_id: string | null;
+            /** Origin Solution Id */
+            origin_solution_id?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "restore" | "orphan" | "bulk_delete";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed";
+            /** Error */
+            error?: string | null;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * SolutionFileSummary
+         * @description Lightweight summary of one file owned by a solution install.
+         */
+        SolutionFileSummary: {
+            /** Location */
+            location: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size?: number | null;
         };
         /**
          * SolutionInstallPreview
@@ -30230,7 +30365,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30263,7 +30398,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30296,7 +30431,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -30329,7 +30464,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints__workflow_id__delete: {
         parameters: {
             query?: never;
             header: {
@@ -36870,6 +37005,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionDeployJobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enqueue_file_job_api_solutions_file_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionFileJobEnqueue"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionFileJobEnqueued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_job_api_solutions_file_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionFileJobStatus"];
                 };
             };
             /** @description Validation Error */

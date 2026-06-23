@@ -1,7 +1,11 @@
 import { FolderOpen } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { FilesExplorer } from "@/components/files/FilesExplorer";
 
 export function Files() {
+	const [searchParams] = useSearchParams();
+	const install = searchParams.get("install") ?? undefined;
+
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-4">
 			<header className="flex shrink-0 items-center gap-2">
@@ -14,7 +18,7 @@ export function Files() {
 				</div>
 			</header>
 			<div className="min-h-0 flex-1">
-				<FilesExplorer />
+				<FilesExplorer install={install} />
 			</div>
 		</div>
 	);

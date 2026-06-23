@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { Menu, Plus, Upload } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ChevronLeft, Menu, Plus, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Sheet,
@@ -34,22 +35,31 @@ const READ_ONLY_LOCATIONS = new Set(["uploads"]);
 // ring instead of a hard border so it reads as part of the theme).
 const PANE = "flex min-h-0 flex-col overflow-hidden rounded-[min(var(--radius-4xl),24px)] bg-card ring-1 ring-foreground/5 dark:ring-foreground/10";
 
-export function FilesExplorer() {
+interface FilesExplorerProps {
+	/**
+	 * When set, the explorer is pinned to the solution install's file scope:
+	 * location="solutions", scope=<install_id>.  The org/global selector is
+	 * hidden and the header shows a back-link to the Solution detail page.
+	 */
+	install?: string;
+}
+
+export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 	const { isPlatformAdmin } = useAuth();
 	const { data: organizations = [] } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: isPlatformAdmin && !install,
 	});
 	const isWide = useMediaQuery("(min-width: 1024px)");
 
-	// selectorScope is what OrganizationSelect speaks: null = Global, UUID = org.
-	// There is no "all scopes". The data layer needs the EXPLICIT "global"
-	// string (not null/UNSET) so write/upload (`resolve_target_org`) and the
-	// structural list agree — null would resolve to the caller's own org on
-	// the write path while the explorer means literal global. `apiScope` below
-	// is the value passed to every child/SDK call.
+	// When `install` is set, scope and location are pinned — not user-controlled.
+	// Otherwise selectorScope is what OrganizationSelect speaks: null = Global.
+	// The data layer needs the EXPLICIT "global" string (not null/UNSET) so
+	// write/upload (`resolve_target_org`) and the structural list agree — null
+	// would resolve to the caller's own org on the write path while the explorer
+	// means literal global.
 	const [selectorScope, setSelectorScope] = useState<string | null>(null);
-	const scope = selectorScope ?? "global";
-	const [location, setLocation] = useState<string | null>(null);
+	const scope = install ?? selectorScope ?? "global";
+	const [location, setLocation] = useState<string | null>(install ? "solutions" : null);
 	const [prefix, setPrefix] = useState("");
 	const [selectedFile, setSelectedFile] = useState<string | null>(null);
 	const [view, setView] = useState<"browse" | "policies">("browse");
@@ -76,11 +86,12 @@ export function FilesExplorer() {
 		() => setRefreshKey((k) => k + 1),
 	);
 	const scopeLabel = useMemo(() => {
+		if (install) return "Solution";
 		if (selectorScope === null) return "Global";
 		return (
 			organizations.find((o) => o.id === selectorScope)?.name ?? "Organization"
 		);
-	}, [selectorScope, organizations]);
+	}, [install, selectorScope, organizations]);
 	const segments = prefix ? prefix.replace(/\/$/, "").split("/") : [];
 
 	function resetTo(nextLocation: string | null, nextPrefix: string) {
@@ -213,6 +224,16 @@ export function FilesExplorer() {
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-3">
 			<header className="flex shrink-0 flex-wrap items-center gap-2">
+				{install && (
+					<Link
+						to={`/solutions/${install}`}
+						className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+						data-testid="files-solution-back"
+					>
+						<ChevronLeft className="mr-1 h-3.5 w-3.5" />
+						Solution
+					</Link>
+				)}
 				{!isWide && (
 					<Sheet open={treeOpen} onOpenChange={setTreeOpen}>
 						<SheetTrigger asChild>
@@ -233,7 +254,7 @@ export function FilesExplorer() {
 						</SheetContent>
 					</Sheet>
 				)}
-				{isPlatformAdmin && (
+				{isPlatformAdmin && !install && (
 					<div className="w-56">
 						<OrganizationSelect
 							value={selectorScope}

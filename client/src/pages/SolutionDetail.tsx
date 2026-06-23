@@ -22,6 +22,7 @@ import {
 	AppWindow,
 	FileCode,
 	FileText,
+	FolderOpen,
 	Bot,
 	Database,
 	SlidersHorizontal,
@@ -136,7 +137,8 @@ type EntityKind =
 	| "forms"
 	| "agents"
 	| "tables"
-	| "claims";
+	| "claims"
+	| "files";
 
 /** Contents type-chip selection: a specific kind or the combined summary. */
 type ContentsFilter = "all" | EntityKind;
@@ -152,6 +154,7 @@ const ENTITY_TABS: {
 	{ key: "agents", label: "Agents", Icon: Bot },
 	{ key: "tables", label: "Tables", Icon: Database },
 	{ key: "claims", label: "Custom Claims", Icon: KeyRound },
+	{ key: "files", label: "Files", Icon: FolderOpen },
 ];
 
 /** Per-entity-page link target, carrying the `?from` so the entity page can
@@ -176,6 +179,8 @@ function entityHref(
 		case "workflows":
 			// The execute route is keyed by workflow NAME, not id.
 			return `/workflows/${encodeURIComponent(entity.name)}/execute${from}`;
+		case "files":
+			return `/files?install=${solutionId}&from=solution:${solutionId}`;
 	}
 }
 
@@ -199,6 +204,7 @@ const ENTITY_TAB_LABEL: Record<EntityKind, string> = {
 	agents: "agents",
 	tables: "tables",
 	claims: "custom claims",
+	files: "files",
 };
 
 const GRID_TABLE_ENTITY_TABS = new Set<EntityKind>([
@@ -678,10 +684,13 @@ function EntityTabContent({
 	kind,
 	items,
 	solutionId,
+	fileCount,
 }: {
 	kind: EntityKind;
 	items: EntitySummary[];
 	solutionId: string;
+	/** Actual file count from SolutionEntities.files (files kind only). */
+	fileCount?: number;
 }) {
 	const navigate = useNavigate();
 	const [search, setSearch] = useState("");
@@ -717,6 +726,31 @@ function EntityTabContent({
 			{ valid: true, missingParams: [] },
 		]),
 	);
+
+	// Files are a flat resource with their own dedicated Explorer page — navigate
+	// there instead of attempting to inline-render a SolutionFileSummary list.
+	if (kind === "files") {
+		const count = fileCount ?? 0;
+		const href = `/files?install=${solutionId}&from=solution:${solutionId}`;
+		return (
+			<div className="flex flex-col items-center gap-3 py-8 text-center">
+				<FolderOpen className="h-8 w-8 text-muted-foreground" />
+				<p className="text-sm text-muted-foreground">
+					{count === 0
+						? "This Solution has no files."
+						: `${count} file${count === 1 ? "" : "s"} owned by this install.`}
+				</p>
+				<Link
+					to={href}
+					className="inline-flex items-center gap-1.5 text-sm font-medium hover:underline"
+					data-testid="files-view-link"
+				>
+					<FolderOpen className="h-4 w-4" />
+					Browse Files
+				</Link>
+			</div>
+		);
+	}
 
 	if (items.length === 0) {
 		return (
@@ -1269,6 +1303,7 @@ export function SolutionDetail() {
 			agents: data?.agents?.length ?? 0,
 			tables: data?.tables?.length ?? 0,
 			claims: data?.claims?.length ?? 0,
+			files: data?.files?.length ?? 0,
 		} satisfies Record<EntityKind, number>;
 	}, [data]);
 
@@ -1278,8 +1313,12 @@ export function SolutionDetail() {
 	);
 	const configsCount = data?.configs?.length ?? 0;
 
-	const itemsFor = (key: EntityKind): EntitySummary[] =>
-		(data?.[key] as EntitySummary[] | undefined) ?? [];
+	// `files` carries SolutionFileSummary[], not EntitySummary[] — EntityTabContent
+	// handles the files kind before it reaches the EntitySummary rendering path.
+	const itemsFor = (key: EntityKind): EntitySummary[] => {
+		if (key === "files") return [];
+		return (data?.[key] as EntitySummary[] | undefined) ?? [];
+	};
 
 	const requiredUnset = data?.required_configs_unset ?? [];
 	// Contents tab: "All" shows a combined per-type summary; a specific chip
@@ -1581,6 +1620,7 @@ export function SolutionDetail() {
 										kind={activeKind}
 										items={itemsFor(activeKind)}
 										solutionId={sol.id}
+										fileCount={entityCounts.files}
 									/>
 								) : (
 									<ContentsSummary

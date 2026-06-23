@@ -41,6 +41,7 @@ from src.models.contracts.solutions import (
     SolutionDeployJobStatus,
     SolutionEntities,
     SolutionEntitySummary,
+    SolutionFileSummary,
     SolutionExistingInstall,
     SolutionFileJobEnqueue,
     SolutionFileJobEnqueued,
@@ -360,12 +361,19 @@ async def get_solution_entities(
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
+    from src.services.solution_files import enumerate_solution_files
+
     workflows = await _workflow_summaries(ctx, Workflow.solution_id == solution_id)
     apps = await _app_summaries(ctx, Application.solution_id == solution_id)
     forms = await _form_summaries(ctx, Form.solution_id == solution_id)
     agents = await _agent_summaries(ctx, Agent.solution_id == solution_id)
     claims = await _claim_summaries(ctx, CustomClaim.solution_id == solution_id)
     tables = await _table_summaries(ctx, Table.solution_id == solution_id)
+    file_entries = await enumerate_solution_files(ctx.db, solution_id)
+    files = [
+        SolutionFileSummary(location=f.location, path=f.path, size=f.size)
+        for f in file_entries
+    ]
 
     decls = (
         await ctx.db.execute(
@@ -404,6 +412,7 @@ async def get_solution_entities(
         agents=agents,
         claims=claims,
         tables=tables,
+        files=files,
         configs=configs,
         required_configs_unset=required_unset,
     )

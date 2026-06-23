@@ -156,6 +156,14 @@ class SolutionEntitySummary(BaseModel):
     created_at: datetime | None = None
 
 
+class SolutionFileSummary(BaseModel):
+    """Lightweight summary of one file owned by a solution install."""
+
+    location: str
+    path: str
+    size: int | None = None
+
+
 class SolutionEntities(BaseModel):
     """Everything one install owns + its config declaration/value status."""
 
@@ -166,6 +174,7 @@ class SolutionEntities(BaseModel):
     agents: list[SolutionEntitySummary] = Field(default_factory=list)
     claims: list[SolutionEntitySummary] = Field(default_factory=list)
     tables: list[SolutionEntitySummary] = Field(default_factory=list)
+    files: list[SolutionFileSummary] = Field(default_factory=list)
     configs: list[SolutionConfigStatus] = Field(default_factory=list)
     required_configs_unset: list[str] = Field(default_factory=list)
 

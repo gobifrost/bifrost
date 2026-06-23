@@ -450,4 +450,39 @@ describe("SolutionDetail", () => {
 			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(1),
 		);
 	});
+
+	it("renders a Files chip in Contents when the install has files", async () => {
+		const entities = makeEntities();
+		(entities as Record<string, unknown>).files = [
+			{ location: "solutions", path: "data/hello.txt", size: 2 },
+		];
+		mockGetSolutionEntities.mockResolvedValue(entities);
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-contents"));
+		const filesChip = screen.getByTestId("chip-files");
+		expect(filesChip).toHaveTextContent("Files");
+		expect(filesChip).toHaveTextContent("1");
+	});
+
+	it("navigates the Files chip to /files?install=<id>", async () => {
+		const entities = makeEntities();
+		(entities as Record<string, unknown>).files = [
+			{ location: "solutions", path: "data/hello.txt", size: 2 },
+		];
+		mockGetSolutionEntities.mockResolvedValue(entities);
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-contents"));
+		await user.click(screen.getByTestId("chip-files"));
+
+		// Files tab renders a Browse Files link pointing at the scoped Files page.
+		const link = await screen.findByTestId("files-view-link");
+		expect(link).toHaveAttribute(
+			"href",
+			"/files?install=sol-1&from=solution:sol-1",
+		);
+	});
 });

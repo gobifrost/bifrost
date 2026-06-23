@@ -185,3 +185,43 @@ async def test_capture_candidates_list_and_capture_loose_config(e2e_client, plat
     assert entities.status_code == 200, entities.text
     entity_config_keys = {item["key"] for item in entities.json()["configs"]}
     assert key in entity_config_keys
+
+
+async def test_get_solution_entities_includes_files(e2e_client, platform_admin):
+    """SolutionEntities.files is populated with files written to the install scope."""
+    headers = platform_admin.headers
+    slug = f"ent-files-{uuid.uuid4().hex[:8]}"
+    sid = _create_solution(e2e_client, headers, slug)
+
+    # Seed an allow-all policy on the 'solutions' location (global scope).
+    policy_r = e2e_client.put(
+        "/api/files/policies/",
+        headers=headers,
+        params={"location": "solutions"},
+        json={"policies": {"policies": [{"name": "allow_all", "actions": ["read", "write", "delete", "list"]}]}},
+    )
+    assert policy_r.status_code in (200, 201, 204), policy_r.text
+
+    # Initially the files list is empty.
+    r0 = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
+    assert r0.status_code == 200, r0.text
+    assert "files" in r0.json(), f"missing 'files' key: {list(r0.json().keys())}"
+    assert r0.json()["files"] == []
+
+    # Write a file into the solution scope.
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid}",
+        headers=headers,
+        json={"location": "solutions", "path": "data/hello.txt", "content": "hi", "mode": "cloud"},
+    )
+    assert write_r.status_code == 204, write_r.text
+
+    # Now the entities response should include the file.
+    r1 = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
+    assert r1.status_code == 200, r1.text
+    body = r1.json()
+    assert "files" in body, f"missing 'files' key: {list(body.keys())}"
+    files = body["files"]
+    assert len(files) == 1, f"expected 1 file, got {files}"
+    assert files[0]["location"] == "solutions"
+    assert files[0]["path"] == "data/hello.txt"
