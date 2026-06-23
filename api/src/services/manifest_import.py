@@ -2076,7 +2076,7 @@ class ManifestResolver:
         # update path. ValidationError propagates to the import caller so a
         # malformed tables.yaml fails loudly rather than landing an
         # unparseable AST in the DB. Pattern: fail loud at the writer, fail
-        # closed at the reader (see _load_policies in src/routers/tables.py).
+        # closed at the reader (load_resolved_table_policies in table_policy_loader.py).
         policies = src["policies"]
         if policies is not None:
             policies_list = [p.model_dump(mode="json") for p in policies]

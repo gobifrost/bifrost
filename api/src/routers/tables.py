@@ -68,26 +68,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
 
-def _load_policies(table: Table) -> TablePolicies:
-    """Load TablePolicies from the table's `access` JSONB column.
-
-    Empty if null. Fails closed (empty → default deny) on validation error,
-    with a warning log so corrupt data is visible to operators. Without this,
-    one bad JSONB blob would take the whole table offline (HTTP 500); now
-    users get a predictable deny instead.
-    """
-    if not table.access:
-        return TablePolicies()
-    try:
-        return TablePolicies.model_validate(table.access)
-    except ValidationError as e:
-        logger.warning(
-            "malformed policies on table %s; defaulting to empty (deny). "
-            "Validation error: %s",
-            table.id, e,
-        )
-        return TablePolicies()
-
 
 def _resolve_attribution(
     user: UserPrincipal,
