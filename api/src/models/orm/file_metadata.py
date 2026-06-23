@@ -41,25 +41,48 @@ class FileMetadata(Base):
         server_default=text("NOW()"),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+    )
+    origin_solution_slug: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None
+    )
+    origin_solution_id: Mapped[UUID | None] = mapped_column(nullable=True, default=None)
+    orphaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     __table_args__ = (
         Index("ix_file_metadata_organization_id", "organization_id"),
         Index("ix_file_metadata_lookup", "organization_id", "location", "path"),
+        # H4: existing org/global uniques now exclude solution rows
         Index(
             "uq_file_metadata_org_location_path",
             "organization_id",
             "location",
             "path",
             unique=True,
-            postgresql_where=text("organization_id IS NOT NULL"),
+            postgresql_where=text("organization_id IS NOT NULL AND solution_id IS NULL"),
         ),
         Index(
             "uq_file_metadata_global_location_path",
             "location",
             "path",
             unique=True,
-            postgresql_where=text("organization_id IS NULL"),
+            postgresql_where=text("organization_id IS NULL AND solution_id IS NULL"),
         ),
+        # Solution tier: rows belonging to an installed solution instance
+        Index(
+            "uq_file_metadata_solution_location_path",
+            "solution_id",
+            "location",
+            "path",
+            unique=True,
+            postgresql_where=text("solution_id IS NOT NULL"),
+        ),
+        Index("ix_file_metadata_solution_id", "solution_id"),
     )
 
 
@@ -88,23 +111,46 @@ class FilePolicy(Base):
         server_default=text("NOW()"),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+    )
+    origin_solution_slug: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None
+    )
+    origin_solution_id: Mapped[UUID | None] = mapped_column(nullable=True, default=None)
+    orphaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     __table_args__ = (
         Index("ix_file_policies_organization_id", "organization_id"),
         Index("ix_file_policies_lookup", "organization_id", "location", "path"),
+        # H4: existing org/global uniques now exclude solution rows
         Index(
             "uq_file_policies_org_location_path",
             "organization_id",
             "location",
             "path",
             unique=True,
-            postgresql_where=text("organization_id IS NOT NULL"),
+            postgresql_where=text("organization_id IS NOT NULL AND solution_id IS NULL"),
         ),
         Index(
             "uq_file_policies_global_location_path",
             "location",
             "path",
             unique=True,
-            postgresql_where=text("organization_id IS NULL"),
+            postgresql_where=text("organization_id IS NULL AND solution_id IS NULL"),
         ),
+        # Solution tier: rows belonging to an installed solution instance
+        Index(
+            "uq_file_policies_solution_location_path",
+            "solution_id",
+            "location",
+            "path",
+            unique=True,
+            postgresql_where=text("solution_id IS NOT NULL"),
+        ),
+        Index("ix_file_policies_solution_id", "solution_id"),
     )
