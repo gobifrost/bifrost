@@ -694,7 +694,8 @@ async def update_solution(
     summary="Delete an install and everything it owns (admin only)",
 )
 async def delete_solution(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser,
+    background_tasks: BackgroundTasks,
 ) -> SolutionDeleteSummary:
     """Delete an install non-destructively for customer data.
 
@@ -862,6 +863,21 @@ async def delete_solution(
                 )
                 config_values_orphaned = result.rowcount or 0
 
+            # DETACH FILES (before the Solution delete, mirroring the table detach
+            # above).  Re-stamp metadata in-txn: null solution_id so the
+            # ondelete=CASCADE FK can no longer reach these rows.  s3_key is NOT
+            # updated here — bytes still live at the install-scoped path; the
+            # post-commit S3-move job (kind='orphan') moves them using the
+            # captured IDs.
+            from src.services.solution_files import restamp_solution_files_metadata
+
+            captured_file_ids = await restamp_solution_files_metadata(
+                ctx.db,
+                install_id=solution_id,
+                org_id=sol.organization_id,
+                slug=sol.slug,
+            )
+
             summary = SolutionDeleteSummary(
                 solution_id=solution_id,
                 workflows_deleted=await _count(Workflow),
@@ -872,15 +888,18 @@ async def delete_solution(
                 config_declarations_deleted=len(decl_keys),
                 tables_orphaned=len(table_ids),
                 config_values_orphaned=config_values_orphaned,
+                files_orphaned=len(captured_file_ids),
             )
 
             # Capture the org before the delete — accessing attributes on a
             # deleted+committed instance would trip an expired-attribute refresh.
             sol_org_id = sol.organization_id
+            sol_slug = sol.slug
 
             # Solution delete: cascades workflows/apps/forms/agents + the config
-            # DECLARATIONS. Tables already have solution_id=NULL, so they are NOT
-            # cascaded; config values were never FK-tied to the Solution.
+            # DECLARATIONS. Tables already have solution_id=NULL (detached above);
+            # files already have solution_id=NULL (restamped above); config values
+            # were never FK-tied to the Solution.
             await ctx.db.delete(sol)
             await ctx.db.commit()
 
@@ -894,6 +913,36 @@ async def delete_solution(
 
                 await invalidate_all_config(
                     str(sol_org_id) if sol_org_id is not None else None
+                )
+
+            # Enqueue the S3-move job for orphaned files — after commit so the
+            # job row is visible to the poll endpoint immediately.  The metadata
+            # re-stamp (solution_id → NULL) already happened in-txn above; the
+            # job only needs to move bytes from the install-scoped S3 key to the
+            # org-scoped key.  captured_file_ids were snapshotted before the
+            # restamp so the worker can query by ID regardless of solution_id state.
+            # Enqueue S3-move only for org-scoped solutions — a global (no org)
+            # solution has nowhere to move the bytes to; their s3_key is left
+            # pointing at the now-gone install scope (acceptable edge case).
+            if captured_file_ids and sol_org_id is not None:
+                file_job = SolutionFileJob(
+                    install_id=solution_id,
+                    origin_solution_id=solution_id,
+                    kind="orphan",
+                    status="queued",
+                    captured_keys=captured_file_ids,
+                )
+                ctx.db.add(file_job)
+                await ctx.db.commit()
+                await ctx.db.refresh(file_job)
+                background_tasks.add_task(
+                    _run_file_job,
+                    file_job.id,
+                    "orphan",
+                    solution_id,
+                    sol_org_id,
+                    sol_slug,
+                    captured_file_ids,
                 )
 
             # S3 sweep only after the DB is durable (mirrors deploy's DB-then-S3).

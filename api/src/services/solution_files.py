@@ -178,6 +178,53 @@ async def write_solution_file(
     return True
 
 
+async def restamp_solution_files_metadata(
+    db: AsyncSession,
+    install_id: UUID,
+    org_id: UUID | None,
+    slug: str,
+) -> list[str]:
+    """Re-stamp FileMetadata rows so the ``solution_id`` FK cascade cannot reach them.
+
+    This is the **in-transaction** half of the uninstall orphan flow.  It nulls
+    ``solution_id``, sets ``organization_id`` / provenance / ``orphaned_at``,
+    and returns the list of file IDs (as hex strings) for the caller to pass to
+    the post-commit S3-move job.
+
+    It does **NOT** touch ``s3_key`` — the bytes still live at the install-scoped
+    S3 path.  The job worker calls :func:`orphan_solution_files_by_ids` with the
+    returned IDs; that function reads the stale ``s3_key`` from the DB rows,
+    moves the bytes, and updates ``s3_key`` to the org-scoped key.
+    """
+    rows = (
+        await db.execute(
+            select(FileMetadata.id).where(FileMetadata.solution_id == install_id)
+        )
+    ).scalars().all()
+
+    if not rows:
+        return []
+
+    now = datetime.now(timezone.utc)
+
+    # Core UPDATE — bypasses unit-of-work; guard never fires.  Nulling
+    # ``solution_id`` BEFORE the Solution delete prevents the ondelete=CASCADE
+    # from reaching these rows (mirrors the table detach pattern).
+    await db.execute(
+        update(FileMetadata)
+        .where(FileMetadata.solution_id == install_id)
+        .values(
+            solution_id=None,
+            organization_id=org_id,
+            origin_solution_id=install_id,
+            origin_solution_slug=slug,
+            orphaned_at=now,
+        )
+    )
+
+    return [str(row) for row in rows]
+
+
 async def orphan_solution_files(
     db: AsyncSession,
     install_id: UUID,

@@ -388,6 +388,7 @@ class SolutionDeleteSummary(BaseModel):
     config_declarations_deleted: int = 0
     tables_orphaned: int = 0
     config_values_orphaned: int = 0
+    files_orphaned: int = 0
 
 
 class SolutionDeployEnqueued(BaseModel):
