@@ -20,6 +20,9 @@ from shared.file_paths import resolve_s3_key
 from src.models.orm.file_metadata import FileMetadata
 from src.services.file_storage import FileStorageService
 
+# UUID list type alias for captured_keys payloads.
+_FileIdList = list[str]
+
 
 @dataclass
 class SolutionFileEntry:
@@ -208,6 +211,72 @@ async def orphan_solution_files(
         new_s3_key = resolve_s3_key(row.location, str(org_id), row.path)
 
         # Move bytes: read old → write new → delete old.
+        content = await storage.read_uploaded_file(old_s3_key)
+        await storage.write_raw_to_s3(new_s3_key, content)
+        await storage.delete_raw_from_s3(old_s3_key)
+
+        # Core UPDATE — bypasses unit-of-work; guard never fires.
+        await db.execute(
+            update(FileMetadata)
+            .where(FileMetadata.id == row.id)
+            .values(
+                solution_id=None,
+                organization_id=org_id,
+                s3_key=new_s3_key,
+                origin_solution_id=install_id,
+                origin_solution_slug=slug,
+                orphaned_at=now,
+            )
+        )
+
+    await db.commit()
+    return len(rows)
+
+
+async def orphan_solution_files_by_ids(
+    db: AsyncSession,
+    install_id: UUID,
+    org_id: UUID,
+    slug: str,
+    file_ids: _FileIdList,
+) -> int:
+    """Re-stamp a specific set of files (by ID) as org-owned orphans.
+
+    This is the C3-safe variant: it works from a list of ``FileMetadata.id``
+    values snapshotted at job-enqueue time, NOT by querying
+    ``solution_id == install_id``.  After an uninstall the ``solution_id``
+    column has already been cleared, so any query by ``solution_id`` would
+    return zero rows.  The caller (``_run_file_job``) passes the IDs captured
+    before the restamp happened.
+
+    Returns the number of files successfully orphaned.
+    """
+    if not file_ids:
+        return 0
+
+    parsed_ids = [UUID(fid) for fid in file_ids]
+
+    rows = (
+        await db.execute(
+            select(
+                FileMetadata.id,
+                FileMetadata.location,
+                FileMetadata.path,
+                FileMetadata.s3_key,
+            ).where(FileMetadata.id.in_(parsed_ids))
+        )
+    ).all()
+
+    if not rows:
+        return 0
+
+    storage = FileStorageService(db)
+    now = datetime.now(timezone.utc)
+
+    for row in rows:
+        old_s3_key = row.s3_key
+        new_s3_key = resolve_s3_key(row.location, str(org_id), row.path)
+
         content = await storage.read_uploaded_file(old_s3_key)
         await storage.write_raw_to_s3(new_s3_key, content)
         await storage.delete_raw_from_s3(old_s3_key)

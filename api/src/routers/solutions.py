@@ -42,6 +42,9 @@ from src.models.contracts.solutions import (
     SolutionEntities,
     SolutionEntitySummary,
     SolutionExistingInstall,
+    SolutionFileJobEnqueue,
+    SolutionFileJobEnqueued,
+    SolutionFileJobStatus,
     SolutionInstallPreview,
     PullAckRequest,
     PullAckResponse,
@@ -60,6 +63,7 @@ from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.forms import Form
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.models.orm.solution_file_jobs import SolutionFileJob
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
@@ -1112,6 +1116,149 @@ async def get_deploy_job(
             status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
         )
     return SolutionDeployJobStatus.model_validate(job)
+
+
+# ---------------------------------------------------------------------------
+# File job: enqueue + poll
+# ---------------------------------------------------------------------------
+
+FILE_JOB_ORPHAN_THRESHOLD = timedelta(minutes=15)
+
+
+async def _run_file_job(
+    job_id: UUID,
+    kind: str,
+    install_id: UUID | None,
+    org_id: UUID | None,
+    slug: str | None,
+    captured_file_ids: list[str] | None,
+) -> None:
+    """Execute a file mass-op under a fresh session (background task).
+
+    Dispatches to the Task-17 ``solution_files`` service by ``kind``.  The
+    worker reads ``captured_file_ids`` (snapshotted at enqueue) so it never
+    re-queries ``solution_id == install_id`` — which would return nothing for an
+    ``orphan`` job because the in-txn re-stamp already cleared ``solution_id``
+    before the Solution row was deleted (C3).
+    """
+    from src.core.database import get_db_context
+    from src.services.solution_files import orphan_solution_files_by_ids
+
+    async def _set_status(
+        status_value: str,
+        error: str | None = None,
+        result: dict | None = None,
+    ) -> None:
+        async with get_db_context() as db:
+            job = await db.get(SolutionFileJob, job_id)
+            if job is None:
+                return
+            job.status = status_value
+            job.error = error
+            job.result = result
+
+    await _set_status("running")
+    try:
+        if kind == "orphan":
+            if install_id is None or org_id is None or slug is None or captured_file_ids is None:
+                raise ValueError("orphan job requires install_id, org_id, slug, and captured_file_ids")
+            async with get_db_context() as db:
+                moved = await orphan_solution_files_by_ids(
+                    db, install_id, org_id, slug, captured_file_ids
+                )
+            await _set_status("succeeded", result={"files_orphaned": moved})
+        else:
+            raise ValueError(f"Unsupported file job kind: {kind!r}")
+    except Exception:  # noqa: BLE001 — capture any failure onto the job
+        logger.exception("Solution file job %s (%s) failed", job_id, kind)
+        await _set_status("failed", "File job failed unexpectedly; see server logs.")
+
+
+@router.post(
+    "/file-jobs",
+    response_model=SolutionFileJobEnqueued,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue a background file mass-op (admin only)",
+)
+async def enqueue_file_job(
+    body: SolutionFileJobEnqueue,
+    ctx: Context,
+    user: CurrentSuperuser,
+    background_tasks: BackgroundTasks,
+) -> SolutionFileJobEnqueued:
+    """Enqueue a file mass-operation as a background job.
+
+    The job row is persisted before the task is scheduled so the caller can
+    poll ``GET /api/solutions/file-jobs/{id}`` the instant it has the id.
+
+    For ``orphan`` jobs the caller must supply ``org_id`` and ``slug``; the
+    endpoint snapshots the current file IDs into ``captured_keys`` at enqueue
+    time so the worker is immune to post-restamp DB state (C3).
+    """
+    if body.kind == "orphan":
+        if body.org_id is None or body.slug is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="orphan jobs require org_id and slug",
+            )
+        if body.install_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="orphan jobs require install_id",
+            )
+        # Snapshot file IDs now — before any restamp that may follow.
+        from sqlalchemy import select as sa_select
+
+        from src.models.orm.file_metadata import FileMetadata
+
+        rows = (
+            await ctx.db.execute(
+                sa_select(FileMetadata.id).where(
+                    FileMetadata.solution_id == body.install_id
+                )
+            )
+        ).scalars().all()
+        captured: list[str] = [str(r) for r in rows]
+    else:
+        captured = None  # type: ignore[assignment]
+
+    job = SolutionFileJob(
+        install_id=body.install_id,
+        origin_solution_id=body.install_id,
+        kind=body.kind,
+        status="queued",
+        captured_keys=captured,
+    )
+    ctx.db.add(job)
+    await ctx.db.commit()
+    await ctx.db.refresh(job)
+
+    background_tasks.add_task(
+        _run_file_job,
+        job.id,
+        body.kind,
+        body.install_id,
+        body.org_id,
+        body.slug,
+        captured,
+    )
+    return SolutionFileJobEnqueued(file_job_id=job.id)
+
+
+@router.get(
+    "/file-jobs/{job_id}",
+    response_model=SolutionFileJobStatus,
+    summary="Poll the status of an async file job (admin only)",
+)
+async def get_file_job(
+    job_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionFileJobStatus:
+    job = await ctx.db.get(SolutionFileJob, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File job not found"
+        )
+    return SolutionFileJobStatus.model_validate(job)
 
 
 @router.post(
