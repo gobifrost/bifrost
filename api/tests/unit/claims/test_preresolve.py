@@ -180,9 +180,10 @@ async def test_run_claim_query_returns_empty_when_source_table_denies_read(monke
             return _FakeResult()
 
     # Source table has no read-granting policies → compile_read_filter is None.
-    monkeypatch.setattr(
-        preresolve, "_load_source_policies", lambda _s: TablePolicies()
-    )
+    async def _fake_load_source_policies(_s, _db):
+        return TablePolicies()
+
+    monkeypatch.setattr(preresolve, "_load_source_policies", _fake_load_source_policies)
 
     claim = _claim("locked")
     rows = await preresolve._run_claim_query(

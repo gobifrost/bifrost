@@ -195,6 +195,7 @@ class TestSubgroupRegistration:
             "events",
             "files",
             "requirements",
+            "policy-rule",
         }
 
     def test_dispatch_unknown_subgroup_exits_1(self) -> None:

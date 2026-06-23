@@ -1,5 +1,7 @@
 """Round-trip TablePublic ↔ ORM dict for the policies field."""
 
+import pytest
+
 from src.models.contracts.tables import TableCreate, TablePublic, TableUpdate
 
 
@@ -107,20 +109,26 @@ def test_public_outputs_policies_field_name():
     assert dumped["policies"]["policies"][0]["name"] == "p1"
 
 
-def test_load_policies_corruption_returns_empty(caplog):
-    """_load_policies fails closed (empty TablePolicies → default deny)
+@pytest.mark.asyncio
+async def test_load_policies_corruption_returns_empty(caplog):
+    """load_resolved_table_policies fails closed (empty TablePolicies → default deny)
     when JSONB is corrupt, with a warning log so corruption is visible."""
-    from src.routers.tables import _load_policies
+    from unittest.mock import AsyncMock
+    from src.services.table_policy_loader import load_resolved_table_policies
 
     class FakeTable:
         access = {"policies": [{"name": "p", "actions": ["read"], "when": {"INVALID_OP": []}}]}
         id = "fake-id"
+        organization_id = None
+        solution_id = None
 
-    with caplog.at_level("WARNING", logger="src.routers.tables"):
-        result = _load_policies(FakeTable())  # type: ignore[arg-type]
+    fake_db = AsyncMock()
+
+    with caplog.at_level("WARNING", logger="src.services.table_policy_loader"):
+        result = await load_resolved_table_policies(FakeTable(), fake_db)  # type: ignore[arg-type]
 
     assert result.policies == []  # default deny
     assert any(
-        rec.name == "src.routers.tables" and "malformed policies" in rec.message
+        rec.name == "src.services.table_policy_loader" and "malformed" in rec.message
         for rec in caplog.records
     )

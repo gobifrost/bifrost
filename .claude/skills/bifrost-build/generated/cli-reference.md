@@ -356,7 +356,7 @@ Usage: claims create [OPTIONS]
 Options:
   --name TEXT                     name  [required]
   --description TEXT              description
-  --type TEXT                     type
+  --type [list|scalar]            type
   --query TEXT                    query as JSON literal or @path to a
                                   YAML/JSON file.  [required]
   --global                        Target global scope (org=NULL). Alias for
@@ -432,7 +432,7 @@ Usage: claims update [OPTIONS] NAME
 
 Options:
   --description TEXT              description
-  --type TEXT                     type
+  --type [list|scalar]            type
   --query TEXT                    query as JSON literal or @path to a
                                   YAML/JSON file.
   --global                        Target global scope (org=NULL). Alias for
@@ -1425,7 +1425,7 @@ Usage: policy-rule create [OPTIONS]
 
 Options:
   --name TEXT                     name  [required]
-  --domain TEXT                   domain  [required]
+  --domain [file|table]           domain  [required]
   --description TEXT              description
   --body TEXT                     body as JSON literal or @path to a YAML/JSON
                                   file.  [required]

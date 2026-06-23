@@ -961,7 +961,7 @@ class ManifestPolicyRef(BaseModel):
 
     Mirrors :class:`src.models.contracts.policies.PolicyRuleRef`.
     """
-    ref: str = Field(alias="$ref", min_length=1, max_length=100)
+    ref: str = Field(alias="$ref", min_length=1, max_length=100, **classify(FieldClass.CONTENT))
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
