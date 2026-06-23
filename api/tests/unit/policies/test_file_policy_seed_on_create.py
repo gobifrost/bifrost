@@ -33,6 +33,33 @@ async def test_create_does_not_duplicate_existing_admin_bypass(db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_does_not_duplicate_inline_name_admin_bypass(db_session):
+    svc = FilePolicyService(db_session)
+    # An inline rule with name=="admin_bypass" (legacy body form) must also prevent
+    # the seed from being prepended, so admin_bypass appears exactly once.
+    doc = FilePolicies.model_validate(
+        {
+            "policies": [
+                {
+                    "name": "admin_bypass",
+                    "actions": ["read", "write", "delete", "list"],
+                    "when": {"user": "is_platform_admin"},
+                }
+            ]
+        }
+    )
+    row = await svc.upsert_policy(
+        organization_id=None, location="gallery", path="", policies=doc
+    )
+    # The name== arm of the idempotency check should fire; seed must NOT be prepended.
+    admin_bypass_entries = [
+        r for r in row.policies.get("policies", [])
+        if r.get("name") == "admin_bypass" or r.get("$ref") == "admin_bypass"
+    ]
+    assert len(admin_bypass_entries) == 1
+
+
+@pytest.mark.asyncio
 async def test_update_does_not_re_add_revoked_admin_bypass(db_session):
     svc = FilePolicyService(db_session)
     await svc.upsert_policy(

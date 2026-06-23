@@ -5,12 +5,14 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
 from src.models.orm.policy_rule import PolicyRule
+from src.models.orm.solutions import Solution
 from src.services.audit_context import ActorContext
 from src.services.policy_rule_service import (
     PolicyRuleInUse,
@@ -103,3 +105,39 @@ async def test_seeds_both_domains_idempotent_and_readonly(db_session, admin_acto
         await svc.update(
             "admin_bypass", "file", PolicyRuleUpdate(description="x"), org_id=None, actor=admin_actor
         )
+
+
+@pytest.mark.asyncio
+async def test_solution_managed_rule_update_and_delete_raise_409(db_session, seed_org, admin_actor):
+    """Solution-managed PolicyRule must 409 on update and delete, not 500."""
+    install_solution_write_guard()
+    sol = Solution(
+        id=uuid4(),
+        slug=f"test-sol-{uuid4().hex[:8]}",
+        name="Test Solution",
+        organization_id=seed_org,
+    )
+    db_session.add(sol)
+    await db_session.flush()
+
+    svc = PolicyRuleService(db_session)
+    row = PolicyRule(
+        organization_id=seed_org,
+        name="sol-rule",
+        domain="file",
+        description="solution-owned",
+        body={"actions": ["read"], "when": None},
+        solution_id=sol.id,
+    )
+    db_session.add(row)
+    await db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.update(
+            "sol-rule", "file", PolicyRuleUpdate(description="hacked"), org_id=seed_org, actor=admin_actor
+        )
+    assert exc.value.status_code == 409
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.delete("sol-rule", "file", org_id=seed_org, actor=admin_actor)
+    assert exc.value.status_code == 409

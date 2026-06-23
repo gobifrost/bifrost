@@ -15,6 +15,7 @@ from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.tables import Table
 from src.repositories.policy_rule import PolicyRuleRepository
 from src.services.audit import emit_audit
+from src.services.solutions.guard import assert_not_solution_managed
 
 
 class PolicyRuleInUse(Exception):
@@ -108,6 +109,7 @@ class PolicyRuleService:
         actor: Any,
     ) -> PolicyRule:
         row = await self._get(name, domain, org_id)
+        assert_not_solution_managed(row)
         if row.is_builtin:
             raise PolicyRuleReadOnly(name)
         usages = await find_policy_rule_usages(
@@ -136,6 +138,7 @@ class PolicyRuleService:
 
     async def delete(self, name: str, domain: str, *, org_id: UUID | None, actor: Any) -> None:
         row = await self._get(name, domain, org_id)
+        assert_not_solution_managed(row)
         if row.is_builtin:
             raise PolicyRuleReadOnly(name)
         usages = await find_policy_rule_usages(
