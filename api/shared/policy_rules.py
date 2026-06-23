@@ -1,15 +1,20 @@
-"""Override-aware where-used for named policy rules."""
+"""Override-aware where-used for named policy rules + ref resolver."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.contracts.policies import FilePolicies, FilePolicyRule, Policy, PolicyRuleRef, TablePolicies
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.tables import Table
+
+if TYPE_CHECKING:
+    from src.repositories.policy_rule import PolicyRuleRepository
 
 
 @dataclass
@@ -83,3 +88,64 @@ async def find_policy_rule_usages(
             }
         )
     return usages
+
+
+# ---------------------------------------------------------------------------
+# Named-rule ref resolver
+# ---------------------------------------------------------------------------
+
+
+class PolicyRuleNotFound(Exception):
+    """Raised when a {"$ref": name} rule cannot be found in any scope tier."""
+
+
+class PolicyRuleDomainMismatch(Exception):
+    """Raised when a resolved rule's domain differs from the policy's action_domain."""
+
+
+async def resolve_policy_refs(
+    policies: FilePolicies | TablePolicies,
+    *,
+    repo: PolicyRuleRepository,
+    action_domain: Literal["file", "table"],
+    solution_id: UUID | None = None,
+) -> None:
+    """Replace each PolicyRuleRef with the resolved inline rule. Mutates in place.
+
+    Resolution is by (name, domain=action_domain): a {"$ref": "admin_bypass"} in a
+    file policy picks the FILE admin_bypass and in a table policy the TABLE one.
+
+    When solution_id is set, resolution is own-solution → org → global (Codex R2/C1).
+    When solution_id is None, the inherited org→global cascade applies.
+
+    Raises:
+        PolicyRuleNotFound: ref name not found in any scope tier.
+        PolicyRuleDomainMismatch: resolved rule domain != action_domain, or rule body
+            is invalid for the action_domain's rule class.
+    """
+    rule_cls = FilePolicyRule if action_domain == "file" else Policy
+    resolved: list = []
+    for entry in policies.policies:
+        if not isinstance(entry, PolicyRuleRef):
+            resolved.append(entry)
+            continue
+        row = await repo.get_for_ref(name=entry.ref, domain=action_domain, solution_id=solution_id)
+        if row is None:
+            raise PolicyRuleNotFound(entry.ref)
+        if row.domain != action_domain:
+            raise PolicyRuleDomainMismatch(
+                f"{entry.ref!r} is a {row.domain} rule, not {action_domain}"
+            )
+        body = row.body or {}
+        try:
+            resolved.append(rule_cls.model_validate({
+                "name": row.name,
+                "description": row.description,
+                "actions": body.get("actions"),
+                "when": body.get("when"),
+            }))
+        except Exception as exc:  # body invalid for this domain (e.g. FileAction vs Action)
+            raise PolicyRuleDomainMismatch(
+                f"rule {entry.ref!r} body invalid for {action_domain}: {exc}"
+            ) from exc
+    policies.policies = resolved
