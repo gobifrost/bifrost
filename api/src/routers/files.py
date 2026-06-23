@@ -578,6 +578,18 @@ async def set_file_policy(
         org_id = _organization_id_for_policy(location, scope)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # Validate policy refs before persisting — raises 422 for unresolvable $ref names.
+    parsed_doc = _policy_document(request.policies)
+    from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
+    from src.repositories.policy_rule import PolicyRuleRepository
+    ref_repo = PolicyRuleRepository(db, org_id=org_id, is_superuser=True)
+    try:
+        await resolve_policy_refs(parsed_doc.model_copy(deep=True), repo=ref_repo, action_domain="file")
+    except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"errors": [{"path": "$.policies", "message": str(exc)}]},
+        ) from exc
     row = await FilePolicyService(db).upsert_policy(
         organization_id=org_id,
         location=location,

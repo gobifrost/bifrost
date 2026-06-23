@@ -808,6 +808,7 @@ def _split_value_error_msg(msg: str) -> tuple[str, bool, str]:
     ),
 )
 async def validate_policies(
+    ctx: Context,
     user: CurrentSuperuser,
     body: Any = Body(...),
 ) -> PolicyValidationResponse:
@@ -844,7 +845,18 @@ async def validate_policies(
         )
 
     try:
-        TablePolicies.model_validate(body)
+        parsed = TablePolicies.model_validate(body)
+        # Validate $ref entries resolve to real rules before reporting ok=True.
+        from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
+        from src.repositories.policy_rule import PolicyRuleRepository
+        ref_repo = PolicyRuleRepository(ctx.db, org_id=None, is_superuser=True)
+        try:
+            await resolve_policy_refs(parsed.model_copy(deep=True), repo=ref_repo, action_domain="table")
+        except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as ref_exc:
+            return PolicyValidationResponse(
+                ok=False,
+                errors=[PolicyValidationError(path="$.policies", message=str(ref_exc))],
+            )
         return PolicyValidationResponse(ok=True)
     except ValidationError as e:
         raw_errors = e.errors()

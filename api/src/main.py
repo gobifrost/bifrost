@@ -90,6 +90,7 @@ from src.routers import (
     mcp_me_connections_router,
     mcp_oauth_callback_router,
     sdk_modules_router,
+    policy_rules_router,
 )
 
 # Configure logging
@@ -615,6 +616,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_me_connections_router)
     app.include_router(mcp_oauth_callback_router)
     app.include_router(sdk_modules_router)
+    app.include_router(policy_rules_router)
 
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount

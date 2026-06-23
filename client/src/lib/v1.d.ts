@@ -9184,6 +9184,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/policy-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List policy rules
+         * @description List policy rules visible to the caller's scope.
+         */
+        get: operations["list_policy_rules_api_policy_rules_get"];
+        put?: never;
+        /**
+         * Create a named policy rule
+         * @description Create a new (name, domain) policy rule in the caller's org (or global when no org).
+         */
+        post: operations["create_policy_rule_api_policy_rules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/policy-rules/{domain}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update a named policy rule
+         * @description Update an existing policy rule.
+         */
+        put: operations["update_policy_rule_api_policy_rules__domain___name__put"];
+        post?: never;
+        /**
+         * Delete a named policy rule
+         * @description Delete a policy rule. Fails with 409 if the rule is in use or read-only.
+         */
+        delete: operations["delete_policy_rule_api_policy_rules__domain___name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/policy-rules/{domain}/{name}/usages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get usages of a named policy rule
+         * @description Return all file-policies and tables that reference this rule.
+         */
+        get: operations["get_policy_rule_usages_api_policy_rules__domain___name__usages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -18812,6 +18880,53 @@ export interface components {
             actions: ("read" | "create" | "update" | "delete")[];
             when?: components["schemas"]["Expr"] | null;
         };
+        /** PolicyRuleCreate */
+        PolicyRuleCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Domain
+             * @enum {string}
+             */
+            domain: "file" | "table";
+            /** Description */
+            description?: string | null;
+            /** Body */
+            body: {
+                [key: string]: unknown;
+            };
+            /** Organization Id */
+            organization_id?: string | null;
+        };
+        /** PolicyRulePublic */
+        PolicyRulePublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Organization Id */
+            organization_id: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Domain
+             * @enum {string}
+             */
+            domain: "file" | "table";
+            /** Description */
+            description: string | null;
+            /** Body */
+            body: {
+                [key: string]: unknown;
+            };
+            /** Is Builtin */
+            is_builtin: boolean;
+            /** Created At */
+            created_at: string | null;
+            /** Updated At */
+            updated_at: string | null;
+        };
         /**
          * PolicyRuleRef
          * @description A reference to a named PolicyRule, spliced inline at resolution time.
@@ -18819,6 +18934,17 @@ export interface components {
         PolicyRuleRef: {
             /** $Ref */
             $ref: string;
+        };
+        /** PolicyRuleUpdate */
+        PolicyRuleUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Body */
+            body?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * PolicyValidationError
@@ -39800,6 +39926,179 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_policy_rules_api_policy_rules_get: {
+        parameters: {
+            query?: {
+                /** @description Filter by domain ('file' or 'table') */
+                domain?: string | null;
+                /** @description Org scope; omit for all. */
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRulePublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_policy_rule_api_policy_rules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyRuleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRulePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_policy_rule_api_policy_rules__domain___name__put: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path: {
+                domain: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyRuleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRulePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_policy_rule_api_policy_rules__domain___name__delete: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path: {
+                domain: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_policy_rule_usages_api_policy_rules__domain___name__usages_get: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path: {
+                domain: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
