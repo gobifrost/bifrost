@@ -90,6 +90,7 @@ def _diff_and_collect(
         ("integrations", "integrations"),
         ("configs", "configs"),
         ("claims", "claims"),
+        ("policy_rules", "policy_rules"),
         ("tables", "tables"),
         ("file_policies", "file_policies"),
         ("events", "events"),
@@ -526,6 +527,17 @@ class ManifestResolver:
         for row in cfg_result.all():
             cache["config_by_natural"][(row[1], row[2], row[3])] = (row[0], row[4], row[5])
 
+        # Policy rules: {(name, domain, org_id): id} + {id} set
+        from src.models.orm.policy_rule import PolicyRule as PolicyRuleOrm
+        pr_result = await self.db.execute(
+            select(PolicyRuleOrm.id, PolicyRuleOrm.name, PolicyRuleOrm.domain, PolicyRuleOrm.organization_id)
+        )
+        cache["policy_rule_ids"] = set()
+        cache["policy_rule_by_natural"] = {}
+        for row in pr_result.all():
+            cache["policy_rule_ids"].add(row[0])
+            cache["policy_rule_by_natural"][(row[1], row[2], row[3])] = row[0]
+
         # Custom Claims: {(name, org_id): id} + {id} set
         claim_result = await self.db.execute(
             select(CustomClaim.id, CustomClaim.name, CustomClaim.organization_id)
@@ -628,6 +640,7 @@ class ManifestResolver:
             total += sum(1 for minteg in manifest.integrations.values() if minteg.id in changed_ids)
             total += sum(1 for mcfg in manifest.configs.values() if mcfg.id in changed_ids)
             total += sum(1 for mclaim in manifest.claims.values() if mclaim.id in changed_ids)
+            total += sum(1 for mrule in manifest.policy_rules.values() if mrule.id in changed_ids)
             total += sum(1 for mapp in manifest.apps.values() if mapp.id in changed_ids)
             total += sum(1 for mtable in manifest.tables.values() if mtable.id in changed_ids)
             total += sum(1 for mfp in manifest.file_policies.values() if mfp.id in changed_ids)
@@ -638,7 +651,7 @@ class ManifestResolver:
             total = (len(manifest.organizations) + len(manifest.roles)
                      + len(manifest.workflows) + len(manifest.integrations)
                      + len(manifest.configs) + len(manifest.claims) + len(manifest.apps)
-                     + len(manifest.tables) + len(manifest.file_policies)
+                     + len(manifest.policy_rules) + len(manifest.tables) + len(manifest.file_policies)
                      + len(manifest.events)
                      + len(manifest.forms) + len(manifest.agents))
         current = 0
@@ -729,7 +742,15 @@ class ManifestResolver:
                 except Exception as e:
                     logger.warning(f"Preview sync failed for app {mapp.name}: {e}")
 
-        # 5. Resolve tables (refs org + app UUIDs)
+        # 5. Resolve policy rules (MUST run before tables + file policies so refs resolve)
+        for key, mrule in manifest.policy_rules.items():
+            if changed_ids is not None and mrule.id not in changed_ids:
+                continue
+            await _prog(f"Importing policy rule: {mrule.domain}/{mrule.name}")
+            rule_ops = self._resolve_policy_rule(mrule, cache)
+            await self._apply_ops(rule_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("policy_rule_ids", set()))
+
+        # 6. Resolve tables (refs org + app UUIDs)
         for key, mtable in manifest.tables.items():
             if changed_ids is not None and mtable.id not in changed_ids:
                 continue
@@ -737,7 +758,7 @@ class ManifestResolver:
             table_ops = await self._resolve_table(mtable.name or key, mtable, cache)
             await self._apply_ops(table_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("table_ids", set()))
 
-        # 6. Resolve file policies (refs org)
+        # 8. Resolve file policies (refs org)
         for key, mfp in manifest.file_policies.items():
             if changed_ids is not None and mfp.id not in changed_ids:
                 continue
@@ -750,7 +771,7 @@ class ManifestResolver:
                 existing_ids=cache.get("file_policy_ids", set()),
             )
 
-        # 7. Resolve custom claims (refs org + source table by name)
+        # 9. Resolve custom claims (refs org + source table by name)
         for key, mclaim in manifest.claims.items():
             if changed_ids is not None and mclaim.id not in changed_ids:
                 continue
@@ -1377,6 +1398,7 @@ class ManifestResolver:
         present_integ_uuids = [UUID(m.id) for m in manifest.integrations.values()]
         present_config_uuids = [UUID(m.id) for m in manifest.configs.values()]
         present_claim_uuids = [UUID(m.id) for m in manifest.claims.values()]
+        present_policy_rule_uuids = [UUID(m.id) for m in manifest.policy_rules.values()]
         present_table_uuids = [UUID(m.id) for m in manifest.tables.values()]
         present_file_policy_uuids = [
             UUID(m.id) for m in manifest.file_policies.values()
@@ -1549,6 +1571,16 @@ class ManifestResolver:
         from src.models.orm.custom_claims import CustomClaim
 
         await _bulk_delete(CustomClaim, [], present_claim_uuids, "claims")
+
+        # Delete non-builtin policy rules not in manifest.
+        from src.models.orm.policy_rule import PolicyRule as PolicyRuleOrm
+
+        await _bulk_delete(
+            PolicyRuleOrm,
+            [PolicyRuleOrm.is_builtin == False],  # noqa: E712
+            present_policy_rule_uuids,
+            "policy_rules",
+        )
 
         # Delete event subscriptions not in manifest
         await _bulk_delete(EventSubscription, [], present_sub_uuids, "event_subscriptions")
@@ -1960,6 +1992,56 @@ class ManifestResolver:
                 model=Config,
                 id=cfg_id,
                 values=insert_values,
+                match_on="id",
+            )]
+
+    def _resolve_policy_rule(self, mrule, cache: dict) -> "list[SyncOp]":
+        """Resolve a named policy rule from manifest into SyncOps.
+
+        Upserts by natural key (name, domain, organization_id) — non-destructive:
+        updates existing rows and inserts new ones. Must run BEFORE
+        _resolve_table and _resolve_file_policy so that $ref entries in those
+        entities can resolve against already-committed rules.
+        """
+        from datetime import datetime, timezone
+        from uuid import UUID
+
+        from src.models.orm.policy_rule import PolicyRule as PolicyRuleOrm
+        from src.services.sync_ops import SyncOp, Upsert  # noqa: F401
+
+        from bifrost.manifest_codec import Destination
+
+        vals = mrule.to_orm_values(Destination.GIT_SYNC).direct
+        rule_id = UUID(vals["id"])
+        org_id = UUID(vals["organization_id"]) if vals["organization_id"] else None
+        now = datetime.now(timezone.utc)
+
+        cache_hit = cache["policy_rule_by_natural"].get((vals["name"], vals["domain"], org_id))
+
+        base_values: dict = {
+            "id": rule_id,
+            "name": vals["name"],
+            "domain": vals["domain"],
+            "description": vals["description"],
+            "body": vals["body"],
+            "organization_id": org_id,
+        }
+
+        if cache_hit is not None:
+            existing_id = cache_hit
+            return [Upsert(
+                model=PolicyRuleOrm,
+                id=existing_id,
+                values=base_values,
+                match_on="id",
+            )]
+        else:
+            # PolicyRule.created_at/updated_at have Python-side defaults only (no
+            # server_default), so Core INSERT must supply them explicitly.
+            return [Upsert(
+                model=PolicyRuleOrm,
+                id=rule_id,
+                values={**base_values, "created_at": now, "updated_at": now},
                 match_on="id",
             )]
 

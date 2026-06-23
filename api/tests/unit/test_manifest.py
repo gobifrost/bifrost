@@ -2503,3 +2503,167 @@ def test_manifest_workflow_carries_tool_description():
     # Default is None when omitted
     wf2 = ManifestWorkflow(id="44444444-4444-4444-4444-444444444444", path="p.py", function_name="f")
     assert wf2.tool_description is None
+
+
+# =============================================================================
+# ManifestPolicyRule tests (Task 10)
+# =============================================================================
+
+
+class TestManifestPolicyRule:
+    """Tests for ManifestPolicyRule entity model."""
+
+    def test_from_row_to_orm_values_round_trip(self):
+        """from_row preserves name/domain/description/body; to_orm_values returns them."""
+        from types import SimpleNamespace
+        from uuid import UUID
+
+        from bifrost.manifest import ManifestPolicyRule
+        from bifrost.manifest_codec import Destination
+
+        rule_id = str(uuid4())
+        org_id = str(uuid4())
+        fake_row = SimpleNamespace(
+            id=UUID(rule_id),
+            name="admin_bypass",
+            domain="table",
+            description="Platform admins bypass all table policies.",
+            body={"actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+            organization_id=UUID(org_id),
+        )
+
+        manifest_rule = ManifestPolicyRule.from_row(fake_row)
+        assert manifest_rule.name == "admin_bypass"
+        assert manifest_rule.domain == "table"
+        assert manifest_rule.description == "Platform admins bypass all table policies."
+        assert manifest_rule.body == {"actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}}
+        assert manifest_rule.organization_id == org_id
+        assert manifest_rule.id == rule_id
+
+        orm_vals = manifest_rule.to_orm_values(Destination.GIT_SYNC).direct
+        assert orm_vals["name"] == "admin_bypass"
+        assert orm_vals["domain"] == "table"
+        assert orm_vals["description"] == "Platform admins bypass all table policies."
+        assert orm_vals["body"] == {"actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}}
+        assert orm_vals["organization_id"] == org_id
+        assert orm_vals["id"] == rule_id
+
+    def test_from_row_drops_env_fields(self):
+        """from_row excludes is_builtin, created_by, solution_id, timestamps."""
+        from types import SimpleNamespace
+        from uuid import UUID, uuid4 as u4
+        from datetime import datetime, timezone
+
+        from bifrost.manifest import ManifestPolicyRule
+
+        fake_row = SimpleNamespace(
+            id=u4(),
+            name="owner_write",
+            domain="file",
+            description=None,
+            body={"actions": ["read"], "when": None},
+            organization_id=None,
+            # env fields that must NOT appear in ManifestPolicyRule
+            is_builtin=True,
+            created_by=u4(),
+            solution_id=u4(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        manifest_rule = ManifestPolicyRule.from_row(fake_row)
+        dumped = manifest_rule.model_dump(mode="json")
+        assert "is_builtin" not in dumped
+        assert "created_by" not in dumped
+        assert "solution_id" not in dumped
+        assert "created_at" not in dumped
+        assert "updated_at" not in dumped
+        assert dumped["name"] == "owner_write"
+        assert dumped["domain"] == "file"
+
+    def test_to_orm_values_raises_for_non_git_sync(self):
+        """to_orm_values raises NotImplementedError for non-GIT_SYNC destinations."""
+        from bifrost.manifest import ManifestPolicyRule
+        from bifrost.manifest_codec import Destination
+
+        rule = ManifestPolicyRule(
+            id=str(uuid4()),
+            name="test",
+            domain="table",
+            body={"actions": ["read"], "when": None},
+        )
+        with pytest.raises(NotImplementedError):
+            rule.to_orm_values(Destination.INSTALL)
+
+    def test_policy_rule_round_trips_through_yaml(self):
+        """ManifestPolicyRule serializes into and parses from manifest YAML."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestPolicyRule,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        rule_id = str(uuid4())
+        rule = ManifestPolicyRule(
+            id=rule_id,
+            name="admin_bypass",
+            domain="table",
+            description="Bypass for admins",
+            body={"actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}},
+        )
+        manifest = Manifest(policy_rules={rule_id: rule})
+        yaml_str = serialize_manifest(manifest)
+
+        restored = parse_manifest(yaml_str)
+        assert rule_id in restored.policy_rules
+        restored_rule = restored.policy_rules[rule_id]
+        assert restored_rule.name == "admin_bypass"
+        assert restored_rule.domain == "table"
+        assert restored_rule.description == "Bypass for admins"
+        assert restored_rule.body == {"actions": ["read", "create", "update", "delete"], "when": {"user": "is_platform_admin"}}
+
+    def test_table_policy_ref_round_trips(self):
+        """A table manifest policy list containing a {$ref: ops} ref round-trips."""
+        from bifrost.manifest import (
+            ManifestPolicyRef,
+            ManifestTable,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        table_id = str(uuid4())
+        raw = {
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "tickets",
+                    "policies": [
+                        {
+                            "name": "owner_can_write",
+                            "actions": ["update", "delete"],
+                            "when": {"eq": [{"row": "owner_id"}, {"user": "user_id"}]},
+                        },
+                        {"$ref": "ops"},
+                    ],
+                },
+            },
+        }
+
+        manifest = parse_manifest(yaml.dump(raw, default_flow_style=False))
+        table = manifest.tables[table_id]
+        assert table.policies is not None
+        assert len(table.policies) == 2
+        ref_entry = table.policies[1]
+        assert isinstance(ref_entry, ManifestPolicyRef)
+        assert ref_entry.ref == "ops"
+
+        # Round-trip through YAML — ref is preserved verbatim
+        output = serialize_manifest(manifest)
+        restored = parse_manifest(output)
+        restored_table = restored.tables[table_id]
+        assert restored_table.policies is not None
+        assert len(restored_table.policies) == 2
+        restored_ref = restored_table.policies[1]
+        assert isinstance(restored_ref, ManifestPolicyRef)
+        assert restored_ref.ref == "ops"

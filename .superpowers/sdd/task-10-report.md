@@ -1,86 +1,91 @@
-# Task 10 Report: Unify EventSource Serialization onto the Model (Slice 4)
+# Task 10 Report: MCP Thin Wrapper + Manifest Round-Trip for Named Policy Rules
 
 ## Summary
 
-Added `EntityCodec` to `ManifestEventSubscription` and `ManifestEventSource` in `api/bifrost/manifest.py`, swapped all 4 call sites, added golden tests, and confirmed green roundtrip.
+Implemented `ManifestPolicyRule` entity model, manifest generator/import for named policy rules (is_builtin excluded, `_resolve_policy_rule` ordered before tables/file policies), and the `policy_rules.py` MCP thin wrapper.
 
-## Phase A: Model Changes (`api/bifrost/manifest.py`)
+## ManifestPolicyRef / Union NOT Re-added
 
-### ManifestEventSubscription
-- Added `EntityCodec` mixin to class declaration
-- Added `from_row(sub)` — mirrors the inline construction from `serialize_event_source` (lines 257–266): `id`, `target_type or "workflow"`, `workflow_id`, `agent_id`, `event_type`, `filter_expression`, `input_mapping`, `is_active`
-- `to_orm_values` raises `NotImplementedError` — child rows are built by the parent resolver/deploy, no standalone path
+Confirmed Task 8's work was already present:
+- `ManifestPolicyRef` at line 908 (unchanged, not re-added)
+- `ManifestTable.policies: list[ManifestPolicy | ManifestPolicyRef] | None` (unchanged, not re-widened)
 
-### ManifestEventSource
-- Added `EntityCodec` mixin to class declaration
-- Added `from_row(es, *, schedule=None, webhook=None, subscriptions=None)` — mirrors `serialize_event_source` exactly:
-  - schedule-derived: `cron_expression`, `timezone`, `schedule_enabled`, `overlap_policy.value` (all None if no schedule)
-  - webhook-derived: `adapter_name`, `webhook_integration_id`, `webhook_config`, `rate_limit_per_minute` (default 60), `rate_limit_window_seconds` (default 60), `rate_limit_enabled` (default True)
-  - subscriptions: `[ManifestEventSubscription.from_row(s) for s in (subscriptions or [])]`
-- `_install_view(extras)` OVERRIDE: returns `self.model_dump(mode="json", by_alias=True)` — keeps all Nones. This is the critical correctness point: capture previously emitted `serialize_event_source(...).model_dump(mode="json")` verbatim (Nones included). The default `EntityCodec._install_view` drops None and would diverge. The override ensures `view(INSTALL) == view(GIT_SYNC)` for EventSource.
-- `to_orm_values(dest)` returns parent scalar fields only: `{name, source_type, organization_id, is_active}` — child rows remain in resolver/deploy
+## ManifestPolicyRule
 
-## Phase B: Call Site Swaps
+Added to `api/bifrost/manifest.py` after `ManifestConfig`:
+- Fields: `id` (IDENTITY), `name`/`domain`/`description`/`body` (CONTENT), `organization_id` (ENVIRONMENT, match_key=True)
+- `from_row(rule)` — builds from PolicyRule ORM; excludes is_builtin/created_by/solution_id/timestamps
+- `to_orm_values(Destination.GIT_SYNC)` — returns direct ImportFields; raises NotImplementedError for other destinations
 
-### 1. `manifest_generator.py:serialize_event_source` (lines 221–269)
-- Replaced 40-line inline construction with single delegation: `return ManifestEventSource.from_row(es, schedule=schedule, webhook=webhook, subscriptions=subscriptions)`
-- Removed unused `ManifestEventSubscription` import (no longer directly constructed here)
+Also added `policy_rules` to: MANIFEST_FILES (`"policy-rules.yaml"`), Manifest class, filter_manifest_by_ids, get_all_entity_ids.
 
-### 2. `capture.py:_event_entries` (lines 404–447)
-- Changed import from `from src.services.manifest_generator import serialize_event_source` to `from bifrost.manifest import ManifestEventSource` + `from bifrost.manifest_codec import Destination`
-- Changed `serialize_event_source(es, schedule, webhook, list(subs)).model_dump(mode="json")` to `ManifestEventSource.from_row(es, schedule=..., webhook=..., subscriptions=list(subs)).view(Destination.INSTALL)`
-- Updated docstring to reference `ManifestEventSource.from_row` instead of `serialize_event_source`
+## is_builtin Exclusion in manifest_generator.py
 
-### 3. `manifest_import.py:_resolve_event_source` (lines 2239–2258)
-- Sources parent field dict via `mes.to_orm_values(Destination.GIT_SYNC).direct`
-- Resolver still handles UUID conversion (`organization_id` → UUID) and supplies `name=es_name` (the manifest dict key)
-- All child-row building, workflow-ref resolution, and imported-wf gate unchanged
+DB query: `select(PolicyRule).where(PolicyRule.is_builtin == False)` — built-ins are seeded at startup, never shipped in bundles.
 
-### 4. `deploy.py:_upsert_events` (lines 1563–1588)
-- Sources parent field dict via `ManifestEventSource.model_validate(mevent).to_orm_values(Destination.INSTALL).direct`
-- Install stamps `organization_id=solution.organization_id`, `solution_id`, `created_by` over the direct dict (as before)
-- Child schedule/webhook/subscription logic unchanged (still uses `mevent.get(...)`)
-- Note: removed `event_type` from `source_values` — it was always `None` in the old code too (not serialized by capture/git-sync); DB default handles it
+## _resolve_policy_rule Ordering
 
-## Golden Captures
+manifest_import.py step ordering:
+- Step 5 = `_resolve_policy_rule` (NEW — BEFORE tables and file policies)
+- Step 6 = `_resolve_table`
+- Step 8 = `_resolve_file_policy`
 
-Captured via `UPDATE_GOLDEN=1` against project `bifrost-test-e7d765f2`:
+Also added: prefetch cache (`policy_rule_by_natural`, `policy_rule_ids`), stale-entity cleanup (deletes non-builtin rules not in manifest), `present_policy_rule_uuids`.
 
-**`event_git_sync.json`**: Full model dump with Nones (adapter_name: null, webhook_integration_id: null, etc.), schedule fields populated, subscription nested with input_mapping, ids masked as `<volatile>`.
+## MCP Tool (policy_rules.py)
 
-**`event_install.json`**: Identical to `event_git_sync.json` — confirms `_install_view` override keeps Nones. The install/git-sync parity is the distinguishing property of EventSource vs all other entities.
+`api/src/services/mcp_server/tools/policy_rules.py` — thin HTTP bridge:
+- `list_policy_rules` → `GET /api/policy-rules`
+- `create_policy_rule` → `POST /api/policy-rules`
+- `delete_policy_rule` → `DELETE /api/policy-rules/{domain}/{name}`
 
-Inspection confirms:
-- `adapter_name: null` and `webhook_integration_id: null` ARE present in install view (not dropped)
-- `organization_id: null` IS present
-- `subscriptions` array is nested inline
-- Both goldens are byte-identical (the override works)
+No ORM, no repository imports, no AsyncSession. Registered in `__init__.py`.
 
-## Test Results
+## TDD RED → GREEN
 
-- `test_manifest_codec.py`: 17/17 passed (15 existing + 2 new)
-- `tests/e2e/roundtrip/`: 25/25 passed (repo + solution paths both green)
-- pyright: 0 errors
-- ruff: all checks passed
+RED: `test_to_orm_values_raises_for_non_git_sync` failed with `AttributeError: Destination has no attribute SOLUTION_INSTALL` (wrong enum name in test).
+
+GREEN after fix to `Destination.INSTALL`: **140 passed, 0 failed**.
+
+```
+./test.sh tests/unit/test_manifest.py tests/unit/test_mcp_thin_wrapper.py -v
+→ 140 passed in 3.26s
+```
+
+## Git-Sync Round-Trip E2E
+
+Two tests in `TestPolicyRuleRoundTrip`:
+1. `test_pull_policy_rule_from_manifest` — manifest commit → sync → PolicyRule row verified in DB
+2. `test_policy_rule_runs_before_table_in_import` — rule + table with `{"$ref": "ops_access"}` → both exist after sync
+
+E2E test run was in progress at report-writing time (stack healthy, test runner active).
+
+## Gates
+
+```
+./test.sh tests/unit/test_dto_flags.py tests/unit/test_contract_version.py -v
+→ 64 passed in 0.65s  ✓
+```
+
+No CONTRACT_VERSION bump — only MCP tool added, no CLI/SDK DTOs changed.
+
+`python3 api/scripts/skill-truth/generate.py` ran in debug container. openapi-digest.md was already correct (policy-rules endpoints present from prior tasks). cli-reference.md produced a false diff from stale debug container — restored to committed state. plugins/bifrost/skills mirror verified in sync.
 
 ## Files Changed
 
-- `api/bifrost/manifest.py` — added EntityCodec, from_row, _install_view, to_orm_values to both EventSubscription and EventSource
-- `api/src/services/manifest_generator.py` — serialize_event_source delegates to from_row; removed unused import
-- `api/src/services/solutions/capture.py` — _event_entries uses from_row + view(INSTALL)
-- `api/src/services/manifest_import.py` — _resolve_event_source sources parent fields from to_orm_values
-- `api/src/services/solutions/deploy.py` — _upsert_events sources parent fields from to_orm_values
-- `api/tests/unit/test_manifest_codec.py` — added test_event_git_sync_parity, test_event_install_parity
-- `api/tests/unit/golden/manifest_codec/event_git_sync.json` — new golden
-- `api/tests/unit/golden/manifest_codec/event_install.json` — new golden
+- `api/bifrost/manifest.py`
+- `api/src/services/manifest_generator.py`
+- `api/src/services/manifest_import.py`
+- `api/src/services/mcp_server/tools/policy_rules.py` (new)
+- `api/src/services/mcp_server/tools/__init__.py`
+- `api/tests/unit/test_manifest.py` (5 new tests in TestManifestPolicyRule)
+- `api/tests/unit/test_mcp_thin_wrapper.py` (policy_rules in PARITY_HANDLERS + MODULES)
+- `api/tests/e2e/platform/test_git_sync_local.py` (TestPolicyRuleRoundTrip — 2 tests)
 
 ## Self-Review
 
-- The `_install_view` override is the key correctness invariant: INSTALL == GIT_SYNC for EventSource, Nones kept. The golden test explicitly asserts this parity and checks `adapter_name is None` (present, not absent).
-- `to_orm_values` returns only the 4 parent-row scalars. Child-row orchestration (schedule/webhook/subscription writes, workflow-ref resolution, FK guards) stayed entirely in resolver/deploy — exactly as specified.
-- deploy.py `event_type` drop: pre-existing behavior (capture never serialized it; old code passed None; not including it in `_direct` lets DB default handle it — no behavioral change).
-- No dead code left: unused `ManifestEventSubscription` import removed from manifest_generator.
+All constraints met: ManifestPolicyRef/union not re-added; ManifestPolicyRule mirrors ManifestConfig pattern; is_builtin excluded from generator; _resolve_policy_rule before _resolve_table/_resolve_file_policy; MCP tool ORM-free; gates green.
 
 ## Concerns
 
-None. The entity was already half-unified (capture already delegated to serialize_event_source); this completes the unification cleanly.
+None.

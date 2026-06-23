@@ -5442,3 +5442,117 @@ class TestDeleteConfirmation:
         deleted_wf = row.scalar_one_or_none()
         # Either deleted or deactivated
         assert deleted_wf is None or deleted_wf.is_active is False
+
+
+@pytest.mark.asyncio
+class TestPolicyRuleRoundTrip:
+    """Task 10: PolicyRule export → import round-trip via git sync."""
+
+    async def test_pull_policy_rule_from_manifest(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Pull manifest with a PolicyRule → row created in DB before any table using it."""
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.policy_rule import PolicyRule
+
+        work_dir = Path(working_clone.working_dir)
+        rule_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+
+        (bifrost_dir / "policy-rules.yaml").write_text(yaml.dump({
+            "policy_rules": {
+                rule_id: {
+                    "id": rule_id,
+                    "name": "ops_read_only",
+                    "domain": "table",
+                    "description": "Read-only access for ops team.",
+                    "body": {
+                        "actions": ["read"],
+                        "when": {"user": "is_platform_admin"},
+                    },
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add([".bifrost/policy-rules.yaml"])
+        working_clone.index.commit("add policy rule")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True, f"Sync failed: {result}"
+
+        # Verify rule is in DB
+        db_session.expire_all()
+        rule = await db_session.get(PolicyRule, UUIDType(rule_id))
+        assert rule is not None
+        assert rule.name == "ops_read_only"
+        assert rule.domain == "table"
+        assert rule.description == "Read-only access for ops team."
+        assert rule.body["when"] == {"user": "is_platform_admin"}
+        assert rule.is_builtin is False
+
+    async def test_policy_rule_runs_before_table_in_import(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """PolicyRule imported before the table that references it via $ref."""
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.policy_rule import PolicyRule
+        from src.models.orm.tables import Table
+
+        work_dir = Path(working_clone.working_dir)
+        rule_id = str(uuid4())
+        table_id = str(uuid4())
+
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+
+        (bifrost_dir / "policy-rules.yaml").write_text(yaml.dump({
+            "policy_rules": {
+                rule_id: {
+                    "id": rule_id,
+                    "name": "ops_access",
+                    "domain": "table",
+                    "body": {"actions": ["read"], "when": {"call": "has_role", "args": ["ops"]}},
+                },
+            },
+        }, default_flow_style=False))
+
+        (bifrost_dir / "tables.yaml").write_text(yaml.dump({
+            "tables": {
+                table_id: {
+                    "id": table_id,
+                    "name": "work_orders",
+                    "policies": [
+                        {"$ref": "ops_access"},
+                    ],
+                },
+            },
+        }, default_flow_style=False))
+
+        working_clone.index.add([
+            ".bifrost/policy-rules.yaml",
+            ".bifrost/tables.yaml",
+        ])
+        working_clone.index.commit("add rule + table with ref")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True, f"Sync failed: {result}"
+
+        db_session.expire_all()
+        rule = await db_session.get(PolicyRule, UUIDType(rule_id))
+        assert rule is not None, "PolicyRule must exist before table import resolves $ref"
+
+        table = await db_session.get(Table, UUIDType(table_id))
+        assert table is not None
+        assert table.name == "work_orders"

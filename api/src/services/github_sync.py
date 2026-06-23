@@ -1152,7 +1152,7 @@ class GitHubSyncService:
             manifest.organizations or manifest.roles
             or manifest.workflows or manifest.forms or manifest.agents or manifest.apps
             or manifest.integrations or manifest.configs or manifest.tables
-            or manifest.events
+            or manifest.events or manifest.policy_rules
         )
         if not has_entities:
             return 0, []

@@ -55,6 +55,7 @@ MANIFEST_FILES: dict[str, str] = {
     "integrations": "integrations.yaml",
     "configs": "configs.yaml",
     "claims": "claims.yaml",
+    "policy_rules": "policy-rules.yaml",
     "tables": "tables.yaml",
     "file_policies": "file-policies.yaml",
     "events": "events.yaml",
@@ -773,6 +774,51 @@ class ManifestConfig(EntityCodec, BaseModel):
         )
 
 
+class ManifestPolicyRule(EntityCodec, BaseModel):
+    """A named, reusable policy rule shippable in a manifest bundle.
+
+    Mirrors :class:`src.models.orm.policy_rule.PolicyRule`. Content fields
+    (name, domain, description, body) are portable across environments.
+    Environment-specific fields (organization_id, created_by, timestamps,
+    is_builtin, solution_id) are excluded — they live on the DB row only.
+    """
+
+    id: str = Field(description="PolicyRule UUID", **classify(FieldClass.IDENTITY))
+    name: str = Field(description="Rule name (unique per domain+org)", **classify(FieldClass.CONTENT, match_key=True))
+    domain: str = Field(description="Policy domain: 'file' | 'table'", **classify(FieldClass.CONTENT, match_key=True))
+    description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
+    body: dict = Field(description="Rule body ({actions, when})", **classify(FieldClass.CONTENT))
+    organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, match_key=True))
+
+    @classmethod
+    def from_row(cls, rule) -> "ManifestPolicyRule":
+        """Build from a PolicyRule ORM row."""
+        return cls(
+            id=str(rule.id),
+            name=rule.name,
+            domain=rule.domain,
+            description=rule.description,
+            body=rule.body,
+            organization_id=str(rule.organization_id) if rule.organization_id else None,
+        )
+
+    def to_orm_values(self, dest: Destination) -> ImportFields:
+        if dest is not Destination.GIT_SYNC:
+            raise NotImplementedError(f"ManifestPolicyRule has no install path; dest={dest}")
+        return ImportFields(
+            direct={
+                "id": self.id,
+                "name": self.name,
+                "domain": self.domain,
+                "description": self.description,
+                "body": self.body,
+                "organization_id": self.organization_id,
+            },
+            indexer_content={},
+            restamp={},
+        )
+
+
 class ManifestSolutionConfigSchema(EntityCodec, BaseModel):
     """A solution-owned config DECLARATION (portable; never a value)."""
     id: str = Field(description="Config schema UUID", **classify(FieldClass.IDENTITY))
@@ -1343,6 +1389,7 @@ class Manifest(BaseModel):
     integrations: dict[str, ManifestIntegration] = Field(default_factory=dict)
     configs: dict[str, ManifestConfig] = Field(default_factory=dict)
     claims: dict[str, ManifestCustomClaim] = Field(default_factory=dict)
+    policy_rules: dict[str, ManifestPolicyRule] = Field(default_factory=dict)
     tables: dict[str, ManifestTable] = Field(default_factory=dict)
     file_policies: dict[str, ManifestFilePolicy] = Field(default_factory=dict)
     events: dict[str, ManifestEventSource] = Field(default_factory=dict)
@@ -1394,6 +1441,7 @@ def filter_manifest_by_ids(manifest: Manifest, entity_ids: set[str]) -> Manifest
         integrations={k: v for k, v in manifest.integrations.items() if k in entity_ids},
         configs={k: v for k, v in manifest.configs.items() if k in entity_ids},
         claims={k: v for k, v in manifest.claims.items() if k in entity_ids},
+        policy_rules={k: v for k, v in manifest.policy_rules.items() if k in entity_ids},
         tables={k: v for k, v in manifest.tables.items() if k in entity_ids},
         file_policies={
             k: v for k, v in manifest.file_policies.items() if k in entity_ids
@@ -1665,6 +1713,8 @@ def get_all_entity_ids(manifest: Manifest) -> set[str]:
         ids.add(cfg.id)
     for claim in manifest.claims.values():
         ids.add(claim.id)
+    for rule in manifest.policy_rules.values():
+        ids.add(rule.id)
     for table in manifest.tables.values():
         ids.add(table.id)
     for file_policy in manifest.file_policies.values():

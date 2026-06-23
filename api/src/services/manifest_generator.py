@@ -33,6 +33,7 @@ from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.organizations import Organization
+from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.tables import Table
 from src.models.orm.users import Role
 from src.models.orm.workflow_roles import WorkflowRole
@@ -51,6 +52,7 @@ from bifrost.manifest import (
     ManifestMCPConnectionTool,
     ManifestMCPServer,
     ManifestOrganization,
+    ManifestPolicyRule,
     ManifestRole,
     ManifestTable,
     ManifestWorkflow,
@@ -183,6 +185,11 @@ def serialize_config(cfg: Config) -> ManifestConfig:
 def serialize_custom_claim(claim: CustomClaim) -> ManifestCustomClaim:
     """Serialize a CustomClaim ORM object to ManifestCustomClaim."""
     return ManifestCustomClaim.from_row(claim)
+
+
+def serialize_policy_rule(rule: PolicyRule) -> ManifestPolicyRule:
+    """Serialize a PolicyRule ORM object to ManifestPolicyRule."""
+    return ManifestPolicyRule.from_row(rule)
 
 
 def serialize_table(table: Table) -> ManifestTable:
@@ -426,6 +433,16 @@ async def generate_manifest(
     claims_list = claim_result.scalars().all()
 
     # ------------------------------------------------------------------
+    # Policy Rules (exclude is_builtin rows — built-ins are seeded at startup)
+    # ------------------------------------------------------------------
+    policy_rule_result = await db.execute(
+        select(PolicyRule)
+        .where(PolicyRule.is_builtin == False)  # noqa: E712
+        .order_by(PolicyRule.organization_id, PolicyRule.domain, PolicyRule.name)
+    )
+    policy_rules_list = policy_rule_result.scalars().all()
+
+    # ------------------------------------------------------------------
     # Tables
     # ------------------------------------------------------------------
     table_result = await db.execute(_scope(select(Table), Table).order_by(Table.name))
@@ -531,6 +548,10 @@ async def generate_manifest(
             str(claim.id): serialize_custom_claim(claim)
             for claim in claims_list
         },
+        policy_rules={
+            str(rule.id): serialize_policy_rule(rule)
+            for rule in policy_rules_list
+        },
         tables={
             str(table.id): serialize_table(table)
             for table in tables_list
@@ -585,6 +606,7 @@ async def generate_manifest(
         f"{len(manifest.forms)} forms, {len(manifest.agents)} agents, "
         f"{len(manifest.apps)} apps, {len(manifest.integrations)} integrations, "
         f"{len(manifest.configs)} configs, {len(manifest.claims)} claims, "
+        f"{len(manifest.policy_rules)} policy_rules, "
         f"{len(manifest.tables)} tables, "
         f"{len(manifest.file_policies)} file_policies, "
         f"{len(manifest.events)} events, "
