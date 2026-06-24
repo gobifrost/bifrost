@@ -46,13 +46,6 @@ class FileMetadata(Base):
         nullable=True,
         default=None,
     )
-    origin_solution_slug: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, default=None
-    )
-    origin_solution_id: Mapped[UUID | None] = mapped_column(nullable=True, default=None)
-    orphaned_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
-    )
 
     __table_args__ = (
         Index("ix_file_metadata_organization_id", "organization_id"),
@@ -115,13 +108,6 @@ class FilePolicy(Base):
         ForeignKey("solutions.id", ondelete="CASCADE"),
         nullable=True,
         default=None,
-    )
-    origin_solution_slug: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, default=None
-    )
-    origin_solution_id: Mapped[UUID | None] = mapped_column(nullable=True, default=None)
-    orphaned_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
     )
 
     __table_args__ = (
