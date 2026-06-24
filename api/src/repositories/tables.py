@@ -82,7 +82,9 @@ class TableRepository(OrgScopedRepository[Table]):
             raise ValueError(f"Table '{data.name}' already exists")
 
         if data.policies is not None:
-            access_json: dict[str, Any] | None = data.policies.model_dump(mode="json")
+            # by_alias=True preserves the $ref alias on PolicyRuleRef; without it
+            # a ref policy is stored as {"ref": ...} and breaks manifest serialization.
+            access_json: dict[str, Any] | None = data.policies.model_dump(mode="json", by_alias=True)
         else:
             access_json = make_seed_admin_bypass()
 
@@ -121,7 +123,7 @@ class TableRepository(OrgScopedRepository[Table]):
             table.schema = data.schema
         if "policies" in data.model_fields_set:
             table.access = (
-                data.policies.model_dump(mode="json")
+                data.policies.model_dump(mode="json", by_alias=True)
                 if data.policies is not None
                 else None
             )

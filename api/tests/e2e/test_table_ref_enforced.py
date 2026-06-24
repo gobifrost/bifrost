@@ -52,6 +52,7 @@ async def test_table_list_allowed_via_referenced_rule(
     db_session.add(rule)
     await db_session.commit()
 
+    table_id = None
     try:
         # Create a table whose entire policy set is a reference to the global rule.
         table_name = f"ref_table_{uuid.uuid4().hex[:8]}"
@@ -93,6 +94,12 @@ async def test_table_list_allowed_via_referenced_rule(
         assert docs[0]["data"]["x"] == 42
 
     finally:
-        # Clean up the global rule so it doesn't affect other tests.
+        # Clean up BOTH the global rule and the global table created via the API.
+        # The table is committed in the running API's own session, so the
+        # db_session rollback never reaches it; leaving it behind leaks a global
+        # (solution_id IS NULL) row whose $ref policy poisons later
+        # generate_manifest() calls in the same suite run.
+        if table_id is not None:
+            e2e_client.delete(f"/api/tables/{table_id}", headers=platform_admin.headers)
         await db_session.delete(rule)
         await db_session.commit()

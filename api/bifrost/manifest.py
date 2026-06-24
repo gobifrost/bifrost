@@ -1057,9 +1057,12 @@ class ManifestTable(EntityCodec, BaseModel):
         if raw_policies:
             entries: list[ManifestPolicy | ManifestPolicyRef] = []
             for p in raw_policies:
-                if isinstance(p, dict) and "$ref" in p:
-                    # Stored as a named-rule ref — preserve the $ref form.
-                    ref_val = p.get("$ref")
+                # Accept both the canonical "$ref" alias and the legacy
+                # un-aliased "ref" key: older rows were persisted as {"ref": ...}
+                # before tables repo serialization used by_alias=True. Recover
+                # them as a ref rather than exploding ManifestPolicy validation.
+                if isinstance(p, dict) and ("$ref" in p or "ref" in p):
+                    ref_val = p.get("$ref") or p.get("ref")
                     if not ref_val:
                         raise ValueError(f"malformed policy ref entry (null or empty $ref): {p!r}")
                     entries.append(ManifestPolicyRef(**{"$ref": ref_val}))

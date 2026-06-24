@@ -219,6 +219,14 @@ async def isolate_file_policies(request) -> AsyncGenerator[None, None]:
     for a CLI write) would otherwise leak an allow-everything rule into later
     tests — flipping a sibling's default-deny assertion from 403 to 404. Mirror
     the S3/redis isolation fixtures: best-effort sweep, skipped for unit tests.
+
+    NOTE: this intentionally does NOT sweep Table/PolicyRule rows. Global
+    PolicyRule rows include seeded built-ins (`admin_bypass`) that every test
+    depends on, so a blanket global delete breaks them. The narrower leak class
+    — an orphaned global table with a `$ref` policy poisoning a later
+    generate_manifest() — is handled at its source: the test that creates such a
+    table deletes it in teardown, and ManifestTable.from_row tolerates the
+    legacy un-aliased ref shape.
     """
     if "unit" in request.fspath.strpath:
         yield

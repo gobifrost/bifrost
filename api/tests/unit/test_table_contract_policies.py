@@ -132,3 +132,59 @@ async def test_load_policies_corruption_returns_empty(caplog):
         rec.name == "src.services.table_policy_loader" and "malformed" in rec.message
         for rec in caplog.records
     )
+
+
+def test_policy_ref_serializes_with_dollar_ref_alias():
+    """A $ref table policy must persist as {"$ref": ...}, not {"ref": ...}.
+
+    Regression: api/src/repositories/tables.py stored TablePolicies via
+    model_dump(mode="json") WITHOUT by_alias=True, dropping the $ref alias.
+    The corrupted {"ref": ...} shape then exploded ManifestTable.from_row
+    (ManifestPolicy requires name+actions), surfacing as an order-dependent
+    flake when an orphaned table row leaked into a later generate_manifest().
+    """
+    tc = TableCreate.model_validate({"name": "t", "policies": {"policies": [{"$ref": "admin_bypass"}]}})
+    assert tc.policies is not None
+    dumped = tc.policies.model_dump(mode="json", by_alias=True)
+    assert dumped == {"policies": [{"$ref": "admin_bypass"}]}, dumped
+
+
+def test_manifest_table_round_trips_ref_policy():
+    """ManifestTable.from_row accepts a stored $ref table policy and preserves it."""
+    from bifrost.manifest import ManifestPolicyRef, ManifestTable
+
+    class FakeOrmTable:
+        id = "00000000-0000-0000-0000-000000000009"
+        name = "reffed"
+        description = None
+        schema = None
+        organization_id = None
+        solution_id = None
+        access = {"policies": [{"$ref": "admin_bypass"}]}
+
+    mt = ManifestTable.from_row(FakeOrmTable())
+    assert mt.policies is not None
+    assert len(mt.policies) == 1
+    assert isinstance(mt.policies[0], ManifestPolicyRef)
+    assert mt.policies[0].ref == "admin_bypass"
+
+
+def test_manifest_table_tolerates_legacy_unaliased_ref_policy():
+    """Defense-in-depth: rows already corrupted as {"ref": ...} by the old
+    serializer must not explode generate_manifest(). Production DBs already
+    contain such rows; the serializer recovers them as a ref, not a crash."""
+    from bifrost.manifest import ManifestPolicyRef, ManifestTable
+
+    class FakeOrmTable:
+        id = "00000000-0000-0000-0000-00000000000a"
+        name = "legacy-reffed"
+        description = None
+        schema = None
+        organization_id = None
+        solution_id = None
+        access = {"policies": [{"ref": "admin_bypass"}]}  # legacy, un-aliased
+
+    mt = ManifestTable.from_row(FakeOrmTable())
+    assert mt.policies is not None
+    assert isinstance(mt.policies[0], ManifestPolicyRef)
+    assert mt.policies[0].ref == "admin_bypass"
