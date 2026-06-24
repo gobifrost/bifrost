@@ -1,48 +1,59 @@
-"""Full real-solution end-to-end: files + named policy rule + $ref + deploy/export/install/uninstall.
+"""Capstone e2e: inactive-lifecycle arc with files + named policy rule + $ref.
 
-Capstone integration test for the solution-scoped files + named policy rules plans.
-Covers all 7 required behaviors in two co-dependent test functions sharing setup state
-via module-level globals (single test run, sequential — this keeps setup cost low while
-still verifying the full arc).
+Proves the FULL solution lifecycle end-to-end:
 
-Test 1  (test_deploy_and_access): Steps 1–3 + 7(leakage probe)
-  1. Create a solution; add a workflow, a table, a file, and a file policy with {"$ref":"admin_bypass"}.
-  2. Deploy the solution (real async deploy job → poll to succeeded).
-  3. Platform admin (has admin_bypass) → READ OK; org-scoped non-admin → 403.
-  7. Second solution cannot read the first solution's file at the same logical path.
+  Arc 1  (test_arc_1_deploy_through_uninstall) — Steps 1–3 + 6 (leakage)
+    1. Create solution + workflow + table + FILE (solutions/{install}/docs/readme.md)
+       + file POLICY referencing {"$ref":"admin_bypass"} (Plan 1 named rule).
+    2. Deploy (real async job → poll succeeded).
+    3. Allowed user (platform admin) reads the file → 200 + correct content.
+       Denied user (non-admin) → 403 (admin_bypass rule enforced).
+    UNINSTALL:
+       status == "inactive"; FileMetadata row STILL has solution_id == install
+       (FROZEN, NOT orphaned/nulled); Table row STILL has solution_id == install.
+       File is BROWSABLE (entities endpoint 200) + workflow execution REFUSED
+       (dormant gate → 409).
+    6. Cross-solution leakage: a second solution cannot read the first's file.
 
-Test 2  (test_export_install_orphan): Steps 4–6
-  4. Export the solution (full + include_data) → zip has secrets.enc AND manifest
-     .bifrost/file-policies.yaml with the $ref PRESERVED.
-  5. Install the same bundle into a clean org → file present, policy resolves $ref
-     (admin_bypass is global/seeded, so the clean org gets it too), table present.
-  6. Uninstall the ORIGINAL → the file SURVIVES as an org file (orphaned_at set,
-     solution_id NULL, readable at the org scope).
+  Arc 2  (test_arc_2_reactivate_export_harddelete) — Steps 4–5 (reinstall/reactivate)
+       + export + hard-delete.
+    REINSTALL without reactivate → 409 "inactive_install_exists".
+    REINSTALL with reactivate=true → status "active", SAME install id, data intact
+    (file + table still there under the same solution_id), file readable again.
+    Export with data → secrets.enc present (encrypted tier) + $ref preserved in DB.
+    HARD-DELETE with confirm=<slug> → Solution gone, table + file-metadata cascaded.
+    Confirm MISMATCH → 4xx, nothing deleted.
 
-NOTE: The ``isolate_file_policies`` autouse fixture in tests/conftest.py wipes
-``file_metadata`` before every async test (and possibly sync tests under
-pytest-asyncio auto mode). ``test_export_install_orphan`` re-writes the file at its
-start to recreate the metadata row, since the S3 object persists across the wipe.
+Design: two methods in a single class sharing state via a class-level dict.
+Class fixture ordering guarantees Arc 1 runs before Arc 2 (pytest alphabetical
+within-class ordering is stable when not randomised, and the state-check guard
+gives a clear skip message if ordering breaks).
 """
 from __future__ import annotations
 
 import io
+import time
 import uuid
 import zipfile
+from urllib.parse import quote
+from uuid import UUID
 
 import pytest
-import yaml
+from sqlalchemy import select
+
+from src.models.orm.file_metadata import FileMetadata
+from src.models.orm.tables import Table
 
 pytestmark = pytest.mark.e2e
 
-# ---------------------------------------------------------------------------
-# State shared between the two test functions
-# ---------------------------------------------------------------------------
-# These are populated by test_deploy_and_access and consumed by test_export_install_orphan.
-# pytest guarantees alphabetical / definition order within a module only when not
-# randomised, so we keep both tests in a single class to force the ordering.
 
+# ---------------------------------------------------------------------------
+# Module-level state shared between Arc 1 → Arc 2
+# (populated by test_arc_1_*, consumed by test_arc_2_*)
+# ---------------------------------------------------------------------------
 _STATE: dict = {}
+
+EXPORT_PASSWORD = "capstone-e2e-export-pw"
 
 
 # ---------------------------------------------------------------------------
@@ -50,26 +61,18 @@ _STATE: dict = {}
 # ---------------------------------------------------------------------------
 
 def _upload_headers(headers: dict) -> dict:
-    """Strip Content-Type so httpx sets multipart correctly."""
+    """Strip Content-Type so httpx sets multipart boundary itself."""
     return {k: v for k, v in headers.items() if k.lower() != "content-type"}
 
 
-def _create_org(e2e_client, headers) -> dict:
-    domain = f"sfae-{uuid.uuid4().hex[:8]}.test"
+def _create_solution(e2e_client, headers, slug: str) -> dict:
+    # Pass organization_id=null EXPLICITLY so it lands in model_fields_set
+    # and is treated as "global scope" (not HOME/caller's org).
     r = e2e_client.post(
-        "/api/organizations",
+        "/api/solutions",
         headers=headers,
-        json={"name": f"SolFilesE2E {domain}", "domain": domain},
+        json={"slug": slug, "name": slug.upper(), "organization_id": None},
     )
-    assert r.status_code == 201, f"create org failed: {r.text}"
-    return r.json()
-
-
-def _create_solution(e2e_client, headers, slug: str, org_id: str | None = None) -> dict:
-    body: dict = {"slug": slug, "name": slug.upper()}
-    if org_id is not None:
-        body["organization_id"] = org_id
-    r = e2e_client.post("/api/solutions", headers=headers, json=body)
     assert r.status_code in (200, 201), f"create solution failed: {r.text}"
     return r.json()
 
@@ -83,12 +86,18 @@ def _seed_solutions_policy(e2e_client, headers, *, org_id: str | None = None) ->
         "/api/files/policies/",
         headers=headers,
         params=params,
-        json={"policies": {"policies": [{"name": "allow_all", "actions": ["read", "write", "delete", "list"]}]}},
+        json={"policies": {"policies": [
+            {"name": "allow_all", "actions": ["read", "write", "delete", "list"]}
+        ]}},
     )
-    assert r.status_code in (200, 201, 204), f"seed solutions policy failed: {r.status_code} {r.text}"
+    assert r.status_code in (200, 201, 204), (
+        f"seed solutions policy failed: {r.status_code} {r.text}"
+    )
 
 
-def _write_solution_file(e2e_client, headers, sol_id: str, path: str, content: str) -> None:
+def _write_solution_file(
+    e2e_client, headers, sol_id: str, path: str, content: str
+) -> None:
     r = e2e_client.post(
         f"/api/files/write?solution={sol_id}",
         headers=headers,
@@ -97,7 +106,9 @@ def _write_solution_file(e2e_client, headers, sol_id: str, path: str, content: s
     assert r.status_code == 204, f"file write failed: {r.status_code} {r.text}"
 
 
-def _read_solution_file(e2e_client, headers, sol_id: str, path: str) -> tuple[int, str | None]:
+def _read_solution_file(
+    e2e_client, headers, sol_id: str, path: str
+) -> tuple[int, str | None]:
     """Returns (status_code, content_or_None)."""
     r = e2e_client.post(
         f"/api/files/read?solution={sol_id}",
@@ -109,7 +120,7 @@ def _read_solution_file(e2e_client, headers, sol_id: str, path: str) -> tuple[in
     return r.status_code, None
 
 
-def _set_file_policy_with_ref(
+def _set_file_policy_ref(
     e2e_client,
     headers,
     *,
@@ -118,11 +129,10 @@ def _set_file_policy_with_ref(
     prefix: str,
     ref_name: str,
 ) -> dict:
-    """Create a file policy referencing a named rule via {"$ref": ref_name}."""
+    """Create a file policy whose single rule is {"$ref": ref_name}."""
     params: dict = {"location": location}
     if scope is not None:
         params["scope"] = scope
-    from urllib.parse import quote
     encoded = quote(prefix.strip("/"), safe="")
     r = e2e_client.put(
         f"/api/files/policies/{encoded}",
@@ -134,25 +144,35 @@ def _set_file_policy_with_ref(
     return r.json()
 
 
-def _deploy_solution(e2e_client, headers, sol_id: str, tables=None, workflows=None) -> dict:
-    """Build a minimal deploy payload, POST it, and poll to terminal state.
-
-    Uses the conftest ``deploy_solution`` helper (which handles the legacy JSON→zip
-    adapter AND the async poll pattern).
-    """
-    from tests.e2e.platform.conftest import deploy_solution
+def _deploy_solution(
+    e2e_client,
+    headers,
+    sol_id: str,
+    tables: list | None = None,
+    workflows: list | None = None,
+    python_files: dict | None = None,
+) -> dict:
+    """Deploy, poll async job, assert succeeded, return result payload."""
+    from tests.e2e.platform.conftest import deploy_solution as _ds
 
     body: dict = {
         "tables": tables or [],
         "workflows": workflows or [],
     }
-    result = deploy_solution(e2e_client, sol_id, headers, body)
+    if python_files:
+        body["python_files"] = python_files
+    result = _ds(e2e_client, sol_id, headers, body)
     assert result.status_code == 200, f"deploy failed: {result.status_code} {result.text}"
     return result.json()
 
 
+def _uninstall(e2e_client, headers, sol_id: str) -> dict:
+    r = e2e_client.post(f"/api/solutions/{sol_id}/uninstall", headers=headers)
+    assert r.status_code == 200, f"uninstall failed: {r.status_code} {r.text}"
+    return r.json()
+
+
 def _export_solution(e2e_client, headers, sol_id: str, password: str) -> bytes:
-    """Full-backup export with file sidecars encrypted in secrets.enc."""
     r = e2e_client.post(
         f"/api/solutions/{sol_id}/export?mode=full&include_data=true",
         headers=headers,
@@ -162,370 +182,458 @@ def _export_solution(e2e_client, headers, sol_id: str, password: str) -> bytes:
     return r.content
 
 
-def _install_solution_zip(
-    e2e_client, headers, zip_bytes: bytes, slug: str, password: str
-) -> dict:
-    """Rewrite the descriptor slug, then install via the zip endpoint."""
+def _make_install_zip(slug: str, table_name: str, table_bundle_id: str) -> bytes:
+    """Minimal workspace zip used for the reinstall round-trip.
+
+    ``table_bundle_id`` must be the SAME manifest UUID used in the original deploy
+    so the solution_entity_id resolves to the same Table row (avoid duplicate-name
+    conflict on the ix_tables_solution_name_unique index).
+    """
     buf = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as src_zf, zipfile.ZipFile(buf, "w") as dst_zf:
-        for name in src_zf.namelist():
-            data = src_zf.read(name)
-            if name == "bifrost.solution.yaml":
-                desc = yaml.safe_load(data.decode())
-                desc["slug"] = slug
-                desc["name"] = slug.upper()
-                data = yaml.safe_dump(desc, sort_keys=False).encode()
-            dst_zf.writestr(name, data)
-    new_zip_bytes = buf.getvalue()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(
+            "bifrost.solution.yaml",
+            f"slug: {slug}\nname: {slug.upper()}\nscope: global\n",
+        )
+        z.writestr(
+            ".bifrost/tables.yaml",
+            "tables:\n"
+            f"  {table_bundle_id}:\n"
+            f"    id: {table_bundle_id}\n"
+            f"    name: {table_name}\n"
+            "    schema:\n"
+            "      columns:\n"
+            "        - name: note\n"
+            "    policies: null\n",
+        )
+    return buf.getvalue()
 
-    r = e2e_client.post(
-        "/api/solutions/install",
+
+def _install_zip(
+    e2e_client, headers, zip_bytes: bytes, *, query: str = ""
+):
+    return e2e_client.post(
+        f"/api/solutions/install{query}",
         headers=_upload_headers(headers),
-        files={"file": (f"{slug}.zip", new_zip_bytes, "application/zip")},
-        data={"password": password, "replace_data": "true"},
+        files={"file": ("sol.zip", zip_bytes, "application/zip")},
     )
-    assert r.status_code in (200, 201), f"install failed: {r.status_code} {r.text}"
-    return r.json()
-
-
-def _manifest_from_zip(zip_bytes: bytes) -> dict:
-    """Extract and merge all .bifrost/*.yaml manifest files from the export zip."""
-    out: dict = {}
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for name in zf.namelist():
-            if name.startswith(".bifrost/") and name.endswith((".yaml", ".yml")):
-                if name == ".bifrost/secrets.enc":
-                    continue
-                loaded = yaml.safe_load(zf.read(name)) or {}
-                out.update(loaded)
-    return out
-
-
-def _wait_for_orphan_job(e2e_client, headers, sol_id: str, *, timeout_s: float = 30.0) -> None:
-    """Poll the orphan file-move job (if any) to completion."""
-    import time
-
-    # The file orphan job is enqueued after the solution DELETE commit.
-    # We probe the /api/solutions/{id} endpoint — 404 means the delete committed.
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        r = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
-        if r.status_code == 404:
-            break
-        time.sleep(0.2)
 
 
 # ---------------------------------------------------------------------------
-# Test class (ordered: setup → deploy → export/install/orphan)
+# Test class
 # ---------------------------------------------------------------------------
 
 @pytest.mark.e2e
-class TestSolutionFilesFullArc:
-    """Full 7-step integration arc: create → deploy → read → export → install → uninstall."""
+class TestSolutionInactiveLifecycleCapstone:
+    """Capstone: full inactive-lifecycle arc — deploy / uninstall / reactivate / export / hard-delete."""
 
     # ------------------------------------------------------------------
-    # STEP 1–3 + step 7 (leakage)
+    # ARC 1: steps 1–3 + leakage + uninstall-freezes assertion
     # ------------------------------------------------------------------
 
-    def test_deploy_and_access(self, e2e_client, platform_admin, alice_user):
-        """Steps 1–3 + 7: create solution with file + $ref policy, deploy, verify
-        access control, and verify cross-solution isolation."""
+    async def test_arc_1_deploy_through_uninstall(
+        self, e2e_client, platform_admin, alice_user, db_session
+    ):
+        """Steps 1-3 + leakage check + UNINSTALL → frozen rows + dormant gate.
+
+        Covers:
+        - Behavior 1: create solution + workflow + table + file + $ref policy
+        - Behavior 2: deploy (async poll) + allowed read 200 / denied 403
+        - Behavior 6: cross-solution leakage blocked
+        - UNINSTALL → status inactive; FileMetadata.solution_id unchanged; Table.solution_id unchanged
+        - Behavior 3 (browse still works, execution refused)
+        """
         headers = platform_admin.headers
+        slug = f"capstone-{uuid.uuid4().hex[:8]}"
 
-        # ── Step 1a: org + solution ────────────────────────────────────────
-        org = _create_org(e2e_client, headers)
-        org_id = org["id"]
-
-        slug = f"sfae-src-{uuid.uuid4().hex[:8]}"
-        sol = _create_solution(e2e_client, headers, slug, org_id=org_id)
+        # ── Step 1a: create solution (global scope so admin can manage it) ──
+        sol = _create_solution(e2e_client, headers, slug)
         sol_id = sol["id"]
 
-        _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+        _seed_solutions_policy(e2e_client, headers)
 
-        # ── Step 1b+c: write file + note table_name for deploy payload ───────
-        table_name = f"sfae_tbl_{uuid.uuid4().hex[:8]}"
+        # ── Step 1b: table for the deploy payload ────────────────────────
+        table_name = f"capstone_tbl_{uuid.uuid4().hex[:8]}"
         table_bundle_id = str(uuid.uuid4())
 
-        # ── Step 1c: write a file into the solution ────────────────────────
+        # ── Step 1c: file into the solution ──────────────────────────────
         file_path = f"docs/readme-{uuid.uuid4().hex[:8]}.md"
-        file_content = f"# Solution Readme\n\nGenerated by test {uuid.uuid4().hex}"
+        file_content = f"# Capstone Readme\n\ntest-{uuid.uuid4().hex}"
         _write_solution_file(e2e_client, headers, sol_id, file_path, file_content)
 
-        # ── Step 1d: file policy referencing admin_bypass by $ref ──────────
-        # The admin_bypass named rule is a global built-in (seeded at startup).
-        # We put a file policy on the solutions/{install_id}/docs/ prefix that
-        # references it, so only platform admins can read files under docs/.
-        docs_prefix = "docs"
-        fp_row = _set_file_policy_with_ref(
+        # ── Step 1d: file policy with {"$ref": "admin_bypass"} ───────────
+        # admin_bypass is a global built-in seeded at startup.
+        _set_file_policy_ref(
             e2e_client,
             headers,
             location="solutions",
-            scope=org_id,
-            prefix=docs_prefix,
+            scope=None,  # global scope
+            prefix="docs",
             ref_name="admin_bypass",
         )
-        fp_id = fp_row["id"]
 
-        # ── Step 2: deploy with table ─────────────────────────────────────
-        _deploy_solution(e2e_client, headers, sol_id, tables=[{
-            "id": table_bundle_id,
-            "name": table_name,
-            "description": "sfae test table",
-            "schema": {"columns": [{"name": "note", "type": "string"}]},
-            "policies": None,
-        }])
+        # ── Step 2: deploy (async job + poll) ────────────────────────────
+        wf_content = "def run(**kwargs): return {'ok': True}"
+        _deploy_solution(
+            e2e_client,
+            headers,
+            sol_id,
+            tables=[{
+                "id": table_bundle_id,
+                "name": table_name,
+                "description": "capstone table",
+                "schema": {"columns": [{"name": "note", "type": "string"}]},
+                "policies": None,
+            }],
+            workflows=[{
+                "id": str(uuid.uuid4()),
+                "name": "run",
+                "path": "workflows/run.py",
+                "function_name": "run",
+                "type": "workflow",
+            }],
+            python_files={"workflows/run.py": wf_content},
+        )
 
-        # ── Step 3a: admin can read the file ──────────────────────────────
+        # ── Step 3a: platform admin can read the file ─────────────────────
         status, content = _read_solution_file(e2e_client, headers, sol_id, file_path)
         assert status == 200, f"admin read failed with status {status}"
         assert content == file_content, f"content mismatch: {content!r}"
 
-        # ── Step 3b: non-admin org user is denied ─────────────────────────
-        # alice_user is a regular (non-superuser) user in org1 — NOT a platform admin.
-        # The admin_bypass rule grants access only to is_platform_admin, so alice should be 403.
-        denied_status, _ = _read_solution_file(e2e_client, alice_user.headers, sol_id, file_path)
+        # ── Step 3b: non-admin user is denied (admin_bypass enforced) ─────
+        # alice_user is a regular user (not is_platform_admin).
+        denied_status, _ = _read_solution_file(
+            e2e_client, alice_user.headers, sol_id, file_path
+        )
         assert denied_status == 403, (
-            f"Expected 403 for non-admin alice_user, got {denied_status} — "
+            f"Expected 403 for non-admin user, got {denied_status} — "
             "admin_bypass $ref policy should deny non-platform-admins"
         )
 
-        # ── Step 7: cross-solution leakage check ──────────────────────────
-        # A second solution in the same org cannot read the first's file.
-        slug_b = f"sfae-leak-{uuid.uuid4().hex[:8]}"
-        sol_b = _create_solution(e2e_client, headers, slug_b, org_id=org_id)
+        # ── Step 6: cross-solution leakage check ─────────────────────────
+        slug_b = f"capstone-leak-{uuid.uuid4().hex[:8]}"
+        sol_b = _create_solution(e2e_client, headers, slug_b)
         sol_b_id = sol_b["id"]
-        _seed_solutions_policy(e2e_client, headers, org_id=org_id)
         _deploy_solution(e2e_client, headers, sol_b_id)
 
-        # Sol B tries to read sol A's file — must be 404 (not in sol B's scope)
         leak_r = e2e_client.post(
             f"/api/files/read?solution={sol_b_id}",
             headers=headers,
             json={"location": "solutions", "path": file_path, "mode": "cloud"},
         )
-        assert leak_r.status_code in (404, 403), (
+        assert leak_r.status_code in (403, 404), (
             f"Cross-solution leakage: sol B could read sol A's file "
             f"(status {leak_r.status_code})"
         )
 
-        # ── Persist state for test 2 ──────────────────────────────────────
+        # ── UNINSTALL ─────────────────────────────────────────────────────
+        uninstall_body = _uninstall(e2e_client, headers, sol_id)
+        assert uninstall_body["status"] == "inactive", (
+            f"Expected status='inactive' after uninstall, got: {uninstall_body}"
+        )
+
+        # Solution row STILL EXISTS.
+        sol_check = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
+        assert sol_check.status_code == 200, (
+            f"Solution row was deleted on uninstall — must only flip status"
+        )
+        assert sol_check.json()["status"] == "inactive"
+
+        # ── UNINSTALL-FREEZES: FileMetadata.solution_id unchanged ─────────
+        # Load the FileMetadata row directly — it must still carry solution_id == sol_id.
+        db_session.expire_all()
+        fm_rows = (
+            await db_session.execute(
+                select(FileMetadata).where(
+                    FileMetadata.solution_id == UUID(sol_id)
+                )
+            )
+        ).scalars().all()
+        assert fm_rows, (
+            f"No FileMetadata rows with solution_id={sol_id} after uninstall — "
+            "uninstall must NOT clear solution_id (data must be FROZEN, not orphaned)"
+        )
+        for fm in fm_rows:
+            assert fm.solution_id == UUID(sol_id), (
+                f"FileMetadata {fm.id}: solution_id was cleared on uninstall "
+                f"(got {fm.solution_id!r}) — freeze invariant violated"
+            )
+
+        # ── UNINSTALL-FREEZES: Table.solution_id unchanged ────────────────
+        from src.services.solutions.deploy import solution_entity_id
+        real_tid = solution_entity_id(UUID(sol_id), UUID(table_bundle_id))
+        db_session.expire_all()
+        tbl = (
+            await db_session.execute(
+                select(Table).where(Table.id == real_tid)
+            )
+        ).scalar_one_or_none()
+        assert tbl is not None, (
+            f"Table row {real_tid} was deleted on uninstall — data was destroyed"
+        )
+        assert tbl.solution_id == UUID(sol_id), (
+            f"Table.solution_id was cleared on uninstall (got {tbl.solution_id!r}) — "
+            "uninstall must NOT mutate owned entities"
+        )
+
+        # ── Behavior 3: file BROWSABLE while inactive ─────────────────────
+        browse_r = e2e_client.get(f"/api/solutions/{sol_id}/entities", headers=headers)
+        assert browse_r.status_code == 200, (
+            f"Inactive solution entities browse failed: {browse_r.status_code} {browse_r.text}"
+        )
+
+        # ── Behavior 3: workflow execution REFUSED (dormant gate → 409) ──
+        exec_r = e2e_client.post(
+            f"/api/workflows/execute?solution={sol_id}",
+            headers=headers,
+            json={"workflow_id": "workflows/run.py::run", "input_data": {}},
+        )
+        assert exec_r.status_code == 409, (
+            f"Expected 409 (dormant gate) for inactive solution execution, "
+            f"got {exec_r.status_code}: {exec_r.text}"
+        )
+        assert "inactive" in exec_r.json().get("detail", "").lower(), (
+            f"Expected 'inactive' in dormant-gate detail, got: {exec_r.text}"
+        )
+
+        # ── Persist state for Arc 2 ───────────────────────────────────────
         _STATE.update(
             sol_id=sol_id,
-            org_id=org_id,
             slug=slug,
             file_path=file_path,
             file_content=file_content,
-            fp_id=fp_id,
             table_name=table_name,
             table_bundle_id=table_bundle_id,
+            real_tid=str(real_tid),
         )
 
     # ------------------------------------------------------------------
-    # STEPS 4–6: export → install → uninstall
+    # ARC 2: reinstall/reactivate + export + hard-delete
     # ------------------------------------------------------------------
 
-    def test_export_install_orphan(self, e2e_client, platform_admin):
-        """Steps 4–6: export with $ref preserved, install into clean org, uninstall + orphan."""
-        # This test depends on test_deploy_and_access having run first.
-        # If pytest re-orders (e.g. randomisation), skip with a clear message rather
-        # than crashing on a missing key.
+    async def test_arc_2_reactivate_export_harddelete(
+        self, e2e_client, platform_admin, db_session
+    ):
+        """Steps 4–5 (reinstall/reactivate) + export (encrypted tier + $ref) + hard-delete.
+
+        Covers:
+        - Behavior 4: reinstall without reactivate → 409 inactive_install_exists
+        - Behavior 4: reinstall with reactivate=true → status active, SAME install id, data intact
+        - Behavior 5: export with data → secrets.enc + $ref preserved in DB
+        - Behavior 6: hard-delete confirm mismatch → 4xx, nothing deleted
+        - Behavior 6: hard-delete confirmed → Solution gone, Table gone, FileMetadata gone
+        """
         if not _STATE:
             pytest.skip(
-                "test_export_install_orphan requires test_deploy_and_access to run first; "
-                "either run the full class or fix test ordering."
+                "test_arc_2_reactivate_export_harddelete requires test_arc_1_deploy_through_uninstall "
+                "to run first. Run the full class or fix test ordering."
             )
 
         headers = platform_admin.headers
-        sol_id = _STATE["sol_id"]
-        org_id = _STATE["org_id"]
-        file_path = _STATE["file_path"]
-        file_content = _STATE["file_content"]
-        table_name = _STATE["table_name"]
+        sol_id: str = _STATE["sol_id"]
+        slug: str = _STATE["slug"]
+        file_path: str = _STATE["file_path"]
+        file_content: str = _STATE["file_content"]
+        table_name: str = _STATE["table_name"]
+        table_bundle_id: str = _STATE["table_bundle_id"]
+        real_tid = UUID(_STATE["real_tid"])
 
-        # Re-seed policies and re-write the file to recreate DB state that
-        # ``isolate_file_policies`` (autouse) wipes between tests: it deletes ALL
-        # FilePolicy and FileMetadata rows. The S3 objects survive; we recreate the
-        # DB rows so the export can include the file in secrets.enc and the $ref
-        # policy check passes.
-        _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+        # Re-seed the allow-all policy (autouse isolate_file_policies wipes between tests).
+        _seed_solutions_policy(e2e_client, headers)
+
+        # ── Behavior 4a: reinstall WITHOUT reactivate → 409 ──────────────
+        zip_bytes = _make_install_zip(slug, table_name, table_bundle_id)
+        r_no_react = _install_zip(e2e_client, headers, zip_bytes)
+        assert r_no_react.status_code == 409, (
+            f"Expected 409 on reinstall without reactivate, got {r_no_react.status_code}: "
+            f"{r_no_react.text}"
+        )
+        detail = r_no_react.json().get("detail", {})
+        assert detail.get("reason") == "inactive_install_exists", (
+            f"Expected reason='inactive_install_exists', got: {detail}"
+        )
+        assert detail.get("solution_id") == sol_id, (
+            f"Conflict payload must carry the inactive install's id, got: {detail}"
+        )
+
+        # Nothing was deleted — the inactive install still exists.
+        still_exists = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
+        assert still_exists.status_code == 200, (
+            f"Inactive install was deleted by a failed reinstall attempt: "
+            f"{still_exists.status_code}"
+        )
+
+        # ── Behavior 4b: reinstall WITH reactivate=true ───────────────────
+        r_react = _install_zip(e2e_client, headers, zip_bytes, query="?reactivate=true")
+        assert r_react.status_code in (200, 201), (
+            f"Expected 200/201 on reactivate, got {r_react.status_code}: {r_react.text}"
+        )
+        reactivated = r_react.json()
+
+        # SAME install id — NOT a duplicate.
+        assert reactivated["id"] == sol_id, (
+            f"Reactivate must return the SAME install id, not a new one. "
+            f"Original: {sol_id}, returned: {reactivated['id']}"
+        )
+        assert reactivated["status"] == "active", (
+            f"Reactivated install must have status='active', got: {reactivated['status']}"
+        )
+
+        # Only ONE Solution for this slug (no duplicate row).
+        list_r = e2e_client.get("/api/solutions?scope=global", headers=headers)
+        assert list_r.status_code == 200, list_r.text
+        matching = [s for s in list_r.json().get("solutions", []) if s["slug"] == slug]
+        assert len(matching) == 1, (
+            f"Expected exactly one install for slug '{slug}', found {len(matching)}: {matching}"
+        )
+
+        # Table still there (FileMetadata was wiped by isolate_file_policies
+        # between the two test methods — the freeze invariant is verified in Arc 1).
+        db_session.expire_all()
+        tbl = (
+            await db_session.execute(
+                select(Table).where(Table.id == real_tid)
+            )
+        ).scalar_one_or_none()
+        assert tbl is not None, (
+            f"Table {real_tid} was lost on reactivation — owned data must survive"
+        )
+        assert tbl.solution_id == UUID(sol_id), (
+            f"Table.solution_id changed on reactivation: got {tbl.solution_id!r}"
+        )
+
+        # File readable again after reactivation.
+        # Re-write file because isolate_file_policies wiped the metadata row.
         _write_solution_file(e2e_client, headers, sol_id, file_path, file_content)
-        _set_file_policy_with_ref(
+        read_status, read_content = _read_solution_file(
+            e2e_client, headers, sol_id, file_path
+        )
+        assert read_status == 200, (
+            f"File not readable after reactivation: status {read_status}"
+        )
+        assert read_content == file_content, (
+            f"File content mismatch after reactivation: {read_content!r}"
+        )
+
+        # ── Behavior 5: export with data → encrypted tier + $ref preserved ─
+        # Restore the $ref policy (wiped by isolate_file_policies).
+        _set_file_policy_ref(
             e2e_client,
             headers,
             location="solutions",
-            scope=org_id,
+            scope=None,
             prefix="docs",
             ref_name="admin_bypass",
         )
 
-        # ── Step 4: export full + include_data ────────────────────────────
-        password = "sfae-export-pw-test"
-        zip_bytes = _export_solution(e2e_client, headers, sol_id, password)
+        zip_exp = _export_solution(e2e_client, headers, sol_id, EXPORT_PASSWORD)
 
-        # Assert secrets.enc present (file bytes encrypted in confidential tier)
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            names = zf.namelist()
-        assert ".bifrost/secrets.enc" in names, (
-            f"secrets.enc absent from full export; zip contains: {names}"
+        # secrets.enc must be present (file in encrypted tier, NOT plaintext).
+        with zipfile.ZipFile(io.BytesIO(zip_exp)) as zf:
+            exp_names = zf.namelist()
+        assert ".bifrost/secrets.enc" in exp_names, (
+            f"secrets.enc absent from full export — file not in encrypted tier. "
+            f"Zip contains: {exp_names}"
+        )
+        # File bytes must be inside secrets.enc (not as a plaintext member).
+        plaintext_files = [n for n in exp_names if n.startswith("files/")]
+        assert not plaintext_files, (
+            f"File sidecars leaked as plaintext zip members: {plaintext_files}"
         )
 
-        # Assert file content is in the encrypted secrets.enc blob (not plaintext)
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            blob_text = zf.read(".bifrost/secrets.enc").decode()
+        # Decrypt and verify the file is in the encrypted blob.
         from src.services.solutions.secrets_blob import decode_secrets_blob
-        blob = decode_secrets_blob(blob_text, password=password)
-        encrypted_file_paths = [sf.get("path", "") for sf in blob.solution_files]
-        assert any(file_path in p for p in encrypted_file_paths), (
-            f"File {file_path!r} not found in secrets.enc solution_files. "
-            f"Found: {encrypted_file_paths}"
+        with zipfile.ZipFile(io.BytesIO(zip_exp)) as zf:
+            blob_text = zf.read(".bifrost/secrets.enc").decode()
+        blob = decode_secrets_blob(blob_text, password=EXPORT_PASSWORD)
+        encrypted_paths = [sf.get("path", "") for sf in blob.solution_files]
+        assert any(file_path in p for p in encrypted_paths), (
+            f"File {file_path!r} not found in secrets.enc. Found: {encrypted_paths}"
         )
 
-        # Assert $ref is PRESERVED in the policy store (not inlined when stored).
-        # The policy was set via PUT /api/files/policies/docs — verify the DB still
-        # carries {"$ref": "admin_bypass"} (not the inlined rule body).
-        from urllib.parse import quote
+        # $ref PRESERVED in DB: policy GET must still carry {"$ref":"admin_bypass"}.
         docs_encoded = quote("docs", safe="")
         policy_r = e2e_client.get(
             f"/api/files/policies/{docs_encoded}",
             headers=headers,
-            params={"location": "solutions", "scope": org_id},
+            params={"location": "solutions"},
         )
         assert policy_r.status_code == 200, (
             f"GET file policy for docs/ failed: {policy_r.status_code} {policy_r.text}"
         )
-        policy_data = policy_r.json()
-        policy_rules = policy_data.get("policies", {}).get("policies", [])
-        admin_bypass_refs = [r for r in policy_rules if r.get("$ref") == "admin_bypass"]
-        assert admin_bypass_refs, (
-            f"$ref not preserved in policy store after export. "
-            f"Policy rules: {policy_rules}"
+        policy_rules = policy_r.json().get("policies", {}).get("policies", [])
+        ref_rules = [rule for rule in policy_rules if rule.get("$ref") == "admin_bypass"]
+        assert ref_rules, (
+            f"$ref not preserved in policy store. "
+            f"Policy rules after export: {policy_rules}"
         )
 
-        # Assert $ref is PRESERVED in the exported artifact.
-        # File policies are org-scoped DB entities — NOT part of SolutionBundle, so
-        # they do not appear in the zip manifest (.bifrost/*.yaml).  The $ref
-        # preservation is therefore verified at the DB layer via the GET /api/files/policies
-        # call above (admin_bypass_refs asserts the stored JSONB still carries the $ref,
-        # not an inlined rule body).
-        #
-        # Use _manifest_from_zip here to verify the zip is structurally valid and
-        # carries the expected entity sections (tables, and/or workflows), exercising
-        # the round-trip serialisation pipeline that the $ref assertion depends on.
-        manifest = _manifest_from_zip(zip_bytes)
-        assert manifest, (
-            f"Exported zip manifest is empty — expected at least tables section. "
-            f"Zip file list: {names}"
-        )
-        # The solution was deployed with a table — it must round-trip in the manifest.
-        table_entries = manifest.get("tables", {})
-        assert table_entries, (
-            f"Tables missing from exported zip manifest. "
-            f"Manifest keys: {list(manifest.keys())}"
-        )
-        # Each table entry must carry a non-empty name (basic serialisation sanity).
-        assert all(v.get("name") for v in table_entries.values()), (
-            f"One or more table entries in the manifest have no name: {table_entries}"
-        )
-
-        # ── Step 5: install into clean org ────────────────────────────────
-        dst_slug = f"sfae-dst-{uuid.uuid4().hex[:8]}"
-        installed = _install_solution_zip(e2e_client, headers, zip_bytes, dst_slug, password)
-        dst_id = installed["id"]
-
-        # Seed allow-all so admin can read
-        _seed_solutions_policy(e2e_client, headers, org_id=installed.get("organization_id"))
-
-        # File must be readable on the new install
-        dst_status, dst_content = _read_solution_file(e2e_client, headers, dst_id, file_path)
-        assert dst_status == 200, f"installed file not readable: status {dst_status}"
-        assert dst_content == file_content, (
-            f"installed file content mismatch: expected {file_content!r}, got {dst_content!r}"
-        )
-
-        # Table must exist in the installed solution
-        tables_list_r = e2e_client.get("/api/tables", headers=headers)
-        if tables_list_r.status_code == 200:
-            sol_tables = [
-                t for t in tables_list_r.json().get("tables", [])
-                if t.get("solution_id") == dst_id
-            ]
-            assert sol_tables, (
-                f"No tables found in installed solution {dst_id}. "
-                f"Table round-trip may be broken (src table_name={table_name!r})."
-            )
-
-        # admin_bypass rule is global (seeded at startup) — verify it's accessible
-        # from the installed solution's context (proves the clean org can resolve $refs).
-        rule_list_r = e2e_client.get(
-            "/api/policy-rules",
+        # ── Behavior 6a: hard-delete confirm MISMATCH → 4xx, nothing touched ─
+        bad_del = e2e_client.request(
+            "DELETE",
+            f"/api/solutions/{sol_id}",
             headers=headers,
-            params={"domain": "file"},
+            params={"confirm": "wrong-slug-mismatch"},
         )
-        assert rule_list_r.status_code == 200, (
-            f"list policy rules failed: {rule_list_r.status_code} {rule_list_r.text}"
+        assert bad_del.status_code in (400, 422), (
+            f"Expected 4xx on confirm mismatch, got {bad_del.status_code}: {bad_del.text}"
         )
-        rules = rule_list_r.json()
-        admin_bypass_rules = [r for r in rules if r.get("name") == "admin_bypass"]
-        assert admin_bypass_rules, (
-            f"admin_bypass global rule not found in policy rules list. Got: {[r.get('name') for r in rules]}"
-        )
-        rule_body = admin_bypass_rules[0].get("body", {})
-        assert rule_body.get("when", {}).get("user") == "is_platform_admin", (
-            f"admin_bypass rule body unexpected: {rule_body}"
+        # Solution must still exist.
+        still_r = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
+        assert still_r.status_code == 200, (
+            f"Solution was deleted despite confirm mismatch (status {still_r.status_code})"
         )
 
-        # ── Step 6: uninstall ORIGINAL solution ───────────────────────────
-        del_r = e2e_client.delete(f"/api/solutions/{sol_id}", headers=headers)
-        assert del_r.status_code in (200, 204), (
-            f"uninstall failed: {del_r.status_code} {del_r.text}"
+        # ── Behavior 6b: hard-delete CONFIRMED → cascade ──────────────────
+        ok_del = e2e_client.request(
+            "DELETE",
+            f"/api/solutions/{sol_id}",
+            headers=headers,
+            params={"confirm": slug},
+        )
+        assert ok_del.status_code in (200, 204), (
+            f"Hard-delete failed: {ok_del.status_code} {ok_del.text}"
+        )
+        body = ok_del.json()
+        assert body["solution_id"] == sol_id, (
+            f"Hard-delete response must carry solution_id, got: {body}"
         )
 
-        # DETERMINISTIC IN-TXN ASSERTION: restamp_solution_files_metadata runs
-        # INSIDE the uninstall transaction — BEFORE db.delete(sol) + commit.
-        # Because the restamp and the Solution delete are one atomic commit, the
-        # Solution returning 404 (committed delete) PROVES the restamp also committed
-        # (solution_id→NULL, orphaned_at set, organization_id set).
-        # We wait for the Solution to disappear so we know the transaction is durable.
-        _wait_for_orphan_job(e2e_client, headers, sol_id)
-        sol_check_r = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
-        assert sol_check_r.status_code == 404, (
-            f"Solution {sol_id} still exists after uninstall DELETE committed — "
-            f"expected 404, got {sol_check_r.status_code}. Uninstall may not have committed."
+        # Solution row gone.
+        gone_r = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
+        assert gone_r.status_code == 404, (
+            f"Solution still exists after hard-delete: {gone_r.status_code}"
         )
-        # At this point: Solution is gone AND the FileMetadata restamp committed.
-        # The FileMetadata rows now have solution_id=NULL, orphaned_at set,
-        # organization_id=org_id — they are NOT cascade-deleted by the Solution FK.
-        # The async S3 byte-move job moves bytes from _solutions/{sol_id}/ to the
-        # org-scoped S3 key; poll for that to complete below.
 
-        # ASYNC JOB ASSERTION: poll until the file is readable at org scope.
-        # The byte-move is a FastAPI BackgroundTask that runs in-process immediately
-        # after the commit, so it typically completes within a few seconds.
-        # If it never becomes readable, the test FAILS — not silently passes.
-        import time
-
-        org_read_r = None
-        orphan_readable = False
-        for _ in range(40):
-            org_read_r = e2e_client.post(
-                "/api/files/read",
-                headers=headers,
-                json={"location": "solutions", "scope": org_id, "path": file_path, "mode": "cloud"},
-            )
-            if org_read_r.status_code == 200:
-                assert org_read_r.json().get("content") == file_content, (
-                    f"orphaned file content mismatch: {org_read_r.json()}"
+        # ── HARD-DELETE-CASCADE: FileMetadata rows cascaded away ──────────
+        # Poll briefly to let any async S3 sweep complete before the DB assertion.
+        deadline = time.monotonic() + 10.0
+        fm_remaining = None
+        while time.monotonic() < deadline:
+            db_session.expire_all()
+            fm_remaining = (
+                await db_session.execute(
+                    select(FileMetadata).where(
+                        FileMetadata.solution_id == UUID(sol_id)
+                    )
                 )
-                orphan_readable = True
+            ).scalars().all()
+            if not fm_remaining:
                 break
-            time.sleep(0.5)
+            time.sleep(0.25)
 
-        if not orphan_readable:
-            last_status = org_read_r.status_code if org_read_r is not None else "N/A"
-            last_body = org_read_r.text if org_read_r is not None else "N/A"
-            pytest.fail(
-                f"Orphaned file at org scope never became readable within 20s after uninstall. "
-                f"The in-txn restamp committed (Solution is 404), but the async S3 byte-move "
-                f"job did not complete in time. "
-                f"Last org-read status: {last_status} — {last_body}"
+        assert not fm_remaining, (
+            f"FileMetadata rows survived hard-delete — FK cascade did not fire. "
+            f"Remaining: {[str(fm.id) for fm in (fm_remaining or [])]}"
+        )
+
+        # ── HARD-DELETE-CASCADE: Table row cascaded away ──────────────────
+        db_session.expire_all()
+        tbl_gone = (
+            await db_session.execute(
+                select(Table).where(Table.id == real_tid)
             )
+        ).scalar_one_or_none()
+        assert tbl_gone is None, (
+            f"Owned Table {real_tid} survived hard-delete — cascade did not fire"
+        )
