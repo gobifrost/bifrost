@@ -1,14 +1,26 @@
 """Shared helpers for solution-scoped storage declarations."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import ExecutionContext
+from src.core.org_filter import resolve_target_org
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
+
+
+@dataclass(frozen=True)
+class FileTier:
+    name: Literal["solution", "org", "global"]
+    scope: str
+    organization_id: UUID | None
+    solution_id: UUID | None
 
 
 async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution | None:
@@ -49,3 +61,65 @@ async def solution_declares_table_name(
         )
     )
     return result.scalar_one_or_none() is not None
+
+
+async def file_read_tiers(
+    db: AsyncSession,
+    ctx: ExecutionContext,
+    location: str,
+    requested_scope: str | None,
+) -> list[FileTier]:
+    """Return candidate storage tiers for file read/list/exists operations."""
+    if ctx.solution_id is None:
+        org_id = _file_org_id(ctx, location, requested_scope)
+        return [
+            FileTier(
+                "global" if org_id is None else "org",
+                _storage_scope(org_id),
+                org_id,
+                None,
+            )
+        ]
+
+    if location == "workspace":
+        raise ValueError("workspace is not available in solution file context")
+
+    solution_id = UUID(str(ctx.solution_id))
+    solution = await db.get(Solution, solution_id)
+    if solution is None:
+        return []
+
+    tiers = [
+        FileTier(
+            "solution",
+            str(solution_id),
+            solution.organization_id,
+            solution_id,
+        )
+    ]
+    if solution.global_repo_access:
+        if solution.organization_id is not None:
+            tiers.append(
+                FileTier(
+                    "org",
+                    str(solution.organization_id),
+                    solution.organization_id,
+                    None,
+                )
+            )
+        tiers.append(FileTier("global", "global", None, None))
+    return tiers
+
+
+def _file_org_id(
+    ctx: ExecutionContext,
+    location: str,
+    requested_scope: str | None,
+) -> UUID | None:
+    if location == "workspace":
+        return None
+    return resolve_target_org(ctx.user, requested_scope, ctx.org_id)
+
+
+def _storage_scope(org_id: UUID | None) -> str:
+    return str(org_id) if org_id is not None else "global"

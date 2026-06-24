@@ -60,6 +60,7 @@ WATCH_SESSION_TTL_SECONDS = 120
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/files", tags=["Files"])
+_USE_CONTEXT_SOLUTION_ID = object()
 
 
 # =============================================================================
@@ -449,8 +450,13 @@ async def _filter_listed_paths(
     location: str,
     scope: str | None,
     action: str = "list",
+    solution_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
 ) -> list[str]:
-    solution_id = _ctx_solution_id(ctx, location)
+    resolved_solution_id = (
+        _ctx_solution_id(ctx, location)
+        if solution_id is _USE_CONTEXT_SOLUTION_ID
+        else cast(UUID | None, solution_id)
+    )
     allowed_paths = []
     for listed_path in paths:
         policy_path = _relative_list_path(listed_path, location=location, scope=scope)
@@ -460,7 +466,7 @@ async def _filter_listed_paths(
             location=location,
             scope=scope,
             path=policy_path,
-            solution_id=solution_id,
+            solution_id=resolved_solution_id,
         ):
             allowed_paths.append(listed_path)
     return allowed_paths
@@ -853,17 +859,37 @@ async def read_file(
 ) -> FileReadResponse:
     """Read a file from a managed or custom location."""
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        await _require_file_policy(
-            ctx,
-            action="read",
-            location=request.location,
-            scope=effective_scope,
-            path=request.path,
-            solution_id=_ctx_solution_id(ctx, request.location),
-        )
+        from src.services.solution_scope import file_read_tiers
+
+        tiers = await file_read_tiers(db, ctx, request.location, request.scope)
         backend = get_backend(request.mode, db)
-        content = await backend.read(request.path, request.location, scope=effective_scope)
+        content: bytes | None = None
+        had_allowed_tier = False
+        for tier in tiers:
+            if not await _authorize_file_policy(
+                ctx,
+                action="read",
+                location=request.location,
+                scope=tier.scope,
+                path=request.path,
+                solution_id=tier.solution_id,
+            ):
+                continue
+            had_allowed_tier = True
+            try:
+                content = await backend.read(
+                    request.path,
+                    request.location,
+                    scope=tier.scope,
+                )
+                break
+            except FileNotFoundError:
+                continue
+
+        if content is None:
+            if not had_allowed_tier:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            raise FileNotFoundError(f"File not found: {request.path}")
 
         if request.binary:
             return FileReadResponse(content=base64.b64encode(content).decode(), binary=True)
@@ -1021,14 +1047,19 @@ async def list_files_simple(
 ) -> FileListResponse:
     """List files in a directory (simple SDK-focused endpoint)."""
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+        from src.services.solution_scope import file_read_tiers
+
+        tiers = await file_read_tiers(db, ctx, request.location, request.scope)
+        if not tiers:
+            return FileListResponse(files=[])
+        primary_tier = tiers[0]
         directory_allowed = await _authorize_file_policy(
             ctx,
             action="list",
             location=request.location,
-            scope=effective_scope,
+            scope=primary_tier.scope,
             path=request.directory,
-            solution_id=_ctx_solution_id(ctx, request.location),
+            solution_id=primary_tier.solution_id,
         )
         if request.include_metadata and request.mode == "cloud" and request.location == "workspace":
             # Return ETags + last_modified via RepoStorage
@@ -1048,8 +1079,9 @@ async def list_files_simple(
                         ctx,
                         paths=list(s3_metadata.keys()),
                         location=request.location,
-                        scope=effective_scope,
+                        scope=primary_tier.scope,
                         action="list",
+                        solution_id=primary_tier.solution_id,
                     )
                 )
                 s3_metadata = {
@@ -1082,15 +1114,38 @@ async def list_files_simple(
             )
 
         backend = get_backend(request.mode, db)
-        files = await backend.list(request.directory, request.location, scope=effective_scope)
-        files = await _filter_listed_paths(
-            ctx,
-            paths=files,
-            location=request.location,
-            scope=effective_scope,
-            action="list",
-        )
-        if not directory_allowed and not files:
+        files: list[str] = []
+        seen: set[str] = set()
+        any_directory_allowed = directory_allowed
+        for tier in tiers:
+            tier_directory_allowed = await _authorize_file_policy(
+                ctx,
+                action="list",
+                location=request.location,
+                scope=tier.scope,
+                path=request.directory,
+                solution_id=tier.solution_id,
+            )
+            any_directory_allowed = any_directory_allowed or tier_directory_allowed
+            tier_files = await backend.list(
+                request.directory,
+                request.location,
+                scope=tier.scope,
+            )
+            tier_files = await _filter_listed_paths(
+                ctx,
+                paths=sorted(tier_files),
+                location=request.location,
+                scope=tier.scope,
+                action="list",
+                solution_id=tier.solution_id,
+            )
+            for path in tier_files:
+                if path in seen:
+                    continue
+                seen.add(path)
+                files.append(path)
+        if not any_directory_allowed and not files:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return FileListResponse(files=files)
 
@@ -1110,20 +1165,29 @@ async def file_exists(
 ) -> FileExistsResponse:
     """Check if a file exists."""
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        allowed = await _authorize_file_policy(
-            ctx,
-            action="exists",
-            location=request.location,
-            scope=effective_scope,
-            path=request.path,
-            solution_id=_ctx_solution_id(ctx, request.location),
-        )
-        if not allowed:
-            return FileExistsResponse(exists=False)
+        from src.services.solution_scope import file_read_tiers
+
+        tiers = await file_read_tiers(db, ctx, request.location, request.scope)
         backend = get_backend(request.mode, db)
-        exists = await backend.exists(request.path, request.location, scope=effective_scope)
-        return FileExistsResponse(exists=exists)
+        for tier in tiers:
+            allowed = await _authorize_file_policy(
+                ctx,
+                action="exists",
+                location=request.location,
+                scope=tier.scope,
+                path=request.path,
+                solution_id=tier.solution_id,
+            )
+            if not allowed:
+                continue
+            exists = await backend.exists(
+                request.path,
+                request.location,
+                scope=tier.scope,
+            )
+            if exists:
+                return FileExistsResponse(exists=True)
+        return FileExistsResponse(exists=False)
 
     except ValueError as e:
         raise HTTPException(
