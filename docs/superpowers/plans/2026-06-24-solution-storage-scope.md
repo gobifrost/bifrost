@@ -35,8 +35,8 @@
 
 ## Todo Tracker
 
-- [ ] Task 0: Preflight and baseline facts
-- [ ] Task 1: Files SDK appends `?solution=` for every file REST call
+- [x] Task 0: Preflight and baseline facts
+- [x] Task 1: Files SDK appends `?solution=` for every file REST call
 - [ ] Task 2: Server derives solution context for any file location
 - [ ] Task 3: Declare file locations in `.bifrost/files.yaml`
 - [ ] Task 4: Enforce declared-only solution writes for files and tables
@@ -118,7 +118,7 @@ class ManifestFiles(BaseModel):
 **Files:**
 - Read only: plan, spec, git state, relevant router/SDK files
 
-- [ ] **Step 1: Confirm branch/worktree**
+- [x] **Step 1: Confirm branch/worktree**
 
 Run:
 
@@ -133,7 +133,7 @@ Expected:
 - worktree has no unrelated edits before starting
 - `HEAD` is on `codex/files-sdk-policies`
 
-- [ ] **Step 2: Confirm known bad seams**
+- [x] **Step 2: Confirm known bad seams**
 
 Run:
 
@@ -148,7 +148,7 @@ Expected:
 - tables SDK has `_scope_query`; files SDK does not before Task 1.
 - file export/import still has in-memory/base64 file payload paths before Task 9.
 
-- [ ] **Step 3: Mark Task 0 complete**
+- [x] **Step 3: Mark Task 0 complete**
 
 No commit unless this task discovers and documents a plan correction.
 
@@ -158,7 +158,7 @@ No commit unless this task discovers and documents a plan correction.
 - Modify: `api/bifrost/files.py`
 - Test: `api/tests/unit/test_files_sdk_solution_scope.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create `api/tests/unit/test_files_sdk_solution_scope.py` with tests that patch `get_client()` and assert every SDK method uses a URL containing `solution=<id>` when `ExecutionContext.solution_id` is set, and no solution query otherwise.
 
@@ -208,7 +208,7 @@ async def test_file_sdk_appends_solution_query(method_name, args, kwargs, monkey
     assert "solution=11111111-1111-1111-1111-111111111111" in captured_urls[0]
 ```
 
-- [ ] **Step 2: Run failing test**
+- [x] **Step 2: Run failing test**
 
 Run:
 
@@ -218,7 +218,7 @@ Run:
 
 Expected: FAIL because URLs do not include `?solution=`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Mirror `api/bifrost/tables.py::_scope_query`. Add a helper in `api/bifrost/files.py`:
 
@@ -237,7 +237,7 @@ def _solution_query() -> str:
 
 Append `_solution_query()` to every file endpoint URL.
 
-- [ ] **Step 4: Run passing test**
+- [x] **Step 4: Run passing test**
 
 Run:
 
@@ -247,7 +247,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/bifrost/files.py api/tests/unit/test_files_sdk_solution_scope.py
