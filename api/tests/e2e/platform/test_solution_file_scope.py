@@ -16,6 +16,8 @@ from uuid import UUID
 
 import pytest
 
+from tests.e2e.file_policy_helpers import grant_file_policy
+
 pytestmark = pytest.mark.e2e
 
 
@@ -221,6 +223,141 @@ def test_presign_put_cannot_plant_in_foreign_scope(e2e_client, platform_admin):
         assert sid in resolved_path, (
             f"signed PUT did not target caller's install: path={resolved_path}"
         )
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_context_scopes_freeform_location_metadata_and_s3_key(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    """A solution context scopes any file location by install id, not only
+    location=solutions.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    org_id_str = org1["id"]
+    sol = _create_solution(
+        e2e_client,
+        headers,
+        f"file-scope-reports-{uuid.uuid4().hex[:8]}",
+        org_id=org_id_str,
+    )
+    sid = sol["id"]
+    actual_org_id_str = sol.get("organization_id")
+    assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+    grant_file_policy(
+        e2e_client,
+        headers,
+        location="reports",
+        scope=actual_org_id_str,
+        prefix="",
+        allow_all=True,
+    )
+
+    test_path = f"solution-reports/{uuid.uuid4().hex}.txt"
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid}",
+        headers=headers,
+        json={
+            "location": "reports",
+            "path": test_path,
+            "content": "quarterly close",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 204, f"write failed: {write_r.status_code} {write_r.text}"
+
+    read_r = e2e_client.post(
+        f"/api/files/read?solution={sid}",
+        headers=headers,
+        json={"location": "reports", "path": test_path, "mode": "cloud"},
+    )
+    assert read_r.status_code == 200, f"read failed: {read_r.status_code} {read_r.text}"
+    assert read_r.json()["content"] == "quarterly close"
+
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(sid),
+            FileMetadata.location == "reports",
+            FileMetadata.path == test_path,
+        )
+    )
+    row = result.scalar_one_or_none()
+    assert row is not None, "FileMetadata row not found for solution-scoped reports write"
+    assert row.solution_id == UUID(sid)
+    assert row.organization_id == UUID(actual_org_id_str)
+    assert row.organization_id != UUID(sid)
+    assert row.s3_key == f"reports/{sid}/{test_path}"
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_context_overrides_body_scope_for_non_solutions_location(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    """A conflicting request-body scope cannot move a solution-context write
+    out of the install's storage scope.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    org_id_str = org1["id"]
+    sol = _create_solution(
+        e2e_client,
+        headers,
+        f"file-scope-conflict-{uuid.uuid4().hex[:8]}",
+        org_id=org_id_str,
+    )
+    sid = sol["id"]
+    actual_org_id_str = sol.get("organization_id")
+    assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+    grant_file_policy(
+        e2e_client,
+        headers,
+        location="reports",
+        scope=actual_org_id_str,
+        prefix="",
+        allow_all=True,
+    )
+
+    conflicting_scope = str(uuid.uuid4())
+    test_path = f"solution-scope-override/{uuid.uuid4().hex}.txt"
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid}",
+        headers=headers,
+        json={
+            "location": "reports",
+            "scope": conflicting_scope,
+            "path": test_path,
+            "content": "body scope ignored",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 204, f"write failed: {write_r.status_code} {write_r.text}"
+
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(sid),
+            FileMetadata.location == "reports",
+            FileMetadata.path == test_path,
+        )
+    )
+    row = result.scalar_one_or_none()
+    assert row is not None, "FileMetadata row not found for body-scope override write"
+    assert row.s3_key == f"reports/{sid}/{test_path}"
+    assert conflicting_scope not in row.s3_key
+    assert row.organization_id == UUID(actual_org_id_str)
 
 
 @pytest.mark.e2e

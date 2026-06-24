@@ -253,7 +253,7 @@ def _file_org_id(ctx: Context, location: str, requested_scope: str | None) -> UU
     `"global"` → None, a UUID → that org). `workspace` is the one unscoped
     location (shared codebase), so it always resolves to None/global.
 
-    NOTE: for `solutions` location with an active solution context, use
+    NOTE: for any location with an active solution context, use
     `_resolve_effective_scope` instead — it returns the install UUID as the
     storage scope, which is NOT an org UUID.
 
@@ -279,26 +279,25 @@ def _resolve_effective_scope(
     evaluation, with solution-context taking priority over every other signal
     (including a superuser's explicit `requested_scope`).
 
-    - ``solutions`` location + ``ctx.solution_id`` → ``str(install_id)``
+    - ``ctx.solution_id`` → ``str(install_id)``
       (H6: ctx.solution_id wins over requested_scope, even for superusers).
     - All other cases → ``_storage_scope(_file_org_id(ctx, location, requested_scope))``.
     """
-    if location == "solutions" and ctx.solution_id is not None:
-        return ctx.solution_id
+    if ctx.solution_id is not None:
+        return str(ctx.solution_id)
     return _storage_scope(_file_org_id(ctx, location, requested_scope))
 
 
 def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
-    """Return the install UUID from context when operating on the ``solutions``
-    location; None otherwise.  Used to forward solution_id to policy and
-    metadata helpers so the solution-tier policy cascade (Task 3) and the C2
-    metadata column are both correct."""
-    if location == "solutions" and ctx.solution_id is not None:
-        try:
-            return UUID(ctx.solution_id)
-        except (ValueError, AttributeError):
-            return None
-    return None
+    """Return the install UUID from context when present. Used to forward
+    solution_id to policy and metadata helpers so the solution-tier policy
+    cascade (Task 3) and the C2 metadata column are both correct."""
+    if ctx.solution_id is None:
+        return None
+    try:
+        return UUID(str(ctx.solution_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 async def _install_org_id(ctx: Context, solution_id: UUID | None) -> UUID | None:
@@ -345,8 +344,8 @@ async def _authorize_file_policy(
     another org's tree here. `solution_id` is forwarded to the policy service
     so Task 3's own-solution cascade can resolve correctly.
 
-    For `solutions` location, `scope` is the install UUID string (not an org
-    UUID), so we derive `organization_id` from `ctx.org_id` and forward
+    For solution-context requests, `scope` is the install UUID string (not an
+    org UUID), so we derive `organization_id` from the install and forward
     `solution_id` separately rather than coercing the install UUID into org."""
     from src.services.file_policy_service import FilePolicyService
 
@@ -355,7 +354,7 @@ async def _authorize_file_policy(
     if location != "workspace":
         if scope is None:
             return False
-        if location == "solutions" and resolved_solution_id is not None:
+        if resolved_solution_id is not None:
             # scope == str(install_id) — look up the install's org from DB so
             # the policy check uses the install's scope (not the caller's JWT
             # org, which may be None for a platform admin making test calls).
