@@ -21,7 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, File, HTTPException, Response, UploadFile, status
 from fastapi import Form as FastapiForm
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
@@ -765,9 +765,9 @@ async def get_solution_deletion_summary(
 
     async def _count(model: type) -> int:
         result = await ctx.db.execute(
-            select(model.id).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
+            select(func.count()).select_from(model).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
         )
-        return len(result.scalars().all())
+        return result.scalar_one()
 
     file_entries = await enumerate_solution_files(ctx.db, solution_id)
 
@@ -854,13 +854,10 @@ async def delete_solution(
             # Count + collect app ids BEFORE the cascade delete — for the summary
             # and the S3 app-dist sweep (the rows are gone after the delete).
             async def _count(model: type) -> int:
-                return len(
-                    (
-                        await ctx.db.execute(
-                            select(model.id).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
-                        )
-                    ).scalars().all()
+                result = await ctx.db.execute(
+                    select(func.count()).select_from(model).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
                 )
+                return result.scalar_one()
 
             app_ids = list(
                 (
