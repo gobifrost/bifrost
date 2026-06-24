@@ -1583,6 +1583,12 @@ def deploy_cmd(
     default=False,
     help="Overwrite existing table data when the zip carries conflicting rows.",
 )
+@click.option(
+    "--reactivate",
+    is_flag=True,
+    default=False,
+    help="Reactivate an existing inactive (uninstalled) install of the same slug rather than refusing.",
+)
 def install_cmd(
     zip_path: str,
     org: str | None,
@@ -1591,6 +1597,7 @@ def install_cmd(
     password: str | None,
     replace_secrets: bool,
     replace_data: bool,
+    reactivate: bool,
 ) -> None:
     """POST a Solution workspace zip to ``/api/solutions/install``.
 
@@ -1606,6 +1613,11 @@ def install_cmd(
     blob; supply ``--password`` to decrypt it.  On a 409 collision the server
     names the conflicting keys — re-run with ``--replace-secrets`` to overwrite.
     A wrong password returns 422.
+
+    If the slug already has an INACTIVE (uninstalled) install in the target org,
+    the server returns 409 with ``reason=inactive_install_exists``.  Pass
+    ``--reactivate`` to flip that install back to active and redeploy the bundle
+    atop the retained frozen data.
     """
     config_values: dict[str, str] = {}
     for pair in set_values:
@@ -1632,19 +1644,34 @@ def install_cmd(
             form["replace_secrets"] = "true"
         if replace_data:
             form["replace_data"] = "true"
+        url = "/api/solutions/install"
+        if reactivate:
+            url += "?reactivate=true"
         resp = await client.post(
-            "/api/solutions/install",
+            url,
             files={"file": (pathlib.Path(zip_path).name, zip_bytes, "application/zip")},
             data=form,
         )
         if resp.status_code == 409:
-            detail = resp.json().get("detail", resp.text)
-            click.echo(f"Install collision: {detail}", err=True)
-            click.echo(
-                "Re-run with --replace-secrets to overwrite conflicting config values, "
-                "or --replace-data for table data.",
-                err=True,
-            )
+            detail = resp.json().get("detail", {})
+            if isinstance(detail, dict) and detail.get("reason") == "inactive_install_exists":
+                click.echo(
+                    f"An inactive install of '{detail.get('slug')}' already exists "
+                    f"(id={detail.get('solution_id')}).",
+                    err=True,
+                )
+                click.echo(
+                    "Re-run with --reactivate to reactivate it, "
+                    "or delete the existing install first.",
+                    err=True,
+                )
+            else:
+                click.echo(f"Install collision: {detail}", err=True)
+                click.echo(
+                    "Re-run with --replace-secrets to overwrite conflicting config values, "
+                    "or --replace-data for table data.",
+                    err=True,
+                )
             return 1
         if resp.status_code == 422:
             detail = resp.json().get("detail", resp.text)

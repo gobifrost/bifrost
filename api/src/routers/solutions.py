@@ -1563,6 +1563,7 @@ async def install_solution(
     replace_secrets: Annotated[bool, FastapiForm()] = False,
     replace_data: Annotated[bool, FastapiForm()] = False,
     force: bool = False,
+    reactivate: bool = False,
 ) -> SolutionDTO:
     """Atomically install a Solution from a workspace zip.
 
@@ -1593,6 +1594,7 @@ async def install_solution(
         BadExportPassword,
         ContentCollision,
         GitConnectedInstallError,
+        InactiveInstallExists,
         UnmetDependency,
         install_zip,
     )
@@ -1632,7 +1634,21 @@ async def install_solution(
             password=password,
             replace_secrets=replace_secrets,
             replace_data=replace_data,
+            reactivate=reactivate,
         )
+    except InactiveInstallExists as exc:
+        # An inactive install of this slug already exists in the target org.
+        # Return a structured 409 so the UI/CLI can prompt the user to either
+        # reactivate (pass ?reactivate=true) or hard-delete the install first.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "inactive_install_exists",
+                "solution_id": str(exc.solution_id),
+                "slug": exc.slug,
+                "message": str(exc),
+            },
+        ) from exc
     except UnmetDependency as exc:
         # A bundle imports a modules.X that isn't shipped — refuse before
         # anything lands, naming the missing module.

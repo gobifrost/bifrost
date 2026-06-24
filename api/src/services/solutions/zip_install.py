@@ -104,6 +104,25 @@ class ContentCollision(ValueError):
         )
 
 
+class InactiveInstallExists(Exception):
+    """A zip-install targeted a slug that matches an INACTIVE (uninstalled) install.
+
+    Duplicate creation is refused while the inactive install exists — the caller
+    must either reactivate the existing install (pass ``reactivate=True``) or
+    hard-delete it first for a clean install.  Carries the install's id and slug
+    so the endpoint can surface a structured 409 prompt to the UI/CLI.
+    """
+
+    def __init__(self, solution_id: UUID, slug: str) -> None:
+        self.solution_id = solution_id
+        self.slug = slug
+        super().__init__(
+            f"An inactive install of '{slug}' already exists (id={solution_id}). "
+            "Pass reactivate=true to reactivate it, or delete the existing install first."
+        )
+
+
+
 @dataclass
 class PreviewResult:
     """What a zip would create — parse-only, nothing persisted."""
@@ -352,7 +371,12 @@ async def find_install(
 
 
 async def _resolve_or_create_solution(
-    db: AsyncSession, *, slug: str, name: str, organization_id: UUID | None
+    db: AsyncSession,
+    *,
+    slug: str,
+    name: str,
+    organization_id: UUID | None,
+    reactivate: bool = False,
 ) -> Solution:
     """Find the install for ``(slug, organization_id)`` or create a fresh one.
 
@@ -360,9 +384,21 @@ async def _resolve_or_create_solution(
     ``_resolve_target_install``, which also guards cross-org ambiguity): each
     org's install of a slug is independent (criterion 9), so we match within the
     requested scope only and create when none exists.
+
+    Inactive-install guard: when an INACTIVE install is found and ``reactivate``
+    is False, raises ``InactiveInstallExists`` so the caller can surface a 409
+    prompt.  When ``reactivate`` is True, the existing install is flipped back to
+    ``"active"`` and returned — the normal deploy will upsert entities atop the
+    retained frozen rows (non-destructive; no new install row is created).
     """
     existing = await find_install(db, slug=slug, organization_id=organization_id)
     if existing is not None:
+        if existing.status == "inactive":
+            if not reactivate:
+                raise InactiveInstallExists(existing.id, existing.slug)
+            # Reactivate: flip status back to active and let the deploy proceed.
+            existing.status = "active"
+            await db.flush()
         return existing
 
     row = Solution(slug=slug, name=name, organization_id=organization_id)
@@ -382,6 +418,7 @@ async def install_zip(
     password: str | None = None,
     replace_secrets: bool = False,
     replace_data: bool = False,
+    reactivate: bool = False,
 ) -> Solution:
     """Atomically install a Solution zip: deploy the bundle, then apply config
     VALUES — all under the per-install write lock.
@@ -413,7 +450,11 @@ async def install_zip(
             )
 
         solution = await _resolve_or_create_solution(
-            db, slug=preview.slug, name=preview.name, organization_id=organization_id
+            db,
+            slug=preview.slug,
+            name=preview.name,
+            organization_id=organization_id,
+            reactivate=reactivate,
         )
 
         # One-writer invariant: a git-connected install is written ONLY by
