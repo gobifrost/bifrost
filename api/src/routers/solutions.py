@@ -720,7 +720,6 @@ async def update_solution(
 )
 async def delete_solution(
     solution_id: UUID, ctx: Context, user: CurrentSuperuser,
-    background_tasks: BackgroundTasks,
 ) -> SolutionDeleteSummary:
     """Delete an install non-destructively for customer data.
 
@@ -956,16 +955,23 @@ async def delete_solution(
                     str(sol_org_id) if sol_org_id is not None else None
                 )
 
-            # Enqueue the S3-move job for orphaned files — after commit so the
-            # job row is visible to the poll endpoint immediately.  The metadata
-            # re-stamp (solution_id → NULL) already happened in-txn above; the
-            # job only needs to move bytes from the install-scoped S3 key to the
-            # org-scoped key.  captured_file_ids were snapshotted before the
-            # restamp so the worker can query by ID regardless of solution_id state.
+            # Move orphaned files' bytes to the org-scoped S3 key BEFORE the
+            # S3 sweep.  The sweep deletes everything under _solutions/{id}/;
+            # running it before the move would destroy the bytes before they
+            # can be copied to the org namespace.
+            #
+            # The SolutionFileJob row is created for observability (poll endpoint)
+            # and updated inline once the move completes.  No BackgroundTask is
+            # needed — the sweep already runs synchronously in this handler.
+            #
             # Global solutions (org_id is None) have no target org; their metadata
             # rows were already deleted above, so captured_file_ids is empty and
             # this branch is a no-op.
             if captured_file_ids and sol_org_id is not None:
+                logger.info(
+                    "Orphan file move: %d file(s) for solution %s → org %s",
+                    len(captured_file_ids), solution_id, sol_org_id,
+                )
                 file_job = SolutionFileJob(
                     install_id=solution_id,
                     origin_solution_id=solution_id,
@@ -976,15 +982,42 @@ async def delete_solution(
                 ctx.db.add(file_job)
                 await ctx.db.commit()
                 await ctx.db.refresh(file_job)
-                background_tasks.add_task(
-                    _run_file_job,
-                    file_job.id,
-                    "orphan",
-                    solution_id,
-                    sol_org_id,
-                    sol_slug,
-                    captured_file_ids,
-                )
+                file_job_id = file_job.id
+
+                # Move bytes inline — orphan_solution_files_by_ids reads from the
+                # install-scoped S3 key, copies to the org-scoped key, deletes the
+                # old key, and updates the FileMetadata.s3_key column.  This must
+                # finish before the sweep deletes the remaining solution S3 keys.
+                from src.core.database import get_db_context
+                from src.services.solution_files import orphan_solution_files_by_ids
+
+                try:
+                    async with get_db_context() as move_db:
+                        moved = await orphan_solution_files_by_ids(
+                            move_db,
+                            solution_id,
+                            sol_org_id,
+                            sol_slug,
+                            captured_file_ids,
+                        )
+                    logger.info(
+                        "Orphan file move succeeded: %d file(s) moved for solution %s",
+                        moved, solution_id,
+                    )
+                    async with get_db_context() as status_db:
+                        job_row = await status_db.get(SolutionFileJob, file_job_id)
+                        if job_row is not None:
+                            job_row.status = "succeeded"
+                            job_row.result = {"files_orphaned": moved}
+                except Exception:  # noqa: BLE001 — capture any failure onto the job
+                    logger.exception(
+                        "Inline orphan file move failed for solution %s", solution_id
+                    )
+                    async with get_db_context() as status_db:
+                        job_row = await status_db.get(SolutionFileJob, file_job_id)
+                        if job_row is not None:
+                            job_row.status = "failed"
+                            job_row.error = "Inline file move failed; see server logs."
 
             # S3 sweep only after the DB is durable (mirrors deploy's DB-then-S3).
             storage = SolutionStorage(solution_id)

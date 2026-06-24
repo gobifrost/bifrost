@@ -327,9 +327,13 @@ class TestSolutionFilesFullArc:
     def test_export_install_orphan(self, e2e_client, platform_admin):
         """Steps 4–6: export with $ref preserved, install into clean org, uninstall + orphan."""
         # This test depends on test_deploy_and_access having run first.
-        assert _STATE, (
-            "test_export_install_orphan requires test_deploy_and_access to run first"
-        )
+        # If pytest re-orders (e.g. randomisation), skip with a clear message rather
+        # than crashing on a missing key.
+        if not _STATE:
+            pytest.skip(
+                "test_export_install_orphan requires test_deploy_and_access to run first; "
+                "either run the full class or fix test ordering."
+            )
 
         headers = platform_admin.headers
         sol_id = _STATE["sol_id"]
@@ -397,6 +401,32 @@ class TestSolutionFilesFullArc:
             f"Policy rules: {policy_rules}"
         )
 
+        # Assert $ref is PRESERVED in the exported artifact.
+        # File policies are org-scoped DB entities — NOT part of SolutionBundle, so
+        # they do not appear in the zip manifest (.bifrost/*.yaml).  The $ref
+        # preservation is therefore verified at the DB layer via the GET /api/files/policies
+        # call above (admin_bypass_refs asserts the stored JSONB still carries the $ref,
+        # not an inlined rule body).
+        #
+        # Use _manifest_from_zip here to verify the zip is structurally valid and
+        # carries the expected entity sections (tables, and/or workflows), exercising
+        # the round-trip serialisation pipeline that the $ref assertion depends on.
+        manifest = _manifest_from_zip(zip_bytes)
+        assert manifest, (
+            f"Exported zip manifest is empty — expected at least tables section. "
+            f"Zip file list: {names}"
+        )
+        # The solution was deployed with a table — it must round-trip in the manifest.
+        table_entries = manifest.get("tables", {})
+        assert table_entries, (
+            f"Tables missing from exported zip manifest. "
+            f"Manifest keys: {list(manifest.keys())}"
+        )
+        # Each table entry must carry a non-empty name (basic serialisation sanity).
+        assert all(v.get("name") for v in table_entries.values()), (
+            f"One or more table entries in the manifest have no name: {table_entries}"
+        )
+
         # ── Step 5: install into clean org ────────────────────────────────
         dst_slug = f"sfae-dst-{uuid.uuid4().hex[:8]}"
         installed = _install_solution_zip(e2e_client, headers, zip_bytes, dst_slug, password)
@@ -450,34 +480,52 @@ class TestSolutionFilesFullArc:
             f"uninstall failed: {del_r.status_code} {del_r.text}"
         )
 
-        # Poll until the solution is gone (the orphan-job enqueue is async)
+        # DETERMINISTIC IN-TXN ASSERTION: restamp_solution_files_metadata runs
+        # INSIDE the uninstall transaction — BEFORE db.delete(sol) + commit.
+        # Because the restamp and the Solution delete are one atomic commit, the
+        # Solution returning 404 (committed delete) PROVES the restamp also committed
+        # (solution_id→NULL, orphaned_at set, organization_id set).
+        # We wait for the Solution to disappear so we know the transaction is durable.
         _wait_for_orphan_job(e2e_client, headers, sol_id)
+        sol_check_r = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
+        assert sol_check_r.status_code == 404, (
+            f"Solution {sol_id} still exists after uninstall DELETE committed — "
+            f"expected 404, got {sol_check_r.status_code}. Uninstall may not have committed."
+        )
+        # At this point: Solution is gone AND the FileMetadata restamp committed.
+        # The FileMetadata rows now have solution_id=NULL, orphaned_at set,
+        # organization_id=org_id — they are NOT cascade-deleted by the Solution FK.
+        # The async S3 byte-move job moves bytes from _solutions/{sol_id}/ to the
+        # org-scoped S3 key; poll for that to complete below.
 
-        # The file must SURVIVE (orphaned) — readable at org scope
-        # The worker moves it from _solutions/{sol_id}/ to _repo/ under the org's namespace.
-        # Use the org-scoped read endpoint (no ?solution= param) to verify.
+        # ASYNC JOB ASSERTION: poll until the file is readable at org scope.
+        # The byte-move is a FastAPI BackgroundTask that runs in-process immediately
+        # after the commit, so it typically completes within a few seconds.
+        # If it never becomes readable, the test FAILS — not silently passes.
         import time
-        orphan_status = None
-        for _ in range(20):
-            orphan_status, orphan_content = _read_solution_file(
-                e2e_client, headers, sol_id, file_path
-            )
-            # Once orphaned, reads with the old sol_id context will 404 (no such solution).
-            # The org-scoped read should find it:
+
+        org_read_r = None
+        orphan_readable = False
+        for _ in range(40):
             org_read_r = e2e_client.post(
                 "/api/files/read",
                 headers=headers,
-                params={"scope": org_id},
-                json={"location": "solutions", "path": file_path, "mode": "cloud"},
+                json={"location": "solutions", "scope": org_id, "path": file_path, "mode": "cloud"},
             )
             if org_read_r.status_code == 200:
                 assert org_read_r.json().get("content") == file_content, (
                     f"orphaned file content mismatch: {org_read_r.json()}"
                 )
+                orphan_readable = True
                 break
             time.sleep(0.5)
-        else:
-            # If the orphan-move job hasn't run yet, the file may still be at the
-            # solution-scoped path. Accept either 200 or 404 (the solution is gone,
-            # so 404 is also valid — the important thing is it wasn't wiped).
-            pass
+
+        if not orphan_readable:
+            last_status = org_read_r.status_code if org_read_r is not None else "N/A"
+            last_body = org_read_r.text if org_read_r is not None else "N/A"
+            pytest.fail(
+                f"Orphaned file at org scope never became readable within 20s after uninstall. "
+                f"The in-txn restamp committed (Solution is 404), but the async S3 byte-move "
+                f"job did not complete in time. "
+                f"Last org-read status: {last_status} — {last_body}"
+            )
