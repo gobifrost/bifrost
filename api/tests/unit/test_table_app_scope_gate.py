@@ -15,7 +15,7 @@ from src.models.orm.applications import Application
 from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
-from src.routers.tables import _resolve_solution_table_by_name
+from src.services.solution_scope import resolve_solution_table_by_name
 
 pytestmark = pytest.mark.e2e
 
@@ -45,7 +45,11 @@ def _ctx(db, *, app_id, is_superuser) -> Any:
     # ?solution= arm (F2 chokepoint) reads ctx.solution_id first.
     return cast(Any, SimpleNamespace(
         db=db, app_id=str(app_id), solution_id=None,
-        user=SimpleNamespace(is_superuser=is_superuser),
+        user=SimpleNamespace(
+            user_id=uuid4(),
+            is_superuser=is_superuser,
+            is_external=False,
+        ),
     ))
 
 
@@ -63,7 +67,7 @@ async def test_foreign_org_app_id_does_not_resolve_other_orgs_table(db_session):
 
     # Caller is a NON-superuser scoped to org A, but supplies org B's app id.
     ctx = _ctx(db, app_id=app_b.id, is_superuser=False)
-    got = await _resolve_solution_table_by_name(ctx, name, target_org_id=org_a.id)
+    got = await resolve_solution_table_by_name(db, ctx, name, target_org_id=org_a.id)
     assert got is None, "cross-tenant table resolved via a foreign app_id header"
 
 
@@ -78,7 +82,7 @@ async def test_own_org_app_id_resolves_its_table(db_session):
     app_b, table_b = await _install_with_app_and_table(db, org_b.id, name)
 
     ctx = _ctx(db, app_id=app_b.id, is_superuser=False)
-    got = await _resolve_solution_table_by_name(ctx, name, target_org_id=org_b.id)
+    got = await resolve_solution_table_by_name(db, ctx, name, target_org_id=org_b.id)
     assert got is not None and got.id == table_b.id
 
 
@@ -92,5 +96,5 @@ async def test_global_install_table_resolves_for_any_org(db_session):
     app_g, table_g = await _install_with_app_and_table(db, None, name)  # global install
 
     ctx = _ctx(db, app_id=app_g.id, is_superuser=False)
-    got = await _resolve_solution_table_by_name(ctx, name, target_org_id=org_a.id)
+    got = await resolve_solution_table_by_name(db, ctx, name, target_org_id=org_a.id)
     assert got is not None and got.id == table_g.id

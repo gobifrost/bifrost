@@ -58,7 +58,7 @@ from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Document, Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.services.solution_scope import (
-    _resolve_solution_table_by_name,
+    resolve_solution_table_by_name,
     solution_context_id,
 )
 from src.services.table_policy_loader import load_resolved_table_policies
@@ -101,15 +101,6 @@ def _resolve_attribution(
     created_by = body_created_by or caller
     updated_by = body_updated_by or body_created_by or caller
     return (created_by, updated_by)
-
-
-def _context_solution_uuid(ctx: Context) -> UUID | None:
-    if not ctx.solution_id:
-        return None
-    try:
-        return UUID(ctx.solution_id)
-    except ValueError:
-        return None
 
 
 def _row_from_doc(doc: Document) -> dict[str, Any]:
@@ -584,8 +575,8 @@ async def get_table_or_404(
 
     Install-scoped name resolution (a Solution app via ``X-Bifrost-App`` OR a
     solution workflow via ``ctx.solution_id``) is handled in
-    ``_resolve_solution_table_by_name`` below — own-first, then the org/_repo/
-    cascade. Gated by the org check.
+    ``resolve_solution_table_by_name`` — own-first, then the org/_repo/ cascade.
+    Gated by the org check.
     """
     target_org_id = _resolve_target_org_safe(ctx, scope)
     repo = TableRepository(
@@ -607,7 +598,7 @@ async def get_table_or_404(
             f"table identifier {log_safe(name_or_id)!r} is not a UUID, "
             "falling back to name lookup"
         )
-    solution_id = _context_solution_uuid(ctx)
+    solution_id = await solution_context_id(ctx.db, ctx)
     if table is not None and solution_id is not None and table.solution_id != solution_id:
         table = None
 
@@ -620,7 +611,7 @@ async def get_table_or_404(
         # The lookup is GATED to the caller's org scope (Codex #16): the
         # X-Bifrost-App header is client-supplied, so it must NOT let a caller
         # reach a table in an org they can't see by passing a foreign app id.
-        install_table = await _resolve_solution_table_by_name(
+        install_table = await resolve_solution_table_by_name(
             ctx.db, ctx, name_or_id, target_org_id
         )
         if install_table is not None:

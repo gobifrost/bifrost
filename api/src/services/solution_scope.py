@@ -95,7 +95,7 @@ async def solution_context_id(
     ).scalar_one_or_none()
 
 
-async def _resolve_solution_table_by_name(
+async def resolve_solution_table_by_name(
     db: AsyncSession,
     ctx: ExecutionContext,
     name: str,

@@ -232,6 +232,68 @@ async def test_solution_context_missing_table_name_404s_without_auto_create(
 
 
 @pytest.mark.asyncio
+async def test_sdk_table_create_route_rejects_solution_context_without_repo_table(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"sdk-create-solution-{uuid.uuid4().hex[:8]}",
+        org_id=org1["id"],
+        global_repo_access=True,
+    )
+    solution_id = solution["id"]
+    table_name = f"sdk_blocked_{uuid.uuid4().hex[:8]}"
+
+    response = e2e_client.post(
+        f"/api/sdk/tables/create?solution={solution_id}",
+        headers=headers,
+        json={
+            "name": table_name,
+            "scope": org1["id"],
+            "table_schema": {"columns": [{"name": "label"}]},
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert await _repo_table_by_name(db_session, table_name) is None
+
+
+def test_sdk_table_create_route_ignores_solution_table_name_collision(
+    e2e_client,
+    platform_admin,
+    org1,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"sdk-create-collision-{uuid.uuid4().hex[:8]}",
+        org_id=org1["id"],
+    )
+    solution_id = solution["id"]
+    table_name = f"sdk_collision_{uuid.uuid4().hex[:8]}"
+    _deploy_table(e2e_client, headers, solution_id, table_name)
+
+    response = e2e_client.post(
+        "/api/sdk/tables/create",
+        headers=headers,
+        json={
+            "name": table_name,
+            "scope": org1["id"],
+            "table_schema": {"columns": [{"name": "label"}]},
+        },
+    )
+
+    assert response.status_code in (200, 201), response.text
+    assert response.json()["name"] == table_name
+
+
+@pytest.mark.asyncio
 async def test_open_solution_cannot_write_to_org_or_global_fallback_table(
     e2e_client,
     platform_admin,
