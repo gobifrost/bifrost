@@ -344,6 +344,7 @@ async def _authorize_file_policy(
     path: str,
     content_type: str | None = None,
     solution_id: UUID | None = None,
+    organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
 ) -> bool:
     """Evaluate file policy access. `scope` is the storage-scope string the
     caller already derived via `_resolve_effective_scope` (a UUID string,
@@ -356,21 +357,23 @@ async def _authorize_file_policy(
     `solution_id` separately rather than coercing the install UUID into org."""
     from src.services.file_policy_service import FilePolicyService
 
-    organization_id: UUID | None = None
+    policy_organization_id: UUID | None = None
     resolved_solution_id = solution_id
-    if location != "workspace":
+    if organization_id is not _USE_CONTEXT_SOLUTION_ID:
+        policy_organization_id = cast(UUID | None, organization_id)
+    elif location != "workspace":
         if scope is None:
             return False
         if resolved_solution_id is not None:
             # scope == str(install_id) — look up the install's org from DB so
             # the policy check uses the install's scope (not the caller's JWT
             # org, which may be None for a platform admin making test calls).
-            organization_id = await _install_org_id(ctx, resolved_solution_id)
+            policy_organization_id = await _install_org_id(ctx, resolved_solution_id)
         elif scope == "global":
-            organization_id = None
+            policy_organization_id = None
         else:
             try:
-                organization_id = UUID(scope)
+                policy_organization_id = UUID(scope)
             except ValueError:
                 return False
 
@@ -383,7 +386,7 @@ async def _authorize_file_policy(
     service = FilePolicyService(ctx.db)
     return await service.is_allowed(
         cast(FileAction, policy_action),
-        organization_id=organization_id,
+        organization_id=policy_organization_id,
         location=location,
         path=path,
         user=ctx.user,
@@ -400,6 +403,7 @@ async def _require_file_policy(
     path: str,
     content_type: str | None = None,
     solution_id: UUID | None = None,
+    organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
 ) -> None:
     allowed = await _authorize_file_policy(
         ctx,
@@ -409,6 +413,7 @@ async def _require_file_policy(
         path=path,
         content_type=content_type,
         solution_id=solution_id,
+        organization_id=organization_id,
     )
     if not allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
@@ -458,6 +463,7 @@ async def _filter_listed_paths(
     scope: str | None,
     action: str = "list",
     solution_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
+    organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
 ) -> list[str]:
     resolved_solution_id = (
         _ctx_solution_id(ctx, location)
@@ -474,6 +480,7 @@ async def _filter_listed_paths(
             scope=scope,
             path=policy_path,
             solution_id=resolved_solution_id,
+            organization_id=organization_id,
         ):
             allowed_paths.append(listed_path)
     return allowed_paths
@@ -883,6 +890,7 @@ async def read_file(
                 scope=tier.scope,
                 path=request.path,
                 solution_id=tier.solution_id,
+                organization_id=tier.organization_id,
             ):
                 continue
             had_allowed_tier = True
@@ -1073,6 +1081,7 @@ async def list_files_simple(
             scope=primary_tier.scope,
             path=request.directory,
             solution_id=primary_tier.solution_id,
+            organization_id=primary_tier.organization_id,
         )
         if request.include_metadata and request.mode == "cloud" and request.location == "workspace":
             # Return ETags + last_modified via RepoStorage
@@ -1095,6 +1104,7 @@ async def list_files_simple(
                         scope=primary_tier.scope,
                         action="list",
                         solution_id=primary_tier.solution_id,
+                        organization_id=primary_tier.organization_id,
                     )
                 )
                 s3_metadata = {
@@ -1138,6 +1148,7 @@ async def list_files_simple(
                 scope=tier.scope,
                 path=request.directory,
                 solution_id=tier.solution_id,
+                organization_id=tier.organization_id,
             )
             any_directory_allowed = any_directory_allowed or tier_directory_allowed
             if not tier_directory_allowed:
@@ -1154,6 +1165,7 @@ async def list_files_simple(
                 scope=tier.scope,
                 action="list",
                 solution_id=tier.solution_id,
+                organization_id=tier.organization_id,
             )
             for path in tier_files:
                 if path in seen:
@@ -1195,6 +1207,7 @@ async def file_exists(
                 scope=tier.scope,
                 path=request.path,
                 solution_id=tier.solution_id,
+                organization_id=tier.organization_id,
             )
             if not allowed:
                 continue

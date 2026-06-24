@@ -322,6 +322,246 @@ async def test_service_uses_solution_metadata_for_solution_creator_policy(
 
 
 @pytest.mark.asyncio
+async def test_non_solution_org_lookup_ignores_solution_policy_rows(
+    db_session,
+) -> None:
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=org.id,
+    )
+    db_session.add_all([org, solution])
+    await db_session.flush()
+
+    db_session.add(
+        FilePolicy(
+            organization_id=org.id,
+            solution_id=solution.id,
+            location="finance",
+            path="reports",
+            policies=_allow_all("read").model_dump(mode="json", by_alias=True),
+            created_by=uuid4(),
+        )
+    )
+    await db_session.flush()
+
+    service = FilePolicyService(db_session)
+    resolved = await service.load_policy(
+        organization_id=org.id,
+        solution_id=None,
+        location="finance",
+        path="reports/q1.txt",
+    )
+
+    assert resolved is None
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        solution_id=None,
+        location="finance",
+        path="reports/q1.txt",
+        user=_user(org.id),
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_non_solution_global_lookup_ignores_solution_policy_rows(
+    db_session,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=None,
+    )
+    db_session.add(solution)
+    await db_session.flush()
+
+    db_session.add(
+        FilePolicy(
+            organization_id=None,
+            solution_id=solution.id,
+            location="finance",
+            path="reports",
+            policies=_allow_all("read").model_dump(mode="json", by_alias=True),
+            created_by=uuid4(),
+        )
+    )
+    await db_session.flush()
+
+    service = FilePolicyService(db_session)
+    resolved = await service.load_policy(
+        organization_id=None,
+        solution_id=None,
+        location="finance",
+        path="reports/q1.txt",
+    )
+
+    assert resolved is None
+    assert await service.is_allowed(
+        "read",
+        organization_id=None,
+        solution_id=None,
+        location="finance",
+        path="reports/q1.txt",
+        user=_user(uuid4()),
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_org_policy_uses_non_solution_metadata_for_creator_policy(
+    db_session,
+) -> None:
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=org.id,
+    )
+    db_session.add_all([org, solution])
+    await db_session.flush()
+
+    path = "owned/org-doc.txt"
+    org_creator_id = str(uuid4())
+    solution_creator_id = str(uuid4())
+    service = FilePolicyService(db_session)
+    await service.upsert_metadata(
+        organization_id=org.id,
+        location="finance",
+        path=path,
+        s3_key=f"finance/{org.id}/{path}",
+        created_by=org_creator_id,
+        updated_by=org_creator_id,
+        content_type="text/plain",
+        size_bytes=5,
+        sha256="a" * 64,
+    )
+    await service.upsert_metadata(
+        organization_id=org.id,
+        solution_id=solution.id,
+        location="finance",
+        path=path,
+        s3_key=f"finance/{solution.id}/{path}",
+        created_by=solution_creator_id,
+        updated_by=solution_creator_id,
+        content_type="text/plain",
+        size_bytes=5,
+        sha256="b" * 64,
+    )
+    await service.upsert_policy(
+        organization_id=org.id,
+        location="finance",
+        path="owned",
+        policies=FilePolicies.model_validate({
+            "policies": [
+                {
+                    "name": "org_creator_read",
+                    "actions": ["read"],
+                    "when": {"eq": [{"file": "created_by"}, {"user": "user_id"}]},
+                }
+            ]
+        }),
+        created_by=uuid4(),
+        seed_admin_bypass=False,
+    )
+
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        solution_id=None,
+        location="finance",
+        path=path,
+        user=_user(org.id, user_id=org_creator_id),
+    ) is True
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        solution_id=None,
+        location="finance",
+        path=path,
+        user=_user(org.id, user_id=solution_creator_id),
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_global_policy_uses_non_solution_metadata_for_creator_policy(
+    db_session,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=None,
+    )
+    db_session.add(solution)
+    await db_session.flush()
+
+    path = "owned/global-doc.txt"
+    global_creator_id = str(uuid4())
+    solution_creator_id = str(uuid4())
+    service = FilePolicyService(db_session)
+    await service.upsert_metadata(
+        organization_id=None,
+        location="finance",
+        path=path,
+        s3_key=f"finance/global/{path}",
+        created_by=global_creator_id,
+        updated_by=global_creator_id,
+        content_type="text/plain",
+        size_bytes=5,
+        sha256="a" * 64,
+    )
+    await service.upsert_metadata(
+        organization_id=None,
+        solution_id=solution.id,
+        location="finance",
+        path=path,
+        s3_key=f"finance/{solution.id}/{path}",
+        created_by=solution_creator_id,
+        updated_by=solution_creator_id,
+        content_type="text/plain",
+        size_bytes=5,
+        sha256="b" * 64,
+    )
+    await service.upsert_policy(
+        organization_id=None,
+        location="finance",
+        path="owned",
+        policies=FilePolicies.model_validate({
+            "policies": [
+                {
+                    "name": "global_creator_read",
+                    "actions": ["read"],
+                    "when": {"eq": [{"file": "created_by"}, {"user": "user_id"}]},
+                }
+            ]
+        }),
+        created_by=uuid4(),
+        seed_admin_bypass=False,
+    )
+
+    assert await service.is_allowed(
+        "read",
+        organization_id=None,
+        solution_id=None,
+        location="finance",
+        path=path,
+        user=_user(uuid4(), user_id=global_creator_id),
+    ) is True
+    assert await service.is_allowed(
+        "read",
+        organization_id=None,
+        solution_id=None,
+        location="finance",
+        path=path,
+        user=_user(uuid4(), user_id=solution_creator_id),
+    ) is False
+
+
+@pytest.mark.asyncio
 async def test_service_preresolves_custom_claims_before_evaluation(
     db_session, monkeypatch
 ) -> None:
