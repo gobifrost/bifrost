@@ -35,14 +35,6 @@ class ConfigResponse(BaseModel):
     description: str | None = None
     updated_at: datetime | None = None
     updated_by: str | None = None
-    orphaned_at: datetime | None = Field(
-        default=None,
-        description="When this config was orphaned by a Solution uninstall (null if not orphaned)",
-    )
-    origin_solution_slug: str | None = Field(
-        default=None,
-        description="Slug of the Solution this config was orphaned from (null if not orphaned)",
-    )
 
 
 class SetConfigRequest(BaseModel):

@@ -98,8 +98,6 @@ class TablePublic(TableBase):
     created_by: str | None
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
-    orphaned_at: datetime | None = Field(default=None, description="When this table was orphaned by a Solution uninstall (null if not orphaned)")
-    origin_solution_slug: str | None = Field(default=None, description="Slug of the Solution this table was orphaned from (null if not orphaned)")
 
     @model_validator(mode="before")
     @classmethod

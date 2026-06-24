@@ -1,11 +1,6 @@
 """E2E tests for ``src.services.solution_files``.
 
-Exercises write → enumerate → read round-trip, replace/skip semantics,
-orphan-move (re-stamps metadata + moves S3 key), and the before_flush guard.
-
-The guard test calls ``install_solution_write_guard()`` and then calls
-``orphan_solution_files`` — proving the Core-only code path bypasses it.
-An ORM mutation of a solution-managed row would raise ``SolutionManagedWriteError``.
+Exercises write → enumerate → read round-trip and replace/skip semantics.
 """
 
 from __future__ import annotations
@@ -18,7 +13,6 @@ from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.services.solution_files import (
     enumerate_solution_files,
-    orphan_solution_files,
     read_solution_file,
     write_solution_file,
 )
@@ -127,121 +121,3 @@ async def test_skip_mode_writes_when_absent(db_session, install):
 
     back = await read_solution_file(db_session, install.id, location, path)
     assert back == b"new file"
-
-
-@pytest.mark.asyncio
-async def test_orphan_move_restamps_and_moves_s3(db_session, install, org):
-    """orphan_solution_files re-stamps metadata to org and moves the S3 key.
-
-    After orphaning:
-    - solution_id is None
-    - organization_id equals org.id
-    - origin_solution_id == install.id
-    - origin_solution_slug == install.slug
-    - orphaned_at is not None
-    - Old S3 key is gone (FileNotFoundError)
-    - New org-scoped key has the bytes.
-    """
-    from shared.file_paths import resolve_s3_key
-    from src.models.orm.file_metadata import FileMetadata
-    from src.services.file_storage import FileStorageService
-    from sqlalchemy import select
-
-    content = b"orphan me"
-    location = "shared"
-    path = f"e2e/{uuid4().hex}.txt"
-
-    await write_solution_file(
-        db_session, install.id, location, path, content, mode="replace"
-    )
-
-    # Capture the old S3 key before orphaning.
-    old_s3_key = resolve_s3_key(location, str(install.id), path)
-
-    count = await orphan_solution_files(
-        db_session, install.id, org.id, install.slug
-    )
-    assert count == 1
-
-    # Metadata row is re-stamped.
-    row = (
-        await db_session.execute(
-            select(FileMetadata).where(
-                FileMetadata.organization_id == org.id,
-                FileMetadata.location == location,
-                FileMetadata.path == path,
-            )
-        )
-    ).scalar_one_or_none()
-    assert row is not None
-    assert row.solution_id is None
-    assert row.organization_id == org.id
-    assert row.origin_solution_id == install.id
-    assert row.origin_solution_slug == install.slug
-    assert row.orphaned_at is not None
-
-    # New key is readable.
-    new_s3_key = resolve_s3_key(location, str(org.id), path)
-    storage = FileStorageService(db_session)
-    new_bytes = await storage.read_uploaded_file(new_s3_key)
-    assert new_bytes == content
-
-    # Old key is gone.
-    import pytest
-    with pytest.raises(Exception):
-        await storage.read_uploaded_file(old_s3_key)
-
-
-@pytest.mark.asyncio
-async def test_orphan_returns_count(db_session, install, org):
-    """orphan_solution_files returns the number of files moved."""
-    location = "shared"
-
-    for i in range(3):
-        await write_solution_file(
-            db_session,
-            install.id,
-            location,
-            f"e2e/{uuid4().hex}.txt",
-            f"file {i}".encode(),
-            mode="replace",
-        )
-
-    count = await orphan_solution_files(db_session, install.id, org.id, install.slug)
-    assert count == 3
-
-
-@pytest.mark.asyncio
-async def test_orphan_empty_install_returns_zero(db_session, install, org):
-    """orphan_solution_files on an install with no files returns 0."""
-    count = await orphan_solution_files(db_session, install.id, org.id, install.slug)
-    assert count == 0
-
-
-@pytest.mark.asyncio
-async def test_guard_active_core_writes_bypass(db_session, install, org):
-    """Core writes bypass the before_flush guard — ORM mutations would not.
-
-    This is the prod-faithfulness proof:
-    - We install the session-wide before_flush backstop.
-    - We write a solution-managed file.
-    - We call orphan_solution_files (all Core UPDATE statements).
-    - No SolutionManagedWriteError is raised → Core bypasses the guard.
-    """
-    from src.services.solutions.guard import install_solution_write_guard
-
-    install_solution_write_guard()  # idempotent; installs the backstop
-
-    location = "shared"
-    path = f"e2e/{uuid4().hex}.txt"
-
-    # Write phase — Core INSERT, guard should not fire.
-    await write_solution_file(
-        db_session, install.id, location, path, b"guard test", mode="replace"
-    )
-
-    # Orphan phase — Core UPDATE + S3 move, guard should not fire.
-    count = await orphan_solution_files(
-        db_session, install.id, org.id, install.slug
-    )
-    assert count == 1  # guard did not raise → Core path bypassed the backstop

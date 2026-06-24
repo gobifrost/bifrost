@@ -400,11 +400,6 @@ class SolutionDeployer:
         await self._upsert_agents(solution, rb.agents)
         await self._upsert_events(solution, rb.events)
         await self._upsert_config_schemas(solution, rb.config_schemas)
-        # Un-orphan this install's config VALUES that match the re-declared keys
-        # (Task 14c) so the operator doesn't re-enter them on reinstall.
-        reattached_configs = await self._reattach_orphan_configs(
-            solution, {c["key"] for c in rb.config_schemas}
-        )
         # Pre-create an empty integration shell for each declared connection that
         # doesn't yet exist globally (never clobbering a configured one). Uses the
         # ORIGINAL bundle: connection declarations key on integration NAME, which
@@ -419,11 +414,6 @@ class SolutionDeployer:
         # this mirrors it for every deploy/zip-install/CLI-deploy target.
         await self._upsert_connection_declarations(
             solution, bundle.connection_schemas
-        )
-        # Captured pre-commit: the finalize closure runs after the caller's
-        # commit, when lazy-loading off the ORM row is no longer safe.
-        install_org_id_str = (
-            str(solution.organization_id) if solution.organization_id is not None else None
         )
         (
             wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
@@ -463,16 +453,6 @@ class SolutionDeployer:
         # install runnable. Only an outage that survives all retries raises
         # SolutionFinalizeIncomplete — and even then a later deploy/sync heals it.
         async def _finalize_s3() -> None:
-            if reattached_configs:
-                # The reattach is a Core UPDATE that never bumped the config
-                # cache (mirror of the uninstall router's invalidation).
-                # Without this, merged_for_sdk keeps serving the orphan-era
-                # cache and the reattached value stays invisible until TTL.
-                # Post-commit on purpose: invalidating pre-commit would let a
-                # concurrent reader re-cache the OLD state before we commit.
-                from src.core.cache import invalidate_all_config
-
-                await invalidate_all_config(install_org_id_str)
             await _retry_idempotent(
                 "store source artifact", sid,
                 lambda: self._write_source_artifact(sid, source_artifact),
@@ -942,62 +922,6 @@ class SolutionDeployer:
                 # None / absent -> seed admin_bypass, matching API-created tables
                 # and manifest import; without it RLS denies all table I/O.
                 access = make_seed_admin_bypass()
-
-            # ── Reattach (Task 14c) ─────────────────────────────────────────
-            # Before creating a fresh (empty) table, adopt a surviving orphan
-            # from a PRIOR install of THIS Solution (same slug + name + org) so
-            # the customer's documents flow back in. We KEEP the orphan's id (its
-            # Documents reference it); identity for resolution is the
-            # solution-scoped (solution_id, name) uniqueness, not the id, so a
-            # reattached table's id legitimately won't match this deploy's
-            # remapped bundle id. If multiple orphans match (repeated
-            # install/uninstall cycles), adopt the MOST RECENTLY orphaned one
-            # (max orphaned_at) and leave the rest orphaned for manual cleanup.
-            org_pred = (
-                Table.organization_id == solution.organization_id
-                if solution.organization_id is not None
-                else Table.organization_id.is_(None)
-            )
-            # Fetch id + current access only — NOT the ORM object. The reattach
-            # writes via a Core update() (below), which bypasses the unit-of-work
-            # so the read-only before_flush backstop (solutions/guard.py) doesn't
-            # fire; loading + mutating the ORM object would trip that guard the
-            # moment we stamp solution_id (it then looks solution-managed).
-            orphan_row = (
-                await self.db.execute(
-                    select(Table.id, Table.access)
-                    .where(
-                        Table.orphaned_at.is_not(None),
-                        Table.origin_solution_slug == solution.slug,
-                        Table.name == name,
-                        org_pred,
-                    )
-                    .order_by(Table.orphaned_at.desc())
-                )
-            ).first()
-            if orphan_row is not None:
-                orphan_id, prev_access = orphan_row[0], orphan_row[1]
-                await self.db.execute(
-                    update(Table)
-                    .where(Table.id == orphan_id)
-                    .values(
-                        solution_id=sid,
-                        organization_id=solution.organization_id,
-                        orphaned_at=None,
-                        origin_solution_slug=None,
-                        origin_solution_id=None,
-                        name=name,
-                        description=src["description"],
-                        schema=src["schema"],
-                        access=access,
-                    )
-                )
-                adopted_ids.add(orphan_id)
-                # A reattach with a changed policy must invalidate subscribers'
-                # policy cache too (mirrors the normal path's intent).
-                if prev_access != access:
-                    await publish_policy_changed(str(orphan_id))
-                continue  # adopted — skip the id-based upsert for this entry
 
             # Fetch existing (owner + current access) in one shot — used for the
             # ownership guard AND to decide whether to emit policy_changed.
@@ -1764,43 +1688,6 @@ class SolutionDeployer:
                         created_by="solution-deploy",
                     )
                 )
-
-    async def _reattach_orphan_configs(
-        self, solution: Solution, declared_keys: set[str]
-    ) -> int:
-        """Un-orphan config VALUES from a prior install of this Solution so the
-        operator doesn't re-enter them (Task 14c).
-
-        Config has no ``solution_id`` — values are keyed by ``(key, org)``, so
-        "reattach" is just clearing the orphan stamp on the matching live rows.
-        Scoped to this install's slug + declared keys + org. Idempotent and safe
-        even when ANOTHER live install in the same org shares one of these keys:
-        a Config value is matched by (key, org), not an FK, so two installs can
-        share a row. Clearing the stamp on an already-live value is a no-op, and
-        we only touch rows that are CURRENTLY orphaned (``orphaned_at IS NOT
-        NULL``) and tattooed with THIS slug — so we never disturb a value that a
-        different live install owns.
-        """
-        if not declared_keys:
-            return 0
-        from src.models.orm.config import Config
-
-        org_pred = (
-            Config.organization_id == solution.organization_id
-            if solution.organization_id is not None
-            else Config.organization_id.is_(None)
-        )
-        result = await self.db.execute(
-            update(Config)
-            .where(
-                org_pred,
-                Config.key.in_(declared_keys),
-                Config.origin_solution_slug == solution.slug,
-                Config.orphaned_at.is_not(None),
-            )
-            .values(orphaned_at=None, origin_solution_slug=None, origin_solution_id=None)
-        )
-        return result.rowcount or 0
 
     async def _guard_owner(self, model: type, entity_id: UUID, sid: UUID) -> None:
         """Raise SolutionDeployConflict if ``entity_id`` exists and is owned by

@@ -1,9 +1,9 @@
 """Service for managing files that belong to a Solution install.
 
-Provides enumerate / read / write / orphan-move operations.  All metadata
-writes use SQLAlchemy **Core** statements (``insert()`` / ``update()``) so
-they bypass the ORM unit-of-work and are invisible to the
-``before_flush`` read-only guard in ``solutions/guard.py``.
+Provides enumerate / read / write operations.  All metadata writes use
+SQLAlchemy **Core** statements (``insert()`` / ``update()``) so they bypass
+the ORM unit-of-work and are invisible to the ``before_flush`` read-only
+guard in ``solutions/guard.py``.
 """
 
 from __future__ import annotations
@@ -13,15 +13,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.file_paths import resolve_s3_key
 from src.models.orm.file_metadata import FileMetadata
 from src.services.file_storage import FileStorageService
-
-# UUID list type alias for captured_keys payloads.
-_FileIdList = list[str]
 
 
 @dataclass
@@ -176,200 +173,3 @@ async def write_solution_file(
 
     await db.commit()
     return True
-
-
-async def restamp_solution_files_metadata(
-    db: AsyncSession,
-    install_id: UUID,
-    org_id: UUID | None,
-    slug: str,
-) -> list[str]:
-    """Re-stamp FileMetadata rows so the ``solution_id`` FK cascade cannot reach them.
-
-    This is the **in-transaction** half of the uninstall orphan flow.  It nulls
-    ``solution_id``, sets ``organization_id`` / provenance / ``orphaned_at``,
-    and returns the list of file IDs (as hex strings) for the caller to pass to
-    the post-commit S3-move job.
-
-    It does **NOT** touch ``s3_key`` — the bytes still live at the install-scoped
-    S3 path.  The job worker calls :func:`orphan_solution_files_by_ids` with the
-    returned IDs; that function reads the stale ``s3_key`` from the DB rows,
-    moves the bytes, and updates ``s3_key`` to the org-scoped key.
-    """
-    rows = (
-        await db.execute(
-            select(FileMetadata.id).where(FileMetadata.solution_id == install_id)
-        )
-    ).scalars().all()
-
-    if not rows:
-        return []
-
-    now = datetime.now(timezone.utc)
-
-    # Core UPDATE — bypasses unit-of-work; guard never fires.  Nulling
-    # ``solution_id`` BEFORE the Solution delete prevents the ondelete=CASCADE
-    # from reaching these rows (mirrors the table detach pattern).
-    await db.execute(
-        update(FileMetadata)
-        .where(FileMetadata.solution_id == install_id)
-        .values(
-            solution_id=None,
-            organization_id=org_id,
-            origin_solution_id=install_id,
-            origin_solution_slug=slug,
-            orphaned_at=now,
-        )
-    )
-
-    return [str(row) for row in rows]
-
-
-async def delete_solution_files_metadata(
-    db: AsyncSession,
-    install_id: UUID,
-) -> int:
-    """Delete all FileMetadata rows owned by *install_id*.
-
-    Used during uninstall of a **global** solution (org_id is None).  For
-    global installs there is no target org to orphan files to, and the S3
-    bytes are swept by the existing ``_solutions/{install_id}/`` prefix
-    delete in ``delete_solution``.  Deleting the metadata rows BEFORE the
-    Solution delete prevents the ondelete=CASCADE FK from racing with this
-    call, and leaves no dangling phantom rows whose ``s3_key`` points to
-    already-deleted bytes.
-
-    Uses a Core DELETE to bypass the ORM unit-of-work guard.
-    Returns the number of rows deleted.
-    """
-    result = await db.execute(
-        delete(FileMetadata).where(FileMetadata.solution_id == install_id)
-    )
-    return result.rowcount or 0
-
-
-async def orphan_solution_files(
-    db: AsyncSession,
-    install_id: UUID,
-    org_id: UUID,
-    slug: str,
-) -> int:
-    """Re-stamp all files owned by *install_id* as org-owned orphans.
-
-    For each file:
-    1. Core-UPDATE the ``file_metadata`` row: clear ``solution_id``, set
-       ``organization_id``, record provenance (``origin_solution_id``,
-       ``origin_solution_slug``, ``orphaned_at``).
-    2. Move the S3 object from the solution-scoped key to the org-scoped key
-       (read → write new key → delete old key).
-
-    Returns the number of files orphaned.
-    """
-    rows = (
-        await db.execute(
-            select(
-                FileMetadata.id,
-                FileMetadata.location,
-                FileMetadata.path,
-                FileMetadata.s3_key,
-            ).where(FileMetadata.solution_id == install_id)
-        )
-    ).all()
-
-    if not rows:
-        return 0
-
-    storage = FileStorageService(db)
-    now = datetime.now(timezone.utc)
-
-    for row in rows:
-        old_s3_key = row.s3_key
-        new_s3_key = resolve_s3_key(row.location, str(org_id), row.path)
-
-        # Move bytes: read old → write new → delete old.
-        content = await storage.read_uploaded_file(old_s3_key)
-        await storage.write_raw_to_s3(new_s3_key, content)
-        await storage.delete_raw_from_s3(old_s3_key)
-
-        # Core UPDATE — bypasses unit-of-work; guard never fires.
-        await db.execute(
-            update(FileMetadata)
-            .where(FileMetadata.id == row.id)
-            .values(
-                solution_id=None,
-                organization_id=org_id,
-                s3_key=new_s3_key,
-                origin_solution_id=install_id,
-                origin_solution_slug=slug,
-                orphaned_at=now,
-            )
-        )
-
-    await db.commit()
-    return len(rows)
-
-
-async def orphan_solution_files_by_ids(
-    db: AsyncSession,
-    install_id: UUID,
-    org_id: UUID,
-    slug: str,
-    file_ids: _FileIdList,
-) -> int:
-    """Re-stamp a specific set of files (by ID) as org-owned orphans.
-
-    This is the C3-safe variant: it works from a list of ``FileMetadata.id``
-    values snapshotted at job-enqueue time, NOT by querying
-    ``solution_id == install_id``.  After an uninstall the ``solution_id``
-    column has already been cleared, so any query by ``solution_id`` would
-    return zero rows.  The caller (``_run_file_job``) passes the IDs captured
-    before the restamp happened.
-
-    Returns the number of files successfully orphaned.
-    """
-    if not file_ids:
-        return 0
-
-    parsed_ids = [UUID(fid) for fid in file_ids]
-
-    rows = (
-        await db.execute(
-            select(
-                FileMetadata.id,
-                FileMetadata.location,
-                FileMetadata.path,
-                FileMetadata.s3_key,
-            ).where(FileMetadata.id.in_(parsed_ids))
-        )
-    ).all()
-
-    if not rows:
-        return 0
-
-    storage = FileStorageService(db)
-    now = datetime.now(timezone.utc)
-
-    for row in rows:
-        old_s3_key = row.s3_key
-        new_s3_key = resolve_s3_key(row.location, str(org_id), row.path)
-
-        content = await storage.read_uploaded_file(old_s3_key)
-        await storage.write_raw_to_s3(new_s3_key, content)
-        await storage.delete_raw_from_s3(old_s3_key)
-
-        # Core UPDATE — bypasses unit-of-work; guard never fires.
-        await db.execute(
-            update(FileMetadata)
-            .where(FileMetadata.id == row.id)
-            .values(
-                solution_id=None,
-                organization_id=org_id,
-                s3_key=new_s3_key,
-                origin_solution_id=install_id,
-                origin_solution_slug=slug,
-                orphaned_at=now,
-            )
-        )
-
-    await db.commit()
-    return len(rows)

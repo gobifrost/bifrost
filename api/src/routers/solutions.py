@@ -43,9 +43,6 @@ from src.models.contracts.solutions import (
     SolutionEntitySummary,
     SolutionFileSummary,
     SolutionExistingInstall,
-    SolutionFileJobEnqueue,
-    SolutionFileJobEnqueued,
-    SolutionFileJobStatus,
     SolutionInstallPreview,
     PullAckRequest,
     PullAckResponse,
@@ -64,7 +61,6 @@ from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.forms import Form
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
-from src.models.orm.solution_file_jobs import SolutionFileJob
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
@@ -730,14 +726,9 @@ async def delete_solution(
     - Owned tables are DETACHED before the Solution delete (``solution_id`` set
       to NULL so the cascade can't reach them) and survive as ordinary org
       tables. Their documents are untouched — they hang off the surviving table.
-    - The install's config VALUES (Config rows in the install's org scope whose
-      key matches a declaration) are stamped with orphan provenance and survive
-      (Config has no ``solution_id`` FK, so they were never cascade-tied).
-
-    Both carry ``origin_solution_slug``/``origin_solution_id``/``orphaned_at`` so
-    a reinstall can reattach them. The install's S3 artifacts are swept. The git
-    repo is NEVER touched — a git-connected install is deletable; only the install
-    and its local artifacts go, the upstream repo is left alone.
+    The install's S3 artifacts are swept. The git repo is NEVER touched — a
+    git-connected install is deletable; only the install and its local artifacts
+    go, the upstream repo is left alone.
     """
     # Load WITHOUT eager-loading ``connection_schema`` (it is ``lazy="selectin"``).
     # If the children are loaded, the relationship's ``delete-orphan`` cascade marks
@@ -813,8 +804,6 @@ async def delete_solution(
                 ).scalars().all()
             )
 
-            now = datetime.now(timezone.utc)
-
             # DETACH TABLES (before the Solution delete so the FK cascade can't
             # reach them). They survive as ordinary org tables; documents are
             # untouched (they hang off the surviving table row).
@@ -824,99 +813,8 @@ async def delete_solution(
                 .values(
                     solution_id=None,
                     organization_id=sol.organization_id,
-                    origin_solution_slug=sol.slug,
-                    origin_solution_id=sol.id,
-                    orphaned_at=now,
                 )
             )
-
-            # STAMP CONFIG VALUES with orphan provenance (Config has no
-            # solution_id FK, so "detach" is just the tattoo — the row already
-            # survives the Solution delete). Match the install's declared keys in
-            # the install's org scope.
-            #
-            # KNOWN LIMITATION of the keyed-not-FK'd model: a Config VALUE is
-            # shared by key, so if another LIVE install in the same org declares
-            # the same key, that value backs both installs. We guard the common
-            # case by NOT orphaning keys still declared by another live install
-            # in this org (leaving the shared value live). The residual edge —
-            # two installs declaring the same key where only this one is being
-            # removed — is handled; a value mis-stamped despite the guard (e.g.
-            # an install added after a partial-failure) would need a manual
-            # un-orphan or a re-set in scope (which heals it).
-            config_values_orphaned = 0
-            still_declared_keys: set[str] = set()
-            if decl_keys:
-                org_match = (
-                    SolutionORM.organization_id == sol.organization_id
-                    if sol.organization_id is not None
-                    else SolutionORM.organization_id.is_(None)
-                )
-                still_declared_keys = set(
-                    (
-                        await ctx.db.execute(
-                            select(SolutionConfigSchema.key)
-                            .join(
-                                SolutionORM,
-                                SolutionConfigSchema.solution_id == SolutionORM.id,
-                            )
-                            .where(
-                                SolutionConfigSchema.solution_id != solution_id,
-                                SolutionConfigSchema.key.in_(decl_keys),
-                                org_match,
-                            )
-                        )
-                    ).scalars().all()
-                )
-
-            keys_to_orphan = decl_keys - still_declared_keys
-            if keys_to_orphan:
-                org_pred = (
-                    Config.organization_id == sol.organization_id
-                    if sol.organization_id is not None
-                    else Config.organization_id.is_(None)
-                )
-                result = await ctx.db.execute(
-                    update(Config)
-                    .where(org_pred, Config.key.in_(keys_to_orphan))
-                    .values(
-                        origin_solution_slug=sol.slug,
-                        origin_solution_id=sol.id,
-                        orphaned_at=now,
-                    )
-                )
-                config_values_orphaned = result.rowcount or 0
-
-            # DETACH FILES (before the Solution delete, mirroring the table detach
-            # above).  Branch on global vs org-scoped:
-            #
-            # • Org-scoped install: re-stamp metadata in-txn (null solution_id so
-            #   the ondelete=CASCADE FK can no longer reach these rows), then enqueue
-            #   an S3-move job to migrate bytes to the org-scoped key.  s3_key is NOT
-            #   updated here — the job worker does it.
-            #
-            # • Global install (org_id is None): there is no target org to orphan
-            #   files to.  The S3 bytes are swept by the _solutions/{install_id}/
-            #   prefix delete below; deleting the metadata rows here (before the
-            #   Solution delete) prevents the ondelete=CASCADE from racing and leaves
-            #   no dangling phantom rows whose s3_key points to deleted bytes.
-            if sol.organization_id is not None:
-                from src.services.solution_files import restamp_solution_files_metadata
-
-                captured_file_ids = await restamp_solution_files_metadata(
-                    ctx.db,
-                    install_id=solution_id,
-                    org_id=sol.organization_id,
-                    slug=sol.slug,
-                )
-                files_count = len(captured_file_ids)
-            else:
-                from src.services.solution_files import delete_solution_files_metadata
-
-                captured_file_ids = []
-                files_count = await delete_solution_files_metadata(
-                    ctx.db, install_id=solution_id
-                )
 
             summary = SolutionDeleteSummary(
                 solution_id=solution_id,
@@ -927,97 +825,14 @@ async def delete_solution(
                 claims_deleted=await _count(CustomClaim),
                 config_declarations_deleted=len(decl_keys),
                 tables_orphaned=len(table_ids),
-                config_values_orphaned=config_values_orphaned,
-                files_orphaned=files_count,
+                config_values_orphaned=0,
+                files_orphaned=0,
             )
 
-            # Capture the org before the delete — accessing attributes on a
-            # deleted+committed instance would trip an expired-attribute refresh.
-            sol_org_id = sol.organization_id
-            sol_slug = sol.slug
-
             # Solution delete: cascades workflows/apps/forms/agents + the config
-            # DECLARATIONS. Tables already have solution_id=NULL (detached above);
-            # files already have solution_id=NULL (restamped above); config values
-            # were never FK-tied to the Solution.
+            # DECLARATIONS. Tables already have solution_id=NULL (detached above).
             await ctx.db.delete(sol)
             await ctx.db.commit()
-
-            # The orphan stamp is a Core UPDATE that does NOT go through
-            # set_config/upsert_config, so it never bumped the config cache.
-            # Without this, merged_for_sdk could keep serving the now-orphaned
-            # value (incl. a leftover SECRET) from Redis until TTL. Invalidate
-            # the install's org scope so runtime reads re-resolve against the DB.
-            if config_values_orphaned:
-                from src.core.cache import invalidate_all_config
-
-                await invalidate_all_config(
-                    str(sol_org_id) if sol_org_id is not None else None
-                )
-
-            # Move orphaned files' bytes to the org-scoped S3 key BEFORE the
-            # S3 sweep.  The sweep deletes everything under _solutions/{id}/;
-            # running it before the move would destroy the bytes before they
-            # can be copied to the org namespace.
-            #
-            # The SolutionFileJob row is created for observability (poll endpoint)
-            # and updated inline once the move completes.  No BackgroundTask is
-            # needed — the sweep already runs synchronously in this handler.
-            #
-            # Global solutions (org_id is None) have no target org; their metadata
-            # rows were already deleted above, so captured_file_ids is empty and
-            # this branch is a no-op.
-            if captured_file_ids and sol_org_id is not None:
-                logger.info(
-                    "Orphan file move: %d file(s) for solution %s → org %s",
-                    len(captured_file_ids), solution_id, sol_org_id,
-                )
-                file_job = SolutionFileJob(
-                    install_id=solution_id,
-                    origin_solution_id=solution_id,
-                    kind="orphan",
-                    status="queued",
-                    captured_keys=captured_file_ids,
-                )
-                ctx.db.add(file_job)
-                await ctx.db.commit()
-                await ctx.db.refresh(file_job)
-                file_job_id = file_job.id
-
-                # Move bytes inline — orphan_solution_files_by_ids reads from the
-                # install-scoped S3 key, copies to the org-scoped key, deletes the
-                # old key, and updates the FileMetadata.s3_key column.  This must
-                # finish before the sweep deletes the remaining solution S3 keys.
-                from src.core.database import get_db_context
-                from src.services.solution_files import orphan_solution_files_by_ids
-
-                try:
-                    async with get_db_context() as move_db:
-                        moved = await orphan_solution_files_by_ids(
-                            move_db,
-                            solution_id,
-                            sol_org_id,
-                            sol_slug,
-                            captured_file_ids,
-                        )
-                    logger.info(
-                        "Orphan file move succeeded: %d file(s) moved for solution %s",
-                        moved, solution_id,
-                    )
-                    async with get_db_context() as status_db:
-                        job_row = await status_db.get(SolutionFileJob, file_job_id)
-                        if job_row is not None:
-                            job_row.status = "succeeded"
-                            job_row.result = {"files_orphaned": moved}
-                except Exception:  # noqa: BLE001 — capture any failure onto the job
-                    logger.exception(
-                        "Inline orphan file move failed for solution %s", solution_id
-                    )
-                    async with get_db_context() as status_db:
-                        job_row = await status_db.get(SolutionFileJob, file_job_id)
-                        if job_row is not None:
-                            job_row.status = "failed"
-                            job_row.error = "Inline file move failed; see server logs."
 
             # S3 sweep only after the DB is durable (mirrors deploy's DB-then-S3).
             storage = SolutionStorage(solution_id)
@@ -1239,146 +1054,6 @@ async def get_deploy_job(
             status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
         )
     return SolutionDeployJobStatus.model_validate(job)
-
-
-# ---------------------------------------------------------------------------
-# File job: enqueue + poll
-# ---------------------------------------------------------------------------
-
-async def _run_file_job(
-    job_id: UUID,
-    kind: str,
-    install_id: UUID | None,
-    org_id: UUID | None,
-    slug: str | None,
-    captured_file_ids: list[str] | None,
-) -> None:
-    """Execute a file mass-op under a fresh session (background task).
-
-    Dispatches to the Task-17 ``solution_files`` service by ``kind``.  The
-    worker reads ``captured_file_ids`` (snapshotted at enqueue) so it never
-    re-queries ``solution_id == install_id`` — which would return nothing for an
-    ``orphan`` job because the in-txn re-stamp already cleared ``solution_id``
-    before the Solution row was deleted (C3).
-    """
-    from src.core.database import get_db_context
-    from src.services.solution_files import orphan_solution_files_by_ids
-
-    async def _set_status(
-        status_value: str,
-        error: str | None = None,
-        result: dict | None = None,
-    ) -> None:
-        async with get_db_context() as db:
-            job = await db.get(SolutionFileJob, job_id)
-            if job is None:
-                return
-            job.status = status_value
-            job.error = error
-            job.result = result
-
-    await _set_status("running")
-    try:
-        if kind == "orphan":
-            if install_id is None or org_id is None or slug is None or captured_file_ids is None:
-                raise ValueError("orphan job requires install_id, org_id, slug, and captured_file_ids")
-            async with get_db_context() as db:
-                moved = await orphan_solution_files_by_ids(
-                    db, install_id, org_id, slug, captured_file_ids
-                )
-            await _set_status("succeeded", result={"files_orphaned": moved})
-        else:
-            raise ValueError(f"Unsupported file job kind: {kind!r}")
-    except Exception:  # noqa: BLE001 — capture any failure onto the job
-        logger.exception("Solution file job %s (%s) failed", job_id, kind)
-        await _set_status("failed", "File job failed unexpectedly; see server logs.")
-
-
-@router.post(
-    "/file-jobs",
-    response_model=SolutionFileJobEnqueued,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Enqueue a background file mass-op (admin only)",
-)
-async def enqueue_file_job(
-    body: SolutionFileJobEnqueue,
-    ctx: Context,
-    user: CurrentSuperuser,
-    background_tasks: BackgroundTasks,
-) -> SolutionFileJobEnqueued:
-    """Enqueue a file mass-operation as a background job.
-
-    The job row is persisted before the task is scheduled so the caller can
-    poll ``GET /api/solutions/file-jobs/{id}`` the instant it has the id.
-
-    For ``orphan`` jobs the caller must supply ``org_id`` and ``slug``; the
-    endpoint snapshots the current file IDs into ``captured_keys`` at enqueue
-    time so the worker is immune to post-restamp DB state (C3).
-    """
-    if body.kind == "orphan":
-        if body.org_id is None or body.slug is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="orphan jobs require org_id and slug",
-            )
-        if body.install_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="orphan jobs require install_id",
-            )
-        # Snapshot file IDs now — before any restamp that may follow.
-        from sqlalchemy import select as sa_select
-
-        from src.models.orm.file_metadata import FileMetadata
-
-        rows = (
-            await ctx.db.execute(
-                sa_select(FileMetadata.id).where(
-                    FileMetadata.solution_id == body.install_id
-                )
-            )
-        ).scalars().all()
-        captured: list[str] = [str(r) for r in rows]
-    else:
-        captured = None  # type: ignore[assignment]
-
-    job = SolutionFileJob(
-        install_id=body.install_id,
-        origin_solution_id=body.install_id,  # install_id == the Solution's own id in this model; origin_* is provenance for the orphan flow
-        kind=body.kind,
-        status="queued",
-        captured_keys=captured,
-    )
-    ctx.db.add(job)
-    await ctx.db.commit()
-    await ctx.db.refresh(job)
-
-    background_tasks.add_task(
-        _run_file_job,
-        job.id,
-        body.kind,
-        body.install_id,
-        body.org_id,
-        body.slug,
-        captured,
-    )
-    return SolutionFileJobEnqueued(file_job_id=job.id)
-
-
-@router.get(
-    "/file-jobs/{job_id}",
-    response_model=SolutionFileJobStatus,
-    summary="Poll the status of an async file job (admin only)",
-)
-async def get_file_job(
-    job_id: UUID, ctx: Context, user: CurrentSuperuser
-) -> SolutionFileJobStatus:
-    job = await ctx.db.get(SolutionFileJob, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="File job not found"
-        )
-    return SolutionFileJobStatus.model_validate(job)
 
 
 @router.post(

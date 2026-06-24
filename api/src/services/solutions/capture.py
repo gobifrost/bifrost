@@ -751,7 +751,6 @@ class SolutionCaptureService:
                 Config.organization_id == solution.organization_id
                 if solution.organization_id is not None
                 else Config.organization_id.is_(None),
-                Config.orphaned_at.is_(None),
             )
             config = (await self.db.execute(q)).scalar_one_or_none()
             if config is None:

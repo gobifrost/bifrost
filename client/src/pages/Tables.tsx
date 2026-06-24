@@ -384,17 +384,6 @@ export function Tables() {
 															solutionId={table.solution_id}
 														/>
 													)}
-													{table.orphaned_at && (
-														<Badge
-															variant="outline"
-															className="font-sans text-xs font-normal text-muted-foreground"
-														>
-															Orphaned
-															{table.origin_solution_slug
-																? ` · from ${table.origin_solution_slug}`
-																: ""}
-														</Badge>
-													)}
 												</span>
 											</DataTableCell>
 											<DataTableCell className="max-w-xs truncate text-muted-foreground">

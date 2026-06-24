@@ -7263,14 +7263,9 @@ export interface paths {
          *     - Owned tables are DETACHED before the Solution delete (``solution_id`` set
          *       to NULL so the cascade can't reach them) and survive as ordinary org
          *       tables. Their documents are untouched — they hang off the surviving table.
-         *     - The install's config VALUES (Config rows in the install's org scope whose
-         *       key matches a declaration) are stamped with orphan provenance and survive
-         *       (Config has no ``solution_id`` FK, so they were never cascade-tied).
-         *
-         *     Both carry ``origin_solution_slug``/``origin_solution_id``/``orphaned_at`` so
-         *     a reinstall can reattach them. The install's S3 artifacts are swept. The git
-         *     repo is NEVER touched — a git-connected install is deletable; only the install
-         *     and its local artifacts go, the upstream repo is left alone.
+         *     The install's S3 artifacts are swept. The git repo is NEVER touched — a
+         *     git-connected install is deletable; only the install and its local artifacts
+         *     go, the upstream repo is left alone.
          */
         delete: operations["delete_solution_api_solutions__solution_id__delete"];
         options?: never;
@@ -7493,50 +7488,6 @@ export interface paths {
         };
         /** Poll the status of an async deploy job (admin only) */
         get: operations["get_deploy_job_api_solutions_deploy_jobs__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/solutions/file-jobs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Enqueue a background file mass-op (admin only)
-         * @description Enqueue a file mass-operation as a background job.
-         *
-         *     The job row is persisted before the task is scheduled so the caller can
-         *     poll ``GET /api/solutions/file-jobs/{id}`` the instant it has the id.
-         *
-         *     For ``orphan`` jobs the caller must supply ``org_id`` and ``slug``; the
-         *     endpoint snapshots the current file IDs into ``captured_keys`` at enqueue
-         *     time so the worker is immune to post-restamp DB state (C3).
-         */
-        post: operations["enqueue_file_job_api_solutions_file_jobs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/solutions/file-jobs/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Poll the status of an async file job (admin only) */
-        get: operations["get_file_job_api_solutions_file_jobs__job_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12049,16 +12000,6 @@ export interface components {
             updated_at?: string | null;
             /** Updated By */
             updated_by?: string | null;
-            /**
-             * Orphaned At
-             * @description When this config was orphaned by a Solution uninstall (null if not orphaned)
-             */
-            orphaned_at?: string | null;
-            /**
-             * Origin Solution Slug
-             * @description Slug of the Solution this config was orphaned from (null if not orphaned)
-             */
-            origin_solution_slug?: string | null;
         };
         /**
          * ConfigSchemaItem
@@ -21554,78 +21495,6 @@ export interface components {
             version?: string | null;
         };
         /**
-         * SolutionFileJobEnqueue
-         * @description Request body for ``POST /api/solutions/file-jobs``.
-         */
-        SolutionFileJobEnqueue: {
-            /**
-             * Install Id
-             * Format: uuid
-             */
-            install_id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "restore" | "orphan" | "bulk_delete";
-            /** Org Id */
-            org_id?: string | null;
-            /** Slug */
-            slug?: string | null;
-        };
-        /**
-         * SolutionFileJobEnqueued
-         * @description Returned by ``POST /api/solutions/file-jobs``.
-         */
-        SolutionFileJobEnqueued: {
-            /**
-             * File Job Id
-             * Format: uuid
-             */
-            file_job_id: string;
-        };
-        /**
-         * SolutionFileJobStatus
-         * @description Current state of an async file job.
-         */
-        SolutionFileJobStatus: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Install Id */
-            install_id: string | null;
-            /** Origin Solution Id */
-            origin_solution_id?: string | null;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "restore" | "orphan" | "bulk_delete";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "queued" | "running" | "succeeded" | "failed";
-            /** Error */
-            error?: string | null;
-            /** Result */
-            result?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /**
          * SolutionFileSummary
          * @description Lightweight summary of one file owned by a solution install.
          */
@@ -22031,16 +21900,6 @@ export interface components {
              * @description UUID of the owning Solution install (null if not solution-managed)
              */
             solution_id?: string | null;
-            /**
-             * Orphaned At
-             * @description When this table was orphaned by a Solution uninstall (null if not orphaned)
-             */
-            orphaned_at?: string | null;
-            /**
-             * Origin Solution Slug
-             * @description Slug of the Solution this table was orphaned from (null if not orphaned)
-             */
-            origin_solution_slug?: string | null;
         };
         /**
          * TableUpdate
@@ -27862,8 +27721,6 @@ export interface operations {
             query?: {
                 /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org. */
                 scope?: string | null;
-                /** @description Include orphaned configs (former-install data left by an uninstalled Solution). */
-                include_orphaned?: boolean;
             };
             header?: never;
             path?: never;
@@ -35823,8 +35680,6 @@ export interface operations {
             query?: {
                 /** @description Filter scope: 'global' for global only, org UUID for specific org. */
                 scope?: string | null;
-                /** @description Include orphaned tables (former-install data left by an uninstalled Solution). */
-                include_orphaned?: boolean;
             };
             header?: never;
             path?: never;
@@ -37005,70 +36860,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionDeployJobStatus"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    enqueue_file_job_api_solutions_file_jobs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SolutionFileJobEnqueue"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SolutionFileJobEnqueued"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_file_job_api_solutions_file_jobs__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SolutionFileJobStatus"];
                 };
             };
             /** @description Validation Error */

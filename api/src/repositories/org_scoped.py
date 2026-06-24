@@ -46,11 +46,6 @@ def _model_has_solution_id(model: Any) -> bool:
     return "solution_id" in model.__table__.columns
 
 
-def _model_has_orphaned_at(model: Any) -> bool:
-    """True if the model carries an orphaned_at column (Table/Config — orphan-capable)."""
-    return "orphaned_at" in model.__table__.columns
-
-
 class OrgScopedRepository(Generic[ModelT]):
     """
     The single canonical repository for all org-scoped data access in Bifrost.
@@ -242,15 +237,6 @@ class OrgScopedRepository(Generic[ModelT]):
         # must show deployed entities so users can see/use them, criterion 16.)
         if _model_has_solution_id(self.model) and not include_solution_managed:
             query = query.where(self.model.solution_id.is_(None))  # type: ignore[attr-defined]
-        # Orphaned rows (a former install's data, orphaned_at stamped) must not
-        # leak into the normal org name cascade — they resolve only via the
-        # explicit show-orphaned path and reattach. This is gated on
-        # orphaned_at INDEPENDENTLY of solution_id: Table carries solution_id
-        # (NULL'd on uninstall) but Config does NOT (it's keyed, not FK'd), so
-        # Config would otherwise never get the exclusion via the solution_id
-        # branch above. Both orphan-capable models get it here.
-        if _model_has_orphaned_at(self.model) and not include_solution_managed:
-            query = query.where(self.model.orphaned_at.is_(None))  # type: ignore[attr-defined]
 
         # Step 1: Try org-specific lookup (if we have an org)
         if self.org_id is not None:
@@ -305,7 +291,7 @@ class OrgScopedRepository(Generic[ModelT]):
         return entity
 
     async def list(
-        self, *, include_orphaned: bool = False, **filters: Any
+        self, **filters: Any
     ) -> list[ModelT]:
         """
         List entities with cascade scoping and role check.
@@ -315,11 +301,6 @@ class OrgScopedRepository(Generic[ModelT]):
         2. Pass role-based access check (for entities with role tables)
 
         Args:
-            include_orphaned: When False (default), orphaned rows (former-install
-                data whose Solution was uninstalled — solution_id NULL'd to
-                survive, orphaned_at stamped) are hidden from the list. Set True
-                for the "show orphaned" path. No-op for models without an
-                orphaned_at column.
             **filters: Additional filter conditions
 
         Returns:
@@ -335,12 +316,6 @@ class OrgScopedRepository(Generic[ModelT]):
         # Build base query with cascade scoping
         query = select(self.model)
         query = self._apply_cascade_scope(query)
-
-        # Orphaned rows (former-install data, solution_id NULL'd to survive
-        # uninstall) are hidden from the normal list unless explicitly requested
-        # via the "show orphaned" path. Mirrors the name-cascade exclusion.
-        if _model_has_orphaned_at(self.model) and not include_orphaned:
-            query = query.where(self.model.orphaned_at.is_(None))  # type: ignore[attr-defined]
 
         # Apply additional filters
         for key, value in filters.items():

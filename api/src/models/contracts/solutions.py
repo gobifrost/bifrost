@@ -513,36 +513,3 @@ class SolutionSetupStatus(BaseModel):
 # ---------------------------------------------------------------------------
 # File job contracts
 # ---------------------------------------------------------------------------
-
-
-class SolutionFileJobEnqueue(BaseModel):
-    """Request body for ``POST /api/solutions/file-jobs``."""
-
-    install_id: UUID
-    kind: Literal["restore", "orphan", "bulk_delete"]
-    # For 'orphan': the org that will own the re-stamped files + the slug used
-    # to record provenance on the orphaned rows.
-    org_id: UUID | None = None
-    slug: str | None = None
-
-
-class SolutionFileJobEnqueued(BaseModel):
-    """Returned by ``POST /api/solutions/file-jobs``."""
-
-    file_job_id: UUID
-
-
-class SolutionFileJobStatus(BaseModel):
-    """Current state of an async file job."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    install_id: UUID | None
-    origin_solution_id: UUID | None = None
-    kind: Literal["restore", "orphan", "bulk_delete"]
-    status: Literal["queued", "running", "succeeded", "failed"]
-    error: str | None = None
-    result: dict[str, Any] | None = None
-    created_at: datetime
-    updated_at: datetime

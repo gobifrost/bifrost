@@ -1,7 +1,6 @@
 /**
  * Tests for the Config list page "Show orphaned" toggle: toggling it threads
- * `include_orphaned` into the list fetch, and orphaned rows render an origin
- * badge.
+ * `include_orphaned` into the list fetch.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -47,8 +46,6 @@ const orphanedConfig = {
 	org_id: null,
 	description: "",
 	integration_name: null,
-	orphaned_at: "2026-02-01T00:00:00Z",
-	origin_solution_slug: "crm-sync",
 };
 
 beforeEach(() => {
@@ -81,8 +78,4 @@ describe("Config — Show orphaned toggle", () => {
 		expect(mockUseConfigs).toHaveBeenLastCalledWith(undefined, true);
 	});
 
-	it("badges an orphaned row with its origin solution", async () => {
-		await renderPage();
-		expect(screen.getByText(/orphaned · from crm-sync/i)).toBeInTheDocument();
-	});
 });

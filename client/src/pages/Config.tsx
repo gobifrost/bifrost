@@ -380,20 +380,7 @@ export function Config() {
 										)}
 									</DataTableCell>
 									<DataTableCell className="font-mono">
-										<span className="flex items-center gap-2">
-											{config.key}
-											{config.orphaned_at && (
-												<Badge
-													variant="outline"
-													className="font-sans text-xs font-normal text-muted-foreground"
-												>
-													Orphaned
-													{config.origin_solution_slug
-														? ` · from ${config.origin_solution_slug}`
-														: ""}
-												</Badge>
-											)}
-										</span>
+										{config.key}
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap max-w-xs truncate">
 										{maskValue(config.value, config.type)}
