@@ -106,6 +106,13 @@ def _write_solution_file(
     assert r.status_code == 204, f"file write failed: {r.status_code} {r.text}"
 
 
+async def _declare_solution_file_location(db_session, sol_id: str, location: str) -> None:
+    from src.services.solutions.file_locations import reconcile_solution_file_locations
+
+    await reconcile_solution_file_locations(db_session, solution_id=UUID(sol_id), locations=[location])
+    await db_session.commit()
+
+
 def _read_solution_file(
     e2e_client, headers, sol_id: str, path: str
 ) -> tuple[int, str | None]:
@@ -151,6 +158,7 @@ def _deploy_solution(
     tables: list | None = None,
     workflows: list | None = None,
     python_files: dict | None = None,
+    file_locations: list[str] | None = None,
 ) -> dict:
     """Deploy, poll async job, assert succeeded, return result payload."""
     from tests.e2e.platform.conftest import deploy_solution as _ds
@@ -158,6 +166,7 @@ def _deploy_solution(
     body: dict = {
         "tables": tables or [],
         "workflows": workflows or [],
+        "file_locations": file_locations or [],
     }
     if python_files:
         body["python_files"] = python_files
@@ -206,6 +215,7 @@ def _make_install_zip(slug: str, table_name: str, table_bundle_id: str) -> bytes
             "        - name: note\n"
             "    policies: null\n",
         )
+        z.writestr(".bifrost/files.yaml", "locations:\n- solutions\n")
     return buf.getvalue()
 
 
@@ -259,7 +269,6 @@ class TestSolutionInactiveLifecycleCapstone:
         # ── Step 1c: file into the solution ──────────────────────────────
         file_path = f"docs/readme-{uuid.uuid4().hex[:8]}.md"
         file_content = f"# Capstone Readme\n\ntest-{uuid.uuid4().hex}"
-        _write_solution_file(e2e_client, headers, sol_id, file_path, file_content)
 
         # ── Step 1d: file policy with {"$ref": "admin_bypass"} ───────────
         # admin_bypass is a global built-in seeded at startup.
@@ -293,7 +302,11 @@ class TestSolutionInactiveLifecycleCapstone:
                 "type": "workflow",
             }],
             python_files={"workflows/run.py": wf_content},
+            file_locations=["solutions"],
         )
+
+        await _declare_solution_file_location(db_session, sol_id, "solutions")
+        _write_solution_file(e2e_client, headers, sol_id, file_path, file_content)
 
         # ── Step 3a: platform admin can read the file ─────────────────────
         status, content = _read_solution_file(e2e_client, headers, sol_id, file_path)
@@ -314,7 +327,7 @@ class TestSolutionInactiveLifecycleCapstone:
         slug_b = f"capstone-leak-{uuid.uuid4().hex[:8]}"
         sol_b = _create_solution(e2e_client, headers, slug_b)
         sol_b_id = sol_b["id"]
-        _deploy_solution(e2e_client, headers, sol_b_id)
+        _deploy_solution(e2e_client, headers, sol_b_id, file_locations=["solutions"])
 
         leak_r = e2e_client.post(
             f"/api/files/read?solution={sol_b_id}",

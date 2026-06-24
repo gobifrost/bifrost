@@ -5,11 +5,11 @@ run in the unit test environment without a live S3/SeaweedFS.
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import io
 import uuid
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -49,18 +49,24 @@ def _make_entries(paths: list[tuple[str, bytes]]) -> list[SolutionFileEntry]:
 # ---------------------------------------------------------------------------
 
 
-async def test_bundle_includes_solution_files_when_requested(db_session) -> None:
+async def _read_payload(zf: zipfile.ZipFile, tmp_path: Path, payload: str, password: str) -> bytes:
+    from src.services.solutions.file_payloads import iter_encrypted_payload_file
+
+    payload_path = Path(zf.extract(payload, tmp_path))
+    chunks: list[bytes] = []
+    async for chunk in iter_encrypted_payload_file(payload_path, password=password):
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def test_bundle_includes_solution_file_metadata_when_requested(db_session) -> None:
     """include_data=True must populate bundle.solution_files with entries
-    carrying correct sha256 and non-empty content_bytes."""
+    carrying metadata only; payload bytes are streamed later by export."""
     from src.services.solutions.capture import SolutionCaptureService
 
     sol = _make_solution()
     db_session.add(sol)
     await db_session.flush()
-
-    file_a = (b"file alpha content", "docs/alpha.txt")
-    file_b = (b"file beta content", "docs/beta.txt")
-    files_data = {p: c for c, p in [file_a, file_b]}
 
     meta_entries = [
         SolutionFileEntry(
@@ -80,9 +86,6 @@ async def test_bundle_includes_solution_files_when_requested(db_session) -> None
     async def _mock_enumerate(db, install_id):
         return meta_entries
 
-    async def _mock_read(db, install_id, location, path):
-        return files_data[path]
-
     with (
         patch(
             "src.services.solution_files.enumerate_solution_files",
@@ -90,7 +93,7 @@ async def test_bundle_includes_solution_files_when_requested(db_session) -> None
         ),
         patch(
             "src.services.solution_files.read_solution_file",
-            side_effect=_mock_read,
+            side_effect=AssertionError("capture must not read solution file bytes"),
         ),
     ):
         svc = SolutionCaptureService(db_session)
@@ -102,7 +105,7 @@ async def test_bundle_includes_solution_files_when_requested(db_session) -> None
 
     for entry in bundle.solution_files:
         expected_bytes = b"file alpha content" if "alpha" in entry.path else b"file beta content"
-        assert entry.content_bytes == expected_bytes
+        assert entry.content_bytes is None
         assert entry.sha256 == hashlib.sha256(expected_bytes).hexdigest()
         assert entry.size == len(expected_bytes)
         assert entry.location == "shared"
@@ -164,10 +167,6 @@ async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) ->
     async def _mock_enumerate(db, install_id):
         return over_cap
 
-    async def _mock_read(db, install_id, location, path):
-        i = int(path.replace("docs/f", "").replace(".txt", ""))
-        return f"content {i}".encode()
-
     with (
         patch(
             "src.services.solution_files.enumerate_solution_files",
@@ -175,7 +174,7 @@ async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) ->
         ),
         patch(
             "src.services.solution_files.read_solution_file",
-            side_effect=_mock_read,
+            side_effect=AssertionError("capture must not read solution file bytes"),
         ),
         caplog.at_level(logging.WARNING, logger="src.services.solutions.capture"),
     ):
@@ -190,15 +189,16 @@ async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) ->
 # ---------------------------------------------------------------------------
 
 
-async def test_export_zip_files_in_encrypted_tier_not_plaintext(db_session) -> None:
-    """M7 property: the bytes land in the encrypted .bifrost/secrets.enc,
-    NOT as plaintext files/ members in the zip.
+async def test_export_zip_files_in_encrypted_payload_members_not_plaintext(
+    db_session, tmp_path
+) -> None:
+    """M7 property: bytes land in encrypted payload members, not plaintext.
 
     Calls build_workspace_zip directly with a bundle that carries
     solution_files, then:
     1. Asserts the zip does NOT contain any 'files/' member.
     2. Asserts .bifrost/secrets.enc is present.
-    3. Decrypts it and confirms the file bytes are present.
+    3. Decrypts payload members and confirms the file bytes are present.
     """
     from src.services.solutions.export import build_workspace_zip
     from src.services.solutions.secrets_blob import decode_secrets_blob
@@ -216,35 +216,29 @@ async def test_export_zip_files_in_encrypted_tier_not_plaintext(db_session) -> N
             path="docs/alpha.txt",
             sha256=hashlib.sha256(content_a).hexdigest(),
             size=len(content_a),
+            content_bytes=content_a,
         ),
         SolutionFileEntry(
             location="shared",
             path="docs/beta.txt",
             sha256=hashlib.sha256(content_b).hexdigest(),
             size=len(content_b),
+            content_bytes=content_b,
         ),
     ]
-    files_data = {"docs/alpha.txt": content_a, "docs/beta.txt": content_b}
 
     async def _mock_enumerate(db, install_id):
         return meta_entries
 
-    async def _mock_read(db, install_id, location, path):
-        return files_data[path]
-
     from src.services.solutions.capture import SolutionCaptureService
 
-    with (
-        patch(
-            "src.services.solution_files.enumerate_solution_files",
-            side_effect=_mock_enumerate,
-        ),
-        patch(
-            "src.services.solution_files.read_solution_file",
-            side_effect=_mock_read,
-        ),
+    with patch(
+        "src.services.solution_files.enumerate_solution_files",
+        side_effect=_mock_enumerate,
     ):
         bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
+    for entry, content_bytes in zip(bundle.solution_files, (content_a, content_b), strict=True):
+        entry.content_bytes = content_bytes
 
     assert len(bundle.solution_files) == 2
 
@@ -272,8 +266,13 @@ async def test_export_zip_files_in_encrypted_tier_not_plaintext(db_session) -> N
     file_map = {f["path"]: f for f in content.solution_files}
     assert "docs/alpha.txt" in file_map
     assert "docs/beta.txt" in file_map
-    assert base64.b64decode(file_map["docs/alpha.txt"]["content_b64"]) == content_a
-    assert base64.b64decode(file_map["docs/beta.txt"]["content_b64"]) == content_b
+    assert "content_b64" not in file_map["docs/alpha.txt"]
+    assert await _read_payload(
+        zf, tmp_path, file_map["docs/alpha.txt"]["payload"], password
+    ) == content_a
+    assert await _read_payload(
+        zf, tmp_path, file_map["docs/beta.txt"]["payload"], password
+    ) == content_b
 
 
 async def test_export_no_secrets_enc_without_password(db_session) -> None:
@@ -317,3 +316,67 @@ async def test_export_no_secrets_enc_without_password(db_session) -> None:
     zip_bytes = build_workspace_zip(bundle)  # no password
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
     assert ".bifrost/secrets.enc" not in zf.namelist()
+
+
+async def test_import_payload_streams_bounded_chunks(
+    db_session, tmp_path, monkeypatch
+) -> None:
+    from src.services.solutions.deploy import SolutionBundle
+    from src.services.solutions.export import build_workspace_zip
+    from src.services.solutions.secrets_blob import decode_secrets_blob
+    from src.services.solutions.zip_install import _apply_solution_files
+
+    content = (b"a" * (8 * 1024 * 1024)) + b"tail"
+    sol = _make_solution()
+    sol.id = uuid.uuid4()
+    password = "stream-import-pw"
+    bundle = SolutionBundle(
+        solution=sol,
+        solution_files=[
+            SolutionFileEntry(
+                location="shared",
+                path="docs/large.bin",
+                sha256=hashlib.sha256(content).hexdigest(),
+                size=len(content),
+                content_bytes=content,
+            )
+        ],
+    )
+    zip_bytes = build_workspace_zip(bundle, password=password)
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        zf.extractall(tmp_path)
+        encrypted = zf.read(".bifrost/secrets.enc").decode()
+
+    sidecar = decode_secrets_blob(encrypted, password=password)
+    assert "content_b64" not in sidecar.solution_files[0]
+    assert sidecar.solution_files[0]["payload"].startswith(".bifrost/file-payloads/")
+
+    seen_chunks: list[int] = []
+    restored = bytearray()
+
+    async def _fake_write(db, install_id, location, path, chunks, *, mode):  # noqa: ANN001
+        assert install_id == sol.id
+        assert location == "shared"
+        assert path == "docs/large.bin"
+        assert mode == "replace"
+        async for chunk in chunks:
+            seen_chunks.append(len(chunk))
+            restored.extend(chunk)
+        return True
+
+    monkeypatch.setattr(
+        "src.services.solution_files.write_solution_file_from_chunks",
+        _fake_write,
+    )
+
+    await _apply_solution_files(
+        db_session,
+        solution=sol,
+        solution_files=sidecar.solution_files,
+        workspace=tmp_path,
+        password=password,
+    )
+
+    assert bytes(restored) == content
+    assert seen_chunks
+    assert max(seen_chunks) <= 8 * 1024 * 1024

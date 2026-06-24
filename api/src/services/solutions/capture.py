@@ -838,10 +838,10 @@ class SolutionCaptureService:
     async def _solution_file_entries(
         self, solution: Solution
     ) -> list[Any]:
-        """Read each solution-owned file's bytes for a full-backup export.
+        """Return solution-owned file metadata for a full-backup export.
 
-        Enumerates via the Task-17 service (metadata-only, no S3) then reads
-        each file's bytes from S3. Only files that can be read are included.
+        Enumerates via the Task-17 service (metadata-only, no S3). File bytes
+        are streamed later by the export writer from each entry's ``s3_key``.
 
         File cap: if a solution exceeds FILE_CAP files, a WARNING is logged
         naming the solution slug and actual count, and only the first FILE_CAP
@@ -849,11 +849,7 @@ class SolutionCaptureService:
 
         Empty → returns [] (omit from encrypted blob when empty).
         """
-        from src.services.solution_files import (
-            SolutionFileEntry,
-            enumerate_solution_files,
-            read_solution_file,
-        )
+        from src.services.solution_files import enumerate_solution_files
 
         entries = await enumerate_solution_files(self.db, solution.id)
         if not entries:
@@ -869,33 +865,7 @@ class SolutionCaptureService:
             )
             entries = entries[:FILE_CAP]
 
-        result: list[SolutionFileEntry] = []
-        for entry in entries:
-            try:
-                content_bytes = await read_solution_file(
-                    self.db, solution.id, entry.location, entry.path
-                )
-            except Exception:
-                # File disappeared between enumerate and read — skip rather than
-                # fail the whole capture.
-                logger.warning(
-                    "bundle_for: could not read file %r/%r for solution %r; skipping.",
-                    entry.location,
-                    entry.path,
-                    solution.slug,
-                )
-                continue
-            result.append(
-                SolutionFileEntry(
-                    location=entry.location,
-                    path=entry.path,
-                    sha256=entry.sha256,
-                    size=entry.size,
-                    content_bytes=content_bytes,
-                )
-            )
-
-        return result
+        return entries
 
     async def _file_location_entries(self, solution_id: UUID) -> list[str]:
         from src.models.orm.solution_file_location import SolutionFileLocation

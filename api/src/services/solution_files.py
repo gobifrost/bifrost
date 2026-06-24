@@ -9,6 +9,7 @@ guard in ``solutions/guard.py``.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -25,15 +26,17 @@ from src.services.file_storage import FileStorageService
 class SolutionFileEntry:
     """Summary of one file belonging to a solution install.
 
-    ``content_bytes`` is populated during bundle capture (include_data=True) and
-    carries the raw file content for encryption into the export bundle.  It is
-    None when the entry comes from a metadata-only enumerate (no S3 read).
+    ``s3_key`` points at the runtime object so full exports can stream payloads
+    from S3. ``content_bytes`` is retained for small in-memory test fixtures and
+    legacy deploy paths; live capture leaves it unset.
     """
 
     location: str
     path: str
     sha256: str | None
     size: int | None
+    s3_key: str | None = None
+    payload: str | None = None
     content_bytes: bytes | None = None
 
 
@@ -52,6 +55,7 @@ async def enumerate_solution_files(
                 FileMetadata.path,
                 FileMetadata.sha256,
                 FileMetadata.size_bytes,
+                FileMetadata.s3_key,
             ).where(FileMetadata.solution_id == install_id)
         )
     ).all()
@@ -61,6 +65,7 @@ async def enumerate_solution_files(
             path=row.path,
             sha256=row.sha256,
             size=row.size_bytes,
+            s3_key=row.s3_key,
         )
         for row in rows
     ]
@@ -93,6 +98,33 @@ async def read_solution_file(
         )
     storage = FileStorageService(db)
     return await storage.read_uploaded_file(row)
+
+
+async def iter_solution_file_chunks(
+    db: AsyncSession,
+    install_id: UUID,
+    location: str,
+    path: str,
+    *,
+    chunk_size: int = 8 * 1024 * 1024,
+) -> AsyncIterator[bytes]:
+    """Yield a solution-owned file's bytes from S3 in bounded chunks."""
+    row = (
+        await db.execute(
+            select(FileMetadata.s3_key).where(
+                FileMetadata.solution_id == install_id,
+                FileMetadata.location == location,
+                FileMetadata.path == path,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise FileNotFoundError(
+            f"No file for install {install_id}: location={location!r} path={path!r}"
+        )
+    storage = FileStorageService(db)
+    async for chunk in storage.iter_raw_s3_chunks(row, chunk_size=chunk_size):
+        yield chunk
 
 
 async def write_solution_file(
@@ -160,6 +192,71 @@ async def write_solution_file(
         )
     else:
         # Core UPDATE — same reason.
+        await db.execute(
+            update(FileMetadata)
+            .where(FileMetadata.id == existing_id)
+            .values(
+                s3_key=s3_key,
+                sha256=sha256,
+                size_bytes=size,
+                updated_at=now,
+            )
+        )
+
+    await db.commit()
+    return True
+
+
+async def write_solution_file_from_chunks(
+    db: AsyncSession,
+    install_id: UUID,
+    location: str,
+    path: str,
+    chunks: AsyncIterator[bytes],
+    *,
+    mode: str = "replace",
+) -> bool:
+    """Stream file chunks to S3 and upsert the solution file metadata row."""
+    if mode not in ("replace", "skip"):
+        raise ValueError(f"mode must be 'replace' or 'skip', got {mode!r}")
+
+    s3_key = resolve_s3_key(location, str(install_id), path)
+    existing_id: UUID | None = (
+        await db.execute(
+            select(FileMetadata.id).where(
+                FileMetadata.solution_id == install_id,
+                FileMetadata.location == location,
+                FileMetadata.path == path,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing_id is not None and mode == "skip":
+        return False
+
+    storage = FileStorageService(db)
+    sha256, size = await storage.write_raw_chunks_to_s3(
+        s3_key,
+        chunks,
+    )
+    now = datetime.now(timezone.utc)
+
+    if existing_id is None:
+        await db.execute(
+            insert(FileMetadata).values(
+                id=uuid4(),
+                solution_id=install_id,
+                organization_id=None,
+                location=location,
+                path=path,
+                s3_key=s3_key,
+                sha256=sha256,
+                size_bytes=size,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    else:
         await db.execute(
             update(FileMetadata)
             .where(FileMetadata.id == existing_id)

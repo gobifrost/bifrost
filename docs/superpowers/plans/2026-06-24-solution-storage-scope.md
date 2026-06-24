@@ -45,7 +45,7 @@
 - [x] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
 - [x] Task 7: Policy resolution is tier-correct and solution policies never leak upward
 - [x] Task 8: Web SDK/app file calls honor solution scope
-- [ ] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
+- [x] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
 - [ ] Task 10: Re-point capstone and `location="solutions"` tests to the real model
 - [ ] Task 11: Full deployed-solution end-to-end and large-file memory tests
 - [ ] Task 12: Final verification sweep
@@ -732,11 +732,12 @@ Notes:
 - Modify: `api/src/services/solutions/export.py`
 - Modify: `api/src/services/solutions/zip_install.py`
 - Modify: `api/src/services/solutions/secrets_blob.py`
-- Test: `api/tests/unit/test_solution_export_streaming.py`
+- Test: `api/tests/unit/test_solution_file_capture.py`
+- Test: `api/tests/unit/test_solution_export.py`
 - Test: `api/tests/e2e/platform/test_solution_export_files.py`
-- Test: `api/tests/e2e/platform/test_solution_import_data.py`
+- Test: `api/tests/e2e/platform/test_solution_files_e2e.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Tests must prove:
 - Exporting solution files does not call `read_uploaded_file()` for payload bytes.
@@ -745,7 +746,7 @@ Tests must prove:
 - Import streams payload entries to S3 and upserts metadata.
 - Peak in-process payload chunk size remains bounded. Use a fake 64 MiB stream and assert no full-object read method is invoked.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/unit/test_solution_export_streaming.py tests/e2e/platform/test_solution_export_files.py tests/e2e/platform/test_solution_import_data.py -v
@@ -753,7 +754,7 @@ Tests must prove:
 
 Expected: FAIL because current code reads bytes into memory/base64.
 
-- [ ] **Step 3: Implement S3 chunk helpers**
+- [x] **Step 3: Implement S3 chunk helpers**
 
 Add helpers similar to:
 
@@ -771,7 +772,7 @@ async def put_object_from_chunks(self, key: str, chunks: AsyncIterator[bytes], c
 
 Use multipart upload for streamed writes. Do not concatenate chunks.
 
-- [ ] **Step 4: Implement export payload entries**
+- [x] **Step 4: Implement export payload entries**
 
 Keep `.bifrost/solution-files.yaml` or `manifest.solution_files` as the metadata index. Add payload reference fields if needed:
 
@@ -786,15 +787,15 @@ solution_files:
 
 Write payload entries with `zipfile.ZipFile.open(payload, "w")` and stream chunks from S3. Do not put file bytes in `SolutionBundle` or `secrets.enc`.
 
-- [ ] **Step 5: Implement import payload streaming**
+- [x] **Step 5: Implement import payload streaming**
 
 Read `ZipFile.open(payload, "r")` in fixed chunks and stream to S3 multipart upload, then write metadata with `solution_id`, `location`, `path`, `sha256`, and size.
 
-- [ ] **Step 6: Decide encrypted large-file behavior**
+- [x] **Step 6: Decide encrypted large-file behavior**
 
-For this plan, keep `secrets.enc` for config values and table rows only. File payloads travel as zip payload entries. If product requires encrypted file payloads before release, add a follow-up task for per-file streaming encryption; do not reintroduce one giant Fernet JSON blob.
+Decision: keep `secrets.enc` for config values, table rows, and the encrypted file payload index. File bytes travel as separate `.bifrost/file-payloads/*.bin.enc` members encrypted per chunk with the export password. Do not reintroduce one giant `content_b64` / Fernet JSON blob.
 
-- [ ] **Step 7: Run passing tests**
+- [x] **Step 7: Run passing tests**
 
 ```bash
 ./test.sh tests/unit/test_solution_export_streaming.py tests/e2e/platform/test_solution_export_files.py tests/e2e/platform/test_solution_import_data.py -v
@@ -808,6 +809,24 @@ Expected: PASS.
 git add api/src/services/file_storage/s3_client.py api/src/services/file_storage/service.py api/src/services/solution_files.py api/src/services/solutions/capture.py api/src/services/solutions/export.py api/src/services/solutions/zip_install.py api/src/services/solutions/secrets_blob.py api/tests/unit/test_solution_export_streaming.py api/tests/e2e/platform/test_solution_export_files.py api/tests/e2e/platform/test_solution_import_data.py
 git commit -m "feat(solution-export): stream solution file payloads"
 ```
+
+Implemented in current working tree:
+- Added S3 chunk read/write helpers and solution-file streaming write/read wrappers.
+- Changed capture to keep solution file entries metadata-only.
+- Changed full export to write encrypted per-file payload members and a small encrypted file index with `payload` refs, never `content_b64`.
+- Changed full import to decrypt payload members chunk-by-chunk, validate sha256/size, and stream to S3.
+- Changed solution zip preview/install/deploy endpoints to spool uploads to temp files instead of `await file.read()`.
+- Changed export endpoint to return a temp-file `FileResponse` instead of `Response(content=data)`.
+- Added path-copy helpers for stored source artifacts and streaming overlay of live runtime payloads.
+- Fixed hard-delete of installs with declared file locations by avoiding ORM delete-orphan handling for `Solution.file_locations`.
+
+Verified:
+- `cd api && ruff check src/services/file_storage/s3_client.py src/services/file_storage/service.py src/services/solution_files.py src/services/solutions/file_payloads.py src/services/solutions/export.py src/services/solutions/zip_install.py src/services/solutions/source_artifact.py src/services/solutions/secrets_blob.py src/routers/solutions.py tests/unit/test_solution_file_capture.py tests/unit/test_solution_export.py tests/e2e/platform/test_solution_export_files.py`
+- `./test.sh tests/unit/test_solution_file_capture.py tests/unit/test_solution_export.py tests/unit/test_solution_zip_install.py -v` (22 passed)
+- `./test.sh tests/e2e/platform/test_solution_export_files.py -v` (3 passed)
+- `./test.sh tests/e2e/platform/test_solution_files_e2e.py::TestSolutionInactiveLifecycleCapstone::test_arc_1_deploy_through_uninstall tests/e2e/platform/test_solution_files_e2e.py::TestSolutionInactiveLifecycleCapstone::test_arc_2_reactivate_export_harddelete -v` (2 passed)
+- `cd api && pyright` (0 errors)
+- `./test.sh tests/unit/test_solution_file_capture.py tests/unit/test_solution_export.py tests/unit/test_solution_zip_install.py tests/e2e/platform/test_solution_export_files.py tests/e2e/platform/test_solution_files_e2e.py::TestSolutionInactiveLifecycleCapstone::test_arc_1_deploy_through_uninstall tests/e2e/platform/test_solution_files_e2e.py::TestSolutionInactiveLifecycleCapstone::test_arc_2_reactivate_export_harddelete -v` (28 passed)
 
 ## Task 10: Re-Point Capstone And `location="solutions"` Tests
 

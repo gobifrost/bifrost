@@ -9,6 +9,7 @@ Python full-replace writer from deleting it.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import UUID
 
 from src.config import Settings, get_settings
@@ -46,6 +47,11 @@ class SolutionSourceArtifactStorage:
         async with self._get_client() as client:
             await client.put_object(Bucket=self._bucket, Key=self._key(), Body=data)
 
+    async def write_from_path(self, path: Path) -> None:
+        async with self._get_client() as client:
+            with path.open("rb") as f:
+                await client.put_object(Bucket=self._bucket, Key=self._key(), Body=f)
+
     async def read(self) -> bytes | None:
         async with self._get_client() as client:
             try:
@@ -57,6 +63,24 @@ class SolutionSourceArtifactStorage:
                 if "NoSuchKey" in str(type(exc).__name__) or "404" in str(exc):
                     return None
                 raise
+
+    async def copy_to_path(self, path: Path) -> bool:
+        async with self._get_client() as client:
+            try:
+                response = await client.get_object(Bucket=self._bucket, Key=self._key())
+            except client.exceptions.NoSuchKey:
+                return False
+            except Exception as exc:  # noqa: BLE001 - aiobotocore backends vary
+                if "NoSuchKey" in str(type(exc).__name__) or "404" in str(exc):
+                    return False
+                raise
+
+            body = response["Body"]
+            async with body:
+                with path.open("wb") as f:
+                    while chunk := await body.read(8 * 1024 * 1024):
+                        f.write(chunk)
+            return True
 
     async def delete(self) -> None:
         async with self._get_client() as client:

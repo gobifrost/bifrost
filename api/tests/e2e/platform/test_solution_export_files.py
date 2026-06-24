@@ -5,10 +5,10 @@ never as plaintext zip members.
 """
 from __future__ import annotations
 
-import base64
 import io
 import uuid
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -46,10 +46,20 @@ def make_solution_with_files(e2e_client, platform_admin, db_session):
     return _make
 
 
+async def _read_payload(zf: zipfile.ZipFile, tmp_path: Path, payload: str, password: str) -> bytes:
+    from src.services.solutions.file_payloads import iter_encrypted_payload_file
+
+    payload_path = Path(zf.extract(payload, tmp_path))
+    chunks: list[bytes] = []
+    async for chunk in iter_encrypted_payload_file(payload_path, password=password):
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def test_full_export_files_in_encrypted_tier(
-    e2e_client, platform_admin, make_solution_with_files
+    e2e_client, platform_admin, make_solution_with_files, tmp_path
 ):
-    """M7: full export must put file bytes in secrets.enc, NOT as plaintext zip members."""
+    """M7: full export must put file bytes in encrypted payload members."""
     content_a = b"secret file alpha e2e"
     content_b = b"secret file beta e2e"
     sol = await make_solution_with_files({
@@ -83,8 +93,13 @@ async def test_full_export_files_in_encrypted_tier(
 
     assert len(content.solution_files) == 2
     file_map = {f["path"]: f for f in content.solution_files}
-    assert base64.b64decode(file_map["docs/alpha.txt"]["content_b64"]) == content_a
-    assert base64.b64decode(file_map["docs/beta.txt"]["content_b64"]) == content_b
+    assert "content_b64" not in file_map["docs/alpha.txt"]
+    assert await _read_payload(
+        zf, tmp_path, file_map["docs/alpha.txt"]["payload"], "pw-e2e"
+    ) == content_a
+    assert await _read_payload(
+        zf, tmp_path, file_map["docs/beta.txt"]["payload"], "pw-e2e"
+    ) == content_b
 
 
 async def test_full_export_no_files_omits_file_section(

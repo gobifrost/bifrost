@@ -7,6 +7,7 @@ as the original monolithic FileStorageService.
 
 import ast
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID
 
@@ -345,6 +346,15 @@ class FileStorageService:
         """Read a file from S3 (for uploaded files)."""
         return await self._s3_storage.read_uploaded_file(path)
 
+    def iter_raw_s3_chunks(
+        self,
+        path: str,
+        *,
+        chunk_size: int = 8 * 1024 * 1024,
+    ) -> AsyncIterator[bytes]:
+        """Yield raw S3 object bytes without loading the whole object."""
+        return self._s3_storage.iter_object_chunks(path, chunk_size=chunk_size)
+
     async def write_raw_to_s3(self, path: str, content: bytes) -> None:
         """Write content directly to S3 without workspace indexing."""
         async with self._s3_storage.get_client() as s3:
@@ -354,6 +364,20 @@ class FileStorageService:
                 Body=content,
                 ContentType=S3StorageClient.guess_content_type(path),
             )
+
+    async def write_raw_chunks_to_s3(
+        self,
+        path: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+    ) -> tuple[str, int]:
+        """Write raw chunks directly to S3 and return ``(sha256, size)``."""
+        return await self._s3_storage.put_object_from_chunks(
+            path,
+            chunks,
+            content_type=content_type,
+        )
 
     async def delete_raw_from_s3(self, path: str) -> None:
         """Delete a file directly from S3 without workspace indexing."""

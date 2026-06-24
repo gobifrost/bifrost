@@ -9,6 +9,7 @@ Handles S3 operations including:
 
 import hashlib
 import mimetypes
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -175,3 +176,112 @@ class S3StorageClient:
                 return await response["Body"].read()
             except s3.exceptions.NoSuchKey:
                 raise FileNotFoundError(f"File not found: {path}")
+
+    async def iter_object_chunks(
+        self,
+        path: str,
+        *,
+        chunk_size: int = 8 * 1024 * 1024,
+    ) -> AsyncIterator[bytes]:
+        """Yield an S3 object in bounded chunks."""
+        async with self.get_client() as s3:
+            try:
+                response = await s3.get_object(
+                    Bucket=self.settings.s3_bucket,
+                    Key=path,
+                )
+            except s3.exceptions.NoSuchKey:
+                raise FileNotFoundError(f"File not found: {path}")
+
+            body = response["Body"]
+            async with body:
+                while True:
+                    chunk = await body.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+    async def put_object_from_chunks(
+        self,
+        path: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        content_type: str | None = None,
+        part_size: int = 8 * 1024 * 1024,
+    ) -> tuple[str, int]:
+        """Write chunks to S3, returning ``(sha256, size)``.
+
+        Small objects are uploaded with a single PUT. Larger streams switch to
+        multipart upload without retaining the whole object in memory.
+        """
+        digest = hashlib.sha256()
+        total = 0
+        buffer = bytearray()
+        upload_id: str | None = None
+        parts: list[dict[str, int | str]] = []
+        part_number = 1
+
+        async with self.get_client() as s3:
+
+            async def ensure_upload() -> str:
+                nonlocal upload_id
+                if upload_id is None:
+                    created = await s3.create_multipart_upload(
+                        Bucket=self.settings.s3_bucket,
+                        Key=path,
+                        ContentType=content_type or self.guess_content_type(path),
+                    )
+                    upload_id = created["UploadId"]
+                return upload_id
+
+            async def upload_part(data: bytes) -> None:
+                nonlocal part_number
+                current_upload_id = await ensure_upload()
+                response = await s3.upload_part(
+                    Bucket=self.settings.s3_bucket,
+                    Key=path,
+                    UploadId=current_upload_id,
+                    PartNumber=part_number,
+                    Body=data,
+                )
+                parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
+                part_number += 1
+
+            try:
+                async for chunk in chunks:
+                    if not chunk:
+                        continue
+                    digest.update(chunk)
+                    total += len(chunk)
+                    buffer.extend(chunk)
+                    while len(buffer) >= part_size:
+                        part = bytes(buffer[:part_size])
+                        del buffer[:part_size]
+                        await upload_part(part)
+
+                if upload_id is None:
+                    await s3.put_object(
+                        Bucket=self.settings.s3_bucket,
+                        Key=path,
+                        Body=bytes(buffer),
+                        ContentType=content_type or self.guess_content_type(path),
+                    )
+                else:
+                    if buffer:
+                        await upload_part(bytes(buffer))
+                    await s3.complete_multipart_upload(
+                        Bucket=self.settings.s3_bucket,
+                        Key=path,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                    )
+            except Exception:
+                if upload_id is not None:
+                    await s3.abort_multipart_upload(
+                        Bucket=self.settings.s3_bucket,
+                        Key=path,
+                        UploadId=upload_id,
+                    )
+                raise
+
+        return digest.hexdigest(), total

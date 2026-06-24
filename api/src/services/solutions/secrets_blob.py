@@ -38,8 +38,8 @@ class SolutionContent:
     password-encrypted .bifrost/secrets.enc blob — never in plaintext.
 
     ``solution_files`` is a list of dicts with keys:
-      ``location``, ``path``, ``sha256``, ``size``, ``content_b64``
-    (content bytes are base64-encoded for JSON serialization).
+      ``location``, ``path``, ``sha256``, ``size``, ``payload``, ``encryption``.
+    Legacy imports may still provide ``content_b64``; new exports never do.
     """
 
     config_values: dict[str, str] = field(default_factory=dict)

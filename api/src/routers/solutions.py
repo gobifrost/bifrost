@@ -14,17 +14,21 @@ import base64
 import json
 import logging
 import os
+import tempfile
 import zipfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, File, HTTPException, Response, UploadFile, status
 from fastapi import Form as FastapiForm
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
+from starlette.background import BackgroundTask
 
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
@@ -80,6 +84,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
 
 DEPLOY_JOB_ORPHAN_THRESHOLD = timedelta(minutes=15)
+UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+
+
+def _cleanup_file(path: str | Path) -> None:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 - best-effort response cleanup
+        logger.warning("Failed to remove temporary file %s", path)
+
+
+async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
+    tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=".zip", delete=False)
+    path = Path(tmp.name)
+    try:
+        with tmp:
+            while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                tmp.write(chunk)
+    except Exception:
+        _cleanup_file(path)
+        raise
+    return path
 
 
 async def reconcile_orphaned_deploy_jobs(
@@ -302,8 +327,8 @@ async def export_solution(
 
     from src.services.solutions.capture import SolutionCaptureService
     from src.services.solutions.export import (
-        add_encrypted_content_to_workspace_zip,
-        build_workspace_zip,
+        add_live_content_to_workspace_zip_file,
+        build_workspace_zip_for_export,
     )
     from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
@@ -312,50 +337,62 @@ async def export_solution(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
     include_values = mode == "full"
-    stored_source = await SolutionSourceArtifactStorage(solution_id).read()
-    if stored_source is not None and mode == "shareable":
-        data = stored_source
-    else:
-        bundle = await SolutionCaptureService(ctx.db).bundle_for(
-            sol,
-            include_imports=True,
-            include_values=include_values,
-            include_data=include_data,
-        )
-        if stored_source is not None:
-            import base64
-
-            from src.services.solutions.secrets_blob import SolutionContent
-
-            file_sidecar_entries: list[dict] = []
-            for sf in bundle.solution_files:
-                if sf.content_bytes is None:
-                    continue
-                file_sidecar_entries.append(
-                    {
-                        "location": sf.location,
-                        "path": sf.path,
-                        "sha256": sf.sha256,
-                        "size": sf.size,
-                        "content_b64": base64.b64encode(sf.content_bytes).decode("ascii"),
-                    }
-                )
-            data = add_encrypted_content_to_workspace_zip(
-                stored_source,
-                SolutionContent(
-                    config_values=bundle.config_values,
-                    table_data=bundle.table_data,
-                    solution_files=file_sidecar_entries,
-                ),
-                password=password or "",
-            )
-        else:
-            data = build_workspace_zip(bundle, password=password if include_values else None)
+    artifact = SolutionSourceArtifactStorage(solution_id)
     filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
-    return Response(
-        content=data,
+    tmp = tempfile.NamedTemporaryFile(
+        prefix=f"bifrost-solution-export-{solution_id}-",
+        suffix=".zip",
+        delete=False,
+    )
+    out_path = Path(tmp.name)
+    tmp.close()
+    try:
+        stored_source_path = tempfile.NamedTemporaryFile(
+            prefix=f"bifrost-solution-source-{solution_id}-",
+            suffix=".zip",
+            delete=False,
+        )
+        source_path = Path(stored_source_path.name)
+        stored_source_path.close()
+        has_stored_source = await artifact.copy_to_path(source_path)
+        if has_stored_source and mode == "shareable":
+            source_path.replace(out_path)
+        else:
+            bundle = await SolutionCaptureService(ctx.db).bundle_for(
+                sol,
+                include_imports=True,
+                include_values=include_values,
+                include_data=include_data,
+            )
+            if has_stored_source:
+                await add_live_content_to_workspace_zip_file(
+                    source_path,
+                    bundle,
+                    ctx.db,
+                    out_path,
+                    password=password or "",
+                )
+            else:
+                await build_workspace_zip_for_export(
+                    bundle,
+                    ctx.db,
+                    out_path,
+                    password=password if include_values else None,
+                )
+        _cleanup_file(source_path)
+    except Exception:
+        _cleanup_file(out_path)
+        try:
+            _cleanup_file(source_path)
+        except UnboundLocalError:
+            pass
+        raise
+    return FileResponse(
+        out_path,
         media_type="application/zip",
+        filename=filename,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        background=BackgroundTask(_cleanup_file, out_path),
     )
 
 
@@ -809,7 +846,7 @@ async def delete_solution(
     To uninstall non-destructively (freeze data, flip status only), use:
     ``POST /{id}/uninstall``.
     """
-    # Load WITHOUT eager-loading ``connection_schema`` (it is ``lazy="selectin"``).
+    # Load WITHOUT eager-loading selectin child relationships.
     # If the children are loaded, the relationship's ``delete-orphan`` cascade marks
     # them in ``session.deleted`` at flush and the Solutions read-only backstop
     # rejects them (drive F3). With ``noload`` the children are never loaded, so the
@@ -822,7 +859,10 @@ async def delete_solution(
         await ctx.db.execute(
             select(SolutionORM)
             .where(SolutionORM.id == solution_id)
-            .options(noload(SolutionORM.connection_schema))
+            .options(
+                noload(SolutionORM.connection_schema),
+                noload(SolutionORM.file_locations),
+            )
         )
     ).scalar_one_or_none()
     if sol is None:
@@ -908,7 +948,7 @@ async def delete_solution(
 async def _run_deploy_job(
     job_id: UUID,
     solution_id: UUID,
-    zip_data: bytes,
+    zip_path: Path,
     *,
     force: bool,
 ) -> None:
@@ -924,7 +964,7 @@ async def _run_deploy_job(
     from src.core.database import get_db_context
     from src.services.solutions.zip_install import (
         UnmetDependency,
-        deploy_zip_to_solution,
+        deploy_zip_to_solution_path,
     )
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
@@ -956,7 +996,9 @@ async def _run_deploy_job(
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
                 await _set_phase("parsing workspace zip and building app dist")
-                result = await deploy_zip_to_solution(db, solution, zip_data, force=force)
+                result = await deploy_zip_to_solution_path(
+                    db, solution, zip_path, force=force
+                )
                 await db.commit()
                 # S3 only after the DB is durable — a failed commit changes no running
                 # code (P1-c). Still inside the lock so finalize can't race another deploy.
@@ -1006,6 +1048,8 @@ async def _run_deploy_job(
         await _set_status("failed", "Deploy failed unexpectedly; see server logs.")
     else:
         await _set_status("succeeded", result=deploy_result)
+    finally:
+        _cleanup_file(zip_path)
 
 
 @router.post(
@@ -1034,12 +1078,13 @@ async def deploy_solution(
             detail="This install is git-connected; deploy is disabled (auto-pull is the only writer).",
         )
 
-    from src.services.solutions.zip_install import preview_zip
+    from src.services.solutions.zip_install import preview_zip_path
 
-    data = await file.read()
+    zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-deploy-")
     try:
-        preview = preview_zip(data)
+        preview = preview_zip_path(zip_path)
     except (ValueError, zipfile.BadZipFile) as exc:
+        _cleanup_file(zip_path)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid solution zip: {exc}",
@@ -1074,6 +1119,7 @@ async def deploy_solution(
         ).all()
         blockers = unpulled_blockers([(t, i) for t, i in pending_rows], manifest_ids)
         if blockers:
+            _cleanup_file(zip_path)
             detail = ", ".join(f"{t}:{i}" for t, i in blockers)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1091,7 +1137,7 @@ async def deploy_solution(
     await ctx.db.commit()
     await ctx.db.refresh(job)
 
-    background_tasks.add_task(_run_deploy_job, job.id, solution_id, data, force=force)
+    background_tasks.add_task(_run_deploy_job, job.id, solution_id, zip_path, force=force)
     return SolutionDeployEnqueued(deploy_job_id=job.id)
 
 
@@ -1353,7 +1399,7 @@ async def install_preview(
     empty/absent → global NULL), the response also carries ``existing_install``
     + ``diff`` so the UI routes to UPGRADE instead of a second install (Task 22).
     """
-    from src.services.solutions.zip_install import preview_zip
+    from src.services.solutions.zip_install import preview_zip_path
 
     org_id: UUID | None = None
     if organization_id:
@@ -1365,14 +1411,16 @@ async def install_preview(
                 detail=f"Invalid organization_id: {organization_id}",
             ) from exc
 
-    data = await file.read()
+    zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-preview-")
     try:
-        result = preview_zip(data)
+        result = preview_zip_path(zip_path)
     except (ValueError, zipfile.BadZipFile) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid solution zip: {exc}",
         ) from exc
+    finally:
+        _cleanup_file(zip_path)
 
     return await _preview_to_dto(ctx, result, org_id)
 
@@ -1596,7 +1644,7 @@ async def install_solution(
         GitConnectedInstallError,
         InactiveInstallExists,
         UnmetDependency,
-        install_zip,
+        install_zip_path,
     )
 
     org_id: UUID | None = None
@@ -1622,11 +1670,11 @@ async def install_solution(
             detail="config_values must be a JSON object mapping key → value",
         )
 
-    data = await file.read()
+    zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-install-")
     try:
-        solution = await install_zip(
+        solution = await install_zip_path(
             ctx.db,
-            data,
+            zip_path,
             organization_id=org_id,
             config_values=values,
             deployer_email=user.email,
@@ -1695,4 +1743,6 @@ async def install_solution(
                 "Re-run the install to complete it (it is idempotent)."
             ),
         ) from exc
+    finally:
+        _cleanup_file(zip_path)
     return SolutionDTO.model_validate(solution)
