@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from src.models.orm.file_metadata import FileMetadata
+from src.models.orm.applications import Application
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.tables import Table
 from src.services.solutions.deploy import solution_entity_id
@@ -31,6 +32,29 @@ async def _declare_file_location(db_session, solution_id: str, location: str) ->
         SolutionFileLocation(solution_id=UUID(solution_id), location=location)
     )
     await db_session.commit()
+
+
+async def _create_solution_app(
+    db_session,
+    solution_id: str,
+    *,
+    org_id: str | None = None,
+) -> str:
+    app_id = uuid.uuid4()
+    slug = f"decl-app-{app_id.hex[:8]}"
+    db_session.add(
+        Application(
+            id=app_id,
+            name=slug,
+            slug=slug,
+            repo_path=f"apps/{slug}",
+            organization_id=UUID(org_id) if org_id else None,
+            solution_id=UUID(solution_id),
+            access_level="authenticated",
+        )
+    )
+    await db_session.commit()
+    return str(app_id)
 
 
 def _deploy_table(e2e_client, headers, solution_id: str, table_name: str) -> str:
@@ -157,6 +181,110 @@ async def test_solution_write_to_undeclared_file_location_returns_404_without_me
 
 
 @pytest.mark.asyncio
+async def test_solution_app_header_write_to_declared_file_location_succeeds(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"app-decl-file-{uuid.uuid4().hex[:8]}",
+        org_id=org1["id"],
+    )
+    solution_id = solution["id"]
+    app_id = await _create_solution_app(
+        db_session,
+        solution_id,
+        org_id=org1["id"],
+    )
+    await _declare_file_location(db_session, solution_id, "finance")
+    grant_file_policy(
+        e2e_client,
+        headers,
+        location="finance",
+        scope=org1["id"],
+        prefix="",
+        allow_all=True,
+    )
+
+    path = f"app-declared/{uuid.uuid4().hex}.txt"
+    response = e2e_client.post(
+        "/api/files/write",
+        headers={**headers, "X-Bifrost-App": app_id},
+        json={
+            "location": "finance",
+            "path": path,
+            "content": "declared app write",
+            "mode": "cloud",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(solution_id),
+            FileMetadata.location == "finance",
+            FileMetadata.path == path,
+        )
+    )
+    assert result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_solution_app_header_write_to_undeclared_file_location_returns_404(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"app-undecl-file-{uuid.uuid4().hex[:8]}",
+        org_id=org1["id"],
+    )
+    solution_id = solution["id"]
+    app_id = await _create_solution_app(
+        db_session,
+        solution_id,
+        org_id=org1["id"],
+    )
+    grant_file_policy(
+        e2e_client,
+        headers,
+        location="finance",
+        scope=org1["id"],
+        prefix="",
+        allow_all=True,
+    )
+
+    path = f"app-undeclared/{uuid.uuid4().hex}.txt"
+    response = e2e_client.post(
+        "/api/files/write",
+        headers={**headers, "X-Bifrost-App": app_id},
+        json={
+            "location": "finance",
+            "path": path,
+            "content": "must not persist",
+            "mode": "cloud",
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.location == "finance",
+            FileMetadata.path == path,
+        )
+    )
+    assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
 async def test_non_solution_custom_file_location_write_still_succeeds(
     e2e_client,
     platform_admin,
@@ -218,6 +346,33 @@ def test_solution_table_insert_declared_succeeds(e2e_client, platform_admin):
 
 
 @pytest.mark.asyncio
+async def test_solution_app_header_table_insert_declared_succeeds(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"app-decl-table-{uuid.uuid4().hex[:8]}",
+    )
+    solution_id = solution["id"]
+    table_name = f"app_declared_{uuid.uuid4().hex[:8]}"
+    _deploy_table(e2e_client, headers, solution_id, table_name)
+    app_id = await _create_solution_app(db_session, solution_id)
+
+    response = e2e_client.post(
+        f"/api/tables/{table_name}/documents",
+        headers={**headers, "X-Bifrost-App": app_id},
+        json={"id": "row-1", "data": {"label": "ok"}},
+    )
+
+    assert response.status_code in (200, 201), response.text
+    assert response.json()["data"]["label"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_solution_table_insert_undeclared_returns_404_without_repo_table(
     e2e_client,
     platform_admin,
@@ -243,6 +398,45 @@ async def test_solution_table_insert_undeclared_returns_404_without_repo_table(
 
 
 @pytest.mark.asyncio
+async def test_solution_app_header_table_insert_undeclared_does_not_fall_back_to_repo_table(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"app-undecl-table-{uuid.uuid4().hex[:8]}",
+    )
+    solution_id = solution["id"]
+    app_id = await _create_solution_app(db_session, solution_id)
+    table_name = f"app_repo_same_name_{uuid.uuid4().hex[:8]}"
+
+    repo_create = e2e_client.post(
+        "/api/tables?scope=global",
+        headers=headers,
+        json={"name": table_name, "schema": {"columns": [{"name": "label"}]}},
+    )
+    assert repo_create.status_code in (200, 201), repo_create.text
+
+    response = e2e_client.post(
+        f"/api/tables/{table_name}/documents",
+        headers={**headers, "X-Bifrost-App": app_id},
+        json={"id": "row-1", "data": {"label": "must not hit repo"}},
+    )
+
+    assert response.status_code == 404, response.text
+    repo_table = await _repo_table_by_name(db_session, table_name)
+    assert repo_table is not None
+    row = e2e_client.get(
+        f"/api/tables/{repo_table.id}/documents/row-1",
+        headers=headers,
+    )
+    assert row.status_code == 404, row.text
+
+
+@pytest.mark.asyncio
 async def test_solution_table_upsert_undeclared_returns_404_without_repo_table(
     e2e_client,
     platform_admin,
@@ -261,6 +455,69 @@ async def test_solution_table_upsert_undeclared_returns_404_without_repo_table(
         f"/api/tables/{table_name}/documents/upsert?solution={solution_id}",
         headers=headers,
         json={"id": "row-1", "data": {"label": "blocked"}},
+    )
+
+    assert response.status_code == 404, response.text
+    assert await _repo_table_by_name(db_session, table_name) is None
+
+
+@pytest.mark.asyncio
+async def test_solution_table_insert_by_repo_table_uuid_returns_404(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"uuid-bypass-{uuid.uuid4().hex[:8]}",
+    )
+    solution_id = solution["id"]
+    table_name = f"repo_uuid_{uuid.uuid4().hex[:8]}"
+    repo_create = e2e_client.post(
+        "/api/tables?scope=global",
+        headers=headers,
+        json={"name": table_name, "schema": {"columns": [{"name": "label"}]}},
+    )
+    assert repo_create.status_code in (200, 201), repo_create.text
+    repo_table_id = repo_create.json()["id"]
+
+    response = e2e_client.post(
+        f"/api/tables/{repo_table_id}/documents?solution={solution_id}",
+        headers=headers,
+        json={"id": "row-1", "data": {"label": "must not hit repo"}},
+    )
+
+    assert response.status_code == 404, response.text
+    repo_table = await _repo_table_by_name(db_session, table_name)
+    assert repo_table is not None
+    row = e2e_client.get(
+        f"/api/tables/{repo_table.id}/documents/row-1",
+        headers=headers,
+    )
+    assert row.status_code == 404, row.text
+
+
+@pytest.mark.asyncio
+async def test_solution_table_create_path_does_not_create_repo_table(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"undecl-create-{uuid.uuid4().hex[:8]}",
+    )
+    solution_id = solution["id"]
+    table_name = f"undeclared_create_{uuid.uuid4().hex[:8]}"
+
+    response = e2e_client.post(
+        f"/api/tables?solution={solution_id}",
+        headers=headers,
+        json={"name": table_name, "schema": {"columns": [{"name": "label"}]}},
     )
 
     assert response.status_code == 404, response.text

@@ -339,6 +339,7 @@ async def get_execution_context(
     # inactive solution; a missing/unknown app_id leaves existing behaviour
     # unchanged (no 500 on a bad header value).
     app_id_header = request.headers.get("X-Bifrost-App")
+    app_solution_id: UUID | None = None
     if app_id_header is not None:
         from src.models.orm.applications import Application as ApplicationORM
         from src.models.orm.solutions import Solution as SolutionORM
@@ -349,9 +350,20 @@ async def get_execution_context(
         if app_uuid is not None:
             app_row = await db.get(ApplicationORM, app_uuid)
             if app_row is not None and app_row.solution_id is not None:
+                app_solution_id = app_row.solution_id
                 sol_row = await db.get(SolutionORM, app_row.solution_id)
                 if sol_row is not None:
                     await _refuse_if_solution_inactive(sol_row)
+    if solution_id_param is not None and app_solution_id is not None:
+        if UUID(solution_id_param) != app_solution_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="X-Bifrost-App does not belong to the requested solution",
+            )
+
+    effective_solution_id = solution_id_param or (
+        str(app_solution_id) if app_solution_id is not None else None
+    )
 
     return ExecutionContext(
         user=user,
@@ -359,7 +371,7 @@ async def get_execution_context(
         db=db,
         # Set by the v2 SDK provider for Solution apps; harmless/None otherwise.
         app_id=app_id_header,
-        solution_id=solution_id_param,
+        solution_id=effective_solution_id,
     )
 
 

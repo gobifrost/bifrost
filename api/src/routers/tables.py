@@ -101,6 +101,15 @@ def _resolve_attribution(
     return (created_by, updated_by)
 
 
+def _context_solution_uuid(ctx: Context) -> UUID | None:
+    if not ctx.solution_id:
+        return None
+    try:
+        return UUID(ctx.solution_id)
+    except ValueError:
+        return None
+
+
 def _row_from_doc(doc: Document) -> dict[str, Any]:
     """Flatten a Document ORM row into the dict shape the evaluator expects.
 
@@ -596,6 +605,9 @@ async def get_table_or_404(
             f"table identifier {log_safe(name_or_id)!r} is not a UUID, "
             "falling back to name lookup"
         )
+    solution_id = _context_solution_uuid(ctx)
+    if table is not None and solution_id is not None and table.solution_id != solution_id:
+        table = None
 
     # Fall back to name lookup (cascade scoping: org-specific then global).
     if not table:
@@ -611,7 +623,7 @@ async def get_table_or_404(
         )
         if install_table is not None:
             table = install_table
-        elif ctx.solution_id:
+        elif solution_id is not None:
             table = None
         else:
             table = await repo.get_by_name(name_or_id)
@@ -702,6 +714,12 @@ async def create_table(
     ),
 ) -> TablePublic:
     """Create a new table for storing documents (platform admin only)."""
+    if ctx.solution_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tables must be declared by the solution manifest",
+        )
+
     # Prefer organization_id from request body; fall back to scope query param (legacy)
     if "organization_id" in (data.model_fields_set or set()):
         target_org_id = data.organization_id

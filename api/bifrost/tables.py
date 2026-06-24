@@ -127,6 +127,10 @@ class tables:
             >>> table = await tables.create("customers")
             >>> app_table = await tables.create("app_data", app="app-uuid")
         """
+        if _has_solution_context():
+            raise RuntimeError(
+                "Solution executions cannot create tables at runtime; declare tables in the solution manifest"
+            )
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(

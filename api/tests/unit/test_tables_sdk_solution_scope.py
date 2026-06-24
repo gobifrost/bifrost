@@ -161,3 +161,17 @@ async def test_non_solution_context_still_auto_creates_after_404(
     assert client.urls[0].startswith("/api/tables/customers/documents")
     assert client.urls[1] == "/api/tables?scope=00000000-0000-0000-0000-000000000000"
     assert client.urls[2] == client.urls[0]
+
+
+@pytest.mark.asyncio
+async def test_solution_context_create_table_fails_before_sdk_create_endpoint(
+    monkeypatch,
+):
+    client = FakeClient()
+    monkeypatch.setattr(tables_sdk, "get_client", lambda: client)
+    set_execution_context(_make_context(solution_id=SOLUTION_ID))
+
+    with pytest.raises(RuntimeError, match="declare tables in the solution manifest"):
+        await tables_sdk.tables.create("customers")
+
+    assert client.urls == []

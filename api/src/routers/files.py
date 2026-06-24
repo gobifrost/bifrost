@@ -964,13 +964,19 @@ async def delete_file(
     """Delete a file from a managed or custom location."""
     try:
         effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+        solution_id = _ctx_solution_id(ctx, request.location)
+        await _require_declared_solution_file_location(
+            ctx,
+            solution_id=solution_id,
+            location=request.location,
+        )
         await _require_file_policy(
             ctx,
             action="delete",
             location=request.location,
             scope=effective_scope,
             path=request.path,
-            solution_id=_ctx_solution_id(ctx, request.location),
+            solution_id=solution_id,
         )
         backend = get_backend(request.mode, db)
         await backend.delete(request.path, request.location, scope=effective_scope)
@@ -984,7 +990,6 @@ async def delete_file(
                 path=request.path,
                 action="delete",
             )
-            solution_id = _ctx_solution_id(ctx, request.location)
             await FilePolicyService(db).delete_metadata(
                 organization_id=await _install_org_id(ctx, solution_id),
                 location=request.location,
