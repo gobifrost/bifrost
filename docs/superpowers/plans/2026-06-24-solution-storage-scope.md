@@ -1,102 +1,233 @@
 # Solution Storage Scope Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to implement this plan task-by-task. Use a fresh implementer subagent per task, then run spec-compliance and code-quality reviews before marking the task done. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make solution-scoped storage work the way a real workflow/SDK author reaches it: a solution scopes any declared location/table by `solution_id` (`finance/{solution_id}/…`), reachable from the SDK; `global_repo_access` gates the data cascade; declared-only inside solutions; solution policies stay solution-only.
+**Goal:** Make solution-scoped files and tables usable from real solution workflows/apps: declared locations/tables resolve under `solution_id`, undeclared writes fail, `global_repo_access` gates org/global data fallback, and full solution import/export remains memory-safe for very large file payloads.
 
-**Architecture:** Remove the `location=="solutions"` hardcode so solution context scopes ANY location by `solution_id` (the S3 primitive `resolve_s3_key` already produces `{location}/{scope}/{path}`). The files SDK appends `?solution=<install_id>` exactly like the tables SDK. The server loads the Solution and gates the org→global *data* cascade on `global_repo_access` (today it gates code only). A solution declares its file locations + tables in the manifest; undeclared references inside a solution resolve not-found (no auto-create). Tables get the same declared-only + gated-cascade treatment. The DB columns, policy cascade, Core writes, inactive-lifecycle, manifest round-trip, and status gate all survive (they key on `solution_id`, not the literal location).
+**Architecture:** A solution is a scope on ordinary storage locations, not a special location. Runtime context (`?solution=<install_id>` or `X-Bifrost-App`) selects the solution tier for declared locations/tables, and the server decides whether fallback to org/global data is allowed by loading the `Solution.global_repo_access` flag. File-location declarations live in `.bifrost/files.yaml`; file bytes are transported with streaming payload entries, not JSON/base64 in `secrets.enc`.
 
-**Tech Stack:** Python 3.11 / FastAPI / SQLAlchemy async / Pydantic v2 / Alembic / PostgreSQL / SeaweedFS(S3); Click CLI; React/TS client.
-
-**Spec:** `docs/superpowers/specs/2026-06-24-solution-storage-scope-redesign.md` (+ the BROKEN-findings companion).
-
-## Global Constraints
-
-- **Worktree only.** `/home/jack/GitHub/bifrost/.claude/worktrees/files-sdk-policies` (branch `codex/files-sdk-policies`). Never touch the primary checkout.
-- **Solution = a SCOPE on any location, NOT a location.** `location=="solutions"` special-casing is REMOVED; solution context (`?solution=` / `ctx.solution_id`) drives the scope (`{location}/{solution_id}/…`) for ANY location.
-- **`global_repo_access` gates the DATA cascade.** ON → own-solution→org→global. OFF → sealed to the solution's own scope (no org/global data). Decided SERVER-SIDE (load the Solution; the SDK ExecutionContext does NOT carry the flag).
-- **Declared-only inside solutions; `_repo/` workspace unchanged.** A solution cannot auto-create a table/file-location it didn't declare → undeclared reference resolves NOT-FOUND. Non-solution `_repo/` keeps implicit auto-create-on-write.
-- **Solution policies (file + table) apply ONLY to `{solution_id}` — never cascade to global.**
-- **SDK reachability is the load-bearing fix.** Files SDK appends `?solution=` as a QUERY PARAM on the URL (not the JSON body), mirroring `bifrost/tables.py::_scope_query`. The server reads `request.query_params.get("solution")`.
-- **No mirror-delete; no implicit fallback the spec didn't ask for.** No dead code.
-- **Tests via `./test.sh`** (Dockerized). Fast filter form: `./test.sh tests/path::test` (the `e2e <path>` form runs the WHOLE suite). The e2e suite has known pre-existing state-pollution flakes (test_manifest_scope_aware, ExecutionHistory, git-sync ManifestPolicy) — verify YOUR file in isolation.
-- **Stage commits by explicit file list — NEVER `git add -A`.** This worktree has had stranded chat-v2 changes; a broad add re-introduces them.
+**Tech Stack:** Python 3.11, FastAPI, SQLAlchemy async, Pydantic v2, Alembic, PostgreSQL, SeaweedFS/S3 via aiobotocore, Click CLI, React/TypeScript, Vite.
 
 ---
+
+## Confirmed Decisions
+
+- Solution context scopes any declared file location by install id: `finance/{solution_id}/path.ext`.
+- `location == "solutions"` is not a control-flow branch. `"solutions"` may still be a normal declarable location string.
+- `global_repo_access=false` means sealed data runtime: own-solution tier only. No org/global fallback for files or tables.
+- `global_repo_access=true` allows read fallback: own-solution -> org -> global. It does not allow undeclared solution writes.
+- File policies are evaluated for the tier that actually serves the bytes: solution policy for solution bytes, org policy for org bytes, global policy for global bytes.
+- Table policies are evaluated on the resolved table row, as today, after table-name resolution chooses the tier.
+- File-location declarations are separate from `solution_files`. `solution_files` is a data export index; `files.yaml` declares runtime storage locations.
+- Table auto-create is disabled in solution context. A solution can write only to tables declared in its manifest.
+- Full solution exports/imports must not read all file bytes into memory. 30+ GB of files is a required design target.
+
+## Codex Execution Model
+
+- Worktree: `/home/jack/GitHub/bifrost/.claude/worktrees/files-sdk-policies`
+- Branch: `codex/files-sdk-policies`
+- Never edit the primary checkout.
+- Stage commits by explicit file list only. Never `git add -A`.
+- Use `./test.sh` for backend tests.
+- Use subagents for implementation and review because the user explicitly requested delegation. In this Codex environment, the controller should spawn subagents explicitly; they do not automatically inherit a mutable shared worktree the way a long Claude Code session may feel like it does.
+- Dispatch implementers sequentially for code-writing tasks to avoid overlapping edits. Explorers and reviewers may run in parallel when their scopes do not overlap.
+- The controller owns todo tracking in this file and marks a task complete only after implementation, focused tests, spec review, and code quality review pass.
+
+## Todo Tracker
+
+- [ ] Task 0: Preflight and baseline facts
+- [ ] Task 1: Files SDK appends `?solution=` for every file REST call
+- [ ] Task 2: Server derives solution context for any file location
+- [ ] Task 3: Declare file locations in `.bifrost/files.yaml`
+- [ ] Task 4: Enforce declared-only solution writes for files and tables
+- [ ] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
+- [ ] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
+- [ ] Task 7: Policy resolution is tier-correct and solution policies never leak upward
+- [ ] Task 8: Web SDK/app file calls honor solution scope
+- [ ] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
+- [ ] Task 10: Re-point capstone and `location="solutions"` tests to the real model
+- [ ] Task 11: Full deployed-solution end-to-end and large-file memory tests
+- [ ] Task 12: Final verification sweep
 
 ## File Structure
 
 | File | Responsibility | Action |
 |------|----------------|--------|
-| `api/bifrost/files.py` | SDK: append `?solution=<install_id>` (query) on every file op, from ExecutionContext | Mod |
-| `api/src/routers/files.py` | `_resolve_effective_scope`: solution_id scopes ANY location; read `?solution=` query; metadata/content own-solution→org→global cascade gated by global_repo_access; declared-only enforcement | Mod |
-| `api/src/services/file_policy_service.py` | metadata read cascade (mirror the existing policy `load_policy` cascade) + `solution_id IS NULL` org lookups (already fixed) + global gate | Mod |
-| `api/src/routers/tables.py` + table resolution | gate org→global data cascade on global_repo_access; declared-only (no implicit create) inside a solution | Mod |
-| `api/src/core/auth.py` | ensure ctx carries what the data-gate needs (solution_id already; load global_repo_access server-side where the cascade runs) | Mod (maybe) |
-| `api/bifrost/manifest.py` + `models/contracts/solutions.py` | declared **file-locations** set on the manifest/solution (mirror `Manifest.tables`) | Mod |
-| `api/src/services/solutions/deploy.py` + `manifest_import.py` | register declared locations on deploy/import | Mod |
-| `api/tests/e2e/platform/test_solution_file_scope.py` + `test_solution_files_e2e.py` (capstone) + others | re-point off `location="solutions"` onto the scope model; add SDK-reachability tests | Mod |
-| `client/src/...` (web SDK file calls) | honor solution scope (the app `X-Bifrost-App` path) for files | Mod |
+| `api/bifrost/files.py` | Python files SDK REST client | Append solution query on all file operations |
+| `api/bifrost/tables.py` | Python tables SDK auto-create behavior | Do not auto-create tables from solution context |
+| `api/bifrost/manifest.py` | Split manifest model and parser/serializer | Add `.bifrost/files.yaml` declaration support |
+| `api/src/models/orm/solution_file_location.py` | Install-owned file-location declarations | Create |
+| `api/src/models/orm/__init__.py` | ORM model export | Register declaration model |
+| `api/alembic/versions/20260624_solution_file_locations.py` | DB schema | Create declaration table |
+| `api/src/services/solution_scope.py` | Shared solution helpers | Create helper for solution row, declarations, tier candidates |
+| `api/src/routers/files.py` | File runtime resolution | Remove hardcode, enforce declarations, tiered read resolution |
+| `api/src/services/file_backend.py` | S3 file backend | Add read/list/exists by explicit S3 key or tier candidates if needed |
+| `api/src/services/file_policy_service.py` | File policy and metadata lookup | Add tier-aware metadata/policy helpers |
+| `api/src/routers/tables.py` | Table runtime resolution | Gate fallback and block solution auto-create |
+| `api/src/services/manifest_generator.py` | DB to manifest | Emit declared file locations |
+| `api/src/services/manifest_import.py` | Manifest to DB | Import declared file locations |
+| `api/src/services/solutions/deploy.py` | Solution install full replace | Upsert/reconcile file-location declarations |
+| `api/src/services/solutions/capture.py` | Solution export bundle construction | Carry declarations; stop loading file bytes into `SolutionBundle` |
+| `api/src/services/solutions/export.py` | Zip/export writer | Stream file payloads into zip entries |
+| `api/src/services/solutions/zip_install.py` | Zip/import reader | Stream file payloads from zip to S3 |
+| `api/src/services/solutions/secrets_blob.py` | Encrypted config/table sensitive tier | Remove solution file bytes from JSON/base64 payload |
+| `api/src/services/solution_files.py` | Solution file metadata and payload helpers | Add streaming read/write helpers |
+| `api/src/services/file_storage/s3_client.py` | Low-level S3 operations | Add chunked read/write/copy helpers |
+| `client/src/lib/app-sdk/files.ts` | Web app SDK file calls | Confirm `X-Bifrost-App` path and add tests |
+| Focused backend and client test files named in each task | Verification | Add focused tests per task |
 
----
+## Manifest Shape
 
-## Task 1: Files SDK appends `?solution=` (the reachability fix)
+Use `.bifrost/files.yaml` for declared solution runtime file locations:
 
-**Files:**
-- Modify: `api/bifrost/files.py` (all file ops)
-- Test: `api/tests/unit/test_files_sdk_solution_scope.py`
-
-**Interfaces:**
-- Produces: every files-SDK REST call carries `?solution=<install_id>` as a URL query param when `ctx.solution_id` is set (read from the ExecutionContext), exactly like `bifrost/tables.py::_scope_query`. Omitted outside a solution execution (unchanged `_repo/`/org behavior).
-
-> This is the SINGLE change that makes solution-scoped files reachable from a workflow at all — it's first because nothing else matters if the SDK can't signal solution context. `?solution=` is a QUERY param on the URL (not the JSON body); the server already reads `request.query_params.get("solution")` (auth.py:318).
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# api/tests/unit/test_files_sdk_solution_scope.py
-import bifrost.files as files_sdk
-from bifrost._context import set_execution_context
-from bifrost._execution_context import ExecutionContext
-
-def test_file_ops_append_solution_query_when_in_solution(monkeypatch):
-    captured = {}
-    async def fake_post(url, json=None, **kw):
-        captured["url"] = url
-        class R: status_code = 200; 
-        def _j(): return {"content": ""}
-        R.json = staticmethod(_j); R.raise_for_status = lambda self=None: None
-        return R
-    # set a solution execution context
-    set_execution_context(ExecutionContext(solution_id="11111111-1111-1111-1111-111111111111"))
-    monkeypatch.setattr(files_sdk, "_post", fake_post, raising=False)  # adapt to the SDK's HTTP call
-    import asyncio
-    asyncio.run(files_sdk.read("finance/x.txt", location="finance"))
-    assert "solution=11111111-1111-1111-1111-111111111111" in captured["url"]
-
-def test_file_ops_omit_solution_query_outside_solution(monkeypatch):
-    captured = {}
-    async def fake_post(url, json=None, **kw):
-        captured["url"] = url
-        class R: status_code = 200
-        R.json = staticmethod(lambda: {"content": ""}); R.raise_for_status = lambda self=None: None
-        return R
-    set_execution_context(ExecutionContext(solution_id=None))
-    monkeypatch.setattr(files_sdk, "_post", fake_post, raising=False)
-    import asyncio
-    asyncio.run(files_sdk.read("x.txt"))
-    assert "solution=" not in captured["url"]
+```yaml
+locations:
+  - finance
+  - reports
 ```
 
-> The exact monkeypatch target depends on how `bifrost/files.py` issues HTTP (read it — it uses an `apiClient`/`_post`/httpx call). Adapt the test to capture the actual request URL. The ASSERTION (solution= in URL when ctx.solution_id set, absent otherwise) is the contract.
+Implementation details:
 
-- [ ] **Step 2: Run → FAIL** — `./test.sh tests/unit/test_files_sdk_solution_scope.py -v`.
+- Add `ManifestFiles` in `api/bifrost/manifest.py`:
 
-- [ ] **Step 3: Implement** — In `api/bifrost/files.py`, add a helper mirroring `tables.py::_scope_query`:
+```python
+class ManifestFiles(BaseModel):
+    locations: list[str] = Field(default_factory=list)
+
+    @field_validator("locations")
+    @classmethod
+    def normalize_locations(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item and item.strip()]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("files.locations must not contain duplicates")
+        blocked = {"workspace", "temp", "uploads", "_repo", "_tmp", "_apps"}
+        bad = sorted(set(normalized) & blocked)
+        if bad:
+            raise ValueError(f"reserved file locations cannot be declared: {', '.join(bad)}")
+        return sorted(normalized)
+```
+
+- Add `files: ManifestFiles = Field(default_factory=ManifestFiles)` to `Manifest`.
+- Add `MANIFEST_FILES["files"] = "files.yaml"`.
+- Special-case split manifest serialization/parsing so `.bifrost/files.yaml` writes top-level `locations:` rather than nesting under `files:`.
+- Keep legacy single-file serialization as `files: { locations: ["finance"] }`.
+- Keep `solution_files` as the full-export data index. It is not a declaration list.
+
+## Task 0: Preflight And Baseline Facts
+
+**Files:**
+- Read only: plan, spec, git state, relevant router/SDK files
+
+- [ ] **Step 1: Confirm branch/worktree**
+
+Run:
+
+```bash
+pwd
+git status --short
+git log --oneline --decorate -3
+```
+
+Expected:
+- `pwd` is `/home/jack/GitHub/bifrost/.claude/worktrees/files-sdk-policies`
+- worktree has no unrelated edits before starting
+- `HEAD` is on `codex/files-sdk-policies`
+
+- [ ] **Step 2: Confirm known bad seams**
+
+Run:
+
+```bash
+rg -n 'location == "solutions"|location=="solutions"' api/src/routers/files.py
+rg -n '_scope_query|solution=' api/bifrost/tables.py api/bifrost/files.py
+rg -n 'content_b64|solution_files|content_bytes|read_uploaded_file' api/src/services/solutions api/src/services/solution_files.py api/src/services/file_storage
+```
+
+Expected:
+- `files.py` router still has `location == "solutions"` branches before Task 2.
+- tables SDK has `_scope_query`; files SDK does not before Task 1.
+- file export/import still has in-memory/base64 file payload paths before Task 9.
+
+- [ ] **Step 3: Mark Task 0 complete**
+
+No commit unless this task discovers and documents a plan correction.
+
+## Task 1: Files SDK Appends `?solution=`
+
+**Files:**
+- Modify: `api/bifrost/files.py`
+- Test: `api/tests/unit/test_files_sdk_solution_scope.py`
+
+- [ ] **Step 1: Write failing tests**
+
+Create `api/tests/unit/test_files_sdk_solution_scope.py` with tests that patch `get_client()` and assert every SDK method uses a URL containing `solution=<id>` when `ExecutionContext.solution_id` is set, and no solution query otherwise.
+
+Required cases:
+
+```python
+@pytest.mark.parametrize(
+    ("method_name", "args", "kwargs"),
+    [
+        ("read", ("x.txt",), {"location": "finance"}),
+        ("read_bytes", ("x.bin",), {"location": "finance"}),
+        ("write", ("x.txt", "hi"), {"location": "finance"}),
+        ("write_bytes", ("x.bin", b"hi"), {"location": "finance"}),
+        ("list", ("",), {"location": "finance"}),
+        ("delete", ("x.txt",), {"location": "finance"}),
+        ("exists", ("x.txt",), {"location": "finance"}),
+        ("get_signed_url", ("x.txt",), {"location": "finance", "method": "GET"}),
+    ],
+)
+async def test_file_sdk_appends_solution_query(method_name, args, kwargs, monkeypatch):
+    captured_urls: list[str] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            if method_name == "list":
+                return {"files": []}
+            if method_name == "exists":
+                return {"exists": True}
+            if method_name == "get_signed_url":
+                return {"url": "https://example.invalid/signed", "path": "finance/abc/x.txt"}
+            return {"content": ""}
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        async def post(self, url, json=None):
+            captured_urls.append(url)
+            return FakeResponse()
+
+    set_execution_context(ExecutionContext(solution_id="11111111-1111-1111-1111-111111111111"))
+    monkeypatch.setattr(files_sdk, "get_client", lambda: FakeClient())
+    await getattr(files_sdk.files, method_name)(*args, **kwargs)
+    assert captured_urls
+    assert "solution=11111111-1111-1111-1111-111111111111" in captured_urls[0]
+```
+
+- [ ] **Step 2: Run failing test**
+
+Run:
+
+```bash
+./test.sh tests/unit/test_files_sdk_solution_scope.py -v
+```
+
+Expected: FAIL because URLs do not include `?solution=`.
+
+- [ ] **Step 3: Implement**
+
+Mirror `api/bifrost/tables.py::_scope_query`. Add a helper in `api/bifrost/files.py`:
 
 ```python
 from urllib.parse import urlencode
-from ._context import _current_context
+from ._context import _execution_context
+
+def _current_context():
+    return _execution_context.get()
 
 def _solution_query() -> str:
     ctx = _current_context()
@@ -104,219 +235,693 @@ def _solution_query() -> str:
     return f"?{urlencode({'solution': str(solution_id)})}" if solution_id else ""
 ```
 
-Append `_solution_query()` to the URL of every file op (read, read_bytes, write, write_bytes, list, + the others at ~227/251/291). The `scope` (org) stays in the JSON body as today; `solution` goes on the URL. (If the SDK already builds a URL with a query, merge params rather than double-`?`.)
+Append `_solution_query()` to every file endpoint URL.
 
-- [ ] **Step 4: Run → PASS.** Confirm both tests pass.
+- [ ] **Step 4: Run passing test**
+
+Run:
+
+```bash
+./test.sh tests/unit/test_files_sdk_solution_scope.py -v
+```
+
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add api/bifrost/files.py api/tests/unit/test_files_sdk_solution_scope.py
-git commit -m "feat(solution-files): files SDK appends ?solution= from ExecutionContext (reachability)"
+git commit -m "feat(solution-files): pass solution context from files SDK"
 ```
 
----
-
-## Task 2: `_resolve_effective_scope` scopes ANY location by solution_id (drop the hardcode)
+## Task 2: Server Scopes Any File Location By Solution Context
 
 **Files:**
-- Modify: `api/src/routers/files.py` (`_resolve_effective_scope` ~line 275, `_ctx_solution_id` ~291)
-- Test: `api/tests/e2e/platform/test_solution_file_scope.py` (add non-"solutions" location cases)
+- Modify: `api/src/routers/files.py`
+- Test: `api/tests/e2e/platform/test_solution_file_scope.py`
 
-**Interfaces:**
-- Produces: when `ctx.solution_id` is set (from `?solution=`), `_resolve_effective_scope` returns `str(install_id)` as the scope for ANY location (not just `"solutions"`), so `resolve_s3_key(location, install_id, path)` → `{location}/{install_id}/{path}`. `request.scope` is ignored whenever a solution context is present (the H6 rule, now generalized).
+- [ ] **Step 1: Write failing tests**
 
-- [ ] **Step 1: Failing test** — a solution write to `location="finance"` (with `?solution=<install>`) lands at `finance/{install}/...` and is readable by that solution; a second solution can't read it; the metadata row has `solution_id == install`, `location == "finance"`.
+Add tests proving a solution request to `location="finance"` writes metadata with `FileMetadata.solution_id == install_id`, uses S3 key `finance/{install_id}/q1.csv`, and does not honor a conflicting request body `scope`.
 
-```python
-# add to api/tests/e2e/platform/test_solution_file_scope.py
-async def test_solution_scopes_arbitrary_location(solution_client, db_session, install_id):
-    await solution_client.put("/api/files/write", params={"solution": str(install_id)},
-        json={"location":"finance","path":"q1.csv","content_b64":"aGk=","mode":"cloud"})
-    got = await solution_client.post("/api/files/read", params={"solution": str(install_id)},
-        json={"location":"finance","path":"q1.csv","mode":"cloud"})
-    assert got.status_code == 200
-    # the S3 key + metadata are finance/{install}/..., not org-scoped
-    md = (await db_session.execute(select(FileMetadata).where(
-        FileMetadata.location=="finance", FileMetadata.solution_id==install_id))).scalars().first()
-    assert md is not None
+- [ ] **Step 2: Run failing tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_file_scope.py::test_solution_scopes_arbitrary_location_by_install_id -v
 ```
 
-(Use/extend the existing solution-context client fixtures in this file — they already drive `?solution=`. Mirror their setup but with `location="finance"` instead of `"solutions"`.)
+Expected: FAIL because only `location="solutions"` uses `ctx.solution_id`.
 
-- [ ] **Step 2: Run → FAIL** (today it scopes finance to the org, so the metadata query finds nothing / the read 404s differently).
+- [ ] **Step 3: Implement**
 
-- [ ] **Step 3: Implement** — in `_resolve_effective_scope` (files.py:275):
+Update helpers in `api/src/routers/files.py`:
 
 ```python
-def _resolve_effective_scope(ctx, location, requested_scope):
-    # Solution context scopes ANY location by the install id (the S3 key becomes
-    # {location}/{install_id}/...). Generalizes the former location=="solutions"
-    # special-case. request.scope is ignored under a solution context (H6).
+def _resolve_effective_scope(ctx: Context, location: str, requested_scope: str | None) -> str | None:
     if ctx.solution_id is not None:
         return str(ctx.solution_id)
     return _storage_scope(_file_org_id(ctx, location, requested_scope))
+
+def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
+    if ctx.solution_id is None:
+        return None
+    try:
+        return UUID(str(ctx.solution_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
 ```
 
-And `_ctx_solution_id` (files.py:291): return the install_id whenever `ctx.solution_id` is set (drop the `location == "solutions"` condition). Verify the metadata-write path (Task 15's C2) now stamps `solution_id` for ANY location under a solution context (it keys off `_ctx_solution_id`). Grep files.py for every `location == "solutions"` literal and remove the special-case (there are ~3: ~286, ~296, ~358 per the findings) — replacing with the `ctx.solution_id is not None` test.
+Replace all `location == "solutions"` policy/scope branches with `solution_id is not None`.
 
-- [ ] **Step 4: Run → PASS.** Also run the existing scope tests: `./test.sh tests/e2e/platform/test_solution_file_scope.py -v` — the old `location="solutions"` tests must STILL pass (solutions is just one location now) AND the new finance test passes.
+- [ ] **Step 4: Run passing tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_file_scope.py -v
+```
+
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add api/src/routers/files.py api/tests/e2e/platform/test_solution_file_scope.py
-git commit -m "feat(solution-files): solution_id scopes ANY location (drop location==solutions hardcode)"
+git commit -m "feat(solution-files): scope all locations by solution context"
 ```
 
----
-
-## Task 3: File metadata/content read cascade own-solution → org → global, gated by global_repo_access
+## Task 3: Declare File Locations In `.bifrost/files.yaml`
 
 **Files:**
-- Modify: `api/src/services/file_policy_service.py` (the metadata lookup) + `api/src/routers/files.py` (read/list resolution)
+- Create: `api/src/models/orm/solution_file_location.py`
+- Create: `api/alembic/versions/20260624_solution_file_locations.py`
+- Modify: `api/src/models/orm/__init__.py`
+- Modify: `api/bifrost/manifest.py`
+- Modify: `api/src/services/manifest_generator.py`
+- Modify: `api/src/services/manifest_import.py`
+- Modify: `api/src/services/solutions/deploy.py`
+- Test: `api/tests/unit/test_manifest.py`
+- Test: `api/tests/unit/test_solution_file_locations.py`
+
+- [ ] **Step 1: Write failing tests**
+
+Tests must cover:
+- `write_manifest_to_dir()` emits `.bifrost/files.yaml` as top-level `locations:`.
+- `read_manifest_from_dir()` reads that shape into `manifest.files.locations`.
+- Deploy registers locations into the DB.
+- Redeploy reconciles removed locations only when no solution-owned file metadata still uses them; otherwise deploy raises a conflict naming the location.
+
+- [ ] **Step 2: Run failing tests**
+
+```bash
+./test.sh tests/unit/test_manifest.py::TestManifestFilesDeclaration tests/unit/test_solution_file_locations.py -v
+```
+
+Expected: FAIL because declarations do not exist.
+
+- [ ] **Step 3: Implement DB declaration model**
+
+Create ORM model:
+
+```python
+class SolutionFileLocation(Base):
+    __tablename__ = "solution_file_locations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    solution_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    location: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("solution_id", "location", name="uq_solution_file_locations_solution_location"),
+    )
+```
+
+Migration creates the table and index. Do not store `organization_id`; the install scope comes from `solutions.organization_id`.
+
+- [ ] **Step 4: Implement manifest shape**
+
+Add `ManifestFiles`, `Manifest.files`, `MANIFEST_FILES["files"]`, and custom split parse/serialize for `files.yaml` top-level `locations:`.
+
+- [ ] **Step 5: Implement deploy/import registration**
+
+In deploy, full-replace declarations for the install:
+- Insert declared locations.
+- Delete stale declarations only if no `FileMetadata` row exists for `(solution_id, stale_location)`.
+- If rows exist, raise `SolutionDeployConflict("cannot remove file location 'finance' while files still exist")`, substituting the actual stale location name.
+
+- [ ] **Step 6: Run passing tests**
+
+```bash
+./test.sh tests/unit/test_manifest.py::TestManifestFilesDeclaration tests/unit/test_solution_file_locations.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add api/bifrost/manifest.py api/src/models/orm/__init__.py api/src/models/orm/solution_file_location.py api/alembic/versions/*solution_file_locations.py api/src/services/manifest_generator.py api/src/services/manifest_import.py api/src/services/solutions/deploy.py api/tests/unit/test_manifest.py api/tests/unit/test_solution_file_locations.py
+git commit -m "feat(solution-storage): declare solution file locations"
+```
+
+## Task 4: Enforce Declared-Only Solution Writes
+
+**Files:**
+- Create or modify: `api/src/services/solution_scope.py`
+- Modify: `api/src/routers/files.py`
+- Modify: `api/src/routers/tables.py`
+- Modify: `api/bifrost/tables.py`
+- Test: `api/tests/e2e/platform/test_solution_declared_only.py`
+- Test: `api/tests/unit/test_tables_sdk_solution_scope.py`
+
+- [ ] **Step 1: Write failing tests**
+
+Required tests:
+- Solution write to declared file location succeeds.
+- Solution write to undeclared file location returns 404 and creates no metadata/S3 object.
+- Non-solution write to a new custom location still works.
+- Solution table insert into declared table succeeds.
+- Solution table insert/upsert into undeclared table returns 404 and does not auto-create an org/global table.
+- Non-solution table insert still auto-creates on first write.
+
+- [ ] **Step 2: Run failing tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_declared_only.py tests/unit/test_tables_sdk_solution_scope.py -v
+```
+
+Expected: FAIL.
+
+- [ ] **Step 3: Implement declaration helpers**
+
+Create `api/src/services/solution_scope.py`:
+
+```python
+async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution | None:
+    row = await db.get(Solution, solution_id)
+    if row is None or row.status != "active":
+        return None
+    return row
+
+async def solution_allows_global(db: AsyncSession, solution_id: UUID) -> bool:
+    row = await db.get(Solution, solution_id)
+    return bool(row and row.global_repo_access)
+
+async def solution_declares_file_location(db: AsyncSession, solution_id: UUID, location: str) -> bool:
+    result = await db.execute(
+        select(SolutionFileLocation.id).where(
+            SolutionFileLocation.solution_id == solution_id,
+            SolutionFileLocation.location == location,
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+async def solution_declares_table_name(db: AsyncSession, solution_id: UUID, name: str) -> bool:
+    result = await db.execute(
+        select(Table.id).where(Table.solution_id == solution_id, Table.name == name)
+    )
+    return result.scalar_one_or_none() is not None
+```
+
+- [ ] **Step 4: Enforce files**
+
+Before file write, signed PUT creation, and signed upload completion in solution context:
+- Require the location to be declared.
+- Return 404 for undeclared locations.
+- Do not touch S3 or metadata.
+
+- [ ] **Step 5: Enforce tables**
+
+In solution context:
+- `api/bifrost/tables.py` must not call `_ensure_table_exists()` after a 404.
+- Server create path must not create a table from `?solution=` auto-create.
+- Name resolution for undeclared table returns 404.
+
+- [ ] **Step 6: Run passing tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_declared_only.py tests/unit/test_tables_sdk_solution_scope.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add api/src/services/solution_scope.py api/src/routers/files.py api/src/routers/tables.py api/bifrost/tables.py api/tests/e2e/platform/test_solution_declared_only.py api/tests/unit/test_tables_sdk_solution_scope.py
+git commit -m "feat(solution-storage): enforce declared-only solution writes"
+```
+
+## Task 5: Files Tiered Read/List/Exists With `global_repo_access`
+
+**Files:**
+- Modify: `api/src/services/solution_scope.py`
+- Modify: `api/src/routers/files.py`
+- Modify: `api/src/services/file_backend.py`
+- Modify: `api/src/services/file_policy_service.py`
 - Test: `api/tests/e2e/platform/test_solution_file_cascade_gated.py`
 
-**Interfaces:**
-- Produces: a solution file READ resolves own-solution (`solution_id`) first, then — IF `global_repo_access` is ON — org, then global. With `global_repo_access` OFF, resolution STOPS at the solution scope (sealed). The file POLICY cascade (`load_policy`, Task 16) already does own-solution→org→global; this task (a) mirrors it for metadata/content reads and (b) adds the global_repo_access gate to BOTH.
+- [ ] **Step 1: Write failing tests**
 
-> The policy cascade at `file_policy_service.load_policy` (~245-304) already does the own→org→global steps. This task GATES steps 1-2 (org, global) on `global_repo_access` (load the Solution by install_id; if `global_repo_access` is False, skip org+global). And it adds the SAME cascade for the metadata/content read path (the bytes the solution reads), so a sealed solution can't read an org/global file.
+Required matrix:
+- `global_repo_access=false`: solution reads own file, cannot read org/global fallback.
+- `global_repo_access=true`: solution reads own first, then org, then global.
+- Own solution file wins over org/global same path.
+- `exists` follows the same tier result.
+- `list` returns union of allowed tiers when open, solution-only when sealed, without duplicate paths.
 
-- [ ] **Step 1: Failing tests** —
-  - (gated-open) solution with `global_repo_access=True`: a file present only at GLOBAL scope is readable from the solution context (cascades).
-  - (gated-sealed) solution with `global_repo_access=False`: the same global file is NOT readable (404/not-found) — sealed.
-  - own-solution always wins over org/global for the same (location, path).
+- [ ] **Step 2: Run failing tests**
 
-- [ ] **Step 2: Run → FAIL.**
+```bash
+./test.sh tests/e2e/platform/test_solution_file_cascade_gated.py -v
+```
 
-- [ ] **Step 3: Implement** — load the Solution (`SolutionORM` by install_id) where the cascade runs; thread `global_repo_access` into both `load_policy`'s org/global steps and the metadata/content read cascade. When False, the resolver returns own-solution-only (no org/global fallback). When True, the existing cascade runs. Mirror the table cascade gating from Task 4 (do Task 4's `global_repo_access` helper first if shared, or define a small `_solution_allows_global(db, install_id) -> bool`). Keep the own-solution arm always-on.
+Expected: FAIL.
 
-- [ ] **Step 4: Run → PASS.** Regression: a NON-solution file read (no solution context) is unchanged.
+- [ ] **Step 3: Implement tier candidates**
 
-- [ ] **Step 5: Commit** — `feat(solution-files): metadata/content read cascade gated by global_repo_access (sealed when off)`
+In `solution_scope.py`:
 
----
+```python
+@dataclass(frozen=True)
+class FileTier:
+    name: Literal["solution", "org", "global"]
+    scope: str
+    organization_id: UUID | None
+    solution_id: UUID | None
 
-## Task 4: Tables — gate the org→global data cascade on global_repo_access
+async def file_read_tiers(db: AsyncSession, ctx: Context, location: str, requested_scope: str | None) -> list[FileTier]:
+    solution_id = UUID(str(ctx.solution_id)) if ctx.solution_id else None
+    if solution_id is None:
+        org_id = _file_org_id(ctx, location, requested_scope)
+        return [FileTier("global" if org_id is None else "org", _storage_scope(org_id), org_id, None)]
+    solution = await db.get(Solution, solution_id)
+    if solution is None:
+        return []
+    tiers = [FileTier("solution", str(solution_id), solution.organization_id, solution_id)]
+    if solution.global_repo_access:
+        if solution.organization_id is not None:
+            tiers.append(FileTier("org", str(solution.organization_id), solution.organization_id, None))
+        tiers.append(FileTier("global", "global", None, None))
+    return tiers
+```
+
+Rules:
+- No solution context: current single org/global behavior.
+- Solution context: first tier is solution.
+- If `global_repo_access` is true and the solution has `organization_id`, append org tier.
+- If `global_repo_access` is true, append global tier.
+- If false, append no fallback tiers.
+
+- [ ] **Step 4: Implement tiered read/exists/list**
+
+Do not call `backend.read()` once for a solution fallback read. For each tier:
+- Authorize policy using that tier.
+- Resolve S3 key with that tier scope.
+- Try S3.
+- Return first successful read/exists.
+- For list, merge tiers in priority order and de-duplicate paths.
+
+- [ ] **Step 5: Run passing tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_file_cascade_gated.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add api/src/services/solution_scope.py api/src/routers/files.py api/src/services/file_backend.py api/src/services/file_policy_service.py api/tests/e2e/platform/test_solution_file_cascade_gated.py
+git commit -m "feat(solution-files): resolve reads by solution data tier"
+```
+
+## Task 6: Tables Fallback And Auto-Create Gates
 
 **Files:**
-- Modify: `api/src/routers/tables.py` (the `_resolve_solution_table_by_name` → org→global fallback) + `api/src/repositories/org_scoped.py` (or where the table name cascade runs)
+- Modify: `api/src/services/solution_scope.py`
+- Modify: `api/src/routers/tables.py`
+- Modify: `api/bifrost/tables.py`
 - Test: `api/tests/e2e/platform/test_table_solution_cascade_gated.py`
 
-**Interfaces:**
-- Produces: a solution table name lookup resolves own-solution → (if `global_repo_access`) org → global. With the flag OFF, sealed to own-solution. (Today the table data cascade is UNGATED — README:508-519. This makes `global_repo_access` gate data, matching files Task 3.)
+- [ ] **Step 1: Write failing tests**
 
-- [ ] **Step 1: Failing tests** — solution `global_repo_access=True`: a `_repo/`/global table resolves by name from the solution; `=False`: it does NOT (not-found). Own-solution table always wins.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** — in the table-by-name resolution (`routers/tables.py:622-673` + the `repo.get`/cascade), after the own-solution miss, gate the org→global fallback on the Solution's `global_repo_access`. Define/reuse the shared `_solution_allows_global(db, install_id)` helper from Task 3. Keep non-solution (`_repo/`) resolution unchanged.
-- [ ] **Step 4: Run → PASS.** Regression: non-solution table resolution unchanged; the existing solution-table tests still pass (own-solution still wins).
-- [ ] **Step 5: Commit** — `feat(solution-tables): gate org→global table cascade on global_repo_access`
+Required tests:
+- Open solution resolves own table first, then org, then global.
+- Sealed solution resolves own table only.
+- Undeclared table name in solution context returns 404 even if auto-create would previously have run.
+- Non-solution table auto-create still works.
 
----
+- [ ] **Step 2: Run failing tests**
 
-## Task 5: Declared-only inside solutions (no implicit create) — files + tables
+```bash
+./test.sh tests/e2e/platform/test_table_solution_cascade_gated.py -v
+```
 
-**Files:**
-- Modify: `api/src/routers/files.py` (write path) + `api/src/routers/tables.py` (the `_ensure_table_exists`/auto-create path) 
-- Test: `api/tests/e2e/platform/test_solution_declared_only.py`
+Expected: FAIL.
 
-**Interfaces:**
-- Produces: inside a solution context, writing/creating a table or file-location that the solution did NOT declare → NOT-FOUND/refused (no auto-create). Non-solution `_repo/` workspace KEEPS auto-create-on-write (unchanged).
+- [ ] **Step 3: Implement**
 
-> Declaration source: Task 6 adds the declared file-locations to the manifest; tables are declared via `Manifest.tables`. This task enforces "declared-only" at the WRITE/create path for solution context. If Task 6's declaration data isn't available yet, this task can land the ENFORCEMENT POINT (the check + the not-found behavior) keyed on "is this location/table in the solution's declared set" with the declared-set lookup wired in Task 6 — OR sequence Task 6 before Task 5. Recommend Task 6 first; this brief assumes the declared set is queryable.
+Update `_resolve_solution_table_by_name()` and related table get/create paths:
+- Parse `ctx.solution_id` or `ctx.app_id -> Application.solution_id`.
+- Require the table name to be declared by the solution when resolving a solution-owned table.
+- After own miss, call org/global fallback only when `await solution_allows_global(ctx.db, solution_id)` is true.
+- Keep non-solution `OrgScopedRepository` behavior unchanged.
 
-- [ ] **Step 1: Failing tests** — solution writes to an UNDECLARED location → not-found/refused (no row created, no S3 write); solution writes to a DECLARED location → succeeds; a `_repo/` (non-solution) write to a new location/table STILL auto-creates.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** — in the solution write/create paths, check the solution's declared set (file locations from Task 6 / declared tables from `Manifest.tables` registered at deploy). Undeclared → return not-found (mirror how a missing table reads as not-found; do NOT 500). Skip the check entirely when there's no solution context (`_repo/` unchanged).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** — `feat(solution-storage): declared-only inside solutions (no implicit create); _repo unchanged`
+- [ ] **Step 4: Run passing tests**
 
----
+```bash
+./test.sh tests/e2e/platform/test_table_solution_cascade_gated.py -v
+```
 
-## Task 6: Manifest declares the solution's file locations
+Expected: PASS.
 
-**Files:**
-- Modify: `api/bifrost/manifest.py` (+ `models/contracts/solutions.py`), `api/src/services/manifest_generator.py`, `api/src/services/manifest_import.py`, `api/src/services/solutions/deploy.py`
-- Test: `api/tests/unit/test_manifest.py` + `api/tests/e2e/platform/test_git_sync_local.py`
+- [ ] **Step 5: Commit**
 
-**Interfaces:**
-- Produces: a `Manifest.file_locations` declaration (mirror `Manifest.tables: dict[str, ManifestTable]`) — the set of file locations the solution owns/scopes. Round-trips through export→import; registered on deploy so the Task-5 declared-only check + the Task-2/3 scope resolution know the solution's owned locations.
+```bash
+git add api/src/services/solution_scope.py api/src/routers/tables.py api/bifrost/tables.py api/tests/e2e/platform/test_table_solution_cascade_gated.py
+git commit -m "feat(solution-tables): gate fallback and auto-create by solution scope"
+```
 
-- [ ] **Step 1: Failing tests** — a solution declaring file location `finance` round-trips through the manifest (export emits it, import restores it); the deployed solution's declared set includes `finance`; a non-declared location is absent.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** — add the declaration model (mirror `ManifestSolutionConfigSchema`/`Manifest.tables` shape) to `manifest.py`; serialize in `manifest_generator.py`; import + register on the solution in `manifest_import.py`/`deploy.py` (a `solution_file_locations` set on the Solution, or a small declared-locations table — mirror how config-schema declarations are stored). Non-destructive upsert per CLAUDE.md. Where the declared set is read (Tasks 2/3/5), query this registration.
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** — `feat(solution-storage): declare solution file locations in the manifest (round-trip + deploy registration)`
-
----
-
-## Task 7: Solution policies apply only to the solution scope (never global)
+## Task 7: Tier-Correct Policies
 
 **Files:**
-- Modify: `api/src/services/file_policy_service.py` + table policy resolution (confirm the policy cascade never serves a solution policy for org/global resolution)
+- Modify: `api/src/services/file_policy_service.py`
+- Modify: `api/src/routers/files.py`
 - Test: `api/tests/e2e/platform/test_solution_policy_solution_only.py`
+- Test: `api/tests/unit/services/test_file_policy_service.py`
 
-**Interfaces:**
-- Produces: a file/table policy carrying `solution_id` governs ONLY `{solution_id}` resolution — it is never consulted when resolving an org or global file/table. (The cascade's solution arm already runs first for solution context; this task confirms the REVERSE — a solution policy never leaks UP into org/global evaluation.)
+- [ ] **Step 1: Write failing tests**
 
-- [ ] **Step 1: Failing test** — seed a solution-scoped file policy for a prefix; resolve the SAME prefix in an ORG (non-solution) context → the solution policy is NOT applied (the org/global policy or default governs). And a global resolution never sees the solution policy.
-- [ ] **Step 2: Run → FAIL** (if the org cascade currently can see a solution policy row) or PASS-and-harden (if it's already excluded — then add the test as a guard + note).
-- [ ] **Step 3: Implement/confirm** — ensure the org and global cascade arms filter `solution_id IS NULL` (the Codex fix added this to the exact-match lookups; confirm the longest-prefix cascade arms do too). A solution policy must never be a candidate for org/global resolution.
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** — `feat(solution-storage): solution policies never apply to org/global resolution`
+Required tests:
+- A solution file policy governs only the solution tier.
+- Org fallback data is governed by org policy, not solution policy.
+- Global fallback data is governed by global policy, not solution policy.
+- Non-solution org/global policy lookup never considers `solution_id IS NOT NULL` rows.
 
----
+- [ ] **Step 2: Run failing tests**
 
-## Task 8: Web SDK / app file calls honor solution scope
+```bash
+./test.sh tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/services/test_file_policy_service.py -v
+```
+
+Expected: FAIL or PASS-and-harden depending on current filters.
+
+- [ ] **Step 3: Implement**
+
+Policy lookup must be called per `FileTier`:
+- solution tier: pass `solution_id=<install_id>` and install org id.
+- org tier: pass `solution_id=None` and org id.
+- global tier: pass `solution_id=None` and organization id `None`.
+
+Keep `FilePolicy.solution_id.is_(None)` filters on all org/global lookup arms.
+
+- [ ] **Step 4: Run passing tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/services/test_file_policy_service.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add api/src/services/file_policy_service.py api/src/routers/files.py api/tests/e2e/platform/test_solution_policy_solution_only.py api/tests/unit/services/test_file_policy_service.py
+git commit -m "feat(solution-files): evaluate policies against resolved data tier"
+```
+
+## Task 8: Web SDK/App File Calls Honor Solution Scope
 
 **Files:**
-- Modify: `client/src/...` (the web SDK file client used by solution-mounted apps) + confirm `routers/files.py` honors the app's `X-Bifrost-App` → solution scope for files (mirroring the worker `?solution=` path)
-- Test: vitest for the web file client + a Playwright/e2e if practical
+- Modify: `client/src/lib/app-sdk/files.ts`
+- Modify: `client/src/lib/app-sdk/files.test.ts`
+- Test: `api/tests/e2e/platform/test_solution_file_scope.py`
 
-**Interfaces:**
-- Produces: a file call from a solution-mounted app resolves to the app's install scope (the `X-Bifrost-App` header → `ctx.solution_id` → `{location}/{install}/...`), so the web SDK reaches solution files the same way the Python SDK does via `?solution=`.
+- [ ] **Step 1: Write failing tests**
 
-- [ ] **Step 1: Failing test** — a web-SDK file read/write from a solution app context targets the install scope (the request carries the app/solution context; the resolved scope is the install, not the user's org).
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** — ensure the web file client forwards the app/solution context and `routers/files.py`'s `_resolve_effective_scope` honors `X-Bifrost-App`→solution for files (auth.py already maps `X-Bifrost-App`→ctx; confirm files read it like the worker reads `?solution=`). If the app path already sets `ctx.solution_id` (via the L4 X-Bifrost-App gate work), this may be a confirm + test.
-- [ ] **Step 4: Run → PASS.** tsc/lint clean.
-- [ ] **Step 5: Commit** — `feat(solution-files): web SDK / app file calls honor solution scope`
+Add/adjust tests proving app SDK file calls carry `X-Bifrost-App`, server maps that to `Application.solution_id`, and file scope resolves to the install id for declared locations.
 
----
+- [ ] **Step 2: Run failing tests**
 
-## Task 9: Re-point the capstone + all `location="solutions"` tests onto the scope model
+```bash
+./test.sh client unit -- client/src/lib/app-sdk/files.test.ts
+./test.sh tests/e2e/platform/test_solution_file_scope.py::test_solution_app_files_resolve_to_install_scope -v
+```
+
+Expected: FAIL if app path does not reach solution tier.
+
+- [ ] **Step 3: Implement**
+
+Confirm browser auth client includes `X-Bifrost-App` for app SDK calls. If missing, add it in the existing app SDK request layer rather than per-method ad hoc headers.
+
+- [ ] **Step 4: Run passing tests**
+
+```bash
+./test.sh client unit -- client/src/lib/app-sdk/files.test.ts
+./test.sh tests/e2e/platform/test_solution_file_scope.py::test_solution_app_files_resolve_to_install_scope -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add client/src/lib/app-sdk/files.ts client/src/lib/app-sdk/files.test.ts api/tests/e2e/platform/test_solution_file_scope.py
+git commit -m "feat(solution-files): app SDK resolves files in install scope"
+```
+
+## Task 9: Streaming Solution File Payload Import/Export
 
 **Files:**
-- Modify: `api/tests/e2e/platform/test_solution_files_e2e.py` (capstone), `test_solution_file_scope.py`, and any test hardcoding `location="solutions"`
-- Test: themselves
+- Modify: `api/src/services/file_storage/s3_client.py`
+- Modify: `api/src/services/file_storage/service.py`
+- Modify: `api/src/services/solution_files.py`
+- Modify: `api/src/services/solutions/capture.py`
+- Modify: `api/src/services/solutions/export.py`
+- Modify: `api/src/services/solutions/zip_install.py`
+- Modify: `api/src/services/solutions/secrets_blob.py`
+- Test: `api/tests/unit/test_solution_export_streaming.py`
+- Test: `api/tests/e2e/platform/test_solution_export_files.py`
+- Test: `api/tests/e2e/platform/test_solution_import_data.py`
 
-**Interface:** the tests prove the REAL model — a solution scopes a DECLARED location (e.g. `finance`) by solution_id, reachable via the SDK/`?solution=` path, gated by global_repo_access, declared-only — not the `location="solutions"` literal.
+- [ ] **Step 1: Write failing tests**
 
-- [ ] **Step 1:** Grep `grep -rn 'location.*solutions\|"solutions"' api/tests` — for each, decide: is it testing the SCOPE behavior (re-point to a declared location like `finance` + the solution context) or genuinely the literal "solutions" location (keep only if "solutions" remains a valid declarable location — per the spec it's just one location now, so most should move to `finance`/a declared name). Update the capstone's file step to write to a DECLARED location via the solution context and assert `{location}/{install}/...`.
-- [ ] **Step 2: Run → iterate to green** — `./test.sh tests/e2e/platform/test_solution_files_e2e.py tests/e2e/platform/test_solution_file_scope.py -v` (isolated). Every behavior a real assertion; no silent pass.
-- [ ] **Step 3: Commit** — `test(solution-storage): re-point capstone + scope tests onto the solution-as-scope model`
+Tests must prove:
+- Exporting solution files does not call `read_uploaded_file()` for payload bytes.
+- `SolutionContent.solution_files` no longer contains `content_b64`.
+- Export streams payload entries under `.bifrost/file-payloads/<sha256-or-id>`.
+- Import streams payload entries to S3 and upserts metadata.
+- Peak in-process payload chunk size remains bounded. Use a fake 64 MiB stream and assert no full-object read method is invoked.
 
----
+- [ ] **Step 2: Run failing tests**
 
-## Task 10: Full verification sweep
+```bash
+./test.sh tests/unit/test_solution_export_streaming.py tests/e2e/platform/test_solution_export_files.py tests/e2e/platform/test_solution_import_data.py -v
+```
 
-- [ ] **Choke/scope smell check:** `grep -rn 'location == "solutions"\|location=="solutions"' api/src` → NOTHING (the hardcode is gone; solutions is just a location string in data, not a control-flow branch).
-- [ ] **SDK reachability proof:** a solution WORKFLOW (not a raw REST call) writes + reads a file at a declared location — covered by the capstone; confirm it passes.
-- [ ] **Backend:** `cd api && pyright && ruff check .` → 0 errors.
-- [ ] **Types + frontend:** `cd client && npm run generate:types && npm run tsc && npm run lint` → pass (no new errors).
-- [ ] **Full suite:** `./test.sh all` → green (parse the JUnit XML; triage real-vs-flake by isolating any failing file — known flakes: test_manifest_scope_aware, ExecutionHistory, git-sync ManifestPolicy, all pass isolated).
-- [ ] **Client:** `./test.sh client unit`.
-- [ ] **global_repo_access matrix:** confirm sealed (OFF) vs open (ON) for BOTH files and tables — undeclared/org/global not-found when sealed, cascades when open.
-- [ ] Commit any fixups.
+Expected: FAIL because current code reads bytes into memory/base64.
 
----
+- [ ] **Step 3: Implement S3 chunk helpers**
 
-## Notes for the implementer
+Add helpers similar to:
 
-- **The S3 primitive is already right.** `resolve_s3_key` produces `{location}/{scope}/{path}`. Do NOT change it. The bug was the router hardcode + the SDK, not storage.
-- **Mirror the table SDK exactly.** `bifrost/tables.py::_scope_query` is the canonical `?solution=` pattern. Files append `?solution=` as a URL QUERY param (the server reads `request.query_params.get("solution")`), keeping `scope` (org) in the JSON body.
-- **`global_repo_access` is decided SERVER-SIDE.** The SDK ExecutionContext carries `solution_id`, NOT `global_repo_access`. Load the Solution where the cascade runs to read the flag. Define ONE helper `_solution_allows_global(db, install_id)` and use it for both files (Task 3) and tables (Task 4).
-- **Declared-only is solutions-only.** A null solution context (`_repo/`) keeps implicit auto-create. Never gate the non-solution path.
-- **Most plumbing survives.** DB columns, the inactive-lifecycle (L1-L10), Core writes, manifest round-trip, status gate all key on `solution_id` — they don't care if the location is `solutions` or `finance`. You're correcting the scope-resolution + SDK + declaration + global-gate layer.
-- **Watch the worktree.** Stage explicit files only; never `git add -A` (stranded chat-v2 changes).
-- **Sequence note:** Task 6 (declaration) feeds Task 5 (declared-only enforcement) — do 6 before 5, or land 5's enforcement point and wire the declared-set query in 6. Tasks 3+4 share the `_solution_allows_global` helper — define it once (Task 3) and reuse (Task 4).
+```python
+async def iter_object_chunks(self, key: str, chunk_size: int = 8 * 1024 * 1024) -> AsyncIterator[bytes]:
+    async with self.get_client() as s3:
+        response = await s3.get_object(Bucket=self.settings.s3_bucket, Key=key)
+        async for chunk in response["Body"].iter_chunks(chunk_size):
+            if chunk:
+                yield chunk
+
+async def put_object_from_chunks(self, key: str, chunks: AsyncIterator[bytes], content_type: str) -> tuple[int, str]:
+    # multipart upload when size is unknown; abort on error; return (size, sha256)
+```
+
+Use multipart upload for streamed writes. Do not concatenate chunks.
+
+- [ ] **Step 4: Implement export payload entries**
+
+Keep `.bifrost/solution-files.yaml` or `manifest.solution_files` as the metadata index. Add payload reference fields if needed:
+
+```yaml
+solution_files:
+  - location: finance
+    path: q1.csv
+    sha256: 64f1b8f58b8df7c7a0fe5d8a2054b89f527ef0a2d6f6f3ef2b5f2f3f6c0f2a11
+    size: 123
+    payload: .bifrost/file-payloads/<stable-id>.bin
+```
+
+Write payload entries with `zipfile.ZipFile.open(payload, "w")` and stream chunks from S3. Do not put file bytes in `SolutionBundle` or `secrets.enc`.
+
+- [ ] **Step 5: Implement import payload streaming**
+
+Read `ZipFile.open(payload, "r")` in fixed chunks and stream to S3 multipart upload, then write metadata with `solution_id`, `location`, `path`, `sha256`, and size.
+
+- [ ] **Step 6: Decide encrypted large-file behavior**
+
+For this plan, keep `secrets.enc` for config values and table rows only. File payloads travel as zip payload entries. If product requires encrypted file payloads before release, add a follow-up task for per-file streaming encryption; do not reintroduce one giant Fernet JSON blob.
+
+- [ ] **Step 7: Run passing tests**
+
+```bash
+./test.sh tests/unit/test_solution_export_streaming.py tests/e2e/platform/test_solution_export_files.py tests/e2e/platform/test_solution_import_data.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add api/src/services/file_storage/s3_client.py api/src/services/file_storage/service.py api/src/services/solution_files.py api/src/services/solutions/capture.py api/src/services/solutions/export.py api/src/services/solutions/zip_install.py api/src/services/solutions/secrets_blob.py api/tests/unit/test_solution_export_streaming.py api/tests/e2e/platform/test_solution_export_files.py api/tests/e2e/platform/test_solution_import_data.py
+git commit -m "feat(solution-export): stream solution file payloads"
+```
+
+## Task 10: Re-Point Capstone And `location="solutions"` Tests
+
+**Files:**
+- Modify: `api/tests/e2e/platform/test_solution_files_e2e.py`
+- Modify: `api/tests/e2e/platform/test_solution_file_scope.py`
+- Modify: any test found by grep that uses `location="solutions"` as a scope shortcut
+
+- [ ] **Step 1: Find tests**
+
+```bash
+rg -n 'location.*solutions|"solutions"' api/tests client/src -g '*.py' -g '*.ts' -g '*.tsx'
+```
+
+- [ ] **Step 2: Update tests**
+
+Use declared location `finance` or `reports` for scope-model tests. Keep a literal `"solutions"` location test only if it proves it is treated as an ordinary declared custom location.
+
+- [ ] **Step 3: Run tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_files_e2e.py tests/e2e/platform/test_solution_file_scope.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add api/tests/e2e/platform/test_solution_files_e2e.py api/tests/e2e/platform/test_solution_file_scope.py
+git commit -m "test(solution-storage): exercise declared locations instead of solutions hardcode"
+```
+
+## Task 11: Full Deployed Solution E2E And Large-File Memory Tests
+
+**Files:**
+- Create: `api/tests/e2e/platform/test_solution_storage_full_e2e.py`
+- Create: `api/tests/unit/test_solution_large_file_memory.py`
+- Modify as needed: solution test fixtures
+
+- [ ] **Step 1: Write full deployed solution E2E**
+
+The test must:
+- Build/install a solution declaring `files.yaml` location `finance` and a table.
+- Run a real solution workflow using Python SDK `files.write/read` and `tables.insert/query`.
+- Verify S3 key `finance/{solution_id}/q1.csv`.
+- Verify sealed install cannot read org/global file/table fallback.
+- Flip or install open solution with `global_repo_access=true` and verify fallback works.
+- Export full solution with file payloads.
+- Install/import into a second solution and verify file bytes and metadata round-trip.
+
+- [ ] **Step 2: Write large-file memory regression**
+
+Use fake streaming readers/writers, not a real 30 GB fixture. Simulate at least 128 MiB with 8 MiB chunks and assert:
+- no full-object read function is called;
+- no `content_b64` appears in solution payload data;
+- chunk helper sees bounded chunk size;
+- metadata hash/size is correct.
+
+- [ ] **Step 3: Run focused tests**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_storage_full_e2e.py tests/unit/test_solution_large_file_memory.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add api/tests/e2e/platform/test_solution_storage_full_e2e.py api/tests/unit/test_solution_large_file_memory.py
+git commit -m "test(solution-storage): cover full install and streaming file payloads"
+```
+
+## Task 12: Final Verification Sweep
+
+- [ ] **Step 1: Hardcode smell check**
+
+```bash
+rg -n 'location == "solutions"|location=="solutions"' api/src
+```
+
+Expected: no matches.
+
+- [ ] **Step 2: SDK reachability proof**
+
+```bash
+./test.sh tests/e2e/platform/test_solution_storage_full_e2e.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 3: Backend checks**
+
+```bash
+cd api
+pyright
+ruff check .
+```
+
+Expected: 0 errors.
+
+- [ ] **Step 4: Frontend checks**
+
+```bash
+./debug.sh status | grep -q "Status:   UP" || ./debug.sh up
+cd client
+npm run generate:types
+npm run tsc
+npm run lint
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Test suites**
+
+```bash
+./test.sh stack up
+./test.sh all
+./test.sh client unit
+./test.sh client e2e
+```
+
+Expected: PASS, or isolate known flakes and document exact isolated pass/fail results.
+
+- [ ] **Step 6: Commit final fixups**
+
+```bash
+git status --short
+```
+
+If final verification required fixups, stage only the exact files changed by those fixups and commit them with:
+
+```bash
+git commit -m "test(solution-storage): verify solution-scoped storage end to end"
+```
+
+## Self-Review Checklist
+
+- [ ] The plan has no placeholder tasks.
+- [ ] Declaration comes before declared-only enforcement.
+- [ ] File reads/lists/exists are tiered, not single-key only.
+- [ ] Policy evaluation happens per resolved tier.
+- [ ] Table auto-create remains for non-solution only.
+- [ ] File payload import/export is streaming and does not use `content_b64`.
+- [ ] Capstone uses a normal declared location such as `finance`.
+- [ ] Final verification includes a real deployed solution workflow path.
