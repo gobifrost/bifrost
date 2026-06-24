@@ -44,7 +44,7 @@
 - [x] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
 - [x] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
 - [x] Task 7: Policy resolution is tier-correct and solution policies never leak upward
-- [ ] Task 8: Web SDK/app file calls honor solution scope
+- [x] Task 8: Web SDK/app file calls honor solution scope
 - [ ] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
 - [ ] Task 10: Re-point capstone and `location="solutions"` tests to the real model
 - [ ] Task 11: Full deployed-solution end-to-end and large-file memory tests
@@ -668,15 +668,16 @@ Verified:
 ## Task 8: Web SDK/App File Calls Honor Solution Scope
 
 **Files:**
-- Modify: `client/src/lib/app-sdk/files.ts`
 - Modify: `client/src/lib/app-sdk/files.test.ts`
+- Modify: `client/src/lib/app-sdk/provider.test.tsx`
+- Modify: `api/src/routers/files.py`
 - Test: `api/tests/e2e/platform/test_solution_file_scope.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add/adjust tests proving app SDK file calls carry `X-Bifrost-App`, server maps that to `Application.solution_id`, and file scope resolves to the install id for declared locations.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh client unit -- client/src/lib/app-sdk/files.test.ts
@@ -685,11 +686,11 @@ Add/adjust tests proving app SDK file calls carry `X-Bifrost-App`, server maps t
 
 Expected: FAIL if app path does not reach solution tier.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Confirm browser auth client includes `X-Bifrost-App` for app SDK calls. If missing, add it in the existing app SDK request layer rather than per-method ad hoc headers.
 
-- [ ] **Step 4: Run passing tests**
+- [x] **Step 4: Run passing tests**
 
 ```bash
 ./test.sh client unit -- client/src/lib/app-sdk/files.test.ts
@@ -698,12 +699,28 @@ Confirm browser auth client includes `X-Bifrost-App` for app SDK calls. If missi
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add client/src/lib/app-sdk/files.ts client/src/lib/app-sdk/files.test.ts api/tests/e2e/platform/test_solution_file_scope.py
 git commit -m "feat(solution-files): app SDK resolves files in install scope"
 ```
+
+Completed:
+- `ef31db6dd test(solution-files): prove app file calls use install scope`
+- `82776535f fix(solution-files): harden app file scope checks`
+
+Verified:
+- `./test.sh client unit -- src/lib/app-sdk/files.test.ts` (13 passed)
+- `./test.sh tests/e2e/platform/test_solution_file_scope.py::test_solution_app_files_resolve_to_install_scope -v` (1 passed)
+- `cd api && ruff check tests/e2e/platform/test_solution_file_scope.py`
+- `cd api && ruff check src/routers/files.py tests/e2e/platform/test_solution_file_scope.py`
+- `./test.sh client unit -- src/lib/app-sdk/files.test.ts src/lib/app-sdk/provider.test.tsx` (21 passed)
+- `./test.sh tests/e2e/platform/test_solution_file_scope.py::test_solution_app_files_resolve_to_install_scope tests/e2e/platform/test_solution_file_scope.py::test_solution_app_read_requires_declared_file_location -v` (2 passed)
+- `./test.sh tests/e2e/platform/test_solution_file_cascade_gated.py tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/routers/test_files_signed_url.py -v` (27 passed)
+
+Notes:
+- A broader `test_solution_file_scope.py` run still has legacy failures where older tests use undeclared `location="solutions"`/`reports`; that cleanup is intentionally tracked in Task 10.
 
 ## Task 9: Streaming Solution File Payload Import/Export
 
