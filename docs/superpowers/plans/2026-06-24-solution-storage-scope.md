@@ -40,7 +40,7 @@
 - [x] Task 1: Files SDK appends `?solution=` for every file REST call
 - [x] Task 2: Server derives solution context for any file location
 - [x] Task 3: Declare file locations in `.bifrost/files.yaml`
-- [ ] Task 4: Enforce declared-only solution writes for files and tables
+- [x] Task 4: Enforce declared-only solution writes for files and tables
 - [ ] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
 - [ ] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
 - [ ] Task 7: Policy resolution is tier-correct and solution policies never leak upward
@@ -395,7 +395,7 @@ git commit -m "feat(solution-storage): declare solution file locations"
 - Test: `api/tests/e2e/platform/test_solution_declared_only.py`
 - Test: `api/tests/unit/test_tables_sdk_solution_scope.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Required tests:
 - Solution write to declared file location succeeds.
@@ -405,7 +405,7 @@ Required tests:
 - Solution table insert/upsert into undeclared table returns 404 and does not auto-create an org/global table.
 - Non-solution table insert still auto-creates on first write.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_declared_only.py tests/unit/test_tables_sdk_solution_scope.py -v
@@ -413,7 +413,7 @@ Required tests:
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement declaration helpers**
+- [x] **Step 3: Implement declaration helpers**
 
 Create `api/src/services/solution_scope.py`:
 
@@ -444,21 +444,21 @@ async def solution_declares_table_name(db: AsyncSession, solution_id: UUID, name
     return result.scalar_one_or_none() is not None
 ```
 
-- [ ] **Step 4: Enforce files**
+- [x] **Step 4: Enforce files**
 
 Before file write, signed PUT creation, and signed upload completion in solution context:
 - Require the location to be declared.
 - Return 404 for undeclared locations.
 - Do not touch S3 or metadata.
 
-- [ ] **Step 5: Enforce tables**
+- [x] **Step 5: Enforce tables**
 
 In solution context:
 - `api/bifrost/tables.py` must not call `_ensure_table_exists()` after a 404.
 - Server create path must not create a table from `?solution=` auto-create.
 - Name resolution for undeclared table returns 404.
 
-- [ ] **Step 6: Run passing tests**
+- [x] **Step 6: Run passing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_declared_only.py tests/unit/test_tables_sdk_solution_scope.py -v
@@ -466,7 +466,7 @@ In solution context:
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add api/src/services/solution_scope.py api/src/routers/files.py api/src/routers/tables.py api/bifrost/tables.py api/tests/e2e/platform/test_solution_declared_only.py api/tests/unit/test_tables_sdk_solution_scope.py
