@@ -1203,7 +1203,7 @@ async def list_files_simple(
         files: list[str] = []
         seen: set[str] = set()
         any_directory_allowed = directory_allowed
-        for tier in tiers:
+        for index, tier in enumerate(tiers):
             tier_directory_allowed = await _authorize_file_policy(
                 ctx,
                 action="list",
@@ -1214,11 +1214,15 @@ async def list_files_simple(
                 organization_id=tier.organization_id,
             )
             any_directory_allowed = any_directory_allowed or tier_directory_allowed
-            # Even when the directory itself isn't broadly listable, a per-file
-            # policy (e.g. creator-scoped list) may still grant individual paths.
-            # Enumerate and filter per-file, mirroring the workspace branch; the
-            # `not any_directory_allowed and not files` check below 403s when
-            # nothing survives.
+            # The primary tier (index 0 — the caller's own scope) is always
+            # enumerated and filtered per-file, so a per-file policy (e.g. a
+            # creator-scoped list) can surface individual paths even when the
+            # directory isn't broadly listable. Fallback tiers (solution org/
+            # global cascade) are gated by their directory-level list policy:
+            # if the directory is denied for that tier, the whole tier is
+            # hidden rather than leaking its files through per-file grants.
+            if index > 0 and not tier_directory_allowed:
+                continue
             tier_files = await backend.list(
                 request.directory,
                 request.location,
