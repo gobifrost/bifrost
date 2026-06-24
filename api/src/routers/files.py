@@ -1214,8 +1214,11 @@ async def list_files_simple(
                 organization_id=tier.organization_id,
             )
             any_directory_allowed = any_directory_allowed or tier_directory_allowed
-            if not tier_directory_allowed:
-                continue
+            # Even when the directory itself isn't broadly listable, a per-file
+            # policy (e.g. creator-scoped list) may still grant individual paths.
+            # Enumerate and filter per-file, mirroring the workspace branch; the
+            # `not any_directory_allowed and not files` check below 403s when
+            # nothing survives.
             tier_files = await backend.list(
                 request.directory,
                 request.location,

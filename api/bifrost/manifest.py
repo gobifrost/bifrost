@@ -877,7 +877,7 @@ class ManifestSolutionConfigSchema(EntityCodec, BaseModel):
 class ManifestFiles(BaseModel):
     """Solution runtime file-location declarations."""
 
-    locations: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list, **classify(FieldClass.CONTENT))
 
     @field_validator("locations")
     @classmethod

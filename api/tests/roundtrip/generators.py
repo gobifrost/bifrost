@@ -43,6 +43,9 @@ DOMAIN_VALUES: dict[tuple[str, str] | str, Any] = {
     # `list[dict[str, Any]]` — the generic list-of-dict generator would emit a
     # list of strings; supply a valid policy-document shape instead.
     ("ManifestFilePolicy", "policies"): [{"name": "SENT::policy", "actions": ["read"]}],
+    # `validate_location_name` enforces ^[a-z0-9][a-z0-9-]*$; the generic
+    # SENT:: sentinel has uppercase and "::" and is rejected.
+    ("ManifestFiles", "locations"): ["finance"],
 }
 
 

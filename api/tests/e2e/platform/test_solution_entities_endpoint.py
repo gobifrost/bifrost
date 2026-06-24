@@ -9,10 +9,18 @@ from uuid import UUID
 
 import pytest
 
+from src.models.orm.solution_file_location import SolutionFileLocation
 from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
+
+
+async def _declare_file_location(db_session, solution_id: str, location: str) -> None:
+    db_session.add(
+        SolutionFileLocation(solution_id=UUID(solution_id), location=location)
+    )
+    await db_session.commit()
 
 CLEAN_PNG = (
     b"\x89PNG\r\n\x1a\n"
@@ -187,11 +195,14 @@ async def test_capture_candidates_list_and_capture_loose_config(e2e_client, plat
     assert key in entity_config_keys
 
 
-async def test_get_solution_entities_includes_files(e2e_client, platform_admin):
+async def test_get_solution_entities_includes_files(e2e_client, platform_admin, db_session):
     """SolutionEntities.files is populated with files written to the install scope."""
     headers = platform_admin.headers
     slug = f"ent-files-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug)
+
+    # The install must declare the file location before it can write there.
+    await _declare_file_location(db_session, sid, "solutions")
 
     # Seed an allow-all policy on the 'solutions' location (global scope).
     policy_r = e2e_client.put(
