@@ -1809,6 +1809,9 @@ Options:
                                   zip carries conflicting secret values.
   --replace-data                  Overwrite existing table data when the zip
                                   carries conflicting rows.
+  --reactivate                    Reactivate an existing inactive
+                                  (uninstalled) install of the same slug
+                                  rather than refusing.
   --help                          Show this message and exit.
 ```
 

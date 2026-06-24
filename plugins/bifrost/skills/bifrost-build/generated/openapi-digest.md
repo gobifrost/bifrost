@@ -419,6 +419,7 @@
 | POST | `/api/solutions/{solution_id}/capture` |
 | GET | `/api/solutions/{solution_id}/capture/candidates` |
 | POST | `/api/solutions/{solution_id}/capture/preview` |
+| GET | `/api/solutions/{solution_id}/deletion-summary` |
 | POST | `/api/solutions/{solution_id}/deploy` |
 | GET | `/api/solutions/{solution_id}/entities` |
 | POST | `/api/solutions/{solution_id}/export` |
@@ -428,6 +429,7 @@
 | PUT | `/api/solutions/{solution_id}/readme` |
 | GET | `/api/solutions/{solution_id}/setup` |
 | POST | `/api/solutions/{solution_id}/sync` |
+| POST | `/api/solutions/{solution_id}/uninstall` |
 | GET | `/api/tables` |
 | POST | `/api/tables` |
 | POST | `/api/tables/policies/validate` |
