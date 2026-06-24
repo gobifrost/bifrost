@@ -309,15 +309,41 @@ async def get_execution_context(
         user.role_ids = role_ids
         user.role_names = role_names
 
+    # Appended by the SDK (?solution=<install_id>) when a solution workflow is
+    # executing.  Before forwarding it to the context, load the Solution row and
+    # refuse execution for any install that has been uninstalled (status !=
+    # "active").  Browse/export endpoints resolve solution_id via URL path params
+    # and do NOT pass through this code-path, so they remain accessible for
+    # inactive installs.
+    solution_id_param = request.query_params.get("solution")
+    if solution_id_param is not None:
+        from src.models.orm.solutions import Solution as SolutionORM
+        try:
+            solution_uuid = UUID(solution_id_param)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid solution id in ?solution= parameter",
+            )
+        solution_row = await db.get(SolutionORM, solution_uuid)
+        if solution_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Solution not found",
+            )
+        if solution_row.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Solution is inactive (uninstalled) and cannot serve execution requests",
+            )
+
     return ExecutionContext(
         user=user,
         org_id=user.organization_id,
         db=db,
         # Set by the v2 SDK provider for Solution apps; harmless/None otherwise.
         app_id=request.headers.get("X-Bifrost-App"),
-        # Appended by the SDK (?solution=) when a solution workflow is executing;
-        # None otherwise. Lets a workflow resolve its own install's table by name.
-        solution_id=request.query_params.get("solution"),
+        solution_id=solution_id_param,
     )
 
 
