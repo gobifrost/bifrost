@@ -479,13 +479,29 @@ passed to the worker as `solution_global_repo_access`, and applied via
 `set_solution_context` in `services/execution/worker.py` /
 `simple_worker.py`. It is cleared after the run.
 
-### Uninstall and orphaning
+### Uninstall and lifecycle states
 
-When a Solution is uninstalled non-destructively, its data rows survive
-with `solution_id` NULL'd and `orphaned_at` set. The cascade excludes
-orphaned rows from name resolution (independently of `solution_id`, since
-`Config` would otherwise miss the exclusion) — the former-install data
-stops resolving by name but is not deleted.
+When a Solution is uninstalled non-destructively (`POST /api/solutions/{id}/uninstall`),
+`Solution.status` flips to `"inactive"`. Owned rows (workflows, agents, forms, tables,
+apps, files) are **frozen in place**: `solution_id` is RETAINED (not NULL'd), data is
+dormant. Two execution gates enforce the "inactive = not executable" invariant:
+
+1. **HTTP gate** (`core/auth.py::get_execution_context`): refuses `?solution=<inactive-id>`
+   and `X-Bifrost-App` headers whose app belongs to an inactive solution (409 Conflict).
+2. **Worker-side gate** (`services/execution/service.py::get_workflow_for_execution`):
+   the `outerjoin` on `SolutionORM` filters `status == "active" OR solution_id IS NULL`,
+   so scheduled, event-triggered, API-key, and agent-run worker paths cannot execute an
+   inactive solution's workflow — they get `WorkflowNotFoundError` (treated as not found).
+   The same check is mirrored for `POST /api/agent-runs/execute` in `routers/agent_runs.py`.
+
+Dormant data is still **browsable and exportable** via path-param endpoints (e.g.
+`GET /api/solutions/{id}/entities`) — these do not go through the execution-context gate.
+
+**Hard delete** (`DELETE /api/solutions/{id}?confirm={slug}`) is the only destructive
+path: FK cascade removes all owned rows and an S3 sweep cleans the file tree.
+
+**Reinstall-over-inactive** (`POST /api/solutions/{id}/install` on a solution with
+`status == "inactive"`) reactivates the install after prompting for conflict resolution.
 
 ### Open question: should data fallback be gated?
 

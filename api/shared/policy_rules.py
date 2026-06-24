@@ -132,6 +132,9 @@ async def resolve_policy_refs(
         row = await repo.get_for_ref(name=entry.ref, domain=action_domain, solution_id=solution_id)
         if row is None:
             raise PolicyRuleNotFound(entry.ref)
+        # Defense-in-depth: load-bearing check.  get_for_ref's step-3 can surface a
+        # cross-domain row (a ref that exists but in the wrong domain); reject it here
+        # so a misconfigured cross-domain ref can never silently apply wrong-domain rules.
         if row.domain != action_domain:
             raise PolicyRuleDomainMismatch(
                 f"{entry.ref!r} is a {row.domain} rule, not {action_domain}"

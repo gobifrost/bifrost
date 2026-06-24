@@ -863,6 +863,9 @@ async def validate_policies(
         # We want to surface only the inline-model arm (Policy) errors when
         # both arms fail for the same element, so the caller sees exactly the
         # meaningful failures instead of ref-arm noise.
+        # These string literals are the Pydantic v2 union-arm discriminators — the
+        # class __name__s of Policy and PolicyRuleRef.  If either class is renamed,
+        # update these constants to match or the dedup logic silently stops working.
         inline_arm = "Policy"
         ref_arm = "PolicyRuleRef"
         # Collect the element indices that have an inline-arm error.

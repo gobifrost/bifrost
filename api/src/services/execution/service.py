@@ -163,6 +163,7 @@ async def get_workflow_for_execution(
     from src.models import Workflow as WorkflowORM
 
     async def _fetch(session: AsyncSession) -> dict[str, Any]:
+        from sqlalchemy import or_
         from src.models.orm.solutions import Solution as SolutionORM
 
         stmt = (
@@ -171,6 +172,13 @@ async def get_workflow_for_execution(
             .where(
                 WorkflowORM.id == workflow_id,
                 WorkflowORM.is_active == True,  # noqa: E712
+                # Inactive-solution gate: refuse worker-side execution for workflows
+                # belonging to an inactive solution. _repo workflows (solution_id IS NULL)
+                # are always allowed; solution workflows require the solution to be active.
+                or_(
+                    WorkflowORM.solution_id.is_(None),
+                    SolutionORM.status == "active",
+                ),
             )
         )
         result = await session.execute(stmt)

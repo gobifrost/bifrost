@@ -2,7 +2,7 @@
 
 L4 of the solution-inactive-lifecycle plan.
 
-Gate: ``get_execution_context`` in ``api/src/core/auth.py`` refuses to set
+Gate 1 (HTTP): ``get_execution_context`` in ``api/src/core/auth.py`` refuses to set
 ``ctx.solution_id`` when the ?solution= query param refers to an inactive install.
 This blocks execution paths (workflow execution uses ctx.solution_id) while leaving
 browse/export paths untouched (they take solution_id as a URL path param).
@@ -10,12 +10,21 @@ browse/export paths untouched (they take solution_id as a URL path param).
 The gate also covers the ``X-Bifrost-App`` header path: v2 SDK apps send this
 header instead of ``?solution=``, so inactive-solution apps must be refused too.
 
+Gate 2 (worker-side): ``get_workflow_for_execution`` in
+``services/execution/service.py`` applies the same inactive-solution filter at the
+DB query level.  This covers scheduled, event-triggered, API-key, and worker-queue
+paths that do NOT go through ``get_execution_context``.  The same gate is mirrored
+for ``POST /api/agent-runs/execute`` in ``routers/agent_runs.py``.
+
 Tests:
 1. Inactive solution workflow execution is REFUSED (409 Conflict — dormant).
 2. Inactive solution entities are STILL BROWSABLE (200 OK).
 3. Active solution executes normally (regression).
 4. Inactive solution's APP is DOWN via X-Bifrost-App header (dormant gate).
 5. Active solution's app is NOT refused via X-Bifrost-App (regression).
+6. (worker gate) get_workflow_for_execution raises WorkflowNotFoundError for inactive solution.
+7. (worker gate) get_workflow_for_execution resolves normally for active solution.
+8. (worker gate) get_workflow_for_execution resolves normally for _repo workflow (no solution).
 """
 from __future__ import annotations
 
@@ -222,3 +231,95 @@ async def test_active_solution_app_path_not_refused(
         assert r.status_code in (200, 201), (
             f"Active solution app request unexpectedly failed: {r.status_code}: {r.text}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Worker-side gate tests (Gate 2): get_workflow_for_execution
+# ---------------------------------------------------------------------------
+
+class TestWorkerSideInactiveSolutionGate:
+    """Verify that get_workflow_for_execution refuses workflows belonging to
+    an inactive solution, covering the scheduled/event/API-key/worker-queue
+    paths that bypass get_execution_context (Gate 1).
+    """
+
+    async def test_inactive_solution_workflow_not_resolved(self, db_session):
+        """get_workflow_for_execution raises WorkflowNotFoundError for an inactive solution's workflow."""
+        from uuid import uuid4
+        from src.models.orm.organizations import Organization
+        from src.models.orm.solutions import Solution
+        from src.models.orm.workflows import Workflow
+        from src.services.execution.service import (
+            WorkflowNotFoundError,
+            get_workflow_for_execution,
+        )
+
+        db = db_session
+        org = Organization(id=uuid4(), name=f"O-{uuid4().hex[:6]}", created_by="test")
+        db.add(org)
+        await db.flush()
+
+        sol = Solution(
+            id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S",
+            organization_id=org.id, global_repo_access=False, status="inactive",
+        )
+        db.add(sol)
+        await db.flush()
+
+        wf = Workflow(
+            id=uuid4(), name="w", function_name="main", path="workflows/w.py",
+            type="workflow", is_active=True, organization_id=org.id, solution_id=sol.id,
+        )
+        db.add(wf)
+        await db.flush()
+
+        with pytest.raises(WorkflowNotFoundError):
+            await get_workflow_for_execution(str(wf.id), db=db)
+
+    async def test_active_solution_workflow_resolves(self, db_session):
+        """get_workflow_for_execution resolves normally for an active solution's workflow (regression)."""
+        from uuid import uuid4
+        from src.models.orm.organizations import Organization
+        from src.models.orm.solutions import Solution
+        from src.models.orm.workflows import Workflow
+        from src.services.execution.service import get_workflow_for_execution
+
+        db = db_session
+        org = Organization(id=uuid4(), name=f"O-{uuid4().hex[:6]}", created_by="test")
+        db.add(org)
+        await db.flush()
+
+        sol = Solution(
+            id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S",
+            organization_id=org.id, global_repo_access=False, status="active",
+        )
+        db.add(sol)
+        await db.flush()
+
+        wf = Workflow(
+            id=uuid4(), name="w", function_name="main", path="workflows/w.py",
+            type="workflow", is_active=True, organization_id=org.id, solution_id=sol.id,
+        )
+        db.add(wf)
+        await db.flush()
+
+        data = await get_workflow_for_execution(str(wf.id), db=db)
+        assert data["solution_id"] == str(sol.id)
+
+    async def test_repo_workflow_resolves(self, db_session):
+        """get_workflow_for_execution resolves normally for a _repo workflow (no solution, regression)."""
+        from uuid import uuid4
+        from src.models.orm.workflows import Workflow
+        from src.services.execution.service import get_workflow_for_execution
+
+        db = db_session
+        wf = Workflow(
+            id=uuid4(), name="w", function_name="main", path="workflows/w.py",
+            type="workflow", is_active=True, organization_id=None, solution_id=None,
+        )
+        db.add(wf)
+        await db.flush()
+
+        data = await get_workflow_for_execution(str(wf.id), db=db)
+        assert data["solution_id"] is None
+        assert data["can_access_global_repo"] is False
