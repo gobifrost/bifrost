@@ -326,13 +326,29 @@ async def export_solution(
             include_data=include_data,
         )
         if stored_source is not None:
+            import base64
+
             from src.services.solutions.secrets_blob import SolutionContent
 
+            file_sidecar_entries: list[dict] = []
+            for sf in bundle.solution_files:
+                if sf.content_bytes is None:
+                    continue
+                file_sidecar_entries.append(
+                    {
+                        "location": sf.location,
+                        "path": sf.path,
+                        "sha256": sf.sha256,
+                        "size": sf.size,
+                        "content_b64": base64.b64encode(sf.content_bytes).decode("ascii"),
+                    }
+                )
             data = add_encrypted_content_to_workspace_zip(
                 stored_source,
                 SolutionContent(
                     config_values=bundle.config_values,
                     table_data=bundle.table_data,
+                    solution_files=file_sidecar_entries,
                 ),
                 password=password or "",
             )
