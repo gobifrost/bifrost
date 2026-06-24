@@ -394,7 +394,7 @@ class SolutionDeployer:
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, rb.workflows)
         await self._upsert_claims(solution, rb.claims)
-        adopted_table_ids = await self._upsert_tables(solution, rb.tables)
+        await self._upsert_tables(solution, rb.tables)
         builds = await self._upsert_apps(solution, rb.apps)
         await self._upsert_forms(solution, rb.forms)
         await self._upsert_agents(solution, rb.agents)
@@ -419,7 +419,7 @@ class SolutionDeployer:
             wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
             claim_deleted,
             stale_app_dist,
-        ) = await self._reconcile_deletions(sid, rb, adopted_table_ids)
+        ) = await self._reconcile_deletions(sid, rb)
 
         # ── Version bookkeeping (Task 20) — part of the DB phase, so it commits
         # (or rolls back) atomically with the reconcile. A version-carrying
@@ -826,7 +826,7 @@ class SolutionDeployer:
 
     async def _upsert_tables(
         self, solution: Solution, tables: list[dict[str, Any]]
-    ) -> set[UUID]:
+    ) -> None:
         """Upsert table SCHEMA + POLICIES only. Row data (Document records) is
         runtime state and is never written or wiped by deploy (criterion 11).
 
@@ -834,13 +834,6 @@ class SolutionDeployer:
         ``access`` JSONB column. A redeploy with a changed schema updates the
         ``schema`` JSONB in place; the table row (and its Documents via the
         FK) survives untouched.
-
-        Returns the set of ADOPTED orphan table ids (Task 14c). A reattached
-        table keeps the ORPHAN's id (its Documents reference it), which differs
-        from this deploy's remapped bundle id — so the caller must add these ids
-        to the reconcile's present-set, or the same deploy's reconcile sweep
-        (``solution_id == sid AND id NOT IN bundle_ids``) would delete the table
-        it just re-adopted.
         """
         from bifrost.manifest import ManifestTable
         from bifrost.manifest_codec import Destination
@@ -849,7 +842,6 @@ class SolutionDeployer:
         from src.models.contracts.policies import TablePolicies
 
         sid = solution.id
-        adopted_ids: set[UUID] = set()
 
         # Table NAME is unique per install (ix_tables_solution_name_unique). Two
         # tables in THIS bundle sharing a name would hit that index as an
@@ -875,7 +867,6 @@ class SolutionDeployer:
 
             # Resolve + VALIDATE policies before persisting (mirrors REST/manifest
             # paths) so a malformed AST is rejected at deploy, not at read time.
-            # Computed up front so both the reattach and the normal path use it.
             policies = mtbl.get("policies")
             if policies is not None:
                 access = {"policies": policies}
@@ -959,8 +950,6 @@ class SolutionDeployer:
             # without it subscribers keep the old authorization until reconnect).
             if existed and prev_access != access:
                 await publish_policy_changed(str(tbl_id))
-
-        return adopted_ids
 
     async def _upsert_claims(
         self, solution: Solution, claims: list[dict[str, Any]]
@@ -1707,7 +1696,7 @@ class SolutionDeployer:
 
     # ── 3. Scoped full-replace deletion ─────────────────────────────────────
     async def _reconcile_deletions(
-        self, sid: UUID, bundle: SolutionBundle, adopted_table_ids: set[UUID]
+        self, sid: UUID, bundle: SolutionBundle
     ) -> tuple[int, int, int, int, int, int, set[UUID]]:
         """Delete this install's entities that are absent from the bundle.
 
@@ -1720,11 +1709,6 @@ class SolutionDeployer:
         DECLARATIONS (SolutionConfigSchema) are also reconciled here, though
         their deleted count is intentionally not surfaced. Returns
         (workflows, tables, apps, forms, agents, claims) deleted counts.
-
-        ``adopted_table_ids`` are orphan ids re-adopted by THIS deploy
-        (Task 14c). They carry the orphan's id, not this deploy's remapped bundle
-        id, so they must be added to the tables' present-set — otherwise this same
-        sweep would delete the table we just reattached.
         """
         wf_deleted = len(
             await self._reconcile_one(
@@ -1735,7 +1719,7 @@ class SolutionDeployer:
             await self._reconcile_one(
                 Table,
                 sid,
-                {UUID(t["id"]) for t in bundle.tables} | adopted_table_ids,
+                {UUID(t["id"]) for t in bundle.tables},
             )
         )
         # Stale app ids are kept (not just counted): their ``_apps/{id}/dist/``
