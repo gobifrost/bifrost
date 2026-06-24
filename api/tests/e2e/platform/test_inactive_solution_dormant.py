@@ -138,10 +138,10 @@ async def test_active_solution_executes_normally(
     )
 
 
-def _deploy_with_app_and_table(e2e_client, headers, sid: str) -> tuple[str, str, str]:
+def _deploy_with_app_and_table(e2e_client, headers, sid: str) -> tuple[str, str]:
     """Deploy a minimal bundle with one app + one table.
 
-    Returns (app_id, table_name, workflow_id) where app_id is the resolved
+    Returns (app_id, table_name) where app_id is the resolved
     per-install entity id (suitable for the X-Bifrost-App header).
     """
     app_manifest_id = str(uuid.uuid4())
