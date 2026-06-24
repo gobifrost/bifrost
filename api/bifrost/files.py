@@ -33,14 +33,25 @@ Usage:
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlencode
 
 from .client import get_client, raise_for_status_with_detail
-from ._context import resolve_scope
+from ._context import resolve_scope, _execution_context
 
 Mode = Literal["local", "cloud"]
 # `location` is a free string. Special names: "workspace", "temp", "uploads".
 # Anything else is a freeform user-defined location (e.g. "reports", "exports"),
 # except blocked internal prefixes such as "_repo", "_tmp", and "_apps".
+
+
+def _current_context():
+    return _execution_context.get()
+
+
+def _solution_query() -> str:
+    ctx = _current_context()
+    solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+    return f"?{urlencode({'solution': str(solution_id)})}" if solution_id else ""
 
 
 class files:
@@ -81,7 +92,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/read",
+            f"/api/files/read{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -106,7 +117,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/read",
+            f"/api/files/read{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "binary": True, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -134,7 +145,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/write",
+            f"/api/files/write{_solution_query()}",
             json={"path": path, "content": content, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -162,7 +173,7 @@ class files:
         encoded_content = base64.b64encode(content).decode('utf-8')
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/write",
+            f"/api/files/write{_solution_query()}",
             json={"path": path, "content": encoded_content, "location": location, "mode": mode, "binary": True, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -197,7 +208,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/list",
+            f"/api/files/list{_solution_query()}",
             json={"directory": directory, "location": location, "mode": mode, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -226,7 +237,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/delete",
+            f"/api/files/delete{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -250,7 +261,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/exists",
+            f"/api/files/exists{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)
@@ -290,7 +301,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            "/api/files/signed-url",
+            f"/api/files/signed-url{_solution_query()}",
             json={
                 "path": path,
                 "method": method,
