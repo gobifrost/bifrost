@@ -41,6 +41,11 @@ def _scope_query(scope: str | None) -> str:
     return f"?{urlencode(params)}" if params else ""
 
 
+def _has_solution_context() -> bool:
+    ctx = _current_context()
+    return bool(getattr(ctx, "solution_id", None)) if ctx is not None else False
+
+
 async def _ensure_table_exists(table: str, scope: str | None) -> None:
     """Create the table if it doesn't already exist (auto-create-on-insert).
 
@@ -249,7 +254,7 @@ class tables:
         client = get_client()
         url = f"/api/tables/{table}/documents{_scope_query(effective_scope)}"
         response = await client.post(url, json=body)
-        if response.status_code == 404:
+        if response.status_code == 404 and not _has_solution_context():
             # Table doesn't exist — auto-create then retry.
             await _ensure_table_exists(table, effective_scope)
             response = await client.post(url, json=body)
@@ -302,7 +307,7 @@ class tables:
         client = get_client()
         url = f"/api/tables/{table}/documents/upsert{_scope_query(effective_scope)}"
         response = await client.post(url, json=body)
-        if response.status_code == 404:
+        if response.status_code == 404 and not _has_solution_context():
             await _ensure_table_exists(table, effective_scope)
             response = await client.post(url, json=body)
         raise_for_status_with_detail(response)
@@ -538,7 +543,7 @@ class tables:
         client = get_client()
         url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
         response = await client.post(url, json=req_body)
-        if response.status_code == 404:
+        if response.status_code == 404 and not _has_solution_context():
             await _ensure_table_exists(table, effective_scope)
             response = await client.post(url, json=req_body)
         raise_for_status_with_detail(response)

@@ -58,6 +58,7 @@ from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
+from src.services.solution_scope import solution_declares_table_name
 from src.services.table_policy_loader import load_resolved_table_policies
 from src.repositories.tables import TableRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
@@ -608,7 +609,12 @@ async def get_table_or_404(
         install_table = await _resolve_solution_table_by_name(
             ctx, name_or_id, target_org_id
         )
-        table = install_table or await repo.get_by_name(name_or_id)
+        if install_table is not None:
+            table = install_table
+        elif ctx.solution_id:
+            table = None
+        else:
+            table = await repo.get_by_name(name_or_id)
 
     if not table:
         raise HTTPException(
@@ -655,6 +661,8 @@ async def _resolve_solution_table_by_name(
             )
         ).scalar_one_or_none()
     if solution_id is None:
+        return None
+    if not await solution_declares_table_name(ctx.db, solution_id, name):
         return None
     stmt = select(Table).where(
         Table.name == name,

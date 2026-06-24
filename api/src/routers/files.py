@@ -412,6 +412,24 @@ async def _require_file_policy(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
+async def _require_declared_solution_file_location(
+    ctx: Context,
+    *,
+    solution_id: UUID | None,
+    location: str,
+) -> None:
+    if solution_id is None:
+        return
+
+    from src.services.solution_scope import solution_declares_file_location
+
+    if not await solution_declares_file_location(ctx.db, solution_id, location):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File location '{location}' not found",
+        )
+
+
 def _relative_list_path(path: str, *, location: str, scope: str | None) -> str:
     if location == "workspace":
         return path
@@ -722,6 +740,13 @@ async def _build_signed_url(
     from shared.file_paths import resolve_s3_key
 
     effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+    solution_id = _ctx_solution_id(ctx, request.location)
+    if request.method == "PUT":
+        await _require_declared_solution_file_location(
+            ctx,
+            solution_id=solution_id,
+            location=request.location,
+        )
     try:
         s3_path = resolve_s3_key(request.location, effective_scope, request.path)
     except ValueError as e:
@@ -735,7 +760,7 @@ async def _build_signed_url(
         scope=effective_scope,
         path=request.path,
         content_type=request.content_type if request.method == "PUT" else None,
-        solution_id=_ctx_solution_id(ctx, request.location),
+        solution_id=solution_id,
     )
 
     file_storage = FileStorageService(db)
@@ -766,6 +791,11 @@ async def _record_completed_signed_upload(
 
     effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
     solution_id = _ctx_solution_id(ctx, request.location)
+    await _require_declared_solution_file_location(
+        ctx,
+        solution_id=solution_id,
+        location=request.location,
+    )
     await _require_file_policy(
         ctx,
         action="write",
@@ -867,6 +897,11 @@ async def write_file(
     try:
         effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
         solution_id = _ctx_solution_id(ctx, request.location)
+        await _require_declared_solution_file_location(
+            ctx,
+            solution_id=solution_id,
+            location=request.location,
+        )
         await _require_file_policy(
             ctx,
             action="write",
