@@ -335,7 +335,7 @@ class TestSolutionInactiveLifecycleCapstone:
         # Solution row STILL EXISTS.
         sol_check = e2e_client.get(f"/api/solutions/{sol_id}", headers=headers)
         assert sol_check.status_code == 200, (
-            f"Solution row was deleted on uninstall — must only flip status"
+            "Solution row was deleted on uninstall — must only flip status"
         )
         assert sol_check.json()["status"] == "inactive"
 

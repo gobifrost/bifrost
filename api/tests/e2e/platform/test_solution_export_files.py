@@ -23,8 +23,6 @@ def make_solution_with_files(e2e_client, platform_admin, db_session):
     returns a SimpleNamespace with ``.id``.
     """
     from types import SimpleNamespace
-    from src.models.orm.organizations import Organization
-    from src.models.orm.solutions import Solution
     from src.services.solution_files import write_solution_file
 
     async def _make(file_contents: dict[str, bytes]) -> SimpleNamespace:

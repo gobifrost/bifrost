@@ -20,7 +20,6 @@ import zipfile
 
 import pytest
 
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 

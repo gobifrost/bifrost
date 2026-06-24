@@ -10,9 +10,8 @@ import hashlib
 import io
 import uuid
 import zipfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from src.models.orm.solutions import Solution
 from src.services.solution_files import SolutionFileEntry

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import uuid
 import zipfile
 
@@ -143,7 +142,6 @@ def test_solution_install_restores_files(
     e2e_client, platform_admin, cli_client, tmp_path
 ):
     """Install a full-backup zip → file is readable on the new install."""
-    from bifrost.commands.solution import solution_group
 
     headers = platform_admin.headers
     upload_headers = _upload_headers(headers)
