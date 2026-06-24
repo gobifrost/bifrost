@@ -14,6 +14,7 @@
 
 - Solution context scopes any declared file location by install id: `finance/{solution_id}/path.ext`.
 - `location == "solutions"` is not a control-flow branch. `"solutions"` may still be a normal declarable location string.
+- `workspace` is reserved and maps to shared `_repo`; solution-context file APIs reject `location="workspace"` instead of half-scoping metadata over shared bytes.
 - `global_repo_access=false` means sealed data runtime: own-solution tier only. No org/global fallback for files or tables.
 - `global_repo_access=true` allows read fallback: own-solution -> org -> global. It does not allow undeclared solution writes.
 - File policies are evaluated for the tier that actually serves the bytes: solution policy for solution bytes, org policy for org bytes, global policy for global bytes.
@@ -37,7 +38,7 @@
 
 - [x] Task 0: Preflight and baseline facts
 - [x] Task 1: Files SDK appends `?solution=` for every file REST call
-- [ ] Task 2: Server derives solution context for any file location
+- [x] Task 2: Server derives solution context for any file location
 - [ ] Task 3: Declare file locations in `.bifrost/files.yaml`
 - [ ] Task 4: Enforce declared-only solution writes for files and tables
 - [ ] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
@@ -260,11 +261,11 @@ git commit -m "feat(solution-files): pass solution context from files SDK"
 - Modify: `api/src/routers/files.py`
 - Test: `api/tests/e2e/platform/test_solution_file_scope.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests proving a solution request to `location="finance"` writes metadata with `FileMetadata.solution_id == install_id`, uses S3 key `finance/{install_id}/q1.csv`, and does not honor a conflicting request body `scope`.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_file_scope.py::test_solution_scopes_arbitrary_location_by_install_id -v
@@ -272,7 +273,7 @@ Add tests proving a solution request to `location="finance"` writes metadata wit
 
 Expected: FAIL because only `location="solutions"` uses `ctx.solution_id`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Update helpers in `api/src/routers/files.py`:
 
@@ -293,7 +294,7 @@ def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
 
 Replace all `location == "solutions"` policy/scope branches with `solution_id is not None`.
 
-- [ ] **Step 4: Run passing tests**
+- [x] **Step 4: Run passing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_file_scope.py -v
@@ -301,7 +302,7 @@ Replace all `location == "solutions"` policy/scope branches with `solution_id is
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/routers/files.py api/tests/e2e/platform/test_solution_file_scope.py
