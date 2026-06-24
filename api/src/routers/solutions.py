@@ -35,6 +35,7 @@ from src.models.contracts.solutions import (
     SolutionConfigStatus,
     SolutionCreate,
     SolutionDeleteSummary,
+    SolutionDeletionSummary,
     SolutionDependencyPreview,
     SolutionDependencyPreviewRequest,
     SolutionDeployEnqueued,
@@ -709,26 +710,104 @@ async def update_solution(
     return SolutionDTO.model_validate(sol)
 
 
+@router.post(
+    "/{solution_id}/uninstall",
+    response_model=SolutionDTO,
+    summary="Uninstall: flip status to inactive, data frozen in place (admin only)",
+)
+async def uninstall_solution(
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionDTO:
+    """Flip the install's lifecycle status to ``inactive``.
+
+    This is the NON-DESTRUCTIVE uninstall path. Owned entities (tables/workflows/
+    forms/agents/apps) stay exactly where they are, still owned by this install
+    (``solution_id`` is NOT cleared). No S3 ops. No data mutation of any kind.
+
+    An already-inactive install returns 200 unchanged (idempotent).
+
+    To permanently destroy an install and all of its owned data, use the hard-delete
+    path: ``DELETE /{id}?confirm=<slug>``.
+    """
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    await ctx.db.execute(
+        update(SolutionORM)
+        .where(SolutionORM.id == solution_id)
+        .values(status="inactive")
+    )
+    await ctx.db.commit()
+    await ctx.db.refresh(sol)
+    return SolutionDTO.model_validate(sol)
+
+
+@router.get(
+    "/{solution_id}/deletion-summary",
+    response_model=SolutionDeletionSummary,
+    summary="Preview counts of what a hard-delete would destroy (admin only)",
+)
+async def get_solution_deletion_summary(
+    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+) -> SolutionDeletionSummary:
+    """Return per-entity counts of what ``DELETE /{id}?confirm=<slug>`` would destroy.
+
+    Intended for the confirmation modal: the UI fetches this, shows "you are about
+    to delete N tables, M workflows, …", then requires the operator to type the
+    install slug before issuing the hard-delete.
+    """
+    from src.models.orm.events import EventSource, EventSubscription
+    from src.services.solution_files import enumerate_solution_files
+
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    async def _count(model: type) -> int:
+        result = await ctx.db.execute(
+            select(model.id).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
+        )
+        return len(result.scalars().all())
+
+    file_entries = await enumerate_solution_files(ctx.db, solution_id)
+
+    return SolutionDeletionSummary(
+        solution_id=solution_id,
+        files=len(file_entries),
+        tables=await _count(Table),
+        workflows=await _count(Workflow),
+        apps=await _count(Application),
+        forms=await _count(Form),
+        agents=await _count(Agent),
+        claims=await _count(CustomClaim),
+        config_declarations=await _count(SolutionConfigSchema),
+        events=await _count(EventSource) + await _count(EventSubscription),
+    )
+
+
 @router.delete(
     "/{solution_id}",
     response_model=SolutionDeleteSummary,
-    summary="Delete an install and everything it owns (admin only)",
+    summary="Hard-delete an install and ALL owned data — irreversible (admin only)",
 )
 async def delete_solution(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser,
+    solution_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+    confirm: str = "",
 ) -> SolutionDeleteSummary:
-    """Delete an install non-destructively for customer data.
+    """Confirmed hard-delete: drops the Solution row and ALL owned entities.
 
-    Pure-code entities (workflows/apps/forms/agents) and the install's config
-    DECLARATIONS cascade away via the ``solution_id`` FK ``ondelete=CASCADE``.
-    Data-bearing entities are ORPHANED instead of cascaded:
+    **This is irreversible.** Every owned row (tables, workflows, forms, agents,
+    apps, claims, config declarations, events) is removed via the existing
+    ``solution_id ondelete=CASCADE`` FKs when the Solution row is deleted.
+    The ``solutions/{id}/`` S3 prefix is swept after the DB commit.
 
-    - Owned tables are DETACHED before the Solution delete (``solution_id`` set
-      to NULL so the cascade can't reach them) and survive as ordinary org
-      tables. Their documents are untouched — they hang off the surviving table.
-    The install's S3 artifacts are swept. The git repo is NEVER touched — a
-    git-connected install is deletable; only the install and its local artifacts
-    go, the upstream repo is left alone.
+    Requires ``?confirm=<slug>`` equal to the install's slug. A mismatch returns
+    422 immediately — nothing is touched.
+
+    To uninstall non-destructively (freeze data, flip status only), use:
+    ``POST /{id}/uninstall``.
     """
     # Load WITHOUT eager-loading ``connection_schema`` (it is ``lazy="selectin"``).
     # If the children are loaded, the relationship's ``delete-orphan`` cascade marks
@@ -749,6 +828,17 @@ async def delete_solution(
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
+    # Server-side confirm: the caller must echo the install's slug.
+    if confirm != sol.slug:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"confirm mismatch: expected '{sol.slug}', got '{confirm}'. "
+                "Pass ?confirm=<slug> to confirm the hard-delete."
+            ),
+        )
+
+    from src.services.solution_files import enumerate_solution_files
     from src.services.solutions.app_build import SolutionAppBuilder
     from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
     from src.services.solutions.storage import SolutionStorage
@@ -767,12 +857,12 @@ async def delete_solution(
                 return len(
                     (
                         await ctx.db.execute(
-                            select(model.id).where(model.solution_id == solution_id)
+                            select(model.id).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
                         )
                     ).scalars().all()
                 )
 
-            app_ids = set(
+            app_ids = list(
                 (
                     await ctx.db.execute(
                         select(Application.id).where(
@@ -782,39 +872,8 @@ async def delete_solution(
                 ).scalars().all()
             )
 
-            # Owned table ids (for the orphan count) — captured BEFORE we detach
-            # them, since the detach update clears ``solution_id``.
-            table_ids = set(
-                (
-                    await ctx.db.execute(
-                        select(Table.id).where(Table.solution_id == solution_id)
-                    )
-                ).scalars().all()
-            )
-
-            # The install's config DECLARATION keys — used both to count the
-            # cascaded declarations and to find the config VALUES to orphan.
-            decl_keys = set(
-                (
-                    await ctx.db.execute(
-                        select(SolutionConfigSchema.key).where(
-                            SolutionConfigSchema.solution_id == solution_id
-                        )
-                    )
-                ).scalars().all()
-            )
-
-            # DETACH TABLES (before the Solution delete so the FK cascade can't
-            # reach them). They survive as ordinary org tables; documents are
-            # untouched (they hang off the surviving table row).
-            await ctx.db.execute(
-                update(Table)
-                .where(Table.solution_id == solution_id)
-                .values(
-                    solution_id=None,
-                    organization_id=sol.organization_id,
-                )
-            )
+            # Enumerate S3 files BEFORE the DB delete (file_metadata rows cascade away).
+            file_entries = await enumerate_solution_files(ctx.db, solution_id)
 
             summary = SolutionDeleteSummary(
                 solution_id=solution_id,
@@ -823,14 +882,13 @@ async def delete_solution(
                 forms_deleted=await _count(Form),
                 agents_deleted=await _count(Agent),
                 claims_deleted=await _count(CustomClaim),
-                config_declarations_deleted=len(decl_keys),
-                tables_orphaned=len(table_ids),
-                config_values_orphaned=0,
-                files_orphaned=0,
+                config_declarations_deleted=await _count(SolutionConfigSchema),
+                tables_deleted=await _count(Table),
+                files_swept=len(file_entries),
             )
 
-            # Solution delete: cascades workflows/apps/forms/agents + the config
-            # DECLARATIONS. Tables already have solution_id=NULL (detached above).
+            # Hard-delete: the existing ondelete=CASCADE FKs remove all owned rows.
+            # No orphan/detach logic — this is the destructive path.
             await ctx.db.delete(sol)
             await ctx.db.commit()
 

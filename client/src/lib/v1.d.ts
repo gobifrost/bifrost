@@ -3855,22 +3855,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__delete"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7253,19 +7253,19 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete an install and everything it owns (admin only)
-         * @description Delete an install non-destructively for customer data.
+         * Hard-delete an install and ALL owned data — irreversible (admin only)
+         * @description Confirmed hard-delete: drops the Solution row and ALL owned entities.
          *
-         *     Pure-code entities (workflows/apps/forms/agents) and the install's config
-         *     DECLARATIONS cascade away via the ``solution_id`` FK ``ondelete=CASCADE``.
-         *     Data-bearing entities are ORPHANED instead of cascaded:
+         *     **This is irreversible.** Every owned row (tables, workflows, forms, agents,
+         *     apps, claims, config declarations, events) is removed via the existing
+         *     ``solution_id ondelete=CASCADE`` FKs when the Solution row is deleted.
+         *     The ``solutions/{id}/`` S3 prefix is swept after the DB commit.
          *
-         *     - Owned tables are DETACHED before the Solution delete (``solution_id`` set
-         *       to NULL so the cascade can't reach them) and survive as ordinary org
-         *       tables. Their documents are untouched — they hang off the surviving table.
-         *     The install's S3 artifacts are swept. The git repo is NEVER touched — a
-         *     git-connected install is deletable; only the install and its local artifacts
-         *     go, the upstream repo is left alone.
+         *     Requires ``?confirm=<slug>`` equal to the install's slug. A mismatch returns
+         *     422 immediately — nothing is touched.
+         *
+         *     To uninstall non-destructively (freeze data, flip status only), use:
+         *     ``POST /{id}/uninstall``.
          */
         delete: operations["delete_solution_api_solutions__solution_id__delete"];
         options?: never;
@@ -7456,6 +7456,59 @@ export interface paths {
          *     is static, so computed/dynamic refs are invisible — the UI says so.
          */
         post: operations["preview_solution_capture_api_solutions__solution_id__capture_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/uninstall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Uninstall: flip status to inactive, data frozen in place (admin only)
+         * @description Flip the install's lifecycle status to ``inactive``.
+         *
+         *     This is the NON-DESTRUCTIVE uninstall path. Owned entities (tables/workflows/
+         *     forms/agents/apps) stay exactly where they are, still owned by this install
+         *     (``solution_id`` is NOT cleared). No S3 ops. No data mutation of any kind.
+         *
+         *     An already-inactive install returns 200 unchanged (idempotent).
+         *
+         *     To permanently destroy an install and all of its owned data, use the hard-delete
+         *     path: ``DELETE /{id}?confirm=<slug>``.
+         */
+        post: operations["uninstall_solution_api_solutions__solution_id__uninstall_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/deletion-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview counts of what a hard-delete would destroy (admin only)
+         * @description Return per-entity counts of what ``DELETE /{id}?confirm=<slug>`` would destroy.
+         *
+         *     Intended for the confirmation modal: the UI fetches this, shows "you are about
+         *     to delete N tables, M workflows, …", then requires the operator to type the
+         *     install slug before issuing the hard-delete.
+         */
+        get: operations["get_solution_deletion_summary_api_solutions__solution_id__deletion_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -21051,6 +21104,11 @@ export interface components {
              */
             setup_complete: boolean;
             /**
+             * Status
+             * @default active
+             */
+            status: string;
+            /**
              * Scope
              * @enum {string}
              */
@@ -21246,12 +21304,11 @@ export interface components {
         };
         /**
          * SolutionDeleteSummary
-         * @description Counts of what a DELETE did. Pure-code entities (workflows/apps/forms/
-         *     agents) and the install's config DECLARATIONS are deleted via DB cascade.
-         *     Data-bearing entities are ORPHANED, not deleted: owned tables (and their
-         *     documents) are detached and survive as ordinary org tables, and the
-         *     install's config VALUES are stamped with orphan provenance and survive.
-         *     The UI echoes these back to the operator.
+         * @description Counts returned by a confirmed hard-delete (DELETE /{id}?confirm=<slug>).
+         *
+         *     All owned rows are removed via the existing ``solution_id ondelete=CASCADE``
+         *     FKs when the Solution row is deleted. The S3 ``solutions/{id}/`` prefix is
+         *     swept after the DB commit. No data is orphaned — this is the destructive path.
          */
         SolutionDeleteSummary: {
             /**
@@ -21290,20 +21347,74 @@ export interface components {
              */
             config_declarations_deleted: number;
             /**
-             * Tables Orphaned
+             * Tables Deleted
              * @default 0
              */
-            tables_orphaned: number;
+            tables_deleted: number;
             /**
-             * Config Values Orphaned
+             * Files Swept
              * @default 0
              */
-            config_values_orphaned: number;
+            files_swept: number;
+        };
+        /**
+         * SolutionDeletionSummary
+         * @description Preview of what a hard-delete would destroy (GET /{id}/deletion-summary).
+         *
+         *     Returns counts per owned entity type so the confirmation modal can show the
+         *     operator what they are about to destroy before they type the slug.
+         */
+        SolutionDeletionSummary: {
             /**
-             * Files Orphaned
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /**
+             * Files
              * @default 0
              */
-            files_orphaned: number;
+            files: number;
+            /**
+             * Tables
+             * @default 0
+             */
+            tables: number;
+            /**
+             * Workflows
+             * @default 0
+             */
+            workflows: number;
+            /**
+             * Apps
+             * @default 0
+             */
+            apps: number;
+            /**
+             * Forms
+             * @default 0
+             */
+            forms: number;
+            /**
+             * Agents
+             * @default 0
+             */
+            agents: number;
+            /**
+             * Claims
+             * @default 0
+             */
+            claims: number;
+            /**
+             * Config Declarations
+             * @default 0
+             */
+            config_declarations: number;
+            /**
+             * Events
+             * @default 0
+             */
+            events: number;
         };
         /**
          * SolutionDependencyPreview
@@ -30222,7 +30333,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -30255,7 +30366,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -30288,7 +30399,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -30321,7 +30432,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__delete: {
+    execute_endpoint_api_endpoints__workflow_id__post: {
         parameters: {
             query?: never;
             header: {
@@ -36460,7 +36571,9 @@ export interface operations {
     };
     delete_solution_api_solutions__solution_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                confirm?: string;
+            };
             header?: never;
             path: {
                 solution_id: string;
@@ -36792,6 +36905,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionDependencyPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uninstall_solution_api_solutions__solution_id__uninstall_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Solution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_solution_deletion_summary_api_solutions__solution_id__deletion_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDeletionSummary"];
                 };
             };
             /** @description Validation Error */
