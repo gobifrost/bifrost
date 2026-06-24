@@ -43,7 +43,7 @@
 - [x] Task 4: Enforce declared-only solution writes for files and tables
 - [x] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
 - [x] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
-- [ ] Task 7: Policy resolution is tier-correct and solution policies never leak upward
+- [x] Task 7: Policy resolution is tier-correct and solution policies never leak upward
 - [ ] Task 8: Web SDK/app file calls honor solution scope
 - [ ] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
 - [ ] Task 10: Re-point capstone and `location="solutions"` tests to the real model
@@ -613,15 +613,18 @@ git commit -m "feat(solution-tables): gate fallback and auto-create by solution 
 - Test: `api/tests/e2e/platform/test_solution_policy_solution_only.py`
 - Test: `api/tests/unit/services/test_file_policy_service.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Required tests:
 - A solution file policy governs only the solution tier.
 - Org fallback data is governed by org policy, not solution policy.
 - Global fallback data is governed by global policy, not solution policy.
 - Non-solution org/global policy lookup never considers `solution_id IS NOT NULL` rows.
+- Signed GET resolves to the tier that actually serves fallback bytes.
+- Policy listing and policy-test debug output do not leak or misreport solution rows.
+- Workspace metadata listings honor revoked admin-bypass policies.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/services/test_file_policy_service.py -v
@@ -629,7 +632,7 @@ Required tests:
 
 Expected: FAIL or PASS-and-harden depending on current filters.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Policy lookup must be called per `FileTier`:
 - solution tier: pass `solution_id=<install_id>` and install org id.
@@ -638,7 +641,7 @@ Policy lookup must be called per `FileTier`:
 
 Keep `FilePolicy.solution_id.is_(None)` filters on all org/global lookup arms.
 
-- [ ] **Step 4: Run passing tests**
+- [x] **Step 4: Run passing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/services/test_file_policy_service.py -v
@@ -646,12 +649,21 @@ Keep `FilePolicy.solution_id.is_(None)` filters on all org/global lookup arms.
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/services/file_policy_service.py api/src/routers/files.py api/tests/e2e/platform/test_solution_policy_solution_only.py api/tests/unit/services/test_file_policy_service.py
 git commit -m "feat(solution-files): evaluate policies against resolved data tier"
 ```
+
+Completed:
+- `9a1d3f9c2 feat(solution-files): evaluate policies against resolved data tier`
+- `2fa8c4bfe fix(solution-files): scope policies to resolved tiers`
+
+Verified:
+- `cd api && ruff check src/services/file_policy_service.py src/routers/files.py tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/services/test_file_policy_service.py tests/e2e/platform/test_cli_push_pull.py tests/unit/routers/test_files_signed_url.py`
+- `./test.sh tests/unit/routers/test_files_signed_url.py -v` (17 passed)
+- `./test.sh tests/e2e/platform/test_solution_policy_solution_only.py tests/unit/services/test_file_policy_service.py tests/e2e/platform/test_solution_file_cascade_gated.py tests/e2e/platform/test_cli_push_pull.py::test_list_with_metadata_filters_denied_platform_admin_paths -v` (26 passed)
 
 ## Task 8: Web SDK/App File Calls Honor Solution Scope
 
