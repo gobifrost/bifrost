@@ -69,12 +69,20 @@ def _seed_solutions_policy(e2e_client, headers, *, org_id: str | None) -> None:
     assert r.status_code in (200, 201, 204), f"seed policy failed: {r.status_code} {r.text}"
 
 
+async def _declare_file_location(db_session, solution_id: str, location: str) -> None:
+    db_session.add(
+        SolutionFileLocation(solution_id=UUID(solution_id), location=location)
+    )
+    await db_session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 @pytest.mark.e2e
-def test_solution_write_then_read_isolated(e2e_client, platform_admin):
+@pytest.mark.asyncio
+async def test_solution_write_then_read_isolated(e2e_client, platform_admin, db_session):
     """A solution write lands under solutions/{install_id}/; readable by that
     solution; solution B CANNOT read solution A's file at the same logical path.
     """
@@ -91,6 +99,8 @@ def test_solution_write_then_read_isolated(e2e_client, platform_admin):
 
     _seed_solutions_policy(e2e_client, headers, org_id=org_id_a)
     _seed_solutions_policy(e2e_client, headers, org_id=org_id_b)
+    await _declare_file_location(db_session, sid_a, "solutions")
+    await _declare_file_location(db_session, sid_b, "solutions")
 
     test_path = f"r/{uuid.uuid4().hex}/x.txt"
 
@@ -130,7 +140,10 @@ def test_solution_write_then_read_isolated(e2e_client, platform_admin):
 
 
 @pytest.mark.e2e
-def test_presign_rejects_client_supplied_foreign_scope(e2e_client, platform_admin):
+@pytest.mark.asyncio
+async def test_presign_rejects_client_supplied_foreign_scope(
+    e2e_client, platform_admin, db_session
+):
     """O2 #1: a client cannot presign into a foreign scope by passing scope=<other org>.
 
     The server ignores / overrides the supplied scope — the signed URL
@@ -142,6 +155,7 @@ def test_presign_rejects_client_supplied_foreign_scope(e2e_client, platform_admi
     sid = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    await _declare_file_location(db_session, sid, "solutions")
 
     # Use a different org UUID as the "foreign" scope.
     foreign_org = str(uuid.uuid4())
@@ -172,7 +186,8 @@ def test_presign_rejects_client_supplied_foreign_scope(e2e_client, platform_admi
 
 
 @pytest.mark.e2e
-def test_presign_rejects_path_traversal(e2e_client, platform_admin):
+@pytest.mark.asyncio
+async def test_presign_rejects_path_traversal(e2e_client, platform_admin, db_session):
     """O2 #2: path traversal in the presign path is rejected with 400."""
     headers = platform_admin.headers
     slug = f"file-presign-o2-2-{uuid.uuid4().hex[:8]}"
@@ -180,6 +195,7 @@ def test_presign_rejects_path_traversal(e2e_client, platform_admin):
     sid = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    await _declare_file_location(db_session, sid, "solutions")
 
     r = e2e_client.post(
         f"/api/files/signed-url?solution={sid}",
@@ -194,7 +210,10 @@ def test_presign_rejects_path_traversal(e2e_client, platform_admin):
 
 
 @pytest.mark.e2e
-def test_presign_put_cannot_plant_in_foreign_scope(e2e_client, platform_admin):
+@pytest.mark.asyncio
+async def test_presign_put_cannot_plant_in_foreign_scope(
+    e2e_client, platform_admin, db_session
+):
     """O2 #3: presign PUT with a foreign scope cannot plant in the foreign scope."""
     headers = platform_admin.headers
     slug = f"file-presign-o2-3-{uuid.uuid4().hex[:8]}"
@@ -202,6 +221,7 @@ def test_presign_put_cannot_plant_in_foreign_scope(e2e_client, platform_admin):
     sid = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    await _declare_file_location(db_session, sid, "solutions")
 
     foreign_org = str(uuid.uuid4())
 
@@ -299,6 +319,7 @@ async def test_solution_context_scopes_freeform_location_metadata_and_s3_key(
     sid = sol["id"]
     actual_org_id_str = sol.get("organization_id")
     assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+    await _declare_file_location(db_session, sid, "reports")
     grant_file_policy(
         e2e_client,
         headers,
@@ -586,6 +607,7 @@ async def test_solution_context_overrides_body_scope_for_non_solutions_location(
     sid = sol["id"]
     actual_org_id_str = sol.get("organization_id")
     assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+    await _declare_file_location(db_session, sid, "reports")
     grant_file_policy(
         e2e_client,
         headers,
@@ -646,6 +668,7 @@ async def test_solution_write_metadata_c2_correct_columns(e2e_client, platform_a
     assert actual_org_id_str is not None, "solution must have an organization_id for this test"
     org_id = UUID(actual_org_id_str)
     _seed_solutions_policy(e2e_client, headers, org_id=actual_org_id_str)
+    await _declare_file_location(db_session, sid, "solutions")
 
     test_path = f"meta-c2/{uuid.uuid4().hex}.txt"
 
@@ -707,6 +730,7 @@ async def test_solution_delete_removes_metadata_row(e2e_client, platform_admin, 
     actual_org_id_str = sol.get("organization_id")
     assert actual_org_id_str is not None, "solution must have an organization_id for this test"
     _seed_solutions_policy(e2e_client, headers, org_id=actual_org_id_str)
+    await _declare_file_location(db_session, sid, "solutions")
 
     test_path = f"del-c2/{uuid.uuid4().hex}.txt"
 

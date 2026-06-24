@@ -13,12 +13,16 @@ Three assertions:
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import uuid
 import zipfile
 
 import pytest
+from uuid import UUID
+
+from src.models.orm.solution_file_location import SolutionFileLocation
 
 pytestmark = pytest.mark.e2e
 
@@ -53,6 +57,14 @@ def _seed_solutions_policy(e2e_client, headers, *, org_id: str | None) -> None:
         json={"policies": {"policies": [{"name": "allow_all", "actions": ["read", "write", "delete", "list"]}]}},
     )
     assert r.status_code in (200, 201, 204), f"seed policy failed: {r.status_code} {r.text}"
+
+
+def _declare_solutions_location(db_session, sol_id: str) -> None:
+    async def _run() -> None:
+        db_session.add(SolutionFileLocation(solution_id=UUID(sol_id), location="solutions"))
+        await db_session.commit()
+
+    asyncio.run(_run())
 
 
 def _write_solution_file(e2e_client, headers, sol_id: str, path: str, content: str) -> None:
@@ -93,7 +105,7 @@ def _invoke_cli(group, args: list):
 
 @pytest.mark.e2e
 def test_solution_export_full_contains_secrets_enc_with_file(
-    e2e_client, platform_admin, cli_client, tmp_path
+    e2e_client, platform_admin, cli_client, tmp_path, db_session
 ):
     """``bifrost solution export <slug> --mode full --password pw`` → zip with
     ``.bifrost/secrets.enc`` (no plaintext files/ members)."""
@@ -105,6 +117,7 @@ def test_solution_export_full_contains_secrets_enc_with_file(
     sol_id = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    _declare_solutions_location(db_session, sol_id)
 
     # Write a file into the solution scope via REST (simulates workflow writing a file).
     file_path = f"docs/{uuid.uuid4().hex[:8]}.txt"
@@ -139,7 +152,7 @@ def test_solution_export_full_contains_secrets_enc_with_file(
 
 @pytest.mark.e2e
 def test_solution_install_restores_files(
-    e2e_client, platform_admin, cli_client, tmp_path
+    e2e_client, platform_admin, cli_client, tmp_path, db_session
 ):
     """Install a full-backup zip → file is readable on the new install."""
 
@@ -152,6 +165,7 @@ def test_solution_install_restores_files(
     src_id = src["id"]
     org_id = src.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    _declare_solutions_location(db_session, src_id)
 
     file_path = f"restore-test/{uuid.uuid4().hex[:8]}.txt"
     file_content = f"restore-content-{uuid.uuid4().hex}"
@@ -212,7 +226,7 @@ def test_solution_install_restores_files(
 
 @pytest.mark.e2e
 def test_files_list_with_solution_flag(
-    e2e_client, platform_admin, cli_client
+    e2e_client, platform_admin, cli_client, db_session
 ):
     """``bifrost files list --solution <slug>`` lists files in that install's scope."""
     from bifrost.commands.files import files_group
@@ -223,6 +237,7 @@ def test_files_list_with_solution_flag(
     sol_id = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    _declare_solutions_location(db_session, sol_id)
 
     # Write a file via REST.
     subdir = uuid.uuid4().hex[:8]
@@ -244,7 +259,7 @@ def test_files_list_with_solution_flag(
 
 @pytest.mark.e2e
 def test_files_list_solution_defaults_location(
-    e2e_client, platform_admin, cli_client
+    e2e_client, platform_admin, cli_client, db_session
 ):
     """``bifrost files list --solution <slug>`` WITHOUT ``--location`` defaults to
     'solutions' and finds the written file (verifies the advertised UX)."""
@@ -256,6 +271,7 @@ def test_files_list_solution_defaults_location(
     sol_id = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    _declare_solutions_location(db_session, sol_id)
 
     subdir = uuid.uuid4().hex[:8]
     file_path = f"{subdir}/default-loc.txt"
@@ -276,7 +292,7 @@ def test_files_list_solution_defaults_location(
 
 @pytest.mark.e2e
 def test_files_list_with_solution_id_flag(
-    e2e_client, platform_admin, cli_client
+    e2e_client, platform_admin, cli_client, db_session
 ):
     """``bifrost files list --solution <id>`` also works with a bare UUID."""
     from bifrost.commands.files import files_group
@@ -287,6 +303,7 @@ def test_files_list_with_solution_id_flag(
     sol_id = sol["id"]
     org_id = sol.get("organization_id")
     _seed_solutions_policy(e2e_client, headers, org_id=org_id)
+    _declare_solutions_location(db_session, sol_id)
 
     subdir = uuid.uuid4().hex[:8]
     file_path = f"{subdir}/id-test.txt"

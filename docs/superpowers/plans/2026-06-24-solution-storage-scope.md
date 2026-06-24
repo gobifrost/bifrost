@@ -46,7 +46,7 @@
 - [x] Task 7: Policy resolution is tier-correct and solution policies never leak upward
 - [x] Task 8: Web SDK/app file calls honor solution scope
 - [x] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
-- [ ] Task 10: Re-point capstone and `location="solutions"` tests to the real model
+- [x] Task 10: Re-point capstone and `location="solutions"` tests to the real model
 - [ ] Task 11: Full deployed-solution end-to-end and large-file memory tests
 - [ ] Task 12: Final verification sweep
 
@@ -835,17 +835,17 @@ Verified:
 - Modify: `api/tests/e2e/platform/test_solution_file_scope.py`
 - Modify: any test found by grep that uses `location="solutions"` as a scope shortcut
 
-- [ ] **Step 1: Find tests**
+- [x] **Step 1: Find tests**
 
 ```bash
 rg -n 'location.*solutions|"solutions"' api/tests client/src -g '*.py' -g '*.ts' -g '*.tsx'
 ```
 
-- [ ] **Step 2: Update tests**
+- [x] **Step 2: Update tests**
 
 Use declared location `finance` or `reports` for scope-model tests. Keep a literal `"solutions"` location test only if it proves it is treated as an ordinary declared custom location.
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_files_e2e.py tests/e2e/platform/test_solution_file_scope.py -v
@@ -859,6 +859,18 @@ Expected: PASS.
 git add api/tests/e2e/platform/test_solution_files_e2e.py api/tests/e2e/platform/test_solution_file_scope.py
 git commit -m "test(solution-storage): exercise declared locations instead of solutions hardcode"
 ```
+
+Implemented in current working tree:
+- Updated file-scope E2E tests to seed `SolutionFileLocation` declarations before exercising solution file writes/presign paths.
+- Updated CLI solution-file E2E tests to declare the `solutions` location before REST setup writes while keeping CLI invocations in synchronous tests.
+- Updated capstone lifecycle setup to avoid pre-deploy file writes and preserve declarations through the test reinstall ZIP.
+
+Verified:
+- `cd api && ruff check tests/e2e/platform/test_solution_file_scope.py`
+- `./test.sh tests/e2e/platform/test_solution_file_scope.py -v` (11 passed)
+- `cd api && ruff check tests/e2e/platform/test_cli_solution_files.py`
+- `./test.sh tests/e2e/platform/test_cli_solution_files.py -v` (5 passed)
+- `./test.sh tests/e2e/platform/test_solution_files_e2e.py::TestSolutionInactiveLifecycleCapstone::test_arc_1_deploy_through_uninstall tests/e2e/platform/test_solution_files_e2e.py::TestSolutionInactiveLifecycleCapstone::test_arc_2_reactivate_export_harddelete -v` (2 passed)
 
 ## Task 11: Full Deployed Solution E2E And Large-File Memory Tests
 
