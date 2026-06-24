@@ -5671,6 +5671,98 @@ class TestSolutionFilesManifestRoundTrip:
             f"Expected solution_id={sol.id}, got {mfp.solution_id}"
         )
 
+    async def test_resolve_file_policy_natural_key_includes_solution_id(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        """Fix 1: _resolve_file_policy must NOT corrupt an existing org policy when
+        importing a SOLUTION policy at the same (org, location, path) prefix.
+
+        The natural key used for upsert must include solution_id so the two tiers
+        are addressed independently.  Before the fix, the solution import would
+        match and overwrite the org row (data corruption).
+        """
+        from uuid import uuid4 as _uuid4
+
+        from sqlalchemy.dialects.postgresql import insert
+        from src.models.orm.file_metadata import FilePolicy
+        from src.models.orm.organizations import Organization
+        from src.models.orm.solutions import Solution
+        from src.services.manifest_import import ManifestResolver
+
+        org = Organization(name=f"test-fp-key-{_uuid4().hex[:6]}", created_by="test")
+        db_session.add(org)
+        await db_session.flush()
+
+        sol = Solution(
+            slug=f"test-fp-key-sol-{_uuid4().hex[:6]}",
+            name="Test FP Key Solution",
+            organization_id=org.id,
+            version="1.0.0",
+        )
+        db_session.add(sol)
+        await db_session.flush()
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
+        # Pre-existing ORG policy at (org, "shared", "reports").
+        org_fp_id = _uuid4()
+        org_policies_doc = {"policies": [{"name": "org_allow", "actions": ["read"]}]}
+        await db_session.execute(
+            insert(FilePolicy).values(
+                id=org_fp_id,
+                organization_id=org.id,
+                location="shared",
+                path="reports",
+                policies=org_policies_doc,
+                solution_id=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.flush()
+
+        # Build a minimal manifest entry for a SOLUTION policy at the same prefix.
+        sol_fp_id = _uuid4()
+        sol_policies_doc = {"policies": [{"name": "sol_allow", "actions": ["read", "write"]}]}
+        mpolicy = {
+            "id": str(sol_fp_id),
+            "organization_id": str(org.id),
+            "location": "shared",
+            "path": "reports",
+            "policies": sol_policies_doc.get("policies", []),
+            "solution_id": str(sol.id),
+        }
+
+        importer = ManifestResolver(db=db_session)
+        await importer._resolve_file_policy(mpolicy, cache=None)
+        await db_session.flush()
+
+        # The org row must still have its original content — NOT overwritten.
+        from sqlalchemy import select as sa_select
+        org_row = (await db_session.execute(
+            sa_select(FilePolicy).where(
+                FilePolicy.id == org_fp_id,
+            )
+        )).scalar_one_or_none()
+        assert org_row is not None, "Org row disappeared after importing solution policy"
+        assert org_row.policies == org_policies_doc, (
+            f"Org row was corrupted by solution import: {org_row.policies}"
+        )
+
+        # The solution row must also exist.
+        sol_row = (await db_session.execute(
+            sa_select(FilePolicy).where(
+                FilePolicy.id == sol_fp_id,
+            )
+        )).scalar_one_or_none()
+        assert sol_row is not None, "Solution policy row was not created"
+        assert sol_row.solution_id == sol.id, (
+            f"Solution row has wrong solution_id: {sol_row.solution_id}"
+        )
+
 
 @pytest.mark.asyncio
 class TestPolicyRuleRoundTrip:

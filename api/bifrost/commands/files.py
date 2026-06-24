@@ -77,13 +77,19 @@ async def _resolve_solution_install_id(client: BifrostClient, solution_ref: str)
             f"({resp.status_code}): {resp.text[:200]}"
         )
     installs = resp.json().get("solutions", [])
-    match = next((s for s in installs if s.get("slug") == solution_ref), None)
-    if match is None:
+    matches = [s for s in installs if s.get("slug") == solution_ref]
+    if len(matches) == 0:
         raise click.ClickException(
             f"No solution install found with slug {solution_ref!r}. "
             "Pass the install UUID directly or check `bifrost solutions list`."
         )
-    return match["id"]
+    if len(matches) > 1:
+        ids = ", ".join(m["id"] for m in matches)
+        raise click.ClickException(
+            f"Slug {solution_ref!r} is installed in multiple orgs ({ids}). "
+            "Pass the install UUID directly to disambiguate."
+        )
+    return matches[0]["id"]
 
 
 def _policy_path(path: str) -> str:

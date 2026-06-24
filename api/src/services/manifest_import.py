@@ -503,7 +503,11 @@ class ManifestResolver:
             cache["table_ids"].add(row[0])
             cache["table_by_natural"][(row[1], row[2])] = row[0]
 
-        # File policies: {(org_id, location, path): id} + {id} set.
+        # File policies: {(org_id, location, path, solution_id): id} + {id} set.
+        # solution_id is part of the natural key because a solution policy and an
+        # org policy may share the same (org, location, path) prefix (Task 14
+        # partial-unique indexes are solution_id-aware).  Without it the cache
+        # lookup would corrupt the wrong row when both tiers coexist.
         cache["file_policy_ids"] = set()
         cache["file_policy_by_natural"] = {}
         FilePolicy = _load_file_policy_model()
@@ -513,11 +517,12 @@ class ManifestResolver:
                 FilePolicy.organization_id,
                 FilePolicy.location,
                 FilePolicy.path,
+                FilePolicy.solution_id,
             )
         )
         for row in fp_result.all():
             cache["file_policy_ids"].add(row[0])
-            cache["file_policy_by_natural"][(row[1], row[2], row[3])] = row[0]
+            cache["file_policy_by_natural"][(row[1], row[2], row[3], row[4])] = row[0]
 
         # Configs: {(key, integ_id, org_id): (id, value, config_schema_id)}
         cfg_result = await self.db.execute(
@@ -2312,7 +2317,11 @@ class ManifestResolver:
         ).direct
         policy_id = UUID(src["id"])
         org_id = UUID(src["organization_id"]) if src["organization_id"] else None
-        natural = (org_id, src["location"], src["path"])
+        solution_id_val = UUID(src["solution_id"]) if src.get("solution_id") else None
+        # Natural key includes solution_id so org and solution rows at the same
+        # (org, location, path) prefix are not conflated.  Matches the cache key
+        # populated above and the Task-14 partial-unique index predicate.
+        natural = (org_id, src["location"], src["path"], solution_id_val)
         policy_document = {"policies": src["policies"]}
         now = datetime.now(timezone.utc)
 
@@ -2348,10 +2357,14 @@ class ManifestResolver:
         if cache is not None:
             existing_by_natural = cache["file_policy_by_natural"].get(natural)
         else:
+            # natural_q matches the Task-14 partial-unique index: solution_id is
+            # included so org rows and solution rows at the same prefix are
+            # addressed independently.
             natural_q = select(FilePolicy.id).where(
                 FilePolicy.organization_id == org_id,
                 FilePolicy.location == src["location"],
                 FilePolicy.path == src["path"],
+                FilePolicy.solution_id == solution_id_val,
             )
             existing_by_natural = (
                 await self.db.execute(natural_q)
@@ -2377,8 +2390,6 @@ class ManifestResolver:
                     select(FilePolicy.id).where(FilePolicy.id == policy_id)
                 )
             ).scalar_one_or_none()
-
-        solution_id_val = UUID(src["solution_id"]) if src.get("solution_id") else None
 
         if existing_by_id is not None:
             await self.db.execute(

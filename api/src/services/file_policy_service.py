@@ -144,10 +144,16 @@ class FilePolicyService:
         location: str,
         path: str,
     ) -> FileMetadata | None:
+        # Restrict to non-solution rows (solution_id IS NULL).  With Task-14's
+        # partial-unique indexes a solution row and an org row can share the same
+        # (organization_id, location, path), so omitting this filter causes
+        # scalar_one_or_none() to raise MultipleResultsFound → 500.  Solution
+        # metadata reads use _get_solution_metadata (keyed by solution_id) instead.
         stmt = select(FileMetadata).where(
             FileMetadata.organization_id == organization_id,
             FileMetadata.location == location,
             FileMetadata.path == path,
+            FileMetadata.solution_id.is_(None),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
@@ -400,10 +406,17 @@ class FilePolicyService:
         location: str,
         path: str,
     ) -> FilePolicy | None:
+        # Restrict to non-solution rows (solution_id IS NULL).  With Task-14's
+        # partial-unique indexes a solution row and an org row can share the same
+        # (organization_id, location, path), so omitting this filter causes
+        # scalar_one_or_none() to raise MultipleResultsFound → 500.  Callers of
+        # _get_policy_exact are all org-management paths (upsert, delete, exact-
+        # get); solution-policy resolution uses load_policy's separate solution arm.
         stmt = select(FilePolicy).where(
             FilePolicy.organization_id == organization_id,
             FilePolicy.location == location,
             FilePolicy.path == path,
+            FilePolicy.solution_id.is_(None),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 

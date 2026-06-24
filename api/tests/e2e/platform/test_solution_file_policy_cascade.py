@@ -297,3 +297,114 @@ async def test_non_solution_caller_unaffected(
     assert resolved.organization_id == org_id, (
         f"Expected org policy, got org_id={resolved.organization_id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Collision regression tests (Fix 2 & Fix 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_policy_exact_with_colocated_solution_row_returns_org_row(
+    e2e_client, platform_admin, org1, db_session
+):
+    """Fix 2: _get_policy_exact must return the org row when a solution row shares
+    (org, location, path).  Without solution_id IS NULL it raises MultipleResultsFound.
+    """
+    from src.services.file_policy_service import FilePolicyService
+
+    org_id = UUID(org1["id"])
+    slug = f"collision-policy-{uuid.uuid4().hex[:8]}"
+    sol = _create_solution(e2e_client, platform_admin.headers, slug, org_id=str(org_id))
+    install_id = UUID(sol["id"])
+
+    # Seed BOTH a solution row AND an org row at the same (org, location, path).
+    await _seed_policy(
+        db_session,
+        organization_id=org_id,
+        solution_id=install_id,
+        location="solutions",
+        path="docs",
+        policies=_make_deny_all_policies(),
+    )
+    await _seed_policy(
+        db_session,
+        organization_id=org_id,
+        solution_id=None,
+        location="solutions",
+        path="docs",
+        policies=_make_allow_all_policies(),
+    )
+    await db_session.commit()
+
+    svc = FilePolicyService(db_session)
+    # get_policy_exact is the org-management path — it must return the ORG row only.
+    row = await svc.get_policy_exact(
+        organization_id=org_id,
+        location="solutions",
+        path="docs",
+    )
+    assert row is not None, "get_policy_exact returned None — org row not found"
+    assert row.solution_id is None, (
+        f"get_policy_exact returned the solution row (solution_id={row.solution_id}); "
+        "expected the org row (solution_id IS NULL)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_metadata_with_colocated_solution_row_returns_org_row(
+    e2e_client, platform_admin, org1, db_session
+):
+    """Fix 3: get_metadata must return the org row when a solution row shares
+    (org, location, path).  Without solution_id IS NULL it raises MultipleResultsFound.
+    """
+    from src.models.orm.file_metadata import FileMetadata
+    from src.services.file_policy_service import FilePolicyService
+
+    org_id = UUID(org1["id"])
+    slug = f"collision-meta-{uuid.uuid4().hex[:8]}"
+    sol = _create_solution(e2e_client, platform_admin.headers, slug, org_id=str(org_id))
+    install_id = UUID(sol["id"])
+
+    # Seed solution-scoped metadata row.
+    sol_meta = FileMetadata(
+        organization_id=org_id,
+        solution_id=install_id,
+        location="solutions",
+        path="report.pdf",
+        s3_key="solutions/report.pdf",
+        content_type="application/pdf",
+        size_bytes=100,
+        sha256="aabbcc",
+    )
+    db_session.add(sol_meta)
+
+    # Seed org-scoped (non-solution) metadata row at the SAME path.
+    org_meta = FileMetadata(
+        organization_id=org_id,
+        solution_id=None,
+        location="solutions",
+        path="report.pdf",
+        s3_key="solutions/report-org.pdf",
+        content_type="application/pdf",
+        size_bytes=200,
+        sha256="ddeeff",
+    )
+    db_session.add(org_meta)
+    await db_session.flush()
+    await db_session.commit()
+
+    svc = FilePolicyService(db_session)
+    row = await svc.get_metadata(
+        organization_id=org_id,
+        location="solutions",
+        path="report.pdf",
+    )
+    assert row is not None, "get_metadata returned None — org row not found"
+    assert row.solution_id is None, (
+        f"get_metadata returned the solution row (solution_id={row.solution_id}); "
+        "expected the org row (solution_id IS NULL)"
+    )
+    assert row.size_bytes == 200, (
+        f"Wrong row returned: size_bytes={row.size_bytes} (expected 200 for org row)"
+    )

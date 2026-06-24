@@ -981,7 +981,11 @@ async def publish_policy_changed(table_id: str) -> None:
 
 
 def _file_channel(location: str, scope: str | None) -> str:
-    scope_segment = scope or "GLOBAL"
+    # Normalize: None and the storage string "global" both map to "GLOBAL" so
+    # workspace publish callers (which carry effective_scope="global" from
+    # _storage_scope(None)) land on the same channel as workspace WebSocket
+    # subscribers (which pass scope=None from _file_org_and_scope's workspace arm).
+    scope_segment = scope if (scope and scope != "global") else "GLOBAL"
     return f"files:{location}:{scope_segment}"
 
 

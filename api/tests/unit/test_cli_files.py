@@ -11,6 +11,7 @@ import sys
 import unittest.mock as mock
 
 import httpx
+import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
@@ -249,3 +250,75 @@ class TestSearch:
         assert result.exit_code == 0, result.output
         assert '"total_matches": 1' in result.output
         assert '"file_path": "a.py"' in result.output
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: _resolve_solution_install_id slug ambiguity
+# ---------------------------------------------------------------------------
+
+class TestResolveSolutionInstallId:
+    """_resolve_solution_install_id must error on multi-org slug ambiguity."""
+
+    def _make_get_client(self, response_body: dict) -> mock.AsyncMock:
+        """Return a mock client whose .get() returns the given body."""
+        dummy_req = httpx.Request("GET", "https://bifrost.test/api/solutions")
+        client = mock.AsyncMock()
+        client.get = mock.AsyncMock(
+            return_value=httpx.Response(200, json=response_body, request=dummy_req)
+        )
+        return client
+
+    def test_single_match_returns_id(self) -> None:
+        import asyncio
+        from bifrost.commands.files import _resolve_solution_install_id
+
+        client = self._make_get_client({
+            "solutions": [
+                {"id": "aaaa-1111", "slug": "my-sol"},
+            ]
+        })
+        result = asyncio.get_event_loop().run_until_complete(
+            _resolve_solution_install_id(client, "my-sol")
+        )
+        assert result == "aaaa-1111"
+
+    def test_no_match_raises(self) -> None:
+        client = self._make_get_client({"solutions": []})
+        with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=client):
+            runner = CliRunner()
+            # Invoke a real read command; slug won't resolve → ClickException
+            result = runner.invoke(
+                files_group, ["read", "--solution", "missing-slug", "notes.txt"]
+            )
+        assert result.exit_code != 0
+
+    def test_ambiguous_slug_raises_click_exception(self) -> None:
+        """Fix 5: when the same slug appears in multiple orgs, an unambiguous
+        ClickException must be raised instead of silently picking the first match.
+        """
+        import asyncio
+        import click
+        from bifrost.commands.files import _resolve_solution_install_id
+
+        client = self._make_get_client({
+            "solutions": [
+                {"id": "aaaa-1111", "slug": "shared-sol"},
+                {"id": "bbbb-2222", "slug": "shared-sol"},
+            ]
+        })
+        with pytest.raises(click.ClickException, match="multiple orgs"):
+            asyncio.get_event_loop().run_until_complete(
+                _resolve_solution_install_id(client, "shared-sol")
+            )
+
+    def test_uuid_is_returned_unchanged(self) -> None:
+        """A valid UUID is returned directly without hitting the API."""
+        import asyncio
+        from bifrost.commands.files import _resolve_solution_install_id
+
+        client = mock.AsyncMock()  # .get should NOT be called
+        result = asyncio.get_event_loop().run_until_complete(
+            _resolve_solution_install_id(client, "00000000-0000-0000-0000-000000000001")
+        )
+        assert result == "00000000-0000-0000-0000-000000000001"
+        client.get.assert_not_called()
