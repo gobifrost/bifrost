@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 from urllib.parse import unquote
 from uuid import UUID
 
@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/files", tags=["Files"])
 _USE_CONTEXT_SOLUTION_ID = object()
+_T = TypeVar("_T")
 
 
 # =============================================================================
@@ -441,6 +442,12 @@ def _relative_list_path(path: str, *, location: str, scope: str | None) -> str:
     except ValueError:
         return path
     return path[len(prefix):] if path.startswith(prefix) else path
+
+
+def _tiers_for_backend_mode(tiers: list[_T], mode: str) -> list[_T]:
+    if mode == "local":
+        return tiers[:1]
+    return tiers
 
 
 async def _filter_listed_paths(
@@ -861,7 +868,10 @@ async def read_file(
     try:
         from src.services.solution_scope import file_read_tiers
 
-        tiers = await file_read_tiers(db, ctx, request.location, request.scope)
+        tiers = _tiers_for_backend_mode(
+            await file_read_tiers(db, ctx, request.location, request.scope),
+            request.mode,
+        )
         backend = get_backend(request.mode, db)
         content: bytes | None = None
         had_allowed_tier = False
@@ -1049,7 +1059,10 @@ async def list_files_simple(
     try:
         from src.services.solution_scope import file_read_tiers
 
-        tiers = await file_read_tiers(db, ctx, request.location, request.scope)
+        tiers = _tiers_for_backend_mode(
+            await file_read_tiers(db, ctx, request.location, request.scope),
+            request.mode,
+        )
         if not tiers:
             return FileListResponse(files=[])
         primary_tier = tiers[0]
@@ -1127,6 +1140,8 @@ async def list_files_simple(
                 solution_id=tier.solution_id,
             )
             any_directory_allowed = any_directory_allowed or tier_directory_allowed
+            if not tier_directory_allowed:
+                continue
             tier_files = await backend.list(
                 request.directory,
                 request.location,
@@ -1167,7 +1182,10 @@ async def file_exists(
     try:
         from src.services.solution_scope import file_read_tiers
 
-        tiers = await file_read_tiers(db, ctx, request.location, request.scope)
+        tiers = _tiers_for_backend_mode(
+            await file_read_tiers(db, ctx, request.location, request.scope),
+            request.mode,
+        )
         backend = get_backend(request.mode, db)
         for tier in tiers:
             allowed = await _authorize_file_policy(

@@ -354,12 +354,20 @@ class FilePolicyService:
             policies,  # type: ignore[arg-type]
             self.db,
             organization_id,
+            solution_id,
         )
-        metadata = await self.get_metadata(
-            organization_id=organization_id,
-            location=location,
-            path=path,
-        )
+        if solution_id is not None:
+            metadata = await self._get_solution_metadata(
+                solution_id=solution_id,
+                location=location,
+                path=path,
+            )
+        else:
+            metadata = await self.get_metadata(
+                organization_id=organization_id,
+                location=location,
+                path=path,
+            )
         context = FilePolicyContext(
             location=location,
             path=path,

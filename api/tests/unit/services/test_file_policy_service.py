@@ -8,7 +8,9 @@ from uuid import uuid4
 import pytest
 
 from src.models.contracts.policies import FilePolicies
+from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
+from src.models.orm.solutions import Solution
 from src.services.file_policy_service import FilePolicyDenied, FilePolicyService
 
 
@@ -237,6 +239,85 @@ async def test_service_uses_metadata_for_creator_policy(db_session) -> None:
         location="workspace",
         path="owned/doc.txt",
         user=_user(org.id, user_id=str(uuid4())),
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_service_uses_solution_metadata_for_solution_creator_policy(
+    db_session,
+) -> None:
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=org.id,
+    )
+    db_session.add_all([org, solution])
+    await db_session.flush()
+
+    path = "owned/solution-doc.txt"
+    org_creator_id = str(uuid4())
+    solution_creator_id = str(uuid4())
+    service = FilePolicyService(db_session)
+    await service.upsert_metadata(
+        organization_id=org.id,
+        location="finance",
+        path=path,
+        s3_key=f"finance/{org.id}/{path}",
+        created_by=org_creator_id,
+        updated_by=org_creator_id,
+        content_type="text/plain",
+        size_bytes=5,
+        sha256="a" * 64,
+    )
+    await service.upsert_metadata(
+        organization_id=org.id,
+        solution_id=solution.id,
+        location="finance",
+        path=path,
+        s3_key=f"finance/{solution.id}/{path}",
+        created_by=solution_creator_id,
+        updated_by=solution_creator_id,
+        content_type="text/plain",
+        size_bytes=5,
+        sha256="b" * 64,
+    )
+    db_session.add(
+        FilePolicy(
+            organization_id=org.id,
+            solution_id=solution.id,
+            location="finance",
+            path="owned",
+            policies={
+                "policies": [
+                    {
+                        "name": "solution_creator_read",
+                        "actions": ["read"],
+                        "when": {"eq": [{"file": "created_by"}, {"user": "user_id"}]},
+                    }
+                ]
+            },
+            created_by=uuid4(),
+        )
+    )
+    await db_session.flush()
+
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        solution_id=solution.id,
+        location="finance",
+        path=path,
+        user=_user(org.id, user_id=solution_creator_id),
+    ) is True
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        solution_id=solution.id,
+        location="finance",
+        path=path,
+        user=_user(org.id, user_id=org_creator_id),
     ) is False
 
 

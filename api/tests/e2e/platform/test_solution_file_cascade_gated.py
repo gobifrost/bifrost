@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.solution_file_location import SolutionFileLocation
 from tests.e2e.file_policy_helpers import grant_file_policy
 
@@ -39,6 +40,34 @@ def _create_solution(
 async def _declare_file_location(db_session, solution_id: str) -> None:
     db_session.add(
         SolutionFileLocation(solution_id=UUID(solution_id), location=LOCATION)
+    )
+    await db_session.commit()
+
+
+async def _grant_solution_policy(
+    db_session,
+    *,
+    solution_id: str,
+    location: str = LOCATION,
+    prefix: str = "",
+    actions: list[str] | None = None,
+) -> None:
+    db_session.add(
+        FilePolicy(
+            solution_id=UUID(solution_id),
+            organization_id=None,
+            location=location,
+            path=prefix,
+            policies={
+                "policies": [
+                    {
+                        "name": "solution_test_policy",
+                        "actions": actions or ["read", "write", "delete", "list"],
+                        "when": None,
+                    }
+                ]
+            },
+        )
     )
     await db_session.commit()
 
@@ -516,3 +545,67 @@ async def test_list_returns_priority_ordered_union_when_open_and_solution_only_w
         directory=directory,
     )
     assert sealed_files == [sealed_own_path]
+
+
+@pytest.mark.asyncio
+async def test_list_skips_fallback_tier_when_directory_list_policy_denies(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    headers = platform_admin.headers
+    org_id = org1["id"]
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        org_id=org_id,
+        global_repo_access=True,
+    )
+    solution_id = solution["id"]
+    await _declare_file_location(db_session, solution_id)
+    await _grant_solution_policy(db_session, solution_id=solution_id)
+
+    directory = f"list-denied-tier/{uuid.uuid4().hex}"
+    own_path = f"{directory}/own.txt"
+    org_path = f"{directory}/org-hidden.txt"
+    global_path = f"{directory}/global-hidden.txt"
+    for scope, path in ((org_id, org_path), ("global", global_path)):
+        grant_file_policy(
+            e2e_client,
+            headers,
+            location=LOCATION,
+            scope=scope,
+            prefix=path,
+            actions=["read", "write", "list"],
+            allow_all=True,
+        )
+
+    _write_file(
+        e2e_client,
+        headers,
+        solution_id=solution_id,
+        path=own_path,
+        content="own listed",
+    )
+    _write_file(
+        e2e_client,
+        headers,
+        scope=org_id,
+        path=org_path,
+        content="org should not be listed",
+    )
+    _write_file(
+        e2e_client,
+        headers,
+        scope="global",
+        path=global_path,
+        content="global should not be listed",
+    )
+
+    assert _list_files(
+        e2e_client,
+        headers,
+        solution_id=solution_id,
+        directory=directory,
+    ) == [own_path]
