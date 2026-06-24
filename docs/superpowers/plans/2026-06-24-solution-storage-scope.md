@@ -42,7 +42,7 @@
 - [x] Task 3: Declare file locations in `.bifrost/files.yaml`
 - [x] Task 4: Enforce declared-only solution writes for files and tables
 - [x] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
-- [ ] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
+- [x] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
 - [ ] Task 7: Policy resolution is tier-correct and solution policies never leak upward
 - [ ] Task 8: Web SDK/app file calls honor solution scope
 - [ ] Task 9: Streaming solution file payload import/export replaces in-memory file blobs
@@ -566,7 +566,7 @@ git commit -m "feat(solution-files): resolve reads by solution data tier"
 - Modify: `api/bifrost/tables.py`
 - Test: `api/tests/e2e/platform/test_table_solution_cascade_gated.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Required tests:
 - Open solution resolves own table first, then org, then global.
@@ -574,7 +574,7 @@ Required tests:
 - Undeclared table name in solution context returns 404 even if auto-create would previously have run.
 - Non-solution table auto-create still works.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_table_solution_cascade_gated.py -v
@@ -582,7 +582,7 @@ Required tests:
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Update `_resolve_solution_table_by_name()` and related table get/create paths:
 - Parse `ctx.solution_id` or `ctx.app_id -> Application.solution_id`.
@@ -590,7 +590,7 @@ Update `_resolve_solution_table_by_name()` and related table get/create paths:
 - After own miss, call org/global fallback only when `await solution_allows_global(ctx.db, solution_id)` is true.
 - Keep non-solution `OrgScopedRepository` behavior unchanged.
 
-- [ ] **Step 4: Run passing tests**
+- [x] **Step 4: Run passing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_table_solution_cascade_gated.py -v
@@ -598,7 +598,7 @@ Update `_resolve_solution_table_by_name()` and related table get/create paths:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/src/services/solution_scope.py api/src/routers/tables.py api/bifrost/tables.py api/tests/e2e/platform/test_table_solution_cascade_gated.py
