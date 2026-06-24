@@ -41,7 +41,7 @@
 - [x] Task 2: Server derives solution context for any file location
 - [x] Task 3: Declare file locations in `.bifrost/files.yaml`
 - [x] Task 4: Enforce declared-only solution writes for files and tables
-- [ ] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
+- [x] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
 - [ ] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
 - [ ] Task 7: Policy resolution is tier-correct and solution policies never leak upward
 - [ ] Task 8: Web SDK/app file calls honor solution scope
@@ -482,7 +482,7 @@ git commit -m "feat(solution-storage): enforce declared-only solution writes"
 - Modify: `api/src/services/file_policy_service.py`
 - Test: `api/tests/e2e/platform/test_solution_file_cascade_gated.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Required matrix:
 - `global_repo_access=false`: solution reads own file, cannot read org/global fallback.
@@ -491,7 +491,7 @@ Required matrix:
 - `exists` follows the same tier result.
 - `list` returns union of allowed tiers when open, solution-only when sealed, without duplicate paths.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_file_cascade_gated.py -v
@@ -499,7 +499,7 @@ Required matrix:
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement tier candidates**
+- [x] **Step 3: Implement tier candidates**
 
 In `solution_scope.py`:
 
@@ -534,7 +534,7 @@ Rules:
 - If `global_repo_access` is true, append global tier.
 - If false, append no fallback tiers.
 
-- [ ] **Step 4: Implement tiered read/exists/list**
+- [x] **Step 4: Implement tiered read/exists/list**
 
 Do not call `backend.read()` once for a solution fallback read. For each tier:
 - Authorize policy using that tier.
@@ -543,7 +543,7 @@ Do not call `backend.read()` once for a solution fallback read. For each tier:
 - Return first successful read/exists.
 - For list, merge tiers in priority order and de-duplicate paths.
 
-- [ ] **Step 5: Run passing tests**
+- [x] **Step 5: Run passing tests**
 
 ```bash
 ./test.sh tests/e2e/platform/test_solution_file_cascade_gated.py -v
@@ -551,7 +551,7 @@ Do not call `backend.read()` once for a solution fallback read. For each tier:
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add api/src/services/solution_scope.py api/src/routers/files.py api/src/services/file_backend.py api/src/services/file_policy_service.py api/tests/e2e/platform/test_solution_file_cascade_gated.py
