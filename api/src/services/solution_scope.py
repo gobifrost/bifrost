@@ -5,14 +5,16 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import ExecutionContext
 from src.core.org_filter import resolve_target_org
+from src.models.orm.applications import Application
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
+from src.repositories.tables import TableRepository
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,87 @@ async def solution_declares_table_name(
         )
     )
     return result.scalar_one_or_none() is not None
+
+
+async def solution_context_id(
+    db: AsyncSession,
+    ctx: ExecutionContext,
+) -> UUID | None:
+    """Resolve the active install id from request context.
+
+    Auth populates ``ctx.solution_id`` for both ``?solution=`` and solution app
+    calls via ``X-Bifrost-App``. The app-id fallback keeps older call sites and
+    unit tests that construct contexts manually on the same resolver path.
+    """
+    if ctx.solution_id:
+        try:
+            return UUID(str(ctx.solution_id))
+        except ValueError:
+            return None
+
+    if not ctx.app_id:
+        return None
+    try:
+        app_uuid = UUID(str(ctx.app_id))
+    except ValueError:
+        return None
+
+    return (
+        await db.execute(
+            select(Application.solution_id).where(Application.id == app_uuid)
+        )
+    ).scalar_one_or_none()
+
+
+async def _resolve_solution_table_by_name(
+    db: AsyncSession,
+    ctx: ExecutionContext,
+    name: str,
+    target_org_id: UUID | None,
+) -> Table | None:
+    """Resolve a table name from solution context.
+
+    Tier order:
+    1. the solution-owned table for this install, when deployed under ``name``;
+    2. for open solutions only, the ordinary org/global _repo cascade.
+
+    The fallback table, when returned, is still a shared _repo table with
+    ``solution_id IS NULL``. Callers that mutate documents must reject that case.
+    """
+    solution_id = await solution_context_id(db, ctx)
+    if solution_id is None:
+        return None
+
+    solution = await get_active_solution(db, solution_id)
+    if solution is None:
+        return None
+
+    own_stmt = select(Table).where(
+        Table.name == name,
+        Table.solution_id == solution_id,
+    )
+    if not ctx.user.is_superuser:
+        own_stmt = own_stmt.where(
+            or_(
+                Table.organization_id == target_org_id,
+                Table.organization_id.is_(None),
+            )
+        )
+    own = (await db.execute(own_stmt)).scalar_one_or_none()
+    if own is not None:
+        return own
+
+    if not solution.global_repo_access:
+        return None
+
+    repo = TableRepository(
+        db,
+        target_org_id,
+        user_id=ctx.user.user_id,
+        is_superuser=ctx.user.is_superuser,
+        is_external=ctx.user.is_external,
+    )
+    return await repo.get_by_name(name)
 
 
 async def file_read_tiers(
