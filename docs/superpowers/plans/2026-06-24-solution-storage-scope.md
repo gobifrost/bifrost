@@ -39,7 +39,7 @@
 - [x] Task 0: Preflight and baseline facts
 - [x] Task 1: Files SDK appends `?solution=` for every file REST call
 - [x] Task 2: Server derives solution context for any file location
-- [ ] Task 3: Declare file locations in `.bifrost/files.yaml`
+- [x] Task 3: Declare file locations in `.bifrost/files.yaml`
 - [ ] Task 4: Enforce declared-only solution writes for files and tables
 - [ ] Task 5: Files read/list/exists resolve by tier with `global_repo_access`
 - [ ] Task 6: Tables name resolution and auto-create respect solution declarations and `global_repo_access`
@@ -322,7 +322,7 @@ git commit -m "feat(solution-files): scope all locations by solution context"
 - Test: `api/tests/unit/test_manifest.py`
 - Test: `api/tests/unit/test_solution_file_locations.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Tests must cover:
 - `write_manifest_to_dir()` emits `.bifrost/files.yaml` as top-level `locations:`.
@@ -330,7 +330,7 @@ Tests must cover:
 - Deploy registers locations into the DB.
 - Redeploy reconciles removed locations only when no solution-owned file metadata still uses them; otherwise deploy raises a conflict naming the location.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 ./test.sh tests/unit/test_manifest.py::TestManifestFilesDeclaration tests/unit/test_solution_file_locations.py -v
@@ -338,7 +338,7 @@ Tests must cover:
 
 Expected: FAIL because declarations do not exist.
 
-- [ ] **Step 3: Implement DB declaration model**
+- [x] **Step 3: Implement DB declaration model**
 
 Create ORM model:
 
@@ -359,18 +359,18 @@ class SolutionFileLocation(Base):
 
 Migration creates the table and index. Do not store `organization_id`; the install scope comes from `solutions.organization_id`.
 
-- [ ] **Step 4: Implement manifest shape**
+- [x] **Step 4: Implement manifest shape**
 
 Add `ManifestFiles`, `Manifest.files`, `MANIFEST_FILES["files"]`, and custom split parse/serialize for `files.yaml` top-level `locations:`.
 
-- [ ] **Step 5: Implement deploy/import registration**
+- [x] **Step 5: Implement deploy/import registration**
 
 In deploy, full-replace declarations for the install:
 - Insert declared locations.
 - Delete stale declarations only if no `FileMetadata` row exists for `(solution_id, stale_location)`.
 - If rows exist, raise `SolutionDeployConflict("cannot remove file location 'finance' while files still exist")`, substituting the actual stale location name.
 
-- [ ] **Step 6: Run passing tests**
+- [x] **Step 6: Run passing tests**
 
 ```bash
 ./test.sh tests/unit/test_manifest.py::TestManifestFilesDeclaration tests/unit/test_solution_file_locations.py -v
@@ -378,7 +378,7 @@ In deploy, full-replace declarations for the install:
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add api/bifrost/manifest.py api/src/models/orm/__init__.py api/src/models/orm/solution_file_location.py api/alembic/versions/*solution_file_locations.py api/src/services/manifest_generator.py api/src/services/manifest_import.py api/src/services/solutions/deploy.py api/tests/unit/test_manifest.py api/tests/unit/test_solution_file_locations.py
