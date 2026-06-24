@@ -552,6 +552,9 @@ class TestSolutionInactiveLifecycleCapstone:
         )
 
         # $ref PRESERVED in DB: policy GET must still carry {"$ref":"admin_bypass"}.
+        # Verified via DB (GET /api/files/policies/...) rather than the zip artifact because
+        # file policies are not carried in the SolutionBundle zip manifest — this proves the
+        # DB $ref survives the export round-trip, not the export artifact itself.
         docs_encoded = quote("docs", safe="")
         policy_r = e2e_client.get(
             f"/api/files/policies/{docs_encoded}",
@@ -622,9 +625,12 @@ class TestSolutionInactiveLifecycleCapstone:
                 break
             time.sleep(0.25)
 
+        assert fm_remaining is not None, (
+            "poll loop never executed — cannot confirm cascade (clock anomaly?)"
+        )
         assert not fm_remaining, (
-            f"FileMetadata rows survived hard-delete — FK cascade did not fire. "
-            f"Remaining: {[str(fm.id) for fm in (fm_remaining or [])]}"
+            f"FileMetadata rows survived hard-delete timeout — FK cascade did not fire. "
+            f"Remaining: {[str(fm.id) for fm in fm_remaining]}"
         )
 
         # ── HARD-DELETE-CASCADE: Table row cascaded away ──────────────────
