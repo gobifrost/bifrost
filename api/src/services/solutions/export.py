@@ -135,6 +135,15 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     "configs", {str(e["key"]): dict(e) for e in bundle.config_schemas}
                 ),
             )
+        if bundle.file_locations:
+            put(
+                ".bifrost/files.yaml",
+                yaml.safe_dump(
+                    {"locations": list(bundle.file_locations)},
+                    sort_keys=False,
+                    allow_unicode=True,
+                ),
+            )
         # Connection declarations (integrations.get("X") refs) — keyed by the
         # integration NAME (the natural key; no per-install id). Each entry is a
         # secret-scrubbed {integration_name, template, position} dict, the same

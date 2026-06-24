@@ -854,11 +854,14 @@ class ManifestResolver:
                         conn_id, mconn, imported_server_ids, server_id=mserver.id
                     )
 
-        # N. Resolve solution files — AFTER entities, BEFORE finalize.
-        # Only runs when the caller provides both install_id and sidecar_content
-        # (full-backup import path). git-sync callers pass neither, so this is
-        # a no-op for normal manifest imports.
+        # N. Resolve solution file declarations and sidecars — AFTER entities,
+        # BEFORE finalize.
+        # Declarations persist for any install-targeted import. File bytes only
+        # restore when sidecar_content is present (full-backup import path).
+        # Git-sync callers pass no install_id here, so this is a no-op for
+        # normal workspace imports.
         if install_id is not None and not dry_run:
+            await self._resolve_file_locations(manifest, install_id=install_id)
             await self._resolve_solution_files(
                 manifest, install_id=install_id, sidecar_content=sidecar_content
             )
@@ -2418,6 +2421,22 @@ class ManifestResolver:
         await self.db.execute(stmt)
 
         return []
+
+    async def _resolve_file_locations(
+        self,
+        manifest: "Manifest",
+        *,
+        install_id: "UUID",
+    ) -> None:
+        from src.services.solutions.file_locations import (
+            reconcile_solution_file_locations,
+        )
+
+        await reconcile_solution_file_locations(
+            self.db,
+            install_id,
+            manifest.files.locations,
+        )
 
     async def _resolve_solution_files(
         self,

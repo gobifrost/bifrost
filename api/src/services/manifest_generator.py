@@ -35,6 +35,7 @@ from src.models.orm.integrations import Integration, IntegrationConfigSchema, In
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.organizations import Organization
 from src.models.orm.policy_rule import PolicyRule
+from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.tables import Table
 from src.models.orm.users import Role
 from src.models.orm.workflow_roles import WorkflowRole
@@ -47,6 +48,7 @@ from bifrost.manifest import (
     ManifestCustomClaim,
     ManifestEventSource,
     ManifestFilePolicy,
+    ManifestFiles,
     ManifestForm,
     ManifestIntegration,
     ManifestMCPConnection,
@@ -472,6 +474,7 @@ async def generate_manifest(
     # Solution file index (solution-scoped export only, metadata-only — no bytes)
     # ------------------------------------------------------------------
     solution_files_list: list[ManifestSolutionFile] = []
+    file_locations = ManifestFiles()
     if solution_id is not None:
         sf_result = await db.execute(
             select(
@@ -492,6 +495,12 @@ async def generate_manifest(
                     size=row.size_bytes or 0,
                 )
             )
+        fl_result = await db.execute(
+            select(SolutionFileLocation.location)
+            .where(SolutionFileLocation.solution_id == solution_id)
+            .order_by(SolutionFileLocation.position, SolutionFileLocation.location)
+        )
+        file_locations = ManifestFiles(locations=list(fl_result.scalars().all()))
 
     # ------------------------------------------------------------------
     # Event sources + subscriptions
@@ -631,6 +640,7 @@ async def generate_manifest(
             )
             for server in mcp_servers_list
         },
+        files=file_locations,
         solution_files=solution_files_list,
     )
 
@@ -642,6 +652,7 @@ async def generate_manifest(
         f"{len(manifest.policy_rules)} policy_rules, "
         f"{len(manifest.tables)} tables, "
         f"{len(manifest.file_policies)} file_policies, "
+        f"{len(manifest.files.locations)} file_locations, "
         f"{len(manifest.events)} events, "
         f"{len(manifest.mcp_servers)} mcp_servers, "
         f"{len(manifest.solution_files)} solution_files"

@@ -255,6 +255,59 @@ class TestFilePoliciesManifest:
         assert manifest_policy.policies == row.policies["policies"]
 
 
+class TestManifestFilesDeclaration:
+    """Solution runtime file-location declarations live in files.yaml."""
+
+    def test_split_files_yaml_serializes_top_level_locations(self, tmp_path):
+        from bifrost.manifest import (
+            Manifest,
+            ManifestFiles,
+            read_manifest_from_dir,
+            serialize_manifest_dir,
+            write_manifest_to_dir,
+        )
+
+        manifest = Manifest(files=ManifestFiles(locations=["reports", "invoices"]))
+
+        files = serialize_manifest_dir(manifest)
+
+        assert "files.yaml" in files
+        payload = yaml.safe_load(files["files.yaml"])
+        assert payload == {"locations": ["reports", "invoices"]}
+        assert "files" not in payload
+
+        write_manifest_to_dir(manifest, tmp_path / ".bifrost")
+        written = yaml.safe_load((tmp_path / ".bifrost" / "files.yaml").read_text())
+        assert written == {"locations": ["reports", "invoices"]}
+        restored = read_manifest_from_dir(tmp_path / ".bifrost")
+        assert restored.files.locations == ["reports", "invoices"]
+
+    def test_legacy_metadata_yaml_reads_nested_files_key(self):
+        from bifrost.manifest import parse_manifest
+
+        manifest = parse_manifest(
+            """
+files:
+  locations:
+    - reports
+    - invoices
+"""
+        )
+
+        assert manifest.files.locations == ["reports", "invoices"]
+
+    def test_duplicate_and_workspace_locations_are_rejected(self):
+        from pydantic import ValidationError
+
+        from bifrost.manifest import ManifestFiles
+
+        with pytest.raises(ValidationError, match="duplicate file location"):
+            ManifestFiles(locations=["reports", "reports"])
+
+        with pytest.raises(ValidationError, match="workspace"):
+            ManifestFiles(locations=["workspace"])
+
+
 def test_validate_manifest_missing_role(sample_manifest):
     """Detect reference to non-existent role."""
     from bifrost.manifest import parse_manifest, validate_manifest

@@ -20,7 +20,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bifrost.field_classes import FieldClass, classify
 from bifrost.manifest_codec import Destination, EntityCodec, ImportFields
@@ -63,6 +63,7 @@ MANIFEST_FILES: dict[str, str] = {
     "agents": "agents.yaml",
     "apps": "apps.yaml",
     "mcp_servers": "mcp-servers.yaml",
+    "files": "files.yaml",
     "solution_files": "solution-files.yaml",
 }
 MANIFEST_LEGACY_FILE = "metadata.yaml"
@@ -873,6 +874,29 @@ class ManifestSolutionConfigSchema(EntityCodec, BaseModel):
         )
 
 
+class ManifestFiles(BaseModel):
+    """Solution runtime file-location declarations."""
+
+    locations: list[str] = Field(default_factory=list)
+
+    @field_validator("locations")
+    @classmethod
+    def normalize_locations(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            location = str(raw).strip()
+            if not location:
+                continue
+            if location == "workspace":
+                raise ValueError("reserved file location cannot be declared: workspace")
+            if location in seen:
+                raise ValueError(f"duplicate file location: {location}")
+            seen.add(location)
+            normalized.append(location)
+        return normalized
+
+
 class ManifestSolutionFile(EntityCodec, BaseModel):
     """Index entry for one solution-owned file in the encrypted export bundle.
 
@@ -1430,6 +1454,7 @@ class Manifest(BaseModel):
     agents: dict[str, ManifestAgent] = Field(default_factory=dict)
     apps: dict[str, ManifestApp] = Field(default_factory=dict)
     mcp_servers: dict[str, ManifestMCPServer] = Field(default_factory=dict)
+    files: ManifestFiles = Field(default_factory=ManifestFiles)
     solution_files: list[ManifestSolutionFile] = Field(
         default_factory=list,
         description="Index of solution-owned files (bytes travel in encrypted secrets.enc).",
@@ -1488,6 +1513,7 @@ def filter_manifest_by_ids(manifest: Manifest, entity_ids: set[str]) -> Manifest
         agents={k: v for k, v in manifest.agents.items() if k in entity_ids},
         apps={k: v for k, v in manifest.apps.items() if k in entity_ids},
         mcp_servers={k: v for k, v in manifest.mcp_servers.items() if k in entity_ids},
+        files=manifest.files,
         # solution_files has no UUID key for filtering; carry all entries through.
         solution_files=list(manifest.solution_files),
     )
@@ -1513,8 +1539,12 @@ def serialize_manifest_dir(manifest: Manifest) -> dict[str, str]:
         # Sort top-level entity dicts by key (UUID) for deterministic YAML output
         if isinstance(section, dict):
             section = dict(sorted(section.items()))
+        if key == "files":
+            payload = section
+        else:
+            payload = {key: section}
         files[filename] = yaml.dump(
-            {key: section},
+            payload,
             default_flow_style=False,
             sort_keys=True,
             allow_unicode=True,
@@ -1535,7 +1565,10 @@ def parse_manifest_dir(files: dict[str, str]) -> Manifest:
             continue
         data = yaml.safe_load(content)
         if data and isinstance(data, dict):
-            merged[key] = data.get(key)
+            if key == "files":
+                merged[key] = data
+            else:
+                merged[key] = data.get(key)
     return Manifest(**merged)  # type: ignore[arg-type]
 
 

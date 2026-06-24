@@ -12,6 +12,7 @@ from sqlalchemy import select
 from src.models.orm.integrations import Integration
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
+from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
 from src.services.solutions.capture import SolutionCaptureService
@@ -188,3 +189,15 @@ async def test_connection_entries_idempotent_upsert(db_session) -> None:
         )
     ).scalars().all()
     assert len(rows) == 1
+
+
+async def test_bundle_for_includes_persisted_file_locations(db_session) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    db.add(SolutionFileLocation(solution_id=sol.id, location="invoices", position=1))
+    db.add(SolutionFileLocation(solution_id=sol.id, location="reports", position=0))
+    await db.flush()
+
+    bundle = await SolutionCaptureService(db, repo=_FakeRepo({})).bundle_for(sol)
+
+    assert bundle.file_locations == ["reports", "invoices"]

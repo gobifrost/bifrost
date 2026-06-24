@@ -219,6 +219,24 @@ class TestReadWorkspaceBundleConnectionSchemas:
         assert names == ["cloud_directory", "ticketing"]
 
 
+class TestReadWorkspaceBundleFileLocations:
+    def test_read_workspace_bundle_collects_file_locations(self, tmp_path) -> None:
+        from src.models.orm.solutions import Solution
+        from src.services.solutions.git_sync import read_workspace_bundle
+
+        (tmp_path / "bifrost.solution.yaml").write_text("slug: fl\nname: FL\nscope: global\n")
+        (tmp_path / ".bifrost").mkdir()
+        (tmp_path / ".bifrost" / "files.yaml").write_text(
+            "locations:\n"
+            "  - reports\n"
+            "  - invoices\n"
+        )
+
+        sol = Solution(id=uuid.uuid4(), slug="fl", name="FL", organization_id=None)
+        bundle = read_workspace_bundle(sol, tmp_path)
+        assert bundle.file_locations == ["reports", "invoices"]
+
+
 @pytest.mark.e2e
 class TestGitSyncRerun:
     async def test_rerun_when_trigger_arrives_mid_sync(self, db_session, monkeypatch):

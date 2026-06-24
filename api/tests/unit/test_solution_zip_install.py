@@ -37,6 +37,11 @@ def _make_workspace_zip(extra: dict[str, str] | None = None) -> bytes:
             "    description: needed\n"
             "    position: 0\n"
         ),
+        ".bifrost/files.yaml": (
+            "locations:\n"
+            "  - reports\n"
+            "  - invoices\n"
+        ),
         ".bifrost/claims.yaml": (
             "claims:\n"
             "  22222222-2222-2222-2222-222222222222:\n"
@@ -76,6 +81,7 @@ def test_preview_lists_entities_and_config_schemas() -> None:
 
     assert len(result.claims) == 1
     assert result.claims[0]["name"] == "allowed_campus_ids"
+    assert result.file_locations == ["reports", "invoices"]
 
 
 def test_preview_empty_collections_when_absent() -> None:

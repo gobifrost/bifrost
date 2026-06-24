@@ -838,6 +838,16 @@ def _collect_config_schemas(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+def _collect_file_locations(workspace: pathlib.Path) -> list[str]:
+    """Read solution runtime file-location declarations from .bifrost/files.yaml."""
+    files_file = _bifrost_manifest(workspace, "files.yaml")
+    if files_file is None or not files_file.is_file():
+        return []
+    data = yaml.safe_load(files_file.read_text()) or {}
+    raw = data.get("locations") or []
+    return [str(location).strip() for location in raw if str(location).strip()]
+
+
 def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
     """Read connection DECLARATIONS from .bifrost/connections.yaml (keyed by name).
 

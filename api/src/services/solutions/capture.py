@@ -357,6 +357,7 @@ class SolutionCaptureService:
         claims = await self._claim_entries(solution.id)
         config_schemas = await self._config_entries(solution.id)
         connection_schemas = await self._connection_entries(solution.id)
+        file_locations = await self._file_location_entries(solution.id)
         events = await self._event_entries(solution.id)
         python_files = await self._python_files(
             workflows, include_imports=include_imports
@@ -381,6 +382,7 @@ class SolutionCaptureService:
             claims=claims,
             config_schemas=config_schemas,
             connection_schemas=connection_schemas,
+            file_locations=file_locations,
             events=events,
             readme=solution.readme,
             version=solution.version,
@@ -894,6 +896,18 @@ class SolutionCaptureService:
             )
 
         return result
+
+    async def _file_location_entries(self, solution_id: UUID) -> list[str]:
+        from src.models.orm.solution_file_location import SolutionFileLocation
+
+        rows = (
+            await self.db.execute(
+                select(SolutionFileLocation.location)
+                .where(SolutionFileLocation.solution_id == solution_id)
+                .order_by(SolutionFileLocation.position, SolutionFileLocation.location)
+            )
+        ).scalars().all()
+        return list(rows)
 
     async def _python_files(
         self, workflows: list[dict[str, Any]], *, include_imports: bool = False

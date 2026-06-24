@@ -277,6 +277,7 @@ class SolutionBundle:
     # Each: {integration_name, template, position}. Secret-scrubbed skeletons
     # (no client_id/secret). Declared from integrations.get("X") refs.
     connection_schemas: list[dict[str, Any]] = field(default_factory=list)
+    file_locations: list[str] = field(default_factory=list)
     # Event/schedule triggers. Each is a ManifestEventSource-shaped dict (source
     # + nested schedule/webhook config + subscriptions). Webhook instance state
     # (external_id/state/expires_at) is scrubbed; the instance re-establishes it.
@@ -414,6 +415,16 @@ class SolutionDeployer:
         # this mirrors it for every deploy/zip-install/CLI-deploy target.
         await self._upsert_connection_declarations(
             solution, bundle.connection_schemas
+        )
+        from src.services.solutions.file_locations import (
+            reconcile_solution_file_locations,
+        )
+
+        await reconcile_solution_file_locations(
+            self.db,
+            sid,
+            bundle.file_locations,
+            make_error=SolutionDeployConflict,
         )
         (
             wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
@@ -609,6 +620,7 @@ class SolutionDeployer:
             claims=claims,
             config_schemas=config_schemas,
             events=events,
+            file_locations=list(bundle.file_locations),
             version=bundle.version,
             readme=bundle.readme,
         )

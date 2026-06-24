@@ -119,6 +119,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         _collect_config_schemas,
         _collect_connection_schemas,
         _collect_events,
+        _collect_file_locations,
     )
     from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
 
@@ -138,6 +139,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         agents=agents,
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
+        file_locations=_collect_file_locations(workspace),
         # Declared integrations (connection refs): a git-connected deploy must
         # create the same integration shells + SolutionConnectionSchema rows the
         # zip path does, else a git-installed solution silently drops its

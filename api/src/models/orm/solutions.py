@@ -32,6 +32,7 @@ from src.models.orm.base import Base
 
 if TYPE_CHECKING:
     from src.models.orm.solution_connection_schema import SolutionConnectionSchema
+    from src.models.orm.solution_file_location import SolutionFileLocation
 
 
 # Identity entity — a Solution install. Managed entities reference it by
@@ -154,6 +155,13 @@ class Solution(Base):
         "SolutionConnectionSchema",
         cascade="all, delete-orphan",
         order_by="SolutionConnectionSchema.position",
+        lazy="selectin",
+    )
+
+    file_locations: Mapped[list["SolutionFileLocation"]] = relationship(
+        "SolutionFileLocation",
+        cascade="all, delete-orphan",
+        order_by="SolutionFileLocation.position",
         lazy="selectin",
     )
 

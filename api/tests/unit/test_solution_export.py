@@ -97,6 +97,7 @@ def _bundle() -> SolutionBundle:
                 "position": 0,
             }
         ],
+        file_locations=["reports", "invoices"],
     )
 
 
@@ -140,6 +141,7 @@ def test_export_round_trips_through_preview() -> None:
 
     assert [c["key"] for c in result.config_schemas] == ["API_KEY"]
     assert result.config_schemas[0]["required"] is True
+    assert result.file_locations == ["reports", "invoices"]
 
 
 def test_export_apps_round_trip_source_and_logo() -> None:
@@ -175,6 +177,13 @@ def test_export_python_source_verbatim() -> None:
 def test_export_is_deterministic() -> None:
     """Idempotent finalize retries must not churn bytes (fixed zip mtimes)."""
     assert build_workspace_zip(_bundle()) == build_workspace_zip(_bundle())
+
+
+def test_export_writes_files_yaml_top_level_locations() -> None:
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(_bundle()))) as z:
+        payload = z.read(".bifrost/files.yaml").decode()
+
+    assert payload == "locations:\n- reports\n- invoices\n"
 
 
 def test_export_descriptor_omits_scope_regardless_of_org() -> None:
