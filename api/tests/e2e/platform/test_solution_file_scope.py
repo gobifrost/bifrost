@@ -16,6 +16,8 @@ from uuid import UUID
 
 import pytest
 
+from src.models.orm.applications import Application
+from src.models.orm.solution_file_location import SolutionFileLocation
 from tests.e2e.file_policy_helpers import grant_file_policy
 
 pytestmark = pytest.mark.e2e
@@ -339,6 +341,96 @@ async def test_solution_context_scopes_freeform_location_metadata_and_s3_key(
     assert row.solution_id == UUID(sid)
     assert row.organization_id == UUID(actual_org_id_str)
     assert row.organization_id != UUID(sid)
+    assert row.s3_key == f"reports/{sid}/{test_path}"
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_app_files_resolve_to_install_scope(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    """An app-scoped file request resolves the app's solution install without
+    an explicit ?solution= query parameter.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    org_id_str = org1["id"]
+    sol = _create_solution(
+        e2e_client,
+        headers,
+        f"file-scope-app-{uuid.uuid4().hex[:8]}",
+        org_id=org_id_str,
+    )
+    sid = sol["id"]
+    actual_org_id_str = sol.get("organization_id")
+    assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+
+    solution_id = UUID(sid)
+    app_id = uuid.uuid4()
+    app_slug = f"file-scope-app-{app_id.hex[:8]}"
+    db_session.add(SolutionFileLocation(solution_id=solution_id, location="reports"))
+    db_session.add(
+        Application(
+            id=app_id,
+            name="Files Scope App",
+            slug=app_slug,
+            repo_path=f"apps/{app_slug}",
+            organization_id=UUID(actual_org_id_str),
+            solution_id=solution_id,
+            app_model="standalone_v2",
+            created_by="e2e@test.local",
+        )
+    )
+    await db_session.commit()
+
+    grant_file_policy(
+        e2e_client,
+        headers,
+        location="reports",
+        scope=actual_org_id_str,
+        prefix="",
+        allow_all=True,
+    )
+
+    app_headers = {**headers, "X-Bifrost-App": str(app_id)}
+    test_path = f"solution-app-reports/{uuid.uuid4().hex}.txt"
+    write_r = e2e_client.post(
+        "/api/files/write",
+        headers=app_headers,
+        json={
+            "location": "reports",
+            "path": test_path,
+            "content": "app install scope",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 204, f"write failed: {write_r.status_code} {write_r.text}"
+
+    read_r = e2e_client.post(
+        "/api/files/read",
+        headers=app_headers,
+        json={"location": "reports", "path": test_path, "mode": "cloud"},
+    )
+    assert read_r.status_code == 200, f"read failed: {read_r.status_code} {read_r.text}"
+    assert read_r.json()["content"] == "app install scope"
+
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == solution_id,
+            FileMetadata.location == "reports",
+            FileMetadata.path == test_path,
+        )
+    )
+    row = result.scalar_one_or_none()
+    assert row is not None, "FileMetadata row not found for app-scoped reports write"
+    assert row.solution_id == solution_id
+    assert row.organization_id == UUID(actual_org_id_str)
     assert row.s3_key == f"reports/{sid}/{test_path}"
 
 

@@ -248,7 +248,10 @@ describe("files web SDK", () => {
 		restoreTransport = setBifrostTransport({
 			baseUrl: "https://api.example",
 			fetchImpl: fetchMock as unknown as typeof fetch,
-			headers: { Authorization: "Bearer token" },
+			headers: {
+				Authorization: "Bearer token",
+				"X-Bifrost-App": "app-123",
+			},
 		});
 
 		await files.exists("a.txt");
@@ -257,6 +260,9 @@ describe("files web SDK", () => {
 		expect(fetchMock.mock.calls[0][1].credentials).toBe("omit");
 		expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(
 			"Bearer token",
+		);
+		expect(fetchMock.mock.calls[0][1].headers["X-Bifrost-App"]).toBe(
+			"app-123",
 		);
 	});
 });
