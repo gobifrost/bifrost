@@ -37254,6 +37254,7 @@ export interface operations {
         parameters: {
             query?: {
                 force?: boolean;
+                reactivate?: boolean;
             };
             header?: never;
             path?: never;
