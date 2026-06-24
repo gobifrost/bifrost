@@ -307,6 +307,15 @@ files:
         with pytest.raises(ValidationError, match="workspace"):
             ManifestFiles(locations=["workspace"])
 
+    @pytest.mark.parametrize("location", ["Reports", "team/reports", "_repo", "my_reports"])
+    def test_invalid_runtime_location_names_are_rejected(self, location):
+        from pydantic import ValidationError
+
+        from bifrost.manifest import ManifestFiles
+
+        with pytest.raises(ValidationError, match="Invalid location"):
+            ManifestFiles(locations=[location])
+
 
 def test_validate_manifest_missing_role(sample_manifest):
     """Detect reference to non-existent role."""

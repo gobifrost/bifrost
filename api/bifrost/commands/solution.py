@@ -843,9 +843,13 @@ def _collect_file_locations(workspace: pathlib.Path) -> list[str]:
     files_file = _bifrost_manifest(workspace, "files.yaml")
     if files_file is None or not files_file.is_file():
         return []
+    from bifrost.manifest import ManifestFiles
+
     data = yaml.safe_load(files_file.read_text()) or {}
     raw = data.get("locations") or []
-    return [str(location).strip() for location in raw if str(location).strip()]
+    if not isinstance(raw, list):
+        raise ValueError(".bifrost/files.yaml locations must be a list")
+    return ManifestFiles(locations=raw).locations
 
 
 def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:

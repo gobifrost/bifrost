@@ -882,12 +882,18 @@ class ManifestFiles(BaseModel):
     @field_validator("locations")
     @classmethod
     def normalize_locations(cls, value: list[str]) -> list[str]:
+        from shared.file_paths import validate_location_name
+
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in value:
             location = str(raw).strip()
             if not location:
                 continue
+            try:
+                validate_location_name(location)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
             if location == "workspace":
                 raise ValueError("reserved file location cannot be declared: workspace")
             if location in seen:

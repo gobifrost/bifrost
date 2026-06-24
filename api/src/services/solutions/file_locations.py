@@ -16,12 +16,18 @@ def normalize_file_locations(
     *,
     make_error: Callable[[str], Exception] = ValueError,
 ) -> list[str]:
+    from shared.file_paths import validate_location_name
+
     normalized: list[str] = []
     seen: set[str] = set()
     for raw in locations:
         location = str(raw).strip()
         if not location:
             continue
+        try:
+            validate_location_name(location)
+        except ValueError as exc:
+            raise make_error(str(exc)) from exc
         if location == "workspace":
             raise make_error("reserved file location 'workspace' cannot be declared")
         if location in seen:

@@ -68,6 +68,10 @@ async def test_deploy_persists_and_reconciles_file_locations(db_session) -> None
     [
         (["reports", "reports"], "duplicate file location"),
         (["workspace"], "workspace"),
+        (["Reports"], "Invalid location"),
+        (["team/reports"], "Invalid location"),
+        (["_repo"], "Invalid location"),
+        (["my_reports"], "Invalid location"),
     ],
 )
 async def test_deploy_rejects_invalid_file_locations(
