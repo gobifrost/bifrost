@@ -227,6 +227,52 @@ def test_presign_put_cannot_plant_in_foreign_scope(e2e_client, platform_admin):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+async def test_solution_context_rejects_workspace_location_without_metadata(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
+    """Workspace is physically unscoped, so solution-context file APIs must
+    reject it instead of stamping solution metadata over shared _repo bytes.
+    """
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    sol = _create_solution(
+        e2e_client,
+        headers,
+        f"file-scope-workspace-{uuid.uuid4().hex[:8]}",
+    )
+    sid = sol["id"]
+    test_path = f"solution-workspace/{uuid.uuid4().hex}.txt"
+
+    write_r = e2e_client.post(
+        f"/api/files/write?solution={sid}",
+        headers=headers,
+        json={
+            "location": "workspace",
+            "path": test_path,
+            "content": "must not land in _repo",
+            "mode": "cloud",
+        },
+    )
+    assert write_r.status_code == 400, f"expected 400, got {write_r.status_code}: {write_r.text}"
+    assert "workspace is not available in solution file context" in write_r.text
+
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == UUID(sid),
+            FileMetadata.location == "workspace",
+            FileMetadata.path == test_path,
+        )
+    )
+    assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 async def test_solution_context_scopes_freeform_location_metadata_and_s3_key(
     e2e_client,
     platform_admin,
