@@ -331,20 +331,49 @@ async def get_execution_context(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Solution not found",
             )
-        if solution_row.status != "active":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Solution is inactive (uninstalled) and cannot serve execution requests",
-            )
+        await _refuse_if_solution_inactive(solution_row)
+
+    # Gate: v2 SDK apps send X-Bifrost-App: <app_id>.  If that app belongs to a
+    # solution, the solution must be active — otherwise the app is down along
+    # with its install.  Fail closed only when the app DOES resolve to a known
+    # inactive solution; a missing/unknown app_id leaves existing behaviour
+    # unchanged (no 500 on a bad header value).
+    app_id_header = request.headers.get("X-Bifrost-App")
+    if app_id_header is not None:
+        from src.models.orm.applications import Application as ApplicationORM
+        from src.models.orm.solutions import Solution as SolutionORM
+        try:
+            app_uuid = UUID(app_id_header)
+        except ValueError:
+            app_uuid = None
+        if app_uuid is not None:
+            app_row = await db.get(ApplicationORM, app_uuid)
+            if app_row is not None and app_row.solution_id is not None:
+                sol_row = await db.get(SolutionORM, app_row.solution_id)
+                if sol_row is not None:
+                    await _refuse_if_solution_inactive(sol_row)
 
     return ExecutionContext(
         user=user,
         org_id=user.organization_id,
         db=db,
         # Set by the v2 SDK provider for Solution apps; harmless/None otherwise.
-        app_id=request.headers.get("X-Bifrost-App"),
+        app_id=app_id_header,
         solution_id=solution_id_param,
     )
+
+
+async def _refuse_if_solution_inactive(solution_row: object) -> None:
+    """Raise 409 if the given Solution ORM row is not active.
+
+    Shared by the ?solution= and X-Bifrost-App gate branches so the error
+    message stays consistent.
+    """
+    if getattr(solution_row, "status", None) != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Solution is inactive (uninstalled) and cannot serve execution requests",
+        )
 
 
 # Type aliases for dependency injection
