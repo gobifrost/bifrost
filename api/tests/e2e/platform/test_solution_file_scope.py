@@ -350,6 +350,8 @@ async def test_solution_app_files_resolve_to_install_scope(
     e2e_client,
     platform_admin,
     org1,
+    org1_user,
+    org2_user,
     db_session,
 ):
     """An app-scoped file request resolves the app's solution install without
@@ -398,13 +400,15 @@ async def test_solution_app_files_resolve_to_install_scope(
         allow_all=True,
     )
 
-    app_headers = {**headers, "X-Bifrost-App": str(app_id)}
+    forged_scope = str(uuid.uuid4())
+    app_headers = {**org1_user.headers, "X-Bifrost-App": str(app_id)}
     test_path = f"solution-app-reports/{uuid.uuid4().hex}.txt"
     write_r = e2e_client.post(
         "/api/files/write",
         headers=app_headers,
         json={
             "location": "reports",
+            "scope": forged_scope,
             "path": test_path,
             "content": "app install scope",
             "mode": "cloud",
@@ -432,6 +436,128 @@ async def test_solution_app_files_resolve_to_install_scope(
     assert row.solution_id == solution_id
     assert row.organization_id == UUID(actual_org_id_str)
     assert row.s3_key == f"reports/{sid}/{test_path}"
+    assert forged_scope not in row.s3_key
+
+    forged_headers = {**org2_user.headers, "X-Bifrost-App": str(app_id)}
+    forged_r = e2e_client.post(
+        "/api/files/write",
+        headers=forged_headers,
+        json={
+            "location": "reports",
+            "path": f"solution-app-reports/{uuid.uuid4().hex}.txt",
+            "content": "wrong org",
+            "mode": "cloud",
+        },
+    )
+    assert forged_r.status_code == 403, (
+        f"foreign org user should not use another org's app scope: "
+        f"{forged_r.status_code} {forged_r.text}"
+    )
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_app_read_requires_declared_file_location(
+    e2e_client,
+    platform_admin,
+    org1,
+    org1_user,
+    db_session,
+):
+    """App-scoped read/list/exists paths cannot reach undeclared locations."""
+    from sqlalchemy import select
+
+    from src.models.orm.file_metadata import FileMetadata
+
+    headers = platform_admin.headers
+    org_id_str = org1["id"]
+    sol = _create_solution(
+        e2e_client,
+        headers,
+        f"file-scope-app-undeclared-{uuid.uuid4().hex[:8]}",
+        org_id=org_id_str,
+    )
+    sid = sol["id"]
+    actual_org_id_str = sol.get("organization_id")
+    assert actual_org_id_str is not None, "solution must have an organization_id for this test"
+
+    solution_id = UUID(sid)
+    app_id = uuid.uuid4()
+    app_slug = f"file-scope-app-undec-{app_id.hex[:8]}"
+    db_session.add(
+        Application(
+            id=app_id,
+            name="Files Undeclared App",
+            slug=app_slug,
+            repo_path=f"apps/{app_slug}",
+            organization_id=UUID(actual_org_id_str),
+            solution_id=solution_id,
+            app_model="standalone_v2",
+            created_by="e2e@test.local",
+        )
+    )
+    await db_session.commit()
+
+    location = "undeclared"
+    grant_file_policy(
+        e2e_client,
+        headers,
+        location=location,
+        scope=actual_org_id_str,
+        prefix="",
+        allow_all=True,
+    )
+    path = f"solution-app-undeclared/{uuid.uuid4().hex}.txt"
+    org_write = e2e_client.post(
+        "/api/files/write",
+        headers=headers,
+        json={
+            "location": location,
+            "scope": actual_org_id_str,
+            "path": path,
+            "content": "org fallback should stay hidden",
+            "mode": "cloud",
+        },
+    )
+    assert org_write.status_code == 204, org_write.text
+
+    app_headers = {**org1_user.headers, "X-Bifrost-App": str(app_id)}
+    read_r = e2e_client.post(
+        "/api/files/read",
+        headers=app_headers,
+        json={"location": location, "path": path, "mode": "cloud"},
+    )
+    assert read_r.status_code == 404, read_r.text
+
+    exists_r = e2e_client.post(
+        "/api/files/exists",
+        headers=app_headers,
+        json={"location": location, "path": path, "mode": "cloud"},
+    )
+    assert exists_r.status_code == 404, exists_r.text
+
+    list_r = e2e_client.post(
+        "/api/files/list",
+        headers=app_headers,
+        json={"location": location, "directory": "solution-app-undeclared", "mode": "cloud"},
+    )
+    assert list_r.status_code == 404, list_r.text
+
+    signed_r = e2e_client.post(
+        "/api/files/signed-url",
+        headers=app_headers,
+        json={"location": location, "path": path, "method": "GET"},
+    )
+    assert signed_r.status_code == 404, signed_r.text
+
+    result = await db_session.execute(
+        select(FileMetadata).where(
+            FileMetadata.solution_id == solution_id,
+            FileMetadata.location == location,
+            FileMetadata.path == path,
+        )
+    )
+    assert result.scalar_one_or_none() is None
 
 
 @pytest.mark.e2e

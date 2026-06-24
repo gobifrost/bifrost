@@ -765,6 +765,12 @@ async def _build_signed_url(
         from src.services.solution_scope import file_read_tiers
 
         try:
+            if request.location != "workspace":
+                await _require_declared_solution_file_location(
+                    ctx,
+                    solution_id=solution_id,
+                    location=request.location,
+                )
             tiers = await file_read_tiers(db, ctx, request.location, request.scope)
             if len(tiers) == 1:
                 tier = tiers[0]
@@ -921,6 +927,12 @@ async def read_file(
     try:
         from src.services.solution_scope import file_read_tiers
 
+        if request.location != "workspace":
+            await _require_declared_solution_file_location(
+                ctx,
+                solution_id=_ctx_solution_id(ctx, request.location),
+                location=request.location,
+            )
         tiers = _tiers_for_backend_mode(
             await file_read_tiers(db, ctx, request.location, request.scope),
             request.mode,
@@ -1113,6 +1125,12 @@ async def list_files_simple(
     try:
         from src.services.solution_scope import file_read_tiers
 
+        if request.location != "workspace":
+            await _require_declared_solution_file_location(
+                ctx,
+                solution_id=_ctx_solution_id(ctx, request.location),
+                location=request.location,
+            )
         tiers = _tiers_for_backend_mode(
             await file_read_tiers(db, ctx, request.location, request.scope),
             request.mode,
@@ -1239,6 +1257,12 @@ async def file_exists(
     try:
         from src.services.solution_scope import file_read_tiers
 
+        if request.location != "workspace":
+            await _require_declared_solution_file_location(
+                ctx,
+                solution_id=_ctx_solution_id(ctx, request.location),
+                location=request.location,
+            )
         tiers = _tiers_for_backend_mode(
             await file_read_tiers(db, ctx, request.location, request.scope),
             request.mode,

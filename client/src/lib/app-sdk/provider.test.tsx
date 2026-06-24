@@ -106,6 +106,36 @@ describe("BifrostProvider", () => {
     expect(globalFetch.mock.calls[0][0]).toBe("/api/tables/notes/documents/r");
   });
 
+  it("routes the file SDK through the provider app header while mounted", async () => {
+    const { files } = await import("./files");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ exists: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-file"
+        appId="app-123"
+        fetchImpl={fetchMock as unknown as typeof fetch}
+      >
+        <span>ok</span>
+      </BifrostProvider>,
+    );
+
+    await expect(files.exists("reports/q1.txt", { location: "reports" })).resolves.toBe(true);
+    const [, init] = fetchMock.mock.calls[0];
+    const requestHeaders = init.headers as Record<string, string>;
+    expect(fetchMock.mock.calls[0][0]).toBe("https://dev.example/api/files/exists");
+    expect(requestHeaders.Authorization).toBe("Bearer tok-file");
+    expect(requestHeaders["X-Bifrost-App"]).toBe("app-123");
+  });
+
   it("installs the transport before child mount effects run", () => {
     // A child's mount effect (e.g. useTable's first snapshot query) runs
     // BEFORE the provider's own useEffect. The transport must already be the
