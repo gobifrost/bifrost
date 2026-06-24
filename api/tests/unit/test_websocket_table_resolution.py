@@ -1,4 +1,4 @@
-"""Websocket table-name resolution must apply the canonical solution/orphan filters.
+"""Websocket table-name resolution must apply the canonical solution filters.
 
 A `_repo/` table and a solution-deployed table may legally share (org, name) —
 that's this branch's own design. The websocket name branch of
@@ -8,13 +8,12 @@ propagated to the connection-level handler and killed the ENTIRE websocket.
 
 Canonical semantics (mirror `OrgScopedRepository.get()`): by-name resolution is
 the LIVE `_repo/` namespace — solution-managed rows resolve by id (or
-?solution=), orphaned rows don't resolve by name at all.
+?solution=).
 """
 from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 import pytest
 
@@ -64,15 +63,12 @@ async def _make_solution(db, org_id) -> uuid.UUID:
     return solution.id
 
 
-def _table(name: str, *, org_id, solution_id=None, orphaned: bool = False, access=None) -> Table:
+def _table(name: str, *, org_id, solution_id=None, access=None) -> Table:
     return Table(
         id=uuid.uuid4(),
         name=name,
         organization_id=org_id,
         solution_id=solution_id,
-        origin_solution_slug="x" if orphaned else None,
-        origin_solution_id=uuid.uuid4() if orphaned else None,
-        orphaned_at=datetime.now(timezone.utc) if orphaned else None,
         created_by="dev@x",
         access=access,
     )
@@ -121,20 +117,6 @@ class TestResolveTableIdByName:
         resolved = await ws_mod._resolve_table_id(name, _org_user(org))
         assert resolved == str(live.id)
 
-    async def test_orphan_only_name_resolves_to_none(self, patched_db) -> None:
-        """Orphaned rows don't resolve by name at all — if the only match is
-        orphaned, the lookup returns None (table-not-found), never the orphan.
-        """
-        db = patched_db
-        org = await _make_org(db)
-        name = f"customers_{uuid.uuid4().hex[:8]}"
-
-        db.add(_table(name, org_id=org, orphaned=True))
-        await db.flush()
-
-        assert await ws_mod._resolve_table_id(name, _org_user(org)) is None
-
-
 class TestLoadPoliciesForTableByName:
     async def test_name_lookup_skips_solution_rows(self, patched_db) -> None:
         """Same-name `_repo/` + solution rows: the name branch must load the
@@ -159,15 +141,3 @@ class TestLoadPoliciesForTableByName:
         policies = await ws_mod._load_policies_for_table(name)
         assert policies == TablePolicies()
 
-    async def test_name_lookup_excludes_orphans(self, patched_db) -> None:
-        """Orphan-only name: the policy name branch returns None (not-found),
-        never the orphaned row's policy document.
-        """
-        db = patched_db
-        org = await _make_org(db)
-        name = f"customers_{uuid.uuid4().hex[:8]}"
-
-        db.add(_table(name, org_id=org, orphaned=True))
-        await db.flush()
-
-        assert await ws_mod._load_policies_for_table(name) is None

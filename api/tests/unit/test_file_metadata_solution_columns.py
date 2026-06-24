@@ -1,13 +1,12 @@
-"""TDD tests for solution_id + orphan-provenance columns on FileMetadata & FilePolicy."""
+"""TDD tests for solution_id column on FileMetadata & FilePolicy."""
 
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
 
 
 def test_solution_columns_present():
-    """All four new columns must exist on both models."""
+    """solution_id column must exist on both models (orphan-provenance columns were removed)."""
     for M in (FileMetadata, FilePolicy):
-        for col in ("solution_id", "origin_solution_slug", "origin_solution_id", "orphaned_at"):
-            assert col in M.__table__.columns, f"{M.__name__}.{col} missing"
+        assert "solution_id" in M.__table__.columns, f"{M.__name__}.solution_id missing"
 
 
 def test_solution_partial_unique_file_metadata():

@@ -44,6 +44,6 @@ async def test_delete_solution_removes_source_artifact(db_session, monkeypatch) 
     monkeypatch.setattr("src.services.solutions.write_lock.solution_write_lock", _unlocked)
 
     ctx, user = _admin(db_session)
-    await delete_solution(sol.id, ctx, user)
+    await delete_solution(sol.id, ctx, user, confirm=sol.slug)
 
     assert await artifact.read() is None

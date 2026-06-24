@@ -118,10 +118,6 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/roles.py', 'KnowledgeNamespaceRoleORM.organization_id == entry.organization_id,', 'KnowledgeNamespaceRole identity-entity filter (permanent)'),
     ('routers/solutions.py', 'set_keys_q = select(Config.key).where(Config.organization_id == sol.organization_id)', 'entities endpoint: install-scoped config-key existence read for value_set status (NOT cascade)'),
     ('routers/solutions.py', 'set_keys_q = select(Config.key).where(Config.organization_id.is_(None))', 'entities endpoint: global-scope config-key existence read for value_set status (NOT cascade)'),
-    ('routers/solutions.py', 'Config.organization_id == sol.organization_id', 'uninstall: install-scoped orphan-stamp UPDATE on config values (NOT cascade)'),
-    ('routers/solutions.py', 'else Config.organization_id.is_(None)', 'uninstall: global-scope orphan-stamp UPDATE on config values (NOT cascade)'),
-    ('routers/solutions.py', 'SolutionORM.organization_id == sol.organization_id', 'uninstall: find OTHER live installs declaring the same key in this org to skip stamping a shared value (NOT cascade)'),
-    ('routers/solutions.py', 'else SolutionORM.organization_id.is_(None)', 'uninstall: global-scope variant of the same shared-key guard (NOT cascade)'),
     ('routers/solutions.py', 'return model.organization_id.is_(None)  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
     ('routers/solutions.py', 'return model.organization_id == org_id  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
     # X-Bifrost-App app-scoped solution table lookup (install-scoped, NOT org
