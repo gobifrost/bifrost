@@ -85,7 +85,11 @@ export function FilePreview({ location, scope, path }: FilePreviewProps) {
 					const bytes = await files.readBytes(path, { location, scope });
 					if (cancelled) return;
 					const type = IMAGE_MIME[extOf(path)] ?? "application/octet-stream";
-					objectUrl = URL.createObjectURL(new Blob([bytes], { type }));
+					// Copy into a plain ArrayBuffer-backed view so the Blob part
+					// type is concrete (readBytes returns Uint8Array<ArrayBufferLike>).
+					objectUrl = URL.createObjectURL(
+						new Blob([new Uint8Array(bytes)], { type }),
+					);
 					setImageUrl(objectUrl);
 				} catch (err) {
 					if (!cancelled)

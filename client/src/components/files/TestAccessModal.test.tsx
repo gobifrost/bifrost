@@ -9,9 +9,10 @@ vi.mock("@/services/filePolicies", () => ({
 }));
 import { useUsersFiltered } from "@/hooks/useUsers";
 import { testAllActions } from "@/services/filePolicies";
+import type { FilePolicyAction } from "@/services/filePolicies";
 import { TestAccessModal } from "./TestAccessModal";
 
-function result(action: string, allowed: boolean) {
+function result(action: FilePolicyAction, allowed: boolean) {
 	return { allowed, path: "p", location: "gallery", action };
 }
 
