@@ -367,6 +367,49 @@ async def test_non_solution_org_lookup_ignores_solution_policy_rows(
 
 
 @pytest.mark.asyncio
+async def test_policy_list_hides_solution_rows_for_org_scope(
+    db_session,
+) -> None:
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=org.id,
+    )
+    db_session.add_all([org, solution])
+    await db_session.flush()
+
+    db_session.add_all([
+        FilePolicy(
+            organization_id=org.id,
+            solution_id=solution.id,
+            location="finance",
+            path="reports",
+            policies=_allow_all("read").model_dump(mode="json", by_alias=True),
+            created_by=uuid4(),
+        ),
+        FilePolicy(
+            organization_id=org.id,
+            solution_id=None,
+            location="finance",
+            path="visible",
+            policies=_allow_all("read").model_dump(mode="json", by_alias=True),
+            created_by=uuid4(),
+        ),
+    ])
+    await db_session.flush()
+
+    rows = await FilePolicyService(db_session).list_policies(
+        organization_id=org.id,
+        location="finance",
+    )
+
+    assert [row.path for row in rows] == ["visible"]
+    assert all(row.solution_id is None for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_non_solution_global_lookup_ignores_solution_policy_rows(
     db_session,
 ) -> None:
@@ -408,6 +451,48 @@ async def test_non_solution_global_lookup_ignores_solution_policy_rows(
         path="reports/q1.txt",
         user=_user(uuid4()),
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_policy_list_hides_solution_rows_for_global_scope(
+    db_session,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=None,
+    )
+    db_session.add(solution)
+    await db_session.flush()
+
+    db_session.add_all([
+        FilePolicy(
+            organization_id=None,
+            solution_id=solution.id,
+            location="finance",
+            path="reports",
+            policies=_allow_all("read").model_dump(mode="json", by_alias=True),
+            created_by=uuid4(),
+        ),
+        FilePolicy(
+            organization_id=None,
+            solution_id=None,
+            location="finance",
+            path="visible",
+            policies=_allow_all("read").model_dump(mode="json", by_alias=True),
+            created_by=uuid4(),
+        ),
+    ])
+    await db_session.flush()
+
+    rows = await FilePolicyService(db_session).list_policies(
+        organization_id=None,
+        location="finance",
+    )
+
+    assert [row.path for row in rows] == ["visible"]
+    assert all(row.solution_id is None for row in rows)
 
 
 @pytest.mark.asyncio

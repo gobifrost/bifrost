@@ -1,6 +1,9 @@
 """E2E tests for CLI push/pull endpoints and manifest round-tripping."""
 import base64
 import hashlib
+import uuid
+from urllib.parse import quote
+
 import pytest
 
 from tests.e2e.file_policy_helpers import grant_file_policy
@@ -224,6 +227,34 @@ def test_list_with_metadata(e2e_client, platform_admin):
     assert item["etag"] == expected_md5
 
 
+def test_list_with_metadata_filters_denied_platform_admin_paths(
+    e2e_client,
+    platform_admin,
+):
+    """include_metadata should obey a revoked admin bypass for individual files."""
+    path = f"modules/metadata-denied-{uuid.uuid4().hex}.py"
+    _write_file(e2e_client, platform_admin.headers, path, "# denied metadata")
+
+    for _ in range(2):
+        response = e2e_client.put(
+            f"/api/files/policies/{quote(path, safe='')}",
+            headers=platform_admin.headers,
+            params={"location": "workspace"},
+            json={"policies": {"policies": []}},
+        )
+        assert response.status_code == 200, response.text
+
+    resp = e2e_client.post("/api/files/list", headers=platform_admin.headers, json={
+        "include_metadata": True,
+        "mode": "cloud",
+        "location": "workspace",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert path not in data["files"]
+    assert path not in {item["path"] for item in data["files_metadata"]}
+
+
 def test_list_with_metadata_excludes_git(e2e_client, platform_admin):
     """Writing .git/ paths should be rejected, and .git/ should not appear in metadata listings."""
     # The API rejects .git/ paths at write time
@@ -297,4 +328,3 @@ def test_per_file_push_pull_roundtrip(e2e_client, platform_admin):
         })
         assert resp.status_code == 200
         assert resp.json()["content"] == expected_content
-

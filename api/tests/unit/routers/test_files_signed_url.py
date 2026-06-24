@@ -30,6 +30,7 @@ def _ctx():
     explicit-scope and global-fallback arms; cross-org pinning has e2e coverage."""
     ctx = MagicMock()
     ctx.org_id = None
+    ctx.solution_id = None
     ctx.scope = None
     ctx.user = UserPrincipal(
         user_id=UUID("11111111-1111-1111-1111-111111111111"),

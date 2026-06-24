@@ -590,6 +590,7 @@ async def test_file_policy_access(
     service = FilePolicyService(db)
     matched = await service.load_policy(
         organization_id=org_id,
+        solution_id=solution_id,
         location=request.location,
         path=request.path,
     )
@@ -759,29 +760,74 @@ async def _build_signed_url(
     """Policy-check and generate a single presigned URL."""
     from shared.file_paths import resolve_s3_key
 
-    effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
     solution_id = _ctx_solution_id(ctx, request.location)
-    if request.method == "PUT":
+    if request.method == "GET":
+        from src.services.solution_scope import file_read_tiers
+
+        try:
+            tiers = await file_read_tiers(db, ctx, request.location, request.scope)
+            if len(tiers) == 1:
+                tier = tiers[0]
+                s3_path = resolve_s3_key(request.location, tier.scope, request.path)
+                await _require_file_policy(
+                    ctx,
+                    action="signed_get",
+                    location=request.location,
+                    scope=tier.scope,
+                    path=request.path,
+                    solution_id=tier.solution_id,
+                    organization_id=tier.organization_id,
+                )
+            else:
+                backend = get_backend("cloud", db)
+                allowed_path: str | None = None
+                for tier in tiers:
+                    s3_path = resolve_s3_key(request.location, tier.scope, request.path)
+                    if not await _authorize_file_policy(
+                        ctx,
+                        action="signed_get",
+                        location=request.location,
+                        scope=tier.scope,
+                        path=request.path,
+                        solution_id=tier.solution_id,
+                        organization_id=tier.organization_id,
+                    ):
+                        continue
+                    allowed_path = allowed_path or s3_path
+                    if await backend.exists(
+                        request.path,
+                        request.location,
+                        scope=tier.scope,
+                    ):
+                        allowed_path = s3_path
+                        break
+                if allowed_path is None:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                s3_path = allowed_path
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    else:
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
         await _require_declared_solution_file_location(
             ctx,
             solution_id=solution_id,
             location=request.location,
         )
-    try:
-        s3_path = resolve_s3_key(request.location, effective_scope, request.path)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-
-    policy_action = "signed_put" if request.method == "PUT" else "signed_get"
-    await _require_file_policy(
-        ctx,
-        action=policy_action,
-        location=request.location,
-        scope=effective_scope,
-        path=request.path,
-        content_type=request.content_type if request.method == "PUT" else None,
-        solution_id=solution_id,
-    )
+        try:
+            s3_path = resolve_s3_key(request.location, effective_scope, request.path)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        await _require_file_policy(
+            ctx,
+            action="signed_put",
+            location=request.location,
+            scope=effective_scope,
+            path=request.path,
+            content_type=request.content_type,
+            solution_id=solution_id,
+        )
 
     file_storage = FileStorageService(db)
 
@@ -1095,22 +1141,21 @@ async def list_files_simple(
                 path: meta for path, meta in s3_metadata.items()
                 if not path.startswith(".git/")
             }
-            if not ctx.is_platform_admin:
-                allowed_paths = set(
-                    await _filter_listed_paths(
-                        ctx,
-                        paths=list(s3_metadata.keys()),
-                        location=request.location,
-                        scope=primary_tier.scope,
-                        action="list",
-                        solution_id=primary_tier.solution_id,
-                        organization_id=primary_tier.organization_id,
-                    )
+            allowed_paths = set(
+                await _filter_listed_paths(
+                    ctx,
+                    paths=list(s3_metadata.keys()),
+                    location=request.location,
+                    scope=primary_tier.scope,
+                    action="list",
+                    solution_id=primary_tier.solution_id,
+                    organization_id=primary_tier.organization_id,
                 )
-                s3_metadata = {
-                    path: meta for path, meta in s3_metadata.items()
-                    if path in allowed_paths
-                }
+            )
+            s3_metadata = {
+                path: meta for path, meta in s3_metadata.items()
+                if path in allowed_paths
+            }
             if not directory_allowed and not s3_metadata:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 

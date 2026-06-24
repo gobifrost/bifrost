@@ -64,17 +64,19 @@ async def _seed_solution_policy(
     solution_id: str,
     prefix: str,
     actions: list[str],
-) -> None:
-    db_session.add(
-        FilePolicy(
-            organization_id=UUID(org_id),
-            solution_id=UUID(solution_id),
-            location=LOCATION,
-            path=prefix,
-            policies=_policy(actions),
-        )
+) -> str:
+    row = FilePolicy(
+        organization_id=UUID(org_id),
+        solution_id=UUID(solution_id),
+        location=LOCATION,
+        path=prefix,
+        policies=_policy(actions),
     )
+    db_session.add(row)
+    await db_session.flush()
+    policy_id = str(row.id)
     await db_session.commit()
+    return policy_id
 
 
 async def _set_solution_policy_actions(
@@ -191,7 +193,7 @@ async def test_solution_policy_governs_solution_tier_only(
         db_session,
         solution_id=solution_id,
         prefix=prefix,
-        actions=[],
+        actions=["delete"],
     )
 
     response = _read_file(
@@ -229,7 +231,7 @@ async def test_org_fallback_data_uses_org_policy_not_solution_policy(
         org_id=org_id,
         solution_id=solution_id,
         prefix=prefix,
-        actions=[],
+        actions=["delete"],
     )
     _grant_policy(e2e_client, headers, scope=org_id, prefix=prefix)
     _write_file(
@@ -249,6 +251,14 @@ async def test_org_fallback_data_uses_org_policy_not_solution_policy(
 
     assert response.status_code == 200, response.text
     assert response.json()["content"] == "org fallback bytes"
+
+    signed = e2e_client.post(
+        f"/api/files/signed-url?solution={solution_id}",
+        headers=headers,
+        json={"location": LOCATION, "path": path, "method": "GET"},
+    )
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["path"] == f"{LOCATION}/{org_id}/{path}"
 
 
 @pytest.mark.asyncio
@@ -276,7 +286,7 @@ async def test_global_fallback_data_uses_global_policy_not_solution_policy(
         org_id=org_id,
         solution_id=solution_id,
         prefix=prefix,
-        actions=[],
+        actions=["delete"],
     )
     _grant_policy(e2e_client, headers, scope="global", prefix=prefix)
     _write_file(
@@ -296,3 +306,50 @@ async def test_global_fallback_data_uses_global_policy_not_solution_policy(
 
     assert response.status_code == 200, response.text
     assert response.json()["content"] == "global fallback bytes"
+
+    signed = e2e_client.post(
+        f"/api/files/signed-url?solution={solution_id}",
+        headers=headers,
+        json={"location": LOCATION, "path": path, "method": "GET"},
+    )
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["path"] == f"{LOCATION}/global/{path}"
+
+
+@pytest.mark.asyncio
+async def test_solution_policy_access_test_reports_solution_policy(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    headers = platform_admin.headers
+    org_id = org1["id"]
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        org_id=org_id,
+        global_repo_access=False,
+    )
+    solution_id = solution["id"]
+    await _declare_location(db_session, solution_id)
+
+    prefix = f"task7-debug/{uuid.uuid4().hex}/"
+    path = f"{prefix}debug.txt"
+    policy_id = await _seed_solution_policy(
+        db_session,
+        org_id=org_id,
+        solution_id=solution_id,
+        prefix=prefix,
+        actions=["read"],
+    )
+
+    response = e2e_client.post(
+        f"/api/files/policies/test?solution={solution_id}",
+        headers=headers,
+        json={"location": LOCATION, "path": path, "action": "read"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["allowed"] is True
+    assert response.json()["matched_policy"] == policy_id

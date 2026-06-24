@@ -205,7 +205,10 @@ class FilePolicyService:
         organization_id: UUID | None,
         location: str | None = None,
     ) -> list[FilePolicy]:
-        stmt = select(FilePolicy).where(FilePolicy.organization_id == organization_id)
+        stmt = select(FilePolicy).where(
+            FilePolicy.organization_id == organization_id,
+            FilePolicy.solution_id.is_(None),
+        )
         if location is not None:
             stmt = stmt.where(FilePolicy.location == location)
         stmt = stmt.order_by(FilePolicy.location, FilePolicy.path)
