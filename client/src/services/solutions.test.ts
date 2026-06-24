@@ -130,13 +130,16 @@ describe("solutions service", () => {
 		});
 	});
 
-	it("deletes a solution by id", async () => {
+	it("deletes a solution by id with confirm slug", async () => {
 		mockDelete.mockResolvedValue({ data: { solution_id: "sol-1" } });
 
-		const out = await deleteSolution("sol-1");
+		const out = await deleteSolution("sol-1", "my-solution");
 
 		expect(mockDelete).toHaveBeenCalledWith("/api/solutions/{solution_id}", {
-			params: { path: { solution_id: "sol-1" } },
+			params: {
+				path: { solution_id: "sol-1" },
+				query: { confirm: "my-solution" },
+			},
 		});
 		expect(out.solution_id).toBe("sol-1");
 	});

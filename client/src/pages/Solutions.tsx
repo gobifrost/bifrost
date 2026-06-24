@@ -22,6 +22,7 @@ import {
 	HardDriveUpload,
 	LayoutGrid,
 	Plus,
+	PowerOff,
 	Table as TableIcon,
 	Upload,
 } from "lucide-react";
@@ -62,6 +63,8 @@ export function Solutions() {
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
+	// By default inactive installs are hidden; the toggle surfaces them.
+	const [showInactive, setShowInactive] = useState(false);
 	// Deep link: `?repo=<url>&path=<subpath>&ref=<ref>` opens the install dialog
 	// in From-repository mode with the fields pre-filled. The dialog mode is
 	// seeded from the URL on first render; the params are then stripped (in an
@@ -115,7 +118,11 @@ export function Solutions() {
 			: solutions.filter(
 					(sol) => (sol.organization_id ?? null) === filterOrgId,
 				);
-	const filtered = useSearch(scopeFiltered, searchTerm, ["name", "slug"]);
+	// Hide inactive installs unless the toggle is on.
+	const activeFiltered = showInactive
+		? scopeFiltered
+		: scopeFiltered.filter((sol) => sol.status !== "inactive");
+	const filtered = useSearch(activeFiltered, searchTerm, ["name", "slug"]);
 
 	// Whole-page drag-and-drop: dropping a .zip opens the install dialog
 	// prefilled with that file.
@@ -146,6 +153,20 @@ export function Solutions() {
 		const file = e.currentTarget.files?.[0];
 		e.currentTarget.value = "";
 		if (file) setDialogMode({ kind: "create", file });
+	}
+
+	function statusBadge(sol: Solution) {
+		if (sol.status !== "inactive") return null;
+		return (
+			<Badge
+				variant="secondary"
+				className="gap-1 border-muted-foreground/30 text-muted-foreground"
+				data-testid="inactive-badge"
+			>
+				<PowerOff className="h-3 w-3" />
+				Inactive
+			</Badge>
+		);
 	}
 
 	function sourceBadge(sol: Solution) {
@@ -257,7 +278,7 @@ export function Solutions() {
 				</div>
 			</div>
 
-			{/* Search + Organization filter */}
+			{/* Search + Organization filter + show-inactive toggle */}
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
 				<SearchBox
 					value={searchTerm}
@@ -274,6 +295,19 @@ export function Solutions() {
 						placeholder="All organizations"
 					/>
 				</div>
+				<label
+					className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-muted-foreground"
+					data-testid="show-inactive-toggle"
+				>
+					<input
+						type="checkbox"
+						checked={showInactive}
+						onChange={(e) => setShowInactive(e.target.checked)}
+						className="accent-primary"
+						aria-label="Show inactive"
+					/>
+					Show inactive
+				</label>
 			</div>
 
 			<div className="flex-1 min-h-0 overflow-auto">
@@ -325,7 +359,12 @@ export function Solutions() {
 										navigate(`/solutions/${sol.id}`);
 									}
 								}}
-								className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[10px] border bg-card transition-colors hover:border-border/80 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className={[
+									"group relative flex cursor-pointer flex-col overflow-hidden rounded-[10px] border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+									sol.status === "inactive"
+										? "bg-muted/40 opacity-70 hover:opacity-100"
+										: "bg-card hover:border-border/80 hover:bg-accent/30",
+								].join(" ")}
 							>
 								<div className="flex items-start justify-between gap-3 border-b px-4 py-3">
 									<div className="flex min-w-0 items-center gap-2">
@@ -349,6 +388,7 @@ export function Solutions() {
 									</div>
 								</div>
 								<div className="flex items-center gap-2 px-4 py-3">
+									{statusBadge(sol)}
 									{orgBadge(sol)}
 									{sourceBadge(sol)}
 									{sol.version && (
@@ -365,6 +405,7 @@ export function Solutions() {
 							<DataTableRow>
 								<DataTableHead>Name</DataTableHead>
 								<DataTableHead>Slug</DataTableHead>
+								<DataTableHead>Status</DataTableHead>
 								<DataTableHead>Organization</DataTableHead>
 								<DataTableHead>Source</DataTableHead>
 								<DataTableHead>Version</DataTableHead>
@@ -395,6 +436,7 @@ export function Solutions() {
 									<DataTableCell className="text-muted-foreground">
 										{sol.slug}
 									</DataTableCell>
+									<DataTableCell>{statusBadge(sol)}</DataTableCell>
 									<DataTableCell>{orgBadge(sol)}</DataTableCell>
 									<DataTableCell>{sourceBadge(sol)}</DataTableCell>
 									<DataTableCell className="text-muted-foreground">

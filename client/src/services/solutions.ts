@@ -35,6 +35,8 @@ export type SolutionCaptureResponse =
 export type SolutionReadme = components["schemas"]["SolutionReadme"];
 export type SolutionRepoPreviewRequest =
 	components["schemas"]["SolutionRepoPreviewRequest"];
+export type SolutionDeletionSummary =
+	components["schemas"]["SolutionDeletionSummary"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
@@ -265,14 +267,61 @@ export async function setSolutionConfig(
 	if (error) throw new Error(getErrorMessage(error, "Failed to save config value"));
 }
 
+/**
+ * Non-destructive uninstall: flip status to inactive, data frozen in place.
+ * Owned entities stay owned — use for soft-removal. Returns the updated Solution.
+ */
+export async function uninstallSolution(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<Solution> {
+	const { signal } = options;
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/{solution_id}/uninstall",
+		{ params: { path: { solution_id: solutionId } }, signal },
+	);
+	if (error) throw new Error(getErrorMessage(error, "Failed to uninstall solution"));
+	return data;
+}
+
+/**
+ * Preview counts of what a hard-delete would destroy. Fetch before showing
+ * the confirmation modal.
+ */
+export async function getSolutionDeletionSummary(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<SolutionDeletionSummary> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/{solution_id}/deletion-summary",
+		{ params: { path: { solution_id: solutionId } }, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to get deletion summary"));
+	}
+	return data;
+}
+
+/**
+ * Hard-delete: permanently destroys the Solution and ALL owned entities.
+ * `confirm` must equal the install's slug (server validates).
+ */
 export async function deleteSolution(
 	solutionId: string,
+	confirm: string,
 	options: RequestOptions = {},
 ): Promise<SolutionDeleteSummary> {
 	const { signal } = options;
 	const { data, error } = await apiClient.DELETE(
 		"/api/solutions/{solution_id}",
-		{ params: { path: { solution_id: solutionId } }, signal },
+		{
+			params: {
+				path: { solution_id: solutionId },
+				query: { confirm },
+			},
+			signal,
+		},
 	);
 	if (error) throw new Error(getErrorMessage(error, "Failed to delete solution"));
 	return data;

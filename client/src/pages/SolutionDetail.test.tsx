@@ -37,6 +37,8 @@ vi.mock("@/contexts/AuthContext", () => ({
 const mockGetSolutionEntities = vi.fn();
 const mockUpdateSolution = vi.fn();
 const mockDeleteSolution = vi.fn();
+const mockUninstallSolution = vi.fn();
+const mockGetSolutionDeletionSummary = vi.fn();
 const mockSetSolutionConfig = vi.fn();
 const mockExportSolution = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
@@ -46,6 +48,9 @@ vi.mock("@/services/solutions", () => ({
 	getSolutionEntities: (...a: unknown[]) => mockGetSolutionEntities(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
+	uninstallSolution: (...a: unknown[]) => mockUninstallSolution(...a),
+	getSolutionDeletionSummary: (...a: unknown[]) =>
+		mockGetSolutionDeletionSummary(...a),
 	setSolutionConfig: (...a: unknown[]) => mockSetSolutionConfig(...a),
 	exportSolution: (...a: unknown[]) => mockExportSolution(...a),
 	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
@@ -54,7 +59,7 @@ vi.mock("@/services/solutions", () => ({
 	captureSolutionEntities: (...a: unknown[]) => mockCaptureSolutionEntities(...a),
 }));
 
-function makeEntities() {
+function makeEntities(statusOverride = "active") {
 	return {
 		solution: {
 			id: "sol-1",
@@ -65,6 +70,8 @@ function makeEntities() {
 			git_connected: false,
 			git_repo_url: null,
 			scope: "org",
+			status: statusOverride,
+			setup_complete: true,
 		},
 		workflows: [
 			{
@@ -140,6 +147,18 @@ async function renderPage() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSolutionEntities.mockResolvedValue(makeEntities());
+	mockGetSolutionDeletionSummary.mockResolvedValue({
+		solution_id: "sol-1",
+		files: 2,
+		tables: 1,
+		workflows: 3,
+		apps: 0,
+		forms: 1,
+		agents: 0,
+		claims: 1,
+		config_declarations: 2,
+		events: 0,
+	});
 	mockGetSolutionCaptureCandidates.mockResolvedValue({
 		workflows: [],
 		apps: [],
@@ -483,6 +502,108 @@ describe("SolutionDetail", () => {
 		expect(link).toHaveAttribute(
 			"href",
 			"/files?install=sol-1&from=solution:sol-1",
+		);
+	});
+
+	it("shows 'Uninstall' in the overflow menu for an active solution", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		expect(await screen.findByTestId("uninstall-solution")).toBeInTheDocument();
+		expect(screen.getByTestId("hard-delete-solution")).toBeInTheDocument();
+	});
+
+	it("calls uninstallSolution when Uninstall is clicked", async () => {
+		mockUninstallSolution.mockResolvedValue({
+			...makeEntities().solution,
+			status: "inactive",
+		});
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		await user.click(await screen.findByTestId("uninstall-solution"));
+
+		await waitFor(() =>
+			expect(mockUninstallSolution).toHaveBeenCalledWith("sol-1"),
+		);
+	});
+
+	it("shows Reactivate button and no Uninstall in overflow menu for an inactive solution", async () => {
+		mockGetSolutionEntities.mockResolvedValue(makeEntities("inactive"));
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		// Reactivate replaces Update in the header.
+		expect(screen.getByTestId("reactivate-solution")).toBeInTheDocument();
+		expect(screen.queryByTestId("update-solution")).not.toBeInTheDocument();
+		// Inactive badge shown.
+		expect(screen.getByTestId("status-inactive-badge")).toBeInTheDocument();
+
+		// Overflow menu has no Uninstall but still has Delete permanently.
+		await user.click(screen.getByTestId("solution-actions"));
+		expect(screen.queryByTestId("uninstall-solution")).not.toBeInTheDocument();
+		expect(screen.getByTestId("hard-delete-solution")).toBeInTheDocument();
+	});
+
+	it("opens the hard-delete modal, lists deletion summary, disables Confirm until slug typed", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		await user.click(await screen.findByTestId("hard-delete-solution"));
+
+		const modal = await screen.findByTestId("hard-delete-dialog");
+		expect(modal).toBeInTheDocument();
+
+		// Deletion summary is shown (mocked with 2 files, 1 table, etc.)
+		const summaryList = await screen.findByTestId("deletion-summary-list");
+		expect(summaryList).toHaveTextContent(/2 files/);
+		expect(summaryList).toHaveTextContent(/1 table/);
+		expect(summaryList).toHaveTextContent(/3 workflows/);
+
+		// Confirm is disabled until slug is typed.
+		const confirmBtn = screen.getByTestId("confirm-hard-delete");
+		expect(confirmBtn).toBeDisabled();
+
+		const input = screen.getByTestId("hard-delete-confirm-input");
+		await user.type(input, "wrong-slug");
+		expect(confirmBtn).toBeDisabled();
+
+		await user.clear(input);
+		await user.type(input, "my-solution");
+		expect(confirmBtn).not.toBeDisabled();
+	});
+
+	it("calls deleteSolution with confirm=slug and navigates away on hard-delete", async () => {
+		mockDeleteSolution.mockResolvedValue({
+			solution_id: "sol-1",
+			workflows_deleted: 3,
+			apps_deleted: 0,
+			forms_deleted: 1,
+			agents_deleted: 0,
+			claims_deleted: 1,
+			config_declarations_deleted: 2,
+			tables_deleted: 1,
+			files_swept: 2,
+		});
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		await user.click(await screen.findByTestId("hard-delete-solution"));
+		await screen.findByTestId("hard-delete-dialog");
+
+		const input = screen.getByTestId("hard-delete-confirm-input");
+		await user.type(input, "my-solution");
+		await user.click(screen.getByTestId("confirm-hard-delete"));
+
+		await waitFor(() =>
+			expect(mockDeleteSolution).toHaveBeenCalledWith("sol-1", "my-solution"),
+		);
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/solutions"),
 		);
 	});
 });

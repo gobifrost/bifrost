@@ -73,14 +73,10 @@ const DEFAULT_QUERY: DocumentQuery = {
 
 /**
  * Hook to fetch all tables (list endpoint — scope is valid here)
- *
- * `includeOrphaned` surfaces tables left behind by an uninstalled Solution
- * (rows carrying `orphaned_at`), which are hidden by default.
  */
-export function useTables(scope?: string, includeOrphaned = false) {
-	const query: { scope?: string; include_orphaned?: boolean } = {};
+export function useTables(scope?: string) {
+	const query: { scope?: string } = {};
 	if (scope) query.scope = scope;
-	if (includeOrphaned) query.include_orphaned = true;
 	return $api.useQuery(
 		"get",
 		"/api/tables",

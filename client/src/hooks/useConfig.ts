@@ -20,12 +20,9 @@ type Config = components["schemas"]["ConfigResponse"];
  * - "global": show only global configs (org_id IS NULL)
  * - UUID string: show that org's configs + global configs
  */
-export function useConfigs(
-	filterScope?: string | null,
-	includeOrphaned = false,
-) {
+export function useConfigs(filterScope?: string | null) {
 	// Build query params - scope is the new filter parameter
-	const queryParams: Record<string, string | boolean | undefined> = {};
+	const queryParams: Record<string, string | undefined> = {};
 	if (filterScope === null) {
 		// null means "global only"
 		queryParams.scope = "global";
@@ -35,17 +32,11 @@ export function useConfigs(
 	}
 	// undefined = don't send scope (show all)
 
-	// Orphaned configs (former-install data left by an uninstalled Solution)
-	// are hidden unless explicitly requested.
-	if (includeOrphaned) {
-		queryParams.include_orphaned = true;
-	}
-
 	return $api.useQuery("get", "/api/config", {
 		params: {
 			query:
 				Object.keys(queryParams).length > 0 ? queryParams : undefined,
-		} as { query?: { scope?: string; include_orphaned?: boolean } },
+		} as { query?: { scope?: string } },
 	});
 }
 

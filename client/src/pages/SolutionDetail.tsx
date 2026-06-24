@@ -41,6 +41,9 @@ import {
 	Unlink,
 	ArrowUp,
 	RefreshCw,
+	PowerOff,
+	Trash2,
+	RotateCcw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -108,6 +111,8 @@ import {
 	getSolutionReadme,
 	putSolutionReadme,
 	deleteSolution,
+	uninstallSolution,
+	getSolutionDeletionSummary,
 	exportSolution,
 	setSolutionConfig,
 	syncSolution,
@@ -122,6 +127,7 @@ import type { components } from "@/lib/v1";
 type EntitySummary = components["schemas"]["SolutionEntitySummary"];
 type ConfigStatus = components["schemas"]["SolutionConfigStatus"];
 type ConfigType = components["schemas"]["ConfigType"];
+type SolutionDeletionSummary = components["schemas"]["SolutionDeletionSummary"];
 
 /** The three top-level tabs (down from 9). README leads Overview (it's the
  * description, not a section); the 6 entity inventories collapse into Contents
@@ -1171,8 +1177,12 @@ export function SolutionDetail() {
 	const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
 	const [captureOpen, setCaptureOpen] = useState(false);
 	const [exportDialogOpen, setExportDialogOpen] = useState(false);
-	const [deleteOpen, setDeleteOpen] = useState(false);
-	const [deleteConfirm, setDeleteConfirm] = useState("");
+	// Hard-delete modal state.
+	const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
+	const [hardDeleteConfirm, setHardDeleteConfirm] = useState("");
+	const [deletionSummary, setDeletionSummary] =
+		useState<SolutionDeletionSummary | null>(null);
+	const [deletionSummaryLoading, setDeletionSummaryLoading] = useState(false);
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["solutions", solutionId, "entities"],
@@ -1234,14 +1244,13 @@ export function SolutionDetail() {
 		},
 	});
 
-	const deleteMut = useMutation({
-		mutationFn: () => deleteSolution(solutionId!),
-		onSuccess: (summary) => {
-			queryClient.invalidateQueries({ queryKey: ["solutions"] });
-			toast.success("Solution uninstalled", {
-				description: `Removed ${summary.workflows_deleted} workflows, ${summary.apps_deleted} apps, ${summary.forms_deleted} forms, ${summary.agents_deleted} agents. Kept ${summary.tables_orphaned} tables and ${summary.config_values_orphaned} config values as orphaned data.`,
-			});
-			navigate("/solutions");
+	/** Non-destructive uninstall — flips status to inactive, data frozen. */
+	const uninstallMut = useMutation({
+		mutationFn: () => uninstallSolution(solutionId!),
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["solutions"] });
+			invalidate();
+			toast.success("Solution uninstalled (inactive)");
 		},
 		onError: (err: unknown) => {
 			toast.error("Failed to uninstall", {
@@ -1249,6 +1258,39 @@ export function SolutionDetail() {
 			});
 		},
 	});
+
+	/** Hard-delete — permanently destroys everything. Requires confirm === slug. */
+	const hardDeleteMut = useMutation({
+		mutationFn: () => deleteSolution(solutionId!, hardDeleteConfirm),
+		onSuccess: (summary) => {
+			queryClient.invalidateQueries({ queryKey: ["solutions"] });
+			toast.success("Solution permanently deleted", {
+				description: `Removed ${summary.workflows_deleted} workflows, ${summary.apps_deleted} apps, ${summary.forms_deleted} forms, ${summary.agents_deleted} agents, ${summary.tables_deleted} tables, ${summary.files_swept} files.`,
+			});
+			navigate("/solutions");
+		},
+		onError: (err: unknown) => {
+			toast.error("Failed to delete solution", {
+				description: err instanceof Error ? err.message : "Unknown error",
+			});
+		},
+	});
+
+	/** Open the hard-delete modal and eagerly fetch the deletion-summary. */
+	async function openHardDelete() {
+		setHardDeleteConfirm("");
+		setDeletionSummary(null);
+		setHardDeleteOpen(true);
+		setDeletionSummaryLoading(true);
+		try {
+			const summary = await getSolutionDeletionSummary(solutionId!);
+			setDeletionSummary(summary);
+		} catch {
+			// Summary is informational — allow the modal to proceed without it.
+		} finally {
+			setDeletionSummaryLoading(false);
+		}
+	}
 
 	// "Update now" for a git-connected install with an available update: pull the
 	// repo at its configured ref and full-replace the installed content. The
@@ -1392,6 +1434,16 @@ export function SolutionDetail() {
 								)}
 							</p>
 							<div className="mt-3 flex flex-wrap items-center gap-2">
+								{sol.status === "inactive" && (
+									<Badge
+										variant="secondary"
+										className="gap-1 border-muted-foreground/30 text-muted-foreground"
+										data-testid="status-inactive-badge"
+									>
+										<PowerOff className="h-3 w-3" />
+										Inactive
+									</Badge>
+								)}
 								{sol.version && (
 									<Badge variant="outline">v{sol.version}</Badge>
 								)}
@@ -1440,7 +1492,7 @@ export function SolutionDetail() {
 							)}
 						</div>
 						<div className="flex shrink-0 items-center justify-end gap-2">
-							{sol.setup_complete === false && (
+							{sol.setup_complete === false && sol.status !== "inactive" && (
 								<Button
 									data-testid="continue-setup"
 									variant="outline"
@@ -1451,7 +1503,17 @@ export function SolutionDetail() {
 									Continue Setup
 								</Button>
 							)}
-							{sol.git_connected && sol.update_available_version ? (
+							{sol.status === "inactive" ? (
+								<Button
+									data-testid="reactivate-solution"
+									variant="outline"
+									className="whitespace-nowrap"
+									onClick={() => setUpdateOpen(true)}
+								>
+									<RotateCcw className="mr-1.5 h-4 w-4" />
+									Reactivate
+								</Button>
+							) : sol.git_connected && sol.update_available_version ? (
 								<Button
 									data-testid="update-now"
 									className="whitespace-nowrap"
@@ -1477,13 +1539,12 @@ export function SolutionDetail() {
 							)}
 							<SolutionActionsMenu
 								exporting={exportMut.isPending}
+								isInactive={sol.status === "inactive"}
 								onCapture={() => setCaptureOpen(true)}
 								onExport={() => setExportDialogOpen(true)}
 								onEdit={() => setEditOpen(true)}
-								onDelete={() => {
-									setDeleteConfirm("");
-									setDeleteOpen(true);
-								}}
+								onUninstall={() => uninstallMut.mutate()}
+								onHardDelete={openHardDelete}
 							/>
 						</div>
 					</div>
@@ -1768,77 +1829,149 @@ export function SolutionDetail() {
 						isPending={exportMut.isPending}
 					/>
 
-					{/* Delete / uninstall dialog (type-to-confirm) */}
+					{/* Hard-delete confirmation modal (type-the-slug to confirm) */}
 					<Dialog
-						open={deleteOpen}
+						open={hardDeleteOpen}
 						onOpenChange={(o) => {
-							if (!o) {
-								setDeleteOpen(false);
-								setDeleteConfirm("");
+							if (!o && !hardDeleteMut.isPending) {
+								setHardDeleteOpen(false);
+								setHardDeleteConfirm("");
 							}
 						}}
 					>
-						<DialogContent data-testid="delete-dialog">
+						<DialogContent data-testid="hard-delete-dialog">
 							<DialogHeader>
-								<DialogTitle>Uninstall {sol.name}?</DialogTitle>
+								<DialogTitle className="flex items-center gap-2">
+									<Trash2 className="h-4 w-4 text-destructive" />
+									Permanently delete {sol.name}?
+								</DialogTitle>
 								<DialogDescription asChild>
 									<div className="space-y-2 text-sm text-muted-foreground">
 										<p>
-											Workflows, apps, forms, and agents will be
-											removed.
-										</p>
-										<p>
+											This is{" "}
 											<span className="font-medium text-foreground">
-												Tables (and their data) and config values
-												are kept as orphaned data
-											</span>{" "}
-											— they will be reattached if you reinstall this
-											Solution.
+												irreversible
+											</span>
+											. All owned entities and files will be
+											permanently destroyed.
 										</p>
-										<p>The git repository is not touched.</p>
+										{deletionSummaryLoading && (
+											<p className="flex items-center gap-2">
+												<Loader2 className="h-4 w-4 animate-spin" />
+												Loading what will be deleted…
+											</p>
+										)}
+										{deletionSummary && !deletionSummaryLoading && (
+											<ul
+												className="list-disc pl-4 text-foreground"
+												data-testid="deletion-summary-list"
+											>
+												{deletionSummary.files > 0 && (
+													<li>
+														{deletionSummary.files} file
+														{deletionSummary.files !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.tables > 0 && (
+													<li>
+														{deletionSummary.tables} table
+														{deletionSummary.tables !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.workflows > 0 && (
+													<li>
+														{deletionSummary.workflows} workflow
+														{deletionSummary.workflows !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.apps > 0 && (
+													<li>
+														{deletionSummary.apps} app
+														{deletionSummary.apps !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.forms > 0 && (
+													<li>
+														{deletionSummary.forms} form
+														{deletionSummary.forms !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.agents > 0 && (
+													<li>
+														{deletionSummary.agents} agent
+														{deletionSummary.agents !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.claims > 0 && (
+													<li>
+														{deletionSummary.claims} custom claim
+														{deletionSummary.claims !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.events > 0 && (
+													<li>
+														{deletionSummary.events} event
+														{deletionSummary.events !== 1 ? "s" : ""}
+													</li>
+												)}
+												{deletionSummary.config_declarations > 0 && (
+													<li>
+														{deletionSummary.config_declarations} config
+														declaration
+														{deletionSummary.config_declarations !== 1
+															? "s"
+															: ""}
+													</li>
+												)}
+											</ul>
+										)}
 									</div>
 								</DialogDescription>
 							</DialogHeader>
 
 							<div className="space-y-2">
-								<Label htmlFor="delete-confirm">
+								<Label htmlFor="hard-delete-confirm">
 									Type{" "}
 									<span className="font-mono font-semibold text-foreground">
-										{sol.name}
+										{sol.slug}
 									</span>{" "}
 									to confirm
 								</Label>
 								<Input
-									id="delete-confirm"
-									data-testid="delete-confirm-input"
-									value={deleteConfirm}
-									onChange={(e) => setDeleteConfirm(e.target.value)}
+									id="hard-delete-confirm"
+									data-testid="hard-delete-confirm-input"
+									value={hardDeleteConfirm}
+									onChange={(e) => setHardDeleteConfirm(e.target.value)}
 									autoComplete="off"
+									placeholder={sol.slug}
 								/>
 							</div>
 
 							<DialogFooter>
 								<Button
 									variant="outline"
+									disabled={hardDeleteMut.isPending}
 									onClick={() => {
-										setDeleteOpen(false);
-										setDeleteConfirm("");
+										setHardDeleteOpen(false);
+										setHardDeleteConfirm("");
 									}}
 								>
 									Cancel
 								</Button>
 								<Button
 									variant="destructive"
-									data-testid="confirm-delete"
+									data-testid="confirm-hard-delete"
 									disabled={
-										deleteConfirm !== sol.name || deleteMut.isPending
+										hardDeleteConfirm !== sol.slug ||
+										hardDeleteMut.isPending
 									}
-									onClick={() => deleteMut.mutate()}
+									onClick={() => hardDeleteMut.mutate()}
 								>
-									{deleteMut.isPending && (
+									{hardDeleteMut.isPending && (
 										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 									)}
-									Uninstall
+									<Trash2 className="mr-1.5 h-4 w-4" />
+									Delete permanently
 								</Button>
 							</DialogFooter>
 						</DialogContent>

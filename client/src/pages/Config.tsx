@@ -69,7 +69,6 @@ export function Config() {
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 	const [isImportOpen, setIsImportOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
-	const [showOrphaned, setShowOrphaned] = useState(false);
 
 	// Pass filterOrgId to backend for filtering (undefined = all, null = global only)
 	// For platform admins, undefined means show all. For non-admins, backend handles filtering.
@@ -77,7 +76,7 @@ export function Config() {
 		data: configs,
 		isFetching,
 		refetch,
-	} = useConfigs(isPlatformAdmin ? filterOrgId : undefined, showOrphaned);
+	} = useConfigs(isPlatformAdmin ? filterOrgId : undefined);
 	const deleteConfig = useDeleteConfig();
 
 	// Fetch organizations for the org name lookup (platform admins only)
@@ -257,16 +256,6 @@ export function Config() {
 						/>
 					</div>
 				)}
-				<label className="flex items-center gap-2 whitespace-nowrap text-sm text-muted-foreground">
-					<Checkbox
-						checked={showOrphaned}
-						onCheckedChange={(checked) =>
-							setShowOrphaned(checked === true)
-						}
-						aria-label="Show orphaned"
-					/>
-					Show orphaned
-				</label>
 				{isPlatformAdmin && (
 					<div className="flex flex-wrap items-center gap-2 sm:ml-auto">
 						{selectedIds.size > 0 && (

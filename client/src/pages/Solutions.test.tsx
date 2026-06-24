@@ -163,6 +163,51 @@ describe("Solutions — list", () => {
 		expect(screen.getByText("v1.2.3")).toBeInTheDocument();
 	});
 
+	it("shows an inactive badge for solutions with status=inactive", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({ id: "a", name: "Active One", status: "active" }),
+				makeSolution({
+					id: "b",
+					name: "Inactive One",
+					slug: "inactive-sol",
+					status: "inactive",
+				}),
+			],
+		});
+		await renderPage();
+		await screen.findByText("Active One");
+
+		// By default inactive installs are hidden.
+		expect(screen.queryByText("Inactive One")).toBeNull();
+		// No inactive badge visible yet.
+		expect(screen.queryByTestId("inactive-badge")).toBeNull();
+	});
+
+	it("shows inactive solutions when the show-inactive toggle is checked", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({ id: "a", name: "Active One", status: "active" }),
+				makeSolution({
+					id: "b",
+					name: "Inactive One",
+					slug: "inactive-sol",
+					status: "inactive",
+				}),
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findByText("Active One");
+
+		const toggle = screen.getByTestId("show-inactive-toggle");
+		await user.click(toggle.querySelector("input")!);
+
+		await waitFor(() =>
+			expect(screen.getByText("Inactive One")).toBeInTheDocument(),
+		);
+		expect(screen.getByTestId("inactive-badge")).toBeInTheDocument();
+	});
+
 	it("shows an 'Update available' badge only when update_available_version is set", async () => {
 		mockListSolutions.mockResolvedValue({
 			solutions: [

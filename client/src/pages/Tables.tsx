@@ -68,7 +68,6 @@ export function Tables() {
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 	const [isImportOpen, setIsImportOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
-	const [showOrphaned, setShowOrphaned] = useState(false);
 
 	// Convert filterOrgId to scope for API: undefined = all, null = global only, string = org UUID
 	const apiScope =
@@ -78,7 +77,7 @@ export function Tables() {
 				? "global"
 				: filterOrgId;
 
-	const { data, isLoading, refetch } = useTables(apiScope, showOrphaned);
+	const { data, isLoading, refetch } = useTables(apiScope);
 	const deleteTable = useDeleteTable();
 
 	// Fetch organizations for the org name lookup (platform admins only)
@@ -247,16 +246,6 @@ export function Tables() {
 								/>
 							</div>
 						)}
-						<label className="flex items-center gap-2 whitespace-nowrap text-sm text-muted-foreground">
-							<Checkbox
-								checked={showOrphaned}
-								onCheckedChange={(checked) =>
-									setShowOrphaned(checked === true)
-								}
-								aria-label="Show orphaned"
-							/>
-							Show orphaned
-						</label>
 						{isPlatformAdmin && (
 							<div className="flex items-center gap-2 ml-auto">
 								{selectedIds.size > 0 && (
@@ -347,7 +336,7 @@ export function Tables() {
 																table.id,
 															)
 														}
-														onClick={(e) =>
+														onClick={(e: React.MouseEvent) =>
 															e.stopPropagation()
 														}
 													/>
@@ -395,7 +384,7 @@ export function Tables() {
 											<DataTableCell className="w-0 whitespace-nowrap text-right">
 												<div
 													className="flex justify-end gap-2"
-													onClick={(e) =>
+													onClick={(e: React.MouseEvent) =>
 														e.stopPropagation()
 													}
 												>
