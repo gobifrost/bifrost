@@ -370,7 +370,30 @@ describe("exportSolution", () => {
 		expect(out.blob).toBe(blob);
 	});
 
-	it("sends the full-backup password in the body, not the URL", async () => {
+	it("sends the backup password in the body and content options in the URL", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			blob: () => Promise.resolve(new Blob([])),
+		});
+
+		const { exportSolution } = await import("./solutions");
+		await exportSolution("sol-1", "full", "hunter2", {
+			includeValues: true,
+			includeFiles: true,
+			includeData: true,
+		});
+
+		const [url, options] = mockAuthFetch.mock.calls[0];
+		expect(url).toBe(
+			"/api/solutions/sol-1/export?mode=full&include_values=true&include_files=true&include_data=true",
+		);
+		expect(url).not.toContain("hunter2");
+		expect(options.method).toBe("POST");
+		expect(JSON.parse(options.body)).toEqual({ password: "hunter2" });
+	});
+
+	it("keeps the legacy boolean fourth argument as include_data", async () => {
 		mockAuthFetch.mockResolvedValue({
 			ok: true,
 			headers: new Headers(),
@@ -380,11 +403,8 @@ describe("exportSolution", () => {
 		const { exportSolution } = await import("./solutions");
 		await exportSolution("sol-1", "full", "hunter2", true);
 
-		const [url, options] = mockAuthFetch.mock.calls[0];
+		const [url] = mockAuthFetch.mock.calls[0];
 		expect(url).toBe("/api/solutions/sol-1/export?mode=full&include_data=true");
-		expect(url).not.toContain("hunter2");
-		expect(options.method).toBe("POST");
-		expect(JSON.parse(options.body)).toEqual({ password: "hunter2" });
 	});
 
 	it("falls back to a generic filename without a disposition header", async () => {

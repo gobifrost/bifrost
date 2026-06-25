@@ -1,4 +1,4 @@
-"""Task 6 (Task-19): bundle_for populates solution_files for full exports (include_data=True).
+"""Task 6 (Task-19): bundle_for populates solution_files for backups (include_files=True).
 
 TDD — these tests are written BEFORE the implementation and use mocks so they
 run in the unit test environment without a live S3/SeaweedFS.
@@ -60,7 +60,7 @@ async def _read_payload(zf: zipfile.ZipFile, tmp_path: Path, payload: str, passw
 
 
 async def test_bundle_includes_solution_file_metadata_when_requested(db_session) -> None:
-    """include_data=True must populate bundle.solution_files with entries
+    """include_files=True must populate bundle.solution_files with entries
     carrying metadata only; payload bytes are streamed later by export."""
     from src.services.solutions.capture import SolutionCaptureService
 
@@ -97,7 +97,7 @@ async def test_bundle_includes_solution_file_metadata_when_requested(db_session)
         ),
     ):
         svc = SolutionCaptureService(db_session)
-        bundle = await svc.bundle_for(sol, include_data=True)
+        bundle = await svc.bundle_for(sol, include_files=True)
 
     assert len(bundle.solution_files) == 2
     paths = {e.path for e in bundle.solution_files}
@@ -123,6 +123,30 @@ async def test_bundle_excludes_solution_files_by_default(db_session) -> None:
     assert bundle.solution_files == []
 
 
+async def test_bundle_table_data_does_not_imply_solution_files(db_session) -> None:
+    """include_data controls table rows only; file payloads have their own option."""
+    from src.services.solutions.capture import SolutionCaptureService
+
+    sol = _make_solution()
+    db_session.add(sol)
+    await db_session.flush()
+
+    async def _mock_enumerate(db, install_id):
+        return _make_entries([("docs/alpha.txt", b"file alpha content")])
+
+    with patch(
+        "src.services.solution_files.enumerate_solution_files",
+        side_effect=_mock_enumerate,
+    ):
+        bundle = await SolutionCaptureService(db_session).bundle_for(
+            sol,
+            include_data=True,
+            include_files=False,
+        )
+
+    assert bundle.solution_files == []
+
+
 async def test_bundle_solution_files_empty_when_no_files(db_session) -> None:
     """Solutions with no files must have an empty solution_files list."""
     from src.services.solutions.capture import SolutionCaptureService
@@ -138,7 +162,7 @@ async def test_bundle_solution_files_empty_when_no_files(db_session) -> None:
         "src.services.solution_files.enumerate_solution_files",
         side_effect=_empty_enumerate,
     ):
-        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
+        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_files=True)
 
     assert bundle.solution_files == []
 
@@ -178,7 +202,7 @@ async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) ->
         ),
         caplog.at_level(logging.WARNING, logger="src.services.solutions.capture"),
     ):
-        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
+        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_files=True)
 
     assert len(bundle.solution_files) == FILE_CAP
     assert any("file" in r.message.lower() for r in caplog.records)
@@ -236,7 +260,7 @@ async def test_export_zip_files_in_encrypted_payload_members_not_plaintext(
         "src.services.solution_files.enumerate_solution_files",
         side_effect=_mock_enumerate,
     ):
-        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
+        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_files=True)
     for entry, content_bytes in zip(bundle.solution_files, (content_a, content_b), strict=True):
         entry.content_bytes = content_bytes
 
@@ -311,7 +335,7 @@ async def test_export_no_secrets_enc_without_password(db_session) -> None:
             side_effect=_mock_read,
         ),
     ):
-        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
+        bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_files=True)
 
     zip_bytes = build_workspace_zip(bundle)  # no password
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))

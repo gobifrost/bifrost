@@ -7381,14 +7381,14 @@ export interface paths {
          *
          *     This is a POST (not GET) specifically so the full-backup ``password`` rides
          *     in the request BODY rather than the URL query string — a query-string secret
-         *     leaks into access logs, proxies, and browser history. ``mode`` and
-         *     ``include_data`` stay in the query (they are not sensitive).
+         *     leaks into access logs, proxies, and browser history. ``mode`` and the
+         *     backup-content flags stay in the query (they are not sensitive).
          *
-         *     ``mode=shareable`` (default): portable export, no sensitive values.
-         *     ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
-         *     the config values set for this install; requires ``password`` (in the body).
-         *     ``include_data=true``: include table row data in the encrypted blob.
-         *     Requires ``mode=full`` (data must be encrypted).
+         *     ``mode=shareable`` (default): portable export, no runtime values.
+         *     ``mode=full``: backup export. ``include_values`` controls config/secret
+         *     values, ``include_files`` controls Solution-owned file payloads, and
+         *     ``include_data`` controls table row data. A password is required whenever a
+         *     backup payload is requested.
          */
         post: operations["export_solution_api_solutions__solution_id__export_post"];
         delete?: never;
@@ -36779,6 +36779,8 @@ export interface operations {
         parameters: {
             query?: {
                 mode?: string;
+                include_values?: boolean | null;
+                include_files?: boolean | null;
                 include_data?: boolean;
             };
             header?: never;

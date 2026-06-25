@@ -113,6 +113,7 @@ import {
 	uninstallSolution,
 	getSolutionDeletionSummary,
 	exportSolution,
+	type SolutionExportOptions,
 	setSolutionConfig,
 	syncSolution,
 	previewSolutionFromRepo,
@@ -1211,12 +1212,12 @@ export function SolutionDetail() {
 		mutationFn: ({
 			mode,
 			password,
-			includeData,
+			options,
 		}: {
 			mode: "shareable" | "full";
 			password?: string;
-			includeData?: boolean;
-		}) => exportSolution(solutionId!, mode, password, includeData),
+			options?: SolutionExportOptions;
+		}) => exportSolution(solutionId!, mode, password, options),
 		onSuccess: ({ blob, filename }) => {
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
@@ -1808,8 +1809,8 @@ export function SolutionDetail() {
 					<ExportSolutionDialog
 						open={exportDialogOpen}
 						onOpenChange={setExportDialogOpen}
-						onExport={(mode, password, includeData) =>
-							exportMut.mutate({ mode, password, includeData })
+						onExport={(mode, password, options) =>
+							exportMut.mutate({ mode, password, options })
 						}
 						isPending={exportMut.isPending}
 					/>

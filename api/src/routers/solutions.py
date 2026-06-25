@@ -291,6 +291,8 @@ async def export_solution(
     ctx: Context,
     user: CurrentSuperuser,
     mode: str = "shareable",
+    include_values: bool | None = None,
+    include_files: bool | None = None,
     include_data: bool = False,
     password: Annotated[str | None, Body(embed=True)] = None,
 ) -> Response:
@@ -300,29 +302,36 @@ async def export_solution(
 
     This is a POST (not GET) specifically so the full-backup ``password`` rides
     in the request BODY rather than the URL query string — a query-string secret
-    leaks into access logs, proxies, and browser history. ``mode`` and
-    ``include_data`` stay in the query (they are not sensitive).
+    leaks into access logs, proxies, and browser history. ``mode`` and the
+    backup-content flags stay in the query (they are not sensitive).
 
-    ``mode=shareable`` (default): portable export, no sensitive values.
-    ``mode=full``: includes an encrypted ``.bifrost/secrets.enc`` blob carrying
-    the config values set for this install; requires ``password`` (in the body).
-    ``include_data=true``: include table row data in the encrypted blob.
-    Requires ``mode=full`` (data must be encrypted).
+    ``mode=shareable`` (default): portable export, no runtime values.
+    ``mode=full``: backup export. ``include_values`` controls config/secret
+    values, ``include_files`` controls Solution-owned file payloads, and
+    ``include_data`` controls table row data. A password is required whenever a
+    backup payload is requested.
     """
     if mode not in ("shareable", "full"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="mode must be 'shareable' or 'full'",
         )
-    if mode == "full" and not password:
+
+    include_values_flag = mode == "full" if include_values is None else include_values
+    # Back-compat: old callers only had include_data; keep that as "include
+    # all large runtime data" unless include_files is sent explicitly.
+    include_files_flag = include_data if include_files is None else include_files
+    wants_backup_payload = include_values_flag or include_files_flag or include_data
+
+    if mode == "shareable" and wants_backup_payload:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="full export requires a password",
+            detail="backup content options require mode=full",
         )
-    if include_data and mode != "full":
+    if mode == "full" and wants_backup_payload and not password:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="include_data requires mode=full (data must be encrypted)",
+            detail="backup export requires a password",
         )
 
     from src.services.solutions.capture import SolutionCaptureService
@@ -336,7 +345,6 @@ async def export_solution(
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
-    include_values = mode == "full"
     artifact = SolutionSourceArtifactStorage(solution_id)
     filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
     tmp = tempfile.NamedTemporaryFile(
@@ -361,8 +369,9 @@ async def export_solution(
             bundle = await SolutionCaptureService(ctx.db).bundle_for(
                 sol,
                 include_imports=True,
-                include_values=include_values,
+                include_values=include_values_flag,
                 include_data=include_data,
+                include_files=include_files_flag,
             )
             if has_stored_source:
                 await add_live_content_to_workspace_zip_file(
@@ -377,7 +386,7 @@ async def export_solution(
                     bundle,
                     ctx.db,
                     out_path,
-                    password=password if include_values else None,
+                    password=password if wants_backup_payload else None,
                 )
         _cleanup_file(source_path)
         # Commit the SolutionConnectionSchema rows that _connection_entries

@@ -42,6 +42,12 @@ interface RequestOptions {
 	signal?: AbortSignal;
 }
 
+export interface SolutionExportOptions {
+	includeValues?: boolean;
+	includeFiles?: boolean;
+	includeData?: boolean;
+}
+
 export async function listSolutions(
 	options: RequestOptions = {},
 ): Promise<SolutionsList> {
@@ -336,13 +342,21 @@ export async function exportSolution(
 	solutionId: string,
 	mode: "shareable" | "full" = "shareable",
 	password?: string,
-	includeData?: boolean,
+	options?: boolean | SolutionExportOptions,
 ): Promise<{ blob: Blob; filename: string }> {
 	// POST so the full-backup password rides in the request body, not the URL
 	// query string (a query-string secret leaks into logs/proxies/history).
-	// mode + include_data are not sensitive and stay in the query.
+	// mode + content flags are not sensitive and stay in the query.
+	const exportOptions =
+		typeof options === "boolean" ? { includeData: options } : (options ?? {});
 	const params = new URLSearchParams({ mode });
-	if (includeData) params.set("include_data", "true");
+	if (exportOptions.includeValues !== undefined) {
+		params.set("include_values", String(exportOptions.includeValues));
+	}
+	if (exportOptions.includeFiles !== undefined) {
+		params.set("include_files", String(exportOptions.includeFiles));
+	}
+	if (exportOptions.includeData) params.set("include_data", "true");
 	const response = await authFetch(
 		`/api/solutions/${solutionId}/export?${params.toString()}`,
 		{

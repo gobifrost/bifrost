@@ -32,7 +32,7 @@ function getPasswordInput() {
 	return screen.getByLabelText(/^password/i);
 }
 
-it("requires a password when Full backup is selected", async () => {
+it("requires a password when Backup is selected", async () => {
 	render(
 		<ExportSolutionDialog
 			open
@@ -40,20 +40,21 @@ it("requires a password when Full backup is selected", async () => {
 			onExport={() => {}}
 		/>,
 	);
-	await userEvent.click(screen.getByLabelText(/full backup/i));
+	await userEvent.click(screen.getByLabelText(/^backup/i));
 	expect(getPasswordInput()).toBeRequired();
 });
 
-it("explains what shareable and full backup exports include", async () => {
+it("explains what package and backup exports include", async () => {
 	render(<ExportSolutionDialog open onOpenChange={() => {}} onExport={() => {}} />);
 
 	expect(screen.getByText(/definitions, table schemas/i)).toBeInTheDocument();
-	expect(screen.getByText(/omits config values/i)).toBeInTheDocument();
+	expect(screen.getByText(/package/i)).toBeInTheDocument();
+	expect(screen.getByText(/omits runtime values/i)).toBeInTheDocument();
 	expect(
-		screen.getByText(/config values, secret values, and Solution-owned files/i),
+		screen.getByText(/choose which runtime state to include/i),
 	).toBeInTheDocument();
 
-	await userEvent.click(screen.getByLabelText(/full backup/i));
+	await userEvent.click(screen.getByLabelText(/^backup/i));
 	expect(screen.getByText(/table schemas are already included/i)).toBeInTheDocument();
 });
 
@@ -70,7 +71,7 @@ it("calls onExport with shareable + no password by default", async () => {
 	expect(onExport).toHaveBeenCalledWith("shareable", undefined, undefined);
 });
 
-it("Export button is disabled when Full backup selected but password is empty", async () => {
+it("Export button is disabled when Backup is selected but password is empty", async () => {
 	render(
 		<ExportSolutionDialog
 			open
@@ -78,7 +79,7 @@ it("Export button is disabled when Full backup selected but password is empty", 
 			onExport={() => {}}
 		/>,
 	);
-	await userEvent.click(screen.getByLabelText(/full backup/i));
+	await userEvent.click(screen.getByLabelText(/^backup/i));
 	expect(screen.getByRole("button", { name: /export/i })).toBeDisabled();
 });
 
@@ -95,7 +96,7 @@ it("Export button is disabled and shows a spinner label when isPending", async (
 	expect(btn).toBeDisabled();
 });
 
-it("calls onExport with full + password when Full backup is selected and password entered", async () => {
+it("calls onExport with backup defaults and password when Backup is selected", async () => {
 	const onExport = vi.fn();
 	render(
 		<ExportSolutionDialog
@@ -104,10 +105,14 @@ it("calls onExport with full + password when Full backup is selected and passwor
 			onExport={onExport}
 		/>,
 	);
-	await userEvent.click(screen.getByLabelText(/full backup/i));
+	await userEvent.click(screen.getByLabelText(/^backup/i));
 	await userEvent.type(getPasswordInput(), "s3cr3t");
 	await userEvent.click(screen.getByRole("button", { name: /export/i }));
-	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t", false);
+	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t", {
+		includeValues: true,
+		includeFiles: true,
+		includeData: false,
+	});
 });
 
 it("calls onOpenChange(false) when Cancel is clicked", async () => {
@@ -123,18 +128,40 @@ it("calls onOpenChange(false) when Cancel is clicked", async () => {
 	expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 
-it("offers Include table data only in Full backup mode", async () => {
+it("offers backup content options only in Backup mode", async () => {
 	render(<ExportSolutionDialog open onOpenChange={() => {}} onExport={() => {}} />);
+	expect(screen.queryByLabelText(/configuration values and secrets/i)).toBeNull();
+	expect(screen.queryByLabelText(/solution-owned files/i)).toBeNull();
 	expect(screen.queryByLabelText(/include table data/i)).toBeNull();
-	await userEvent.click(screen.getByLabelText(/full backup/i));
+
+	await userEvent.click(screen.getByLabelText(/^backup/i));
+	expect(screen.getByLabelText(/configuration values and secrets/i)).toBeChecked();
+	expect(screen.getByLabelText(/solution-owned files/i)).toBeChecked();
 	expect(screen.getByLabelText(/include table data/i)).toBeInTheDocument();
+});
+
+it("sends the selected backup content options", async () => {
+	const onExport = vi.fn();
+	render(<ExportSolutionDialog open onOpenChange={() => {}} onExport={onExport} />);
+
+	await userEvent.click(screen.getByLabelText(/^backup/i));
+	await userEvent.click(screen.getByLabelText(/solution-owned files/i));
+	await userEvent.click(screen.getByLabelText(/include table data/i));
+	await userEvent.type(getPasswordInput(), "s3cr3t");
+	await userEvent.click(screen.getByRole("button", { name: /export/i }));
+
+	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t", {
+		includeValues: true,
+		includeFiles: false,
+		includeData: true,
+	});
 });
 
 it("resets mode + password back to Shareable after close and reopen", async () => {
 	render(<ControlledExport />);
 
-	// Select Full backup and type a password.
-	await userEvent.click(screen.getByLabelText(/full backup/i));
+	// Select Backup and type a password.
+	await userEvent.click(screen.getByLabelText(/^backup/i));
 	await userEvent.type(getPasswordInput(), "s3cr3t");
 	expect(getPasswordInput()).toHaveValue("s3cr3t");
 
@@ -142,17 +169,17 @@ it("resets mode + password back to Shareable after close and reopen", async () =
 	await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
 	expect(screen.queryByLabelText(/^password/i)).not.toBeInTheDocument();
 
-	// Reopen — mode must be back to Shareable: the Shareable radio is checked,
-	// the Full radio is not, and no password field is rendered (so the stale
+	// Reopen — mode must be back to Package: the Package radio is checked,
+	// the Backup radio is not, and no password field is rendered (so the stale
 	// "s3cr3t" value is gone).
 	await userEvent.click(
 		screen.getByRole("button", { name: /reopen-harness/i }),
 	);
 	expect(
-		screen.getByRole("radio", { name: /shareable bundle/i }),
+		screen.getByRole("radio", { name: /^package/i }),
 	).toBeChecked();
 	expect(
-		screen.getByRole("radio", { name: /full backup/i }),
+		screen.getByRole("radio", { name: /^backup/i }),
 	).not.toBeChecked();
 	expect(screen.queryByLabelText(/^password/i)).not.toBeInTheDocument();
 });

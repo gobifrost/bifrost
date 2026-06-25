@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import type { SolutionExportOptions } from "@/services/solutions";
 
 export interface ExportSolutionDialogProps {
 	open: boolean;
@@ -21,7 +22,7 @@ export interface ExportSolutionDialogProps {
 	onExport: (
 		mode: "shareable" | "full",
 		password?: string,
-		includeData?: boolean,
+		options?: SolutionExportOptions,
 	) => void | Promise<void>;
 	/** When true, the Export button is disabled and shows a spinner. */
 	isPending?: boolean;
@@ -30,9 +31,9 @@ export interface ExportSolutionDialogProps {
 /**
  * Presentational dialog for choosing the solution export mode.
  *
- * - "Shareable bundle" (default): strips secret config values, safe to share.
- * - "Full backup": includes encrypted config values and runtime files; requires
- *   a password. Table rows are optional.
+ * - "Package" (default): definition only, safe to share.
+ * - "Backup": package plus selected runtime state. Selected runtime state is
+ *   password-encrypted.
  *
  * Network calls are the caller's responsibility (onExport prop).
  */
@@ -44,15 +45,21 @@ export function ExportSolutionDialog({
 }: ExportSolutionDialogProps) {
 	const [mode, setMode] = useState<"shareable" | "full">("shareable");
 	const [password, setPassword] = useState("");
+	const [includeValues, setIncludeValues] = useState(true);
+	const [includeFiles, setIncludeFiles] = useState(true);
 	const [includeData, setIncludeData] = useState(false);
 
-	const exportDisabled = mode === "full" && password.trim() === "";
+	const hasBackupSelection = includeValues || includeFiles || includeData;
+	const exportDisabled =
+		mode === "full" && (!hasBackupSelection || password.trim() === "");
 
 	function handleExport() {
 		void onExport(
 			mode,
 			mode === "full" ? password : undefined,
-			mode === "full" ? includeData : undefined,
+			mode === "full"
+				? { includeValues, includeFiles, includeData }
+				: undefined,
 		);
 	}
 
@@ -61,6 +68,8 @@ export function ExportSolutionDialog({
 			// Reset state when closing
 			setMode("shareable");
 			setPassword("");
+			setIncludeValues(true);
+			setIncludeFiles(true);
 			setIncludeData(false);
 		}
 		onOpenChange(next);
@@ -85,6 +94,8 @@ export function ExportSolutionDialog({
 							setMode(v as "shareable" | "full");
 							if (v === "shareable") {
 								setPassword("");
+								setIncludeValues(true);
+								setIncludeFiles(true);
 								setIncludeData(false);
 							}
 						}}
@@ -97,16 +108,14 @@ export function ExportSolutionDialog({
 							<RadioGroupItem
 								id="mode-shareable"
 								value="shareable"
-								aria-label="Shareable bundle"
+								aria-label="Package"
 								className="mt-0.5 shrink-0"
 							/>
 							<span className="min-w-0">
-								<span className="block text-sm font-medium">
-									Shareable bundle
-								</span>
+								<span className="block text-sm font-medium">Package</span>
 								<span className="mt-0.5 block text-xs text-muted-foreground">
-									Omits config values, secret values, runtime file payloads,
-									and table rows. Safe to share with others or publish.
+									Definitions only. Omits runtime values, file payloads, and
+									table rows. Safe to share with others or publish.
 								</span>
 							</span>
 						</label>
@@ -118,15 +127,14 @@ export function ExportSolutionDialog({
 							<RadioGroupItem
 								id="mode-full"
 								value="full"
-								aria-label="Full backup"
+								aria-label="Backup"
 								className="mt-0.5 shrink-0"
 							/>
 							<span className="min-w-0">
-								<span className="block text-sm font-medium">Full backup</span>
+								<span className="block text-sm font-medium">Backup</span>
 								<span className="mt-0.5 block text-xs text-muted-foreground">
-									Adds an encrypted backup payload with config values, secret
-									values, and Solution-owned files. Requires a password to
-									install. Keep this file private.
+									Choose which runtime state to include. Selected backup
+									contents are encrypted with a password.
 								</span>
 							</span>
 						</label>
@@ -156,27 +164,78 @@ export function ExportSolutionDialog({
 								</p>
 							</div>
 
-							<div className="flex items-start gap-3 rounded-lg border p-3">
-								<Checkbox
-									id="export-include-data"
-									checked={includeData}
-									onCheckedChange={(checked) =>
-										setIncludeData(checked === true)
-									}
-									className="mt-0.5 shrink-0"
-								/>
-								<div className="min-w-0 space-y-0.5">
-									<label
-										htmlFor="export-include-data"
-										className="cursor-pointer text-sm font-medium leading-none"
-									>
-										Include table data
-									</label>
-									<p className="text-xs text-muted-foreground">
-										Adds table rows to the encrypted backup payload. Table schemas
-										are already included above.
-									</p>
+							<div className="space-y-3 rounded-lg border p-3">
+								<p className="text-sm font-medium">Backup contents</p>
+								<div className="flex items-start gap-3">
+									<Checkbox
+										id="export-include-values"
+										checked={includeValues}
+										onCheckedChange={(checked) =>
+											setIncludeValues(checked === true)
+										}
+										className="mt-0.5 shrink-0"
+									/>
+									<div className="min-w-0 space-y-0.5">
+										<label
+											htmlFor="export-include-values"
+											className="cursor-pointer text-sm font-medium leading-none"
+										>
+											Configuration values and secrets
+										</label>
+										<p className="text-xs text-muted-foreground">
+											Includes configured values for this install, including
+											secret values.
+										</p>
+									</div>
 								</div>
+								<div className="flex items-start gap-3">
+									<Checkbox
+										id="export-include-files"
+										checked={includeFiles}
+										onCheckedChange={(checked) =>
+											setIncludeFiles(checked === true)
+										}
+										className="mt-0.5 shrink-0"
+									/>
+									<div className="min-w-0 space-y-0.5">
+										<label
+											htmlFor="export-include-files"
+											className="cursor-pointer text-sm font-medium leading-none"
+										>
+											Solution-owned files
+										</label>
+										<p className="text-xs text-muted-foreground">
+											Includes file payloads owned by this Solution.
+										</p>
+									</div>
+								</div>
+								<div className="flex items-start gap-3">
+									<Checkbox
+										id="export-include-data"
+										checked={includeData}
+										onCheckedChange={(checked) =>
+											setIncludeData(checked === true)
+										}
+										className="mt-0.5 shrink-0"
+									/>
+									<div className="min-w-0 space-y-0.5">
+										<label
+											htmlFor="export-include-data"
+											className="cursor-pointer text-sm font-medium leading-none"
+										>
+											Include table data
+										</label>
+										<p className="text-xs text-muted-foreground">
+											Adds table rows to the encrypted backup payload. Table
+											schemas are already included above.
+										</p>
+									</div>
+								</div>
+								{!hasBackupSelection && (
+									<p className="text-xs text-destructive">
+										Select at least one backup content type.
+									</p>
+								)}
 							</div>
 						</>
 					)}

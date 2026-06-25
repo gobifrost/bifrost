@@ -348,6 +348,7 @@ class SolutionCaptureService:
         include_imports: bool = False,
         include_values: bool = False,
         include_data: bool = False,
+        include_files: bool = False,
     ) -> SolutionBundle:
         workflows = await self._workflow_entries(solution.id)
         tables = await self._table_entries(solution.id)
@@ -369,7 +370,7 @@ class SolutionCaptureService:
         if include_data:
             table_data = await self._table_data(solution)
         solution_files: list[Any] = []
-        if include_data:
+        if include_files:
             solution_files = await self._solution_file_entries(solution)
         return SolutionBundle(
             solution=solution,
