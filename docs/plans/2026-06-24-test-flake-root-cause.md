@@ -1,8 +1,35 @@
 # Intermittent test flake — root cause & fix (2026-06-24)
 
 Two backend tests passed in isolation but failed intermittently under `./test.sh all`:
-- `tests/unit/test_manifest_scope_aware.py::TestScopeAwareManifest::test_no_solution_id_is_repo_scoped`
-- `tests/e2e/platform/test_solution_connection_refs_e2e.py::test_export_scrubs_connection_template_and_carries_no_secret`
+- `tests/unit/test_manifest_scope_aware.py::TestScopeAwareManifest::test_no_solution_id_is_repo_scoped` → **Flake A** (table policy by_alias).
+- `tests/e2e/platform/test_solution_connection_refs_e2e.py::test_export_scrubs_connection_template_and_carries_no_secret` → **Flake B** (export commit race).
+
+Both turned out to be REAL production bugs that test ordering/load merely exposed — not pure test litter.
+
+## Flake B — export endpoint commit race (commit `83d806176`)
+
+`/api/solutions/{id}/export` (`src/routers/solutions.py:~390`) upserts
+`SolutionConnectionSchema` rows as a side-effect of scanning a fresh `_repo/`
+workspace (`capture._connection_entries`, `capture.py:712-719`), then returned
+`FileResponse` **without** `await ctx.db.commit()`. The only commit was
+`get_db()`'s teardown, which FastAPI runs AFTER the response body streams. The
+test queries those rows from its own `db_session` immediately after the response
+returns → races the server commit. Under isolation the commit wins (passes 3/3);
+under full-suite DB load the commit lags → `decl is None` → fail.
+
+Real-bug impact (not just the test): a deferred-commit failure would silently
+drop the persisted connection declarations a later deploy/DR relies on. Every
+other mutating endpoint in `solutions.py` commits explicitly (lines 169, 258,
+740, 777, …) — the export endpoint was the lone exception.
+
+Fix: explicit `await ctx.db.commit()` before `return FileResponse(...)`. The zip
+contents were always correct (built from the returned `entries`); only the
+persistence was unreliable.
+
+---
+
+## Flake A — manifest policy $ref (original analysis below)
+
 
 Investigated via two parallel subagents (ref-resolution trace + isolation audit). Both converged.
 
