@@ -78,7 +78,9 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 	// Bump to force ShareTree/FolderListing to refetch after a mutation.
 	const [refreshKey, setRefreshKey] = useState(0);
 
-	const readOnly = location !== null && READ_ONLY_LOCATIONS.has(location);
+	const solutionReadOnly = Boolean(install);
+	const readOnly =
+		solutionReadOnly || (location !== null && READ_ONLY_LOCATIONS.has(location));
 	const canUpload = view === "browse" && location !== null && !readOnly;
 	const uploadInputRef = useRef<HTMLInputElement>(null);
 	const { uploading, uploadFiles } = useFileUpload(
@@ -136,6 +138,7 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 	}
 
 	function openPolicy(loc: string, path: string) {
+		if (solutionReadOnly) return;
 		setModalTarget({ location: loc, path });
 		setPolicyOpen(true);
 	}
@@ -162,14 +165,17 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 		} else if (action === "test") {
 			openTest(loc, treePrefix);
 		} else if (action === "newPolicy") {
+			if (solutionReadOnly) return;
 			openPolicy(loc, treePrefix);
 		} else if (action === "upload") {
+			if (solutionReadOnly) return;
 			handleSelect(loc, treePrefix);
 		}
 	}
 
 	function handleRowAction(action: ListingRowAction, path: string) {
 		if (location === null) return;
+		if (readOnly && (action === "policy" || action === "delete")) return;
 		if (action === "preview") {
 			setSelectedFile(path);
 			if (!isWide) setDetailOpen(true);
@@ -183,7 +189,7 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 	}
 
 	async function deleteFile(path: string) {
-		if (location === null) return;
+		if (location === null || readOnly) return;
 		const { files } = await import("@/lib/app-sdk/files");
 		try {
 			await files.delete(path, { location, scope });
@@ -205,6 +211,7 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 			scope={scope}
 			selectedLocation={location}
 			selectedPrefix={prefix}
+			readOnly={solutionReadOnly}
 			onSelect={handleSelect}
 			onContextAction={handleTreeAction}
 		/>
@@ -220,6 +227,9 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 					location={location ?? ""}
 					scope={scope}
 					path={selectedFile ?? (location ? prefix : null)}
+					readOnly={readOnly}
+					managedBySolution={solutionReadOnly}
+					solutionId={install}
 					onOpenTest={() =>
 						openTest(location ?? "", selectedFile ?? prefix)
 					}
@@ -327,23 +337,29 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 					)}
 				</div>
 				<div className="ml-auto flex shrink-0 items-center gap-2">
-					<Tabs
-						value={view}
-						onValueChange={(value) => setView(value as "browse" | "policies")}
-					>
-						<TabsList>
-							<TabsTrigger value="browse">Browse</TabsTrigger>
-							<TabsTrigger value="policies">Policies</TabsTrigger>
-						</TabsList>
-					</Tabs>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						onClick={() => setNewShareOpen(true)}
-					>
-						<Plus className="h-4 w-4" /> New Share
-					</Button>
+					{!install && (
+						<>
+							<Tabs
+								value={view}
+								onValueChange={(value) =>
+									setView(value as "browse" | "policies")
+								}
+							>
+								<TabsList>
+									<TabsTrigger value="browse">Browse</TabsTrigger>
+									<TabsTrigger value="policies">Policies</TabsTrigger>
+								</TabsList>
+							</Tabs>
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								onClick={() => setNewShareOpen(true)}
+							>
+								<Plus className="h-4 w-4" /> New Share
+							</Button>
+						</>
+					)}
 					{canUpload && (
 						<>
 							<input
@@ -371,7 +387,7 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 				</div>
 			</header>
 
-			{view === "policies" ? (
+			{view === "policies" && !install ? (
 				<div className="min-h-0 flex-1 overflow-hidden">
 					<PoliciesView
 						scope={scope}
@@ -392,6 +408,8 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 							location={location}
 							prefix={prefix}
 							readOnly={readOnly}
+							managedBySolution={solutionReadOnly}
+							solutionId={install}
 							onOpenFolder={(next) => resetTo(location, next)}
 							onSelectFile={selectFile}
 							onRowAction={handleRowAction}

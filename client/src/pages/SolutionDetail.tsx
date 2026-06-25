@@ -1916,13 +1916,17 @@ export function SolutionDetail() {
 							</DialogHeader>
 
 							<div className="space-y-2">
-								<Label htmlFor="hard-delete-confirm">
-									Type{" "}
-									<span className="font-mono font-semibold text-foreground">
+								<div className="space-y-1">
+									<Label htmlFor="hard-delete-confirm">
+										Type the Solution slug to confirm
+									</Label>
+									<div
+										data-testid="hard-delete-slug"
+										className="break-all rounded-md border bg-muted px-2.5 py-2 font-mono text-xs font-semibold text-foreground"
+									>
 										{sol.slug}
-									</span>{" "}
-									to confirm
-								</Label>
+									</div>
+								</div>
 								<Input
 									id="hard-delete-confirm"
 									data-testid="hard-delete-confirm-input"

@@ -15,6 +15,7 @@ import {
 	DataTableHeader,
 	DataTableRow,
 } from "@/components/ui/data-table";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { files } from "@/lib/app-sdk/files";
 import { listStructure, type StructureEntry } from "@/services/fileStructure";
 import { EntryMenuItem } from "./fileContextMenu";
@@ -35,6 +36,8 @@ interface FolderListingProps {
 	location: string | null;
 	prefix: string;
 	readOnly: boolean;
+	managedBySolution?: boolean;
+	solutionId?: string | null;
 	onOpenFolder: (prefix: string) => void;
 	onSelectFile: (path: string) => void;
 	onRowAction: (action: ListingRowAction, path: string) => void;
@@ -47,6 +50,8 @@ export function FolderListing({
 	location,
 	prefix,
 	readOnly,
+	managedBySolution = false,
+	solutionId = null,
 	onOpenFolder,
 	onSelectFile,
 	onRowAction,
@@ -101,6 +106,9 @@ export function FolderListing({
 	const folders = entries.filter((e) => e.kind === "folder");
 	const fileEntries = entries.filter((e) => e.kind === "file");
 	const canUpload = !readOnly && location !== null;
+	const managedBadge = managedBySolution ? (
+		<SolutionManagedBadge solutionId={solutionId ?? undefined} />
+	) : null;
 
 	return (
 		<section
@@ -188,6 +196,7 @@ export function FolderListing({
 												<div className="flex min-w-0 items-center gap-2">
 													<Folder className="h-4 w-4 text-muted-foreground" />
 													<span className="truncate">{folder.name}</span>
+													{managedBadge}
 												</div>
 											</DataTableCell>
 											<DataTableCell />
@@ -225,6 +234,7 @@ export function FolderListing({
 												<div className="flex min-w-0 items-center gap-2">
 													<FileText className="h-4 w-4 text-muted-foreground" />
 													<span className="truncate">{file.name}</span>
+													{managedBadge}
 												</div>
 											</DataTableCell>
 											<DataTableCell>
@@ -277,7 +287,9 @@ export function FolderListing({
 									<ContextMenuContent>
 										<EntryMenuItem action="preview" onSelect={() => onRowAction("preview", file.path)} />
 										<EntryMenuItem action="test" onSelect={() => onRowAction("test", file.path)} />
-										<EntryMenuItem action="policy" onSelect={() => onRowAction("policy", file.path)} />
+										{!readOnly && (
+											<EntryMenuItem action="policy" onSelect={() => onRowAction("policy", file.path)} />
+										)}
 										<EntryMenuItem action="download" onSelect={() => void handleDownload(file.path)} />
 										{!readOnly && (
 											<>

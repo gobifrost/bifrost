@@ -5,6 +5,11 @@ vi.mock("@/services/fileStructure", () => ({ listStructure: vi.fn() }));
 vi.mock("@/lib/app-sdk/files", () => ({
 	files: { upload: vi.fn(), download: vi.fn(), delete: vi.fn() },
 }));
+vi.mock("@/components/solutions/SolutionManagedBadge", () => ({
+	SolutionManagedBadge: () => (
+		<span data-testid="solution-managed-badge">Managed</span>
+	),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { listStructure } from "@/services/fileStructure";
 import { files } from "@/lib/app-sdk/files";
@@ -78,6 +83,53 @@ describe("FolderListing", () => {
 		expect(
 			screen.queryByRole("button", { name: /upload/i }),
 		).not.toBeInTheDocument();
+	});
+
+	it("hides policy and delete mutation actions when read-only", async () => {
+		const onRowAction = vi.fn();
+		const onFolderAction = vi.fn();
+		render(
+			<FolderListing
+				scope={null}
+				location="uploads"
+				prefix=""
+				readOnly
+				onOpenFolder={vi.fn()}
+				onSelectFile={vi.fn()}
+				onRowAction={onRowAction}
+				onFolderAction={onFolderAction}
+				onUploaded={vi.fn()}
+			/>,
+		);
+
+		fireEvent.contextMenu(await screen.findByText("a.png"));
+		expect(screen.queryByText("Manage Policy")).not.toBeInTheDocument();
+		expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+
+		fireEvent.contextMenu(await screen.findByText("team"));
+		expect(screen.queryByText("New Policy")).not.toBeInTheDocument();
+		expect(screen.queryByText("Upload")).not.toBeInTheDocument();
+	});
+
+	it("shows managed lock badges for solution-owned rows", async () => {
+		render(
+			<FolderListing
+				scope="sol-1"
+				location="reports"
+				prefix=""
+				readOnly
+				managedBySolution
+				solutionId="sol-1"
+				onOpenFolder={vi.fn()}
+				onSelectFile={vi.fn()}
+				onRowAction={vi.fn()}
+				onFolderAction={vi.fn()}
+				onUploaded={vi.fn()}
+			/>,
+		);
+
+		await screen.findByText("a.png");
+		expect(screen.getAllByTestId("solution-managed-badge")).toHaveLength(2);
 	});
 
 	it("shows a click-to-upload dropzone for an empty writable folder", async () => {

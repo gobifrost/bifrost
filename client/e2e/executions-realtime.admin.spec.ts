@@ -11,12 +11,12 @@
 
 import { test, expect } from "./fixtures/api-fixture";
 
-// Inline Python workflow that emits one log line immediately, pauses, then
-// emits the rest so the page has a deterministic window to mount, subscribe
-// via WebSocket, snapshot an initial log count, and then observe more logs
+// Inline Python workflow that waits briefly before emitting logs so the
+// details page can mount and subscribe before the first frame arrives. It then
+// emits logs slowly enough to snapshot an initial count and observe more lines
 // arrive BEFORE the execution finishes.
-// If this script runs too fast, all logs land before the assertion window
-// opens and we can't prove they streamed in vs. were fetched at the end.
+// If this script runs too fast, all logs land before the assertion window opens
+// and we can't prove they streamed in vs. were fetched at the end.
 // `result` is returned as the workflow result.
 const SCRIPT = `
 import asyncio
@@ -24,12 +24,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logger.info("streaming log line 0")
-await asyncio.sleep(45.0)
+await asyncio.sleep(5.0)
 
-for i in range(1, 21):
+for i in range(0, 21):
     logger.info(f"streaming log line {i}")
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.75)
 
 result = {"ok": True, "lines": 21}
 `.trim();
@@ -39,9 +38,9 @@ test.describe("Execution Realtime Streaming", () => {
 		page,
 		api,
 	}) => {
-		// Script runs ~55s; allow generous headroom for navigation, WebSocket
+		// Script runs ~21s; allow generous headroom for navigation, WebSocket
 		// handshake, and the final status/result assertions.
-		test.setTimeout(120000);
+		test.setTimeout(90000);
 
 		// Fail the test on any console error. Attach before navigation so we
 		// catch errors from the initial mount, WebSocket handshake, and merge.
@@ -83,15 +82,14 @@ test.describe("Execution Realtime Streaming", () => {
 		// Each emitted line renders as visible text in the logs panel. The
 		// WebSocket frames deliver them one-at-a-time, so seeing ANY of them
 		// means the streaming pipeline is wired end-to-end.
-		const firstLog = page.getByText("streaming log line 0", {
-			exact: true,
-		});
-		await firstLog.waitFor({ state: "visible", timeout: 30000 });
+		const streamingLines = page.getByText(/^streaming log line \d+$/);
+		await streamingLines
+			.first()
+			.waitFor({ state: "visible", timeout: 45000 });
 
 		// Snapshot count of streaming lines visible right after the first
 		// arrives. Because the script sleeps 1s between lines, we should see
 		// only a handful at this point — far fewer than the full 20.
-		const streamingLines = page.getByText(/^streaming log line \d+$/);
 		const initialLogCount = await streamingLines.count();
 		expect(initialLogCount).toBeGreaterThan(0);
 
@@ -99,7 +97,7 @@ test.describe("Execution Realtime Streaming", () => {
 		// Poll until more lines have appeared than we saw initially. This
 		// happens without a page reload — if it does, the stream is working.
 		await expect
-			.poll(async () => streamingLines.count(), { timeout: 70000 })
+			.poll(async () => streamingLines.count(), { timeout: 45000 })
 			.toBeGreaterThan(initialLogCount);
 
 		// Assertion 3: status transitions from a pre-terminal state (Running

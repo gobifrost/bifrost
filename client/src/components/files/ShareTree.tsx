@@ -31,6 +31,7 @@ interface ShareTreeProps {
 	scope: string | null;
 	selectedLocation: string | null;
 	selectedPrefix: string;
+	readOnly?: boolean;
 	onSelect: (location: string, prefix: string) => void;
 	onContextAction: (
 		action: ShareTreeAction,
@@ -148,6 +149,7 @@ export function ShareTree({
 	scope,
 	selectedLocation,
 	selectedPrefix,
+	readOnly = false,
 	onSelect,
 	onContextAction,
 }: ShareTreeProps) {
@@ -185,6 +187,7 @@ export function ShareTree({
 			{shares.map((share) => {
 				const locationActive = selectedLocation === share.location;
 				const selected = locationActive && selectedPrefix === "";
+				const effectiveReadOnly = readOnly || share.readOnly;
 				return (
 					<div key={share.location}>
 						<ContextMenu>
@@ -202,7 +205,7 @@ export function ShareTree({
 									<span className="truncate" title={share.location}>
 										{share.location}
 									</span>
-									{share.readOnly && (
+									{effectiveReadOnly && (
 										<span className="ml-auto flex items-center gap-0.5 text-[10px] text-muted-foreground">
 											<Lock className="h-3 w-3" /> read-only
 										</span>
@@ -212,7 +215,7 @@ export function ShareTree({
 							<ContextMenuContent>
 								<EntryMenuItem action="effective" onSelect={() => onContextAction("effective", share.location, "")} />
 								<EntryMenuItem action="test" onSelect={() => onContextAction("test", share.location, "")} />
-								{!share.readOnly && (
+								{!effectiveReadOnly && (
 									<>
 										<EntryMenuItem action="upload" onSelect={() => onContextAction("upload", share.location, "")} />
 										<EntryMenuItem action="newPolicy" onSelect={() => onContextAction("newPolicy", share.location, "")} />
@@ -224,7 +227,7 @@ export function ShareTree({
 							<ShareChildren
 								location={share.location}
 								scope={scope}
-								readOnly={share.readOnly}
+								readOnly={effectiveReadOnly}
 								selectedLocation={selectedLocation}
 								selectedPrefix={selectedPrefix}
 								onSelect={onSelect}

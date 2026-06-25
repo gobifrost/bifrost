@@ -4,6 +4,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/services/filePolicies", () => ({
 	effectiveAccess: vi.fn(),
 }));
+vi.mock("@/components/solutions/SolutionManagedBadge", () => ({
+	SolutionManagedBadge: () => (
+		<span data-testid="solution-managed-badge">Managed</span>
+	),
+}));
 import { effectiveAccess } from "@/services/filePolicies";
 import { EffectiveAccessPanel } from "./EffectiveAccessPanel";
 
@@ -56,5 +61,28 @@ describe("EffectiveAccessPanel", () => {
 		);
 		fireEvent.click(screen.getByRole("button", { name: /test access/i }));
 		expect(onOpenTest).toHaveBeenCalled();
+	});
+
+	it("hides policy management in read-only solution file scope", async () => {
+		vi.mocked(effectiveAccess).mockResolvedValue([]);
+		const onManagePolicy = vi.fn();
+		render(
+			<EffectiveAccessPanel
+				location="reports"
+				scope="sol-1"
+				path="demo/readme.txt"
+				readOnly
+				managedBySolution
+				solutionId="sol-1"
+				onOpenTest={vi.fn()}
+				onManagePolicy={onManagePolicy}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("button", { name: /manage policy/i }),
+		).not.toBeInTheDocument();
+		expect(screen.getByTestId("solution-managed-badge")).toBeInTheDocument();
+		expect(onManagePolicy).not.toHaveBeenCalled();
 	});
 });

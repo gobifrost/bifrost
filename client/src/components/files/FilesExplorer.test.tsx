@@ -18,15 +18,19 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 	),
 }));
 const shareTreeScopes: Array<string | null> = [];
+const shareTreeReadOnly: boolean[] = [];
 vi.mock("./ShareTree", () => ({
 	ShareTree: ({
 		scope,
+		readOnly,
 		onSelect,
 	}: {
 		scope: string | null;
+		readOnly?: boolean;
 		onSelect: (location: string, prefix: string) => void;
 	}) => {
 		shareTreeScopes.push(scope);
+		shareTreeReadOnly.push(Boolean(readOnly));
 		return (
 			<div data-testid="share-tree">
 				<button type="button" onClick={() => onSelect("gallery", "")}>
@@ -37,15 +41,27 @@ vi.mock("./ShareTree", () => ({
 	},
 }));
 const folderListingLocations: Array<string | null> = [];
+const folderListingReadOnly: boolean[] = [];
 vi.mock("./FolderListing", () => ({
-	FolderListing: ({ location }: { location: string | null }) => {
+	FolderListing: ({
+		location,
+		readOnly,
+	}: {
+		location: string | null;
+		readOnly: boolean;
+	}) => {
 		folderListingLocations.push(location);
+		folderListingReadOnly.push(readOnly);
 		return <div data-testid="folder-listing" />;
 	},
 }));
 vi.mock("./FilePreview", () => ({ FilePreview: () => <div /> }));
+const effectiveAccessReadOnly: boolean[] = [];
 vi.mock("./EffectiveAccessPanel", () => ({
-	EffectiveAccessPanel: () => <div />,
+	EffectiveAccessPanel: ({ readOnly }: { readOnly?: boolean }) => {
+		effectiveAccessReadOnly.push(Boolean(readOnly));
+		return <div />;
+	},
 }));
 vi.mock("./TestAccessModal", () => ({ TestAccessModal: () => <div /> }));
 vi.mock("./PolicyEditorModal", () => ({ PolicyEditorModal: () => <div /> }));
@@ -64,6 +80,11 @@ import { FilesExplorer } from "./FilesExplorer";
 
 describe("FilesExplorer", () => {
 	beforeEach(() => {
+		shareTreeScopes.length = 0;
+		shareTreeReadOnly.length = 0;
+		folderListingLocations.length = 0;
+		folderListingReadOnly.length = 0;
+		effectiveAccessReadOnly.length = 0;
 		vi.mocked(useAuth).mockReturnValue({
 			isPlatformAdmin: true,
 		} as ReturnType<typeof useAuth>);
@@ -156,7 +177,6 @@ describe("FilesExplorer", () => {
 	describe("install prop (solution-scoped mode)", () => {
 		it("pins scope to the install id and passes it to ShareTree", () => {
 			vi.mocked(useMediaQuery).mockReturnValue(true);
-			shareTreeScopes.length = 0;
 			render(
 				<MemoryRouter>
 					<FilesExplorer install="sol-abc" />
@@ -164,6 +184,28 @@ describe("FilesExplorer", () => {
 			);
 			// scope must be the install id, not "global" or an org id.
 			expect(shareTreeScopes).toContain("sol-abc");
+		});
+
+		it("makes the solution-scoped file browser read-only", () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" />
+				</MemoryRouter>,
+			);
+
+			expect(shareTreeReadOnly).toContain(true);
+			expect(folderListingReadOnly).toContain(true);
+			expect(effectiveAccessReadOnly).toContain(true);
+			expect(
+				screen.queryByRole("button", { name: "New Share" }),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole("tab", { name: /policies/i }),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole("button", { name: /upload/i }),
+			).not.toBeInTheDocument();
 		});
 
 		it("starts at the solution shares root instead of a pseudo solutions location", () => {

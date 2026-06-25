@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { effectiveAccess, type FilePolicy } from "@/services/filePolicies";
 import { InlineLoader } from "./InlineLoader";
 
@@ -9,6 +10,9 @@ interface EffectiveAccessPanelProps {
 	location: string;
 	scope: string | null;
 	path: string | null;
+	readOnly?: boolean;
+	managedBySolution?: boolean;
+	solutionId?: string | null;
 	onOpenTest: () => void;
 	onManagePolicy: () => void;
 }
@@ -17,6 +21,9 @@ export function EffectiveAccessPanel({
 	location,
 	scope,
 	path,
+	readOnly = false,
+	managedBySolution = false,
+	solutionId = null,
 	onOpenTest,
 	onManagePolicy,
 }: EffectiveAccessPanelProps) {
@@ -56,11 +63,16 @@ export function EffectiveAccessPanel({
 				<div className="flex items-center gap-2">
 					<ShieldCheck className="h-4 w-4 text-muted-foreground" />
 					<h2 className="text-sm font-semibold">Effective Access</h2>
+					{managedBySolution && (
+						<SolutionManagedBadge solutionId={solutionId ?? undefined} />
+					)}
 				</div>
 				<div className="flex gap-1">
-					<Button type="button" variant="outline" size="xs" onClick={onManagePolicy}>
-						Manage policy
-					</Button>
+					{!readOnly && (
+						<Button type="button" variant="outline" size="xs" onClick={onManagePolicy}>
+							Manage policy
+						</Button>
+					)}
 					<Button
 						type="button"
 						size="xs"

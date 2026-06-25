@@ -579,6 +579,11 @@ describe("SolutionDetail", () => {
 		expect(summaryList).toHaveTextContent(/1 table/);
 		expect(summaryList).toHaveTextContent(/3 workflows/);
 
+		expect(screen.getByTestId("hard-delete-slug")).toHaveTextContent(
+			"my-solution",
+		);
+		expect(screen.getByText("Type the Solution slug to confirm")).toBeInTheDocument();
+
 		// Confirm is disabled until slug is typed.
 		const confirmBtn = screen.getByTestId("confirm-hard-delete");
 		expect(confirmBtn).toBeDisabled();
