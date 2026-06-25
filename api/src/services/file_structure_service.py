@@ -20,7 +20,7 @@ from src.services.file_storage import FileStorageService
 
 # Top-level S3 prefixes that map to reserved/internal locations and must never
 # appear as explorer shares.
-_HIDDEN_TOP_PREFIXES = {"_repo", "_tmp", "_apps"}
+_HIDDEN_TOP_PREFIXES = {"_repo", "_tmp", "_apps", "_solutions", "_solution_artifacts"}
 _UPLOADS_TOP = UPLOADS_PREFIX.rstrip("/")
 
 

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Menu, Plus, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, Menu, Plus, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Sheet,
@@ -38,13 +38,15 @@ const PANE = "flex min-h-0 flex-col overflow-hidden rounded-[min(var(--radius-4x
 interface FilesExplorerProps {
 	/**
 	 * When set, the explorer is pinned to the solution install's file scope:
-	 * location="solutions", scope=<install_id>.  The org/global selector is
-	 * hidden and the header shows a back-link to the Solution detail page.
+	 * scope=<install_id>. The org/global selector is hidden and the header shows
+	 * a back-link to the Solution detail page.
 	 */
 	install?: string;
+	/** Display name for the pinned Solution install. */
+	installName?: string;
 }
 
-export function FilesExplorer({ install }: FilesExplorerProps = {}) {
+export function FilesExplorer({ install, installName }: FilesExplorerProps = {}) {
 	const { isPlatformAdmin } = useAuth();
 	const { data: organizations = [] } = useOrganizations({
 		enabled: isPlatformAdmin && !install,
@@ -59,7 +61,7 @@ export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 	// means literal global.
 	const [selectorScope, setSelectorScope] = useState<string | null>(null);
 	const scope = install ?? selectorScope ?? "global";
-	const [location, setLocation] = useState<string | null>(install ? "solutions" : null);
+	const [location, setLocation] = useState<string | null>(null);
 	const [prefix, setPrefix] = useState("");
 	const [selectedFile, setSelectedFile] = useState<string | null>(null);
 	const [view, setView] = useState<"browse" | "policies">("browse");
@@ -111,6 +113,14 @@ export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 	}
 
 	function handleBreadcrumb(depth: number) {
+		if (install && depth === 0) {
+			resetTo(location, "");
+			return;
+		}
+		if (install) {
+			resetTo(location, segments.slice(0, depth).join("/"));
+			return;
+		}
 		if (depth === -1) {
 			resetTo(null, "");
 		} else if (depth === 0) {
@@ -220,21 +230,33 @@ export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 			</div>
 		</div>
 	);
+	const solutionTitle = installName ?? "Solution";
+	const solutionBreadcrumbItems =
+		location === null ? [] : [location, ...segments];
 
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-3">
 			<header className="flex shrink-0 flex-wrap items-center gap-2">
 				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
 					{install && (
-						<Link
-							to={`/solutions/${install}`}
-							className="inline-flex shrink-0 items-center text-sm text-muted-foreground hover:text-foreground"
-							data-testid="files-solution-back"
-							aria-label="Back to Solution"
-						>
-							<ChevronLeft className="mr-1 h-3.5 w-3.5" />
-							Back
-						</Link>
+						<>
+							<Button asChild variant="outline" size="sm">
+								<Link
+									to={`/solutions/${install}`}
+									data-testid="files-solution-back"
+									aria-label="Back to Solution"
+								>
+									<ChevronLeft data-icon="inline-start" />
+									Back
+								</Link>
+							</Button>
+							<span
+								className="min-w-0 truncate text-sm font-semibold text-foreground"
+								title={solutionTitle}
+							>
+								{solutionTitle}
+							</span>
+						</>
 					)}
 					{!isWide && (
 						<Sheet open={treeOpen} onOpenChange={setTreeOpen}>
@@ -266,7 +288,7 @@ export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 							/>
 						</div>
 					)}
-					{view === "browse" && (
+					{view === "browse" && !install && (
 						<div className="min-w-0 flex-1">
 							<Breadcrumbs
 								scopeLabel={scopeLabel}
@@ -275,6 +297,33 @@ export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 								onNavigate={handleBreadcrumb}
 							/>
 						</div>
+					)}
+					{view === "browse" && install && solutionBreadcrumbItems.length > 0 && (
+						<nav
+							aria-label="Breadcrumb"
+							className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5"
+						>
+							{solutionBreadcrumbItems.map((item, index) => (
+								<span key={`${item}-${index}`} className="flex min-w-0 items-center">
+									{index > 0 && (
+										<ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+									)}
+									<button
+										type="button"
+										onClick={() => handleBreadcrumb(index)}
+										title={item}
+										className={
+											"max-w-[12rem] truncate rounded px-1 text-sm hover:bg-muted " +
+											(index === solutionBreadcrumbItems.length - 1
+												? "font-medium text-foreground"
+												: "text-muted-foreground")
+										}
+									>
+										{item}
+									</button>
+								</span>
+							))}
+						</nav>
 					)}
 				</div>
 				<div className="ml-auto flex shrink-0 items-center gap-2">

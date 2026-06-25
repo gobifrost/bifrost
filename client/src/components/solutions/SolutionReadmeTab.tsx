@@ -18,8 +18,8 @@ import { TiptapEditor } from "@/components/ui/tiptap-editor";
 
 export interface SolutionReadmeTabProps {
 	readme: string | null;
-	onSave: (markdown: string) => void | Promise<void>;
 	canEdit: boolean;
+	onSave?: (markdown: string) => void | Promise<void>;
 }
 
 export function SolutionReadmeTab({
@@ -44,6 +44,7 @@ export function SolutionReadmeTab({
 	};
 
 	const save = async () => {
+		if (!onSave) return;
 		setSaving(true);
 		try {
 			await onSave(draft);

@@ -166,17 +166,16 @@ describe("FilesExplorer", () => {
 			expect(shareTreeScopes).toContain("sol-abc");
 		});
 
-		it("pins location to 'solutions' and passes it to FolderListing", () => {
+		it("starts at the solution shares root instead of a pseudo solutions location", () => {
 			vi.mocked(useMediaQuery).mockReturnValue(true);
 			folderListingLocations.length = 0;
 			render(
 				<MemoryRouter>
-					<FilesExplorer install="sol-abc" />
+					<FilesExplorer install="sol-abc" installName="Finance Ops" />
 				</MemoryRouter>,
 			);
-			// location must be "solutions" — not null/undefined — so the read/write
-			// API calls target the correct location bucket.
-			expect(folderListingLocations).toContain("solutions");
+			expect(folderListingLocations).toContain(null);
+			expect(screen.queryByText("solutions")).not.toBeInTheDocument();
 		});
 
 		it("hides the org/global selector when install is set", () => {
@@ -193,12 +192,31 @@ describe("FilesExplorer", () => {
 			vi.mocked(useMediaQuery).mockReturnValue(true);
 			render(
 				<MemoryRouter>
-					<FilesExplorer install="sol-abc" />
+					<FilesExplorer install="sol-abc" installName="Finance Ops" />
 				</MemoryRouter>,
 			);
 			const back = screen.getByRole("link", { name: /back to solution/i });
 			expect(back).toHaveAttribute("href", "/solutions/sol-abc");
 			expect(back).toHaveTextContent("Back");
+			expect(screen.getByText("Finance Ops")).toHaveClass("font-semibold");
+		});
+
+		it("shows the selected solution file location as the breadcrumb root", async () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			const user = userEvent.setup();
+			folderListingLocations.length = 0;
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" installName="Finance Ops" />
+				</MemoryRouter>,
+			);
+
+			await user.click(screen.getByRole("button", { name: "select-gallery" }));
+
+			expect(folderListingLocations).toContain("gallery");
+			expect(screen.getByRole("navigation", { name: /breadcrumb/i }))
+				.toHaveTextContent("gallery");
+			expect(screen.queryByText("solutions")).not.toBeInTheDocument();
 		});
 	});
 });

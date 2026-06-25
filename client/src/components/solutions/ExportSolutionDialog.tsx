@@ -31,7 +31,8 @@ export interface ExportSolutionDialogProps {
  * Presentational dialog for choosing the solution export mode.
  *
  * - "Shareable bundle" (default): strips secret config values, safe to share.
- * - "Full backup": includes encrypted secrets; requires a password.
+ * - "Full backup": includes encrypted config values and runtime files; requires
+ *   a password. Table rows are optional.
  *
  * Network calls are the caller's responsibility (onExport prop).
  */
@@ -71,9 +72,9 @@ export function ExportSolutionDialog({
 				<DialogHeader>
 					<DialogTitle>Export Solution</DialogTitle>
 					<DialogDescription>
-						Choose how to export this Solution. The shareable bundle is safe to
-						distribute — secrets are omitted. A full backup retains encrypted
-						secret values and requires a password to install.
+						Choose how to export this Solution. Definitions, table schemas,
+						config declarations, file-location declarations, and source files
+						are included in both modes.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -104,8 +105,8 @@ export function ExportSolutionDialog({
 									Shareable bundle
 								</span>
 								<span className="mt-0.5 block text-xs text-muted-foreground">
-									Secret config values are excluded. Safe to share with others
-									or publish.
+									Omits config values, secret values, runtime file payloads,
+									and table rows. Safe to share with others or publish.
 								</span>
 							</span>
 						</label>
@@ -123,7 +124,8 @@ export function ExportSolutionDialog({
 							<span className="min-w-0">
 								<span className="block text-sm font-medium">Full backup</span>
 								<span className="mt-0.5 block text-xs text-muted-foreground">
-									Includes encrypted secret values. Requires a password to
+									Adds an encrypted backup payload with config values, secret
+									values, and Solution-owned files. Requires a password to
 									install. Keep this file private.
 								</span>
 							</span>
@@ -171,8 +173,8 @@ export function ExportSolutionDialog({
 										Include table data
 									</label>
 									<p className="text-xs text-muted-foreground">
-										Exports table rows, which may contain sensitive records.
-										Encrypted with your password.
+										Adds table rows to the encrypted backup payload. Table schemas
+										are already included above.
 									</p>
 								</div>
 							</div>

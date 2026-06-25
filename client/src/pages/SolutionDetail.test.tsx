@@ -44,8 +44,10 @@ const mockExportSolution = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
 const mockSyncSolution = vi.fn();
+const mockGetSolutionReadme = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	getSolutionEntities: (...a: unknown[]) => mockGetSolutionEntities(...a),
+	getSolutionReadme: (...a: unknown[]) => mockGetSolutionReadme(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
 	uninstallSolution: (...a: unknown[]) => mockUninstallSolution(...a),
@@ -147,6 +149,7 @@ async function renderPage() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSolutionEntities.mockResolvedValue(makeEntities());
+	mockGetSolutionReadme.mockResolvedValue({ readme: null });
 	mockGetSolutionDeletionSummary.mockResolvedValue({
 		solution_id: "sol-1",
 		files: 2,
@@ -190,6 +193,19 @@ describe("SolutionDetail", () => {
 		expect(
 			screen.getByRole("heading", { name: "My Solution" }),
 		).toBeInTheDocument();
+	});
+
+	it("keeps the README read-only even for manual installs", async () => {
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(
+			await screen.findByText(/no setup instructions provided/i),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/add setup instructions/i)).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /write readme/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("renders the version and upgraded-from subtext", async () => {

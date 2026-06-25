@@ -109,7 +109,6 @@ import {
 	getSolutionEntities,
 	getSolutionSetup,
 	getSolutionReadme,
-	putSolutionReadme,
 	deleteSolution,
 	uninstallSolution,
 	getSolutionDeletionSummary,
@@ -121,7 +120,6 @@ import {
 import { UpgradeDiffView } from "@/components/solutions/CreateEditSolution";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
-import { useAuth } from "@/contexts/AuthContext";
 import type { components } from "@/lib/v1";
 
 type EntitySummary = components["schemas"]["SolutionEntitySummary"];
@@ -970,13 +968,10 @@ function chipClass(active: boolean): string {
 }
 
 /** Overview = the install's description (README, rendered GitHub-style) leading
- * a status/contents summary so the tab is never empty. README editing is only
- * offered for disconnected installs (a git-connected install's README is repo-
- * owned — the PUT 409s, so we hide the affordance). */
+ * a status/contents summary so the tab is never empty. Installed Solution
+ * content is read-only in the UI; changes flow through deploy/sync. */
 function OverviewTab({
 	readme,
-	canEditReadme,
-	onSaveReadme,
 	entityCounts,
 	configsCount,
 	version,
@@ -985,8 +980,6 @@ function OverviewTab({
 	onGoToContents,
 }: {
 	readme: string | null;
-	canEditReadme: boolean;
-	onSaveReadme: (markdown: string) => void | Promise<void>;
 	entityCounts: Record<EntityKind, number>;
 	configsCount: number;
 	version: string | null;
@@ -1043,8 +1036,7 @@ function OverviewTab({
 			<div className="min-h-0 flex-1">
 				<SolutionReadmeTab
 					readme={readme}
-					canEdit={canEditReadme}
-					onSave={onSaveReadme}
+					canEdit={false}
 				/>
 			</div>
 		</div>
@@ -1167,7 +1159,6 @@ export function SolutionDetail() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { data: organizations } = useOrganizations();
-	const { isPlatformAdmin } = useAuth();
 
 	// Land on Overview — the install's description + at-a-glance status. Contents
 	// (entities) and Configuration are one click away.
@@ -1628,12 +1619,6 @@ export function SolutionDetail() {
 						<TabsContent value="overview" className="flex-1 min-h-0">
 							<OverviewTab
 								readme={readmeData?.readme ?? null}
-								canEditReadme={isPlatformAdmin && !sol.git_connected}
-								onSaveReadme={async (md) => {
-									await putSolutionReadme(sol.id, md.trim() ? md : null);
-									toast.success("README saved");
-									invalidate();
-								}}
 								entityCounts={entityCounts}
 								configsCount={configsCount}
 								version={sol.version ?? null}

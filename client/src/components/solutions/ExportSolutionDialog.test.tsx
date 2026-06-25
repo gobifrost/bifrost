@@ -44,6 +44,19 @@ it("requires a password when Full backup is selected", async () => {
 	expect(getPasswordInput()).toBeRequired();
 });
 
+it("explains what shareable and full backup exports include", async () => {
+	render(<ExportSolutionDialog open onOpenChange={() => {}} onExport={() => {}} />);
+
+	expect(screen.getByText(/definitions, table schemas/i)).toBeInTheDocument();
+	expect(screen.getByText(/omits config values/i)).toBeInTheDocument();
+	expect(
+		screen.getByText(/config values, secret values, and Solution-owned files/i),
+	).toBeInTheDocument();
+
+	await userEvent.click(screen.getByLabelText(/full backup/i));
+	expect(screen.getByText(/table schemas are already included/i)).toBeInTheDocument();
+});
+
 it("calls onExport with shareable + no password by default", async () => {
 	const onExport = vi.fn();
 	render(

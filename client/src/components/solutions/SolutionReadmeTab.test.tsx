@@ -25,7 +25,7 @@ vi.mock("@/components/ui/tiptap-editor", () => ({
 describe("SolutionReadmeTab", () => {
 	it("renders readme content via the editor", () => {
 		render(
-			<SolutionReadmeTab readme="# Hello" onSave={vi.fn()} canEdit={false} />,
+			<SolutionReadmeTab readme="# Hello" canEdit={false} />,
 		);
 		expect(screen.getByTestId("tiptap")).toHaveValue("# Hello");
 	});
@@ -36,7 +36,7 @@ describe("SolutionReadmeTab", () => {
 	});
 
 	it("shows a muted empty state when no readme and not editable", () => {
-		render(<SolutionReadmeTab readme={null} onSave={vi.fn()} canEdit={false} />);
+		render(<SolutionReadmeTab readme={null} canEdit={false} />);
 		expect(
 			screen.getByText(/no setup instructions provided/i),
 		).toBeInTheDocument();
@@ -57,7 +57,7 @@ describe("SolutionReadmeTab", () => {
 
 	it("does not show an Edit button when canEdit is false", () => {
 		render(
-			<SolutionReadmeTab readme="# Hello" onSave={vi.fn()} canEdit={false} />,
+			<SolutionReadmeTab readme="# Hello" canEdit={false} />,
 		);
 		expect(
 			screen.queryByRole("button", { name: /edit/i }),

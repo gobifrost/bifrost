@@ -28,6 +28,8 @@ async def test_list_shares_excludes_reserved_includes_uploads_readonly(db_sessio
     storage = FileStorageService(db_session)
     await storage.write_raw_to_s3(resolve_s3_key("gallery", "global", "a.png"), b"x")
     await storage.write_raw_to_s3(resolve_s3_key("uploads", "global", "u.png"), b"x")
+    await storage.write_raw_to_s3("_solutions/global/workflows/run.py", b"x")
+    await storage.write_raw_to_s3("_solution_artifacts/global/source.zip", b"x")
 
     svc = FileStructureService(db_session)
     shares = await svc.list_shares(org_id=None)
@@ -36,6 +38,8 @@ async def test_list_shares_excludes_reserved_includes_uploads_readonly(db_sessio
     assert "uploads" in by_loc and by_loc["uploads"].read_only is True
     assert "workspace" not in by_loc
     assert "temp" not in by_loc
+    assert "_solutions" not in by_loc
+    assert "_solution_artifacts" not in by_loc
 
 
 @pytest.mark.asyncio
