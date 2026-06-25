@@ -27,7 +27,7 @@ Package export, which omits runtime state, can stay as a synchronous direct down
 - Do not make Package export asynchronous in the first implementation.
 - Do not store backup passwords.
 - Do not build resumable partial downloads in the first implementation.
-- Do not move execution to RabbitMQ workers unless the scheduler path proves insufficient.
+- Do not use RabbitMQ workers for export execution, including as a fallback path.
 - Do not redo the large-file proof as part of this UX/job design.
 
 ## User Experience
