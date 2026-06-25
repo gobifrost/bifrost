@@ -224,55 +224,60 @@ export function FilesExplorer({ install }: FilesExplorerProps = {}) {
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-3">
 			<header className="flex shrink-0 flex-wrap items-center gap-2">
-				{install && (
-					<Link
-						to={`/solutions/${install}`}
-						className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-						data-testid="files-solution-back"
-					>
-						<ChevronLeft className="mr-1 h-3.5 w-3.5" />
-						Solution
-					</Link>
-				)}
-				{!isWide && (
-					<Sheet open={treeOpen} onOpenChange={setTreeOpen}>
-						<SheetTrigger asChild>
-							<Button
-								type="button"
-								variant="outline"
-								size="icon-sm"
-								aria-label="Open shares"
-							>
-								<Menu className="h-4 w-4" />
-							</Button>
-						</SheetTrigger>
-						<SheetContent side="left" className="w-72 p-0">
-							<SheetHeader className="px-3 py-2">
-								<SheetTitle>Shares</SheetTitle>
-							</SheetHeader>
-							<div className="flex min-h-0 flex-1 flex-col">{tree}</div>
-						</SheetContent>
-					</Sheet>
-				)}
-				{isPlatformAdmin && !install && (
-					<div className="w-56">
-						<OrganizationSelect
-							value={selectorScope}
-							onChange={handleScopeChange}
-							showGlobal
-							showAll={false}
-						/>
-					</div>
-				)}
-				{view === "browse" && (
-					<Breadcrumbs
-						scopeLabel={scopeLabel}
-						location={location}
-						segments={segments}
-						onNavigate={handleBreadcrumb}
-					/>
-				)}
-				<div className="ml-auto flex items-center gap-2">
+				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+					{install && (
+						<Link
+							to={`/solutions/${install}`}
+							className="inline-flex shrink-0 items-center text-sm text-muted-foreground hover:text-foreground"
+							data-testid="files-solution-back"
+							aria-label="Back to Solution"
+						>
+							<ChevronLeft className="mr-1 h-3.5 w-3.5" />
+							Back
+						</Link>
+					)}
+					{!isWide && (
+						<Sheet open={treeOpen} onOpenChange={setTreeOpen}>
+							<SheetTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon-sm"
+									aria-label="Open shares"
+								>
+									<Menu className="h-4 w-4" />
+								</Button>
+							</SheetTrigger>
+							<SheetContent side="left" className="w-72 p-0">
+								<SheetHeader className="px-3 py-2">
+									<SheetTitle>Shares</SheetTitle>
+								</SheetHeader>
+								<div className="flex min-h-0 flex-1 flex-col">{tree}</div>
+							</SheetContent>
+						</Sheet>
+					)}
+					{isPlatformAdmin && !install && (
+						<div className="w-56 shrink-0">
+							<OrganizationSelect
+								value={selectorScope}
+								onChange={handleScopeChange}
+								showGlobal
+								showAll={false}
+							/>
+						</div>
+					)}
+					{view === "browse" && (
+						<div className="min-w-0 flex-1">
+							<Breadcrumbs
+								scopeLabel={scopeLabel}
+								location={location}
+								segments={segments}
+								onNavigate={handleBreadcrumb}
+							/>
+						</div>
+					)}
+				</div>
+				<div className="ml-auto flex shrink-0 items-center gap-2">
 					<Tabs
 						value={view}
 						onValueChange={(value) => setView(value as "browse" | "policies")}

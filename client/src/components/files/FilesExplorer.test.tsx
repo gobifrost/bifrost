@@ -85,6 +85,16 @@ describe("FilesExplorer", () => {
 		expect(screen.getByTestId("detail-pane")).toBeInTheDocument();
 	});
 
+	it("keeps the scope selector and breadcrumb in a shrinkable header region", () => {
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		render(<FilesExplorer />);
+
+		const scopeSelector = screen.getByText("scope-select").parentElement;
+		expect(scopeSelector).toHaveClass("shrink-0");
+		expect(screen.getByRole("navigation", { name: /breadcrumb/i }).parentElement)
+			.toHaveClass("min-w-0", "flex-1");
+	});
+
 	it("passes the explicit 'global' scope (not null) to children at default", () => {
 		vi.mocked(useMediaQuery).mockReturnValue(true);
 		shareTreeScopes.length = 0;
@@ -186,8 +196,9 @@ describe("FilesExplorer", () => {
 					<FilesExplorer install="sol-abc" />
 				</MemoryRouter>,
 			);
-			const back = screen.getByTestId("files-solution-back");
+			const back = screen.getByRole("link", { name: /back to solution/i });
 			expect(back).toHaveAttribute("href", "/solutions/sol-abc");
+			expect(back).toHaveTextContent("Back");
 		});
 	});
 });
