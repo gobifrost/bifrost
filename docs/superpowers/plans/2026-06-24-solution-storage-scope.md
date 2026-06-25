@@ -49,6 +49,61 @@
 - [x] Task 10: Re-point capstone and `location="solutions"` tests to the real model
 - [x] Task 11: Full deployed-solution end-to-end and large-file memory tests
 - [x] Task 12: Final verification sweep (backend green; client e2e deferred to Jack)
+- [ ] Task 13: Release-acceptance — live full-stack drive + large-file (30GB-class) memory proof + client e2e
+
+## Task 13: Release-Acceptance Drive (Jack's "ready" bar)
+
+The implementation + tests are complete (Tasks 0-12). Backend suite green
+(6700 pass; the lone full-run failure is `test_subscriptions.py` — a
+pre-existing repo-wide timeout flake, unchanged on this branch, passes isolated;
+see `docs/plans/2026-06-24-test-flake-root-cause.md`). What remains is Jack's
+higher bar for "ready," which automated tests do NOT yet cover:
+
+**13a. Live full-stack drive (a real solution with files, end to end).**
+- `BIFROST_FORCE_PORT=1 ./debug.sh up` (port mode — Chrome/Playwright can't drive
+  netbird; large-file curl is also simpler over localhost).
+- Install the API-matched CLI in a scratch venv (CLAUDE.md "Spinning up" recipe).
+- Build/deploy a solution that declares a `files.yaml` location + a table + a
+  workflow that does `sdk.files.write/read` and `sdk.tables.upsert/query`.
+- Drive it as a user: run the workflow, confirm bytes land at
+  `<location>/{solution_id}/...` in S3, confirm a sealed (`global_repo_access=
+  false`) install can't read org/global fallback and an open one can.
+- Export the solution, reinstall into a second org, confirm files + table rows
+  round-trip. (This mirrors `test_solution_storage_full_e2e.py` but LIVE.)
+
+**13b. Large-file / OOM proof (the explicit 30GB concern).**
+- Gap: `test_solution_large_file_memory.py` proves bounded 8MiB chunking and
+  no `content_b64` with FAKE S3 chunks. It does NOT prove a live stack streams
+  multi-GB without API RSS ballooning (a real aiobotocore/zip-writer buffering
+  regression would slip past the fake).
+- Drive: write N real large files into a solution location summing to a
+  meaningful total (start ~5-10GB to fit the dev box; the design target is 30GB).
+  Seed via `dd`-generated files pushed through `sdk.files.write_bytes` or the
+  signed-upload path. Then `bifrost solution export` and `solution install`.
+- MEASURE during export AND import: watch the API/worker container RSS
+  (`docker stats <project>-api-1 <project>-worker-1` or
+  `cat /sys/fs/cgroup/.../memory.current`). PASS = peak RSS stays bounded
+  (roughly a few × the 8MiB chunk + zip overhead), NOT proportional to total
+  file bytes. If RSS tracks file size → streaming is broken somewhere
+  (capture/export/zip_install/secrets_blob); that's a real bug to fix before merge.
+- Key code under test: `file_storage/s3_client.py::iter_raw_s3_chunks` +
+  `put_object_from_chunks`, `solutions/file_payloads.py`, `solutions/export.py`,
+  `solutions/zip_install.py`, `solutions/secrets_blob.py` (file bytes must NOT
+  enter the Fernet JSON blob — only the per-chunk encrypted `.bin.enc` members).
+
+**13c. Client e2e (deferred from Task 12).**
+- Branch specs are `*.admin.spec.ts` (not in CI). Run under port mode:
+  `./test.sh client e2e` (Playwright). Or accept they're out-of-CI and skip with
+  a note — Jack's call.
+
+**13d. Scoping confirmation (Jack asked for the explicit map).**
+- The scoping-rule → test map is in the handoff prompt / this session's summary.
+  Spot-check by re-running the focused scope suites:
+  `./test.sh tests/e2e/platform/test_solution_file_cascade_gated.py
+  tests/e2e/platform/test_table_solution_cascade_gated.py
+  tests/e2e/platform/test_solution_policy_solution_only.py
+  tests/e2e/platform/test_solution_declared_only.py
+  tests/unit/test_files_sdk_solution_scope.py -v`
 
 ## Current Handoff Snapshot
 
