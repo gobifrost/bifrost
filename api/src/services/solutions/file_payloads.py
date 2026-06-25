@@ -48,7 +48,7 @@ async def write_encrypted_payload_member(
     }
 
     info = ZipInfo(member, date_time=_ZIP_EPOCH)
-    with zf.open(info, "w") as out:
+    with zf.open(info, "w", force_zip64=True) as out:
         out.write(json.dumps(header, separators=(",", ":")).encode() + b"\n")
         async for chunk in chunks:
             if chunk:
@@ -79,7 +79,7 @@ def write_encrypted_payload_member_from_bytes(
     }
 
     info = ZipInfo(member, date_time=_ZIP_EPOCH)
-    with zf.open(info, "w") as out:
+    with zf.open(info, "w", force_zip64=True) as out:
         out.write(json.dumps(header, separators=(",", ":")).encode() + b"\n")
         for offset in range(0, len(content), 8 * 1024 * 1024):
             out.write(fernet.encrypt(content[offset : offset + 8 * 1024 * 1024]) + b"\n")

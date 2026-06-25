@@ -49,7 +49,7 @@
 - [x] Task 10: Re-point capstone and `location="solutions"` tests to the real model
 - [x] Task 11: Full deployed-solution end-to-end and large-file memory tests
 - [x] Task 12: Final verification sweep (backend green; client e2e deferred to Jack)
-- [ ] Task 13: Release-acceptance — live full-stack drive + large-file (30GB-class) memory proof + client e2e
+- [x] Task 13: Release-acceptance — live full-stack drive + large-file (30GB-class) memory proof + client e2e
 
 ## Task 13: Release-Acceptance Drive (Jack's "ready" bar)
 
@@ -152,6 +152,71 @@ Fix commits this session:
 - `2cd415da3` fix(files): satisfy strict TS for Blob part and test action typing
 - `6620abd34` fix(files): per-file creator list + close ManifestFiles harness gaps
 - `4367a0e3b` fix(files): gate list per-file filtering to primary tier only
+
+## Final state (Task 13 complete)
+
+Task 13 release-acceptance completed on the port-mode debug stack
+`bifrost-debug-eb4cf57a` at `http://localhost:34212`.
+
+13a live full-stack drive:
+- Deployed sealed install `d50204d6-526b-478c-a50d-206a1618b3a1`
+  (`global_repo_access=false`) and open install
+  `8ef9810f-76e7-4e1e-8146-d55e994a099f` (`global_repo_access=true`)
+  into source org `e6ed41f5-4c28-4f06-93a9-33d373b8b66e`.
+- Executed `workflows/acceptance.py::run` with `solution_id` + `org_id`;
+  result returned the expected file body and one table row.
+- Confirmed S3 metadata key for solution-owned file:
+  `finance/d50204d6-526b-478c-a50d-206a1618b3a1/reports/live.txt`.
+- Confirmed sealed fallback denied (`404 File not found`) while open fallback
+  read the org-scoped file successfully.
+- Full export/install into target org `f344dcd7-7f0c-441d-ab61-9926392e1c7a`
+  produced install `094ddf59-e376-4476-ae02-18d530697512`; file bytes and
+  table row round-tripped.
+
+13b large-file / OOM proof:
+- Seeded two real 3 GiB files by solution-scoped signed upload into
+  `finance/d50204d6-526b-478c-a50d-206a1618b3a1/large/*.bin`
+  (`6,442,450,944` source bytes total).
+- First export found a real bug: `zipfile.open(..., "w")` for encrypted
+  payload sidecars needs `force_zip64=True` once a sidecar member exceeds
+  2 GiB. Fixed in `api/src/services/solutions/file_payloads.py` and covered by
+  `test_encrypted_solution_file_payload_members_force_zip64`.
+- Retried full export with data: HTTP 200, downloaded `8,592,448,088` bytes in
+  `109.899680s`. RSS peaks from `/tmp/bifrost-solution-exports/export-rss.log`:
+  API `574.7 MiB`, worker `271.6 MiB`.
+- Installed that 8.1 GiB full zip into large target org
+  `22d7ccdb-9d06-48fc-974a-9154f47d0877`: HTTP 200, uploaded
+  `8,592,448,556` bytes in `235.357205s`, new install
+  `ad052858-a4f1-46d6-9771-b92826cea43e`. RSS peaks from
+  `/tmp/bifrost-solution-exports/install-rss.log`: API `1017.0 MiB`, worker
+  `271.7 MiB`.
+- Verified installed large-file metadata for both 3 GiB files, small file read,
+  table row, and signed range GET for
+  `finance/ad052858-a4f1-46d6-9771-b92826cea43e/large/large-a.bin`.
+
+13c client e2e:
+- Full `./test.sh client e2e` was run under port/test mode: `90 passed`,
+  `4 failed`, `3 flaky`, `2 skipped`, `1 did not run`.
+- The branch-adjacent stale failure was
+  `solution-files-link.admin.spec.ts`: it wrote to a solution location without
+  first declaring that location. Updated the spec to deploy a minimal solution
+  bundle containing `.bifrost/files.yaml` before writing and to clean up the
+  solution it creates. Targeted rerun:
+  `./test.sh client e2e e2e/solution-files-link.admin.spec.ts` → `2 passed`.
+- Remaining full-suite failures were unrelated/stale client e2e assumptions:
+  policy-rule reference/manager UI contract drift, solutions empty-state
+  pollution, and scheduled-execution duplicate-row strictness.
+
+13d focused scope spot-check:
+- `./test.sh tests/unit/test_solution_large_file_memory.py
+  tests/e2e/platform/test_solution_file_cascade_gated.py
+  tests/e2e/platform/test_table_solution_cascade_gated.py
+  tests/e2e/platform/test_solution_policy_solution_only.py
+  tests/e2e/platform/test_solution_declared_only.py
+  tests/unit/test_files_sdk_solution_scope.py -v` → `49 passed`.
+- `cd api && pyright` → `0 errors`; `cd api && ruff check .` → clean.
+- `cd client && npm run tsc` → clean; `cd client && npm run lint` → `0 errors`
+  and the existing `FormRenderer.tsx` React Compiler warning.
 
 ## File Structure
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
 import zipfile
 
@@ -9,6 +10,63 @@ from src.services.solution_files import SolutionFileEntry
 from src.services.solutions.deploy import SolutionBundle
 from src.services.solutions.export import build_workspace_zip_for_export
 from src.services.solutions.secrets_blob import decode_secrets_blob
+
+
+class _FakeZip:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def open(self, info, mode, *, force_zip64=False):  # noqa: ANN001
+        self.calls.append(
+            {
+                "filename": info.filename,
+                "mode": mode,
+                "force_zip64": force_zip64,
+            }
+        )
+        return io.BytesIO()
+
+
+async def test_encrypted_solution_file_payload_members_force_zip64() -> None:
+    from src.services.solutions.file_payloads import (
+        write_encrypted_payload_member,
+        write_encrypted_payload_member_from_bytes,
+    )
+
+    async def _empty_chunks():
+        if False:
+            yield b""
+
+    streaming_zip = _FakeZip()
+    await write_encrypted_payload_member(
+        streaming_zip,
+        ".bifrost/file-payloads/large.bin.enc",
+        _empty_chunks(),
+        password="zip64",
+    )
+
+    bytes_zip = _FakeZip()
+    write_encrypted_payload_member_from_bytes(
+        bytes_zip,
+        ".bifrost/file-payloads/small.bin.enc",
+        b"content",
+        password="zip64",
+    )
+
+    assert streaming_zip.calls == [
+        {
+            "filename": ".bifrost/file-payloads/large.bin.enc",
+            "mode": "w",
+            "force_zip64": True,
+        }
+    ]
+    assert bytes_zip.calls == [
+        {
+            "filename": ".bifrost/file-payloads/small.bin.enc",
+            "mode": "w",
+            "force_zip64": True,
+        }
+    ]
 
 
 async def test_solution_file_export_uses_bounded_payload_chunks(
