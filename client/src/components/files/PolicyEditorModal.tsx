@@ -88,6 +88,7 @@ export function PolicyEditorModal({
 						<div className="flex items-center justify-between">
 							<DialogTitle>Manage policy</DialogTitle>
 							<Button
+								type="button"
 								size="sm"
 								variant="ghost"
 								className="text-xs"

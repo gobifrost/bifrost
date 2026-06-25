@@ -47,7 +47,7 @@ test.describe("Solution lifecycle UI (admin)", () => {
 	}) => {
 		await page.goto("/config");
 		await expect(
-			page.getByRole("heading", { name: /configuration/i }),
+			page.getByRole("heading", { name: "Configuration", exact: true }),
 		).toBeVisible({ timeout: 10000 });
 
 		// The "Show orphaned" checkbox must no longer exist.

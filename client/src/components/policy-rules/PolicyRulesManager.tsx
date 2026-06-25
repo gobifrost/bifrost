@@ -65,7 +65,7 @@ interface RuleFormState {
 	bodyJson: string;
 }
 
-const EMPTY_FORM: RuleFormState = { name: "", description: "", bodyJson: '{\n  "policies": []\n}' };
+const EMPTY_FORM: RuleFormState = { name: "", description: "", bodyJson: '{\n  "actions": ["read"],\n  "when": null\n}' };
 
 function isInUseError(err: unknown): err is Error & { cause: PolicyRuleInUseError } {
 	return (
@@ -232,6 +232,7 @@ export function PolicyRulesManager({ domain }: PolicyRulesManagerProps) {
 					Reusable named rules for {domainLabel} policies
 				</p>
 				<Button
+					type="button"
 					size="sm"
 					variant="outline"
 					onClick={openCreate}

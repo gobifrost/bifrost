@@ -748,6 +748,15 @@ describe("PolicyEditor — reference mode", () => {
 		);
 	});
 
+	it("renders Manage rules as a non-submit button for table dialog forms", () => {
+		mockListRules.mockResolvedValue([]);
+		renderWithProviders(<PolicyEditor value={null} onChange={onChange} />);
+		expect(screen.getByTestId("manage-rules-btn")).toHaveAttribute(
+			"type",
+			"button",
+		);
+	});
+
 	it("inserts a {$ref} entry when a rule is picked from the dropdown", async () => {
 		mockListRules.mockResolvedValue([TABLE_RULE]);
 		renderWithProviders(<PolicyEditor value={null} onChange={onChange} />);

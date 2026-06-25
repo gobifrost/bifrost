@@ -39,7 +39,7 @@ test.describe("Policy rule reference mode", () => {
 				name: FILE_RULE_NAME,
 				domain: "file",
 				description: "E2E test file rule",
-				body: { policies: [] },
+				body: { actions: ["read"], when: null },
 			},
 		});
 		expect(
@@ -53,7 +53,7 @@ test.describe("Policy rule reference mode", () => {
 				name: TABLE_RULE_NAME,
 				domain: "table",
 				description: "E2E test table rule",
-				body: { policies: [] },
+				body: { actions: ["read"], when: null },
 			},
 		});
 		expect(
@@ -115,8 +115,8 @@ test.describe("Policy rule reference mode", () => {
 
 		// The "Insert reference…" dropdown should appear with the file rule.
 		const refTrigger = page
-			.getByRole("dialog")
-			.getByRole("button", { name: /insert reference/i });
+			.getByRole("dialog", { name: /manage policy/i })
+			.getByLabel(/insert reference/i);
 		await expect(refTrigger).toBeVisible({ timeout: 5000 });
 		await refTrigger.click();
 		await expect(
@@ -138,20 +138,20 @@ test.describe("Policy rule reference mode", () => {
 		expect(tableRes.ok(), `create table: ${await tableRes.text()}`).toBe(true);
 		const tableData = (await tableRes.json()) as { id: string };
 
-		// Navigate to the table's detail page.
-		await page.goto(`/tables/${tableData.id}`);
+		// Navigate to Tables and open the table edit dialog.
+		await page.goto("/tables");
 		await expect(
-			page.getByRole("heading").filter({ hasText: TABLE_NAME }),
+			page.getByRole("heading", { name: /tables/i }).first(),
 		).toBeVisible({ timeout: 15000 });
 
-		// Open the Policies tab / section.
-		const policiesTab = page.getByRole("tab", { name: /policies/i });
-		if (await policiesTab.isVisible({ timeout: 2000 }).catch(() => false)) {
-			await policiesTab.click();
-		}
+		const tableRow = page.getByRole("row").filter({ hasText: TABLE_NAME });
+		await expect(tableRow).toBeVisible({ timeout: 10000 });
+		await tableRow.getByRole("button", { name: /edit table/i }).click();
+		const tableDialog = page.getByRole("dialog", { name: /edit table/i });
+		await expect(tableDialog).toBeVisible({ timeout: 10000 });
 
 		// The "Insert reference…" dropdown should appear with the table rule.
-		const refTrigger = page.getByRole("button", { name: /insert reference/i });
+		const refTrigger = tableDialog.getByLabel(/insert reference/i);
 		await expect(refTrigger).toBeVisible({ timeout: 10000 });
 		await refTrigger.click();
 		await expect(

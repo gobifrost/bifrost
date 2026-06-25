@@ -261,6 +261,7 @@ export function PolicyEditor({ value, onChange }: PolicyEditorProps) {
 						</Select>
 					)}
 					<Button
+						type="button"
 						size="sm"
 						variant="ghost"
 						className="text-xs"

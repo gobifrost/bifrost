@@ -11,9 +11,10 @@
 
 import { test, expect } from "./fixtures/api-fixture";
 
-// Inline Python workflow that emits log lines over ~20s so the page has
-// plenty of time to mount, subscribe via WebSocket, snapshot an initial log
-// count, and then observe more logs arrive BEFORE the execution finishes.
+// Inline Python workflow that emits one log line immediately, pauses, then
+// emits the rest so the page has a deterministic window to mount, subscribe
+// via WebSocket, snapshot an initial log count, and then observe more logs
+// arrive BEFORE the execution finishes.
 // If this script runs too fast, all logs land before the assertion window
 // opens and we can't prove they streamed in vs. were fetched at the end.
 // `result` is returned as the workflow result.
@@ -23,11 +24,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-for i in range(20):
-    logger.info(f"streaming log line {i}")
-    await asyncio.sleep(1.0)
+logger.info("streaming log line 0")
+await asyncio.sleep(45.0)
 
-result = {"ok": True, "lines": 20}
+for i in range(1, 21):
+    logger.info(f"streaming log line {i}")
+    await asyncio.sleep(0.5)
+
+result = {"ok": True, "lines": 21}
 `.trim();
 
 test.describe("Execution Realtime Streaming", () => {
@@ -35,9 +39,9 @@ test.describe("Execution Realtime Streaming", () => {
 		page,
 		api,
 	}) => {
-		// Script runs ~20s; allow generous headroom for navigation, WebSocket
+		// Script runs ~55s; allow generous headroom for navigation, WebSocket
 		// handshake, and the final status/result assertions.
-		test.setTimeout(90000);
+		test.setTimeout(120000);
 
 		// Fail the test on any console error. Attach before navigation so we
 		// catch errors from the initial mount, WebSocket handshake, and merge.
@@ -95,7 +99,7 @@ test.describe("Execution Realtime Streaming", () => {
 		// Poll until more lines have appeared than we saw initially. This
 		// happens without a page reload — if it does, the stream is working.
 		await expect
-			.poll(async () => streamingLines.count(), { timeout: 30000 })
+			.poll(async () => streamingLines.count(), { timeout: 70000 })
 			.toBeGreaterThan(initialLogCount);
 
 		// Assertion 3: status transitions from a pre-terminal state (Running

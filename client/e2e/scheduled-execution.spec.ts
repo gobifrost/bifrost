@@ -50,10 +50,18 @@ async def ${WORKFLOW_FUNCTION}() -> dict:
  * rendered as the row's first mono-font cell content and is unique per test
  * run (suffixed with `UNIQUE`), so text is the reliable selector.
  */
-function rowForWorkflow(page: Page, workflowName: string) {
-	return page
-		.locator("table tbody tr")
-		.filter({ hasText: workflowName });
+function rowForWorkflow(
+	page: Page,
+	workflowName: string,
+	status?: "Scheduled" | "Cancelled" | "Completed",
+) {
+	let row = page.locator("table tbody tr").filter({ hasText: workflowName });
+	if (status) {
+		row = row.filter({
+			has: page.getByText(status, { exact: true }),
+		});
+	}
+	return row;
 }
 
 /**
@@ -122,7 +130,7 @@ test.describe("Scheduled executions", () => {
 		// past recent terminal rows.
 		await page.getByRole("tab", { name: "Scheduled" }).click();
 
-		const row = rowForWorkflow(page, WORKFLOW_FUNCTION);
+		const row = rowForWorkflow(page, WORKFLOW_FUNCTION, "Scheduled");
 		await expect(row).toBeVisible({ timeout: 15_000 });
 		await expect(row.getByText("Scheduled", { exact: true })).toBeVisible();
 
@@ -143,7 +151,7 @@ test.describe("Scheduled executions", () => {
 		// Cancelled. Switch to All so the row is visible regardless of which
 		// tab the row lands on after the status change.
 		await page.getByRole("tab", { name: "All" }).click();
-		const rowAfter = rowForWorkflow(page, WORKFLOW_FUNCTION);
+		const rowAfter = rowForWorkflow(page, WORKFLOW_FUNCTION, "Cancelled");
 		await expect(
 			rowAfter.getByText("Cancelled", { exact: true }),
 		).toBeVisible({ timeout: 10_000 });
@@ -173,7 +181,7 @@ test.describe("Scheduled executions", () => {
 		await page.goto("/history");
 		await page.getByRole("tab", { name: "Scheduled" }).click();
 
-		const row = rowForWorkflow(page, WORKFLOW_FUNCTION);
+		const row = rowForWorkflow(page, WORKFLOW_FUNCTION, "Scheduled");
 		await expect(row).toBeVisible({ timeout: 15_000 });
 		await expect(row.getByText("Scheduled", { exact: true })).toBeVisible();
 
@@ -232,7 +240,7 @@ test.describe("Scheduled executions", () => {
 
 		// Filter to Scheduled so our row is near the top.
 		await page.getByRole("tab", { name: "Scheduled" }).click();
-		const row = rowForWorkflow(page, WORKFLOW_FUNCTION);
+		const row = rowForWorkflow(page, WORKFLOW_FUNCTION, "Scheduled");
 		await expect(row).toBeVisible({ timeout: 10_000 });
 		await expect(row.getByText("Scheduled", { exact: true })).toBeVisible();
 	});

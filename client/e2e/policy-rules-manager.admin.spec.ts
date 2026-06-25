@@ -20,6 +20,7 @@ import { test, expect } from "./fixtures/api-fixture";
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const TABLE_NAME = `e2e_mgr_table_${UNIQUE}`.replace(/[^a-z0-9_]/g, "_");
 const RULE_NAME = `e2e-mgr-rule-${UNIQUE}`;
+let tableId: string;
 
 test.describe("Policy rules manager", () => {
 	test.beforeAll(async ({ api }) => {
@@ -28,12 +29,16 @@ test.describe("Policy rules manager", () => {
 			data: { name: TABLE_NAME, description: "E2E manager test table" },
 		});
 		expect(res.ok(), `create table: ${await res.text()}`).toBe(true);
+		const table = (await res.json()) as { id: string };
+		tableId = table.id;
 	});
 
 	test.afterAll(async ({ api }) => {
 		// Best-effort cleanup.
 		await api.delete(`/api/policy-rules/table/${RULE_NAME}`).catch(() => {});
-		// We don't delete the table — test teardown handles that.
+		if (tableId) {
+			await api.delete(`/api/tables/${tableId}`).catch(() => {});
+		}
 	});
 
 	test("open manager, create rule, edit, see built-in badge, attempt in-use delete", async ({
@@ -46,20 +51,15 @@ test.describe("Policy rules manager", () => {
 			page.getByRole("heading", { name: /tables/i }).first(),
 		).toBeVisible({ timeout: 15000 });
 
-		// Open the table dialog.
-		const tableRow = page.getByText(TABLE_NAME, { exact: false }).first();
+		// Open the table edit dialog from the matching table row.
+		const tableRow = page.getByRole("row").filter({ hasText: TABLE_NAME });
 		await expect(tableRow).toBeVisible({ timeout: 10000 });
-		await tableRow.click();
-
-		// Open the table edit dialog.
-		await page
-			.getByRole("button", { name: /edit|settings/i })
-			.first()
-			.click();
-		await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10000 });
+		await tableRow.getByRole("button", { name: /edit table/i }).click();
+		const tableDialog = page.getByRole("dialog", { name: /edit table/i });
+		await expect(tableDialog).toBeVisible({ timeout: 10000 });
 
 		// Click "Manage rules…" inside the policy editor.
-		const manageBtn = page.getByTestId("manage-rules-btn");
+		const manageBtn = tableDialog.getByTestId("manage-rules-btn");
 		await expect(manageBtn).toBeVisible({ timeout: 5000 });
 		await manageBtn.click();
 
@@ -95,7 +95,10 @@ test.describe("Policy rules manager", () => {
 		// ----------------------------------------------------------------
 		// 2. Edit the rule description
 		// ----------------------------------------------------------------
-		await managerDialog.getByTestId("policy-rule-edit-btn").click();
+		const createdRuleRow = managerDialog
+			.getByTestId("policy-rule-row")
+			.filter({ hasText: RULE_NAME });
+		await createdRuleRow.getByTestId("policy-rule-edit-btn").click();
 
 		const editDialog = page.getByRole("dialog", {
 			name: new RegExp(`edit.*${RULE_NAME}`, "i"),
@@ -127,29 +130,26 @@ test.describe("Policy rules manager", () => {
 		// 4. Wire a $ref in the table policy and attempt to delete → 409 blast radius
 		// ----------------------------------------------------------------
 		// Use the API directly to attach the rule as a $ref in the table policy.
-		const attachRes = await api.patch(`/api/tables/${TABLE_NAME}`, {
+		const attachRes = await api.patch(`/api/tables/${tableId}`, {
 			data: {
 				policies: {
 					policies: [{ $ref: RULE_NAME }],
 				},
 			},
 		});
-		// If PATCH is not available, PUT — handle both.
-		void attachRes;
+		expect(attachRes.ok(), `attach table policy: ${await attachRes.text()}`).toBe(
+			true,
+		);
 
 		// Now try to delete the rule — expect the blast-radius dialog.
-		await managerDialog
-			.getByTestId("policy-rule-delete-btn")
-			.first()
-			.click();
+		await createdRuleRow.getByTestId("policy-rule-delete-btn").click();
 		// Confirm the delete in the alert dialog.
 		await page.getByRole("button", { name: "Delete" }).click();
 
-		// Wait for either the blast-radius dialog OR a toast that the rule was deleted.
-		// (If the table policy wasn't wired, the delete succeeds — that's OK too.)
 		const blastDialog = page.getByTestId("blast-radius-dialog");
-		const successToast = page.locator("[data-sonner-toast]");
-		await expect(blastDialog.or(successToast)).toBeVisible({ timeout: 10000 });
+		await expect(blastDialog).toBeVisible({ timeout: 10000 });
+		await expect(blastDialog).toContainText(TABLE_NAME);
+		await blastDialog.getByRole("button", { name: "Close" }).click();
 
 		// ----------------------------------------------------------------
 		// 5. Close the manager

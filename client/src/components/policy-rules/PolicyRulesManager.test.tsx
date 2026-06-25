@@ -42,7 +42,7 @@ const RULE_CUSTOM = {
 	name: "custom_rule",
 	domain: "file" as const,
 	description: "A custom rule",
-	body: { policies: [] },
+	body: { actions: ["read"], when: null },
 	is_builtin: false,
 	created_at: "2024-01-01T00:00:00Z",
 	updated_at: "2024-01-01T00:00:00Z",
@@ -116,7 +116,11 @@ describe("PolicyRulesManager", () => {
 
 		await waitFor(() => {
 			expect(mockCreate).toHaveBeenCalledWith(
-				expect.objectContaining({ name: "new_rule", domain: "file" }),
+				expect.objectContaining({
+					name: "new_rule",
+					domain: "file",
+					body: { actions: ["read"], when: null },
+				}),
 			);
 		});
 	});
@@ -322,4 +326,3 @@ describe("PolicyRulesManager", () => {
 		expect(mockDelete).not.toHaveBeenCalled();
 	});
 });
-
