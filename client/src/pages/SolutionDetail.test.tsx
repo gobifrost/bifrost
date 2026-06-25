@@ -255,6 +255,37 @@ describe("SolutionDetail", () => {
 		expect(screen.getByTestId("chip-claims")).toHaveTextContent("Custom Claims");
 	});
 
+	it("opens the requested Contents filter from an Overview entity count", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByRole("button", { name: /1 workflows/i }));
+
+		expect(screen.getByTestId("tab-contents")).toHaveAttribute(
+			"data-state",
+			"active",
+		);
+		expect(screen.getByTestId("chip-workflows")).toHaveTextContent("Workflows");
+		expect(screen.getByText("Sync Tickets")).toBeInTheDocument();
+		expect(screen.queryByTestId("summary-workflows")).not.toBeInTheDocument();
+	});
+
+	it("opens Files directly from the Overview Files count", async () => {
+		const entities = makeEntities();
+		(entities as Record<string, unknown>).files = [
+			{ location: "reports", path: "demo/readme.txt", size: 2 },
+		];
+		mockGetSolutionEntities.mockResolvedValue(entities);
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByRole("button", { name: /1 files/i }));
+
+		expect(mockNavigate).toHaveBeenCalledWith(
+			"/files?install=sol-1&from=solution:sol-1",
+		);
+	});
+
 	it("renders the update action and the overflow menu in the header", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");

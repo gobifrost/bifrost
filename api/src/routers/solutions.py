@@ -40,6 +40,7 @@ from src.models.contracts.solutions import (
     SolutionCreate,
     SolutionDeleteSummary,
     SolutionDeletionSummary,
+    SolutionEntityCounts,
     SolutionDependencyPreview,
     SolutionDependencyPreviewRequest,
     SolutionDeployEnqueued,
@@ -63,6 +64,7 @@ from src.models.orm.agents import Agent
 from src.models.orm.applications import Application
 from src.models.orm.config import Config
 from src.models.orm.custom_claims import CustomClaim
+from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.forms import Form
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
@@ -171,10 +173,52 @@ async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuper
     return SolutionDTO.model_validate(row)
 
 
+async def _count_by_solution(ctx: Context, model: type, solution_ids: list[UUID]) -> dict[UUID, int]:
+    if not solution_ids:
+        return {}
+    rows = await ctx.db.execute(
+        select(model.solution_id, func.count())  # type: ignore[attr-defined]
+        .where(model.solution_id.in_(solution_ids))  # type: ignore[attr-defined]
+        .group_by(model.solution_id)  # type: ignore[attr-defined]
+    )
+    return {solution_id: int(count) for solution_id, count in rows.all() if solution_id is not None}
+
+
+async def _solution_entity_counts(
+    ctx: Context, solution_ids: list[UUID]
+) -> dict[UUID, SolutionEntityCounts]:
+    counts = {
+        solution_id: SolutionEntityCounts()
+        for solution_id in solution_ids
+    }
+    for attr, model in (
+        ("workflows", Workflow),
+        ("apps", Application),
+        ("forms", Form),
+        ("agents", Agent),
+        ("tables", Table),
+        ("claims", CustomClaim),
+        ("files", FileMetadata),
+    ):
+        by_solution = await _count_by_solution(ctx, model, solution_ids)
+        for solution_id, count in by_solution.items():
+            setattr(counts[solution_id], attr, count)
+    return counts
+
+
 @router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)")
 async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
     rows = (await ctx.db.execute(select(SolutionORM).order_by(SolutionORM.slug))).scalars().all()
-    return SolutionsList(solutions=[SolutionDTO.model_validate(r) for r in rows])
+    ids = [row.id for row in rows]
+    counts = await _solution_entity_counts(ctx, ids)
+    return SolutionsList(
+        solutions=[
+            SolutionDTO.model_validate(row).model_copy(
+                update={"entity_counts": counts.get(row.id, SolutionEntityCounts())}
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)")

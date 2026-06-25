@@ -3855,22 +3855,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__post"];
+        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
         options?: never;
         head?: never;
         patch?: never;
@@ -21108,6 +21108,7 @@ export interface components {
              * @default active
              */
             status: string;
+            entity_counts?: components["schemas"]["SolutionEntityCounts"];
             /**
              * Scope
              * @enum {string}
@@ -21535,6 +21536,47 @@ export interface components {
             configs?: components["schemas"]["SolutionConfigStatus"][];
             /** Required Configs Unset */
             required_configs_unset?: string[];
+        };
+        /**
+         * SolutionEntityCounts
+         * @description Per-install inventory counts for lightweight list/catalog views.
+         */
+        SolutionEntityCounts: {
+            /**
+             * Workflows
+             * @default 0
+             */
+            workflows: number;
+            /**
+             * Apps
+             * @default 0
+             */
+            apps: number;
+            /**
+             * Forms
+             * @default 0
+             */
+            forms: number;
+            /**
+             * Agents
+             * @default 0
+             */
+            agents: number;
+            /**
+             * Tables
+             * @default 0
+             */
+            tables: number;
+            /**
+             * Claims
+             * @default 0
+             */
+            claims: number;
+            /**
+             * Files
+             * @default 0
+             */
+            files: number;
         };
         /**
          * SolutionEntityDiff
@@ -30333,7 +30375,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30366,7 +30408,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30399,7 +30441,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {
@@ -30432,7 +30474,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__post: {
+    execute_endpoint_api_endpoints__workflow_id__get: {
         parameters: {
             query?: never;
             header: {

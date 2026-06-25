@@ -163,6 +163,49 @@ describe("Solutions — list", () => {
 		expect(screen.getByText("v1.2.3")).toBeInTheDocument();
 	});
 
+	it("renders colored entity count badges in a wrapping card footer", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({
+					id: "inventory",
+					name: "Inventory",
+					slug: "inventory",
+					entity_counts: {
+						workflows: 2,
+						apps: 1,
+						forms: 0,
+						agents: 1,
+						tables: 3,
+						claims: 0,
+						files: 4,
+					},
+				}),
+			],
+		});
+		await renderPage();
+
+		const card = (await screen.findByTestId("install-card"));
+		const footer = within(card).getByTestId("solution-card-counts");
+		expect(footer).toHaveClass("flex-wrap");
+		expect(within(footer).getByTestId("solution-count-workflows")).toHaveTextContent(
+			"2",
+		);
+		expect(within(footer).getByTestId("solution-count-apps")).toHaveTextContent(
+			"1",
+		);
+		expect(within(footer).getByTestId("solution-count-agents")).toHaveTextContent(
+			"1",
+		);
+		expect(within(footer).getByTestId("solution-count-tables")).toHaveTextContent(
+			"3",
+		);
+		expect(within(footer).getByTestId("solution-count-files")).toHaveTextContent(
+			"4",
+		);
+		expect(within(footer).queryByTestId("solution-count-forms")).toBeNull();
+		expect(within(footer).queryByTestId("solution-count-claims")).toBeNull();
+	});
+
 	it("shows an inactive badge for solutions with status=inactive", async () => {
 		mockListSolutions.mockResolvedValue({
 			solutions: [

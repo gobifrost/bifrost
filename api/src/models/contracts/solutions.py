@@ -76,6 +76,18 @@ class SolutionReadme(BaseModel):
     readme: str | None = None
 
 
+class SolutionEntityCounts(BaseModel):
+    """Per-install inventory counts for lightweight list/catalog views."""
+
+    workflows: int = 0
+    apps: int = 0
+    forms: int = 0
+    agents: int = 0
+    tables: int = 0
+    claims: int = 0
+    files: int = 0
+
+
 class Solution(BaseModel):
     """Read-shape returned by REST.
 
@@ -114,6 +126,7 @@ class Solution(BaseModel):
     # Lifecycle status. "active" = installed & live. "inactive" = uninstalled
     # (status flip only — data frozen in place under solution_id, dormant).
     status: str = "active"
+    entity_counts: SolutionEntityCounts = Field(default_factory=SolutionEntityCounts)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

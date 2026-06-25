@@ -17,14 +17,21 @@ import {
 	ArrowUp,
 	Boxes,
 	Building2,
+	Bot,
+	AppWindow,
 	GitBranch,
 	Globe,
 	HardDriveUpload,
+	Database,
+	FileCode,
+	FolderOpen,
+	KeyRound,
 	LayoutGrid,
 	Plus,
 	PowerOff,
 	Table as TableIcon,
 	Upload,
+	Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,6 +56,89 @@ import {
 import { useSearch } from "@/hooks/useSearch";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { listSolutions, type Solution } from "@/services/solutions";
+
+type SolutionCountKey =
+	| "workflows"
+	| "apps"
+	| "forms"
+	| "agents"
+	| "tables"
+	| "claims"
+	| "files";
+
+const COUNT_ITEMS: {
+	key: SolutionCountKey;
+	label: string;
+	shortLabel: string;
+	Icon: typeof Workflow;
+	className: string;
+}[] = [
+	{
+		key: "workflows",
+		label: "Workflows",
+		shortLabel: "Flows",
+		Icon: Workflow,
+		className: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+	},
+	{
+		key: "apps",
+		label: "Apps",
+		shortLabel: "Apps",
+		Icon: AppWindow,
+		className: "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
+	},
+	{
+		key: "forms",
+		label: "Forms",
+		shortLabel: "Forms",
+		Icon: FileCode,
+		className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+	},
+	{
+		key: "agents",
+		label: "Agents",
+		shortLabel: "Agents",
+		Icon: Bot,
+		className: "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+	},
+	{
+		key: "tables",
+		label: "Tables",
+		shortLabel: "Tables",
+		Icon: Database,
+		className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+	},
+	{
+		key: "claims",
+		label: "Custom Claims",
+		shortLabel: "Claims",
+		Icon: KeyRound,
+		className: "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+	},
+	{
+		key: "files",
+		label: "Files",
+		shortLabel: "Files",
+		Icon: FolderOpen,
+		className: "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+	},
+];
+
+function solutionEntityCounts(sol: Solution): Partial<Record<SolutionCountKey, number>> {
+	return (
+		(sol as Solution & {
+			entity_counts?: Partial<Record<SolutionCountKey, number>>;
+		}).entity_counts ?? {}
+	);
+}
+
+function visibleCountItems(sol: Solution) {
+	const counts = solutionEntityCounts(sol);
+	return COUNT_ITEMS.map((item) => ({
+		...item,
+		count: counts[item.key] ?? 0,
+	})).filter((item) => item.count > 0);
+}
 
 export function Solutions() {
 	const navigate = useNavigate();
@@ -209,6 +299,27 @@ export function Solutions() {
 				)}
 				{getOrgName(sol.organization_id)}
 			</Badge>
+		);
+	}
+
+	function countBadge(
+		item: (typeof COUNT_ITEMS)[number] & { count: number },
+	) {
+		const Icon = item.Icon;
+		return (
+			<span
+				key={item.key}
+				data-testid={`solution-count-${item.key}`}
+				title={`${item.count} ${item.label}`}
+				className={[
+					"inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] font-medium",
+					item.className,
+				].join(" ")}
+			>
+				<Icon className="h-3 w-3" />
+				<span className="font-semibold tabular-nums">{item.count}</span>
+				<span className="hidden sm:inline">{item.shortLabel}</span>
+			</span>
 		);
 	}
 
@@ -387,14 +498,24 @@ export function Solutions() {
 										</div>
 									</div>
 								</div>
-								<div className="flex items-center gap-2 px-4 py-3">
+								<div className="flex flex-wrap items-center gap-2 border-t px-4 py-2.5">
 									{statusBadge(sol)}
 									{orgBadge(sol)}
 									{sourceBadge(sol)}
-									{sol.version && (
-										<Badge variant="outline">v{sol.version}</Badge>
-									)}
+									{sol.version && <Badge variant="outline">v{sol.version}</Badge>}
 									{updateBadge(sol)}
+								</div>
+								<div
+									className="mt-auto flex flex-wrap gap-1.5 border-t bg-muted/20 px-4 py-2.5"
+									data-testid="solution-card-counts"
+								>
+									{visibleCountItems(sol).length > 0 ? (
+										visibleCountItems(sol).map(countBadge)
+									) : (
+										<span className="text-xs text-muted-foreground">
+											No contents
+										</span>
+									)}
 								</div>
 							</div>
 						))}

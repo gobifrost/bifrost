@@ -152,14 +152,50 @@ const ENTITY_TABS: {
 	key: EntityKind;
 	label: string;
 	Icon: typeof Workflow;
+	iconClassName: string;
 }[] = [
-	{ key: "workflows", label: "Workflows", Icon: Workflow },
-	{ key: "apps", label: "Apps", Icon: AppWindow },
-	{ key: "forms", label: "Forms", Icon: FileCode },
-	{ key: "agents", label: "Agents", Icon: Bot },
-	{ key: "tables", label: "Tables", Icon: Database },
-	{ key: "claims", label: "Custom Claims", Icon: KeyRound },
-	{ key: "files", label: "Files", Icon: FolderOpen },
+	{
+		key: "workflows",
+		label: "Workflows",
+		Icon: Workflow,
+		iconClassName: "text-blue-600 dark:text-blue-300",
+	},
+	{
+		key: "apps",
+		label: "Apps",
+		Icon: AppWindow,
+		iconClassName: "text-indigo-600 dark:text-indigo-300",
+	},
+	{
+		key: "forms",
+		label: "Forms",
+		Icon: FileCode,
+		iconClassName: "text-emerald-600 dark:text-emerald-300",
+	},
+	{
+		key: "agents",
+		label: "Agents",
+		Icon: Bot,
+		iconClassName: "text-violet-600 dark:text-violet-300",
+	},
+	{
+		key: "tables",
+		label: "Tables",
+		Icon: Database,
+		iconClassName: "text-amber-600 dark:text-amber-300",
+	},
+	{
+		key: "claims",
+		label: "Custom Claims",
+		Icon: KeyRound,
+		iconClassName: "text-rose-600 dark:text-rose-300",
+	},
+	{
+		key: "files",
+		label: "Files",
+		Icon: FolderOpen,
+		iconClassName: "text-cyan-600 dark:text-cyan-300",
+	},
 ];
 
 /** Per-entity-page link target, carrying the `?from` so the entity page can
@@ -978,7 +1014,7 @@ function OverviewTab({
 	version,
 	gitConnected,
 	orgName,
-	onGoToContents,
+	onPickEntity,
 }: {
 	readme: string | null;
 	entityCounts: Record<EntityKind, number>;
@@ -986,7 +1022,7 @@ function OverviewTab({
 	version: string | null;
 	gitConnected: boolean;
 	orgName: string;
-	onGoToContents: () => void;
+	onPickEntity: (kind: EntityKind) => void;
 }) {
 	const total = Object.values(entityCounts).reduce((a, b) => a + b, 0);
 	return (
@@ -1002,14 +1038,14 @@ function OverviewTab({
 				</CardHeader>
 				<CardContent>
 					<div className="flex flex-wrap gap-4 text-sm">
-						{ENTITY_TABS.map(({ key, label, Icon }) => (
+						{ENTITY_TABS.map(({ key, label, Icon, iconClassName }) => (
 							<button
 								type="button"
 								key={key}
-								onClick={onGoToContents}
+								onClick={() => onPickEntity(key)}
 								className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
 							>
-								<Icon className="h-4 w-4" />
+								<Icon className={`h-4 w-4 ${iconClassName}`} />
 								<span className="font-medium text-foreground">
 									{entityCounts[key]}
 								</span>
@@ -1063,7 +1099,7 @@ function ContentsSummary({
 	return (
 		<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
 			{ENTITY_TABS.filter(({ key }) => entityCounts[key] > 0).map(
-				({ key, label, Icon }) => (
+				({ key, label, Icon, iconClassName }) => (
 					<button
 						type="button"
 						key={key}
@@ -1071,7 +1107,7 @@ function ContentsSummary({
 						onClick={() => onPick(key)}
 						className="flex items-center gap-3 rounded-xl border p-4 text-left hover:bg-muted"
 					>
-						<Icon className="h-5 w-5 text-muted-foreground" />
+						<Icon className={`h-5 w-5 ${iconClassName}`} />
 						<div>
 							<div className="text-lg font-semibold">{entityCounts[key]}</div>
 							<div className="text-xs text-muted-foreground">{label}</div>
@@ -1360,6 +1396,16 @@ export function SolutionDetail() {
 		useState<ContentsFilter>("all");
 	const activeKind: EntityKind | null =
 		contentsFilter === "all" ? null : contentsFilter;
+	function openContentKind(kind: EntityKind) {
+		if (kind === "files") {
+			const id = sol?.id ?? solutionId;
+			if (!id) return;
+			navigate(`/files?install=${id}&from=solution:${id}`);
+			return;
+		}
+		setContentsFilter(kind);
+		setTab("contents");
+	}
 
 	return (
 		<div
@@ -1625,7 +1671,7 @@ export function SolutionDetail() {
 								version={sol.version ?? null}
 								gitConnected={sol.git_connected}
 								orgName={orgName}
-								onGoToContents={() => setTab("contents")}
+								onPickEntity={openContentKind}
 							/>
 						</TabsContent>
 

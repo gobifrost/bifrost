@@ -171,6 +171,14 @@ test.describe("Solution Files link (admin)", () => {
 			});
 			expect(writeR.status()).toBe(204);
 
+			// The Solutions catalog card should expose a compact Files count in
+			// its responsive footer without needing a per-card entities fetch.
+			await page.goto("/solutions");
+			const card = page.getByTestId("install-card").filter({ hasText: slug.toUpperCase() });
+			await expect(card).toBeVisible({ timeout: 10000 });
+			await expect(card.getByTestId("solution-card-counts")).toBeVisible();
+			await expect(card.getByTestId("solution-count-files")).toContainText("1");
+
 			// Navigate to the Solution detail page.
 			await page.goto(`/solutions/${solId}`);
 			await expect(page.getByTestId("solution-detail")).toBeVisible({ timeout: 15000 });
