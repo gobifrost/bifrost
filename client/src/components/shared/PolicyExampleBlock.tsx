@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/tables/CodeEditor";
 

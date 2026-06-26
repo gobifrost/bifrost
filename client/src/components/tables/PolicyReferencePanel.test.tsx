@@ -138,7 +138,7 @@ describe("PolicyReferencePanel — worked examples", () => {
 		//
 		// Examples render through CodeEditor (mocked to a textarea labelled
 		// `example-<idx>.<format>`). The default editors are `.yaml`.
-		const yaml = (await import("js-yaml")).default;
+		const yaml = await import("js-yaml");
 		renderAndOpen();
 		const headings = screen.getAllByRole("heading", { level: 5 });
 		const editors = screen.getAllByLabelText(/^example-\d+\.yaml$/);
