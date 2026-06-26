@@ -3855,22 +3855,22 @@ export interface paths {
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        get: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        get: operations["execute_endpoint_api_endpoints_workflow_id_get"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        put: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        put: operations["execute_endpoint_api_endpoints_workflow_id_put"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        post: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        post: operations["execute_endpoint_api_endpoints_workflow_id_post"];
         /**
          * Execute workflow via API key
          * @description Execute an endpoint-enabled workflow using an API key for authentication
          */
-        delete: operations["execute_endpoint_api_endpoints__workflow_id__get"];
+        delete: operations["execute_endpoint_api_endpoints_workflow_id_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7391,6 +7391,61 @@ export interface paths {
          *     backup payload is requested.
          */
         post: operations["export_solution_api_solutions__solution_id__export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/export-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List durable Solution backup export jobs (admin only) */
+        get: operations["get_solution_export_jobs_api_solutions__solution_id__export_jobs_get"];
+        put?: never;
+        /**
+         * Queue a durable Solution backup export job (admin only)
+         * @description Create a scheduler-owned backup export job without building the zip.
+         */
+        post: operations["create_solution_export_job_api_solutions__solution_id__export_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/export-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a durable Solution backup export job (admin only) */
+        get: operations["get_solution_export_job_api_solutions_export_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/export-jobs/{job_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a completed durable Solution backup export artifact (admin only) */
+        get: operations["download_solution_export_job_api_solutions_export_jobs__job_id__download_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -21648,6 +21703,103 @@ export interface components {
             version?: string | null;
         };
         /**
+         * SolutionExportJobCreate
+         * @description Request body for enqueueing a solution backup export job.
+         */
+        SolutionExportJobCreate: {
+            options: components["schemas"]["SolutionExportOptions"];
+        };
+        /**
+         * SolutionExportJobPublic
+         * @description Public state for a durable async solution backup export job.
+         */
+        SolutionExportJobPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Requested By Id */
+            requested_by_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "completed" | "failed" | "expired";
+            /**
+             * Progress Percent
+             * @default 0
+             */
+            progress_percent: number;
+            /** Message */
+            message?: string | null;
+            /** Failure Message */
+            failure_message?: string | null;
+            /** Artifact Size Bytes */
+            artifact_size_bytes?: number | null;
+            /** Artifact Sha256 */
+            artifact_sha256?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Download Url */
+            download_url?: string | null;
+        };
+        /**
+         * SolutionExportJobsList
+         * @description Recent durable async backup export jobs for one Solution.
+         */
+        SolutionExportJobsList: {
+            /** Jobs */
+            jobs?: components["schemas"]["SolutionExportJobPublic"][];
+        };
+        /**
+         * SolutionExportOptions
+         * @description Options for a durable async backup export of a solution install.
+         */
+        SolutionExportOptions: {
+            /**
+             * Include Configs
+             * @default true
+             */
+            include_configs: boolean;
+            /**
+             * Include Secrets
+             * @default false
+             */
+            include_secrets: boolean;
+            /**
+             * Include Tables
+             * @default false
+             */
+            include_tables: boolean;
+            /**
+             * Include Files
+             * @default false
+             */
+            include_files: boolean;
+            /** Password */
+            password?: string | null;
+        };
+        /**
          * SolutionFileSummary
          * @description Lightweight summary of one file owned by a solution install.
          */
@@ -30375,7 +30527,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints_workflow_id_get: {
         parameters: {
             query?: never;
             header: {
@@ -30408,7 +30560,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints_workflow_id_put: {
         parameters: {
             query?: never;
             header: {
@@ -30441,7 +30593,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints_workflow_id_post: {
         parameters: {
             query?: never;
             header: {
@@ -30474,7 +30626,7 @@ export interface operations {
             };
         };
     };
-    execute_endpoint_api_endpoints__workflow_id__get: {
+    execute_endpoint_api_endpoints_workflow_id_delete: {
         parameters: {
             query?: never;
             header: {
@@ -36849,6 +37001,149 @@ export interface operations {
             };
             /** @description Install not found, or it predates export support */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_solution_export_jobs_api_solutions__solution_id__export_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionExportJobsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_solution_export_job_api_solutions__solution_id__export_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionExportJobCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionExportJobPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_solution_export_job_api_solutions_export_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionExportJobPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_solution_export_job_api_solutions_export_jobs__job_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Export job not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Export job is not downloadable */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

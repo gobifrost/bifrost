@@ -20,11 +20,15 @@ vi.mock("@/lib/api-client", () => ({
 
 import {
 	deleteSolution,
+	createSolutionExportJob,
+	downloadSolutionExportJob,
 	getSolution,
 	getSolutionEntities,
+	getSolutionExportJob,
 	getSolutionReadme,
 	installSolution,
 	installSolutionFromRepo,
+	listSolutionExportJobs,
 	listSolutions,
 	previewInstall,
 	previewSolutionFromRepo,
@@ -379,9 +383,9 @@ describe("exportSolution", () => {
 
 		const { exportSolution } = await import("./solutions");
 		await exportSolution("sol-1", "full", "hunter2", {
-			includeValues: true,
+			includeConfigs: true,
 			includeFiles: true,
-			includeData: true,
+			includeTables: true,
 		});
 
 		const [url, options] = mockAuthFetch.mock.calls[0];
@@ -431,5 +435,83 @@ describe("exportSolution", () => {
 		await expect(exportSolution("sol-1")).rejects.toThrow(
 			"No stored bundle for this install",
 		);
+	});
+});
+
+describe("solution export jobs", () => {
+	it("creates a backup export job with snake_case options in the body", async () => {
+		mockPost.mockResolvedValue({
+			data: { id: "job-1", solution_id: "sol-1", status: "pending" },
+		});
+
+		const out = await createSolutionExportJob("sol-1", {
+			password: "hunter2",
+			options: {
+				includeConfigs: true,
+				includeSecrets: true,
+				includeTables: false,
+				includeFiles: true,
+			},
+		});
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/{solution_id}/export-jobs",
+			{
+				params: { path: { solution_id: "sol-1" } },
+				body: {
+					options: {
+						include_configs: true,
+						include_secrets: true,
+						include_tables: false,
+						include_files: true,
+						password: "hunter2",
+					},
+				},
+			},
+		);
+		expect(out.id).toBe("job-1");
+	});
+
+	it("lists export jobs for a solution", async () => {
+		mockGet.mockResolvedValue({ data: { jobs: [{ id: "job-1" }] } });
+
+		const out = await listSolutionExportJobs("sol-1");
+
+		expect(mockGet).toHaveBeenCalledWith(
+			"/api/solutions/{solution_id}/export-jobs",
+			{ params: { path: { solution_id: "sol-1" } } },
+		);
+		expect(out.jobs?.[0].id).toBe("job-1");
+	});
+
+	it("gets a single export job", async () => {
+		mockGet.mockResolvedValue({ data: { id: "job-1" } });
+
+		const out = await getSolutionExportJob("job-1");
+
+		expect(mockGet).toHaveBeenCalledWith(
+			"/api/solutions/export-jobs/{job_id}",
+			{ params: { path: { job_id: "job-1" } } },
+		);
+		expect(out.id).toBe("job-1");
+	});
+
+	it("downloads an export job artifact with authFetch", async () => {
+		const blob = new Blob(["zipbytes"], { type: "application/zip" });
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			headers: new Headers({
+				"Content-Disposition": 'attachment; filename="backup.zip"',
+			}),
+			blob: () => Promise.resolve(blob),
+		});
+
+		const out = await downloadSolutionExportJob("job-1");
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/solutions/export-jobs/job-1/download",
+			{ signal: undefined },
+		);
+		expect(out).toEqual({ blob, filename: "backup.zip" });
 	});
 });

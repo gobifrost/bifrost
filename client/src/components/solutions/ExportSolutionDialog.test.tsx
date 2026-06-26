@@ -51,7 +51,7 @@ it("explains what package and backup exports include", async () => {
 	expect(screen.getByText(/package/i)).toBeInTheDocument();
 	expect(screen.getByText(/omits runtime values/i)).toBeInTheDocument();
 	expect(
-		screen.getByText(/choose which runtime state to include/i),
+		screen.getByText(/backups run in the background/i),
 	).toBeInTheDocument();
 
 	await userEvent.click(screen.getByLabelText(/^backup/i));
@@ -80,7 +80,9 @@ it("Export button is disabled when Backup is selected but password is empty", as
 		/>,
 	);
 	await userEvent.click(screen.getByLabelText(/^backup/i));
-	expect(screen.getByRole("button", { name: /export/i })).toBeDisabled();
+	expect(
+		screen.getByRole("button", { name: /queue backup/i }),
+	).toBeDisabled();
 });
 
 it("Export button is disabled and shows a spinner label when isPending", async () => {
@@ -96,6 +98,20 @@ it("Export button is disabled and shows a spinner label when isPending", async (
 	expect(btn).toBeDisabled();
 });
 
+it("Backup button uses queueing language", async () => {
+	render(
+		<ExportSolutionDialog
+			open
+			onOpenChange={() => {}}
+			onExport={() => {}}
+		/>,
+	);
+	await userEvent.click(screen.getByLabelText(/^backup/i));
+	expect(
+		screen.getByRole("button", { name: /queue backup/i }),
+	).toBeInTheDocument();
+});
+
 it("calls onExport with backup defaults and password when Backup is selected", async () => {
 	const onExport = vi.fn();
 	render(
@@ -107,11 +123,12 @@ it("calls onExport with backup defaults and password when Backup is selected", a
 	);
 	await userEvent.click(screen.getByLabelText(/^backup/i));
 	await userEvent.type(getPasswordInput(), "s3cr3t");
-	await userEvent.click(screen.getByRole("button", { name: /export/i }));
+	await userEvent.click(screen.getByRole("button", { name: /queue backup/i }));
 	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t", {
-		includeValues: true,
+		includeConfigs: true,
+		includeSecrets: false,
+		includeTables: false,
 		includeFiles: true,
-		includeData: false,
 	});
 });
 
@@ -130,14 +147,16 @@ it("calls onOpenChange(false) when Cancel is clicked", async () => {
 
 it("offers backup content options only in Backup mode", async () => {
 	render(<ExportSolutionDialog open onOpenChange={() => {}} onExport={() => {}} />);
-	expect(screen.queryByLabelText(/configuration values and secrets/i)).toBeNull();
+	expect(screen.queryByLabelText(/config values/i)).toBeNull();
+	expect(screen.queryByLabelText(/secrets/i)).toBeNull();
+	expect(screen.queryByLabelText(/table data/i)).toBeNull();
 	expect(screen.queryByLabelText(/solution-owned files/i)).toBeNull();
-	expect(screen.queryByLabelText(/include table data/i)).toBeNull();
 
 	await userEvent.click(screen.getByLabelText(/^backup/i));
-	expect(screen.getByLabelText(/configuration values and secrets/i)).toBeChecked();
+	expect(screen.getByLabelText(/config values/i)).toBeChecked();
+	expect(screen.getByLabelText(/secrets/i)).not.toBeChecked();
+	expect(screen.getByLabelText(/table data/i)).not.toBeChecked();
 	expect(screen.getByLabelText(/solution-owned files/i)).toBeChecked();
-	expect(screen.getByLabelText(/include table data/i)).toBeInTheDocument();
 });
 
 it("sends the selected backup content options", async () => {
@@ -146,14 +165,16 @@ it("sends the selected backup content options", async () => {
 
 	await userEvent.click(screen.getByLabelText(/^backup/i));
 	await userEvent.click(screen.getByLabelText(/solution-owned files/i));
-	await userEvent.click(screen.getByLabelText(/include table data/i));
+	await userEvent.click(screen.getByLabelText(/table data/i));
+	await userEvent.click(screen.getByLabelText(/secrets/i));
 	await userEvent.type(getPasswordInput(), "s3cr3t");
-	await userEvent.click(screen.getByRole("button", { name: /export/i }));
+	await userEvent.click(screen.getByRole("button", { name: /queue backup/i }));
 
 	expect(onExport).toHaveBeenCalledWith("full", "s3cr3t", {
-		includeValues: true,
+		includeConfigs: true,
+		includeSecrets: true,
+		includeTables: true,
 		includeFiles: false,
-		includeData: true,
 	});
 });
 

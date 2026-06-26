@@ -44,6 +44,8 @@ import {
 	PowerOff,
 	Trash2,
 	RotateCcw,
+	Archive,
+	Download,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,7 +115,11 @@ import {
 	uninstallSolution,
 	getSolutionDeletionSummary,
 	exportSolution,
+	createSolutionExportJob,
+	listSolutionExportJobs,
+	downloadSolutionExportJob,
 	type SolutionExportOptions,
+	type SolutionExportJob,
 	setSolutionConfig,
 	syncSolution,
 	previewSolutionFromRepo,
@@ -133,7 +139,7 @@ type SolutionDeletionSummary = components["schemas"]["SolutionDeletionSummary"];
  * (type chips); config VALUES + integration connections live in Configuration;
  * Setup is no longer a tab — it's a STATE surfaced as an Overview banner + a
  * Configuration badge. */
-type TabKey = "overview" | "contents" | "configuration";
+type TabKey = "overview" | "contents" | "configuration" | "exports";
 
 /** The entity kinds shown inside the Contents tab (the old per-entity tabs). */
 type EntityKind =
@@ -267,6 +273,40 @@ function formatDate(value: string | null | undefined): string {
 		month: "short",
 		day: "numeric",
 	});
+}
+
+function formatDateTime(value: string | null | undefined): string {
+	if (!value) return "-";
+	return new Date(value).toLocaleString(undefined, {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+	});
+}
+
+function formatBytes(value: number | null | undefined): string {
+	if (!value) return "-";
+	const units = ["B", "KB", "MB", "GB"];
+	let size = value;
+	let unit = 0;
+	while (size >= 1024 && unit < units.length - 1) {
+		size /= 1024;
+		unit += 1;
+	}
+	return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
 }
 
 function workflowTypeBadge(entity: EntitySummary) {
@@ -1191,6 +1231,108 @@ function ConfigurationTab({
 	);
 }
 
+function exportJobStatusBadge(job: SolutionExportJob) {
+	const variant =
+		job.status === "completed"
+			? "default"
+			: job.status === "failed" || job.status === "expired"
+				? "destructive"
+				: "secondary";
+	return <Badge variant={variant}>{job.status.replace("_", " ")}</Badge>;
+}
+
+function ExportsTab({
+	jobs,
+	isLoading,
+	error,
+	onDownload,
+	downloadingJobId,
+}: {
+	jobs: SolutionExportJob[];
+	isLoading: boolean;
+	error?: string;
+	onDownload: (job: SolutionExportJob) => void;
+	downloadingJobId: string | null;
+}) {
+	if (isLoading) {
+		return (
+			<Card>
+				<CardContent className="space-y-3 py-6">
+					<Skeleton className="h-5 w-48" />
+					<Skeleton className="h-16 w-full" />
+				</CardContent>
+			</Card>
+		);
+	}
+
+	if (error) {
+		return (
+			<div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-6 text-sm text-destructive">
+				{error}
+			</div>
+		);
+	}
+
+	if (jobs.length === 0) {
+		return (
+			<div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
+				No backup exports queued yet.
+			</div>
+		);
+	}
+
+	return (
+		<div className="space-y-3">
+			{jobs.map((job) => {
+				const canDownload = job.status === "completed" && !!job.download_url;
+				const isDownloading = downloadingJobId === job.id;
+				return (
+					<Card key={job.id}>
+						<CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+							<div className="min-w-0 flex-1 space-y-2">
+								<div className="flex flex-wrap items-center gap-2">
+									{exportJobStatusBadge(job)}
+									<span className="text-sm font-medium">
+										{job.progress_percent ?? 0}%
+									</span>
+									<span className="text-xs text-muted-foreground">
+										{formatBytes(job.artifact_size_bytes)}
+									</span>
+								</div>
+								<div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+									<span>Created {formatDateTime(job.created_at)}</span>
+									<span>Completed {formatDateTime(job.completed_at)}</span>
+									<span>Expires {formatDateTime(job.expires_at)}</span>
+								</div>
+								{(job.message || job.failure_message) && (
+									<p className="text-sm text-muted-foreground">
+										{job.failure_message ?? job.message}
+									</p>
+								)}
+							</div>
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								disabled={!canDownload || isDownloading}
+								onClick={() => onDownload(job)}
+								className="shrink-0"
+							>
+								{isDownloading ? (
+									<Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+								) : (
+									<Download className="mr-1.5 h-4 w-4" />
+								)}
+								Download
+							</Button>
+						</CardContent>
+					</Card>
+				);
+			})}
+		</div>
+	);
+}
+
 export function SolutionDetail() {
 	const { solutionId } = useParams<{ solutionId: string }>();
 	const navigate = useNavigate();
@@ -1234,6 +1376,18 @@ export function SolutionDetail() {
 		enabled: !!solutionId,
 	});
 
+	const exportJobsQuery = useQuery({
+		queryKey: ["solutions", solutionId, "export-jobs"],
+		queryFn: () => listSolutionExportJobs(solutionId!),
+		enabled: !!solutionId,
+		refetchInterval: (query) => {
+			const jobs = query.state.data?.jobs ?? [];
+			return jobs.some((job) => job.status === "pending" || job.status === "running")
+				? 2500
+				: false;
+		},
+	});
+
 	const invalidate = () => {
 		void queryClient.invalidateQueries({
 			queryKey: ["solutions", solutionId, "entities"],
@@ -1255,18 +1409,44 @@ export function SolutionDetail() {
 			options?: SolutionExportOptions;
 		}) => exportSolution(solutionId!, mode, password, options),
 		onSuccess: ({ blob, filename }) => {
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = filename;
-			document.body.appendChild(a);
-			a.click();
-			a.remove();
-			URL.revokeObjectURL(url);
+			downloadBlob(blob, filename);
 			setExportDialogOpen(false);
 		},
 		onError: (err: unknown) => {
 			toast.error("Failed to export", {
+				description: err instanceof Error ? err.message : "Unknown error",
+			});
+		},
+	});
+
+	const backupExportMut = useMutation({
+		mutationFn: ({
+			password,
+			options,
+		}: {
+			password: string;
+			options: SolutionExportOptions;
+		}) => createSolutionExportJob(solutionId!, { password, options }),
+		onSuccess: () => {
+			setExportDialogOpen(false);
+			setTab("exports");
+			toast.success("Backup export queued");
+			void queryClient.invalidateQueries({
+				queryKey: ["solutions", solutionId, "export-jobs"],
+			});
+		},
+		onError: (err: unknown) => {
+			toast.error("Failed to queue backup export", {
+				description: err instanceof Error ? err.message : "Unknown error",
+			});
+		},
+	});
+
+	const downloadExportJobMut = useMutation({
+		mutationFn: (jobId: string) => downloadSolutionExportJob(jobId),
+		onSuccess: ({ blob, filename }) => downloadBlob(blob, filename),
+		onError: (err: unknown) => {
+			toast.error("Failed to download backup export", {
 				description: err instanceof Error ? err.message : "Unknown error",
 			});
 		},
@@ -1576,7 +1756,7 @@ export function SolutionDetail() {
 								</Button>
 							)}
 							<SolutionActionsMenu
-								exporting={exportMut.isPending}
+								exporting={exportMut.isPending || backupExportMut.isPending}
 								isInactive={sol.status === "inactive"}
 								onCapture={() => setCaptureOpen(true)}
 								onExport={() => setExportDialogOpen(true)}
@@ -1658,6 +1838,14 @@ export function SolutionDetail() {
 										</span>
 									)
 								)}
+							</TabsTrigger>
+							<TabsTrigger
+								value="exports"
+								data-testid="tab-exports"
+								className="gap-1.5"
+							>
+								<Archive className="h-4 w-4" />
+								Exports
 							</TabsTrigger>
 						</TabsList>
 
@@ -1755,6 +1943,26 @@ export function SolutionDetail() {
 										});
 									}
 								}}
+							/>
+						</TabsContent>
+
+						<TabsContent value="exports" className="flex-1 min-h-0 overflow-auto">
+							<ExportsTab
+								jobs={exportJobsQuery.data?.jobs ?? []}
+								isLoading={exportJobsQuery.isLoading}
+								error={
+									exportJobsQuery.error instanceof Error
+										? exportJobsQuery.error.message
+										: exportJobsQuery.isError
+											? "Failed to load backup exports"
+											: undefined
+								}
+								downloadingJobId={
+									downloadExportJobMut.isPending
+										? (downloadExportJobMut.variables ?? null)
+										: null
+								}
+								onDownload={(job) => downloadExportJobMut.mutate(job.id)}
 							/>
 						</TabsContent>
 					</Tabs>
@@ -1855,10 +2063,22 @@ export function SolutionDetail() {
 					<ExportSolutionDialog
 						open={exportDialogOpen}
 						onOpenChange={setExportDialogOpen}
-						onExport={(mode, password, options) =>
-							exportMut.mutate({ mode, password, options })
-						}
-						isPending={exportMut.isPending}
+						onExport={(mode, password, options) => {
+							if (mode === "full") {
+								backupExportMut.mutate({
+									password: password ?? "",
+									options: options ?? {
+										includeConfigs: true,
+										includeSecrets: false,
+										includeTables: false,
+										includeFiles: true,
+									},
+								});
+								return;
+							}
+							exportMut.mutate({ mode, password, options });
+						}}
+						isPending={exportMut.isPending || backupExportMut.isPending}
 					/>
 
 					{/* Hard-delete confirmation modal (type-the-slug to confirm) */}

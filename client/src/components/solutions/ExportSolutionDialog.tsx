@@ -45,20 +45,30 @@ export function ExportSolutionDialog({
 }: ExportSolutionDialogProps) {
 	const [mode, setMode] = useState<"shareable" | "full">("shareable");
 	const [password, setPassword] = useState("");
-	const [includeValues, setIncludeValues] = useState(true);
+	const [includeConfigs, setIncludeConfigs] = useState(true);
+	const [includeSecrets, setIncludeSecrets] = useState(false);
+	const [includeTables, setIncludeTables] = useState(false);
 	const [includeFiles, setIncludeFiles] = useState(true);
-	const [includeData, setIncludeData] = useState(false);
 
-	const hasBackupSelection = includeValues || includeFiles || includeData;
+	const hasBackupSelection =
+		includeConfigs || includeSecrets || includeTables || includeFiles;
 	const exportDisabled =
 		mode === "full" && (!hasBackupSelection || password.trim() === "");
+	const submitLabel =
+		mode === "full"
+			? isPending
+				? "Queueing..."
+				: "Queue backup"
+			: isPending
+				? "Exporting..."
+				: "Export";
 
 	function handleExport() {
 		void onExport(
 			mode,
 			mode === "full" ? password : undefined,
 			mode === "full"
-				? { includeValues, includeFiles, includeData }
+				? { includeConfigs, includeSecrets, includeTables, includeFiles }
 				: undefined,
 		);
 	}
@@ -68,9 +78,10 @@ export function ExportSolutionDialog({
 			// Reset state when closing
 			setMode("shareable");
 			setPassword("");
-			setIncludeValues(true);
+			setIncludeConfigs(true);
+			setIncludeSecrets(false);
+			setIncludeTables(false);
 			setIncludeFiles(true);
-			setIncludeData(false);
 		}
 		onOpenChange(next);
 	}
@@ -94,9 +105,10 @@ export function ExportSolutionDialog({
 							setMode(v as "shareable" | "full");
 							if (v === "shareable") {
 								setPassword("");
-								setIncludeValues(true);
+								setIncludeConfigs(true);
+								setIncludeSecrets(false);
+								setIncludeTables(false);
 								setIncludeFiles(true);
-								setIncludeData(false);
 							}
 						}}
 						className="gap-3"
@@ -133,8 +145,9 @@ export function ExportSolutionDialog({
 							<span className="min-w-0">
 								<span className="block text-sm font-medium">Backup</span>
 								<span className="mt-0.5 block text-xs text-muted-foreground">
-									Choose which runtime state to include. Selected backup
-									contents are encrypted with a password.
+									Choose which runtime state to include. Backups run in the
+									background, are encrypted with a password, and are kept for 7
+									days.
 								</span>
 							</span>
 						</label>
@@ -168,23 +181,65 @@ export function ExportSolutionDialog({
 								<p className="text-sm font-medium">Backup contents</p>
 								<div className="flex items-start gap-3">
 									<Checkbox
-										id="export-include-values"
-										checked={includeValues}
+										id="export-include-configs"
+										checked={includeConfigs}
 										onCheckedChange={(checked) =>
-											setIncludeValues(checked === true)
+											setIncludeConfigs(checked === true)
 										}
 										className="mt-0.5 shrink-0"
 									/>
 									<div className="min-w-0 space-y-0.5">
 										<label
-											htmlFor="export-include-values"
+											htmlFor="export-include-configs"
 											className="cursor-pointer text-sm font-medium leading-none"
 										>
-											Configuration values and secrets
+											Config values
 										</label>
 										<p className="text-xs text-muted-foreground">
-											Includes configured values for this install, including
-											secret values.
+											Includes non-secret configured values for this install.
+										</p>
+									</div>
+								</div>
+								<div className="flex items-start gap-3">
+									<Checkbox
+										id="export-include-secrets"
+										checked={includeSecrets}
+										onCheckedChange={(checked) =>
+											setIncludeSecrets(checked === true)
+										}
+										className="mt-0.5 shrink-0"
+									/>
+									<div className="min-w-0 space-y-0.5">
+										<label
+											htmlFor="export-include-secrets"
+											className="cursor-pointer text-sm font-medium leading-none"
+										>
+											Secrets
+										</label>
+										<p className="text-xs text-muted-foreground">
+											Includes secret config values in the encrypted backup.
+										</p>
+									</div>
+								</div>
+								<div className="flex items-start gap-3">
+									<Checkbox
+										id="export-include-tables"
+										checked={includeTables}
+										onCheckedChange={(checked) =>
+											setIncludeTables(checked === true)
+										}
+										className="mt-0.5 shrink-0"
+									/>
+									<div className="min-w-0 space-y-0.5">
+										<label
+											htmlFor="export-include-tables"
+											className="cursor-pointer text-sm font-medium leading-none"
+										>
+											Table data
+										</label>
+										<p className="text-xs text-muted-foreground">
+											Adds table rows to the encrypted backup payload. Table
+											schemas are already included above.
 										</p>
 									</div>
 								</div>
@@ -206,28 +261,6 @@ export function ExportSolutionDialog({
 										</label>
 										<p className="text-xs text-muted-foreground">
 											Includes file payloads owned by this Solution.
-										</p>
-									</div>
-								</div>
-								<div className="flex items-start gap-3">
-									<Checkbox
-										id="export-include-data"
-										checked={includeData}
-										onCheckedChange={(checked) =>
-											setIncludeData(checked === true)
-										}
-										className="mt-0.5 shrink-0"
-									/>
-									<div className="min-w-0 space-y-0.5">
-										<label
-											htmlFor="export-include-data"
-											className="cursor-pointer text-sm font-medium leading-none"
-										>
-											Include table data
-										</label>
-										<p className="text-xs text-muted-foreground">
-											Adds table rows to the encrypted backup payload. Table
-											schemas are already included above.
 										</p>
 									</div>
 								</div>
@@ -257,7 +290,7 @@ export function ExportSolutionDialog({
 						{isPending && (
 							<Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
 						)}
-						{isPending ? "Exporting…" : "Export"}
+						{submitLabel}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -37,15 +37,30 @@ export type SolutionRepoPreviewRequest =
 	components["schemas"]["SolutionRepoPreviewRequest"];
 export type SolutionDeletionSummary =
 	components["schemas"]["SolutionDeletionSummary"];
+export type SolutionExportJob =
+	components["schemas"]["SolutionExportJobPublic"];
+export type SolutionExportJobsList =
+	components["schemas"]["SolutionExportJobsList"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
 }
 
 export interface SolutionExportOptions {
-	includeValues?: boolean;
+	includeConfigs?: boolean;
+	includeSecrets?: boolean;
+	includeTables?: boolean;
 	includeFiles?: boolean;
+}
+
+type LegacySolutionExportOptions = SolutionExportOptions & {
+	includeValues?: boolean;
 	includeData?: boolean;
+};
+
+export interface CreateSolutionExportJobRequest {
+	password: string;
+	options: SolutionExportOptions;
 }
 
 export async function listSolutions(
@@ -342,7 +357,7 @@ export async function exportSolution(
 	solutionId: string,
 	mode: "shareable" | "full" = "shareable",
 	password?: string,
-	options?: boolean | SolutionExportOptions,
+	options?: boolean | LegacySolutionExportOptions,
 ): Promise<{ blob: Blob; filename: string }> {
 	// POST so the full-backup password rides in the request body, not the URL
 	// query string (a query-string secret leaks into logs/proxies/history).
@@ -350,13 +365,16 @@ export async function exportSolution(
 	const exportOptions =
 		typeof options === "boolean" ? { includeData: options } : (options ?? {});
 	const params = new URLSearchParams({ mode });
-	if (exportOptions.includeValues !== undefined) {
-		params.set("include_values", String(exportOptions.includeValues));
+	const includeValues =
+		exportOptions.includeConfigs ?? exportOptions.includeValues;
+	const includeData = exportOptions.includeTables ?? exportOptions.includeData;
+	if (includeValues !== undefined) {
+		params.set("include_values", String(includeValues));
 	}
 	if (exportOptions.includeFiles !== undefined) {
 		params.set("include_files", String(exportOptions.includeFiles));
 	}
-	if (exportOptions.includeData) params.set("include_data", "true");
+	if (includeData) params.set("include_data", "true");
 	const response = await authFetch(
 		`/api/solutions/${solutionId}/export?${params.toString()}`,
 		{
@@ -375,6 +393,91 @@ export async function exportSolution(
 	return {
 		blob: await response.blob(),
 		filename: match?.[1] ?? `solution-${solutionId}.zip`,
+	};
+}
+
+function exportJobOptionsBody(
+	request: CreateSolutionExportJobRequest,
+): components["schemas"]["SolutionExportJobCreate"] {
+	return {
+		options: {
+			include_configs: request.options.includeConfigs ?? true,
+			include_secrets: request.options.includeSecrets ?? false,
+			include_tables: request.options.includeTables ?? false,
+			include_files: request.options.includeFiles ?? true,
+			password: request.password,
+		},
+	};
+}
+
+export async function createSolutionExportJob(
+	solutionId: string,
+	request: CreateSolutionExportJobRequest,
+	options: RequestOptions = {},
+): Promise<SolutionExportJob> {
+	const { signal } = options;
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/{solution_id}/export-jobs",
+		{
+			params: { path: { solution_id: solutionId } },
+			body: exportJobOptionsBody(request),
+			signal,
+		},
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to queue backup export"));
+	}
+	return data;
+}
+
+export async function listSolutionExportJobs(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<SolutionExportJobsList> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/{solution_id}/export-jobs",
+		{ params: { path: { solution_id: solutionId } }, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to list backup exports"));
+	}
+	return data;
+}
+
+export async function getSolutionExportJob(
+	jobId: string,
+	options: RequestOptions = {},
+): Promise<SolutionExportJob> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/export-jobs/{job_id}",
+		{ params: { path: { job_id: jobId } }, signal },
+	);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to get backup export"));
+	}
+	return data;
+}
+
+export async function downloadSolutionExportJob(
+	jobId: string,
+	options: RequestOptions = {},
+): Promise<{ blob: Blob; filename: string }> {
+	const response = await authFetch(
+		`/api/solutions/export-jobs/${jobId}/download`,
+		{ signal: options.signal },
+	);
+	if (!response.ok) {
+		throw new Error(
+			await parseUploadError(response, "Failed to download backup export"),
+		);
+	}
+	const disposition = response.headers.get("Content-Disposition") ?? "";
+	const match = /filename="([^"]+)"/.exec(disposition);
+	return {
+		blob: await response.blob(),
+		filename: match?.[1] ?? `solution-export-${jobId}.zip`,
 	};
 }
 

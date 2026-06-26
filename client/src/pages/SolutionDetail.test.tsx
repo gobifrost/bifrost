@@ -41,6 +41,9 @@ const mockUninstallSolution = vi.fn();
 const mockGetSolutionDeletionSummary = vi.fn();
 const mockSetSolutionConfig = vi.fn();
 const mockExportSolution = vi.fn();
+const mockCreateSolutionExportJob = vi.fn();
+const mockListSolutionExportJobs = vi.fn();
+const mockDownloadSolutionExportJob = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
 const mockSyncSolution = vi.fn();
@@ -55,6 +58,10 @@ vi.mock("@/services/solutions", () => ({
 		mockGetSolutionDeletionSummary(...a),
 	setSolutionConfig: (...a: unknown[]) => mockSetSolutionConfig(...a),
 	exportSolution: (...a: unknown[]) => mockExportSolution(...a),
+	createSolutionExportJob: (...a: unknown[]) => mockCreateSolutionExportJob(...a),
+	listSolutionExportJobs: (...a: unknown[]) => mockListSolutionExportJobs(...a),
+	downloadSolutionExportJob: (...a: unknown[]) =>
+		mockDownloadSolutionExportJob(...a),
 	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
@@ -150,6 +157,19 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSolutionEntities.mockResolvedValue(makeEntities());
 	mockGetSolutionReadme.mockResolvedValue({ readme: null });
+	mockListSolutionExportJobs.mockResolvedValue({ jobs: [] });
+	mockCreateSolutionExportJob.mockResolvedValue({
+		id: "job-1",
+		solution_id: "sol-1",
+		status: "pending",
+		progress_percent: 0,
+		created_at: "2026-06-25T12:00:00Z",
+		updated_at: "2026-06-25T12:00:00Z",
+	});
+	mockDownloadSolutionExportJob.mockResolvedValue({
+		blob: new Blob(["zipbytes"]),
+		filename: "backup.zip",
+	});
 	mockGetSolutionDeletionSummary.mockResolvedValue({
 		solution_id: "sol-1",
 		files: 2,
@@ -239,6 +259,77 @@ describe("SolutionDetail", () => {
 		const configuration = screen.getByTestId("tab-configuration");
 		expect(configuration).toHaveTextContent("Configuration");
 		expect(configuration).toHaveTextContent("2");
+
+		expect(screen.getByTestId("tab-exports")).toHaveTextContent("Exports");
+	});
+
+	it("lists backup export jobs on the Exports tab and downloads completed jobs", async () => {
+		mockListSolutionExportJobs.mockResolvedValue({
+			jobs: [
+				{
+					id: "job-1",
+					solution_id: "sol-1",
+					status: "completed",
+					progress_percent: 100,
+					artifact_size_bytes: 2048,
+					created_at: "2026-06-25T12:00:00Z",
+					updated_at: "2026-06-25T12:05:00Z",
+					completed_at: "2026-06-25T12:05:00Z",
+					expires_at: "2026-07-02T12:05:00Z",
+					download_url: "/api/solutions/export-jobs/job-1/download",
+				},
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-exports"));
+
+		expect(await screen.findByText("completed")).toBeInTheDocument();
+		expect(screen.getByText(/2(?:\.0)? KB/)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /download/i }));
+
+		await waitFor(() =>
+			expect(mockDownloadSolutionExportJob).toHaveBeenCalledWith("job-1"),
+		);
+	});
+
+	it("shows an error state when backup export jobs fail to load", async () => {
+		mockListSolutionExportJobs.mockRejectedValue(
+			new Error("Failed to list backup exports"),
+		);
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-exports"));
+
+		expect(
+			await screen.findByText("Failed to list backup exports"),
+		).toBeInTheDocument();
+	});
+
+	it("queues Backup exports instead of directly downloading", async () => {
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		await user.click(await screen.findByRole("menuitem", { name: /export/i }));
+		await user.click(screen.getByLabelText(/^backup/i));
+		await user.type(screen.getByLabelText(/^password/i), "hunter2");
+		await user.click(screen.getByRole("button", { name: /queue backup/i }));
+
+		await waitFor(() =>
+			expect(mockCreateSolutionExportJob).toHaveBeenCalledWith("sol-1", {
+				password: "hunter2",
+				options: {
+					includeConfigs: true,
+					includeSecrets: false,
+					includeTables: false,
+					includeFiles: true,
+				},
+			}),
+		);
+		expect(mockExportSolution).not.toHaveBeenCalled();
 	});
 
 	it("shows the per-type chips inside Contents", async () => {

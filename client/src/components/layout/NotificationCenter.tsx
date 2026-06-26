@@ -40,6 +40,7 @@ import {
 } from "@/stores/notificationStore";
 import { useEditorStore } from "@/stores/editorStore";
 import { fileService } from "@/services/fileService";
+import { downloadSolutionExportJob } from "@/services/solutions";
 import { cn } from "@/lib/utils";
 import { authFetch } from "@/lib/api-client";
 import { toast } from "sonner";
@@ -103,6 +104,17 @@ const notificationStatusConfig: Record<
 	cancelled: { color: "text-muted-foreground", bgColor: "bg-muted/50" },
 };
 
+function downloadBlob(blob: Blob, filename: string) {
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
+}
+
 // Action handler for notification actions
 async function handleNotificationAction(
 	notification: Notification,
@@ -110,6 +122,7 @@ async function handleNotificationAction(
 ) {
 	const action = notification.metadata?.action as string | undefined;
 	const actionUrl = notification.metadata?.action_url as string | undefined;
+	const jobId = notification.metadata?.job_id as string | undefined;
 
 	// Handle navigation actions (e.g., configure_pricing)
 	if (actionUrl) {
@@ -140,6 +153,18 @@ async function handleNotificationAction(
 			});
 		}
 	}
+
+	if (action === "download_solution_export" && jobId) {
+		try {
+			const { blob, filename } = await downloadSolutionExportJob(jobId);
+			downloadBlob(blob, filename);
+		} catch (error) {
+			toast.error("Failed to download backup export", {
+				description:
+					error instanceof Error ? error.message : "Unknown error",
+			});
+		}
+	}
 }
 
 function ProgressNotificationItem({
@@ -161,7 +186,14 @@ function ProgressNotificationItem({
 
 	// Check if notification has an action button (but not view_file - that's a link, not a button)
 	const action = notification.metadata?.action as string | undefined;
-	const hasAction = isAwaitingAction && !!action && action !== "view_file";
+	const hasCompletedDownloadAction =
+		notification.status === "completed" &&
+		action === "download_solution_export" &&
+		!!notification.metadata?.job_id;
+	const hasAction =
+		(isAwaitingAction || hasCompletedDownloadAction) &&
+		!!action &&
+		action !== "view_file";
 	const actionLabel =
 		(notification.metadata?.action_label as string) || "Run";
 

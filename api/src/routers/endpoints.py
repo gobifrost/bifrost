@@ -74,13 +74,6 @@ class EndpointExecuteResponse(BaseModel):
 # =============================================================================
 
 
-@router.api_route(
-    "/{workflow_id}",
-    methods=["GET", "POST", "PUT", "DELETE"],
-    response_model=EndpointExecuteResponse,
-    summary="Execute workflow via API key",
-    description="Execute an endpoint-enabled workflow using an API key for authentication",
-)
 async def execute_endpoint(
     workflow_id: str,
     request: Request,
@@ -231,6 +224,18 @@ async def execute_endpoint(
         timeout_seconds=workflow_metadata.timeout_seconds,
         api_key_id=workflow_metadata.workflow_id,
         file_path=workflow_metadata.file_path,
+    )
+
+
+for _method in ("GET", "POST", "PUT", "DELETE"):
+    router.add_api_route(
+        "/{workflow_id}",
+        execute_endpoint,
+        methods=[_method],
+        response_model=EndpointExecuteResponse,
+        summary="Execute workflow via API key",
+        description="Execute an endpoint-enabled workflow using an API key for authentication",
+        operation_id=f"execute_endpoint_api_endpoints_workflow_id_{_method.lower()}",
     )
 
 
