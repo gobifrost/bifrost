@@ -6,7 +6,7 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
-    # Skip CI for documentation/config-only changes. The companion workflow
+    # Skip CI for documentation/plugin/config-only changes. The companion workflow
     # ci-noop.yml fires on these same paths and reports the same status-check
     # names (Lint & Type Check, Unit Tests, E2E Tests) so branch protection
     # still sees the required checks reported as green.
@@ -35,6 +35,7 @@ on:
       - ".claude-plugin/**"
       - ".codex/**"
       - ".codex-plugin/**"
+      - "plugins/bifrost/**"
       - "docs/**"
       - "LICENSE"
       - ".github/CODEOWNERS"
@@ -86,7 +87,7 @@ jobs:
       # Codex skill mirrors (plugins/bifrost/skills/, .codex/skills/) are
       # generated from the canonical .claude/skills/ source. Regenerate and fail
       # if the committed mirrors drift. NOTE: ci.yml paths-ignore skips CI for
-      # skill-only/.md-only PRs (they route to ci-noop.yml), so this gate fires
+      # plugin/skill-only/.md-only PRs (they route to ci-noop.yml), so this gate fires
       # when non-ignored source changes — which is when a mirror regen is most
       # likely needed anyway.
       - name: Codex skill mirrors in sync

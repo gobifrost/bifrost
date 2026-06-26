@@ -1,6 +1,6 @@
-# Branch-protection bypass for docs-only PRs.
+# Branch-protection bypass for docs/plugin/config-only PRs.
 #
-# Background: ci.yml uses paths-ignore to skip Lint/Unit/E2E on docs-only
+# Background: ci.yml uses paths-ignore to skip Lint/Unit/E2E on docs/plugin/config-only
 # changes. But branch protection requires named status checks (e.g.
 # "Lint & Type Check") to report green before merge — and a job that
 # never runs reports nothing, blocking merge forever.
@@ -38,6 +38,7 @@ on:
       - ".claude-plugin/**"
       - ".codex/**"
       - ".codex-plugin/**"
+      - "plugins/bifrost/**"
       - "docs/**"
       - "LICENSE"
       - ".github/CODEOWNERS"
@@ -59,22 +60,22 @@ jobs:
     runs-on: ubuntu-latest
     name: Lint & Type Check
     steps:
-      - run: echo "Skipped — docs/config-only PR."
+      - run: echo "Skipped — docs/plugin/config-only PR."
 
   test-unit:
     runs-on: ubuntu-latest
     name: Unit Tests
     steps:
-      - run: echo "Skipped — docs/config-only PR."
+      - run: echo "Skipped — docs/plugin/config-only PR."
 
   test-client-unit:
     runs-on: ubuntu-latest
     name: Client Unit Tests
     steps:
-      - run: echo "Skipped — docs/config-only PR."
+      - run: echo "Skipped — docs/plugin/config-only PR."
 
   test-e2e:
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
-      - run: echo "Skipped — docs/config-only PR."
+      - run: echo "Skipped — docs/plugin/config-only PR."

@@ -1,11 +1,11 @@
 ---
 name: bifrost:build
-description: Build Bifrost workflows, forms, and apps for both Solution workspaces (v2) and the global _repo workspace (v1). Supports SDK-first (local dev + git) and MCP-only modes.
+description: Build Bifrost workflows, forms, agents, apps, tables, and files for both Solution workspaces (v2) and the global _repo workspace (v1). Supports SDK-first (local dev + git) and MCP-only modes.
 ---
 
 # Bifrost Build
 
-Build Bifrost artifacts — apps, workflows, forms, agents, tables. This hub detects your workspace mode and routes you to the right entry doc.
+Build Bifrost artifacts — apps, workflows, forms, agents, tables, and files. This hub detects your workspace mode and routes you to the right entry doc.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ echo "${found:-NOT_FOUND}"
 ```
 
 **Found → Solution workspace (v2).** Read `references/solutions.md` and follow it.
-- Entities (apps, workflows, forms, agents, tables, configs) are deploy-owned. They ship with the solution and are installed/updated by `bifrost solution deploy` — NOT by live CLI mutations. Calling `bifrost forms create` (or any entity create/update) in a solution workspace 409s because deploy owns those records.
+- Entities (apps, workflows, forms, agents, tables, configs) and declared file locations are deploy-owned. They ship with the solution and are installed/updated by `bifrost solution deploy` — NOT by live CLI mutations. Calling `bifrost forms create` (or any entity create/update) in a solution workspace 409s because deploy owns those records.
 - You author app code in `apps/` and Python workflows in `functions/`, then deploy with `bifrost solution deploy`.
 
 **Not found → Global `_repo` workspace (v1).** Read `references/repo.md` and follow it.
@@ -79,7 +79,7 @@ This is mode-agnostic — always do it before creating anything.
 
 ## Global Hard Rules (Both Modes)
 
-- **In a Solution workspace, entities are deploy-owned — never mutate them live.** Creating or updating a form, agent, table, config, app, or workflow via the entity CLI create/update verbs against a solution-managed record 409s (deploy owns them). Author the content in the workspace and ship it with `bifrost solution deploy`. (This rule does NOT apply in the global `_repo` workspace, where live mutation is the normal path — see the mode dispatcher above.)
+- **In a Solution workspace, entities are deploy-owned — never mutate them live.** Creating or updating a form, agent, table, config, app, or workflow via the entity CLI create/update verbs against a solution-managed record 409s (deploy owns them). Author the content in the workspace and ship it with `bifrost solution deploy`. Solution file locations are declared in `.bifrost/files.yaml`; runtime file bytes are user data, not source files to edit under `_solutions/`. (This rule does NOT apply in the global `_repo` workspace, where live mutation is the normal path — see the mode dispatcher above.)
 - **Never run the watch/push/pull/sync/git commands unsolicited.** These are user-driven, have broad blast radius, or launch interactive TUIs. Describe them to the user and ask them to run the command themselves. This applies in both solution and repo mode.
 - **Never call `bifrost api` for third-party integration APIs** (HaloPSA, Pax8, NinjaOne, etc.). `bifrost api` is the Bifrost platform API only. Call integration APIs from within a workflow using the SDK, not the `bifrost api` passthrough.
 - **Check before using `bifrost api GET <path>`.** If you don't know whether a platform endpoint exists, check `generated/openapi-digest.md` or the entity's `--help` flag first. Never guess URL patterns.
@@ -117,6 +117,7 @@ When workflows are exposed as MCP tools (via agents), their `name` becomes the M
 | Create a form | `references/entities.md` |
 | Create/update/delete any CLI entity | `references/entities.md` |
 | Work with tables (read/write structured data) | `references/tables.md` |
+| Work with app/user files | `references/solutions.md` · `references/web-sdk-v2.md` |
 | MCP-only mode (no local source) | `references/mcp-mode.md` |
 | Exact CLI flag for a command | `generated/cli-reference.md` |
 | Does a platform endpoint exist? | `generated/openapi-digest.md` |

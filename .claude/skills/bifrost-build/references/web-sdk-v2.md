@@ -149,16 +149,112 @@ Accumulates rows across all loaded pages. `hasMore` is true until a partial page
 
 ---
 
+## files and useFiles
+
+The Files SDK gives v2 apps direct, policy-gated access to Bifrost file storage. For Solution apps, declare durable runtime locations in `.bifrost/files.yaml`, then use that location name from the app:
+
+```yaml
+locations:
+  - documents
+```
+
+```tsx
+import { files, useFiles } from "bifrost";
+
+const docs = useFiles("", {
+  location: "documents",
+  includeMetadata: true,
+});
+
+async function saveNote() {
+  await files.write("notes/today.txt", "hello", { location: "documents" });
+  await docs.refetch();
+}
+```
+
+### useFiles — live list
+
+```tsx
+import { useFiles } from "bifrost";
+
+const {
+  files: names,
+  filesMetadata,
+  loading,
+  error,
+  denied,
+  empty,
+  refetch,
+} = useFiles("invoices/", {
+  location: "finance",
+  includeMetadata: true,
+});
+```
+
+- `prefix` is the first argument; use `""` for the location root.
+- `location` defaults to `"workspace"`. In Solution apps, prefer declared locations such as `"finance"` or `"documents"`.
+- `scope` is optional and normally omitted in an app; the platform injects the app/org context.
+- `denied` is true when file policy rejects the list request or revokes the subscription.
+- The hook subscribes to file changes and reloads the list when matching files change.
+
+### files — imperative API
+
+```tsx
+import {
+  files,
+  FileAccessDeniedError,
+  FileNotFoundError,
+  FilePolicyError,
+} from "bifrost";
+
+await files.write("reports/q1.txt", "ready", { location: "finance" });
+const text = await files.read("reports/q1.txt", { location: "finance" });
+const bytes = await files.readBytes("exports/q1.pdf", { location: "finance" });
+await files.writeBytes("exports/q1.pdf", pdfBytes, { location: "finance" });
+
+const listing = await files.list("reports/", {
+  location: "finance",
+  includeMetadata: true,
+});
+
+if (await files.exists("reports/q1.txt", { location: "finance" })) {
+  const blob = await files.download("reports/q1.txt", { location: "finance" });
+  // Or: const signed = await files.signedUrl("reports/q1.txt", { method: "GET", location: "finance" });
+}
+```
+
+Available methods: `read`, `readBytes`, `write`, `writeBytes`, `delete`, `list`, `exists`, `signedUrl`, `signedUrls`, `upload`, and `download`.
+
+Use `upload`/`download` for large or binary browser payloads; they go through signed URLs. Use `write`/`read` for small text payloads and `writeBytes`/`readBytes` for small binary payloads. File policies apply to every operation.
+
+---
+
 ## Error Classes
 
 ```tsx
-import { tables, TableAccessDeniedError, TableNotFoundError } from "bifrost";
+import {
+  tables,
+  files,
+  TableAccessDeniedError,
+  TableNotFoundError,
+  FileAccessDeniedError,
+  FileNotFoundError,
+  FilePolicyError,
+} from "bifrost";
 
 try {
   const snap = await tables.query("my_table");
 } catch (e) {
   if (e instanceof TableNotFoundError) { /* table missing */ }
   if (e instanceof TableAccessDeniedError) { /* policy denied */ }
+}
+
+try {
+  const content = await files.read("reports/q1.txt", { location: "finance" });
+} catch (e) {
+  if (e instanceof FileNotFoundError) { /* file missing */ }
+  if (e instanceof FileAccessDeniedError) { /* policy denied */ }
+  if (e instanceof FilePolicyError) { /* invalid location/path/policy request */ }
 }
 ```
 

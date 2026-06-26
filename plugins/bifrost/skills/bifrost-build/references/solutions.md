@@ -1,6 +1,6 @@
 # Solution Workspace (v2) — Reference
 
-A Solution is an installable, deployable unit. Every entity it owns — apps, workflows, forms, agents, tables, configs — is **deploy-owned**: the platform writes them at install/deploy time and treats them as read-only afterwards. Live entity mutation (the entity create/update CLI verbs) returns a 409 because deploy owns those records. You author content in the workspace and ship it with `bifrost solution deploy` (full replace).
+A Solution is an installable, deployable unit. Every entity it owns — apps, workflows, forms, agents, tables, configs — is **deploy-owned**: the platform writes them at install/deploy time and treats them as read-only afterwards. Declared file locations are also part of the Solution definition; their runtime file bytes are user data. Live entity mutation (the entity create/update CLI verbs) returns a 409 because deploy owns those records. You author content in the workspace and ship it with `bifrost solution deploy` (full replace).
 
 > **For a full worked path (including v1→v2 migration and first-time setup), use the `bifrost:migrate` skill.**
 
@@ -81,6 +81,23 @@ bifrost solution deploy --org "Target Org"    # a specific org
 
 Full-replace deploy of the workspace — all entities are written (or overwritten) from the workspace content. Org targeting follows the **unified `--org` standard** (see below).
 
+### 5a. Declare Solution file locations
+
+If the Solution needs durable runtime files, declare named locations in `.bifrost/files.yaml`:
+
+```yaml
+locations:
+  - finance
+  - documents
+```
+
+These names become policy-addressable file locations for the install. They are the portable declaration, not the file content itself. Rules:
+
+- Use business/domain names (`finance`, `documents`, `attachments`), not platform internals.
+- Do not declare `workspace`; it is reserved.
+- Do not create or manage `_solutions/` or `_solution_artifacts/` folders yourself. Those are internal storage prefixes for deployed source and export artifacts.
+- Runtime files are read and written through the Files SDK (`files`, `useFiles`) or the Files CLI/API with `--solution <install-id-or-slug>`. They are not source files under `apps/` or `functions/`.
+
 ### 6. Install from a zip
 
 ```bash
@@ -89,7 +106,20 @@ bifrost solution install my-solution.zip --global            # global install
 bifrost solution install my-solution.zip --org "Target Org"  # a specific org
 ```
 
-Installs a packaged solution (drag-and-drop equivalent). Use `--set KEY=VALUE` to supply config values at install time. **`install` with no org flag installs into your own org** (not global) — pass `--global` for a global install.
+Installs a packaged solution (drag-and-drop equivalent). Use `--set KEY=VALUE` to supply config values at install time. Full-backup zips created with encrypted backup content require `--password`, and `--replace-secrets` / `--replace-data` control whether existing install data is overwritten. **`install` with no org flag installs into your own org** (not global) — pass `--global` for a global install.
+
+### 7. Export and backup
+
+```bash
+bifrost solution export <solution-ref> --mode shareable
+bifrost solution export <solution-ref> --mode full --password "$PASSWORD" --include-data
+```
+
+Export modes:
+
+- **Shareable** exports carry code, manifests, schema, declared file locations, and setup requirements. They do not carry secrets, table rows, or runtime file bytes.
+- **Full** exports are backups. With `--password`, they can carry secret/config values; with `--include-data`, they also carry table rows and solution runtime files in the encrypted tier.
+- File payloads in a full backup are encrypted payload members referenced from `.bifrost/secrets.enc`; do not expect plaintext runtime files as ordinary zip members.
 
 ### The unified `--org` standard
 
@@ -121,9 +151,9 @@ Install **kind** is chosen entirely at deploy/install time via the unified `--or
 
 ---
 
-## Getting forms, agents, tables, and configs into a Solution
+## Getting forms, agents, tables, configs, and files into a Solution
 
-A solution owns these entities the same way it owns apps and workflows: deploy writes them, and they are read-only afterwards. There are two ways content arrives in the workspace manifest deploy reads.
+A solution owns these entities the same way it owns apps and workflows: deploy writes them, and they are read-only afterwards. File location declarations are also deploy-owned. There are two ways entity content arrives in the workspace manifest deploy reads.
 
 **Path A — capture an existing entity (the migration road).** This adopts a loose `_repo`/global entity that already exists OUTSIDE the solution (authored earlier in the `_repo` workspace, where live entity create/update is the normal path — see `references/repo.md`). Capture stamps it into the install, then you pull and deploy:
 
@@ -159,6 +189,8 @@ Capture stamps ownership server-side but does **not** write source. `bifrost sol
 
 **Path B — author from scratch.** The `bifrost:migrate` skill scaffolds a complete solution (including its forms/agents/tables) end-to-end; invoke it as a Claude skill (not a CLI command) when starting fresh.
 
+**Files are different from captured entities.** Add file *locations* to `.bifrost/files.yaml`; do not capture individual files into the source manifest. Runtime files are written later by the installed app or workflows. A full backup can carry those file bytes, but normal deploy is intentionally non-destructive for files absent from the bundle.
+
 ### Updating an already-owned entity
 
 Once an entity is solution-managed, the live entity update verbs **409** (deploy owns it). The update path is to **edit its field in the corresponding `.bifrost/*.yaml` and redeploy**:
@@ -189,6 +221,8 @@ Apps built with `bifrost solution scaffold-app` consume the v2 `bifrost` SDK. Ke
 | `useWorkflow` / `useWorkflowQuery` / `useWorkflowMutation` | Execute workflows; query-style for data loads, mutation-style for actions |
 | `useTable` / `useInfiniteTable` | Direct table read with live updates |
 | `tables` | Low-level CRUD (`tables.get`, `tables.insert`, `tables.update`, `tables.delete`) + error classes |
+| `useFiles` | Live file listing for a location/prefix |
+| `files` | Low-level file API (`read`, `write`, `delete`, `list`, `exists`, signed URLs) + error classes |
 
 There is no React, shadcn, or router injection from the SDK — import those from the standard packages. See `references/web-sdk-v2.md` for full signatures and examples.
 
@@ -197,5 +231,7 @@ There is no React, shadcn, or router injection from the SDK — import those fro
 ## Key constraints
 
 - Workflows must use portable `path::function` refs (e.g. `functions/hello.py::main`), not UUIDs or bare names — UUIDs are environment-specific and break portability.
+- Solution file locations live in `.bifrost/files.yaml`; runtime file bytes are user data and only travel in encrypted full backups.
+- `_solutions/` and `_solution_artifacts/` are platform internals. Never create those folders in a Solution workspace.
 - The `bifrost:migrate` skill covers the v1→v2 migration path (slug swap, import rewrite, entity capture, etc.).
 - For table schema and query patterns, see `references/tables.md`. For workflow authoring, see `references/workflows-python.md`.

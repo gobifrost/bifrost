@@ -26,6 +26,7 @@ my-solution/
       pages/              # your route pages
   functions/
     hello.py              # @workflow decorated function (solution root, not under the app)
+  .bifrost/files.yaml     # optional Solution runtime file-location declarations
   bifrost.solution.yaml   # Solution descriptor
 ```
 
@@ -71,7 +72,7 @@ root.render(
 (The old `window.__BIFROST_API_URL__` / `window.__BIFROST_TOKEN__` globals AND `document.currentScript?.dataset?.m` are stale — the current boot protocol is the `new URL(import.meta.url)` nonce + registry above. Just keep the scaffolded `main.tsx`.)
 
 Imports in a **v2 standalone app** (this is NOT the v1 surface — see the warning below):
-- **SDK hooks/providers ONLY come from `"bifrost"`**: `import { BifrostProvider, BifrostHeader, useWorkflowQuery, useWorkflowMutation, useWorkflow, useTable, useInfiniteTable, tables } from "bifrost"`. That export list is the whole SDK — see `references/web-sdk-v2.md` / `generated/web-sdk-surface.md`. Nothing else lives in `"bifrost"`.
+- **SDK hooks/providers ONLY come from `"bifrost"`**: `import { BifrostProvider, BifrostHeader, useWorkflowQuery, useWorkflowMutation, useWorkflow, useTable, useInfiniteTable, tables, files, useFiles } from "bifrost"`. That export list is the whole SDK — see `references/web-sdk-v2.md` / `generated/web-sdk-surface.md`. Nothing else lives in `"bifrost"`.
 - **shadcn/ui components** (Button, Card, Dialog, …): `import { Button } from "@/components/ui/button"` — NOT from `"bifrost"`.
 - **React** (useState, lazy, Suspense, …): `import { useState, lazy, Suspense } from "react"` — NOT from `"bifrost"`.
 - **Router**: `import { Link, Outlet, useNavigate } from "react-router-dom"` — NOT from `"bifrost"`.
@@ -184,7 +185,7 @@ Files under `<app>/components/*.tsx` hold app-specific components.
 - One component per file; filename matches the component name (PascalCase).
 - Either default export OR named export matching the filename.
 - Import from siblings with relative paths: `import SearchInput from "./components/SearchInput"`.
-- Import shadcn/ui components from `@/components/ui/<component>`, icons from `"lucide-react"`, router from `"react-router-dom"`, SDK hooks/providers from `"bifrost"`.
+- Import shadcn/ui components from `@/components/ui/<component>`, icons from `"lucide-react"`, router from `"react-router-dom"`, SDK hooks/providers/files from `"bifrost"`.
 
 ```tsx
 // apps/my-app/components/ClientCard.tsx

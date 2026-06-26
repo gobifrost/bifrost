@@ -15,7 +15,8 @@ references:
       - api/bifrost/commands/apps.py
       - client/src/lib/app-sdk/*.ts
       - client/src/lib/app-sdk/*.tsx
-    verified_at_sha: 42e04a10b751778c9f628dc040afa6eb9cdab863
+      - api/bifrost/manifest.py
+    verified_at_sha: 236d0f4753b4b14cfc05c42dccbe9db26b411a77
 
   - file: references/entities.md
     source_globs:
@@ -58,7 +59,12 @@ references:
   - file: references/solutions.md
     source_globs:
       - api/bifrost/commands/solution.py
-    verified_at_sha: a254ac039dd8c4c2d53772bdf2123e59b604e094
+      - api/bifrost/commands/files.py
+      - api/bifrost/manifest.py
+      - api/src/models/contracts/solutions.py
+      - api/src/services/solution_files.py
+      - api/src/services/solutions/*.py
+    verified_at_sha: 236d0f4753b4b14cfc05c42dccbe9db26b411a77
 
   - file: references/tables.md
     source_globs:
@@ -72,9 +78,11 @@ references:
     source_globs:
       - client/src/lib/app-sdk/index.v2.ts
       - client/src/lib/app-sdk/use-workflow*.ts
+      - client/src/lib/app-sdk/files.ts
+      - client/src/lib/app-sdk/use-files.ts
       - client/src/lib/app-sdk/provider.tsx
       - client/src/lib/app-sdk/bifrost-header.tsx
-    verified_at_sha: 42e04a10b751778c9f628dc040afa6eb9cdab863
+    verified_at_sha: 236d0f4753b4b14cfc05c42dccbe9db26b411a77
 
   - file: references/workflows-python.md
     source_globs:
