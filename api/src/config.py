@@ -217,6 +217,25 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Solution Backup Exports
+    # ==========================================================================
+    solution_export_retention_days: int = Field(
+        default=7,
+        ge=1,
+        description="Days to retain completed solution backup export artifacts",
+    )
+    solution_export_cleanup_batch_size: int = Field(
+        default=100,
+        ge=1,
+        description="Maximum solution backup export jobs to clean up per scheduler batch",
+    )
+    solution_export_stale_running_minutes: int = Field(
+        default=120,
+        ge=1,
+        description="Minutes before a running solution backup export job is considered stale",
+    )
+
+    # ==========================================================================
     # Default User (for automated deployments and development)
     # ==========================================================================
     default_user_email: str | None = Field(

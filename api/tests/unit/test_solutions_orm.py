@@ -50,3 +50,40 @@ def test_solution_orm_shape() -> None:
         assert field in cols, f"Solution is missing {field}"
     # organization_id is nullable (NULL == global scope per locked decision 3.3).
     assert cols["organization_id"].nullable is True
+
+
+def test_solution_export_job_orm_shape() -> None:
+    """Durable backup export jobs have the scheduler-owned state columns."""
+    from src.models.orm.solution_export_jobs import SolutionExportJob
+
+    cols = SolutionExportJob.__table__.columns
+    for field in (
+        "id",
+        "solution_id",
+        "organization_id",
+        "requested_by_id",
+        "notification_id",
+        "status",
+        "progress_percent",
+        "message",
+        "failure_message",
+        "encrypted_options",
+        "artifact_storage_key",
+        "artifact_filename",
+        "artifact_size_bytes",
+        "artifact_sha256",
+        "expires_at",
+        "completed_at",
+        "claimed_at",
+        "created_at",
+        "updated_at",
+    ):
+        assert field in cols, f"SolutionExportJob is missing {field}"
+
+    assert cols["solution_id"].nullable is False
+    # NULL organization_id mirrors Solution global scope.
+    assert cols["organization_id"].nullable is True
+    assert cols["requested_by_id"].nullable is True
+    assert cols["notification_id"].nullable is True
+    assert cols["status"].default.arg == "pending"
+    assert cols["progress_percent"].default.arg == 0

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 SolutionScope = Literal["org", "global"]
 
@@ -455,6 +455,60 @@ class SolutionDeployJobStatus(BaseModel):
     result: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
+
+
+SolutionExportJobStatus = Literal["pending", "running", "completed", "failed", "expired"]
+
+
+class SolutionExportOptions(BaseModel):
+    """Options for a durable async backup export of a solution install."""
+
+    include_configs: bool = True
+    include_secrets: bool = False
+    include_tables: bool = False
+    include_files: bool = False
+    password: str | None = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_include(self) -> "SolutionExportOptions":
+        if not any(
+            (
+                self.include_configs,
+                self.include_secrets,
+                self.include_tables,
+                self.include_files,
+            )
+        ):
+            raise ValueError("At least one include_* option must be true")
+        return self
+
+
+class SolutionExportJobCreate(BaseModel):
+    """Request body for enqueueing a solution backup export job."""
+
+    options: SolutionExportOptions
+
+
+class SolutionExportJobPublic(BaseModel):
+    """Public state for a durable async solution backup export job."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    solution_id: UUID
+    organization_id: UUID | None = None
+    requested_by_id: UUID | None = None
+    status: SolutionExportJobStatus
+    progress_percent: int = 0
+    message: str | None = None
+    failure_message: str | None = None
+    artifact_size_bytes: int | None = None
+    artifact_sha256: str | None = None
+    expires_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    download_url: str | None = None
 
 
 class SolutionCaptureRequest(BaseModel):
