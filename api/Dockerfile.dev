@@ -25,8 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
 # python:3.14-slim already supports --require-hashes (>= 8.0).
-COPY pyproject.toml requirements.lock ./
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+COPY pyproject.toml requirements.lock requirements-pyright.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+    && pip install --no-cache-dir --require-hashes -r requirements-pyright.lock
 
 # =============================================================================
 # Stage 2: Runtime

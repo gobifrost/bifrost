@@ -41,8 +41,8 @@ Before touching code, collect the conventions — they shape every later step:
    `orders_sync_records`). Renames MUST rewrite every ref (this skill does that — see step 6).
 2. **Folder layout.** Default: flat `workflows/` + flat `modules/` (NOT nested "feature" dirs).
    Standardize whatever mess `_repo` is in.
-3. **Which app(s)** to migrate, and the **target Solution** (existing install id, or scaffold a new
-   one with `bifrost solution init`).
+3. **Which app(s)** to migrate, and the **target Solution** (existing install id, or create and bind
+   a new one with `bifrost solution create` / `init`).
 4. **Confirm-in-browser or skip.** Offer to skip the browser-confirm loop once the user trusts the
    output.
 
@@ -74,14 +74,14 @@ Do ONE app at a time, fully, before the next. Each step gates the following.
 
 ### Fast path — `bifrost solution migrate-app` does steps 2–5 deterministically
 
-`migrate-app` (and `scaffold-app`) MUST run from inside a Solution workspace — so create one
-FIRST with `solution init`, then run `migrate-app` from that dir. The SOURCE argument is a real
+`migrate-app` (and `scaffold-app`) MUST run from inside a Solution workspace — so create and bind one
+FIRST with `solution create` (or its `init` alias), then run `migrate-app` from that dir. The SOURCE argument is a real
 filesystem path to the v1 app's source (pull it locally first with `bifrost pull`, or point at a
 local checkout) — NOT a `_repo/...` URL.
 
 ```bash
 mkdir <new-slug>-workspace && cd <new-slug>-workspace
-bifrost solution init . --slug <solution-slug> --name "<Title>" --scope org
+bifrost solution create . --slug <solution-slug> --name "<Title>"
 bifrost solution migrate-app /path/to/v1/apps/<old-slug> <new-slug> --title "<Title>" --api-url <debug-url>
 ```
 This scaffolds the v2 app, ports the v1 `pages/`+`components/` (all source files, incl. `.ts`

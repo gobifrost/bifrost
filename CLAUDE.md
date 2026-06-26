@@ -301,13 +301,12 @@ export async function getDataProviders() {
 ./test.sh ci
 
 # Type Generation (requires dev stack running via ./debug.sh)
-cd client && npm run generate:types       # Regenerate TypeScript types from API
+(cd client && npm run generate:types)     # Regenerate TypeScript types from API
 
 # Quality Checks
-cd api && pyright                         # Type check Python
-cd api && ruff check .                    # Lint Python
-cd client && npm run tsc                  # Type check TypeScript
-cd client && npm run lint                 # Lint TypeScript
+./test.sh quality api                     # Type check + lint Python in Docker
+(cd client && npm run tsc)                # Type check TypeScript
+(cd client && npm run lint)               # Lint TypeScript
 ```
 
 **Parallel worktrees:** Each git worktree gets its own isolated test stack (Compose project name is derived from the worktree path). Run `./test.sh stack up` in multiple worktrees simultaneously without conflict.
@@ -357,13 +356,11 @@ Before marking any significant work complete, run this verification sequence:
 # 1. Ensure debug stack is running for THIS worktree
 ./debug.sh status | grep -q "Status:   UP" || ./debug.sh up
 
-# 2. Backend checks (from api/ directory)
-cd api
-pyright                    # Type checking - must pass with 0 errors
-ruff check .               # Linting - must pass
+# 2. Backend checks
+./test.sh quality api       # Dockerized pyright + ruff; must pass with 0 errors
 
 # 3. Regenerate frontend types (from client/ directory)
-cd ../client
+cd client
 npm run generate:types     # Requires debug stack up. If client is bound to a non-default port,
                            # set OPENAPI_URL=http://localhost:<port>/openapi.json (see ./debug.sh status).
 

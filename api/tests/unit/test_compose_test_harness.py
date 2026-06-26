@@ -47,6 +47,20 @@ def _find_compose() -> pathlib.Path:
 _COMPOSE = _find_compose()
 
 
+def _find_repo_file(path: str) -> pathlib.Path:
+    """Locate a repo-root file in-container or on host."""
+    candidates = [
+        pathlib.Path("/app") / path,
+        pathlib.Path(__file__).resolve().parents[3] / path,
+    ]
+    if path.startswith("api/"):
+        candidates.insert(1, pathlib.Path("/app") / path.removeprefix("api/"))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"{path} not found in test harness mounts")
+
+
 def _api_bind_targets() -> list[str]:
     compose = yaml.safe_load(_COMPOSE.read_text())
     volumes = compose["services"]["api"].get("volumes", [])
@@ -90,3 +104,35 @@ def test_api_shares_fixture_subdir_for_install_from_repo():
         "api no longer shares /tmp/bifrost/solution-repo-fixtures; "
         "install/preview-repo e2e tests can't clone host-staged fixtures."
     )
+
+
+def test_test_runner_mounts_pyright_inputs():
+    """The Dockerized quality lane needs the same API config CI uses."""
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    volumes = compose["services"]["test-runner"].get("volumes", [])
+    assert "./api/pyrightconfig.json:/app/pyrightconfig.json:ro" in volumes
+    assert "./test.sh:/app/test.sh:ro" in volumes
+    assert "./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro" in volumes
+
+
+def test_dev_image_installs_pyright_from_hash_pinned_lock():
+    """Local Docker type-checks should not depend on host pyright installs."""
+    dockerfile = _find_repo_file("api/Dockerfile.dev").read_text()
+    assert "requirements-pyright.lock" in dockerfile
+    assert "pip install --no-cache-dir --require-hashes -r requirements-pyright.lock" in dockerfile
+
+
+def test_test_sh_advertises_dockerized_api_quality_lane():
+    script = _find_repo_file("test.sh").read_text()
+    assert "./test.sh quality api" in script
+    assert "cmd_quality" in script
+    assert "sh /app/scripts/quality_api.sh" in script
+
+
+def test_api_quality_script_runs_pyright_without_ci_venv_config():
+    script = _find_repo_file("api/scripts/quality_api.sh").read_text()
+    assert 'config.pop("venvPath", None)' in script
+    assert 'config.pop("venv", None)' in script
+    assert 'Path("pyrightconfig.docker.json")' in script
+    assert "pyright --project pyrightconfig.docker.json --pythonpath /usr/local/bin/python" in script
+    assert "ruff check ." in script

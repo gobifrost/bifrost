@@ -73,6 +73,7 @@ def _make_upstream(record):
 
     async def other(request):
         record["other_path"] = request.path
+        record["other_query"] = request.rel_url.query_string
         record["other_org"] = request.headers.get("X-Bifrost-Org")
         return web.json_response({"upstream_other": True})
 
@@ -175,7 +176,13 @@ async def test_unknown_ref_proxies_to_upstream():
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
-    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="A",
+        org_id="O",
+        solution_id="S",
+    )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
         async with httpx.AsyncClient() as c:
@@ -184,6 +191,7 @@ async def test_unknown_ref_proxies_to_upstream():
         assert r.status_code == 200
         assert r.json()["ran_upstream"] is True
         assert record["execute_body"]["app_id"] == "A"
+        assert record["execute_body"]["solution_id"] == "S"
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()
@@ -194,14 +202,21 @@ async def test_other_api_path_proxies_with_org_header():
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
-    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="A",
+        org_id="O",
+        solution_id="S",
+    )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.get(f"http://127.0.0.1:{dev_port}/api/tables/foo")
+            r = await c.get(f"http://127.0.0.1:{dev_port}/api/tables/foo?limit=10")
         assert r.status_code == 200
         assert r.json()["upstream_other"] is True
         assert record["other_path"] == "/api/tables/foo"
+        assert record["other_query"] == "limit=10&solution=S"
         assert record["other_org"] == "O"
     finally:
         await dev_runner.cleanup()

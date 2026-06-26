@@ -129,14 +129,36 @@ def test_version_defaults_to_none(tmp_path: pathlib.Path) -> None:
     assert load_descriptor(tmp_path).version is None
 
 
-def test_init_writes_version(tmp_path: pathlib.Path) -> None:
+def test_init_writes_version(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`bifrost solution init` writes the version (default 0.1.0) into the
     descriptor, ordered after name, and load_descriptor round-trips it. The
-    descriptor carries no scope: key (install kind is a deploy-time choice)."""
+    descriptor carries no scope: key (install kind lives on the remote install)."""
     from click.testing import CliRunner
 
+    import bifrost.client as client_mod
     from bifrost.commands.solution import solution_group
 
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"id": "inst-1", "slug": "mna", "organization_id": "org-1"}
+
+    class _FakeClient:
+        organization = {"id": "org-1"}
+
+        async def post(self, path, json=None, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
     ws = tmp_path / "ws"
     result = CliRunner().invoke(solution_group, ["init", str(ws), "--slug", "mna"])
     assert result.exit_code == 0, result.output
@@ -146,23 +168,76 @@ def test_init_writes_version(tmp_path: pathlib.Path) -> None:
     assert "scope:" not in text
 
 
-def test_init_rejects_scope_flag(tmp_path: pathlib.Path) -> None:
-    """`--scope` was removed from init — passing it is a usage error."""
+def test_init_scope_flag_targets_global_install_without_descriptor_scope(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--scope global` remains an org-option synonym but is not serialized."""
     from click.testing import CliRunner
 
+    import bifrost.client as client_mod
     from bifrost.commands.solution import solution_group
+
+    payloads = []
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"id": "inst-1", "slug": "mna", "organization_id": None}
+
+    class _FakeClient:
+        organization = {"id": "org-1"}
+
+        async def post(self, path, json=None, **kwargs):
+            payloads.append(json)
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
 
     ws = tmp_path / "ws"
     result = CliRunner().invoke(
         solution_group, ["init", str(ws), "--slug", "mna", "--scope", "global"]
     )
-    assert result.exit_code != 0
+    assert result.exit_code == 0, result.output
+    assert payloads[0]["organization_id"] is None
+    text = (ws / DESCRIPTOR_FILENAME).read_text()
+    assert "scope:" not in text
+    assert "BIFROST_SOLUTION_SCOPE=global" in (ws / ".env").read_text()
 
 
-def test_init_writes_explicit_version(tmp_path: pathlib.Path) -> None:
+def test_init_writes_explicit_version(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from click.testing import CliRunner
 
+    import bifrost.client as client_mod
     from bifrost.commands.solution import solution_group
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"id": "inst-1", "slug": "mna", "organization_id": "org-1"}
+
+    class _FakeClient:
+        organization = {"id": "org-1"}
+
+        async def post(self, path, json=None, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
 
     ws = tmp_path / "ws"
     result = CliRunner().invoke(

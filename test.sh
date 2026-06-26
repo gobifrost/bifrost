@@ -14,6 +14,9 @@
 #   ./test.sh all                       Unit + e2e (mirrors CI).
 #   ./test.sh tests/path/... [args]     Pass through to pytest.
 #
+# Quality checks:
+#   ./test.sh quality api               Run API pyright + ruff inside Docker.
+#
 # Client tests:
 #   ./test.sh client unit               Vitest on the host (no stack).
 #   ./test.sh client e2e                Playwright in the stack's client container.
@@ -265,6 +268,34 @@ cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
 cmd_e2e()  { run_pytest tests/e2e/ -v "$@"; }
 cmd_all()  { run_pytest tests/ -v "$@"; }
 
+cmd_quality() {
+    local sub="${1:-}"
+    shift || true
+    case "$sub" in
+        api) quality_api "$@" ;;
+        *)
+            echo "Usage: ./test.sh quality api [args]" >&2
+            exit 2
+            ;;
+    esac
+}
+
+quality_api() {
+    print_project
+
+    if [ "${BIFROST_SKIP_BUILD:-0}" != "1" ]; then
+        docker compose -f "$COMPOSE_FILE" build test-runner
+    else
+        echo "BIFROST_SKIP_BUILD=1 — using pre-built test-runner image from local docker."
+    fi
+
+    chmod 777 "$LOG_DIR" 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps test-runner \
+        sh /app/scripts/quality_api.sh \
+        2>&1 | tee "$LOG_DIR/quality-api.log"
+    return "${PIPESTATUS[0]}"
+}
+
 cmd_client() {
     local sub="${1:-}"
     shift || true
@@ -364,6 +395,7 @@ case "$1" in
     unit) shift; cmd_unit "$@" ;;
     e2e) shift; cmd_e2e "$@" ;;
     all) shift; cmd_all "$@" ;;
+    quality) shift; cmd_quality "$@" ;;
     client) shift; cmd_client "$@" ;;
     ci) cmd_ci ;;
     -h|--help|help)

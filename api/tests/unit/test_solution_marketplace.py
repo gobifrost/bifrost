@@ -54,13 +54,15 @@ def test_resolve_targets_explicit_org():
     assert _resolve_target_install(installs, "s", "org-A") == "a"
 
 
-def test_deploy_cmd_has_org_option():
+def test_deploy_cmd_has_solution_option_not_org_option():
     from bifrost.commands.solution import deploy_cmd
 
-    # deploy now uses the unified --org standard (org + is_global params).
+    # deploy targets the bound install; --solution can override, but org comes
+    # from the install itself.
     names = {p.name for p in deploy_cmd.params}
-    assert "org" in names
-    assert "is_global" in names
+    assert "solution_ref" in names
+    assert "org" not in names
+    assert "is_global" not in names
 
 
 def test_compute_update_available():

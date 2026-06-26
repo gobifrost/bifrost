@@ -9,9 +9,10 @@ that gap stays instrumented:
   Bundle: ...
   Uploading workspace zip...  ->  Deploying install ...
 
-BifrostClient is mocked so no network/DB is touched. Deploying with --global and
-the default (vendoring-on) descriptor drives the no-shared-deps branch: the
-mocked /api/files/read returns nothing, so vendoring resolves to zero files.
+BifrostClient is mocked so no network/DB is touched. Deploying with a local
+binding and the default (vendoring-on) descriptor drives the no-shared-deps
+branch: the mocked /api/files/read returns nothing, so vendoring resolves to
+zero files.
 """
 from __future__ import annotations
 
@@ -37,8 +38,6 @@ def _resp(payload, status=200):
 
 def _client(captured: dict | None = None):
     async def get(path, **_kwargs):  # type: ignore[no-untyped-def]
-        if path == "/api/solutions":
-            return _resp({"solutions": []})
         if "/deploy-jobs/" in path:
             return _resp({"status": "succeeded", "error": None, "install_id": INSTALL_ID})
         return _resp({}, status=404)
@@ -46,8 +45,6 @@ def _client(captured: dict | None = None):
     async def post(path, json=None, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ARG001
         if captured is not None:
             captured.setdefault("posts", []).append((path, {"json": json, **kwargs}))
-        if path == "/api/solutions":
-            return _resp({"id": INSTALL_ID}, status=201)
         if path == "/api/files/read":
             # Nothing resolvable in _repo/ -> nothing to vendor.
             return _resp({"content": None}, status=404)
@@ -76,6 +73,12 @@ def _scaffold(tmp_path: pathlib.Path) -> pathlib.Path:
             sort_keys=False,
         )
     )
+    (ws / ".env").write_text(
+        f"BIFROST_SOLUTION_ID={INSTALL_ID}\n"
+        "BIFROST_SOLUTION_SLUG=demo\n"
+        "BIFROST_SOLUTION_ORG_ID=00000000-0000-0000-0000-000000000000\n"
+        "BIFROST_SOLUTION_SCOPE=org\n"
+    )
     (ws / "workflows").mkdir()
     (ws / "workflows" / "hello.py").write_text("def run():\n    return 1\n")
     return ws
@@ -86,7 +89,7 @@ def _invoke(ws: pathlib.Path, captured: dict | None = None):
         "bifrost.client.BifrostClient.get_instance", return_value=_client(captured)
     ):
         return CliRunner().invoke(
-            solution_group, ["deploy", str(ws), "--global"], catch_exceptions=False
+            solution_group, ["deploy", str(ws)], catch_exceptions=False
         )
 
 

@@ -84,9 +84,7 @@ def test_scope_filters_out_wrong_scope():
 
 
 def test_deploy_fails_loudly_when_install_list_fetch_fails(tmp_path, monkeypatch):
-    """A non-200 from GET /api/solutions must abort the deploy with a loud
-    error — not silently treat the list as empty, attempt a fresh create, and
-    surface a confusing downstream 409 ('Failed to create install')."""
+    """An explicit --solution must surface list failures and never create."""
     from click.testing import CliRunner
 
     import bifrost.client as client_mod
@@ -120,11 +118,37 @@ def test_deploy_fails_loudly_when_install_list_fetch_fails(tmp_path, monkeypatch
         client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient())
     )
 
-    result = CliRunner().invoke(solution_group, ["deploy"])
+    result = CliRunner().invoke(solution_group, ["deploy", "--solution", "s"])
     assert result.exit_code != 0
     assert "Failed to list installs (500)" in result.output
     assert "internal server error" in result.output
     assert "Failed to create install" not in result.output
+
+
+def test_deploy_requires_bound_workspace(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    import bifrost.client as client_mod
+    from bifrost.commands.solution import solution_group
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\n")
+
+    class _FakeClient:
+        async def get(self, path, **kwargs):
+            raise AssertionError(f"unexpected GET {path}")
+
+        async def post(self, path, **kwargs):
+            raise AssertionError(f"unexpected POST {path}")
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient())
+    )
+
+    result = CliRunner().invoke(solution_group, ["deploy"])
+
+    assert result.exit_code != 0
+    assert "not bound to an install" in result.output
 
 
 # ── deploy version + --force (Task 21) ──────────────────────────────────────
@@ -202,6 +226,12 @@ def _deploy_workspace(tmp_path, monkeypatch, fake, descriptor_text: str):
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text(descriptor_text)
+    (tmp_path / ".env").write_text(
+        "BIFROST_SOLUTION_ID=inst-1\n"
+        "BIFROST_SOLUTION_SLUG=s\n"
+        "BIFROST_SOLUTION_ORG_ID=org-1\n"
+        "BIFROST_SOLUTION_SCOPE=org\n"
+    )
     monkeypatch.setattr(
         client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: fake)
     )

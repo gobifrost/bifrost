@@ -6,11 +6,444 @@ from click.testing import CliRunner
 from bifrost.commands.solution import handle_solution, solution_group
 
 
+def test_solution_init_creates_remote_install_and_env(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+
+    created_payloads = []
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "slug": "dispatch",
+                "organization_id": "22222222-2222-2222-2222-222222222222",
+            }
+
+    class _FakeClient:
+        organization = {"id": "22222222-2222-2222-2222-222222222222"}
+
+        async def post(self, path, json=None, **kwargs):
+            assert path == "/api/solutions"
+            created_payloads.append(json)
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["init", ".", "--slug", "dispatch", "--name", "Dispatch"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "bifrost.solution.yaml").is_file()
+    env = (tmp_path / ".env").read_text()
+    assert "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111" in env
+    assert created_payloads[0]["slug"] == "dispatch"
+    assert (
+        created_payloads[0]["organization_id"]
+        == "22222222-2222-2222-2222-222222222222"
+    )
+
+
+def test_solution_create_creates_remote_install_and_env(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    created_payloads = []
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "slug": "dispatch",
+                "organization_id": "22222222-2222-2222-2222-222222222222",
+            }
+
+    class _FakeClient:
+        organization = {"id": "22222222-2222-2222-2222-222222222222"}
+
+        async def post(self, path, json=None, **kwargs):
+            assert path == "/api/solutions"
+            created_payloads.append(json)
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["create", ".", "--slug", "dispatch", "--name", "Dispatch"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "bifrost.solution.yaml").is_file()
+    env = (tmp_path / ".env").read_text()
+    assert "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111" in env
+    assert created_payloads[0]["slug"] == "dispatch"
+
+
+def test_solution_create_global_scope(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    created_payloads = []
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "slug": "dispatch",
+                "organization_id": None,
+            }
+
+    class _FakeClient:
+        organization = {"id": "22222222-2222-2222-2222-222222222222"}
+
+        async def post(self, path, json=None, **kwargs):
+            created_payloads.append(json)
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["create", ".", "--slug", "dispatch", "--name", "Dispatch", "--global"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert created_payloads[0]["organization_id"] is None
+    env = (tmp_path / ".env").read_text()
+    assert "BIFROST_SOLUTION_SCOPE=global" in env
+
+
+def test_solution_create_remote_failure_removes_new_descriptor(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Resp:
+        status_code = 500
+        text = "boom"
+
+    class _FakeClient:
+        organization = {"id": "22222222-2222-2222-2222-222222222222"}
+
+        async def post(self, path, json=None, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["create", ".", "--slug", "dispatch", "--name", "Dispatch"],
+    )
+
+    assert result.exit_code != 0
+    assert "Failed to create install: 500 boom" in result.output
+    assert not (tmp_path / "bifrost.solution.yaml").exists()
+
+
+def test_solution_create_binding_failure_keeps_descriptor(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Resp:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "slug": "dispatch",
+                "organization_id": "22222222-2222-2222-2222-222222222222",
+            }
+
+    class _FakeClient:
+        organization = {"id": "22222222-2222-2222-2222-222222222222"}
+
+        async def post(self, path, json=None, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+    monkeypatch.setattr(
+        "bifrost.commands.solution.write_solution_binding",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("readonly")),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["create", ".", "--slug", "dispatch", "--name", "Dispatch"],
+    )
+
+    assert result.exit_code != 0
+    assert "Created Solution install 11111111-1111-1111-1111-111111111111" in result.output
+    assert "failed to bind workspace in .env" in result.output
+    assert (tmp_path / "bifrost.solution.yaml").is_file()
+
+
+def test_solution_create_malformed_success_keeps_descriptor(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+
+    class _Resp:
+        status_code = 201
+        text = "not json"
+
+        def json(self):
+            raise ValueError("bad json")
+
+    class _FakeClient:
+        organization = {"id": "22222222-2222-2222-2222-222222222222"}
+
+        async def post(self, path, json=None, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["create", ".", "--slug", "dispatch", "--name", "Dispatch"],
+    )
+
+    assert result.exit_code != 0
+    assert "Created Solution install, but failed to read its binding" in result.output
+    assert (tmp_path / "bifrost.solution.yaml").is_file()
+
+
+def test_solution_bind_by_id_writes_env(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: dispatch\nname: Dispatch\n")
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "solutions": [
+                    {
+                        "id": "11111111-1111-1111-1111-111111111111",
+                        "slug": "dispatch",
+                        "organization_id": "22222222-2222-2222-2222-222222222222",
+                    }
+                ]
+            }
+
+    class _FakeClient:
+        async def get(self, path, **kwargs):
+            assert path == "/api/solutions"
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["bind", ".", "--solution", "11111111-1111-1111-1111-111111111111"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Bound Solution install 11111111-1111-1111-1111-111111111111" in result.output
+    env = (tmp_path / ".env").read_text()
+    assert "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n" in env
+    assert "BIFROST_SOLUTION_SLUG=dispatch\n" in env
+    assert "BIFROST_SOLUTION_ORG_ID=22222222-2222-2222-2222-222222222222\n" in env
+    assert "BIFROST_SOLUTION_SCOPE=org\n" in env
+
+
+def test_solution_bind_by_slug_writes_env(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: dispatch\nname: Dispatch\n")
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "solutions": [
+                    {
+                        "id": "11111111-1111-1111-1111-111111111111",
+                        "slug": "other",
+                        "organization_id": None,
+                    },
+                    {
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "slug": "dispatch",
+                        "organization_id": None,
+                    },
+                ]
+            }
+
+    class _FakeClient:
+        async def get(self, path, **kwargs):
+            assert path == "/api/solutions"
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["bind", ".", "--solution", "dispatch"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Bound Solution install 33333333-3333-3333-3333-333333333333" in result.output
+    env = (tmp_path / ".env").read_text()
+    assert "BIFROST_SOLUTION_ID=33333333-3333-3333-3333-333333333333\n" in env
+    assert "BIFROST_SOLUTION_SLUG=dispatch\n" in env
+    assert "BIFROST_SOLUTION_ORG_ID=\n" in env
+    assert "BIFROST_SOLUTION_SCOPE=global\n" in env
+
+
+def test_solution_bind_refuses_slug_mismatch(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: dispatch\nname: Dispatch\n")
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "solutions": [
+                    {
+                        "id": "11111111-1111-1111-1111-111111111111",
+                        "slug": "other",
+                        "organization_id": None,
+                    }
+                ]
+            }
+
+    class _FakeClient:
+        async def get(self, path, **kwargs):
+            assert path == "/api/solutions"
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["bind", ".", "--solution", "11111111-1111-1111-1111-111111111111"],
+    )
+
+    assert result.exit_code != 0
+    assert "does not match descriptor slug" in result.output
+    assert not (tmp_path / ".env").exists()
+
+
+def test_solution_bind_list_failure_is_surfaced(tmp_path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: dispatch\nname: Dispatch\n")
+
+    class _Resp:
+        status_code = 503
+        text = "unavailable"
+
+    class _FakeClient:
+        async def get(self, path, **kwargs):
+            assert path == "/api/solutions"
+            return _Resp()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["bind", ".", "--solution", "dispatch"],
+    )
+
+    assert result.exit_code != 0
+    assert "Failed to list installs (503): unavailable" in result.output
+    assert not (tmp_path / ".env").exists()
+
+
 def test_start_refuses_outside_solution_workspace(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # no bifrost.solution.yaml here
     result = CliRunner().invoke(solution_group, ["start"])
     assert result.exit_code != 0
     assert "Solution workspace" in result.output or "solution init" in result.output
+
+
+def test_start_refuses_unbound_solution_workspace(tmp_path: Path, monkeypatch):
+    import bifrost.client as client_mod
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: dispatch\nname: Dispatch\n")
+
+    class _FakeClient:
+        organization = {"id": "org-1"}
+        user = {"id": "u", "is_superuser": True}
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **kwargs: _FakeClient()),
+    )
+
+    result = CliRunner().invoke(solution_group, ["start"])
+
+    assert result.exit_code != 0
+    assert "not bound to an install" in result.output
+    assert "bifrost solution bind --solution" in result.output
 
 
 def test_set_dev_execution_context_sets_org(monkeypatch):
@@ -41,6 +474,12 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
+    (tmp_path / ".env").write_text(
+        "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
+        "BIFROST_SOLUTION_SLUG=s\n"
+        "BIFROST_SOLUTION_ORG_ID=org-1\n"
+        "BIFROST_SOLUTION_SCOPE=org\n"
+    )
     (tmp_path / ".bifrost").mkdir()
     (tmp_path / ".bifrost" / "apps.yaml").write_text(
         yaml.safe_dump({"apps": {
@@ -111,6 +550,12 @@ def test_handle_solution_renders_clickexception_not_traceback(tmp_path, monkeypa
     # traceback. (This also covers deploy_cmd/install_cmd, which raise the same.)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
+    (tmp_path / ".env").write_text(
+        "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
+        "BIFROST_SOLUTION_SLUG=s\n"
+        "BIFROST_SOLUTION_ORG_ID=org-1\n"
+        "BIFROST_SOLUTION_SCOPE=org\n"
+    )
     (tmp_path / ".bifrost").mkdir()
     (tmp_path / ".bifrost" / "apps.yaml").write_text(
         yaml.safe_dump({"apps": {

@@ -1692,16 +1692,30 @@ Options:
   --help  Show this message and exit.
 
 Commands:
+  bind          Bind this local Solution workspace to an existing install.
   capture       Adopt loose _repo/ entities into an install (migration).
+  create        Create and bind a new Solution workspace.
   deploy        Deploy the current Solution workspace (full replace,...
   export        Download a Solution's workspace zip (shareable or full...
-  init          Scaffold a bifrost.solution.yaml descriptor.
+  init          Alias for `solution create`: scaffold, create remote...
   install       Install a Solution from a workspace zip (drag-and-drop...
   migrate-app   Migrate a v1 inline app dir to a scaffolded standalone_v2...
   pull          Pull captured entities into the local .bifrost/ manifest...
   scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
   start         Run the app's dev server + local workflows (one origin).
   swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
+```
+
+### `solution bind`
+
+```
+Usage: solution bind [OPTIONS] [PATH]
+
+  Bind this local Solution workspace to an existing install.
+
+Options:
+  --solution TEXT  Install id or unique slug.  [required]
+  --help           Show this message and exit.
 ```
 
 ### `solution capture`
@@ -1729,6 +1743,30 @@ Options:
   --help                          Show this message and exit.
 ```
 
+### `solution create`
+
+```
+Usage: solution create [OPTIONS] [PATH]
+
+  Create and bind a new Solution workspace.
+
+Options:
+  --slug TEXT                     Solution slug (definition identity).
+                                  [required]
+  --name TEXT                     Display name (defaults to slug).
+  --version TEXT                  Bundle version recorded on the install at
+                                  deploy time.  [default: 0.1.0]
+  --global-repo-access / --no-global-repo-access
+                                  [default: no-global-repo-access]
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
+```
+
 ### `solution deploy`
 
 ```
@@ -1737,16 +1775,10 @@ Usage: solution deploy [OPTIONS] [PATH]
   Deploy the current Solution workspace (full replace, non-interactive).
 
 Options:
-  --solution TEXT                 Target install id (override when ambiguous).
-  --global                        Target global scope (org=NULL). Alias for
-                                  --org global.
-  --org, --organization, --scope TEXT
-                                  Org UUID/name, or 'none'/'global' for global
-                                  scope. Omit = your org. (--organization /
-                                  --scope are synonyms.)
-  --force                         Apply even if the bundle version is older
-                                  than the installed version (downgrade).
-  --help                          Show this message and exit.
+  --solution TEXT  Install id or unique slug.
+  --force          Apply even if the bundle version is older than the
+                   installed version (downgrade).
+  --help           Show this message and exit.
 ```
 
 ### `solution export`
@@ -1774,7 +1806,7 @@ Options:
 ```
 Usage: solution init [OPTIONS] [PATH]
 
-  Scaffold a bifrost.solution.yaml descriptor.
+  Alias for `solution create`: scaffold, create remote install, and bind .env.
 
 Options:
   --slug TEXT                     Solution slug (definition identity).
@@ -1784,6 +1816,12 @@ Options:
                                   deploy time.  [default: 0.1.0]
   --global-repo-access / --no-global-repo-access
                                   [default: no-global-repo-access]
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --help                          Show this message and exit.
 ```
 
@@ -1872,14 +1910,9 @@ Usage: solution start [OPTIONS] [APP_SLUG]
   Run the app's dev server + local workflows (one origin).
 
 Options:
-  --global                        Target global scope (org=NULL). Alias for
-                                  --org global.
-  --org, --organization, --scope TEXT
-                                  Org UUID/name, or 'none'/'global' for global
-                                  scope. Omit = your org. (--organization /
-                                  --scope are synonyms.)
-  --port INTEGER                  Local origin port.  [default: 3000]
-  --help                          Show this message and exit.
+  --solution TEXT  Install id or unique slug.
+  --port INTEGER   Local origin port.  [default: 3000]
+  --help           Show this message and exit.
 ```
 
 ### `solution swap-slugs`

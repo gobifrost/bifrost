@@ -322,17 +322,18 @@ All install/remove operations recycle workers asynchronously (returns immediatel
 
 An installable surface — a workspace (apps + workflows + tables + configs + forms + agents) that deploys as one unit. See `references/apps.md` for the Solution app structure and `SKILL.md` for the Solutions skill.
 
-Commands: `solution init / scaffold-app / start / deploy / install`
+Commands: `solution create / init / bind / scaffold-app / start / deploy / install`
 
 ```bash
-bifrost solution init --slug my-solution --name "My Solution"
+bifrost solution create --slug my-solution --name "My Solution"
+bifrost solution bind --solution <id-or-slug>   # for cloned/existing workspaces
 bifrost solution scaffold-app my-app
-bifrost solution start [APP_SLUG]          # APP_SLUG positional (the apps/ dir name); optional org targeting + --port
-bifrost solution deploy                    # your org; --global or --org <ref> targets elsewhere
+bifrost solution start [APP_SLUG]          # APP_SLUG positional (the apps/ dir name); bound install + optional --port
+bifrost solution deploy                    # full-replace the bound install
 bifrost solution install solution.zip --org acme
 ```
 
-`solution init` carries **no install scope** — install kind (org vs global) is the deploy-time `--org`/`--global` choice (the unified standard, below), not a descriptor field.
+`solution init` is an alias for `solution create`: it writes the descriptor, creates an empty remote install, and writes the local `.env` binding. `solution start` and `solution deploy` use that bound install; pass `--solution <id-or-slug>` only when you need a one-command override.
 
 Non-obvious:
 - `deploy` (alias: `bifrost deploy`) full-replaces the install; refuses bundles older than the installed version unless `--force`.
