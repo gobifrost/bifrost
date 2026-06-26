@@ -518,6 +518,10 @@
 /* Tiptap Editor Styles */
 .tiptap-editor,
 .ProseMirror {
+	& > :first-child {
+		margin-top: 0;
+	}
+
 	/* Headings */
 	& h1 {
 		font-size: 2em;
