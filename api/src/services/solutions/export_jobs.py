@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import logging
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -13,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import decrypt_secret, encrypt_secret
 from src.models.enums import ConfigType
-from src.models.contracts.solutions import SolutionExportOptions
+from src.models.contracts.solutions import SolutionExportJobPublic, SolutionExportOptions
+from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution
 from src.services.file_storage import FileStorageService
@@ -26,6 +28,7 @@ from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
 SOLUTION_EXPORT_ARTIFACT_CONTENT_TYPE = "application/zip"
 SOLUTION_EXPORT_ARTIFACT_PREFIX = "solution-exports"
+SOLUTION_EXPORT_DOWNLOAD_PATH_PREFIX = "/api/solutions/export-jobs"
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,73 @@ def export_artifact_storage_key(solution_id: UUID | str, job_id: UUID | str) -> 
 def export_artifact_filename(solution: Solution) -> str:
     """Return the download filename for a Solution export artifact."""
     return f"{solution.slug}-{solution.version or 'unversioned'}.zip"
+
+
+def _is_future(value: datetime | None) -> bool:
+    if value is None:
+        return False
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value > datetime.now(timezone.utc)
+
+
+def public_job(row: SolutionExportJob) -> SolutionExportJobPublic:
+    """Return the public representation of a durable export job row."""
+    download_url = None
+    if (
+        row.status == "completed"
+        and row.artifact_storage_key
+        and _is_future(row.expires_at)
+    ):
+        download_url = f"{SOLUTION_EXPORT_DOWNLOAD_PATH_PREFIX}/{row.id}/download"
+    return SolutionExportJobPublic.model_validate(row).model_copy(
+        update={"download_url": download_url}
+    )
+
+
+async def create_export_job(
+    db: AsyncSession,
+    solution: Solution,
+    requested_by_id: UUID | None,
+    options: SolutionExportOptions,
+    *,
+    notification_id: UUID | None = None,
+) -> SolutionExportJobPublic:
+    """Create a pending scheduler-owned Solution export job without building it."""
+    validate_export_options_password(options)
+    row = SolutionExportJob(
+        solution_id=solution.id,
+        organization_id=solution.organization_id,
+        requested_by_id=requested_by_id,
+        notification_id=notification_id,
+        status="pending",
+        progress_percent=0,
+        message="queued",
+        encrypted_options=encrypt_export_options(options),
+        artifact_filename=export_artifact_filename(solution),
+    )
+    db.add(row)
+    await db.flush()
+    await db.refresh(row)
+    return public_job(row)
+
+
+async def list_export_jobs(
+    db: AsyncSession,
+    solution_id: UUID,
+    *,
+    limit: int = 50,
+) -> list[SolutionExportJobPublic]:
+    """Return recent export jobs for a Solution, newest first."""
+    rows = (
+        await db.execute(
+            select(SolutionExportJob)
+            .where(SolutionExportJob.solution_id == solution_id)
+            .order_by(SolutionExportJob.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [public_job(row) for row in rows]
 
 
 def export_options_to_capture_flags(options: SolutionExportOptions) -> dict[str, bool]:
@@ -296,6 +366,7 @@ __all__ = [
     "SolutionExportArtifactService",
     "build_solution_backup_zip_tempfile",
     "build_solution_backup_zip_to_path",
+    "create_export_job",
     "decrypt_export_options",
     "delete_solution_export_artifact",
     "encrypt_export_options",
@@ -304,6 +375,8 @@ __all__ = [
     "export_options_select_runtime_payload",
     "export_options_to_capture_flags",
     "filter_config_values_by_options",
+    "list_export_jobs",
+    "public_job",
     "solution_secret_config_keys",
     "upload_solution_export_artifact",
     "validate_export_options_password",

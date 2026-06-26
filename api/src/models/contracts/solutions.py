@@ -511,6 +511,12 @@ class SolutionExportJobPublic(BaseModel):
     download_url: str | None = None
 
 
+class SolutionExportJobsList(BaseModel):
+    """Recent durable async backup export jobs for one Solution."""
+
+    jobs: list[SolutionExportJobPublic] = Field(default_factory=list)
+
+
 class SolutionCaptureRequest(BaseModel):
     """Move existing loose entities into an install in place.
 

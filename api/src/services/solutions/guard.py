@@ -56,7 +56,16 @@ class SolutionManagedWriteError(Exception):
 
 # Models whose instances are solution-managed when solution_id is set. Other
 # ORM classes never carry solution_id and are skipped cheaply.
+_OPERATIONAL_SOLUTION_ROW_NAMES = {
+    # Job bookkeeping belongs to the platform scheduler/API, not the deploy-owned
+    # portable entity surface protected by this guard.
+    "SolutionExportJob",
+}
+
+
 def _instance_is_managed(obj: Any) -> bool:
+    if obj.__class__.__name__ in _OPERATIONAL_SOLUTION_ROW_NAMES:
+        return False
     return getattr(obj, "solution_id", None) is not None
 
 

@@ -23,7 +23,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, File, HTTPException, Response, UploadFile, status
 from fastapi import Form as FastapiForm
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +49,9 @@ from src.models.contracts.solutions import (
     SolutionEntitySummary,
     SolutionFileSummary,
     SolutionExistingInstall,
+    SolutionExportJobCreate,
+    SolutionExportJobPublic,
+    SolutionExportJobsList,
     SolutionInstallPreview,
     PullAckRequest,
     PullAckResponse,
@@ -68,6 +71,7 @@ from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.forms import Form
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
@@ -76,6 +80,11 @@ from src.services.solutions.deploy import (
     SolutionDowngradeBlocked,
     SolutionFinalizeIncomplete,
     SolutionWorkflowNameMismatch,
+)
+from src.services.solutions.export_jobs import (
+    create_export_job,
+    list_export_jobs,
+    public_job,
 )
 
 if TYPE_CHECKING:
@@ -454,6 +463,143 @@ async def export_solution(
         filename=filename,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         background=BackgroundTask(_cleanup_file, out_path),
+    )
+
+
+@router.post(
+    "/{solution_id}/export-jobs",
+    response_model=SolutionExportJobPublic,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue a durable Solution backup export job (admin only)",
+)
+async def create_solution_export_job(
+    solution_id: UUID,
+    body: SolutionExportJobCreate,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> SolutionExportJobPublic:
+    """Create a scheduler-owned backup export job without building the zip."""
+    from src.models.contracts.notifications import (
+        NotificationCategory,
+        NotificationCreate,
+    )
+    from src.services.notification_service import get_notification_service
+
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+
+    try:
+        created = await create_export_job(ctx.db, sol, user.user_id, body.options)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        notification = await get_notification_service().create_notification(
+            str(user.user_id),
+            NotificationCreate(
+                category=NotificationCategory.SYSTEM,
+                title="Backup queued",
+                description="Solution backup export is queued.",
+                percent=0,
+                metadata={
+                    "solution_id": str(solution_id),
+                    "job_id": str(created.id),
+                    "action": "download_solution_export",
+                    "action_label": "Download",
+                },
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - Redis/notification outage
+        await ctx.db.rollback()
+        logger.exception("Failed to create Solution export notification")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to create export notification",
+        ) from exc
+
+    row = await ctx.db.get(SolutionExportJob, created.id)
+    if row is None:
+        await ctx.db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Export job was not persisted",
+        )
+    row.notification_id = UUID(notification.id)
+    await ctx.db.commit()
+    await ctx.db.refresh(row)
+    return public_job(row)
+
+
+@router.get(
+    "/{solution_id}/export-jobs",
+    response_model=SolutionExportJobsList,
+    summary="List durable Solution backup export jobs (admin only)",
+)
+async def get_solution_export_jobs(
+    solution_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> SolutionExportJobsList:
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    return SolutionExportJobsList(jobs=await list_export_jobs(ctx.db, solution_id))
+
+
+@router.get(
+    "/export-jobs/{job_id}",
+    response_model=SolutionExportJobPublic,
+    summary="Get a durable Solution backup export job (admin only)",
+)
+async def get_solution_export_job(
+    job_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> SolutionExportJobPublic:
+    row = await ctx.db.get(SolutionExportJob, job_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    return public_job(row)
+
+
+@router.get(
+    "/export-jobs/{job_id}/download",
+    summary="Download a completed durable Solution backup export artifact (admin only)",
+    responses={
+        200: {"content": {"application/zip": {}}},
+        404: {"description": "Export job not found"},
+        409: {"description": "Export job is not downloadable"},
+    },
+)
+async def download_solution_export_job(
+    job_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> StreamingResponse:
+    from src.services.file_storage import FileStorageService
+
+    row = await ctx.db.get(SolutionExportJob, job_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    if (
+        row.status != "completed"
+        or not row.artifact_storage_key
+        or public_job(row).download_url is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Export job is not downloadable",
+        )
+
+    filename = row.artifact_filename or f"solution-export-{row.id}.zip"
+    return StreamingResponse(
+        FileStorageService(ctx.db).iter_raw_s3_chunks(row.artifact_storage_key),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
