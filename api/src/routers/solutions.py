@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+import re
 import tempfile
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -96,6 +97,7 @@ router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
 
 DEPLOY_JOB_ORPHAN_THRESHOLD = timedelta(minutes=15)
 UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+_ZIP_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _cleanup_file(path: str | Path) -> None:
@@ -103,6 +105,12 @@ def _cleanup_file(path: str | Path) -> None:
         Path(path).unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 - best-effort response cleanup
         logger.warning("Failed to remove temporary file %s", path)
+
+
+def _safe_zip_filename(filename: str) -> str:
+    stem = filename.removesuffix(".zip")
+    safe_stem = _ZIP_FILENAME_SAFE_RE.sub("-", stem).strip(".-_")
+    return f"{safe_stem or 'solution-export'}.zip"
 
 
 async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
@@ -399,17 +407,18 @@ async def export_solution(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
     artifact = SolutionSourceArtifactStorage(solution_id)
-    filename = f"{sol.slug}-{sol.version or 'unversioned'}.zip"
+    filename = _safe_zip_filename(f"{sol.slug}-{sol.version or 'unversioned'}.zip")
     tmp = tempfile.NamedTemporaryFile(
-        prefix=f"bifrost-solution-export-{solution_id}-",
+        prefix="bifrost-solution-export-",
         suffix=".zip",
         delete=False,
     )
     out_path = Path(tmp.name)
     tmp.close()
+    source_path: Path | None = None
     try:
         stored_source_path = tempfile.NamedTemporaryFile(
-            prefix=f"bifrost-solution-source-{solution_id}-",
+            prefix="bifrost-solution-source-",
             suffix=".zip",
             delete=False,
         )
@@ -452,10 +461,8 @@ async def export_solution(
         await ctx.db.commit()
     except Exception:
         _cleanup_file(out_path)
-        try:
+        if source_path is not None:
             _cleanup_file(source_path)
-        except UnboundLocalError:
-            pass
         raise
     return FileResponse(
         out_path,
@@ -595,7 +602,7 @@ async def download_solution_export_job(
             detail="Export job is not downloadable",
         )
 
-    filename = row.artifact_filename or f"solution-export-{row.id}.zip"
+    filename = _safe_zip_filename(row.artifact_filename or f"solution-export-{row.id}.zip")
     return StreamingResponse(
         FileStorageService(ctx.db).iter_raw_s3_chunks(row.artifact_storage_key),
         media_type="application/zip",

@@ -332,11 +332,8 @@ class FilePolicyService:
             policies = FilePolicies.model_validate(policy_row.policies)
         except ValidationError as exc:
             logger.warning(
-                "malformed file policies for %s/%s/%s; denying: %s",
-                organization_id,
-                location,
-                policy_row.path,
-                exc,
+                "malformed file policies; denying file access: %s",
+                exc.__class__.__name__,
             )
             return False
 
@@ -345,10 +342,8 @@ class FilePolicyService:
             await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
             logger.warning(
-                "unresolvable file policy ref %s/%s; denying: %s",
-                organization_id,
-                location,
-                exc,
+                "unresolvable file policy ref; denying file access: %s",
+                exc.__class__.__name__,
             )
             return False
 
