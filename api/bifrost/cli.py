@@ -3081,6 +3081,14 @@ async def _sync_files(
     regular_files = {k: v for k, v in files.items() if not _is_bifrost_path(k)}
 
     # ── 2. Fetch server file metadata ────────────────────────────────────
+    # A failed listing is FATAL, not a "push everything" fallback. If we can't
+    # read server state (auth/permission failure, server error, network drop),
+    # every local file would look "new locally" and we'd mass-push the entire
+    # workspace over whatever is on the server — silently, with no way for the
+    # user to catch it. A genuinely empty workspace returns HTTP 200 with an
+    # empty list, so we can still distinguish "nothing on server" (safe to
+    # push) from "couldn't see the server" (abort). Bail loudly on anything
+    # else.
     server_metadata: dict[str, dict[str, str]] = {}
     try:
         resp = await client.post("/api/files/list", json={
@@ -3088,17 +3096,43 @@ async def _sync_files(
             "mode": "cloud",
             "location": "workspace",
         })
-        if resp.status_code == 200:
-            data = resp.json()
-            for item in data.get("files_metadata", []):
-                server_metadata[item["path"]] = {
-                    "etag": item["etag"],
-                    "last_modified": item["last_modified"],
-                    "updated_by": item.get("updated_by", ""),
-                }
     except Exception as e:
-        # Without metadata we'll push everything — slower but still correct
-        logger.debug(f"could not fetch server file metadata, will push without diff: {e}")
+        print(
+            f"Error: could not reach the server to list files ({e}).\n"
+            "Aborting to avoid pushing every local file as new.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if resp.status_code != 200:
+        detail = ""
+        try:
+            detail = resp.json().get("detail", "")
+        except Exception:  # noqa: BLE001 - body may not be JSON; detail stays ""
+            detail = (resp.text or "")[:200]
+        hint = ""
+        if resp.status_code in (401, 403):
+            hint = (
+                "\nThis looks like an authentication/permission problem — "
+                "re-run `bifrost login` and confirm your account can access "
+                "the workspace."
+            )
+        print(
+            f"Error: server returned HTTP {resp.status_code} listing files"
+            f"{f' ({detail})' if detail else ''}.\n"
+            "Aborting to avoid pushing every local file as new."
+            f"{hint}",
+            file=sys.stderr,
+        )
+        return 1
+
+    data = resp.json()
+    for item in data.get("files_metadata", []):
+        server_metadata[item["path"]] = {
+            "etag": item["etag"],
+            "last_modified": item["last_modified"],
+            "updated_by": item.get("updated_by", ""),
+        }
 
     # Filter .git/ objects from server listing
     server_metadata = {

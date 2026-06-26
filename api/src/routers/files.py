@@ -354,8 +354,17 @@ async def _authorize_file_policy(
 
     For solution-context requests, `scope` is the install UUID string (not an
     org UUID), so we derive `organization_id` from the install and forward
-    `solution_id` separately rather than coercing the install UUID into org."""
+    `solution_id` separately rather than coercing the install UUID into org.
+
+    `workspace` is the shared platform codebase: it is superuser-only and never
+    carries file policies. Policy evaluation default-denies when no policy row
+    exists, which would 403 a superuser running `bifrost sync`/`watch` against
+    the normal (unconfigured) workspace, so we short-circuit to a plain
+    superuser check here rather than consulting the policy service."""
     from src.services.file_policy_service import FilePolicyService
+
+    if location == "workspace":
+        return bool(getattr(ctx.user, "is_superuser", False))
 
     policy_organization_id: UUID | None = None
     resolved_solution_id = solution_id

@@ -129,10 +129,12 @@ def _assign_role(e2e_client, platform_admin, role_id: str, *users) -> None:
 
 
 @pytest.mark.e2e
+# NOTE: `workspace` is intentionally NOT in this list. It is the shared
+# platform codebase: superuser-only and never policy-governed (default-deny
+# does not apply). Its contract lives in test_workspace_superuser_only.py.
 @pytest.mark.parametrize(
     ("location", "scope_kind"),
     [
-        ("workspace", "workspace"),
         ("temp", "org"),
         ("uploads", "org"),
         ("shared", "org"),
