@@ -409,6 +409,8 @@
 | GET | `/api/solutions` |
 | POST | `/api/solutions` |
 | GET | `/api/solutions/deploy-jobs/{job_id}` |
+| GET | `/api/solutions/export-jobs/{job_id}` |
+| GET | `/api/solutions/export-jobs/{job_id}/download` |
 | POST | `/api/solutions/install` |
 | POST | `/api/solutions/install/from-repo` |
 | POST | `/api/solutions/install/preview` |
@@ -423,6 +425,8 @@
 | POST | `/api/solutions/{solution_id}/deploy` |
 | GET | `/api/solutions/{solution_id}/entities` |
 | POST | `/api/solutions/{solution_id}/export` |
+| GET | `/api/solutions/{solution_id}/export-jobs` |
+| POST | `/api/solutions/{solution_id}/export-jobs` |
 | GET | `/api/solutions/{solution_id}/logo` |
 | POST | `/api/solutions/{solution_id}/pull/ack` |
 | GET | `/api/solutions/{solution_id}/readme` |
