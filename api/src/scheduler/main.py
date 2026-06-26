@@ -222,6 +222,34 @@ class Scheduler:
         except ImportError:
             logger.warning("Solution update check job not available")
 
+        # Durable Solution backup exports - scheduler-owned, no RabbitMQ worker handoff.
+        try:
+            from src.jobs.schedulers.solution_export_jobs import (
+                cleanup_expired_solution_export_jobs,
+                process_solution_export_jobs,
+            )
+
+            scheduler.add_job(
+                process_solution_export_jobs,
+                IntervalTrigger(seconds=15),
+                id="solution_export_jobs",
+                name="Process durable Solution backup export jobs",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+                **misfire_options,
+            )
+            scheduler.add_job(
+                cleanup_expired_solution_export_jobs,
+                IntervalTrigger(hours=1),
+                id="solution_export_job_cleanup",
+                name="Cleanup expired Solution backup export artifacts",
+                replace_existing=True,
+                **misfire_options,
+            )
+            logger.info("Solution export jobs scheduled (process every 15s, cleanup hourly)")
+        except ImportError:
+            logger.warning("Solution export jobs scheduler not available")
+
         # Event cleanup - daily at 3:00 AM UTC (30-day retention)
         try:
             from src.jobs.schedulers.event_cleanup import cleanup_old_events
