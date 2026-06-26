@@ -243,6 +243,22 @@ describe("FilesExplorer", () => {
 			expect(screen.getByText("Finance Ops")).toHaveClass("font-semibold");
 		});
 
+		it("hides solution page chrome when embedded", () => {
+			vi.mocked(useMediaQuery).mockReturnValue(true);
+			render(
+				<MemoryRouter>
+					<FilesExplorer install="sol-abc" installName="Finance Ops" embedded />
+				</MemoryRouter>,
+			);
+
+			expect(
+				screen.queryByRole("link", { name: /back to solution/i }),
+			).not.toBeInTheDocument();
+			expect(screen.queryByText("Finance Ops")).not.toBeInTheDocument();
+			expect(shareTreeScopes).toContain("sol-abc");
+			expect(shareTreeReadOnly).toContain(true);
+		});
+
 		it("shows the selected solution file location as the breadcrumb root", async () => {
 			vi.mocked(useMediaQuery).mockReturnValue(true);
 			const user = userEvent.setup();

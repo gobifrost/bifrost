@@ -1,12 +1,11 @@
 /**
- * Solution → Files link (M8)
+ * Solution → embedded Files browser (M8)
  *
- * Verifies the Files row in the Solution Contents tab:
+ * Verifies the Files inventory in the Solution Contents tab:
  *   - When a solution has files, the "Files" chip appears in the Contents tab
  *     showing the file count.
- *   - Clicking the chip renders a "Browse Files" link pointing at
- *     /files?install=<id>.
- *   - The Files page (with ?install=) shows the back link to the solution.
+ *   - Clicking the chip renders the same read-only file browser used by the
+ *     Files page, scoped to the Solution install.
  *
  * NOTE: This spec is written but is NOT in CI for this worktree (the
  * Playwright stack only has the debug stack at localhost:34212, not the test
@@ -131,10 +130,10 @@ async function deployWithSolutionsLocation(
 		.toBe("succeeded");
 }
 
-test.describe("Solution Files link (admin)", () => {
+test.describe("Solution Files browser (admin)", () => {
 	test.use({ viewport: { width: 1440, height: 900 } });
 
-	test("Files chip appears in Contents and links to /files?install=<id>", async ({
+	test("Files chip appears in Contents and opens the embedded file browser", async ({
 		page,
 		api,
 	}) => {
@@ -195,20 +194,17 @@ test.describe("Solution Files link (admin)", () => {
 			// Click the Files chip.
 			await filesChip.click();
 
-			// The "Browse Files" link must point at /files?install=<id>.
-			const browseLink = page.getByTestId("files-view-link");
-			await expect(browseLink).toBeVisible({ timeout: 5000 });
-			await expect(browseLink).toHaveAttribute(
-				"href",
-				`/files?install=${solId}&from=solution:${solId}`,
-			);
+			// The Files browser is embedded in-place and remains on the Solution page.
+			await expect(page).toHaveURL(new RegExp(`/solutions/${solId}`));
+			await expect(page.getByRole("tree")).toBeVisible({ timeout: 10000 });
 
-			// Navigate to the Files page via the link.
-			await browseLink.click();
-			await expect(page).toHaveURL(new RegExp(`/files\\?install=${solId}`));
+			// Select the declared "solutions" file location and confirm the
+			// solution-scoped file path is visible through the shared browser UI.
+			await page.getByRole("treeitem", { name: /solutions/i }).click();
 
-			// The back link to the solution must appear.
-			await expect(page.getByTestId("files-solution-back")).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole("cell", { name: "data" })).toBeVisible({
+				timeout: 10000,
+			});
 		} finally {
 			await api
 				.delete(`/api/solutions/${solId}`, { params: { confirm: slug } })

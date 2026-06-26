@@ -107,6 +107,7 @@ import { CreateEditSolution } from "@/components/solutions/CreateEditSolution";
 import { SolutionCaptureDialog } from "@/components/solutions/SolutionCaptureDialog";
 import { SolutionActionsMenu } from "@/components/solutions/SolutionActionsMenu";
 import { ExportSolutionDialog } from "@/components/solutions/ExportSolutionDialog";
+import { FilesExplorer } from "@/components/files/FilesExplorer";
 import {
 	getSolutionEntities,
 	getSolutionSetup,
@@ -763,11 +764,13 @@ function EntityTabContent({
 	kind,
 	items,
 	solutionId,
+	solutionName,
 	fileCount,
 }: {
 	kind: EntityKind;
 	items: EntitySummary[];
 	solutionId: string;
+	solutionName: string;
 	/** Actual file count from SolutionEntities.files (files kind only). */
 	fileCount?: number;
 }) {
@@ -806,27 +809,22 @@ function EntityTabContent({
 		]),
 	);
 
-	// Files are a flat resource with their own dedicated Explorer page — navigate
-	// there instead of attempting to inline-render a SolutionFileSummary list.
 	if (kind === "files") {
 		const count = fileCount ?? 0;
-		const href = `/files?install=${solutionId}&from=solution:${solutionId}`;
+		if (count === 0) {
+			return (
+				<div className="text-sm text-muted-foreground py-8 text-center rounded-2xl border border-dashed">
+					This Solution has no files.
+				</div>
+			);
+		}
 		return (
-			<div className="flex flex-col items-center gap-3 py-8 text-center">
-				<FolderOpen className="h-8 w-8 text-muted-foreground" />
-				<p className="text-sm text-muted-foreground">
-					{count === 0
-						? "This Solution has no files."
-						: `${count} file${count === 1 ? "" : "s"} owned by this install.`}
-				</p>
-				<Link
-					to={href}
-					className="inline-flex items-center gap-1.5 text-sm font-medium hover:underline"
-					data-testid="files-view-link"
-				>
-					<FolderOpen className="h-4 w-4" />
-					Browse Files
-				</Link>
+			<div className="h-[min(72vh,48rem)] min-h-[32rem]" data-testid="solution-files-tab">
+				<FilesExplorer
+					install={solutionId}
+					installName={solutionName}
+					embedded
+				/>
 			</div>
 		);
 	}
@@ -1577,12 +1575,6 @@ export function SolutionDetail() {
 	const activeKind: EntityKind | null =
 		contentsFilter === "all" ? null : contentsFilter;
 	function openContentKind(kind: EntityKind) {
-		if (kind === "files") {
-			const id = sol?.id ?? solutionId;
-			if (!id) return;
-			navigate(`/files?install=${id}&from=solution:${id}`);
-			return;
-		}
 		setContentsFilter(kind);
 		setTab("contents");
 	}
@@ -1899,6 +1891,7 @@ export function SolutionDetail() {
 										kind={activeKind}
 										items={itemsFor(activeKind)}
 										solutionId={sol.id}
+										solutionName={sol.name}
 										fileCount={entityCounts.files}
 									/>
 								) : (

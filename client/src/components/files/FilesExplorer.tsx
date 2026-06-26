@@ -44,9 +44,15 @@ interface FilesExplorerProps {
 	install?: string;
 	/** Display name for the pinned Solution install. */
 	installName?: string;
+	/** Render inside another page surface, without the solution back-link chrome. */
+	embedded?: boolean;
 }
 
-export function FilesExplorer({ install, installName }: FilesExplorerProps = {}) {
+export function FilesExplorer({
+	install,
+	installName,
+	embedded = false,
+}: FilesExplorerProps = {}) {
 	const { isPlatformAdmin } = useAuth();
 	const { data: organizations = [] } = useOrganizations({
 		enabled: isPlatformAdmin && !install,
@@ -248,7 +254,7 @@ export function FilesExplorer({ install, installName }: FilesExplorerProps = {})
 		<div className="flex h-full min-h-0 flex-col gap-3">
 			<header className="flex shrink-0 flex-wrap items-center gap-2">
 				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-					{install && (
+					{install && !embedded && (
 						<>
 							<Button asChild variant="outline" size="sm">
 								<Link

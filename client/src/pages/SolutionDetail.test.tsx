@@ -34,6 +34,18 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: true }),
 }));
 
+const mockFilesExplorer = vi.fn();
+vi.mock("@/components/files/FilesExplorer", () => ({
+	FilesExplorer: (props: { install?: string; installName?: string }) => {
+		mockFilesExplorer(props);
+		return (
+			<div data-testid="solution-files-explorer">
+				Files Explorer {props.install} {props.installName}
+			</div>
+		);
+	},
+}));
+
 const mockGetSolutionEntities = vi.fn();
 const mockUpdateSolution = vi.fn();
 const mockDeleteSolution = vi.fn();
@@ -372,9 +384,12 @@ describe("SolutionDetail", () => {
 
 		await user.click(screen.getByRole("button", { name: /1 files/i }));
 
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/files?install=sol-1&from=solution:sol-1",
+		expect(screen.getByTestId("tab-contents")).toHaveAttribute(
+			"data-state",
+			"active",
 		);
+		expect(await screen.findByTestId("solution-files-explorer"))
+			.toHaveTextContent("Files Explorer sol-1 My Solution");
 	});
 
 	it("renders the update action and the overflow menu in the header", async () => {
@@ -623,7 +638,7 @@ describe("SolutionDetail", () => {
 		expect(filesChip).toHaveTextContent("1");
 	});
 
-	it("navigates the Files chip to /files?install=<id>", async () => {
+	it("embeds the solution-scoped file explorer from the Files chip", async () => {
 		const entities = makeEntities();
 		(entities as Record<string, unknown>).files = [
 			{ location: "solutions", path: "data/hello.txt", size: 2 },
@@ -635,12 +650,13 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByTestId("tab-contents"));
 		await user.click(screen.getByTestId("chip-files"));
 
-		// Files tab renders a Browse Files link pointing at the scoped Files page.
-		const link = await screen.findByTestId("files-view-link");
-		expect(link).toHaveAttribute(
-			"href",
-			"/files?install=sol-1&from=solution:sol-1",
-		);
+		expect(await screen.findByTestId("solution-files-explorer"))
+			.toHaveTextContent("Files Explorer sol-1 My Solution");
+		expect(mockFilesExplorer).toHaveBeenCalledWith({
+			install: "sol-1",
+			installName: "My Solution",
+			embedded: true,
+		});
 	});
 
 	it("shows 'Uninstall' in the overflow menu for an active solution", async () => {
