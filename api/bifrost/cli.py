@@ -2875,10 +2875,18 @@ async def _watch_and_push(
         # Best-effort start notification — server tolerates clients that didn't announce
         logger.debug(f"watch start notification failed: {e}")
 
-    # Initial full sync
+    # Initial full sync. If it aborts (e.g. the server file listing failed —
+    # auth/permission error, server down), do NOT fall through to start the
+    # observer: a half-initialized watch with no server view would push every
+    # subsequent local edit blindly, which is the exact mass-push the abort is
+    # meant to prevent (just deferred to per-file events).
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(f"Initial sync of {path}...", flush=True)
-    await _sync_files(str(path), repo_prefix=repo_prefix, mirror=mirror, validate=validate, client=client)
+    initial_rc = await _sync_files(
+        str(path), repo_prefix=repo_prefix, mirror=mirror, validate=validate, client=client
+    )
+    if initial_rc != 0:
+        return initial_rc
 
     # Seed the known-server-hash cache from the server's file listing before
     # the observer starts. Without this, the very first observer event for

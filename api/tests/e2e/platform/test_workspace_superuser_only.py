@@ -77,3 +77,17 @@ def test_non_superuser_denied_workspace(e2e_client, non_admin_user):
         "location": "workspace",
     })
     assert resp.status_code == 403, f"expected 403 for non-admin, got {resp.status_code}"
+
+
+def test_access_test_endpoint_reports_workspace_superuser_only(e2e_client, platform_admin):
+    """The Test Access endpoint must mirror real enforcement: workspace is
+    superuser-only and ignores any policy row, so a superuser is allowed."""
+    resp = e2e_client.post(
+        "/api/files/policies/test",
+        headers=platform_admin.headers,
+        json={"path": "modules/anything.py", "location": "workspace", "action": "read"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["allowed"] is True
+    assert body["matched_policy"] is None

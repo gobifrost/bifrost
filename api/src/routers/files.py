@@ -364,13 +364,14 @@ async def _authorize_file_policy(
     from src.services.file_policy_service import FilePolicyService
 
     if location == "workspace":
-        return bool(getattr(ctx.user, "is_superuser", False))
+        return ctx.user.is_superuser
 
+    # Past this point location is never "workspace" (handled above).
     policy_organization_id: UUID | None = None
     resolved_solution_id = solution_id
     if organization_id is not _USE_CONTEXT_SOLUTION_ID:
         policy_organization_id = cast(UUID | None, organization_id)
-    elif location != "workspace":
+    else:
         if scope is None:
             return False
         if resolved_solution_id is not None:
@@ -596,6 +597,22 @@ async def test_file_policy_access(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     principal = await _test_principal(ctx, db, request.user_id)
+
+    # workspace is superuser-only and never policy-governed — mirror the real
+    # enforcement in _authorize_file_policy so Test Access reports what actually
+    # happens, not a stale policy-service evaluation.
+    if request.location == "workspace":
+        allowed = principal.is_superuser
+        return FilePolicyAccessTestResponse(
+            allowed=allowed,
+            path=request.path,
+            location=request.location,
+            action=request.action,
+            matched_policy=None,
+            matched_rule="superuser (workspace is not policy-governed)" if allowed else None,
+            denial_reason=None if allowed else "workspace is superuser-only",
+        )
+
     service = FilePolicyService(db)
     matched = await service.load_policy(
         organization_id=org_id,
