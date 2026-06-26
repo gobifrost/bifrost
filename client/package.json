@@ -31,7 +31,7 @@
 		"@atlaskit/pragmatic-drag-and-drop": "^2.0.1",
 		"@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3.0.0",
 		"@atlaskit/pragmatic-drag-and-drop-hitbox": "^2.0.0",
-		"@babel/standalone": "^7.29.7",
+		"@babel/standalone": "^8.0.2",
 		"@hookform/resolvers": "^5.4.0",
 		"@monaco-editor/react": "^4.7.0",
 		"@radix-ui/react-accordion": "^1.2.14",
