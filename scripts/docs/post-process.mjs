@@ -24,7 +24,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, renameSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { execSync } from "node:child_process";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import sharp from "sharp";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";

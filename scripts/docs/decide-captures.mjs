@@ -13,7 +13,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 
 function parseArgs(argv) {
   const out = { full: false };
