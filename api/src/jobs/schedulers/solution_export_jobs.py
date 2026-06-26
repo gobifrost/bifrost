@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import or_, select
 
@@ -61,7 +62,7 @@ async def _update_notification(
         )
 
 
-async def _fail_job(job_id: object, message: str) -> None:
+async def _fail_job(job_id: UUID, message: str) -> None:
     async with get_db_context() as db:
         job = await db.get(SolutionExportJob, job_id)
         if job is None:
@@ -132,7 +133,7 @@ async def _reset_stale_running_jobs() -> int:
     return len(rows)
 
 
-async def _claim_pending_jobs(limit: int) -> list[object]:
+async def _claim_pending_jobs(limit: int) -> list[UUID]:
     async with get_db_context() as db:
         rows = (
             await db.execute(
@@ -172,7 +173,7 @@ async def _claim_pending_jobs(limit: int) -> list[object]:
     return ids
 
 
-async def _process_claimed_job(job_id: object) -> bool:
+async def _process_claimed_job(job_id: UUID) -> bool:
     artifact_path: Path | None = None
     uploaded_storage_key: str | None = None
 
