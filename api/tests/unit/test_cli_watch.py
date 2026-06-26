@@ -406,7 +406,9 @@ def test_watch_allowed_in_plain_repo_workspace(tmp_path):
 def test_watch_aborts_when_initial_sync_fails(tmp_path):
     """If the initial _sync_files aborts (e.g. server file listing 403s), watch
     must return that code and NEVER construct the Observer."""
-    import bifrost.cli as cli
+    import asyncio
+
+    from bifrost.cli import _watch_and_push
 
     class _ListFails:
         async def post(self, url: str, json: Any = None):
@@ -429,10 +431,11 @@ def test_watch_aborts_when_initial_sync_fails(tmp_path):
         observer_constructed["v"] = True
         raise AssertionError("Observer must not be constructed after an aborted initial sync")
 
+    # _watch_and_push does `from watchdog.observers import Observer` internally,
+    # so patch it at the source module.
     with patch("watchdog.observers.Observer", _boom_observer):
-        import asyncio
         rc = asyncio.run(
-            cli._watch_and_push(
+            _watch_and_push(
                 str(tmp_path), repo_prefix="", mirror=False, validate=False, client=_ListFails()
             )
         )
