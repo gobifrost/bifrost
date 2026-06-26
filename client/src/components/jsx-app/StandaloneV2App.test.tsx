@@ -21,6 +21,7 @@ const baseProps = {
 beforeEach(() => {
 	localStorage.clear();
 	delete window.__BIFROST_APP__;
+	delete window.__BIFROST_APPS__;
 	// import() of the dist entry rejects in happy-dom; that's fine — we assert on
 	// the bootstrap, not the app actually booting.
 	vi.spyOn(console, "error").mockImplementation(() => {});
@@ -29,6 +30,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.restoreAllMocks();
 	delete window.__BIFROST_APP__;
+	delete window.__BIFROST_APPS__;
 });
 
 describe("StandaloneV2App", () => {
@@ -107,23 +109,25 @@ describe("StandaloneV2App", () => {
 		await waitFor(() => expect(rootA.dataset.bifrostEntry).toBeTruthy());
 		const nonceA = new URL(rootA.dataset.bifrostEntry!, "http://x").searchParams.get("m")!;
 
-		// Before A's import resolves, the user navigates to app B (a fresh mount).
-		a.unmount();
-		const b = render(<StandaloneV2App {...baseProps} appId="app-B" appSlug="bbb" />);
-		const rootB = b.getByTestId("solution-v2-app-root");
-		await waitFor(() => expect(rootB.dataset.bifrostEntry).toBeTruthy());
-		const nonceB = new URL(rootB.dataset.bifrostEntry!, "http://x").searchParams.get("m")!;
-		expect(nonceA).not.toBe(nonceB);
-
-		// A's still-loading entry reads ITS OWN nonce's bootstrap — never B's.
-		const registry = window.__BIFROST_APPS__!;
-		// A's entry: disabled tombstone (unmounted), appId A, NOT B's live mount.
-		expect(registry[nonceA]?.appId).toBe("app-A");
-		expect(registry[nonceA]?.mountEl).not.toBe(rootB);
-		// B's entry: the live mount with B's identity.
-		expect(registry[nonceB]?.appId).toBe("app-B");
-		expect(registry[nonceB]?.mountEl).toBe(rootB);
+	// Before A's import resolves, the user navigates to app B (a fresh mount).
+	a.unmount();
+	const b = render(<StandaloneV2App {...baseProps} appId="app-B" appSlug="bbb" />);
+	const rootB = b.getByTestId("solution-v2-app-root");
+	let nonceB = "";
+	await waitFor(() => {
+		expect(rootB.dataset.bifrostEntry).toBeTruthy();
+		nonceB = new URL(rootB.dataset.bifrostEntry!, "http://x").searchParams.get("m")!;
+		expect(window.__BIFROST_APPS__?.[nonceB]?.appId).toBe("app-B");
+		expect(window.__BIFROST_APPS__?.[nonceB]?.mountEl).toBe(rootB);
 	});
+	expect(nonceA).not.toBe(nonceB);
+
+	// A's still-loading entry reads ITS OWN nonce's bootstrap — never B's.
+	const registry = window.__BIFROST_APPS__!;
+	// A's entry: disabled tombstone (unmounted), appId A, NOT B's live mount.
+	expect(registry[nonceA]?.appId).toBe("app-A");
+	expect(registry[nonceA]?.mountEl).not.toBe(rootB);
+});
 
 	it("calls the app-registered unmount teardown on cleanup (no leak)", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
