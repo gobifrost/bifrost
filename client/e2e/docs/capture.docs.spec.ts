@@ -221,6 +221,22 @@ if (!fs.existsSync(manifestPath)) {
 
         const page = await ctx.newPage();
         await page.setViewportSize(viewport);
+        await page.addInitScript(() => {
+          if (typeof globalThis.PublicKeyCredential !== "function") {
+            Object.defineProperty(globalThis, "PublicKeyCredential", {
+              configurable: true,
+              value: function PublicKeyCredential() {},
+            });
+          }
+          Object.defineProperty(
+            globalThis.PublicKeyCredential,
+            "isConditionalMediationAvailable",
+            {
+              configurable: true,
+              value: async () => true,
+            },
+          );
+        });
 
         // Apply API mocks BEFORE navigation so initial fetches are
         // intercepted. Per-entry mocks override manifest defaults with
