@@ -238,6 +238,9 @@ IDENTITY_MODELS: set[str] = {
     # A Solution install belongs to a scope (organization_id) but is never
     # resolved by name with cascade — it is identity, like Organization.
     "Solution",
+    # Export jobs are durable history/artifact rows for a specific install and
+    # org scope. They are looked up by id, never resolved through cascade.
+    "SolutionExportJob",
     # File policies resolve with the SAME org→global cascade-and-override as
     # OrgScopedRepository (org-specific prefix wins; fall back to the global
     # (org=NULL) prefix), so a global `shared/<prefix>` policy cascades to every
