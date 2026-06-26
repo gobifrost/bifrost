@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 
 import { CodeEditor } from "@/components/tables/CodeEditor";
 import {
