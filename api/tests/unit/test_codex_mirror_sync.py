@@ -13,6 +13,7 @@ and WRITES the two mirror dirs, both writable in-container and on the host.
 """
 
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -72,3 +73,23 @@ def test_codex_mirrors_in_sync() -> None:
         "Codex skill mirrors are out of sync with .claude/skills/: "
         f"{', '.join(stale)}.\nRun `scripts/sync-codex-skills.sh` and commit the result."
     )
+
+
+def test_public_plugin_skills_do_not_repeat_plugin_namespace() -> None:
+    """Public Bifrost plugin skills should be named by action only.
+
+    Codex renders plugin display name + skill name. If a bundled skill's
+    frontmatter is already ``bifrost:*``, the UI becomes
+    ``Bifrost: Bifrost: ...``.
+    """
+    public_root = _REPO / "plugins/bifrost/skills"
+    skill_files = sorted(public_root.glob("*/SKILL.md"))
+    assert skill_files, f"no public plugin skills found under {public_root}"
+    for skill_file in skill_files:
+        text = skill_file.read_text(encoding="utf-8")
+        match = re.search(r"^name:\s*(\S+)\s*$", text, flags=re.MULTILINE)
+        assert match is not None, f"{skill_file} has no name frontmatter"
+        assert not match.group(1).startswith("bifrost:"), (
+            f"{skill_file} repeats the plugin namespace in skill name "
+            f"{match.group(1)!r}"
+        )

@@ -816,7 +816,28 @@ Options:
 ```
 Usage: files [OPTIONS] COMMAND [ARGS]...
 
-  Read, write, list, search workspace files.
+  Read, write, list, search files and manage file policies.
+
+  Without --solution, commands target the global _repo workspace file scope
+  (location "workspace" by default). With --solution <slug|id>,
+  read/write/list target that Solution install's runtime file scope and
+  default the location to "solutions". Solution source files are deployed from
+  the local workspace with `bifrost solution deploy`; `bifrost files
+  --solution ...` is for runtime/user file bytes after install, not for
+  editing deploy-owned source.
+
+  `bifrost files write` writes one explicit file through the Files API. It
+  does not walk a local tree, apply the sync ignore rules, compare server
+  state, or trigger the push/sync TUI. Use `bifrost push`/`sync`/`watch` when
+  local disk is the source of truth for _repo source files; use `files write`
+  for one-off API writes, scripts, or Solution runtime file data.
+
+  Examples:
+    bifrost files list workflows/              # global _repo files
+    bifrost files write notes.txt --content hi # one direct API write
+    bifrost files read apps/desk/pages/App.tsx # global _repo file
+    bifrost files list --solution desk         # Solution runtime files
+    bifrost files read notes/today.txt --solution desk
 
 Options:
   --json  Emit JSON instead of human-readable output.

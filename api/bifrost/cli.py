@@ -635,14 +635,16 @@ def main(args: list[str] | None = None) -> int:
         print(f"bifrost {__version__}")
         return 0
 
-    _check_cli_version()
+    help_requested = any(a in ("-h", "--help") for a in args)
+    if args[0].lower() == "help" or args[0] in ("-h", "--help"):
+        print_help()
+        return 0
+
+    if not help_requested:
+        _check_cli_version()
 
     try:
         command = args[0].lower()
-
-        if command in ("help", "-h", "--help"):
-            print_help()
-            return 0
 
         if command == "login":
             return handle_login(args[1:])
@@ -739,11 +741,40 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   forms        Manage forms
   agents       Manage AI agents
   apps         Manage applications and dependencies
+  claims       Manage custom claims
   integrations Manage integrations, config schemas, and mappings
   configs      Manage config values
   tables       Manage tables
+  files        Read/write _repo files, Solution runtime files, and file policies
   events       Manage event sources and subscriptions
+  policy-rule  Manage reusable table/file policy rules
   requirements Manage workspace Python requirements.txt (install/list/remove)
+
+Workspace/file targets:
+  _repo source files:
+    bifrost push|pull|sync|watch [path]          # local directory <-> global _repo
+    bifrost files list [path]                    # direct API access to global _repo files
+    bifrost files write <path> --content ...     # one direct API write, no local tree sync
+
+  Solution source files:
+    bifrost solution create --slug <slug>
+    bifrost solution bind --solution <id-or-slug>
+    bifrost solution pull                        # pull captured entity manifests
+    bifrost solution deploy                      # deploy local Solution source
+
+  Solution runtime files:
+    bifrost files list --solution <id-or-slug>   # installed app/workflow file data
+    bifrost files read <path> --solution <id-or-slug>
+
+Push vs files write:
+  bifrost push [path] walks a local file or directory, applies sync ignore rules,
+  compares server state, and uploads source files to global _repo. Use it when
+  local disk is the source of truth. A pushed file lands at the same relative
+  path under _repo, based on the directory where you run the command. To place a
+  file at _repo/workflows/foo.py, run from the workspace root and push
+  workflows/foo.py. `bifrost files write` writes exactly one path through the
+  Files API. Use it for one-off writes, scripts, arbitrary local-to-remote path
+  copies with --from-file, or Solution runtime file data with --solution.
 
 Examples:
   bifrost run workflow.py -w greet
@@ -1795,6 +1826,13 @@ Non-interactive: pass --yes/-y, set BIFROST_NONINTERACTIVE=1, or run without a
 TTY (e.g. in CI) to skip the selection TUI and apply default actions.
 
 Use 'bifrost watch' for continuous file watching.
+A pushed file lands at the same relative path under _repo, based on the
+directory where you run the command. To place a file at _repo/workflows/foo.py,
+run from the workspace root and push workflows/foo.py.
+Use 'bifrost files write <path> --content ...' for a single direct API write
+without walking a local tree or applying sync ignore/diff behavior. To copy a
+local file to an arbitrary remote path, use
+'bifrost files write <remote-path> --from-file <local-file>'.
 
 Examples:
   bifrost push apps/my-app

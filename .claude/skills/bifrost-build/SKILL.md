@@ -1,5 +1,5 @@
 ---
-name: bifrost:build
+name: build
 description: Build Bifrost workflows, forms, agents, apps, tables, and files for both Solution workspaces (v2) and the global _repo workspace (v1). Supports SDK-first (local dev + git) and MCP-only modes.
 ---
 

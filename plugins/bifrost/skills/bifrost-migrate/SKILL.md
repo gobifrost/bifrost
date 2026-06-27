@@ -1,5 +1,5 @@
 ---
-name: bifrost:migrate
+name: migrate
 description: Migrate a legacy Bifrost v1 (inline) app and its backing entities into a clean, installable v2 Solution. Use when the user wants to move an existing _repo app into Solutions, modernize a v1 inline app to standalone_v2, capture loose workflows/tables/configs into a Solution, or standardize/rename a messy workspace. Trigger phrases — "migrate this app to a solution", "move X into a solution", "v1 to v2", "/migrate", "convert my app to standalone v2", "capture these workflows into a solution".
 ---
 
