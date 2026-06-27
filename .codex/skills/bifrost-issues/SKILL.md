@@ -121,6 +121,25 @@ Debug stacks are per-worktree — `./debug.sh` derives its Compose project name 
 - Run `./test.sh`, `pyright`, `ruff`, `npm run tsc`, `npm run lint`, `./test.sh client unit` before claiming done (CLAUDE.md's verification checklist).
 - `pyright`/`ruff` require a repo-root `.venv`: `python -m venv .venv && ./.venv/bin/pip install -r requirements.txt pyright ruff` (matches `.github/workflows/ci.yml`).
 
+### 5.5. CI bottleneck reducers before PR
+
+Run cheap, targeted tripwires for the surfaces you touched before opening the PR. These catch the common "CI found the stale generated thing" loop locally.
+
+| If you touched... | Run before PR |
+|---|---|
+| CLI help, entity commands, DTO flags, or SDK-facing command surface | `./test.sh tests/unit/test_cli_surface_smoke.py tests/unit/test_skill_appendix_fresh.py` |
+| DTO models or CLI/MCP mutation flags | `./test.sh tests/unit/test_dto_flags.py tests/unit/test_contract_version.py` |
+| Bifrost skills under `.claude/skills/` | `bash scripts/sync-codex-skills.sh`, then `./test.sh tests/unit/test_skill_appendix_fresh.py tests/unit/test_codex_mirror_sync.py` |
+| Public plugin skills under `plugins/bifrost/skills/` | Confirm canonical `.claude/skills/` and plugin mirror match (`diff -qr ...`) and that public skill names do not repeat the plugin namespace |
+
+If `test_skill_appendix_fresh.py` fails, run the generator before pushing:
+
+```bash
+python api/scripts/skill-truth/generate.py
+```
+
+If host Python is missing API dependencies, run the generator in the API test image with writable `.claude/skills` and read-only source mounts. Do not hand-edit generated appendices.
+
 ### 6. PR linkage
 
 When opening the PR:
@@ -182,6 +201,18 @@ done
 
 **When a review comment lands** (CodeQL, copilot, human): pull the body and address it before merging. CodeQL findings on this repo's pre-push hook are usually real — see `feedback_codeql_friendly_idioms.md` in memory. Never queue `--auto` and walk away from a fresh review.
 
+**When a CI job fails:** fetch the failing job log immediately instead of waiting for the whole workflow run to finish. `gh run view --log-failed` may refuse while sibling jobs are still running; the job logs endpoint often works sooner:
+
+```bash
+gh pr checks <N> --repo gobifrost/bifrost
+gh pr view <N> --repo gobifrost/bifrost \
+  --json statusCheckRollup \
+  --jq '.statusCheckRollup[] | select((.conclusion // "") == "FAILURE") | {name,workflowName,detailsUrl}'
+gh api repos/gobifrost/bifrost/actions/jobs/<job_id>/logs
+```
+
+Fix CI failures in the same worktree and branch. Prefer a normal follow-up commit once reviewers or other agents may have seen the PR; amending with `--force-with-lease` is acceptable for a fresh, unreviewed PR where you are the only actor. After any force-push, re-check whether auto-merge/queue state survived.
+
 **Path A — protection exists (preferred for ship-when-green):**
 
 1. Confirm with the user once ("Queue it through the merge queue so it ships when CI is green?").
@@ -203,6 +234,8 @@ done
 - Don't merge unprompted. "Merge?" or "queue auto-merge?" is the user's decision — confirm, never assume.
 - If CI is already failing on the PR when you reach this step, surface the failure and don't offer merge until it's fixed.
 - **Review comments are not optional.** A `gh pr checks` watcher that doesn't also poll reviews/comments will leave the user thinking nothing is happening while CodeQL has been waiting on you for 20 minutes.
+- After a force-push, `autoMergeRequest` may be null even if the issue event log says `added_to_merge_queue`. Check both `gh pr view ... --json autoMergeRequest,mergeStateStatus,statusCheckRollup` and recent issue events before repeatedly re-running `gh pr merge`.
+- When required checks are all green and `mergeStateStatus` is `CLEAN`, a queued PR can still take several minutes to flip to `MERGED`. Confirm `added_to_merge_queue` via `gh api repos/gobifrost/bifrost/issues/<N>/events`; then keep the watcher attached rather than thrashing the queue.
 
 ### 8. Cleanup (after merge)
 
