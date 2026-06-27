@@ -28,6 +28,8 @@
     ],
     "websiteURL": "https://github.com/gobifrost/bifrost",
     "brandColor": "#2563EB",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
     "screenshots": []
   }
 }
