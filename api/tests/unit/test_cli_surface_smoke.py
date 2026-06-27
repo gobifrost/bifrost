@@ -19,7 +19,27 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
+from bifrost.cli import main
 from bifrost.commands import ENTITY_GROUPS
+
+
+TOP_LEVEL_COMMANDS = {
+    "sync",
+    "run",
+    "git",
+    "push",
+    "pull",
+    "solution",
+    "deploy",
+    "watch",
+    "api",
+    "migrate-imports",
+    "skill",
+    "login",
+    "logout",
+    "auth",
+    "help",
+}
 
 
 def _group_subcommand_pairs() -> list[tuple[str, str]]:
@@ -68,6 +88,69 @@ def test_every_group_has_json_flag() -> None:
         assert "--json" in result.output, (
             f"{group_name} help does not advertise --json: {result.output}"
         )
+
+
+def test_top_level_help_lists_every_entity_group(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hand-written top-level help must not drift from registered groups."""
+    monkeypatch.setattr("bifrost.cli._check_cli_version", lambda: None)
+    code = main(["--help"])
+    captured = capsys.readouterr()
+    assert code == 0
+    for group_name in sorted(ENTITY_GROUPS):
+        assert f"  {group_name}" in captured.out, (
+            f"top-level help omits registered entity group {group_name!r}"
+        )
+
+
+def test_top_level_help_lists_every_top_level_command(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Top-level command help must stay aligned with main() dispatch."""
+    monkeypatch.setattr("bifrost.cli._check_cli_version", lambda: None)
+    code = main(["--help"])
+    captured = capsys.readouterr()
+    assert code == 0
+    command_section = captured.out.split("Commands:", 1)[1].split("Flags:", 1)[0]
+    for command_name in sorted(TOP_LEVEL_COMMANDS):
+        assert f"  {command_name}" in command_section, (
+            f"top-level help omits command {command_name!r}"
+        )
+
+
+def test_top_level_help_explains_repo_and_solution_file_targets(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Users should be able to discover _repo vs Solution CLI access."""
+    monkeypatch.setattr("bifrost.cli._check_cli_version", lambda: None)
+    code = main(["--help"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "_repo source files" in captured.out
+    assert "Solution source files" in captured.out
+    assert "Solution runtime files" in captured.out
+    assert "bifrost files list --solution" in captured.out
+    assert "Push vs files write" in captured.out
+    assert "same relative" in captured.out
+    assert "path under _repo" in captured.out
+    assert "writes exactly one" in captured.out
+    assert "arbitrary local-to-remote path" in captured.out
+
+
+def test_nested_help_does_not_check_cli_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nested help must render offline without compatibility probes."""
+    monkeypatch.setattr(
+        "bifrost.cli._check_cli_version",
+        lambda: pytest.fail("help should not check CLI/server compatibility"),
+    )
+    code = main(["files", "--help"])
+    assert code == 0
 
 
 EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {

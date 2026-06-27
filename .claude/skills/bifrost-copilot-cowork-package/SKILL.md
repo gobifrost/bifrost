@@ -1,5 +1,5 @@
 ---
-name: bifrost:copilot-cowork-package
+name: copilot-cowork-package
 description: |
   Use when the user wants to turn a Bifrost agent into a Microsoft 365 Copilot Cowork
   plugin (.zip with manifest.json + skills/SKILL.md + agentConnectors pointing at the
