@@ -99,6 +99,11 @@ def _candidate_storage_paths(path: str) -> list[str]:
     return [rooted]
 
 
+def candidate_module_paths(path: str) -> list[str]:
+    """Storage paths that may contain a concrete module file."""
+    return _candidate_storage_paths(path)
+
+
 def candidate_index_prefixes(base_path: str) -> list[str]:
     """Storage-path prefixes to scan the module index with, for namespace-package
     (PEP 420) detection of ``base_path`` (e.g. "modules").

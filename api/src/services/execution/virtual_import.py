@@ -32,6 +32,7 @@ from typing import Any
 
 from src.core.module_cache_sync import (
     candidate_index_prefixes,
+    candidate_module_paths,
     get_module_index_sync,
     get_module_sync,
     solution_has_submodules,
@@ -258,12 +259,12 @@ class VirtualModuleFinder(MetaPathFinder):
     """
     Meta path finder that loads workspace modules from Redis cache.
 
-    Converts Python module names to file paths and fetches directly
-    from Redis. Each import attempt does a Redis GET for the module path.
+    Converts Python module names to file paths, confirms they are workspace
+    modules via the module index, then fetches the source from Redis/API/S3.
 
     Key design points:
-    - No hardcoded prefix required - works with any module name
-    - Direct Redis fetch - newly-added modules are immediately available
+    - Module index is the source of truth for workspace module ownership
+    - Non-workspace third-party imports fall through to normal import handling
     - Supports both modules (.py) and packages (__init__.py)
     """
 
@@ -319,16 +320,17 @@ class VirtualModuleFinder(MetaPathFinder):
 
         Separated from find_spec to keep the recursion guard clean.
 
-        We fetch directly from Redis without checking an index first.
-        This ensures newly-added modules are immediately available
-        without needing to refresh a cached index.
+        The module index determines whether a name belongs to workspace code
+        before we attempt any module fetch. This avoids probing third-party
+        dependency imports through Redis/API/S3 during import resolution.
         """
-        # Convert module name to potential file paths
         possible_paths = self._module_name_to_paths(fullname)
+        module_index = get_module_index_sync()
 
         for file_path, is_package in possible_paths:
-            # Fetch directly from Redis - no index check needed
-            # This ensures newly-added modules are immediately available
+            if not self._module_path_is_indexed(file_path, module_index):
+                continue
+
             cached = get_module_sync(file_path)
             if not cached:
                 continue
@@ -354,7 +356,6 @@ class VirtualModuleFinder(MetaPathFinder):
         # When a Solution is active these are _solutions/{id}/-rooted (with the
         # bare prefix only if global_repo_access is on), so a solution's
         # namespace packages are detected without colliding with _repo/.
-        module_index = get_module_index_sync()
         prefixes = candidate_index_prefixes(base_path)
         has_submodules = any(
             entry.startswith(p) for entry in module_index for p in prefixes
@@ -380,6 +381,10 @@ class VirtualModuleFinder(MetaPathFinder):
 
         # Not in our cache - let filesystem finder handle it
         return None
+
+    def _module_path_is_indexed(self, file_path: str, module_index: set[str]) -> bool:
+        """Return True when the module index says this concrete file is workspace code."""
+        return any(path in module_index for path in candidate_module_paths(file_path))
 
     def _module_name_to_paths(self, fullname: str) -> list[tuple[str, bool]]:
         """
@@ -410,7 +415,7 @@ class VirtualModuleFinder(MetaPathFinder):
         ]
 
     def invalidate_index(self) -> None:
-        """No-op for API compatibility. Index is no longer used."""
+        """No-op for API compatibility. Index reads are delegated to module_cache_sync."""
         pass
 
 
@@ -444,10 +449,10 @@ def install_virtual_import_hook() -> VirtualModuleFinder:
     # might try to fetch from Redis before Redis can even connect.
     _preload_required_modules()
 
-    # Create finder and install the hook
-    # No index pre-loading needed - we fetch modules directly from Redis
+    # Create finder and install the hook before filesystem resolution so
+    # workspace packages cannot be shadowed by platform modules on sys.path.
     _finder = VirtualModuleFinder()
-    sys.meta_path.append(_finder)
+    sys.meta_path.insert(0, _finder)
 
     logger.info("Virtual import hook installed")
     return _finder

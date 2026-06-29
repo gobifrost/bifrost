@@ -3,15 +3,16 @@ Unit tests for the virtual import hook.
 
 Tests the MetaPathFinder implementation that loads modules from Redis cache.
 
-The implementation uses a direct-fetch approach:
-- Each import attempt calls get_module_sync() to fetch from Redis
-- No index caching - modules are fetched directly by path
-- Thread-local recursion guard prevents infinite loops during Redis calls
+The implementation uses the module index to identify workspace-owned imports:
+- Third-party imports not in the index fall through to normal import handling
+- Workspace imports call get_module_sync() only after index membership is known
+- Thread-local recursion guard prevents infinite loops during Redis/API/S3 calls
 """
 
+import importlib
 import sys
 from types import ModuleType
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -94,9 +95,15 @@ class TestVirtualModuleFinder:
                 return {"content": "x = 1", "path": "shared/halopsa.py", "hash": "abc"}
             return None
 
-        with patch(
-            "src.services.execution.virtual_import.get_module_sync",
-            side_effect=mock_get_module,
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value={"shared/halopsa.py"},
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                side_effect=mock_get_module,
+            ),
         ):
             spec = finder.find_spec("shared.halopsa")
 
@@ -115,9 +122,15 @@ class TestVirtualModuleFinder:
                 return {"content": "# package", "path": "shared/__init__.py", "hash": "abc"}
             return None
 
-        with patch(
-            "src.services.execution.virtual_import.get_module_sync",
-            side_effect=mock_get_module,
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value={"shared/__init__.py"},
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                side_effect=mock_get_module,
+            ),
         ):
             spec = finder.find_spec("shared")
 
@@ -137,9 +150,15 @@ class TestVirtualModuleFinder:
                 return {"content": "# package", "path": "shared/__init__.py", "hash": "def"}
             return None
 
-        with patch(
-            "src.services.execution.virtual_import.get_module_sync",
-            side_effect=mock_get_module,
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value={"shared.py", "shared/__init__.py"},
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                side_effect=mock_get_module,
+            ),
         ):
             spec = finder.find_spec("shared")
 
@@ -222,7 +241,7 @@ class TestVirtualModuleFinder:
         """Test that __init__.py takes precedence over namespace package."""
         finder = VirtualModuleFinder()
 
-        module_index = {"modules/extensions/halopsa.py"}
+        module_index = {"modules/__init__.py", "modules/extensions/halopsa.py"}
 
         def mock_get_module(path: str):
             if path == "modules/__init__.py":
@@ -250,7 +269,7 @@ class TestVirtualModuleFinder:
         """Test that stdlib modules are not looked up in cache."""
         finder = VirtualModuleFinder()
 
-        mock_get_module = pytest.importorskip("unittest.mock").MagicMock(return_value=None)
+        mock_get_module = MagicMock(return_value=None)
         with patch(
             "src.services.execution.virtual_import.get_module_sync",
             mock_get_module,
@@ -263,6 +282,25 @@ class TestVirtualModuleFinder:
 
             # get_module_sync should not have been called
             mock_get_module.assert_not_called()
+
+    def test_find_spec_skips_non_workspace_third_party_modules(self):
+        """Third-party dependencies not in the module index should not hit cache lookup."""
+        finder = VirtualModuleFinder()
+        mock_get_module = MagicMock(return_value=None)
+
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value={"shared/halopsa.py"},
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                mock_get_module,
+            ),
+        ):
+            assert finder.find_spec("httpcore") is None
+
+        mock_get_module.assert_not_called()
 
     def test_find_spec_recursion_guard(self):
         """Test that recursion guard prevents infinite loops."""
@@ -416,7 +454,7 @@ class TestInstallRemoveHook:
 
         assert isinstance(finder, VirtualModuleFinder)
         assert len(sys.meta_path) == initial_count + 1
-        assert sys.meta_path[-1] is finder
+        assert sys.meta_path[0] is finder
 
     def test_install_virtual_import_hook_idempotent(self):
         """Test that installing twice returns same finder."""
@@ -544,9 +582,15 @@ class TestIntegration:
                 }
             return None
 
-        with patch(
-            "src.services.execution.virtual_import.get_module_sync",
-            side_effect=mock_get_module,
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value={"virtual_test_module.py"},
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                side_effect=mock_get_module,
+            ),
         ):
             import virtual_test_module  # type: ignore[import-not-found]
 
@@ -573,9 +617,18 @@ class TestIntegration:
             }
             return modules.get(path)
 
-        with patch(
-            "src.services.execution.virtual_import.get_module_sync",
-            side_effect=mock_get_module,
+        with (
+            patch(
+                "src.services.execution.virtual_import.get_module_index_sync",
+                return_value={
+                    "virtual_test_pkg/__init__.py",
+                    "virtual_test_pkg/submod.py",
+                },
+            ),
+            patch(
+                "src.services.execution.virtual_import.get_module_sync",
+                side_effect=mock_get_module,
+            ),
         ):
             import virtual_test_pkg  # type: ignore[import-not-found]
             from virtual_test_pkg import submod  # type: ignore[import-not-found]
@@ -638,3 +691,56 @@ class TestIntegration:
             assert virtual_test_ns.extensions.__file__ is None
             assert hasattr(virtual_test_ns, "__path__")
             assert hasattr(virtual_test_ns.extensions, "__path__")
+
+    def test_virtual_package_takes_precedence_over_filesystem_module(self, tmp_path):
+        """Workspace packages should not be shadowed by same-named platform modules."""
+        module_name = "virtual_collision_pkg"
+        filesystem_module = tmp_path / f"{module_name}.py"
+        filesystem_module.write_text("ORIGIN = 'filesystem'\n")
+        sys.path.insert(0, str(tmp_path))
+        install_virtual_import_hook()
+
+        module_index = {
+            f"{module_name}/__init__.py",
+            f"{module_name}/submodule.py",
+        }
+
+        def mock_get_module(path: str):
+            modules = {
+                f"{module_name}/__init__.py": {
+                    "content": "ORIGIN = 'virtual_package'",
+                    "path": f"{module_name}/__init__.py",
+                    "hash": "abc",
+                },
+                f"{module_name}/submodule.py": {
+                    "content": "VALUE = 'from_submodule'",
+                    "path": f"{module_name}/submodule.py",
+                    "hash": "def",
+                },
+            }
+            return modules.get(path)
+
+        try:
+            with (
+                patch(
+                    "src.services.execution.virtual_import.get_module_index_sync",
+                    return_value=module_index,
+                ),
+                patch(
+                    "src.services.execution.virtual_import.get_module_sync",
+                    side_effect=mock_get_module,
+                ),
+            ):
+                package = importlib.import_module(module_name)
+                submodule = importlib.import_module(f"{module_name}.submodule")
+
+                assert package.ORIGIN == "virtual_package"
+                assert submodule.VALUE == "from_submodule"
+                assert package.__file__ == f"{module_name}/__init__.py"
+        finally:
+            sys.path.remove(str(tmp_path))
+            for loaded in [
+                module_name,
+                f"{module_name}.submodule",
+            ]:
+                sys.modules.pop(loaded, None)
