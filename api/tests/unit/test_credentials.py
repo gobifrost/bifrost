@@ -137,6 +137,7 @@ class TestNoArgResolution:
     def tmp_creds_path(self, tmp_path, monkeypatch):
         path = tmp_path / "credentials.json"
         monkeypatch.setattr(creds_mod, "get_credentials_path", lambda: path)
+        monkeypatch.setattr(creds_mod, "get_config_path", lambda: tmp_path / "config.json")
         creds_mod._reset_persistent_backend_for_tests()
         # Clear any inherited env vars so the env-var arm of resolution is off.
         monkeypatch.delenv("BIFROST_API_URL", raising=False)
@@ -144,27 +145,26 @@ class TestNoArgResolution:
         monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
         return path
 
-    def test_no_arg_get_returns_first_url_when_two_present(self, tmp_creds_path):
-        # Insertion order on dict iteration is the contract for JsonBackend.
+    def test_no_arg_get_returns_none_when_two_present_without_default(self, tmp_creds_path):
         creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
         creds_mod.save_credentials("http://second", "at2", "rt2", "2030-01-01T00:00:00+00:00")
-        result = creds_mod.get_credentials()
-        assert result is not None
-        assert result["api_url"] == "http://first"
+        assert creds_mod.get_credentials() is None
 
     def test_no_arg_clear_targets_same_url_as_no_arg_get(self, tmp_creds_path):
         """clear_credentials() with no arg must clear what get_credentials() returns."""
         creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
         creds_mod.save_credentials("http://second", "at2", "rt2", "2030-01-01T00:00:00+00:00")
+        creds_mod.set_default_connection("http://second")
 
         before = creds_mod.get_credentials()
-        assert before is not None and before["api_url"] == "http://first"
+        assert before is not None and before["api_url"] == "http://second"
 
         creds_mod.clear_credentials()  # no arg
 
-        # 'first' should be gone; 'second' must remain
-        assert creds_mod.get_credentials("http://first") is None
-        assert creds_mod.get_credentials("http://second") is not None
+        # 'second' should be gone; 'first' must remain
+        assert creds_mod.get_credentials("http://second") is None
+        assert creds_mod.get_credentials("http://first") is not None
+        assert creds_mod.get_default_connection() is None
 
     def test_no_arg_get_prefers_env_var_over_first_stored(self, tmp_creds_path, monkeypatch):
         creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
@@ -173,6 +173,60 @@ class TestNoArgResolution:
         result = creds_mod.get_credentials()
         assert result is not None
         assert result["api_url"] == "http://second"
+
+    def test_no_arg_get_returns_only_stored_connection_without_env_or_default(self, tmp_creds_path):
+        creds_mod.save_credentials("http://only", "at", "rt", "2030-01-01T00:00:00+00:00")
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["api_url"] == "http://only"
+
+    def test_no_arg_get_uses_default_connection_without_env(self, tmp_creds_path):
+        creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
+        creds_mod.save_credentials("http://second", "at2", "rt2", "2030-01-01T00:00:00+00:00")
+        creds_mod.set_default_connection("http://second")
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["api_url"] == "http://second"
+
+    def test_env_url_overrides_default_connection(self, tmp_creds_path, monkeypatch):
+        creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
+        creds_mod.save_credentials("http://second", "at2", "rt2", "2030-01-01T00:00:00+00:00")
+        creds_mod.set_default_connection("http://second")
+        monkeypatch.setenv("BIFROST_API_URL", "http://first")
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["api_url"] == "http://first"
+
+    def test_multiple_connections_without_default_prompts_and_saves_selection(
+        self, tmp_creds_path, monkeypatch
+    ):
+        creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
+        creds_mod.save_credentials("http://second", "at2", "rt2", "2030-01-01T00:00:00+00:00")
+        monkeypatch.setattr(
+            creds_mod,
+            "prompt_for_default_connection",
+            lambda urls: "http://second",
+        )
+
+        result = creds_mod.get_credentials(prompt_for_default=True)
+
+        assert result is not None
+        assert result["api_url"] == "http://second"
+        assert creds_mod.get_default_connection() == "http://second"
+
+    def test_multiple_connections_without_default_returns_none_when_not_prompting(
+        self, tmp_creds_path
+    ):
+        creds_mod.save_credentials("http://first", "at1", "rt1", "2030-01-01T00:00:00+00:00")
+        creds_mod.save_credentials("http://second", "at2", "rt2", "2030-01-01T00:00:00+00:00")
+
+        assert creds_mod.get_credentials() is None
 
 
 # ---------- KeyringBackend ----------
@@ -546,3 +600,76 @@ class TestAuthTokenCommand:
         assert rc == 1
         # Nothing token-shaped on stdout (vite must not parse a token from noise).
         assert "access_token" not in capsys.readouterr().out
+
+
+class TestAuthConnectionCommands:
+    def test_auth_list_marks_default_and_env_current(self, monkeypatch, capsys):
+        from bifrost.cli import handle_auth
+
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.list_credentials",
+            lambda: ["http://first", "http://second"],
+        )
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.get_default_connection",
+            lambda: "http://second",
+        )
+        monkeypatch.setenv("BIFROST_API_URL", "http://first")
+
+        rc = handle_auth(["list"])
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "http://first  (current - from BIFROST_API_URL)" in out
+        assert "http://second  (default)" in out
+
+    def test_auth_use_sets_default_connection(self, monkeypatch, capsys):
+        from bifrost.cli import handle_auth
+
+        selected = {}
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.list_credentials",
+            lambda: ["http://first", "http://second"],
+        )
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.set_default_connection",
+            lambda url: selected.setdefault("url", url),
+        )
+
+        rc = handle_auth(["use", "http://second"])
+
+        assert rc == 0
+        assert selected["url"] == "http://second"
+        assert "Default connection set to http://second" in capsys.readouterr().out
+
+    def test_auth_use_rejects_unknown_connection(self, monkeypatch, capsys):
+        from bifrost.cli import handle_auth
+
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.list_credentials",
+            lambda: ["http://first"],
+        )
+
+        rc = handle_auth(["use", "http://missing"])
+
+        assert rc == 1
+        assert "No stored credentials for http://missing" in capsys.readouterr().err
+
+    def test_auth_default_prints_default_and_current(self, monkeypatch, capsys):
+        from bifrost.cli import handle_auth
+
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.get_default_connection",
+            lambda: "http://second",
+        )
+        monkeypatch.setattr(
+            "bifrost.cli.credentials.resolve_current_connection",
+            lambda: ("http://first", "BIFROST_API_URL"),
+        )
+
+        rc = handle_auth(["default"])
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Default connection: http://second" in out
+        assert "Current connection: http://first (from BIFROST_API_URL)" in out

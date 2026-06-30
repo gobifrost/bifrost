@@ -1030,10 +1030,14 @@ Usage: bifrost auth <subcommand>
 
 Subcommands:
   list, ls    List all Bifrost URLs with stored credentials
+  use         Set the default Bifrost URL for directories without .env
+  default     Show the default and currently resolved Bifrost URL
   token       Print resolved {api_url, access_token} as JSON (for dev tooling)
 
 Examples:
   bifrost auth list
+  bifrost auth use https://app.gobifrost.com
+  bifrost auth default
   bifrost auth token
   bifrost auth token --url http://localhost:38421
 """.strip())
@@ -1082,15 +1086,60 @@ Examples:
         if not urls:
             print("No stored credentials.")
             return 0
-        # Resolve which URL the CLI would currently use, to mark it.
-        env_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
+        default_url = credentials.get_default_connection()
+        current_url, current_source = credentials.resolve_current_connection()
         for url in urls:
-            marker = ""
-            if env_url and url.rstrip("/") == env_url:
-                marker = "  (current — from BIFROST_API_URL)"
-            elif not env_url and url == urls[0]:
-                marker = "  (current — first stored)"
-            print(f"  {url}{marker}")
+            markers = []
+            normalized = url.rstrip("/")
+            if normalized == default_url:
+                markers.append("default")
+            if normalized == current_url:
+                if current_source == "BIFROST_API_URL":
+                    markers.append("current - from BIFROST_API_URL")
+                elif current_source:
+                    markers.append(f"current - from {current_source}")
+            suffix = f"  ({'; '.join(markers)})" if markers else ""
+            print(f"  {url}{suffix}")
+        if current_url and current_url.rstrip("/") not in {url.rstrip("/") for url in urls}:
+            print(f"  {current_url}  (current - from {current_source}; not authenticated)")
+        return 0
+
+    if sub == "use":
+        urls = [url.rstrip("/") for url in credentials.list_credentials()]
+        target = args[1].rstrip("/") if len(args) > 1 else None
+        if len(args) > 2:
+            print("Usage: bifrost auth use [url]", file=sys.stderr)
+            return 1
+        if not urls:
+            print("No stored credentials. Run `bifrost login --url <url>` first.", file=sys.stderr)
+            return 1
+        if target is None:
+            target = credentials.prompt_for_default_connection(urls)
+            if target is None:
+                print(
+                    "No default selected. Run `bifrost auth use <url>` in non-interactive shells.",
+                    file=sys.stderr,
+                )
+                return 1
+        if target not in urls:
+            print(f"No stored credentials for {target}. Run `bifrost auth list`.", file=sys.stderr)
+            return 1
+        credentials.set_default_connection(target)
+        print(f"Default connection set to {target}")
+        return 0
+
+    if sub == "default":
+        default_url = credentials.get_default_connection()
+        current_url, current_source = credentials.resolve_current_connection()
+        if default_url:
+            print(f"Default connection: {default_url}")
+        else:
+            print("Default connection: not selected")
+        if current_url:
+            source = f" (from {current_source})" if current_source else ""
+            print(f"Current connection: {current_url}{source}")
+        else:
+            print("Current connection: not resolved")
         return 0
 
     print(f"Unknown auth subcommand: {sub}", file=sys.stderr)

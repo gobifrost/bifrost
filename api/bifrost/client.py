@@ -411,7 +411,7 @@ class BifrostClient:
 
         if instance is None:
             # Try credentials file from CLI login
-            creds = get_credentials()
+            creds = get_credentials(prompt_for_default=require_auth)
 
             # Check if token needs refresh
             if creds and is_token_expired():
@@ -437,6 +437,18 @@ class BifrostClient:
 
             # No credentials - trigger login flow if required
             if require_auth:
+                stored_urls = []
+                try:
+                    from bifrost.credentials import list_credentials
+                    stored_urls = list_credentials()
+                except Exception:
+                    stored_urls = []
+                if stored_urls:
+                    raise RuntimeError(
+                        "Multiple Bifrost connections are stored, but no default "
+                        "connection is selected. Run 'bifrost auth use <url>' "
+                        "or rerun in an interactive terminal to choose one."
+                    )
                 try:
                     # If a loop is already running we're in an async context
                     # (e.g. tests). Don't trigger interactive login.
