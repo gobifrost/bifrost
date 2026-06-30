@@ -1,11 +1,11 @@
 # Docs-screenshot pipeline overlay for docker-compose.test.yml.
 #
-# Mounts the bifrost-integrations-docs checkout into the playwright-runner
+# Mounts the gobifrost checkout into the playwright-runner
 # at /docs so the .docs.spec.ts capture spec can read screenshots.yaml and
 # write PNGs directly into src/assets/.
 #
 # Usage:
-#   DOCS_REPO_PATH=/abs/path/to/bifrost-integrations-docs \
+#   DOCS_REPO_PATH=/abs/path/to/gobifrost \
 #     docker compose -f docker-compose.test.yml -f docker-compose.docs.yml \
 #       --profile client run --rm playwright-runner \
 #       npx playwright test --project=docs

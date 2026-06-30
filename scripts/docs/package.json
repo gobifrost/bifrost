@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.0.1",
-  "description": "Tooling for the bifrost-integrations-docs screenshot pipeline.",
+  "description": "Tooling for the gobifrost screenshot pipeline.",
   "dependencies": {
     "js-yaml": "^4.2.0",
     "pixelmatch": "^7.1.0",

@@ -224,7 +224,7 @@
     "deny": [],
     "ask": [],
     "additionalDirectories": [
-      "~/GitHub/bifrost-integrations-docs/",
+      "~/GitHub/gobifrost/",
       "~/GitHub/gocovi-bifrost-workspace"
     ]
   },

@@ -111,7 +111,7 @@ export default defineConfig({
 
 		// =============================================================
 		// Docs screenshot pipeline (.docs.spec.ts files)
-		// Drives the screenshots.yaml manifest in bifrost-integrations-docs
+		// Drives the screenshots.yaml manifest in gobifrost
 		// to capture full-page screenshots, with sharp-based crop/callout
 		// post-processing. Per-entry auth is handled inside the spec via
 		// ensureAuthenticated() so a single project can capture under

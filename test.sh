@@ -344,7 +344,7 @@ client_e2e() {
 client_docs() {
     require_stack_up
     if [ -z "${DOCS_REPO_PATH:-}" ]; then
-        echo "DOCS_REPO_PATH must be set to the absolute path of the bifrost-integrations-docs checkout." >&2
+        echo "DOCS_REPO_PATH must be set to the absolute path of the gobifrost checkout." >&2
         exit 2
     fi
     if [ ! -f "$DOCS_REPO_PATH/screenshots.yaml" ]; then

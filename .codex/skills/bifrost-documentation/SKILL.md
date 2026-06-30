@@ -1,13 +1,13 @@
 ---
 name: bifrost-documentation
-description: Refresh the bifrost-integrations-docs site by re-capturing screenshots and (optionally) authoring missing pages. Trigger phrases - "refresh docs", "update screenshots", "/bifrost-documentation", "rebuild docs site". Has three modes - bootstrap (one-shot manifest generation, mandatory first run), diff (default - only refresh entries whose Bifrost source changed), full (re-capture and re-author everything).
+description: Refresh the gobifrost site by re-capturing screenshots and (optionally) authoring missing pages. Trigger phrases - "refresh docs", "update screenshots", "/bifrost-documentation", "rebuild docs site". Has three modes - bootstrap (one-shot manifest generation, mandatory first run), diff (default - only refresh entries whose Bifrost source changed), full (re-capture and re-author everything).
 ---
 
 # Bifrost Documentation Pipeline
 
-Refresh `bifrost-integrations-docs` programmatically: re-capture screenshots, author missing Diátaxis-shaped pages, open a docs PR with a TL;DR.
+Refresh `gobifrost` programmatically: re-capture screenshots, author missing Diátaxis-shaped pages, open a docs PR with a TL;DR.
 
-The docs repo is at `~/GitHub/bifrost-integrations-docs` (or clone it from `git@github.com:jackmusick/bifrost-integrations-docs.git` if missing). The bifrost repo's worktree is the source of truth for the running app.
+The docs repo is at `~/GitHub/gobifrost` (or clone it from `git@github.com:gobifrost/website.git` if missing). The bifrost repo's worktree is the source of truth for the running app.
 
 ## Default behavior — "catch up everything since the last documented commit"
 
@@ -39,13 +39,13 @@ The named modes below are the surgical primitives this default orchestrates. Rea
 ## Workflow
 
 1. **Preflight**
-   - Locate docs repo. Try `~/GitHub/bifrost-integrations-docs` then `/tmp/bifrost-integrations-docs`. If missing, clone to `~/GitHub/`.
+   - Locate docs repo. Try `~/GitHub/gobifrost` then `/tmp/gobifrost`. If missing, clone to `~/GitHub/`.
    - Verify clean tree (`git status --porcelain` empty). If dirty, ask the user to commit/stash before continuing.
    - Pull `main` (`git pull --ff-only origin main`).
    - **Compare last-update timestamps** as a sanity signal:
      ```bash
      BIFROST_LAST=$(cd ~/GitHub/bifrost && git log -1 --format=%cI origin/main)
-     DOCS_LAST=$(cd ~/GitHub/bifrost-integrations-docs && git log -1 --format=%cI origin/main)
+     DOCS_LAST=$(cd ~/GitHub/gobifrost && git log -1 --format=%cI origin/main)
      echo "bifrost: $BIFROST_LAST"
      echo "docs:    $DOCS_LAST"
      ```
@@ -140,7 +140,7 @@ If the user asks for a doc and you can't pick a quadrant in one sentence, ask th
 When you've written a new MDX page and need a screenshot:
 
 1. **Identify the route** in `client/src/App.tsx`. Confirm the route renders empty-state-free with mocked data.
-2. **Find the API endpoints** the page calls. `grep -nE 'apiClient|useQuery' <component>` then look at the route names. For each, write a fixture under `bifrost-integrations-docs/fixtures/`.
+2. **Find the API endpoints** the page calls. `grep -nE 'apiClient|useQuery' <component>` then look at the route names. For each, write a fixture under `gobifrost/fixtures/`.
 3. **Add a manifest entry** to `screenshots.yaml`. **`mocks`, `actions`, `crop`, `callouts`, `fullPage`, `settle_ms` MUST be nested under a `capture:` key — NOT at the entry top level.** The capture spec reads `entry.capture.actions` / `effectiveMocks(entry)` from `capture`; top-level `mocks`/`actions` are silently ignored, which produces a premature screenshot of an empty/loading state that still "passes" (no action ran to fail). Top-level keys are only `id`, `image`, `route`, `auth_as`, `seed`, `external`, `diataxis`, `captured_at`. Always end actions with `wait_for: text="<exact on-page label that only appears once data renders>"` so capture can't fire on the empty state. Mock URLs use playwright glob — include BOTH `**/api/foo` and `**/api/foo?**`. **After capturing, open the PNG and confirm it shows real data, not an empty state** — a passing test does not prove the mock matched.
 4. **Vite proxy collisions:** if the route shares a prefix with a `vite.config.ts` proxy rule (e.g. `/mcp-servers` collides with the `/mcp` rule because of prefix match in dev), use `nav_via: { from: "/", click: "<sidebar-link-text>" }` so the test stack reaches the page via in-app routing instead of hard navigation. For deeper paths after `nav_via`, use the `goto_spa: <path>` action to push the path via the SPA's history without re-triggering proxy rules.
 5. **Capture only the new ids**: `scripts/docs/run-pipeline.sh --ids id1,id2 ...` so existing entries aren't re-run.

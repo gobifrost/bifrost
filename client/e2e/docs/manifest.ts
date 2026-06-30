@@ -2,7 +2,7 @@
  * Read and validate the docs screenshot manifest from the mounted docs repo.
  *
  * The same shape is enforced by the Zod schema in
- * `bifrost-integrations-docs/scripts/manifest/schema.mjs`. We don't import
+ * `gobifrost/scripts/manifest/schema.mjs`. We don't import
  * Zod here to keep the playwright-runner image lean — light validation
  * inside the capture spec is enough; the docs repo's `npm run lint:manifest`
  * is where strict validation happens.

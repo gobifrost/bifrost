@@ -54,7 +54,7 @@ Report: any uncommitted changes, how many commits ahead of origin.
 
 ### 3. Documentation freshness check
 
-Run the helper script — it compares last-commit timestamps on `bifrost` vs `bifrost-integrations-docs` and lists any user-facing files changed since docs were last updated:
+Run the helper script — it compares last-commit timestamps on `bifrost` vs `gobifrost` and lists any user-facing files changed since docs were last updated:
 
 ```bash
 ./scripts/release/check-docs-freshness.sh
@@ -424,7 +424,7 @@ Ask the user:
 cat ~/GitHub/gobifrost/.claude/skills/blog/SKILL.md
 ```
 
-If the file is missing, the gobifrost checkout is stale or absent — `git clone git@github.com:jackmusick/gobifrost.git ~/GitHub/gobifrost` (or `git pull` if it exists) and re-read.
+If the file is missing, the gobifrost checkout is stale or absent — `git clone git@github.com:gobifrost/website.git ~/GitHub/gobifrost` (or `git pull` if it exists) and re-read.
 
 Pass to the skill as **inputs**:
 
