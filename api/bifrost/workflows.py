@@ -119,7 +119,7 @@ class workflows:
         if scheduled_at is not None and scheduled_at.tzinfo is None:
             raise ValueError("'scheduled_at' must be timezone-aware")
 
-        from ._context import get_default_scope
+        from ._context import get_default_scope, _execution_context
 
         # Auto-include org_id from execution context if not explicitly provided,
         # same as tables, config, etc.
@@ -132,6 +132,10 @@ class workflows:
             "input_data": input_data or {},
             "sync": False,
         }
+        ctx = _execution_context.get()
+        solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+        if solution_id:
+            payload["solution_id"] = str(solution_id)
         if org_id is not None:
             payload["org_id"] = org_id
         if run_as is not None:

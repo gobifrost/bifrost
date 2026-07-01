@@ -16,6 +16,7 @@ async def emit_event(
     data: dict,
     *,
     organization_id: UUID | None = None,
+    solution_id: UUID | None = None,
     triggered_by: str | None = None,
 ) -> tuple[UUID, int]:
     """Emit a topic event and return (event_id, subscribers_notified).
@@ -33,6 +34,7 @@ async def emit_event(
             topic=topic,
             data=data,
             organization_id=organization_id,
+            solution_id=solution_id,
             triggered_by=triggered_by,
         )
         if count > 0:

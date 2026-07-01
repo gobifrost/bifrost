@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus
@@ -169,14 +169,31 @@ class EventSourceRepository(BaseRepository[EventSource]):
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 
-    async def get_by_topic(self, topic: str) -> EventSource | None:
-        """Get an active topic EventSource by its event_type string."""
-        result = await self.session.execute(
+    async def get_by_topic(
+        self, topic: str, *, solution_id: UUID | None = None
+    ) -> EventSource | None:
+        """Get an active topic EventSource by event_type.
+
+        Solution callers resolve their own install first, then _repo sources.
+        Loose callers must not accidentally select a solution-managed row.
+        """
+        stmt = (
             select(EventSource)
             .where(EventSource.source_type == EventSourceType.TOPIC)
             .where(EventSource.event_type == topic)
             .where(EventSource.is_active.is_(True))
         )
+        if solution_id is not None:
+            stmt = stmt.where(
+                (EventSource.solution_id == solution_id)
+                | (EventSource.solution_id.is_(None))
+            ).order_by(
+                case((EventSource.solution_id == solution_id, 0), else_=1)
+            )
+        else:
+            stmt = stmt.where(EventSource.solution_id.is_(None))
+
+        result = await self.session.execute(stmt)
         return result.unique().scalar_one_or_none()
 
     async def get_distinct_topic_types(self) -> list[str]:

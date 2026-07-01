@@ -106,6 +106,7 @@ def _make_upstream(record):
         record["other_path"] = request.path
         record["other_query"] = request.rel_url.query_string
         record["other_org"] = request.headers.get("X-Bifrost-Org")
+        record["other_accept_encoding"] = request.headers.get("Accept-Encoding")
         return web.json_response({"upstream_other": True})
 
     async def ws_echo(request):
@@ -249,6 +250,32 @@ async def test_other_api_path_proxies_with_org_header():
         assert record["other_path"] == "/api/tables/foo"
         assert record["other_query"] == "limit=10&solution=S"
         assert record["other_org"] == "O"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_api_proxy_forces_identity_encoding():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(set())
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="A",
+        org_id="O",
+        solution_id="S",
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(
+                f"http://127.0.0.1:{dev_port}/api/auth/me",
+                headers={"Accept-Encoding": "br, gzip"},
+            )
+        assert r.status_code == 200
+        assert record["other_accept_encoding"] == "identity"
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

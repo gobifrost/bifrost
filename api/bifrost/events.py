@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 from .client import get_client, raise_for_status_with_detail
-from ._context import resolve_scope
+from ._context import resolve_scope, _execution_context
 
 
 class events:
@@ -52,9 +52,14 @@ class events:
         """
         client = get_client()
         resolved = resolve_scope(scope)
+        ctx = _execution_context.get()
+        solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+        payload = {"topic": topic, "data": data, "scope": resolved}
+        if solution_id:
+            payload["solution"] = str(solution_id)
         response = await client.post(
             "/api/events/emit",
-            json={"topic": topic, "data": data, "scope": resolved},
+            json=payload,
         )
         raise_for_status_with_detail(response)
         return response.json()

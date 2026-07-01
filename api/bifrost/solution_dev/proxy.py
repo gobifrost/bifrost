@@ -32,7 +32,14 @@ import yarl
 from aiohttp import web
 
 # Hop-by-hop headers we must not forward when reverse-proxying.
-_STRIP = {"host", "content-length", "transfer-encoding", "connection", "keep-alive"}
+_STRIP = {
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "accept-encoding",
+}
 
 
 class _UpstreamAuthorityError(ValueError):
@@ -110,6 +117,7 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
 def _auth_headers(cfg: DevProxyConfig, incoming) -> dict[str, str]:
     headers = {k: v for k, v in incoming.items() if k.lower() not in _STRIP}
     headers["Authorization"] = f"Bearer {cfg.token}"
+    headers["Accept-Encoding"] = "identity"
     if cfg.org_id:
         headers["X-Bifrost-Org"] = cfg.org_id
     headers["X-Bifrost-App"] = cfg.app_id
