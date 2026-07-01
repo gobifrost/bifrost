@@ -2589,6 +2589,16 @@ def _to_pep440(version: str) -> str:
     if dirty:
         v = v[: -len("-dirty")]
 
+    # Bifrost release tags use a semver-ish dev release shape
+    # (e.g. "1.0.8-dev.11"). Preserve the actual release instead of treating it
+    # as a no-tag git hash fallback, which makes package tools report
+    # "0.0.0+g1.0.8.dev.11".
+    m = _re.match(r"^(\d+(?:\.\d+)*)-dev\.(\d+)$", v)
+    if m:
+        base, n = m.group(1), m.group(2)
+        pep = f"{base}.dev{n}"
+        return f"{pep}+dirty" if dirty else pep
+
     # Shape: <tag>-<N>-g<sha>
     m = _re.match(r"^(.+)-(\d+)-(g[0-9a-f]+)$", v)
     if m:

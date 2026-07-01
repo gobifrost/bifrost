@@ -31,6 +31,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
+from pydantic import ValidationError
 from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -872,7 +873,13 @@ class SolutionDeployer:
             seen_names.add(nm)
 
         for mtbl in tables:
-            mtbl_model = ManifestTable(**mtbl)
+            table_label = str(mtbl.get("name") or mtbl.get("id") or "<unknown>")
+            try:
+                mtbl_model = ManifestTable(**mtbl)
+            except ValidationError as exc:
+                raise SolutionDeployConflict(
+                    f"table {table_label!r} manifest invalid: {exc}"
+                ) from exc
             src = mtbl_model.to_orm_values(Destination.INSTALL).direct
             tbl_id = UUID(mtbl["id"])
             name = src["name"]
@@ -882,7 +889,12 @@ class SolutionDeployer:
             policies = mtbl.get("policies")
             if policies is not None:
                 access = {"policies": policies}
-                policy_model = TablePolicies.model_validate(access)  # raises on a bad AST
+                try:
+                    policy_model = TablePolicies.model_validate(access)
+                except ValidationError as exc:
+                    raise SolutionDeployConflict(
+                        f"table {name!r} policies invalid: {exc}"
+                    ) from exc
                 from src.routers.tables import _validate_table_policy_claim_refs
 
                 try:

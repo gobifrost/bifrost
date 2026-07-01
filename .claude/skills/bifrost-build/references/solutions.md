@@ -96,6 +96,7 @@ These names become policy-addressable file locations for the install. They are t
 - Use business/domain names (`finance`, `documents`, `attachments`), not platform internals.
 - Do not declare `workspace`; it is reserved.
 - Do not create or manage `_solutions/` or `_solution_artifacts/` folders yourself. Those are internal storage prefixes for deployed source and export artifacts.
+- Deploy seeds each declared location with a solution-scoped root `admin_bypass` file policy so platform admins can seed and maintain runtime files. This does not grant ordinary app users access; add explicit file policies for non-admin read/write/list/delete behavior.
 - Runtime files are read and written through the Files SDK (`files`, `useFiles`) or the Files CLI/API with `--solution <install-id-or-slug>`. They are not source files under `apps/` or `functions/`.
 
 ### 6. Install from a zip

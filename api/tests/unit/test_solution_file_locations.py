@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from bifrost.manifest import Manifest, ManifestFiles
-from src.models.orm.file_metadata import FileMetadata
+from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.services.manifest_import import ManifestResolver
@@ -43,6 +43,17 @@ async def _locations(db, solution_id) -> list[tuple[str, int]]:
     return [(row.location, row.position) for row in rows]
 
 
+async def _file_policies(db, solution_id) -> list[tuple[str, str, dict]]:
+    rows = (
+        await db.execute(
+            select(FilePolicy)
+            .where(FilePolicy.solution_id == solution_id)
+            .order_by(FilePolicy.location, FilePolicy.path)
+        )
+    ).scalars().all()
+    return [(row.location, row.path, row.policies) for row in rows]
+
+
 async def test_deploy_persists_and_reconciles_file_locations(db_session) -> None:
     sol = await _make_solution(db_session)
     deployer = SolutionDeployer(db_session)
@@ -61,6 +72,20 @@ async def test_deploy_persists_and_reconciles_file_locations(db_session) -> None
     await db_session.flush()
 
     assert await _locations(db_session, sol.id) == [("invoices", 0)]
+
+
+async def test_deploy_seeds_solution_file_location_admin_policy(db_session) -> None:
+    sol = await _make_solution(db_session)
+
+    await SolutionDeployer(db_session).deploy(
+        SolutionBundle(solution=sol, file_locations=["reports", "invoices"])
+    )
+    await db_session.flush()
+
+    assert await _file_policies(db_session, sol.id) == [
+        ("invoices", "", {"policies": [{"$ref": "admin_bypass"}]}),
+        ("reports", "", {"policies": [{"$ref": "admin_bypass"}]}),
+    ]
 
 
 @pytest.mark.parametrize(

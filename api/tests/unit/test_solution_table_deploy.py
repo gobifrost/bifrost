@@ -135,14 +135,32 @@ class TestSolutionTableDeploy:
         ).scalars().all()
         assert set(rows) == {"row-1", "row-2"}
 
-    async def test_malformed_policy_is_rejected_at_deploy(self, db_session) -> None:
-        """A bad policy AST is rejected at deploy, not stored to fail at read
-        time (Codex Sub-plan 3 P2)."""
+    async def test_malformed_policy_manifest_is_rejected_at_deploy(self, db_session) -> None:
+        """A malformed policy entry is rejected as a deploy conflict, not a raw
+        Pydantic validation error."""
         db = db_session
         sol = await self._install(db)
         tid = str(uuid.uuid4())
         bad = {"id": tid, "name": "bad", "schema": {}, "policies": [{"not_a_real_op": 123}]}
-        with pytest.raises(Exception):
+        with pytest.raises(SolutionDeployConflict, match="table 'bad' manifest invalid"):
+            await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[bad]))
+        await db.rollback()
+
+    async def test_invalid_policy_ast_is_rejected_at_deploy(self, db_session) -> None:
+        """A policy shape accepted by the manifest but rejected by TablePolicies
+        gets a table-specific deploy error instead of a generic async job error."""
+        db = db_session
+        sol = await self._install(db)
+        tid = str(uuid.uuid4())
+        bad = {
+            "id": tid,
+            "name": "bad",
+            "schema": {},
+            "policies": [
+                {"name": "auth", "actions": ["read"], "when": {"user": "is_authenticated"}}
+            ],
+        }
+        with pytest.raises(SolutionDeployConflict, match="table 'bad' policies invalid"):
             await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, tables=[bad]))
         await db.rollback()
 

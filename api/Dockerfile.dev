@@ -98,10 +98,11 @@ COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/bifrost-header.tsx \
      /app/src/services/sdk_package/sdk_src/
 COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.ts
+RUN chmod -R a+rX /app/src/services/sdk_package
 
 # Copy entrypoint script
 COPY api/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
 
 # Don't switch to bifrost here - entrypoint handles user switching
 # This allows the entrypoint to fix volume permissions when needed

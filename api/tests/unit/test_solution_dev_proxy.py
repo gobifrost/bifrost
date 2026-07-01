@@ -45,6 +45,37 @@ def test_join_upstream_preserves_flag_style_query():
     assert _join_upstream(base, yarl.URL("/api/x?a=1&b=2")) == "http://127.0.0.1:8000/api/x?a=1&b=2"
 
 
+def test_join_upstream_accepts_default_ports_without_rewriting_origin():
+    """Default HTTP/HTTPS ports are same-origin whether explicit or implicit."""
+    assert (
+        _join_upstream("https://bifrost.gocovi.com", yarl.URL("/api/auth/me"))
+        == "https://bifrost.gocovi.com/api/auth/me"
+    )
+    assert (
+        _join_upstream("https://bifrost.gocovi.com:443", yarl.URL("/api/auth/me"))
+        == "https://bifrost.gocovi.com/api/auth/me"
+    )
+    assert (
+        _join_upstream("http://localhost", yarl.URL("/api/auth/me"))
+        == "http://localhost/api/auth/me"
+    )
+    assert (
+        _join_upstream("http://localhost:80", yarl.URL("/api/auth/me"))
+        == "http://localhost/api/auth/me"
+    )
+
+
+def test_join_upstream_retains_non_default_ports():
+    assert (
+        _join_upstream("http://localhost:8080", yarl.URL("/api/auth/me"))
+        == "http://localhost:8080/api/auth/me"
+    )
+    assert (
+        _join_upstream("https://example.test:8443", yarl.URL("/api/auth/me"))
+        == "https://example.test:8443/api/auth/me"
+    )
+
+
 def _free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))

@@ -7,8 +7,10 @@ from uuid import UUID
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.file_metadata import FileMetadata
+from shared.file_policies_seed import make_seed_admin_bypass_file
+from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.models.orm.solution_file_location import SolutionFileLocation
+from src.models.orm.solutions import Solution
 
 
 def normalize_file_locations(
@@ -45,6 +47,11 @@ async def reconcile_solution_file_locations(
     make_error: Callable[[str], Exception] = ValueError,
 ) -> list[str]:
     declared = normalize_file_locations(locations, make_error=make_error)
+    organization_id = (
+        await db.execute(
+            select(Solution.organization_id).where(Solution.id == solution_id)
+        )
+    ).scalar_one_or_none()
     existing = set(
         (
             await db.execute(
@@ -75,6 +82,25 @@ async def reconcile_solution_file_locations(
                     position=position,
                 )
             )
+        existing_policy = (
+            await db.execute(
+                select(FilePolicy.id).where(
+                    FilePolicy.solution_id == solution_id,
+                    FilePolicy.location == location,
+                    FilePolicy.path == "",
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_policy is None:
+            await db.execute(
+                insert(FilePolicy).values(
+                    organization_id=organization_id,
+                    solution_id=solution_id,
+                    location=location,
+                    path="",
+                    policies=make_seed_admin_bypass_file(),
+                )
+            )
 
     stale = existing - set(declared)
     for location in sorted(stale):
@@ -94,6 +120,12 @@ async def reconcile_solution_file_locations(
             )
 
     if stale:
+        await db.execute(
+            delete(FilePolicy).where(
+                FilePolicy.solution_id == solution_id,
+                FilePolicy.location.in_(stale),
+            )
+        )
         await db.execute(
             delete(SolutionFileLocation).where(
                 SolutionFileLocation.solution_id == solution_id,

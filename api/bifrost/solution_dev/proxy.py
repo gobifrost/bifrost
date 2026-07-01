@@ -66,7 +66,7 @@ def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
     # (scheme://host[:port]) followed by a path. re.fullmatch on an
     # origin-prefixed pattern is the SSRF barrier static analysis recognizes,
     # and it genuinely rejects any authority the request managed to inject.
-    origin = f"{base.scheme}://{base.raw_host}" + (f":{base.port}" if base.port else "")
+    origin = str(base.origin())
     if not re.fullmatch(re.escape(origin) + r"(?:/.*)?", result, re.DOTALL):
         raise _UpstreamAuthorityError(f"proxy target {result!r} escapes upstream {origin!r}")
     return result
