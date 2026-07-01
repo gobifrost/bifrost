@@ -668,6 +668,10 @@ class EmitEventRequest(BaseModel):
         default=None,
         description="Organization scope: org UUID string or None for GLOBAL.",
     )
+    solution: str | None = Field(
+        default=None,
+        description="Solution install id from the execution context. When set, topic lookup resolves this install's event source before _repo sources.",
+    )
 
 
 class EmitEventResponse(BaseModel):

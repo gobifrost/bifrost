@@ -13641,6 +13641,11 @@ export interface components {
              * @description Organization scope: org UUID string or None for GLOBAL.
              */
             scope?: string | null;
+            /**
+             * Solution
+             * @description Solution install id from the execution context. When set, topic lookup resolves this install's event source before _repo sources.
+             */
+            solution?: string | null;
         };
         /**
          * EmitEventResponse

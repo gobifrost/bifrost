@@ -95,6 +95,86 @@ async def test_topic_event_source_install_round_trips_event_type(db_session):
     assert es is not None
     assert es.event_type == "ticket.created"
 
-    found = await EventSourceRepository(db_session).get_by_topic("ticket.created")
+    found = await EventSourceRepository(db_session).get_by_topic(
+        "ticket.created", solution_id=sol.id
+    )
     assert found is not None
     assert found.id == installed_id
+
+
+@pytest.mark.asyncio
+async def test_topic_lookup_targets_solution_install_not_sibling(db_session):
+    from src.models.orm.events import EventSource
+    from src.repositories.events import EventSourceRepository
+
+    sol_a = await _make_solution(db_session, "topic-a")
+    sol_b = await _make_solution(db_session, "topic-b")
+    topic = f"ticket.{uuid.uuid4().hex[:8]}"
+    src_id = "55555555-5555-5555-5555-555555555555"
+
+    def bundle(sol):
+        return SolutionBundle(
+            solution=sol,
+            version="0.1.0",
+            events=[{
+                "id": src_id,
+                "name": "on ticket changed",
+                "source_type": "topic",
+                "event_type": topic,
+                "is_active": True,
+                "subscriptions": [],
+            }],
+        )
+
+    await SolutionDeployer(db_session).deploy(bundle(sol_a), force=True)
+    await SolutionDeployer(db_session).deploy(bundle(sol_b), force=True)
+
+    repo = EventSourceRepository(db_session)
+    found_b = await repo.get_by_topic(topic, solution_id=sol_b.id)
+    assert found_b is not None
+    assert found_b.id == solution_entity_id(sol_b.id, uuid.UUID(src_id))
+
+    loose = await repo.get_by_topic(topic)
+    assert loose is None
+
+    assert await db_session.get(EventSource, solution_entity_id(sol_a.id, uuid.UUID(src_id)))
+    assert await db_session.get(EventSource, solution_entity_id(sol_b.id, uuid.UUID(src_id)))
+
+
+@pytest.mark.asyncio
+async def test_topic_emit_targets_solution_install_not_sibling(db_session):
+    from src.models.orm.events import Event
+    from src.services.events.processor import EventProcessor
+
+    sol_a = await _make_solution(db_session, "emit-a")
+    sol_b = await _make_solution(db_session, "emit-b")
+    topic = f"ticket.{uuid.uuid4().hex[:8]}"
+    src_id = "66666666-6666-6666-6666-666666666666"
+
+    def bundle(sol):
+        return SolutionBundle(
+            solution=sol,
+            version="0.1.0",
+            events=[{
+                "id": src_id,
+                "name": "on ticket emitted",
+                "source_type": "topic",
+                "event_type": topic,
+                "is_active": True,
+                "subscriptions": [],
+            }],
+        )
+
+    await SolutionDeployer(db_session).deploy(bundle(sol_a), force=True)
+    await SolutionDeployer(db_session).deploy(bundle(sol_b), force=True)
+
+    event_id, subscribers = await EventProcessor(db_session).emit_topic(
+        topic=topic,
+        data={"ticket_id": "T-1"},
+        solution_id=sol_b.id,
+    )
+
+    event = await db_session.get(Event, event_id)
+    assert event is not None
+    assert subscribers == 0
+    assert event.event_source_id == solution_entity_id(sol_b.id, uuid.UUID(src_id))
