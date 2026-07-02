@@ -610,6 +610,31 @@ Drive findings recorded, NOT yet fixed:
   resolver, but it masks scope-loss bugs; the diagnostics task (plan Task 5
   of the original Codex plan) would make such degradation visible.
 
+## Completeness audit (2026-07-02): which surfaces actually have an install tier
+
+The work above institutionalized request-side derivation for the surfaces
+that HAD install tiers. A full audit of every entity type a Solution ships
+or touches found four data planes with NO install tier at all — the values
+live in a shared org/global namespace and the resolvers never narrow:
+
+| Surface | Ships in bundle? | Runtime install-scoped? | Gap |
+|---|---|---|---|
+| Workflow bodies (tables/files SDK) | yes | **yes** — worker re-derives from the workflow row (`execution/service.py` → consumer → engine ctx) for ALL callers (forms, agents' tools, events, schedules) | none |
+| Events → solution workflow | yes | **yes** (via workflow row) | none |
+| Forms | yes | **yes** (`form.solution_id` as resolution scope) | none |
+| MCP/CLI authoring | n/a | deliberately `solution_id IS NULL`-only | by design |
+| **Config VALUES** | schema only (`SolutionConfigSchema`) | **NO** — `Config` has no `solution_id`; SDK client (`api/bifrost/config.py`) never sends `?solution=`; `cli_get_config` → `merged_for_sdk` org/global only; Setup matches by `(org, key)` | two installs (or two solutions) sharing a key in one org silently share/clobber ONE value row |
+| **Knowledge** | no | **NO** — no `solution_id` on `KnowledgeStore`; org+global fallback; agent search runs at org scope | namespaces collide across installs; solutions can't own a corpus |
+| **Connections/Integrations** | declaration only (`SolutionConnectionSchema`) | **NO** — `integrations.get(name)` resolves by NAME at org/global; the install id is used ONLY for the declared-but-unset 424 | two solutions expecting different "CRM" bindings collide on the name |
+| **OAuth tokens** | no | **NO** — provider-keyed org→global cascade | all installs share the provider token |
+| **Agents (agent-LEVEL access)** | yes (`Agent.solution_id`) | **partial** — tool workflows scope via their own rows, but `agent.solution_id` never enters the run context (`agent_runs.py` enqueue, `consumers/agent_run.py`); agent-level SDK access (knowledge search) runs org-scoped; asymmetric with forms | a solution agent's own-surface reads are unscoped; a mis-bound foreign tool workflow runs at the foreign scope |
+
+Follow-on work (largest first): config value install tier (schema migration
+`Config.solution_id` + own-first tier in `merged_for_sdk`/`cli_get_config` +
+SDK client sends `?solution=` + Setup stamps the install + uninstall
+lifecycle + enforcement-test extension), connection per-install binding,
+agent-level scope propagation, knowledge install namespace (product call).
+
 ## Decision points for Jack (explicitly NOT decided by this plan)
 
 1. **Config solution tier** — `Config` has no `solution_id` column; a solution workflow reading config today gets the plain org/global cascade. Giving configs the own-first tier tables/files have = schema migration + product semantics. Related to the parked data-fallback question.
