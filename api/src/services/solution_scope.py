@@ -95,6 +95,59 @@ async def solution_context_id(
     ).scalar_one_or_none()
 
 
+async def derive_execution_solution_scope(
+    db: AsyncSession,
+    ctx,
+    *,
+    solution_id: str | None,
+    form_id: str | None,
+    app_id: str | None,
+) -> UUID | None:
+    """Resolve the calling install's scope for workflow execution.
+
+    THE canonical derivation for /api/workflows/execute. Precedence:
+    request context (auth already resolved ?solution= / X-Bifrost-App —
+    the same signal tables/files scope by) > body solution_id (a Solution
+    form/agent that knows its own install) > form_id (Form.solution_id)
+    > app_id (Application.solution_id). The body fields are DEPRECATED
+    compatibility inputs — live SDKs still send them; removal requires a
+    CONTRACT_VERSION bump. A bad/foreign/missing reference yields None →
+    no narrowing (the path ref resolves the _repo/ row, or 404s for a
+    scoped caller). Each source is client-supplied; the resolver's own
+    org gate (cascade scope) prevents a foreign scope from reaching
+    another org's workflow.
+    """
+    from src.models.orm.forms import Form
+
+    ctx_scope = await solution_context_id(db, ctx)
+    if ctx_scope is not None:
+        return ctx_scope
+    if solution_id:
+        try:
+            return UUID(solution_id)
+        except ValueError:
+            return None
+    if form_id:
+        try:
+            form_uuid = UUID(form_id)
+        except ValueError:
+            return None
+        return (
+            await db.execute(select(Form.solution_id).where(Form.id == form_uuid))
+        ).scalar_one_or_none()
+    if app_id:
+        try:
+            app_uuid = UUID(app_id)
+        except ValueError:
+            return None
+        return (
+            await db.execute(
+                select(Application.solution_id).where(Application.id == app_uuid)
+            )
+        ).scalar_one_or_none()
+    return None
+
+
 async def resolve_solution_table_by_name(
     db: AsyncSession,
     ctx: ExecutionContext,
