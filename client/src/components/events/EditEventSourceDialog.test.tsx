@@ -132,6 +132,14 @@ describe("EditEventSourceDialog — schedule", () => {
 		const body = mockUpdate.mock.calls[0]![0].body;
 		expect(body.name).toBe("Nightly");
 		expect(body.schedule.cron_expression).toBe("0 9 * * *");
+		await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+		const validationBody = JSON.parse(
+			mockAuthFetch.mock.calls[0]![1].body as string,
+		);
+		expect(validationBody).toEqual({
+			expression: "0 9 * * *",
+			timezone: "UTC",
+		});
 	});
 
 	it("renders the overlap policy select with three options and defaults to skip", async () => {

@@ -111,6 +111,54 @@ async def _count_events_for_source(db_session, source_id) -> int:
     return len(rows)
 
 
+async def _events_for_source(db_session, source_id) -> list[Event]:
+    rows = (
+        await db_session.execute(select(Event).where(Event.event_source_id == source_id))
+    ).scalars().all()
+    return list(rows)
+
+
+@pytest.mark.asyncio
+async def test_schedule_evaluates_cron_in_configured_timezone(db_session):
+    """A 9 AM New York schedule should fire at 14:00 UTC during EST."""
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 1, 1, 14, 0, 30, tzinfo=timezone.utc)
+            if tz is None:
+                return value.replace(tzinfo=None)
+            return value.astimezone(tz)
+
+    source, ss, sub = _make_source_and_subscription(cron="0 9 * * *")
+    ss.timezone = "America/New_York"
+    db_session.add(source)
+    db_session.add(ss)
+    db_session.add(sub)
+    await db_session.commit()
+
+    mock_sub_repo = AsyncMock()
+    mock_sub_repo.get_active_for_event = AsyncMock(return_value=[])
+    mock_processor = AsyncMock()
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=0)
+
+    from src.jobs.schedulers.cron_scheduler import process_schedule_sources
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_IS_VALID, return_value=True),
+        patch(PATH_SUB_REPO, return_value=mock_sub_repo),
+        patch(PATH_PROCESSOR, return_value=mock_processor),
+        patch("src.jobs.schedulers.cron_scheduler.datetime", FrozenDateTime),
+    ):
+        await process_schedule_sources()
+
+    events = await _events_for_source(db_session, source.id)
+    assert len(events) == 1
+    assert events[0].received_at.isoformat() == "2026-01-01T14:00:00+00:00"
+    assert events[0].data["scheduled_time"] == "2026-01-01T14:00:00+00:00"
+    assert events[0].data["timezone"] == "America/New_York"
+
+
 @pytest.mark.asyncio
 async def test_schedule_fires_when_no_active_executions(db_session):
     """Happy path: no prior executions → event is created for this source."""
