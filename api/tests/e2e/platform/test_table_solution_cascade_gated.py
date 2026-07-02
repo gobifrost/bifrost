@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
 from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.platform.conftest import wait_for_deploy
@@ -252,6 +253,51 @@ async def test_sdk_table_create_route_rejects_solution_context_without_repo_tabl
     response = e2e_client.post(
         f"/api/sdk/tables/create?solution={solution_id}",
         headers=headers,
+        json={
+            "name": table_name,
+            "scope": org1["id"],
+            "table_schema": {"columns": [{"name": "label"}]},
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert await _repo_table_by_name(db_session, table_name) is None
+
+
+async def test_sdk_table_create_route_rejects_app_header_solution_context(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    """The X-Bifrost-App signal must refuse SDK table creation exactly like
+    ?solution= does — both resolve to the same install context."""
+    headers = platform_admin.headers
+    solution = _create_solution(
+        e2e_client,
+        headers,
+        f"sdk-hdr-solution-{uuid.uuid4().hex[:8]}",
+        org_id=org1["id"],
+    )
+    app_id = uuid.uuid4()
+    slug = f"hdr-app-{app_id.hex[:8]}"
+    db_session.add(
+        Application(
+            id=app_id,
+            name=slug,
+            slug=slug,
+            repo_path=f"apps/{slug}",
+            organization_id=UUID(org1["id"]),
+            solution_id=UUID(solution["id"]),
+            access_level="authenticated",
+        )
+    )
+    await db_session.commit()
+
+    table_name = f"sdk_hdr_blocked_{uuid.uuid4().hex[:8]}"
+    response = e2e_client.post(
+        "/api/sdk/tables/create",
+        headers={**headers, "X-Bifrost-App": str(app_id)},
         json={
             "name": table_name,
             "scope": org1["id"],
