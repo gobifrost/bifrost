@@ -24,6 +24,7 @@ from .credentials import (
     clear_credentials,
     get_credentials,
     is_token_expired,
+    resolve_current_connection,
     save_credentials,
 )
 
@@ -437,31 +438,39 @@ class BifrostClient:
 
             # No credentials - trigger login flow if required
             if require_auth:
-                stored_urls = []
-                try:
-                    from bifrost.credentials import list_credentials
-                    stored_urls = list_credentials()
-                except Exception:
+                selected_url, _selected_source = resolve_current_connection(
+                    prompt_for_default=True
+                )
+                if selected_url is None:
                     stored_urls = []
-                if stored_urls:
-                    raise RuntimeError(
-                        "Multiple Bifrost connections are stored, but no default "
-                        "connection is selected. Run 'bifrost auth use <url>' "
-                        "or rerun in an interactive terminal to choose one."
-                    )
+                    try:
+                        from bifrost.credentials import list_credentials
+                        stored_urls = list_credentials()
+                    except Exception:
+                        stored_urls = []
+                    if stored_urls:
+                        raise RuntimeError(
+                            "Multiple Bifrost connections are stored, but no default "
+                            "connection is selected. Run 'bifrost auth use <url>' "
+                            "or rerun in an interactive terminal to choose one."
+                        )
                 try:
                     # If a loop is already running we're in an async context
                     # (e.g. tests). Don't trigger interactive login.
                     asyncio.get_running_loop()
                 except RuntimeError:
                     # No running loop, safe to use asyncio.run()
-                    if asyncio.run(login_flow()):
+                    if asyncio.run(login_flow(selected_url)):
                         # Login successful, load credentials
                         creds = get_credentials()
                         if creds:
                             instance = cls(creds["api_url"], creds["access_token"])
                             _thread_local.bifrost_client = instance
                             return instance
+                else:
+                    raise RuntimeError(
+                        "Not logged in. Run 'bifrost login' to authenticate."
+                    )
 
             # No auth available
             raise RuntimeError(
