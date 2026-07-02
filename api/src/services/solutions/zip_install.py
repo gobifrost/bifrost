@@ -506,6 +506,54 @@ async def install_zip_path(
         )
 
 
+def validate_install_zip(zip_path: Path, *, password: str | None) -> PreviewResult:
+    """Fail-fast, synchronous validation of an install zip BEFORE enqueue.
+
+    Runs the caller-input checks that must return a 4xx on the request itself —
+    NOT as a failed background job. Raises before any job row exists:
+
+    * ``ValueError`` / ``zipfile.BadZipFile`` — the zip is corrupt, zip-slips,
+      or is not a Solution workspace (missing ``bifrost.solution.yaml`` slug/name).
+    * ``BadExportPassword`` — the zip carries a ``.bifrost/secrets.enc`` blob and
+      the password is missing or wrong. We decrypt-check here so a wrong password
+      is a synchronous 422, mirroring the deploy endpoint's synchronous
+      ``preview_zip_path`` guard. The install job decrypts again inside the write
+      lock (idempotent) to apply the content.
+
+    Returns the parsed :class:`PreviewResult` so the endpoint can run further
+    synchronous conflict checks (e.g. the inactive-install 409 prompt needs the
+    slug) without re-extracting the zip.
+
+    The heavier build-time gates (unmet dependencies, content collisions,
+    downgrade, git-connected) intentionally stay in the job — they require the
+    built bundle / lock-held DB state and surface as a failed job, exactly as the
+    deploy job surfaces its equivalents.
+    """
+    with tempfile.TemporaryDirectory(prefix="bifrost-zip-validate-") as tmp:
+        _safe_extract_path(zip_path, tmp)
+        workspace = Path(tmp)
+        preview = _parse_workspace(workspace)
+        if not preview.slug or not preview.name:
+            raise ValueError(
+                "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
+            )
+        secrets_path = workspace / ".bifrost" / "secrets.enc"
+        if secrets_path.exists():
+            if not password:
+                raise BadExportPassword(
+                    "this bundle carries secrets — a password is required"
+                )
+            from cryptography.fernet import InvalidToken
+
+            from src.services.solutions.secrets_blob import decode_secrets_blob
+
+            try:
+                decode_secrets_blob(secrets_path.read_text(), password=password)
+            except InvalidToken as exc:
+                raise BadExportPassword("wrong password for this bundle") from exc
+        return preview
+
+
 async def _install_workspace(
     db: AsyncSession,
     workspace: Path,

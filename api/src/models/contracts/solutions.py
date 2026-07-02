@@ -447,7 +447,9 @@ class SolutionDeployJobStatus(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    install_id: UUID
+    # None for a zip install until it resolves-or-creates its target install
+    # inside the job — the succeeded ``result`` carries the solution_id.
+    install_id: UUID | None = None
     status: Literal["queued", "running", "succeeded", "failed"]
     error: str | None = None
     # Per-entity upsert/delete counts (and auto-created role names), present once

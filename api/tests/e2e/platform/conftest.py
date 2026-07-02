@@ -82,6 +82,56 @@ def wait_for_deploy(e2e_client, post_resp, headers, *, timeout_s: float = 30.0):
     raise AssertionError(f"deploy job {job_id} did not finish in {timeout_s}s: {body}")
 
 
+def wait_for_install(e2e_client, post_resp, headers, *, timeout_s: float = 60.0):
+    """Given an install POST response (zip or from-repo), return a terminal shim.
+
+    Install is async (Task H1): a synchronous fail-fast refusal (non-202 — bad
+    zip, wrong password → 422; slug/scope conflict on from-repo → 409) is returned
+    unchanged. A 202 is polled to a terminal job status. On success the shim's
+    ``status_code`` is 201 and ``json()`` returns the FULL installed Solution DTO
+    (fetched by the job's ``result.solution_id``), so existing call sites keep
+    reading ``["id"]`` / ``["version"]`` / ``["git_connected"]``. A failed build
+    gate maps onto the old error shape: an inactive-install result → 409 with the
+    structured detail, any other failure → 409 with a ``detail`` string.
+    """
+    import time as _time
+
+    if post_resp.status_code != 202:
+        return post_resp
+    job_id = post_resp.json()["deploy_job_id"]
+    deadline = _time.monotonic() + timeout_s
+    body: dict = {}
+    while _time.monotonic() < deadline:
+        st = e2e_client.get(f"/api/solutions/deploy-jobs/{job_id}", headers=headers)
+        assert st.status_code == 200, f"status fetch failed: {st.status_code} {st.text}"
+        body = st.json()
+        if body["status"] == "succeeded":
+            result = body.get("result") or {}
+            sid = result.get("solution_id") or body.get("install_id")
+            sol = e2e_client.get(f"/api/solutions/{sid}", headers=headers)
+            assert sol.status_code == 200, f"solution fetch failed: {sol.text}"
+            return _DeployResult(201, sol.json(), sol.text)
+        if body["status"] == "failed":
+            result = body.get("result") or {}
+            error = body.get("error") or "install failed"
+            if result.get("reason") == "inactive_install_exists":
+                return _DeployResult(
+                    409,
+                    {
+                        "detail": {
+                            "reason": "inactive_install_exists",
+                            "solution_id": result.get("solution_id"),
+                            "slug": result.get("slug"),
+                            "message": error,
+                        }
+                    },
+                    error,
+                )
+            return _DeployResult(409, {"detail": error}, error)
+        _time.sleep(0.25)
+    raise AssertionError(f"install job {job_id} did not finish in {timeout_s}s: {body}")
+
+
 def deploy_solution(e2e_client, solution_id, headers, body):
     """POST a deploy bundle and block until the async job is terminal.
 

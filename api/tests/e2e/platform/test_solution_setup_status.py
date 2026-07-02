@@ -16,6 +16,8 @@ import zipfile
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 pytestmark = pytest.mark.e2e
 
 
@@ -130,10 +132,14 @@ async def test_install_with_set_value_flips_setup_complete(e2e_client, platform_
 
     # Install WITHOUT the value — required config unset → incomplete.
     # The install RESPONSE carries the persisted setup_complete column value.
-    r1 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": ("s.zip", zip_no_val, "application/zip")},
+    r1 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": ("s.zip", zip_no_val, "application/zip")},
+        ),
+        headers,
     )
     assert r1.status_code in (200, 201), r1.text
     assert r1.json()["setup_complete"] is False, (
@@ -145,11 +151,15 @@ async def test_install_with_set_value_flips_setup_complete(e2e_client, platform_
     slug_with_val = f"setup-sc-val-{uuid.uuid4().hex[:8]}"
     zip_with_val = _make_required_config_zip(slug_with_val, key=cfg_key)
 
-    r2 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": ("s.zip", zip_with_val, "application/zip")},
-        data={"config_values": '{"' + cfg_key + '": "xyz"}'},
+    r2 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": ("s.zip", zip_with_val, "application/zip")},
+            data={"config_values": '{"' + cfg_key + '": "xyz"}'},
+        ),
+        headers,
     )
     assert r2.status_code in (200, 201), r2.text
     assert r2.json()["setup_complete"] is True, (

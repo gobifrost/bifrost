@@ -23,6 +23,7 @@ import pytest
 from uuid import UUID
 
 from src.models.orm.solution_file_location import SolutionFileLocation
+from tests.e2e.platform.conftest import wait_for_install
 
 pytestmark = pytest.mark.e2e
 
@@ -200,11 +201,15 @@ def test_solution_install_restores_files(
     new_zip_path = tmp_path / f"{dst_slug}.zip"
     new_zip_path.write_bytes(new_zip_bytes)
 
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{dst_slug}.zip", new_zip_bytes, "application/zip")},
-        data={"password": "pw-restore", "replace_data": "true"},
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{dst_slug}.zip", new_zip_bytes, "application/zip")},
+            data={"password": "pw-restore", "replace_data": "true"},
+        ),
+        headers,
     )
     assert inst.status_code in (200, 201), f"install failed: {inst.text}"
     dst_id = inst.json()["id"]

@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 pytestmark = pytest.mark.e2e
 
 # Bind-mounted into both the test-runner and the API container, so a file://
@@ -145,10 +147,14 @@ async def test_preview_repo_rejects_traversing_subpath(e2e_client, platform_admi
 async def test_install_from_repo_creates_connected_install(e2e_client, platform_admin):
     slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
     repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
-    resp = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
-        headers=platform_admin.headers,
+    resp = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
     assert resp.status_code == 201, resp.text
     sol = resp.json()
@@ -165,12 +171,18 @@ async def test_install_from_repo_creates_connected_install(e2e_client, platform_
 async def test_install_from_repo_conflicts_on_existing(e2e_client, platform_admin):
     slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
     repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
-    first = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
-        headers=platform_admin.headers,
+    first = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
     assert first.status_code in (200, 201), first.text
+    # The slug+scope conflict is a synchronous fast-path 409 (the install row was
+    # created before the first job even ran), so the second POST refuses directly.
     again = e2e_client.post(
         "/api/solutions/install/from-repo",
         json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
@@ -184,23 +196,34 @@ async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platfo
     # First repo: descriptor is valid (clone/parse/flush succeed) but a malformed
     # .bifrost/forms.yaml makes the bundle read inside deploy_from_workspace raise.
     bad = _make_fixture_repo(slug=slug, broken_manifest=True)
-    resp = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": bad},
-        headers=platform_admin.headers,
+    # Clone + create succeed synchronously (202); the deploy fails INSIDE the job,
+    # which deletes the just-created row and marks the job failed (mapped to 409 by
+    # wait_for_install).
+    resp = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": bad},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 409, resp.text
     assert "deploy failed" in resp.text
 
     # The failed install must NOT have persisted: a later, VALID install of the
-    # SAME slug succeeds (201) instead of 409'ing — proving no orphan row exists.
+    # SAME slug succeeds instead of 409'ing — proving the job deleted the orphan.
     good = _make_fixture_repo(slug=slug)
-    retry = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": good},
-        headers=platform_admin.headers,
+    retry = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": good},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
-    assert retry.status_code == 201, retry.text
+    assert retry.status_code in (200, 201), retry.text
     assert retry.json()["slug"] == slug
 
 
@@ -212,10 +235,14 @@ async def test_sync_clears_update_available_version(e2e_client, platform_admin, 
 
     slug = f"syncclear-{uuid.uuid4().hex[:8]}"
     repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
-    inst = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
-        headers=platform_admin.headers,
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
     assert inst.status_code == 201, inst.text
     sid = inst.json()["id"]
@@ -253,10 +280,14 @@ async def test_delete_git_connected_install_with_connections(e2e_client, platfor
     """
     slug = f"delconn-{uuid.uuid4().hex[:8]}"
     repo_url = _make_fixture_repo(subdir="acme", slug=slug, with_connection=True)
-    inst = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": repo_url, "repo_subpath": "acme"},
-        headers=platform_admin.headers,
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": repo_url, "repo_subpath": "acme"},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
     assert inst.status_code == 201, inst.text
     inst_data = inst.json()
@@ -288,10 +319,14 @@ async def test_export_carries_connection_declarations(e2e_client, platform_admin
     """
     slug = f"exportconn-{uuid.uuid4().hex[:8]}"
     repo_url = _make_fixture_repo(subdir="acme", slug=slug, with_connection=True)
-    inst = e2e_client.post(
-        "/api/solutions/install/from-repo",
-        json={"repo_url": repo_url, "repo_subpath": "acme"},
-        headers=platform_admin.headers,
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install/from-repo",
+            json={"repo_url": repo_url, "repo_subpath": "acme"},
+            headers=platform_admin.headers,
+        ),
+        platform_admin.headers,
     )
     assert inst.status_code == 201, inst.text
     sid = inst.json()["id"]

@@ -16,6 +16,8 @@ import zipfile
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 pytestmark = pytest.mark.e2e
 
 
@@ -102,12 +104,16 @@ async def test_zip_install_atomic_deploy_and_values(e2e_client, platform_admin):
     assert len(body["workflows"]) == 1
     assert any(c["key"] == "API_KEY" for c in body["config_schemas"])
 
-    # INSTALL: deploy + apply the secret value atomically.
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", data, "application/zip")},
-        data={"config_values": '{"API_KEY": "sk_x"}'},
+    # INSTALL: deploy + apply the secret value atomically (async: 202 → poll).
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", data, "application/zip")},
+            data={"config_values": '{"API_KEY": "sk_x"}'},
+        ),
+        headers,
     )
     assert inst.status_code in (200, 201), inst.text
     sid = inst.json()["id"]
@@ -146,11 +152,17 @@ async def test_zip_install_refused_into_git_connected_install(e2e_client, platfo
     assert create.status_code in (200, 201), create.text
 
     # A zip for the same slug+scope resolves to that connected install → refused.
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", _make_zip(slug), "application/zip")},
-        data={"config_values": "{}"},
+    # The git-connected refusal is a build gate, so it now surfaces as a FAILED
+    # job (mapped back to 409 by wait_for_install).
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", _make_zip(slug), "application/zip")},
+            data={"config_values": "{}"},
+        ),
+        headers,
     )
     assert inst.status_code == 409, inst.text
     assert "git-connected" in inst.json()["detail"]
@@ -172,11 +184,15 @@ async def test_zip_install_upgrade_and_downgrade_gate(e2e_client, platform_admin
 
     def _install(version: str, force: bool = False):
         url = "/api/solutions/install" + ("?force=true" if force else "")
-        return e2e_client.post(
-            url,
-            headers=upload_headers,
-            files={"file": (f"{slug}.zip", _make_zip(slug, version), "application/zip")},
-            data={"config_values": "{}"},
+        return wait_for_install(
+            e2e_client,
+            e2e_client.post(
+                url,
+                headers=upload_headers,
+                files={"file": (f"{slug}.zip", _make_zip(slug, version), "application/zip")},
+                data={"config_values": "{}"},
+            ),
+            headers,
         )
 
     # Install v1.0.0.
@@ -223,11 +239,15 @@ async def test_zip_preview_returns_upgrade_diff_for_existing_install(
     slug = f"zip-diff-{uuid.uuid4().hex[:8]}"
 
     # Install v1 (one workflow, API_KEY declared as secret).
-    v1 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", _make_zip(slug, "1.0.0"), "application/zip")},
-        data={"config_values": "{}"},
+    v1 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", _make_zip(slug, "1.0.0"), "application/zip")},
+            data={"config_values": "{}"},
+        ),
+        headers,
     )
     assert v1.status_code in (200, 201), v1.text
     sid = v1.json()["id"]
@@ -292,11 +312,15 @@ async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admi
     slug = f"zip-exp-{uuid.uuid4().hex[:8]}"
     data = _make_zip(slug, "1.0.0")
 
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", data, "application/zip")},
-        data={"config_values": '{"API_KEY": "sk_x"}'},
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", data, "application/zip")},
+            data={"config_values": '{"API_KEY": "sk_x"}'},
+        ),
+        headers,
     )
     assert inst.status_code in (200, 201), inst.text
     sid = inst.json()["id"]
@@ -325,10 +349,14 @@ async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admi
     assert body["existing_install"]["id"] == sid
 
     # Re-INSTALL the export onto the same install: a no-op full replace.
-    reinst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", export_bytes, "application/zip")},
+    reinst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", export_bytes, "application/zip")},
+        ),
+        headers,
     )
     assert reinst.status_code in (200, 201), reinst.text
     assert reinst.json()["id"] == sid

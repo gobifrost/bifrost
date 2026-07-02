@@ -23,6 +23,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 pytestmark = pytest.mark.e2e
 
 
@@ -159,13 +161,17 @@ async def test_full_export_with_data_restores_rows_in_fresh_org(
     org = await make_org()
 
     files = {"file": ("s.zip", src.zip_bytes, "application/zip")}
-    r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files,
-        data={"organization_id": str(org.id), "password": "pw"},
+    r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files,
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     sol_id = r.json()["id"]
 
     # Find the installed table's UUID via /entities, then query its documents.
@@ -213,35 +219,47 @@ async def test_data_collision_refuses_without_replace_data(
 
     # First install: fills the empty table silently.
     files1 = {"file": ("s.zip", src.zip_bytes, "application/zip")}
-    r0 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files1,
-        data={"organization_id": str(org.id), "password": "pw"},
+    r0 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files1,
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
-    assert r0.status_code == 200, r0.text
+    assert r0.status_code in (200, 201), r0.text
     sol_id = r0.json()["id"]
 
     # Second install of the SAME zip into the SAME org → collision (table has rows).
     files2 = {"file": ("s.zip", src.zip_bytes, "application/zip")}
-    r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files2,
-        data={"organization_id": str(org.id), "password": "pw"},
+    r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files2,
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
     assert r.status_code == 409, r.text
     assert "widgets" in r.text, f"expected 'widgets' in collision error, got: {r.text}"
 
     # Third install of the SAME zip with replace_data=true → wholesale replace, succeeds.
     files3 = {"file": ("s.zip", src.zip_bytes, "application/zip")}
-    r2 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files3,
-        data={"organization_id": str(org.id), "password": "pw", "replace_data": "true"},
+    r2 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files3,
+            data={"organization_id": str(org.id), "password": "pw", "replace_data": "true"},
+        ),
+        headers,
     )
-    assert r2.status_code == 200, r2.text
+    assert r2.status_code in (200, 201), r2.text
 
     # After wholesale replace, table has exactly the bundle's rows (1 row).
     ent_r2 = e2e_client.get(f"/api/solutions/{sol_id}/entities", headers=headers)

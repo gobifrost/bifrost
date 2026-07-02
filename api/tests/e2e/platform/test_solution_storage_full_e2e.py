@@ -20,7 +20,7 @@ from sqlalchemy import select
 from src.models.orm.file_metadata import FileMetadata
 from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.file_policy_helpers import grant_file_policy
-from tests.e2e.platform.conftest import deploy_solution
+from tests.e2e.platform.conftest import deploy_solution, wait_for_install
 
 pytestmark = pytest.mark.e2e
 
@@ -234,13 +234,17 @@ async def test_deployed_solution_storage_round_trips_through_full_export_install
     )
     assert exported.status_code == 200, exported.text
 
-    installed = e2e_client.post(
-        "/api/solutions/install",
-        headers=_upload_headers(headers),
-        files={"file": ("storage.zip", exported.content, "application/zip")},
-        data={"organization_id": target_org_id, "password": "pw-storage"},
+    installed = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=_upload_headers(headers),
+            files={"file": ("storage.zip", exported.content, "application/zip")},
+            data={"organization_id": target_org_id, "password": "pw-storage"},
+        ),
+        headers,
     )
-    assert installed.status_code == 200, installed.text
+    assert installed.status_code in (200, 201), installed.text
     target_sid = installed.json()["id"]
 
     assert _read_solution_file(

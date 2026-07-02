@@ -1281,6 +1281,202 @@ async def _run_deploy_job(
         _cleanup_file(zip_path)
 
 
+async def _run_install_job(
+    job_id: UUID,
+    zip_path: Path,
+    *,
+    organization_id: UUID | None,
+    config_values: dict,
+    deployer_email: str,
+    force: bool,
+    password: str | None,
+    replace_secrets: bool,
+    replace_data: bool,
+    reactivate: bool,
+) -> None:
+    """Execute a zip install under a fresh session (background task).
+
+    Mirrors ``_run_deploy_job``: flips the job ``running`` → ``succeeded`` /
+    ``failed`` and captures build/deploy errors that were previously surfaced as
+    HTTP status codes into ``error`` for the poller. ``install_zip_path`` owns the
+    per-install write lock, DB commit, and S3 finalize internally, so the whole
+    (often >30s) build no longer blocks the request and times out the CLI (Task
+    H1). Fail-fast caller-input validation (config JSON, password decrypt) already
+    ran synchronously at the endpoint before this job row existed.
+    """
+    from src.core.database import get_db_context
+    from src.services.solutions.deploy import (
+        SolutionDeployConflict,
+        SolutionDowngradeBlocked,
+        SolutionFinalizeIncomplete,
+        SolutionWorkflowNameMismatch,
+    )
+    from src.services.solutions.write_lock import SolutionWriteLockHeld
+    from src.services.solutions.zip_install import (
+        BadExportPassword,
+        ContentCollision,
+        GitConnectedInstallError,
+        InactiveInstallExists,
+        UnmetDependency,
+        install_zip_path,
+    )
+
+    async def _set_status(
+        status_value: str,
+        error: str | None = None,
+        result: dict | None = None,
+    ) -> None:
+        async with get_db_context() as db:
+            job = await db.get(SolutionDeployJob, job_id)
+            if job is None:
+                return
+            job.status = status_value
+            job.error = error
+            job.result = result
+
+    await _set_status("running", result={"phase": "building and deploying bundle"})
+    install_result: dict | None = None
+    try:
+        async with get_db_context() as db:
+            solution = await install_zip_path(
+                db,
+                zip_path,
+                organization_id=organization_id,
+                config_values=config_values,
+                deployer_email=deployer_email,
+                force=force,
+                password=password,
+                replace_secrets=replace_secrets,
+                replace_data=replace_data,
+                reactivate=reactivate,
+            )
+            install_result = {"solution_id": str(solution.id), "slug": solution.slug}
+    except InactiveInstallExists as exc:
+        await _set_status(
+            "failed",
+            str(exc),
+            result={
+                "reason": "inactive_install_exists",
+                "solution_id": str(exc.solution_id),
+                "slug": exc.slug,
+            },
+        )
+    except SolutionWriteLockHeld:
+        await _set_status(
+            "failed",
+            "A deploy is already in progress for this install; retry shortly.",
+        )
+    except SolutionFinalizeIncomplete:
+        await _set_status(
+            "failed",
+            "Install committed but storage was unavailable after retries. "
+            "Re-run the install to complete it (it is idempotent).",
+        )
+    except (
+        UnmetDependency,
+        BadExportPassword,
+        ContentCollision,
+        GitConnectedInstallError,
+        SolutionDowngradeBlocked,
+        SolutionDeployConflict,
+        SolutionWorkflowNameMismatch,
+        ValueError,
+        zipfile.BadZipFile,
+    ) as exc:
+        await _set_status("failed", str(exc) or "Install rejected.")
+    except Exception:  # noqa: BLE001 — capture any install failure onto the job
+        logger.exception("Solution install job %s failed", job_id)
+        await _set_status("failed", "Install failed unexpectedly; see server logs.")
+    else:
+        await _set_status("succeeded", result=install_result)
+    finally:
+        _cleanup_file(zip_path)
+
+
+async def _run_install_from_repo_job(
+    job_id: UUID,
+    solution_id: UUID,
+    checkout_root: str,
+    clone_tmp: str,
+) -> None:
+    """Deploy a freshly-created git-connected install from an already-cloned
+    checkout (background task). Mirrors ``_run_deploy_job``.
+
+    The clone + slug/scope 409 already ran synchronously at the endpoint, which
+    also created the ``SolutionORM`` row. This job runs the build/deploy/finalize
+    under the per-install write lock (closes the from-repo lock race, audit M7). A
+    brand-new install whose first deploy fails must not persist as an empty
+    git_connected orphan, so on failure the job deletes the row it was deploying.
+
+    ``checkout_root`` is the workspace dir to deploy (may be a subpath of the
+    clone); ``clone_tmp`` is the top-level temp dir to remove when done.
+    """
+    import shutil
+
+    from src.core.database import get_db_context
+    from src.services.solutions.git_sync import deploy_from_workspace
+    from src.services.solutions.write_lock import (
+        SolutionWriteLockHeld,
+        solution_write_lock,
+    )
+
+    async def _set_status(
+        status_value: str,
+        error: str | None = None,
+        result: dict | None = None,
+    ) -> None:
+        async with get_db_context() as db:
+            job = await db.get(SolutionDeployJob, job_id)
+            if job is None:
+                return
+            job.status = status_value
+            job.error = error
+            job.result = result
+
+    async def _delete_orphan_install() -> None:
+        async with get_db_context() as db:
+            # Detach the job row from the install FIRST: solution_deploy_jobs
+            # carries an ondelete=CASCADE FK to solutions, so deleting the orphan
+            # would otherwise sweep the job row with it and the poller would 404
+            # instead of observing the terminal failed state.
+            job = await db.get(SolutionDeployJob, job_id)
+            if job is not None:
+                job.install_id = None
+                await db.flush()
+            row = await db.get(SolutionORM, solution_id)
+            if row is not None:
+                await db.delete(row)
+
+    await _set_status("running", result={"phase": "deploying from repo checkout"})
+    install_result: dict | None = None
+    try:
+        async with get_db_context() as db:
+            async with solution_write_lock(solution_id):
+                solution = await db.get(SolutionORM, solution_id)
+                if solution is None:
+                    raise SolutionDeployConflict("Solution not found")
+                result = await deploy_from_workspace(db, solution, Path(checkout_root))
+                await db.commit()
+                await result.finalize_s3()
+                install_result = {
+                    "solution_id": str(solution_id),
+                    "slug": solution.slug,
+                }
+    except SolutionWriteLockHeld:
+        await _set_status(
+            "failed",
+            "A deploy is already in progress for this install; retry shortly.",
+        )
+    except Exception as exc:  # noqa: BLE001 — capture any deploy failure onto the job
+        logger.exception("Solution install-from-repo job %s failed", job_id)
+        await _delete_orphan_install()
+        await _set_status("failed", f"Install cloned but deploy failed: {exc}")
+    else:
+        await _set_status("succeeded", result=install_result)
+    finally:
+        shutil.rmtree(clone_tmp, ignore_errors=True)
+
+
 @router.post(
     "/{solution_id}/deploy",
     response_model=SolutionDeployEnqueued,
@@ -1703,33 +1899,45 @@ async def install_preview_repo(
 
 @router.post(
     "/install/from-repo",
-    response_model=SolutionDTO,
-    status_code=status.HTTP_201_CREATED,
-    summary="Install a Solution from a git repo (git-connected, admin only)",
+    response_model=SolutionDeployEnqueued,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue a Solution install from a git repo (git-connected, admin only)",
 )
 async def install_from_repo(
-    body: SolutionRepoPreviewRequest, ctx: Context, user: CurrentSuperuser
-) -> SolutionDTO:
+    body: SolutionRepoPreviewRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+    background_tasks: BackgroundTasks,
+) -> SolutionDeployEnqueued:
     """Create a git-connected install from a repo (+ optional subpath/ref) and
-    deploy it. git-connected from birth: deploy is refused, auto-pull is the
-    only writer. 409 if an install of the same (slug, scope) already exists."""
+    enqueue its first deploy as an async job. git-connected from birth: deploy is
+    refused, auto-pull is the only writer. 409 if an install of the same
+    (slug, scope) already exists.
+
+    Fail-fast synchronous validation runs BEFORE the job row / install row exist:
+    the clone (+ subpath/ref/descriptor checks) and the slug+scope 409. The
+    install row is then created and the build/deploy/finalize runs as a background
+    job under the per-install write lock (closes the from-repo lock race, audit
+    M7). Poll ``GET /deploy-jobs/{deploy_job_id}`` for the result; the terminal
+    ``result`` carries the installed ``solution_id``. If the first deploy fails,
+    the job removes the brand-new install so no empty git_connected orphan remains.
+    """
     import tempfile
     from pathlib import Path
 
     from src.services.solutions.git_sync import (
         NotASolutionWorkspace,
         clone_repo_to_dir,
-        deploy_from_workspace,
         resolve_repo_subpath,
     )
     from src.services.solutions.zip_install import _parse_workspace, find_install
 
-    # ONE clone: read the descriptor AND deploy from the same checkout (no second
-    # clone, no TOCTOU window where slug comes from one clone and deploy another).
-    # The initial create-deploy is single-writer by construction — nothing else
-    # can sync a row that did not exist until this request — so it does NOT need
-    # sync()'s per-install Redis lock (that guards the ongoing auto-pull path).
-    with tempfile.TemporaryDirectory(prefix="bifrost-repo-install-") as tmp:
+    # Clone synchronously into a PERSISTENT temp dir (the async job reads it and
+    # cleans it up). ONE clone: read the descriptor here AND deploy from the same
+    # checkout in the job — no second clone, no TOCTOU window.
+    tmp = tempfile.mkdtemp(prefix="bifrost-repo-install-")
+    cleanup_tmp = True
+    try:
         work = Path(tmp)
         try:
             await clone_repo_to_dir(body.repo_url, work, ref=body.git_ref)
@@ -1805,35 +2013,41 @@ async def install_from_repo(
                 detail=f"An install of '{parsed.slug}' already exists for this scope.",
             ) from exc
 
-        # Deploy from THE SAME checkout we just cloned (no second clone). Commit
-        # the DB phase, THEN finalize S3 — matches _run_sync_once's order.
-        try:
-            result = await deploy_from_workspace(ctx.db, solution, root)
-            await ctx.db.commit()
-        except Exception as exc:
-            # A brand-new install whose first deploy failed must not persist as an
-            # empty git_connected orphan — roll it back and surface the error.
-            await ctx.db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Install cloned but deploy failed: {exc}",
-            ) from exc
-    # Temp dir is gone now; the bundle is in-memory so finalize_s3 is safe (same
-    # as _run_sync_once).
-    await result.finalize_s3()
-    await ctx.db.refresh(solution)
-    return SolutionDTO.model_validate(solution)
+        # Persist the orchestration row alongside the install so the caller can
+        # poll immediately. The build/deploy/finalize runs in the job.
+        job = SolutionDeployJob(install_id=solution.id, status="queued")
+        ctx.db.add(job)
+        await ctx.db.commit()
+        await ctx.db.refresh(job)
+
+        background_tasks.add_task(
+            _run_install_from_repo_job,
+            job.id,
+            solution.id,
+            str(root),
+            tmp,
+        )
+        # The job owns the checkout dir teardown now — don't rmtree it here.
+        cleanup_tmp = False
+        return SolutionDeployEnqueued(deploy_job_id=job.id)
+    finally:
+        if cleanup_tmp:
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 @router.post(
     "/install",
-    response_model=SolutionDTO,
-    summary="Install a Solution zip (atomic deploy + config values, admin only)",
+    response_model=SolutionDeployEnqueued,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue a Solution zip install (async deploy + config values, admin only)",
 )
 async def install_solution(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
     user: CurrentSuperuser,
+    background_tasks: BackgroundTasks,
     organization_id: Annotated[str | None, FastapiForm()] = None,
     config_values: Annotated[str, FastapiForm()] = "{}",
     password: Annotated[str | None, FastapiForm()] = None,
@@ -1841,39 +2055,35 @@ async def install_solution(
     replace_data: Annotated[bool, FastapiForm()] = False,
     force: bool = False,
     reactivate: bool = False,
-) -> SolutionDTO:
-    """Atomically install a Solution from a workspace zip.
+) -> SolutionDeployEnqueued:
+    """Enqueue an async install of a Solution from a workspace zip.
 
-    Resolves-or-creates the install at the chosen scope (empty/absent
+    Fail-fast, synchronous validation runs BEFORE a job row exists: the
+    ``organization_id`` / ``config_values`` shape, the zip being a Solution
+    workspace, and — for a full-backup zip carrying ``.bifrost/secrets.enc`` — a
+    password decrypt-check (a wrong/missing password is a synchronous 422). The
+    heavy build/deploy/finalize then runs as a background job (``SolutionDeployJob``)
+    so the often-slow build no longer times out the CLI's HTTP request (Task H1).
+    Poll ``GET /deploy-jobs/{deploy_job_id}`` for the result; the terminal
+    ``result`` carries the installed ``solution_id``.
+
+    The job resolves-or-creates the install at the chosen scope (empty/absent
     ``organization_id`` → global NULL), runs the proven deploy under the
     per-install write lock, and — in the same locked section after the S3 finalize
-    — applies the provided ``config_values`` (a JSON object of key→value). A
-    missing required config does NOT block the install (warn-not-block).
+    — applies the provided ``config_values``. A missing required config does NOT
+    block the install (warn-not-block). Build-time refusals (unmet dependency,
+    content collision, git-connected install, downgrade) surface as a ``failed``
+    job with the error, mirroring the deploy job.
 
-    Full-backup zips carry a ``.bifrost/secrets.enc`` blob; ``password`` is
-    required to decrypt it.  A wrong password is refused with 422 before
-    anything is written.  If the blob contains values for keys that already
-    have a Config row in the target org, the import is refused with 409 unless
-    ``replace_secrets=true`` (config values) or ``replace_data=true`` (table
-    data, Phase 4).
-
-    A zip whose descriptor ``version`` is OLDER than the installed version is
-    refused with 409 (downgrade gate, Task 20) unless ``?force=true``.
+    The inactive-install conflict is a synchronous 409 (structured
+    ``reason=inactive_install_exists`` detail): it is a caller-decision prompt —
+    pass ``?reactivate=true`` or delete the install first — so it must refuse on
+    the request itself, before a job row exists.
     """
-    from src.services.solutions.deploy import (
-        SolutionDeployConflict,
-        SolutionDowngradeBlocked,
-        SolutionFinalizeIncomplete,
-        SolutionWorkflowNameMismatch,
-    )
-    from src.services.solutions.write_lock import SolutionWriteLockHeld
     from src.services.solutions.zip_install import (
         BadExportPassword,
-        ContentCollision,
-        GitConnectedInstallError,
-        InactiveInstallExists,
-        UnmetDependency,
-        install_zip_path,
+        find_install,
+        validate_install_zip,
     )
 
     org_id: UUID | None = None
@@ -1900,78 +2110,66 @@ async def install_solution(
         )
 
     zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-install-")
+    # Fail-fast validation BEFORE the job row exists: a corrupt zip / non-workspace
+    # / wrong-or-missing secrets password returns a synchronous 4xx, not a failed
+    # job (mirrors deploy's synchronous preview_zip_path guard).
     try:
-        solution = await install_zip_path(
-            ctx.db,
-            zip_path,
-            organization_id=org_id,
-            config_values=values,
-            deployer_email=user.email,
-            force=force,
-            password=password,
-            replace_secrets=replace_secrets,
-            replace_data=replace_data,
-            reactivate=reactivate,
-        )
-    except InactiveInstallExists as exc:
-        # An inactive install of this slug already exists in the target org.
-        # Return a structured 409 so the UI/CLI can prompt the user to either
-        # reactivate (pass ?reactivate=true) or hard-delete the install first.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "inactive_install_exists",
-                "solution_id": str(exc.solution_id),
-                "slug": exc.slug,
-                "message": str(exc),
-            },
-        ) from exc
-    except UnmetDependency as exc:
-        # A bundle imports a modules.X that isn't shipped — refuse before
-        # anything lands, naming the missing module.
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+        preview = validate_install_zip(zip_path, password=password)
     except BadExportPassword as exc:
+        _cleanup_file(zip_path)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    except ContentCollision as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
-    except GitConnectedInstallError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except SolutionDowngradeBlocked as exc:
-        # Older descriptor version than installed (Task 20); ?force=true overrides.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except (ValueError, zipfile.BadZipFile) as exc:
+        _cleanup_file(zip_path)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid solution zip: {exc}",
         ) from exc
-    except SolutionWriteLockHeld as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A deploy is already in progress for this install; retry shortly.",
-        ) from exc
-    except SolutionDeployConflict as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except SolutionWorkflowNameMismatch as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-    except SolutionFinalizeIncomplete as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                "Install committed but storage was unavailable after retries. "
-                "Re-run the install to complete it (it is idempotent)."
-            ),
-        ) from exc
-    finally:
-        _cleanup_file(zip_path)
-    return SolutionDTO.model_validate(solution)
+
+    # Inactive-install conflict is a synchronous, structured 409 prompt (the
+    # caller must choose: reactivate or delete first) — refuse BEFORE a job row
+    # exists. The job re-checks under the write lock (race backstop); this
+    # fast-path keeps the interactive contract the UI/CLI prompt on.
+    if not reactivate:
+        assert preview.slug is not None  # validate_install_zip guarantees it
+        existing = await find_install(ctx.db, slug=preview.slug, organization_id=org_id)
+        if existing is not None and existing.status == "inactive":
+            _cleanup_file(zip_path)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "inactive_install_exists",
+                    "solution_id": str(existing.id),
+                    "slug": existing.slug,
+                    "message": (
+                        f"An inactive install of '{existing.slug}' already exists "
+                        f"(id={existing.id}). Pass reactivate=true to reactivate it, "
+                        "or delete the existing install first."
+                    ),
+                },
+            )
+
+    # Persist the orchestration row before scheduling the task so the caller can
+    # poll for status the instant it has the id. install_id is nullable — a zip
+    # install resolves-or-creates its target install inside the job, so the row
+    # isn't known yet (the succeeded result carries the solution_id).
+    job = SolutionDeployJob(install_id=None, status="queued")
+    ctx.db.add(job)
+    await ctx.db.commit()
+    await ctx.db.refresh(job)
+
+    background_tasks.add_task(
+        _run_install_job,
+        job.id,
+        zip_path,
+        organization_id=org_id,
+        config_values=values,
+        deployer_email=user.email,
+        force=force,
+        password=password,
+        replace_secrets=replace_secrets,
+        replace_data=replace_data,
+        reactivate=reactivate,
+    )
+    return SolutionDeployEnqueued(deploy_job_id=job.id)

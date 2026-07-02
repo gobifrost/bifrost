@@ -224,11 +224,16 @@ def _make_install_zip(slug: str, table_name: str, table_bundle_id: str) -> bytes
 def _install_zip(
     e2e_client, headers, zip_bytes: bytes, *, query: str = ""
 ):
-    return e2e_client.post(
+    # Install is async (202 + poll); wait_for_install returns a terminal shim and
+    # passes synchronous refusals (the structured inactive-install 409) through.
+    from tests.e2e.platform.conftest import wait_for_install
+
+    r = e2e_client.post(
         f"/api/solutions/install{query}",
         headers=_upload_headers(headers),
         files={"file": ("sol.zip", zip_bytes, "application/zip")},
     )
+    return wait_for_install(e2e_client, r, headers)
 
 
 # ---------------------------------------------------------------------------
