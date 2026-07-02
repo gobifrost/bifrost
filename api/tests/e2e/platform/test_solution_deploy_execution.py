@@ -18,17 +18,19 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
-def _create_solution(e2e_client, headers, *, slug: str, global_repo_access: bool) -> str:
-    resp = e2e_client.post(
-        "/api/solutions",
-        headers=headers,
-        json={
-            "slug": slug,
-            "name": slug.upper(),
-            "scope": "global",
-            "global_repo_access": global_repo_access,
-        },
-    )
+def _create_solution(
+    e2e_client, headers, *, slug: str, global_repo_access: bool, org_id: str | None = None
+) -> str:
+    body = {
+        "slug": slug,
+        "name": slug.upper(),
+        "global_repo_access": global_repo_access,
+    }
+    if org_id is None:
+        body["scope"] = "global"
+    else:
+        body["organization_id"] = org_id
+    resp = e2e_client.post("/api/solutions", headers=headers, json=body)
     assert resp.status_code in (200, 201), f"create solution failed: {resp.status_code} {resp.text}"
     return resp.json()["id"]
 
@@ -182,13 +184,15 @@ def _execute_with_app(e2e_client, headers, workflow_ref: str, app_id: str) -> di
     return resp.json()
 
 
-def _deploy_install_with_app(e2e_client, headers, marker: str) -> str:
+def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | None = None) -> str:
     """Deploy a Solution install shipping workflows/main.py::main (returns the
     marker) plus a standalone_v2 app; return the app's remapped DB id."""
     from tests.e2e.platform.conftest import deploy_solution
 
     slug = f"twin-{marker}-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
+    sid = _create_solution(
+        e2e_client, headers, slug=slug, global_repo_access=False, org_id=org_id
+    )
     app_id = str(uuid.uuid4())
     # Deploy is ASYNC (BackgroundTasks) — fire-and-forget would race the
     # background job, so the immediately-following execute can 404 on a
@@ -278,3 +282,22 @@ def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
     assert res_b["status"] == "Success", res_b
     assert res_a["result"] == {"marker": "hdr-aaa"}, res_a
     assert res_b["result"] == {"marker": "hdr-bbb"}, res_b
+
+
+def test_foreign_app_header_cannot_reach_other_orgs_workflow(
+    e2e_client, platform_admin, org1, org2_user
+):
+    """PINNING (expected to hold): a regular user from org2 smuggling org1's
+    X-Bifrost-App must NOT execute org1's install workflow — the resolver's
+    org gate (cascade scope) holds under ctx-first scoping."""
+    headers = platform_admin.headers
+    app_a = _deploy_install_with_app(e2e_client, headers, "xorg", org_id=org1["id"])
+
+    resp = e2e_client.post(
+        "/api/workflows/execute",
+        headers={**org2_user.headers, "X-Bifrost-App": app_a},
+        json={"workflow_id": "workflows/main.py::main", "sync": True},
+    )
+    assert resp.status_code in (403, 404), (
+        f"cross-org header execution must be refused, got {resp.status_code}: {resp.text}"
+    )
