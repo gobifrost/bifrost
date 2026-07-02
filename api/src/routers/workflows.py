@@ -773,9 +773,23 @@ async def execute_workflow(
             request.workflow_id, solution_scope=solution_scope
         )
         if not workflow:
+            # A resolution miss must identify its scope inputs: a dropped or
+            # wrong install scope reads as derived_solution_scope=null here
+            # instead of a mystery 404 (no user/token data — every field is
+            # caller-supplied or derived from it).
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workflow '{request.workflow_id}' not found",
+                detail={
+                    "message": f"Workflow '{request.workflow_id}' not found",
+                    "workflow_ref": request.workflow_id,
+                    "context_solution_id": ctx.solution_id,
+                    "request_solution_id": request.solution_id,
+                    "request_form_id": request.form_id,
+                    "request_app_id": request.app_id,
+                    "derived_solution_scope": (
+                        str(solution_scope) if solution_scope else None
+                    ),
+                },
             )
 
     # Authorization check

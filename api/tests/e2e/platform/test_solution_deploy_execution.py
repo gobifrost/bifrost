@@ -284,6 +284,27 @@ def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
     assert res_b["result"] == {"marker": "hdr-bbb"}, res_b
 
 
+def test_workflow_404_includes_scope_diagnostics(e2e_client, platform_admin):
+    """A scope-resolution miss must identify itself: the 404 detail carries the
+    ref and the derived install scope, so a dropped/wrong scope reads as
+    `derived_solution_scope: null` instead of a mystery 404 (drive lesson —
+    the unscoped courtesy fallback masked scope loss for a whole POC day)."""
+    headers = platform_admin.headers
+    app_a = _deploy_install_with_app(e2e_client, headers, "diag")
+
+    resp = e2e_client.post(
+        "/api/workflows/execute",
+        headers={**headers, "X-Bifrost-App": app_a},
+        json={"workflow_id": "workflows/nonexistent.py::nope", "sync": True},
+    )
+    assert resp.status_code == 404, resp.text
+    detail = resp.json()["detail"]
+    assert detail["workflow_ref"] == "workflows/nonexistent.py::nope"
+    assert "not found" in detail["message"]
+    # Header-scoped caller: the derived install scope is present (a UUID).
+    assert detail["derived_solution_scope"], detail
+
+
 def test_foreign_app_header_cannot_reach_other_orgs_workflow(
     e2e_client, platform_admin, org1, org2_user
 ):

@@ -424,7 +424,20 @@ async def _require_file_policy(
         organization_id=organization_id,
     )
     if not allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        # A policy denial must identify its scope inputs (no user/token data —
+        # every field is caller-supplied or derived from it): a scope-loss bug
+        # reads as solution_id=null instead of a bare "Forbidden".
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "File policy denied",
+                "action": action,
+                "location": location,
+                "path": path,
+                "scope": scope,
+                "solution_id": str(solution_id) if solution_id else None,
+            },
+        )
 
 
 async def _require_declared_solution_file_location(
