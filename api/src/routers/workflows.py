@@ -700,14 +700,17 @@ async def _insert_scheduled_execution(
 async def _derive_solution_scope(
     db,
     *,
+    ctx_solution_id: str | None = None,
     solution_id: str | None,
     form_id: str | None,
     app_id: str | None,
 ) -> "UUID | None":
     """Resolve the calling install's scope for a path::fn workflow ref.
 
-    Precedence: explicit solution_id (a Solution form/agent that knows its
-    own install) > form_id (Form.solution_id) > app_id (Application.solution_id).
+    Precedence: ctx_solution_id (the auth layer already resolved ?solution= /
+    X-Bifrost-App into the request context — the same signal tables/files scope
+    by) > explicit solution_id (a Solution form/agent that knows its own
+    install) > form_id (Form.solution_id) > app_id (Application.solution_id).
     A bad/foreign/missing reference yields None → no narrowing (the path ref
     resolves the _repo/ row, or 404s for a scoped caller). Each source is
     client-supplied; the resolver's own org gate (cascade scope) prevents a
@@ -716,6 +719,11 @@ async def _derive_solution_scope(
     from src.models.orm.forms import Form
     from src.models.orm.applications import Application
 
+    if ctx_solution_id:
+        try:
+            return UUID(str(ctx_solution_id))
+        except ValueError:
+            pass  # auth-validated in practice; fall through to body-derived scope
     if solution_id:
         try:
             return UUID(solution_id)
@@ -804,6 +812,7 @@ async def execute_workflow(
     # form/agent) > form_id > app_id. A bad/foreign ref yields no scope.
     solution_scope = await _derive_solution_scope(
         db,
+        ctx_solution_id=ctx.solution_id,
         solution_id=request.solution_id,
         form_id=request.form_id,
         app_id=request.app_id,

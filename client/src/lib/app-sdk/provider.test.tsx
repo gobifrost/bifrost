@@ -64,6 +64,62 @@ describe("BifrostProvider", () => {
     expect(captured!.auth).toBe("Bearer tok-abc");
   });
 
+  it("attaches X-Bifrost-App on authedFetch so workflow calls carry the app scope", async () => {
+    // Tables/files scope via the transport's X-Bifrost-App header; workflow
+    // execution goes through authedFetch. Both must carry the same context
+    // signal or the server derives a different install scope per surface.
+    let captured: { appHeader: string | null } | null = null;
+    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      captured = { appHeader: headers.get("X-Bifrost-App") };
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    function Caller() {
+      const { authedFetch } = useBifrostContext();
+      void authedFetch("/api/workflows/execute", { method: "POST" });
+      return <span>called</span>;
+    }
+
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-abc"
+        appId="app-777"
+        fetchImpl={fakeFetch}
+      >
+        <Caller />
+      </BifrostProvider>,
+    );
+    await Promise.resolve();
+    expect(captured).not.toBeNull();
+    expect(captured!.appHeader).toBe("app-777");
+  });
+
+  it("omits X-Bifrost-App on authedFetch when no appId is bound", async () => {
+    let captured: { appHeader: string | null } | null = null;
+    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      captured = { appHeader: headers.get("X-Bifrost-App") };
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    function Caller() {
+      const { authedFetch } = useBifrostContext();
+      void authedFetch("/api/workflows/execute", { method: "POST" });
+      return <span>called</span>;
+    }
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="tok-abc" fetchImpl={fakeFetch}>
+        <Caller />
+      </BifrostProvider>,
+    );
+    await Promise.resolve();
+    expect(captured).not.toBeNull();
+    expect(captured!.appHeader).toBeNull();
+  });
+
   it("routes the table SDK through baseUrl + bearer while mounted", async () => {
     const { tables } = await import("./tables");
     const fetchMock = vi

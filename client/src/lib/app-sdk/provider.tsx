@@ -180,6 +180,12 @@ export function BifrostProvider({
       if (orgScope && !headers.has("X-Bifrost-Org")) {
         headers.set("X-Bifrost-Org", orgScope);
       }
+      // Same context signal the tables/files transport sends: the server's
+      // auth layer resolves it to the install scope (ctx.solution_id), so a
+      // workflow path::fn ref scopes to THIS install without body plumbing.
+      if (appId && !headers.has("X-Bifrost-App")) {
+        headers.set("X-Bifrost-App", appId);
+      }
       return baseFetch(joinUrl(baseUrl, input), { ...init, headers });
     };
     const logout = () => onLogout?.();

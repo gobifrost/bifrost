@@ -1,4 +1,4 @@
-"""_derive_solution_scope picks the install scope from solution_id > form_id > app_id."""
+"""_derive_solution_scope picks the install scope from ctx > solution_id > form_id > app_id."""
 from uuid import uuid4
 
 import pytest
@@ -73,3 +73,34 @@ class TestDeriveSolutionScope:
         # Valid UUID, but no such form -> None (not an error).
         got = await _derive_solution_scope(db_session, solution_id=None, form_id=str(uuid4()), app_id=None)
         assert got is None
+
+    async def test_ctx_solution_id_is_primary_scope(self, db_session):
+        # The auth layer already validated ?solution= / X-Bifrost-App and put the
+        # install id on the context — that's the authoritative runtime scope.
+        sid = uuid4()
+        got = await _derive_solution_scope(
+            db_session, ctx_solution_id=str(sid), solution_id=None, form_id=None, app_id=None
+        )
+        assert got == sid
+
+    async def test_ctx_solution_id_wins_over_body_fields(self, db_session):
+        ctx_sid, body_sid = uuid4(), uuid4()
+        got = await _derive_solution_scope(
+            db_session,
+            ctx_solution_id=str(ctx_sid),
+            solution_id=str(body_sid),
+            form_id=None,
+            app_id=None,
+        )
+        assert got == ctx_sid
+
+    async def test_invalid_ctx_solution_id_falls_through_to_body(self, db_session):
+        sid = uuid4()
+        got = await _derive_solution_scope(
+            db_session,
+            ctx_solution_id="not-a-uuid",
+            solution_id=str(sid),
+            form_id=None,
+            app_id=None,
+        )
+        assert got == sid

@@ -31,8 +31,19 @@ import httpx
 import yarl
 from aiohttp import web
 
-# Hop-by-hop headers we must not forward when reverse-proxying.
-_STRIP = {"host", "content-length", "transfer-encoding", "connection", "keep-alive"}
+# Headers we must not forward when reverse-proxying: hop-by-hop headers, plus
+# the browser's Accept-Encoding — browsers advertise encodings (br, zstd) that
+# httpx may not decode, and the proxy rebuilds response headers WITHOUT
+# Content-Encoding, so a passed-through compressed body would reach the browser
+# labeled as plain JSON. Stripping it lets httpx negotiate only what it decodes.
+_STRIP = {
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "accept-encoding",
+}
 
 
 class _UpstreamAuthorityError(ValueError):

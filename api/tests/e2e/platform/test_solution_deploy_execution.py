@@ -182,6 +182,58 @@ def _execute_with_app(e2e_client, headers, workflow_ref: str, app_id: str) -> di
     return resp.json()
 
 
+def _deploy_install_with_app(e2e_client, headers, marker: str) -> str:
+    """Deploy a Solution install shipping workflows/main.py::main (returns the
+    marker) plus a standalone_v2 app; return the app's remapped DB id."""
+    from tests.e2e.platform.conftest import deploy_solution
+
+    slug = f"twin-{marker}-{uuid.uuid4().hex[:8]}"
+    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
+    app_id = str(uuid.uuid4())
+    # Deploy is ASYNC (BackgroundTasks) — fire-and-forget would race the
+    # background job, so the immediately-following execute can 404 on a
+    # workflow whose row hasn't committed yet (flaky under load). Use the
+    # deploy_solution helper that blocks until the deploy job is terminal.
+    resp = deploy_solution(
+        e2e_client,
+        sid,
+        headers,
+        {
+            "python_files": {
+                "workflows/main.py": (
+                    "from bifrost import workflow\n\n"
+                    "@workflow\n"
+                    "async def main():\n"
+                    f"    return {{'marker': '{marker}'}}\n"
+                ),
+            },
+            "workflows": [{
+                "id": str(uuid.uuid4()),
+                "name": f"main_{slug}",
+                "function_name": "main",
+                "path": "workflows/main.py",
+                "type": "workflow",
+            }],
+            "apps": [{
+                "id": app_id,
+                "slug": f"app-{slug}",
+                "name": "App",
+                "app_model": "standalone_v2",
+                "dependencies": {},
+                "access_level": "authenticated",
+                "dist_files": {
+                    "index.html": '<!doctype html><div id="root"></div>',
+                },
+            }],
+        },
+    )
+    assert resp.status_code in (200, 201), f"deploy failed: {resp.status_code} {resp.text}"
+    # The app's DB id is the remapped uuid5(install, manifest_id).
+    from src.services.solutions.deploy import solution_entity_id
+
+    return str(solution_entity_id(uuid.UUID(sid), uuid.UUID(app_id)))
+
+
 def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, platform_admin):
     """Codex #8 P1 end-to-end: two Solution installs each ship
     workflows/main.py::main (different return values) AND an app. Executing each
@@ -189,57 +241,8 @@ def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, plat
     workflow — deterministically, not a sibling install's that shares the path."""
     headers = platform_admin.headers
 
-    def _deploy_install(marker: str) -> str:
-        from tests.e2e.platform.conftest import deploy_solution
-
-        slug = f"twin-{marker}-{uuid.uuid4().hex[:8]}"
-        sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
-        app_id = str(uuid.uuid4())
-        # Deploy is ASYNC (BackgroundTasks) — fire-and-forget would race the
-        # background job, so the immediately-following execute can 404 on a
-        # workflow whose row hasn't committed yet (flaky under load). Use the
-        # deploy_solution helper that blocks until the deploy job is terminal.
-        resp = deploy_solution(
-            e2e_client,
-            sid,
-            headers,
-            {
-                "python_files": {
-                    "workflows/main.py": (
-                        "from bifrost import workflow\n\n"
-                        "@workflow\n"
-                        "async def main():\n"
-                        f"    return {{'marker': '{marker}'}}\n"
-                    ),
-                },
-                "workflows": [{
-                    "id": str(uuid.uuid4()),
-                    "name": f"main_{slug}",
-                    "function_name": "main",
-                    "path": "workflows/main.py",
-                    "type": "workflow",
-                }],
-                "apps": [{
-                    "id": app_id,
-                    "slug": f"app-{slug}",
-                    "name": "App",
-                    "app_model": "standalone_v2",
-                    "dependencies": {},
-                    "access_level": "authenticated",
-                    "dist_files": {
-                        "index.html": '<!doctype html><div id="root"></div>',
-                    },
-                }],
-            },
-        )
-        assert resp.status_code in (200, 201), f"deploy failed: {resp.status_code} {resp.text}"
-        # The app's DB id is the remapped uuid5(install, manifest_id).
-        from src.services.solutions.deploy import solution_entity_id
-
-        return str(solution_entity_id(uuid.UUID(sid), uuid.UUID(app_id)))
-
-    app_a = _deploy_install("aaa")
-    app_b = _deploy_install("bbb")
+    app_a = _deploy_install_with_app(e2e_client, headers, "aaa")
+    app_b = _deploy_install_with_app(e2e_client, headers, "bbb")
 
     # Each app's path-ref resolves to ITS OWN install's workflow.
     res_a = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_a)
@@ -248,3 +251,30 @@ def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, plat
     assert res_b["status"] == "Success", res_b
     assert res_a["result"] == {"marker": "aaa"}, res_a
     assert res_b["result"] == {"marker": "bbb"}, res_b
+
+
+def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
+    """The deployed-browser transport contract: X-Bifrost-App header, NO body
+    app_id. Auth derives ctx.solution_id from the header; workflow execution
+    must honor that context scope so a path::fn ref resolves the install's own
+    workflow — same as tables/files already do."""
+    headers = platform_admin.headers
+
+    app_a = _deploy_install_with_app(e2e_client, headers, "hdr-aaa")
+    app_b = _deploy_install_with_app(e2e_client, headers, "hdr-bbb")
+
+    def _execute_with_header(app_id: str) -> dict:
+        resp = e2e_client.post(
+            "/api/workflows/execute",
+            headers={**headers, "X-Bifrost-App": app_id},
+            json={"workflow_id": "workflows/main.py::main", "sync": True},
+        )
+        assert resp.status_code == 200, f"execute failed: {resp.status_code} {resp.text}"
+        return resp.json()
+
+    res_a = _execute_with_header(app_a)
+    res_b = _execute_with_header(app_b)
+    assert res_a["status"] == "Success", res_a
+    assert res_b["status"] == "Success", res_b
+    assert res_a["result"] == {"marker": "hdr-aaa"}, res_a
+    assert res_b["result"] == {"marker": "hdr-bbb"}, res_b

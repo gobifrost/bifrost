@@ -106,6 +106,7 @@ def _make_upstream(record):
         record["other_path"] = request.path
         record["other_query"] = request.rel_url.query_string
         record["other_org"] = request.headers.get("X-Bifrost-Org")
+        record["other_accept_encoding"] = request.headers.get("Accept-Encoding")
         return web.json_response({"upstream_other": True})
 
     async def ws_echo(request):
@@ -249,6 +250,33 @@ async def test_other_api_path_proxies_with_org_header():
         assert record["other_path"] == "/api/tables/foo"
         assert record["other_query"] == "limit=10&solution=S"
         assert record["other_org"] == "O"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_browser_accept_encoding_is_not_forwarded_upstream():
+    # Browsers advertise encodings (br, zstd) that httpx may not be able to
+    # decode. If the proxy forwards the browser's Accept-Encoding, upstream may
+    # respond with one of those, httpx passes the compressed bytes through, and
+    # _passthrough_headers drops Content-Encoding — so the browser gets
+    # compressed bytes labeled as plain JSON and fails to parse. The proxy must
+    # strip the browser's Accept-Encoding and let httpx negotiate for itself.
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(set())
+    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(
+                f"http://127.0.0.1:{dev_port}/api/tables/foo",
+                headers={"Accept-Encoding": "br, gzip, zstd, x-browser-sentinel"},
+            )
+        assert r.status_code == 200
+        upstream_ae = record["other_accept_encoding"] or ""
+        assert "x-browser-sentinel" not in upstream_ae
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()
