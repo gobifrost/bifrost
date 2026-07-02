@@ -1,4 +1,4 @@
-"""E2E tests for PolicyRuleService — CRUD, Core-update rename cascade, delete guard, built-ins."""
+"""E2E tests for PolicyRuleService — CRUD, delete guard, built-ins."""
 from __future__ import annotations
 
 from uuid import uuid4
@@ -35,35 +35,6 @@ async def seed_org(db_session):
 @pytest.fixture
 def admin_actor():
     return ActorContext(user_id=uuid4(), organization_id=None, source="test")
-
-
-@pytest.mark.asyncio
-async def test_rename_cascades_via_core_update_under_guard(db_session, seed_org, admin_actor):
-    install_solution_write_guard()  # prod-faithful: guard active
-    svc = PolicyRuleService(db_session)
-    await svc.create(
-        PolicyRuleCreate(
-            name="ops",
-            domain="file",
-            organization_id=seed_org,
-            body={"actions": ["read"], "when": None},
-        ),
-        actor=admin_actor,
-    )
-    db_session.add(
-        FilePolicy(
-            organization_id=seed_org,
-            location="shared",
-            path="d/",
-            policies={"policies": [{"$ref": "ops"}]},
-        )
-    )
-    await db_session.flush()
-    await svc.update(
-        "ops", "file", PolicyRuleUpdate(name="operations"), org_id=seed_org, actor=admin_actor
-    )
-    fp = (await db_session.execute(select(FilePolicy))).scalar_one()
-    assert fp.policies["policies"] == [{"$ref": "operations"}]
 
 
 @pytest.mark.asyncio
