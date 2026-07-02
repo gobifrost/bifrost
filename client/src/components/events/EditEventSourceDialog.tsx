@@ -143,7 +143,7 @@ function EditEventSourceDialogContent({
 			const response = await authFetch("/api/schedules/validate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ expression: expr }),
+				body: JSON.stringify({ expression: expr, timezone }),
 			});
 			const data = await response.json();
 			setCronValidation(data);
@@ -154,7 +154,7 @@ function EditEventSourceDialogContent({
 				error: "Unable to connect to validation service",
 			});
 		}
-	}, []);
+	}, [timezone]);
 
 	useEffect(() => {
 		if (!cronExpression.trim()) {
