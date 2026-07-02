@@ -25,6 +25,20 @@ class FileTier:
     solution_id: UUID | None
 
 
+def parse_ctx_solution_id(ctx) -> UUID | None:
+    """Parse ``ctx.solution_id`` (set by auth) into a UUID, or None.
+
+    THE single parse point — routers must not re-implement this
+    (tests/unit/test_solution_scope_enforcement.py)."""
+    raw = getattr(ctx, "solution_id", None)
+    if raw is None:
+        return None
+    try:
+        return UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
 async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution | None:
     solution = await db.get(Solution, solution_id)
     if solution is None or solution.status != "active":
@@ -75,11 +89,9 @@ async def solution_context_id(
     calls via ``X-Bifrost-App``. The app-id fallback keeps older call sites and
     unit tests that construct contexts manually on the same resolver path.
     """
-    if ctx.solution_id:
-        try:
-            return UUID(str(ctx.solution_id))
-        except ValueError:
-            return None
+    ctx_scope = parse_ctx_solution_id(ctx)
+    if ctx_scope is not None:
+        return ctx_scope
 
     if not ctx.app_id:
         return None
@@ -220,7 +232,9 @@ async def file_read_tiers(
     if location == "workspace":
         raise ValueError("workspace is not available in solution file context")
 
-    solution_id = UUID(str(ctx.solution_id))
+    solution_id = parse_ctx_solution_id(ctx)
+    if solution_id is None:
+        return []
     solution = await db.get(Solution, solution_id)
     if solution is None:
         return []

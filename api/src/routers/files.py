@@ -298,13 +298,11 @@ def _resolve_effective_scope(
 def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
     """Return the install UUID from context when present. Used to forward
     solution_id to policy and metadata helpers so the solution-tier policy
-    cascade (Task 3) and the C2 metadata column are both correct."""
-    if ctx.solution_id is None:
-        return None
-    try:
-        return UUID(str(ctx.solution_id))
-    except (ValueError, AttributeError, TypeError):
-        return None
+    cascade (Task 3) and the C2 metadata column are both correct. Canonical
+    parse lives in services/solution_scope.py."""
+    from src.services.solution_scope import parse_ctx_solution_id
+
+    return parse_ctx_solution_id(ctx)
 
 
 async def _install_org_id(ctx: Context, solution_id: UUID | None) -> UUID | None:

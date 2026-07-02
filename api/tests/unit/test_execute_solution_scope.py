@@ -8,12 +8,25 @@ from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.applications import Application
 from src.models.orm.forms import Form
-from src.services.solution_scope import derive_execution_solution_scope
+from src.services.solution_scope import (
+    derive_execution_solution_scope,
+    parse_ctx_solution_id,
+)
 
 
 def _no_ctx() -> SimpleNamespace:
     """A request context with no install scope (plain platform caller)."""
     return SimpleNamespace(solution_id=None, app_id=None)
+
+
+class TestParseCtxSolutionId:
+    def test_parses_valid_uuid(self):
+        sid = uuid4()
+        assert parse_ctx_solution_id(SimpleNamespace(solution_id=str(sid))) == sid
+
+    def test_none_and_garbage_yield_none(self):
+        assert parse_ctx_solution_id(SimpleNamespace(solution_id=None)) is None
+        assert parse_ctx_solution_id(SimpleNamespace(solution_id="nope")) is None
 
 
 async def _org(db):
