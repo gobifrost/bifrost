@@ -467,9 +467,33 @@ the name cascade:
   - A solution **workflow** carries `ctx.solution_id`; the SDK appends
     `?solution=` to name lookups (`ExecutionContext.solution_id`,
     `_execution_context.py`).
-  - A solution **app** sends `X-Bifrost-App`; the router maps it to
-    `Application.solution_id` (`_resolve_solution_table_by_name` in
-    `routers/tables.py`).
+  - A solution **app** sends `X-Bifrost-App`; auth maps it to
+    `Application.solution_id` and routers consume it via
+    `services/solution_scope.py` (e.g. `resolve_solution_table_by_name`
+    used by `routers/tables.py`).
+
+### How the install id is DERIVED (the request side)
+
+Symmetric to gate 1's `resolve_effective_scope` for org scope, install
+scope has exactly one derivation chain — enforced by
+`tests/unit/test_solution_scope_enforcement.py`:
+
+- **`core/auth.py` is the ONLY parser of raw transport signals.** It reads
+  `?solution=` and `X-Bifrost-App`, validates them (UUID shape, active
+  install, header/param agreement), and sets `ctx.solution_id` /
+  `ctx.app_id` on the request's ExecutionContext.
+- **`services/solution_scope.py` is the ONLY consumer API.**
+  `parse_ctx_solution_id(ctx)` parses the context value;
+  `solution_context_id(db, ctx)` adds the app→install fallback;
+  `derive_execution_solution_scope(db, ctx, ...)` adds workflow-execute's
+  deprecated body-field compat tiers (body `solution_id` > `form_id` >
+  `app_id`). Routers call these; they never parse signals themselves.
+- **Body fields on `/api/workflows/execute` are DEPRECATED compat.** Live
+  SDKs still send them; removing them is a CONTRACT_VERSION bump.
+- **The worker path derives scope from the workflow's own DB row**
+  (`jobs/consumers/workflow_execution.py` → `workflow_data["solution_id"]`),
+  NOT from request signals — execution identity is the row's, by design.
+  Forms likewise use their own stored `form.solution_id` (owned scope).
 
 ### How the context is plumbed
 

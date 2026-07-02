@@ -12,6 +12,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import sqlalchemy as sa
 from croniter import croniter
@@ -24,6 +25,41 @@ from src.models.orm.events import Event, EventDelivery, EventSource
 from src.repositories.events import EventSubscriptionRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _get_schedule_zone(timezone_name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown timezone: {timezone_name}") from exc
+
+
+def _next_interval_seconds(cron_expression: str, now_utc: datetime, timezone_name: str) -> float:
+    zone = _get_schedule_zone(timezone_name)
+    local_now = now_utc.astimezone(zone)
+    cron = croniter(cron_expression, local_now)
+    first_run = cron.get_next(datetime)
+    second_run = cron.get_next(datetime)
+    return (
+        second_run.astimezone(timezone.utc)
+        - first_run.astimezone(timezone.utc)
+    ).total_seconds()
+
+
+def _latest_due_run_utc(
+    cron_expression: str,
+    now_utc: datetime,
+    timezone_name: str,
+) -> datetime | None:
+    zone = _get_schedule_zone(timezone_name)
+    local_now = now_utc.astimezone(zone)
+    cron_iter = croniter(cron_expression, local_now)
+    prev_run = cron_iter.get_prev(datetime)
+    prev_run_utc = prev_run.astimezone(timezone.utc)
+    seconds_since_last = (now_utc - prev_run_utc).total_seconds()
+    if seconds_since_last >= 60:
+        return None
+    return prev_run_utc
 
 
 async def process_schedule_sources() -> dict[str, Any]:
@@ -65,7 +101,7 @@ async def process_schedule_sources() -> dict[str, Any]:
             sources = result.unique().scalars().all()
 
             results["total_sources"] = len(sources)
-            now = datetime.now(timezone.utc)
+            now_utc = datetime.now(timezone.utc)
 
             for source in sources:
                 try:
@@ -89,10 +125,11 @@ async def process_schedule_sources() -> dict[str, Any]:
 
                     # Check if schedule interval is too frequent
                     try:
-                        cron = croniter(cron_expression, now)
-                        first_run = cron.get_next(datetime)
-                        second_run = cron.get_next(datetime)
-                        interval_seconds = (second_run - first_run).total_seconds()
+                        interval_seconds = _next_interval_seconds(
+                            cron_expression,
+                            now_utc,
+                            ss.timezone,
+                        )
 
                         if interval_seconds < 300:  # Less than 5 minutes
                             logger.warning(
@@ -106,10 +143,24 @@ async def process_schedule_sources() -> dict[str, Any]:
 
                     # Check if the most recent cron match is within our polling window.
                     # We poll every 1 minute, so check if the last match was < 60s ago.
-                    cron_iter = croniter(cron_expression, now)
-                    prev_run = cron_iter.get_prev(datetime)
-                    seconds_since_last = (now - prev_run).total_seconds()
-                    if seconds_since_last >= 60:
+                    try:
+                        scheduled_at_utc = _latest_due_run_utc(
+                            cron_expression,
+                            now_utc,
+                            ss.timezone,
+                        )
+                    except ValueError as e:
+                        logger.warning(
+                            f"Invalid timezone for schedule source {source.id}: {ss.timezone}"
+                        )
+                        results["errors"].append({
+                            "source_id": str(source.id),
+                            "source_name": source.name,
+                            "error": str(e),
+                        })
+                        continue
+
+                    if scheduled_at_utc is None:
                         continue  # Last match was outside our polling window
 
                     # Check overlap policy: skip if a prior delivery is still active.
@@ -158,11 +209,11 @@ async def process_schedule_sources() -> dict[str, Any]:
                         id=uuid.uuid4(),
                         event_source_id=source.id,
                         event_type="schedule.fired",
-                        received_at=now,
+                        received_at=scheduled_at_utc,
                         data={
                             "cron_expression": cron_expression,
                             "timezone": ss.timezone,
-                            "scheduled_time": now.isoformat(),
+                            "scheduled_time": scheduled_at_utc.isoformat(),
                         },
                         status=EventStatus.PROCESSING,
                     )

@@ -255,7 +255,13 @@ async def test_other_api_path_proxies_with_org_header():
         await up_runner.cleanup()
 
 
-async def test_api_proxy_forces_identity_encoding():
+async def test_browser_accept_encoding_is_not_forwarded_upstream():
+    # Browsers advertise encodings (br, zstd) that httpx may not be able to
+    # decode. If the proxy forwards the browser's Accept-Encoding, upstream may
+    # respond with one of those, httpx passes the compressed bytes through, and
+    # _passthrough_headers drops Content-Encoding — so the browser gets
+    # compressed bytes labeled as plain JSON and fails to parse. The proxy must
+    # strip the browser's Accept-Encoding and let httpx negotiate for itself.
     record = {}
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
@@ -272,7 +278,7 @@ async def test_api_proxy_forces_identity_encoding():
         async with httpx.AsyncClient() as c:
             r = await c.get(
                 f"http://127.0.0.1:{dev_port}/api/auth/me",
-                headers={"Accept-Encoding": "br, gzip"},
+                headers={"Accept-Encoding": "br, gzip, zstd, x-browser-sentinel"},
             )
         assert r.status_code == 200
         assert record["other_accept_encoding"] == "identity"

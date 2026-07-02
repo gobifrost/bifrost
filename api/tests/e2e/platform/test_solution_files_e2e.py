@@ -234,6 +234,40 @@ def _install_zip(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.e2e
+class TestFilePolicyDenialDiagnostics:
+    async def test_denied_write_403_detail_identifies_scope(
+        self, e2e_client, platform_admin, alice_user, db_session
+    ):
+        """A policy denial must identify itself: action, location, and the
+        derived install scope in the 403 detail — a scope-loss bug then reads
+        as `solution_id: null` instead of a bare 'Forbidden'."""
+        headers = platform_admin.headers
+        slug = f"deny-diag-{uuid.uuid4().hex[:8]}"
+        sol = _create_solution(e2e_client, headers, slug)
+        sol_id = sol["id"]
+        _deploy_solution(e2e_client, headers, sol_id, file_locations=["solutions"])
+        await _declare_solution_file_location(db_session, sol_id, "solutions")
+
+        # alice is a regular user: admin_bypass denies her the write.
+        r = e2e_client.post(
+            f"/api/files/write?solution={sol_id}",
+            headers=alice_user.headers,
+            json={
+                "location": "solutions",
+                "path": "deny/probe.txt",
+                "content": "x",
+                "mode": "cloud",
+            },
+        )
+        assert r.status_code == 403, r.text
+        detail = r.json()["detail"]
+        assert detail["action"] == "write"
+        assert detail["location"] == "solutions"
+        assert detail["solution_id"] == sol_id
+        assert "denied" in detail["message"].lower()
+
+
+@pytest.mark.e2e
 class TestSolutionInactiveLifecycleCapstone:
     """Capstone: full inactive-lifecycle arc — deploy / uninstall / reactivate / export / hard-delete."""
 

@@ -198,7 +198,7 @@ def _print_http_error(exc: httpx.HTTPStatusError) -> _ExitCode:
     return 1
 
 
-def _handle_exception(exc: BaseException) -> _ExitCode:
+def _handle_exception(exc: Exception) -> _ExitCode:
     if isinstance(exc, RefNotFoundError):
         _emit_error(
             {"error": "ref_not_found", "kind": exc.kind, "value": exc.value},
@@ -227,6 +227,12 @@ def _handle_exception(exc: BaseException) -> _ExitCode:
             [str(exc)],
         )
         return 1
+    if isinstance(exc, RuntimeError) and "Multiple Bifrost connections" in str(exc):
+        _emit_error(
+            {"error": "connection_not_selected", "message": str(exc)},
+            [str(exc)],
+        )
+        return 1
     raise exc
 
 
@@ -250,7 +256,7 @@ def run_async(coro_fn: Callable[..., Coroutine[Any, Any, Any]]) -> Callable[...,
             asyncio.run(coro_fn(*args, **kwargs))
         except SystemExit:
             raise
-        except BaseException as exc:  # noqa: BLE001 - surfaced as exit codes
+        except Exception as exc:
             code = _handle_exception(exc)
             sys.exit(code)
 
@@ -287,7 +293,13 @@ def pass_resolver(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        client = BifrostClient.get_instance(require_auth=True)
+        try:
+            client = BifrostClient.get_instance(require_auth=True)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            code = _handle_exception(exc)
+            sys.exit(code)
         resolver = RefResolver(client)
         kwargs["client"] = client
         kwargs["resolver"] = resolver

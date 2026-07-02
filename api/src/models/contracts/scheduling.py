@@ -44,6 +44,10 @@ class AsyncExecution(BaseModel):
 class CronValidationRequest(BaseModel):
     """Request model for CRON validation"""
     expression: str = Field(..., description="CRON expression to validate")
+    timezone: str = Field(
+        default="UTC",
+        description="Timezone used to evaluate the CRON expression",
+    )
 
 
 class CronValidationResponse(BaseModel):

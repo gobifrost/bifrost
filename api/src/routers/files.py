@@ -298,13 +298,11 @@ def _resolve_effective_scope(
 def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
     """Return the install UUID from context when present. Used to forward
     solution_id to policy and metadata helpers so the solution-tier policy
-    cascade (Task 3) and the C2 metadata column are both correct."""
-    if ctx.solution_id is None:
-        return None
-    try:
-        return UUID(str(ctx.solution_id))
-    except (ValueError, AttributeError, TypeError):
-        return None
+    cascade (Task 3) and the C2 metadata column are both correct. Canonical
+    parse lives in services/solution_scope.py."""
+    from src.services.solution_scope import parse_ctx_solution_id
+
+    return parse_ctx_solution_id(ctx)
 
 
 async def _install_org_id(ctx: Context, solution_id: UUID | None) -> UUID | None:
@@ -426,7 +424,20 @@ async def _require_file_policy(
         organization_id=organization_id,
     )
     if not allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        # A policy denial must identify its scope inputs (no user/token data —
+        # every field is caller-supplied or derived from it): a scope-loss bug
+        # reads as solution_id=null instead of a bare "Forbidden".
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "File policy denied",
+                "action": action,
+                "location": location,
+                "path": path,
+                "scope": scope,
+                "solution_id": str(solution_id) if solution_id else None,
+            },
+        )
 
 
 async def _require_declared_solution_file_location(

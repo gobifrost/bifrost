@@ -1,4 +1,5 @@
 """A solution form's /execute resolves the install's own workflow, not _repo/."""
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -8,7 +9,11 @@ from src.models.orm.solutions import Solution
 from src.models.orm.forms import Form
 from src.models.orm.workflows import Workflow
 from src.repositories.workflows import WorkflowRepository
-from src.routers.workflows import _derive_solution_scope
+from src.services.solution_scope import derive_execution_solution_scope
+
+
+def _no_ctx() -> SimpleNamespace:
+    return SimpleNamespace(solution_id=None, app_id=None)
 
 
 async def _org(db):
@@ -43,7 +48,9 @@ class TestExecuteSolutionScopeE2E:
         await db.flush()
 
         # Router sequence: derive scope from form_id, then resolve.
-        scope = await _derive_solution_scope(db, solution_id=None, form_id=str(form.id), app_id=None)
+        scope = await derive_execution_solution_scope(
+            db, _no_ctx(), solution_id=None, form_id=str(form.id), app_id=None
+        )
         assert scope == sol.id
         repo = WorkflowRepository(db, org_id=org, is_superuser=True)
         got = await repo.resolve("workflows/foo.py::main", solution_scope=scope)
@@ -63,7 +70,9 @@ class TestExecuteSolutionScopeE2E:
         db.add(form)
         await db.flush()
 
-        scope = await _derive_solution_scope(db, solution_id=None, form_id=str(form.id), app_id=None)
+        scope = await derive_execution_solution_scope(
+            db, _no_ctx(), solution_id=None, form_id=str(form.id), app_id=None
+        )
         assert scope is None
         repo = WorkflowRepository(db, org_id=org, is_superuser=True)
         got = await repo.resolve("workflows/bar.py::main", solution_scope=scope)

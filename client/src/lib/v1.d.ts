@@ -12459,6 +12459,12 @@ export interface components {
              * @description CRON expression to validate
              */
             expression: string;
+            /**
+             * Timezone
+             * @description Timezone used to evaluate the CRON expression
+             * @default UTC
+             */
+            timezone: string;
         };
         /**
          * CronValidationResponse

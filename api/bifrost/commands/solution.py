@@ -275,12 +275,31 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     _ = app_dir
 
 
+def _scaffold_api_url(api_url: str | None) -> str:
+    """Resolve the instance URL to bake into a scaffolded app.
+
+    Explicit flag > workspace env > the authenticated client's URL. The bare
+    localhost:8000 fallback is a last resort for logged-out offline scaffolds —
+    baking it while logged in against a real instance broke the app's
+    `npm install` (the SDK dependency pointed at a dead port; drive finding,
+    2026-07-02)."""
+    resolved = api_url or os.getenv("BIFROST_API_URL")
+    if resolved:
+        return resolved
+    try:
+        return BifrostClient.get_instance(require_auth=True).api_url
+    except RuntimeError:
+        # Not logged in — offline scaffold; main.tsx surfaces the
+        # unauthenticated state at dev time rather than failing here.
+        return "http://localhost:8000"
+
+
 def _scaffold_app(slug: str, path: str | None, api_url: str | None) -> pathlib.Path:
     """Scaffold a standalone_v2 app skeleton; return its dir. Shared by
     ``scaffold-app`` and ``migrate-app`` so the two never drift."""
     import uuid as _uuid
 
-    url = api_url or os.getenv("BIFROST_API_URL") or "http://localhost:8000"
+    url = _scaffold_api_url(api_url)
 
     # Anchor everything at the SOLUTION ROOT (the dir holding the descriptor),
     # found by walking up from cwd. Guessing the root from the app dir
@@ -549,9 +568,11 @@ function Home() {
   //   useWorkflowQuery(ref)    → READ: auto-runs on mount, has { data, refresh }.
   //   useWorkflowMutation(ref) → ACTION: runs on mutate(), has { mutate }.
   // This sample is a button (an action), so it uses the mutation hook. The ref
-  // is a workflow UUID or a portable `path::function` ref (e.g.
-  // "functions/hello.py::main", shipped with this scaffold). Bare names are NOT
-  // resolvable — names aren't unique, so the execute endpoint 404s on them.
+  // is a workflow UUID, a portable `path::function` ref (e.g.
+  // "functions/hello.py::main", shipped with this scaffold), or a workflow
+  // name — all resolve to THIS install's own workflow. Prefer `path::function`:
+  // it's the shape `bifrost solution start` runs LOCALLY (name/UUID refs
+  // proxy to the deployed copy).
   const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
   return (
     <main style={{ padding: 24 }}>
@@ -1998,6 +2019,31 @@ def export_cmd(
         raise SystemExit(rc)
 
 
+def _vite_child_env(
+    base_env: dict[str, str],
+    *,
+    app_id: str,
+    org_id: str,
+    proxy_origin: str,
+    access_token: str,
+) -> dict[str, str]:
+    """Environment for the `solution start` Vite child.
+
+    The bundle-visible BIFROST_API_URL is the LOCAL PROXY origin, never the
+    upstream API: the proxy is where install scope is injected (?solution=,
+    auth, app header) and where local path::fn refs run in-process. Pointing
+    the bundle at the upstream bypasses all of that — local workflow edits
+    silently don't run, install-owned tables 404, declared-location file
+    writes 403 (drive finding, 2026-07-02).
+    """
+    env = dict(base_env)
+    env["VITE_BIFROST_APP_ID"] = app_id
+    env["VITE_BIFROST_ORG_ID"] = org_id
+    env["BIFROST_API_URL"] = proxy_origin
+    env["BIFROST_ACCESS_TOKEN"] = access_token
+    return env
+
+
 @solution_group.command(name="start", help="Run the app's dev server + local workflows (one origin).")
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
@@ -2056,11 +2102,13 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
         click.echo("Installing app dependencies (npm install)…")
         subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
 
-    vite_env = dict(os.environ)
-    vite_env["VITE_BIFROST_APP_ID"] = chosen.app_id
-    vite_env["VITE_BIFROST_ORG_ID"] = (org_info or {}).get("id", "")
-    vite_env["BIFROST_API_URL"] = client.api_url
-    vite_env["BIFROST_ACCESS_TOKEN"] = client._access_token
+    vite_env = _vite_child_env(
+        dict(os.environ),
+        app_id=chosen.app_id,
+        org_id=(org_info or {}).get("id", ""),
+        proxy_origin=f"http://127.0.0.1:{port}",
+        access_token=client._access_token,
+    )
 
     vite_port = port + 1
     # Run `npm run dev` in its OWN process group (start_new_session) so teardown

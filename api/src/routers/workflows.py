@@ -62,6 +62,7 @@ from src.models.orm.applications import Application
 from src.models.orm.agents import Agent, AgentTool
 from src.models.orm.users import Role
 from src.services.workflow_validation import _extract_relative_path
+from src.services.solution_scope import derive_execution_solution_scope
 from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
     assert_not_solution_managed,
@@ -697,51 +698,6 @@ async def _insert_scheduled_execution(
     return exec_id
 
 
-async def _derive_solution_scope(
-    db,
-    *,
-    solution_id: str | None,
-    form_id: str | None,
-    app_id: str | None,
-) -> "UUID | None":
-    """Resolve the calling install's scope for a path::fn workflow ref.
-
-    Precedence: explicit solution_id (a Solution form/agent that knows its
-    own install) > form_id (Form.solution_id) > app_id (Application.solution_id).
-    A bad/foreign/missing reference yields None → no narrowing (the path ref
-    resolves the _repo/ row, or 404s for a scoped caller). Each source is
-    client-supplied; the resolver's own org gate (cascade scope) prevents a
-    foreign scope from reaching another org's workflow.
-    """
-    from src.models.orm.forms import Form
-    from src.models.orm.applications import Application
-
-    if solution_id:
-        try:
-            return UUID(solution_id)
-        except ValueError:
-            return None
-    if form_id:
-        try:
-            form_uuid = UUID(form_id)
-        except ValueError:
-            return None
-        return (
-            await db.execute(select(Form.solution_id).where(Form.id == form_uuid))
-        ).scalar_one_or_none()
-    if app_id:
-        try:
-            app_uuid = UUID(app_id)
-        except ValueError:
-            return None
-        return (
-            await db.execute(
-                select(Application.solution_id).where(Application.id == app_uuid)
-            )
-        ).scalar_one_or_none()
-    return None
-
-
 @router.post(
     "/execute",
     response_model=WorkflowExecutionResponse,
@@ -802,8 +758,9 @@ async def execute_workflow(
     # resolves to THIS install's own workflow, not a sibling install's that
     # shares the path (Codex #8 P1) nor the bare _repo/ one. solution_id (a
     # form/agent) > form_id > app_id. A bad/foreign ref yields no scope.
-    solution_scope = await _derive_solution_scope(
+    solution_scope = await derive_execution_solution_scope(
         db,
+        ctx,
         solution_id=request.solution_id,
         form_id=request.form_id,
         app_id=request.app_id,
@@ -816,9 +773,23 @@ async def execute_workflow(
             request.workflow_id, solution_scope=solution_scope
         )
         if not workflow:
+            # A resolution miss must identify its scope inputs: a dropped or
+            # wrong install scope reads as derived_solution_scope=null here
+            # instead of a mystery 404 (no user/token data — every field is
+            # caller-supplied or derived from it).
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workflow '{request.workflow_id}' not found",
+                detail={
+                    "message": f"Workflow '{request.workflow_id}' not found",
+                    "workflow_ref": request.workflow_id,
+                    "context_solution_id": ctx.solution_id,
+                    "request_solution_id": request.solution_id,
+                    "request_form_id": request.form_id,
+                    "request_app_id": request.app_id,
+                    "derived_solution_scope": (
+                        str(solution_scope) if solution_scope else None
+                    ),
+                },
             )
 
     # Authorization check
