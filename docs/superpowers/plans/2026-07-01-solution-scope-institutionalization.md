@@ -629,11 +629,15 @@ live in a shared org/global namespace and the resolvers never narrow:
 | **OAuth tokens** | no | **NO** — provider-keyed org→global cascade | all installs share the provider token |
 | **Agents (agent-LEVEL access)** | yes (`Agent.solution_id`) | **partial** — tool workflows scope via their own rows, but `agent.solution_id` never enters the run context (`agent_runs.py` enqueue, `consumers/agent_run.py`); agent-level SDK access (knowledge search) runs org-scoped; asymmetric with forms | a solution agent's own-surface reads are unscoped; a mis-bound foreign tool workflow runs at the foreign scope |
 
-Follow-on work (largest first): config value install tier (schema migration
-`Config.solution_id` + own-first tier in `merged_for_sdk`/`cli_get_config` +
-SDK client sends `?solution=` + Setup stamps the install + uninstall
-lifecycle + enforcement-test extension), connection per-install binding,
-agent-level scope propagation, knowledge install namespace (product call).
+**RULING (Jack, 2026-07-02): configs, integrations/connections, oauth, and
+knowledge are SHARED BY DESIGN** — org/global namespaces; a Solution
+*declares* what it needs (SolutionConfigSchema / SolutionConnectionSchema →
+Setup wizard) and consumes the shared instance-owned value. Agents scoping
+through their tool workflows' rows (not agent.solution_id) is also intended.
+The table above is the documented boundary of the install-scoped world, not
+a backlog. Known sharp edge to keep in mind (accepted): two solutions
+declaring the same config key / connection name in one scope share one
+value — declaration keys are effectively a shared vocabulary.
 
 ## Decision points for Jack (explicitly NOT decided by this plan)
 
