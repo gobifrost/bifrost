@@ -275,12 +275,31 @@ def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
     _ = app_dir
 
 
+def _scaffold_api_url(api_url: str | None) -> str:
+    """Resolve the instance URL to bake into a scaffolded app.
+
+    Explicit flag > workspace env > the authenticated client's URL. The bare
+    localhost:8000 fallback is a last resort for logged-out offline scaffolds —
+    baking it while logged in against a real instance broke the app's
+    `npm install` (the SDK dependency pointed at a dead port; drive finding,
+    2026-07-02)."""
+    resolved = api_url or os.getenv("BIFROST_API_URL")
+    if resolved:
+        return resolved
+    try:
+        return BifrostClient.get_instance(require_auth=True).api_url
+    except RuntimeError:
+        # Not logged in — offline scaffold; main.tsx surfaces the
+        # unauthenticated state at dev time rather than failing here.
+        return "http://localhost:8000"
+
+
 def _scaffold_app(slug: str, path: str | None, api_url: str | None) -> pathlib.Path:
     """Scaffold a standalone_v2 app skeleton; return its dir. Shared by
     ``scaffold-app`` and ``migrate-app`` so the two never drift."""
     import uuid as _uuid
 
-    url = api_url or os.getenv("BIFROST_API_URL") or "http://localhost:8000"
+    url = _scaffold_api_url(api_url)
 
     # Anchor everything at the SOLUTION ROOT (the dir holding the descriptor),
     # found by walking up from cwd. Guessing the root from the app dir
