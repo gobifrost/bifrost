@@ -568,9 +568,11 @@ function Home() {
   //   useWorkflowQuery(ref)    → READ: auto-runs on mount, has { data, refresh }.
   //   useWorkflowMutation(ref) → ACTION: runs on mutate(), has { mutate }.
   // This sample is a button (an action), so it uses the mutation hook. The ref
-  // is a workflow UUID or a portable `path::function` ref (e.g.
-  // "functions/hello.py::main", shipped with this scaffold). Bare names are NOT
-  // resolvable — names aren't unique, so the execute endpoint 404s on them.
+  // is a workflow UUID, a portable `path::function` ref (e.g.
+  // "functions/hello.py::main", shipped with this scaffold), or a workflow
+  // name — all resolve to THIS install's own workflow. Prefer `path::function`:
+  // it's the shape `bifrost solution start` runs LOCALLY (name/UUID refs
+  // proxy to the deployed copy).
   const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
   return (
     <main style={{ padding: 24 }}>
