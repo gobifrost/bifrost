@@ -215,6 +215,8 @@ class FilePolicyPublic(BaseModel):
     location: str
     path: str
     policies: FilePolicies
+    # Non-null for deploy-owned solution-tier rows (read-only via CRUD).
+    solution_id: str | None = None
 
 
 class FilePolicyListResponse(BaseModel):
@@ -332,6 +334,29 @@ def _organization_id_for_policy(location: str, scope: str | None) -> UUID | None
     if scope is None or scope == "global":
         return None
     return UUID(scope)
+
+
+def _parse_solution_param(solution: str | None) -> UUID | None:
+    """Parse the admin ``solution`` query param (an install UUID) or None.
+
+    Used by the SUPERUSER-only policy-management endpoints to address an
+    install's deploy-owned solution tier explicitly (reads only — writes are
+    refused as deploy-owned)."""
+    if solution is None or solution == "":
+        return None
+    try:
+        return UUID(solution)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid solution id: {solution!r}",
+        ) from exc
+
+
+_SOLUTION_POLICY_READONLY = (
+    "Solution-tier file policies are managed by deployment methods and cannot be "
+    "edited directly."
+)
 
 
 async def _authorize_file_policy(
@@ -533,6 +558,7 @@ def _policy_public(row) -> FilePolicyPublic:
         location=row.location,
         path=row.path,
         policies=FilePolicies.model_validate(row.policies),
+        solution_id=str(row.solution_id) if getattr(row, "solution_id", None) else None,
     )
 
 
@@ -592,10 +618,23 @@ async def list_file_policies(
     location: str | None = Query(default=None),
     scope: str | None = Query(default=None),
     organization_id: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FilePolicyListResponse:
-    """List file policies for a location and optional org scope."""
+    """List file policies for a location and optional org/solution scope.
+
+    ``solution`` (an install UUID) lists that install's deploy-owned solution
+    tier — admins may SEE these; edits stay blocked (deploy-owned)."""
     from src.services.file_policy_service import FilePolicyService
+
+    solution_id = _parse_solution_param(solution)
+    if solution_id is not None:
+        rows = await FilePolicyService(db).list_policies(
+            organization_id=None,
+            location=location,
+            solution_id=solution_id,
+        )
+        return FilePolicyListResponse(policies=[_policy_public(row) for row in rows])
 
     target_scope = organization_id if organization_id is not None else scope
     try:
@@ -708,10 +747,24 @@ async def get_file_policy(
     user: CurrentSuperuser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FilePolicyPublic:
-    """Get the exact file policy for a location/path prefix."""
+    """Get the exact file policy for a location/path prefix.
+
+    ``solution`` reads the install's deploy-owned solution tier (read-only)."""
     from src.services.file_policy_service import FilePolicyService
+
+    solution_id = _parse_solution_param(solution)
+    if solution_id is not None:
+        row = await FilePolicyService(db).get_solution_policy_exact(
+            solution_id=solution_id,
+            location=location,
+            path=unquote(policy_path).strip("/"),
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File policy not found")
+        return _policy_public(row)
 
     try:
         org_id = _organization_id_for_policy(location, scope)
@@ -735,10 +788,19 @@ async def set_file_policy(
     user: CurrentSuperuser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FilePolicyPublic:
-    """Create or replace the file policy for a location/path prefix."""
+    """Create or replace the file policy for a location/path prefix.
+
+    Solution-tier rows (``solution`` set) are deploy-owned and refused (409)."""
     from src.services.file_policy_service import FilePolicyService
+
+    if _parse_solution_param(solution) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_SOLUTION_POLICY_READONLY,
+        )
 
     try:
         org_id = _organization_id_for_policy(location, scope)
@@ -782,10 +844,19 @@ async def delete_file_policy(
     user: CurrentSuperuser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete the exact file policy for a location/path prefix."""
+    """Delete the exact file policy for a location/path prefix.
+
+    Solution-tier rows (``solution`` set) are deploy-owned and refused (409)."""
     from src.services.file_policy_service import FilePolicyService
+
+    if _parse_solution_param(solution) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_SOLUTION_POLICY_READONLY,
+        )
 
     try:
         org_id = _organization_id_for_policy(location, scope)

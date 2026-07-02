@@ -2535,7 +2535,10 @@ export interface paths {
         };
         /**
          * List File Policies
-         * @description List file policies for a location and optional org scope.
+         * @description List file policies for a location and optional org/solution scope.
+         *
+         *     ``solution`` (an install UUID) lists that install's deploy-owned solution
+         *     tier — admins may SEE these; edits stay blocked (deploy-owned).
          */
         get: operations["list_file_policies_api_files_policies_get"];
         put?: never;
@@ -2598,17 +2601,23 @@ export interface paths {
         /**
          * Get File Policy
          * @description Get the exact file policy for a location/path prefix.
+         *
+         *     ``solution`` reads the install's deploy-owned solution tier (read-only).
          */
         get: operations["get_file_policy_api_files_policies__policy_path__get"];
         /**
          * Set File Policy
          * @description Create or replace the file policy for a location/path prefix.
+         *
+         *     Solution-tier rows (``solution`` set) are deploy-owned and refused (409).
          */
         put: operations["set_file_policy_api_files_policies__policy_path__put"];
         post?: never;
         /**
          * Delete File Policy
          * @description Delete the exact file policy for a location/path prefix.
+         *
+         *     Solution-tier rows (``solution`` set) are deploy-owned and refused (409).
          */
         delete: operations["delete_file_policy_api_files_policies__policy_path__delete"];
         options?: never;
@@ -14852,6 +14861,8 @@ export interface components {
             /** Path */
             path: string;
             policies: components["schemas"]["FilePolicies"];
+            /** Solution Id */
+            solution_id?: string | null;
         };
         /** FilePolicyRule */
         FilePolicyRule: {
@@ -28392,6 +28403,7 @@ export interface operations {
                 location?: string | null;
                 scope?: string | null;
                 organization_id?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path?: never;
@@ -28490,6 +28502,7 @@ export interface operations {
             query?: {
                 location?: string;
                 scope?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path: {
@@ -28524,6 +28537,7 @@ export interface operations {
             query?: {
                 location?: string;
                 scope?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path: {
@@ -28562,6 +28576,7 @@ export interface operations {
             query?: {
                 location?: string;
                 scope?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path: {

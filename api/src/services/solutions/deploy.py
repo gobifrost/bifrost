@@ -279,6 +279,10 @@ class SolutionBundle:
     # (no client_id/secret). Declared from integrations.get("X") refs.
     connection_schemas: list[dict[str, Any]] = field(default_factory=list)
     file_locations: list[str] = field(default_factory=list)
+    # Solution-tier file policies. Each is a ManifestFilePolicy-shaped dict
+    # ({id, location, path, policies}); org/solution ids are scrubbed by the
+    # INSTALL view and re-stamped to the target install on deploy.
+    file_policies: list[dict[str, Any]] = field(default_factory=list)
     # Event/schedule triggers. Each is a ManifestEventSource-shaped dict (source
     # + nested schedule/webhook config + subscriptions). Webhook instance state
     # (external_id/state/expires_at) is scrubbed; the instance re-establishes it.
@@ -427,6 +431,10 @@ class SolutionDeployer:
             bundle.file_locations,
             make_error=SolutionDeployConflict,
         )
+        # File policies deploy AFTER locations so the seeded root admin_bypass
+        # (path="") already exists and is treated as an upsert target — never a
+        # double-insert. Uses the remapped bundle (install-unique ids).
+        await self._upsert_file_policies(solution, rb.file_policies)
         (
             wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
             claim_deleted,
@@ -560,6 +568,7 @@ class SolutionDeployer:
         claims = [copy.deepcopy(e) for e in bundle.claims]
         config_schemas = [copy.deepcopy(e) for e in bundle.config_schemas]
         events = [copy.deepcopy(e) for e in bundle.events]
+        file_policies = [copy.deepcopy(e) for e in bundle.file_policies]
 
         typed_entries: list[tuple[type, dict[str, Any]]] = [
             *[(Workflow, e) for e in workflows],
@@ -610,6 +619,16 @@ class SolutionDeployer:
                 if msub.get("id") is not None:
                     msub["id"] = str(solution_entity_id(sid, UUID(str(msub["id"]))))
 
+        # File policies carry no cross-refs (rules are referenced by portable
+        # ``$ref`` name), so only the own id is remapped for per-install
+        # uniqueness. The upsert keys on the natural key (solution_id, location,
+        # path), not the id — the remap just keeps the PK install-unique.
+        for mpolicy in file_policies:
+            if mpolicy.get("id") is not None:
+                mpolicy["id"] = str(
+                    solution_entity_id(sid, UUID(str(mpolicy["id"])))
+                )
+
         return SolutionBundle(
             solution=bundle.solution,
             python_files=bundle.python_files,
@@ -622,6 +641,7 @@ class SolutionDeployer:
             config_schemas=config_schemas,
             events=events,
             file_locations=list(bundle.file_locations),
+            file_policies=file_policies,
             version=bundle.version,
             readme=bundle.readme,
         )
@@ -1442,6 +1462,152 @@ class SolutionDeployer:
             await Upsert(
                 model=SolutionConfigSchema, id=cid, values=values, match_on="id"
             ).execute(self.db)
+
+    async def _upsert_file_policies(
+        self, solution: Solution, file_policies: list[dict[str, Any]]
+    ) -> None:
+        """Upsert this install's solution-tier file policies + sweep stale rows.
+
+        Runs AFTER :func:`reconcile_solution_file_locations`, which has already
+        seeded a root ``admin_bypass`` (``path=""``) for every declared location.
+        Each manifest entry is validated (``FilePolicies.model_validate``) and its
+        ``$ref``s are resolved against real rules (own-solution → org → global) so
+        a malformed AST or dangling ref is rejected at deploy, not at read time.
+
+        Persisted via **Core** insert/update (never ORM — the read-only guard is
+        always-on in prod), keyed on the natural key ``(solution_id, location,
+        path)``. A manifest ``path=""`` entry (a customized root policy) UPDATES
+        the seed row rather than double-inserting it.
+
+        Stale sweep: this install's solution-tier rows whose ``(location, path)``
+        is absent from the bundle are deleted — EXCEPT root seed rows
+        (``path=""``), which are owned by the file-location reconcile and must
+        survive for every declared location.
+        """
+        from bifrost.manifest import ManifestFilePolicy
+        from shared.policy_rules import (
+            PolicyRuleDomainMismatch,
+            PolicyRuleNotFound,
+            resolve_policy_refs,
+        )
+        from src.models.contracts.policies import FilePolicies
+        from src.models.orm.file_metadata import FilePolicy
+        from src.repositories.policy_rule import PolicyRuleRepository
+
+        sid = solution.id
+        org_id = solution.organization_id
+
+        # Two entries sharing a (location, path) in THIS bundle would collide on
+        # the solution-tier partial-unique index → IntegrityError/500. Catch it
+        # deterministically as a 409 naming the offending prefix.
+        seen: set[tuple[str, str]] = set()
+        for entry in file_policies:
+            key = (str(entry.get("location")), str(entry.get("path") or ""))
+            if key in seen:
+                raise SolutionDeployConflict(
+                    f"two file policies for location {key[0]!r} path {key[1]!r} in "
+                    f"this Solution bundle; file-policy prefixes must be unique "
+                    f"within an install"
+                )
+            seen.add(key)
+
+        ref_repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
+        present: set[tuple[str, str]] = set()
+
+        for entry in file_policies:
+            # The INSTALL view scrubs organization_id (portability); deploy sets
+            # it from the solution below, so default the omitted key to None for
+            # the manifest-model parse (which still validates the rest).
+            parse_entry = {"organization_id": None, **entry}
+            try:
+                mpolicy = ManifestFilePolicy(**parse_entry)
+            except ValidationError as exc:
+                raise SolutionDeployConflict(
+                    f"file policy {entry.get('id')!r} manifest invalid: {exc}"
+                ) from exc
+
+            location = mpolicy.location
+            path = mpolicy.path
+            # Validate + resolve refs on a deep copy so the PERSISTED doc keeps
+            # the {"$ref": name} form (resolving mutates in place).
+            try:
+                policy_model = FilePolicies.model_validate(
+                    {"policies": mpolicy.policies}
+                )
+            except ValidationError as exc:
+                raise SolutionDeployConflict(
+                    f"file policy {location!r}/{path!r} invalid: {exc}"
+                ) from exc
+            try:
+                await resolve_policy_refs(
+                    policy_model.model_copy(deep=True),
+                    repo=ref_repo,
+                    action_domain="file",
+                    solution_id=sid,
+                )
+            except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+                raise SolutionDeployConflict(
+                    f"file policy {location!r}/{path!r} ref unresolvable: {exc}"
+                ) from exc
+
+            doc = {"policies": mpolicy.policies}
+            # Upsert by natural key (solution_id, location, path). A matching row
+            # (incl. the seeded root path="") is UPDATED — never double-inserted.
+            existing_id = (
+                await self.db.execute(
+                    select(FilePolicy.id).where(
+                        FilePolicy.solution_id == sid,
+                        FilePolicy.location == location,
+                        FilePolicy.path == path,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_id is None:
+                await self.db.execute(
+                    insert(FilePolicy).values(
+                        id=UUID(mpolicy.id),
+                        organization_id=org_id,
+                        solution_id=sid,
+                        location=location,
+                        path=path,
+                        policies=doc,
+                    )
+                )
+            else:
+                await self.db.execute(
+                    update(FilePolicy)
+                    .where(FilePolicy.id == existing_id)
+                    .values(policies=doc)
+                )
+            present.add((location, path))
+
+        # Stale sweep: delete this install's solution-tier policies absent from
+        # the bundle, preserving root seed rows (path="") owned by the location
+        # reconcile.
+        existing_rows = (
+            await self.db.execute(
+                select(FilePolicy.location, FilePolicy.path).where(
+                    FilePolicy.solution_id == sid
+                )
+            )
+        ).all()
+        stale = [
+            (loc, pth)
+            for (loc, pth) in existing_rows
+            if pth != "" and (loc, pth) not in present
+        ]
+        for loc, pth in stale:
+            await self.db.execute(
+                delete(FilePolicy).where(
+                    FilePolicy.solution_id == sid,
+                    FilePolicy.location == loc,
+                    FilePolicy.path == pth,
+                )
+            )
+        if stale:
+            logger.info(
+                "Solution %s: deleted %d stale file_policies row(s)", sid, len(stale)
+            )
 
     async def _upsert_integration_shells(
         self, connection_schemas: list[dict[str, Any]]

@@ -199,15 +199,41 @@ class FilePolicyService:
         *,
         organization_id: UUID | None,
         location: str | None = None,
+        solution_id: UUID | None = None,
     ) -> list[FilePolicy]:
-        stmt = select(FilePolicy).where(
-            FilePolicy.organization_id == organization_id,
-            FilePolicy.solution_id.is_(None),
-        )
+        """List file policies.
+
+        When ``solution_id`` is set, return that install's solution-tier rows
+        (``solution_id == …``) so an admin can SEE the deploy-owned policies —
+        writes to them stay blocked (deploy-owned; see the router). Otherwise
+        list the org/global workspace tier (``solution_id IS NULL``).
+        """
+        if solution_id is not None:
+            stmt = select(FilePolicy).where(FilePolicy.solution_id == solution_id)
+        else:
+            stmt = select(FilePolicy).where(
+                FilePolicy.organization_id == organization_id,
+                FilePolicy.solution_id.is_(None),
+            )
         if location is not None:
             stmt = stmt.where(FilePolicy.location == location)
         stmt = stmt.order_by(FilePolicy.location, FilePolicy.path)
         return list((await self.db.execute(stmt)).scalars().all())
+
+    async def get_solution_policy_exact(
+        self,
+        *,
+        solution_id: UUID,
+        location: str,
+        path: str,
+    ) -> FilePolicy | None:
+        """Fetch one solution-tier policy by natural key (read-only surface)."""
+        stmt = select(FilePolicy).where(
+            FilePolicy.solution_id == solution_id,
+            FilePolicy.location == location,
+            FilePolicy.path == path,
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def get_policy_exact(
         self,

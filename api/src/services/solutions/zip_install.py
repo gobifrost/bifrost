@@ -141,6 +141,10 @@ class PreviewResult:
     claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
     file_locations: list[str] = field(default_factory=list)
+    # Solution-tier file policies read from .bifrost/file-policies.yaml. Each is a
+    # ManifestFilePolicy-shaped {id, location, path, policies} dict; deploy
+    # re-stamps solution_id and upserts by (solution_id, location, path).
+    file_policies: list[dict[str, Any]] = field(default_factory=list)
     # Connection declarations read from .bifrost/connections.yaml (Task 14b).
     # Each: {integration_name, template, position}. Install pre-creates an empty
     # integration shell and persists a SolutionConnectionSchema row from each.
@@ -194,6 +198,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         _collect_connection_schemas,
         _collect_events,
         _collect_file_locations,
+        _collect_file_policies,
         _collect_forms,
         _collect_tables,
         _collect_workflows,
@@ -232,6 +237,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
         file_locations=_collect_file_locations(workspace),
+        file_policies=_collect_file_policies(workspace),
         connection_schemas=_collect_connection_schemas(workspace),
         events=_collect_events(workspace),
         readme=_read_readme(workspace),
@@ -366,6 +372,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
         claims=preview.claims,
         config_schemas=preview.config_schemas,
         file_locations=preview.file_locations,
+        file_policies=preview.file_policies,
         connection_schemas=preview.connection_schemas,
         events=preview.events,
         version=preview.version,

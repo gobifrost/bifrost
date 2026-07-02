@@ -1030,6 +1030,32 @@ def _collect_file_locations(workspace: pathlib.Path) -> list[str]:
     return ManifestFiles(locations=raw).locations
 
 
+def _collect_file_policies(workspace: pathlib.Path) -> list[dict]:
+    """Read solution-tier file policies from .bifrost/file-policies.yaml (keyed by UUID).
+
+    Each entry is a portable ``{id, location, path, policies}`` dict written by
+    export's INSTALL view (org/solution ids scrubbed). The server's deploy
+    re-stamps ``solution_id`` to the target install and upserts by natural key
+    ``(solution_id, location, path)``.
+    """
+    fp_file = _bifrost_manifest(workspace, "file-policies.yaml")
+    if fp_file is None or not fp_file.is_file():
+        return []
+    data = yaml.safe_load(fp_file.read_text()) or {}
+    raw = data.get("file_policies", {})
+    entries: list[dict] = []
+    for key, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        entries.append({
+            "id": body.get("id", key),
+            "location": body.get("location"),
+            "path": body.get("path", ""),
+            "policies": body.get("policies", []),
+        })
+    return entries
+
+
 def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
     """Read connection DECLARATIONS from .bifrost/connections.yaml (keyed by name).
 

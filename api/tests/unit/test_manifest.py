@@ -2928,3 +2928,97 @@ class TestResolveFileFromSidecarUnit:
             manifest, install_id=uuid4(), sidecar_content=sidecar
         )
         # If we reach here without raising, the test passes.
+
+
+class TestSolutionFilePolicyBundleRoundTrip:
+    """Solution capture -> export yaml -> CLI collect -> bundle equality.
+
+    Exercises the Task-A3 pipeline: the INSTALL view scrubs env-specific fields
+    (organization_id/solution_id) so only portable {id, location, path, policies}
+    travels; export writes .bifrost/file-policies.yaml keyed by id; the CLI
+    collector reads it back to the same bundle-entry shape the deployer consumes.
+    """
+
+    def _install_view(self, *, policy_id, location, path, policies, solution_id):
+        from types import SimpleNamespace
+
+        from bifrost.manifest import ManifestFilePolicy
+        from bifrost.manifest_codec import Destination
+
+        row = SimpleNamespace(
+            id=policy_id,
+            organization_id=uuid4(),  # scrubbed by INSTALL view
+            location=location,
+            path=path,
+            policies={"policies": policies},
+            solution_id=solution_id,  # scrubbed by INSTALL view
+        )
+        return ManifestFilePolicy.from_row(row).view(Destination.INSTALL)
+
+    def test_install_view_scrubs_env_fields(self):
+        """The INSTALL view drops organization_id and solution_id (portability)."""
+        entry = self._install_view(
+            policy_id=uuid4(),
+            location="shared",
+            path="finance",
+            policies=[{"name": "readers", "actions": ["read"], "when": {"user": "is_platform_admin"}}],
+            solution_id=uuid4(),
+        )
+        assert "organization_id" not in entry
+        assert "solution_id" not in entry
+        assert set(entry) == {"id", "location", "path", "policies"}
+
+    def test_capture_export_collect_round_trip(self, tmp_path):
+        """A captured solution policy survives yaml export + CLI collect intact."""
+        import pathlib
+
+        from bifrost.commands.solution import _collect_file_policies
+        from src.services.solutions.export import _manifest_yaml
+
+        root_id = str(uuid4())
+        prefix_id = str(uuid4())
+        # Two solution-tier rows: the seeded root (path="") + a prefix override.
+        entries = [
+            self._install_view(
+                policy_id=root_id,
+                location="shared",
+                path="",
+                policies=[{"$ref": "admin_bypass"}],
+                solution_id=uuid4(),
+            ),
+            self._install_view(
+                policy_id=prefix_id,
+                location="shared",
+                path="finance",
+                policies=[{"name": "own_org", "actions": ["read"], "when": {"user": "is_platform_admin"}}],
+                solution_id=uuid4(),
+            ),
+        ]
+
+        # Export (mirrors export.py's file-policies.yaml block).
+        yaml_text = _manifest_yaml(
+            "file_policies", {str(e["id"]): dict(e) for e in entries}
+        )
+        ws = tmp_path / "ws"
+        (ws / ".bifrost").mkdir(parents=True)
+        (ws / ".bifrost" / "file-policies.yaml").write_text(yaml_text)
+
+        collected = _collect_file_policies(pathlib.Path(ws))
+        by_id = {c["id"]: c for c in collected}
+        assert set(by_id) == {root_id, prefix_id}
+        # Root seed row round-trips with empty path + its ref list.
+        assert by_id[root_id]["path"] == ""
+        assert by_id[root_id]["policies"] == [{"$ref": "admin_bypass"}]
+        # Prefix override round-trips content-equal to the exported entry.
+        assert by_id[prefix_id]["location"] == "shared"
+        assert by_id[prefix_id]["path"] == "finance"
+        assert by_id[prefix_id]["policies"][0]["name"] == "own_org"
+
+    def test_collect_absent_file_returns_empty(self, tmp_path):
+        """No .bifrost/file-policies.yaml -> empty list (not an error)."""
+        import pathlib
+
+        from bifrost.commands.solution import _collect_file_policies
+
+        (tmp_path / ".bifrost").mkdir(parents=True)
+        assert _collect_file_policies(pathlib.Path(tmp_path)) == []
