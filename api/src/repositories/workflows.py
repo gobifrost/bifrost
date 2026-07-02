@@ -127,7 +127,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                 Workflow.solution_id == solution_scope,
                 Workflow.is_active.is_(True),
             )
-            stmt = self._apply_cascade_scope(stmt)
+            # The own-install match is already install-gated by solution_id;
+            # org-gate it only for regular users. Superusers act cross-org
+            # here exactly as resolve_solution_table_by_name does for tables:
+            # an ORG-BOUND install's rows carry the INSTALL's org, which
+            # routinely differs from an admin caller's effective org.
+            if not self.is_superuser:
+                stmt = self._apply_cascade_scope(stmt)
             result = await self.session.execute(stmt)
             own = result.scalar_one_or_none()
             if own is not None:
@@ -150,6 +156,27 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         path, _, function_name = ref.rpartition("::")
         if not path or not function_name:
             return None
+
+        if solution_scope is not None:
+            # Own-install first, WITHOUT the caller-org cascade for superusers:
+            # the match is already install-gated by solution_id, and an
+            # ORG-BOUND install's rows carry the INSTALL's org — which
+            # routinely differs from an admin caller's effective org (a demo/
+            # support admin driving a customer install saw 404s here while
+            # global installs, whose rows have organization_id NULL, passed).
+            # Regular users keep the cascade: their org must be the install's
+            # (the cross-org negative below relies on it).
+            own_stmt = select(Workflow).where(
+                Workflow.path == path,
+                Workflow.function_name == function_name,
+                Workflow.is_active.is_(True),
+                Workflow.solution_id == solution_scope,
+            )
+            if not self.is_superuser:
+                own_stmt = self._apply_cascade_scope(own_stmt)
+            own_row = (await self.session.execute(own_stmt)).scalars().first()
+            if own_row is not None:
+                return own_row
 
         stmt = (
             select(Workflow)

@@ -113,6 +113,25 @@ async def list_apps(
     output_result(response.json(), ctx=ctx)
 
 
+def _select_bound_app(
+    items: list[dict[str, Any]], ref: str, solution_id: str
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Pick the bound install's own app for ``ref`` (slug, or name
+    case-insensitively), plus any OTHER apps the ref also matches — so the
+    caller can warn that a generic ref ("portal") is ambiguous across
+    scopes instead of silently resolving an unrelated global app."""
+
+    def _matches(item: dict[str, Any]) -> bool:
+        return item.get("slug") == ref or (
+            str(item.get("name") or "").lower() == ref.lower()
+        )
+
+    matches = [i for i in items if _matches(i)]
+    own = [i for i in matches if str(i.get("solution_id") or "") == solution_id]
+    foreign = [i for i in matches if str(i.get("solution_id") or "") != solution_id]
+    return (own[0] if own else None), (foreign if own else [])
+
+
 @apps_group.command("get")
 @click.argument("ref")
 @click.pass_context
@@ -131,7 +150,13 @@ async def get_app(
     ``GET /api/applications/{slug}`` directly. For UUID / name refs we
     resolve to a UUID then locate the matching record from the list payload
     so this command works with any ref shape :class:`RefResolver` accepts.
+
+    Inside a BOUND solution workspace (BIFROST_SOLUTION_ID set), the
+    install's OWN apps are preferred: a generic ref like "portal" must not
+    silently resolve an unrelated global app when the workspace's app
+    matches by slug or name.
     """
+    import os
     from uuid import UUID
 
     try:
@@ -139,6 +164,24 @@ async def get_app(
         is_uuid = True
     except (TypeError, ValueError):
         is_uuid = False
+
+    bound_solution = os.getenv("BIFROST_SOLUTION_ID")
+    if not is_uuid and bound_solution:
+        list_response = await client.get("/api/applications")
+        list_response.raise_for_status()
+        data = list_response.json()
+        items = data.get("applications", []) if isinstance(data, dict) else data
+        own, foreign = _select_bound_app(items, ref, bound_solution)
+        if own is not None:
+            for other in foreign:
+                click.echo(
+                    f"Warning: {ref!r} also matches app {other.get('slug')!r} "
+                    f"({other.get('id')}) outside this solution — returning this "
+                    "workspace's own app. Use the UUID to target the other one.",
+                    err=True,
+                )
+            output_result(own, ctx=ctx)
+            return
 
     if not is_uuid:
         # Try the slug endpoint first — it's a single round-trip and works

@@ -305,6 +305,29 @@ def test_workflow_404_includes_scope_diagnostics(e2e_client, platform_admin):
     assert detail["derived_solution_scope"], detail
 
 
+def test_admin_resolves_orgbound_install_path_ref_cross_org(
+    e2e_client, platform_admin, org1
+):
+    """Dev14 regression: an ORG-BOUND install's workflows carry the install's
+    org; a platform admin whose effective org differs (the normal demo/support
+    posture) must still resolve the install's own workflow by path::fn via the
+    app header — superusers bypass the caller-org gate on the OWN-install
+    match, exactly like resolve_solution_table_by_name does for tables.
+    Global installs never caught this (their rows have organization_id NULL)."""
+    headers = platform_admin.headers
+    app_a = _deploy_install_with_app(e2e_client, headers, "orgbound", org_id=org1["id"])
+
+    resp = e2e_client.post(
+        "/api/workflows/execute",
+        headers={**headers, "X-Bifrost-App": app_a},
+        json={"workflow_id": "workflows/main.py::main", "sync": True},
+    )
+    assert resp.status_code == 200, f"execute failed: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert body["status"] == "Success", body
+    assert body["result"] == {"marker": "orgbound"}, body
+
+
 def test_foreign_app_header_cannot_reach_other_orgs_workflow(
     e2e_client, platform_admin, org1, org2_user
 ):
