@@ -1052,7 +1052,11 @@ async def delete_solution(
     **This is irreversible.** Every owned row (tables, workflows, forms, agents,
     apps, claims, config declarations, events) is removed via the existing
     ``solution_id ondelete=CASCADE`` FKs when the Solution row is deleted.
-    The ``solutions/{id}/`` S3 prefix is swept after the DB commit.
+    S3 bytes are swept after the DB commit: the install's own
+    ``_solutions/{id}/`` manifest prefix, its source artifact, its compiled
+    app dists, AND every declared-location file object (each ``file_entries``
+    row's ``s3_key``, e.g. ``{location}/{id}/{path}``) — those live outside
+    the ``_solutions/{id}/`` prefix and are swept individually.
 
     Requires ``?confirm=<slug>`` equal to the install's slug. A mismatch returns
     422 immediately — nothing is touched.
@@ -1092,6 +1096,7 @@ async def delete_solution(
             ),
         )
 
+    from src.services.file_storage import FileStorageService
     from src.services.solution_files import enumerate_solution_files
     from src.services.solutions.app_build import SolutionAppBuilder
     from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
@@ -1151,6 +1156,16 @@ async def delete_solution(
             builder = SolutionAppBuilder()
             for app_id in app_ids:
                 await builder.delete_dist(app_id)
+
+            # Declared-location file bytes live outside the _solutions/{id}/
+            # prefix (at {location}/{id}/{path}) and are not covered by the
+            # storage.list("") sweep above — clear them individually using the
+            # keys captured before the DB delete. delete_raw_from_s3 is
+            # idempotent, so a missing object is a no-op.
+            file_storage = FileStorageService(ctx.db)
+            for entry in file_entries:
+                if entry.s3_key:
+                    await file_storage.delete_raw_from_s3(entry.s3_key)
     except SolutionWriteLockHeld as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
