@@ -571,6 +571,30 @@ validated against the org's known claims at write time
 
 ---
 
+### File policies, global access, and the global-deny rule
+
+File policies (`FilePolicyService`, `shared/policies/file_policies.py`) are a
+sibling of gate 4's table policies, evaluated per-path instead of per-row.
+Like `PolicyRule` and `Table`, `FilePolicy` rows carry a `solution_id` and can
+be **solution-scoped**: a solution's own file policies deploy, cascade, and
+uninstall alongside the rest of its owned entities (see "Solutions" above).
+
+Not every entity type has caught up to solution scoping yet. **Knowledge**
+(`KnowledgeStore`) is the current example: it has no `solution_id`, so a
+solution's agent that needs a knowledge corpus cannot own one — it must fall
+back to **global access** to reach it. This is not a bug or a gap to close
+opportunistically; it's the intended bridge for entity types that haven't
+been solution-scoped yet.
+
+The governing rule, verbatim: **global-deny applies only to entity types
+that CAN be solution-scoped.** An entity type earns a deny-global posture
+(refusing to fall back to the global tier) only once it has a real
+solution-scoped path of its own — otherwise global access is the only way a
+solution can reach it at all. Use this as the signal for when to flip an
+entity to deny-global as Solutions expands to cover more entity types.
+
+---
+
 ## Creating a repository
 
 For an entity with RBAC:
