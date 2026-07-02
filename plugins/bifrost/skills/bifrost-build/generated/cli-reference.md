@@ -237,6 +237,11 @@ Usage: apps get [OPTIONS] REF
   UUID then locate the matching record from the list payload so this command
   works with any ref shape :class:`RefResolver` accepts.
 
+  Inside a BOUND solution workspace (BIFROST_SOLUTION_ID set), the install's
+  OWN apps are preferred: a generic ref like "portal" must not silently
+  resolve an unrelated global app when the workspace's app matches by slug or
+  name.
+
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
