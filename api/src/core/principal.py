@@ -44,6 +44,12 @@ class UserPrincipal:
     # The claim is minted already neutralized for bypass callers (platform
     # admin / provider org) — see shared/external_access.py.
     is_external: bool = False
+    # Provider-org (platform-org staff) principal. The non-admin half of the
+    # canonical bypass rule (bypass = is_platform_admin OR is_provider_org):
+    # grants cross-org / global scope on files/tables/workflow execution to
+    # portal-hopping provider-org members who are not platform admins. Minted
+    # from Organization.is_provider — see shared/external_access.py.
+    is_provider_org: bool = False
     roles: list[str] = field(default_factory=list)
     # Role identity used by table-policy `has_role` evaluator. Populated by
     # `get_execution_context` from the `user_roles` table; empty for token-only

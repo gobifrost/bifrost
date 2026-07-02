@@ -22,6 +22,7 @@ KNOWN_USER_FIELDS: Final[frozenset[str]] = frozenset({
     "email",
     "organization_id",
     "is_platform_admin",
+    "is_provider_org",
     "role_ids",
     "role_names",
 })

@@ -27,6 +27,7 @@ def create_test_jwt(
     name: str = "Test User",
     is_superuser: bool = False,
     organization_id: str | None = None,
+    is_provider_org: bool = False,
 ) -> str:
     """
     Create test JWT token for authentication.
@@ -40,6 +41,7 @@ def create_test_jwt(
         name: User display name
         is_superuser: Whether user should have superuser/platform admin privileges
         organization_id: Organization ID for ORG users (auto-generated if not provided for non-superusers)
+        is_provider_org: Whether the user belongs to a provider org (bypass half — grants cross-org / global scope like a superuser)
 
     Returns:
         str: JWT token signed with test secret
@@ -64,6 +66,7 @@ def create_test_jwt(
         "email": email,
         "name": name,
         "is_superuser": is_superuser,
+        "is_provider_org": is_provider_org,
         "org_id": None if (is_superuser and organization_id is None) else organization_id,
         "roles": ["authenticated"],
         "exp": now + timedelta(hours=2),

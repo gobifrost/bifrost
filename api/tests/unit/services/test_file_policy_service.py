@@ -778,3 +778,81 @@ async def test_require_file_policy_denial_emits_audit(monkeypatch, db_session) -
         "location": "attachments",
         "path": "private/doc.txt",
     }
+
+
+# ---------------------------------------------------------------------------
+# _principal_matches_org honors the two-flag bypass rule:
+# is_platform_admin OR is_provider_org. Provider-org members (portal-hopping
+# platform staff) reach any org's files just like platform admins; a plain org
+# user is still pinned to its own org, and a system/no-org user is admitted for
+# the global (org=None) scope only. (repositories/README.md — two bypass flags)
+# ---------------------------------------------------------------------------
+
+
+class TestPrincipalMatchesOrgBypass:
+    def _service(self) -> FilePolicyService:
+        return FilePolicyService.__new__(FilePolicyService)
+
+    def test_provider_org_member_matches_foreign_org(self) -> None:
+        svc = self._service()
+        foreign = uuid4()
+        user = _user(uuid4(), is_platform_admin=False, is_provider_org=True)
+        assert svc._principal_matches_org(user, foreign) is True
+
+    def test_plain_org_user_pinned_to_own_org(self) -> None:
+        svc = self._service()
+        own = uuid4()
+        user = _user(own, is_platform_admin=False, is_provider_org=False)
+        assert svc._principal_matches_org(user, own) is True
+        assert svc._principal_matches_org(user, uuid4()) is False
+
+    def test_platform_admin_matches_foreign_org(self) -> None:
+        svc = self._service()
+        user = _user(uuid4(), is_platform_admin=True, is_provider_org=False)
+        assert svc._principal_matches_org(user, uuid4()) is True
+
+    def test_system_no_org_user_gets_false_for_org_scope(self) -> None:
+        # No org and neither bypass flag: cannot reach an org-scoped policy.
+        svc = self._service()
+        user = _user(None, is_platform_admin=False, is_provider_org=False)
+        assert svc._principal_matches_org(user, uuid4()) is False
+        # …but the global (org=None) scope is open to everyone.
+        assert svc._principal_matches_org(user, None) is True
+
+
+@pytest.mark.asyncio
+async def test_provider_org_member_reads_foreign_org_file(db_session) -> None:
+    """End-to-end: a provider-org, non-admin user reads a file whose org
+    policy is scoped to a DIFFERENT org — the bypass carries through
+    is_allowed()'s _principal_matches_org pre-check."""
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    service = FilePolicyService(db_session)
+    await service.upsert_policy(
+        organization_id=org.id,
+        location="workspace",
+        path="reports",
+        policies=_allow_all("read"),
+        created_by=uuid4(),
+    )
+
+    # Caller belongs to a different org but is a provider-org member.
+    caller = _user(uuid4(), is_platform_admin=False, is_provider_org=True)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=caller,
+    ) is True
+
+    # A plain org user from a different org is denied at the pre-check.
+    outsider = _user(uuid4(), is_platform_admin=False, is_provider_org=False)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=outsider,
+    ) is False

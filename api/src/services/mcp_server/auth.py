@@ -28,7 +28,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from shared.external_access import resolve_external_claim
+from shared.external_access import (
+    resolve_external_claim,
+    resolve_provider_org_claim,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -428,6 +431,7 @@ class BifrostAuthProvider:
                     "name": user.name,
                     "is_superuser": user.is_superuser,
                     "is_external": await resolve_external_claim(db, user),
+                    "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
                     "type": "access",
                 }
@@ -482,6 +486,7 @@ class BifrostAuthProvider:
                     "name": user.name,
                     "is_superuser": user.is_superuser,
                     "is_external": await resolve_external_claim(db, user),
+                    "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
                     "type": "access",
                 }

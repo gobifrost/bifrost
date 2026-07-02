@@ -29,7 +29,10 @@ from src.core.db_deps import DbSession
 from src.core.security import create_access_token, create_refresh_token, generate_csrf_token
 from src.services.oauth_sso import OAuthError, OAuthService
 from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
-from shared.external_access import resolve_external_claim
+from shared.external_access import (
+    resolve_external_claim,
+    resolve_provider_org_claim,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -405,6 +408,7 @@ async def oauth_callback(
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
         "is_external": await resolve_external_claim(db, user),
+        "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
         "oauth_provider": callback_data.provider,  # Mark as OAuth login

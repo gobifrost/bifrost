@@ -23,7 +23,10 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from shared.external_access import resolve_external_claim
+from shared.external_access import (
+    resolve_external_claim,
+    resolve_provider_org_claim,
+)
 
 # =============================================================================
 # 1. resolve_external_claim (token mint)
@@ -67,6 +70,39 @@ class TestResolveExternalClaim:
             await resolve_external_claim(db, _user(organization_id=None)) is False
         )
         db.scalar.assert_not_awaited()
+
+
+class TestResolveProviderOrgClaim:
+    """``resolve_provider_org_claim`` — the is_provider_org token-mint helper.
+
+    Returns True iff the user's org has ``is_provider`` set. Org-less / system
+    users are False (no org row → no provider membership). Mirrors the single
+    indexed SELECT of ``resolve_external_claim``.
+    """
+
+    async def test_provider_org_member_is_true(self):
+        db = AsyncMock()
+        db.scalar.return_value = True  # org.is_provider
+        assert await resolve_provider_org_claim(db, _user()) is True
+
+    async def test_regular_org_member_is_false(self):
+        db = AsyncMock()
+        db.scalar.return_value = False
+        assert await resolve_provider_org_claim(db, _user()) is False
+
+    async def test_orgless_user_is_false_without_lookup(self):
+        db = AsyncMock()
+        assert (
+            await resolve_provider_org_claim(db, _user(organization_id=None))
+            is False
+        )
+        db.scalar.assert_not_awaited()
+
+    async def test_none_provider_flag_coerces_to_false(self):
+        # A NULL is_provider column (no org row matched) must be a hard False.
+        db = AsyncMock()
+        db.scalar.return_value = None
+        assert await resolve_provider_org_claim(db, _user()) is False
 
 
 # =============================================================================

@@ -163,6 +163,55 @@ class TestCrossTenantRequiresPlatformAdmin:
 
 
 # ---------------------------------------------------------------------------
+# Bypass is TWO independent flags: is_platform_admin OR is_provider_org.
+# A provider-org member who is NOT a platform admin gets the same cross-org /
+# global reach. (repositories/README.md — "Why two independent bypass flags?")
+# ---------------------------------------------------------------------------
+
+
+class TestProviderOrgBypassIsIndependent:
+    def test_provider_org_member_can_request_global(self) -> None:
+        # Not a platform admin, but a provider-org member: bypass granted.
+        result = resolve_effective_scope(
+            caller_org_id=ORG_A,
+            is_platform_admin=False,
+            is_provider_org=True,
+            requested_scope=None,
+        )
+        assert result is None
+
+    def test_provider_org_member_can_request_other_org(self) -> None:
+        result = resolve_effective_scope(
+            caller_org_id=ORG_A,
+            is_platform_admin=False,
+            is_provider_org=True,
+            requested_scope=ORG_B,
+        )
+        assert result == ORG_B
+
+    def test_neither_flag_still_pins_to_own_org(self) -> None:
+        # Plain org user (neither bypass flag) cannot reach another org.
+        with pytest.raises(ScopeNotAllowed):
+            resolve_effective_scope(
+                caller_org_id=ORG_A,
+                is_platform_admin=False,
+                is_provider_org=False,
+                requested_scope=ORG_B,
+            )
+
+    def test_provider_org_member_unset_still_returns_own_org(self) -> None:
+        # Bypass widens what you MAY request; it does not change the UNSET
+        # default, which is still the caller's own org.
+        result = resolve_effective_scope(
+            caller_org_id=ORG_A,
+            is_platform_admin=False,
+            is_provider_org=True,
+            requested_scope=UNSET,
+        )
+        assert result == ORG_A
+
+
+# ---------------------------------------------------------------------------
 # UNSET vs explicit None must NOT be collapsed.
 #
 # This is the bug class this resolver exists to prevent: adapters must not

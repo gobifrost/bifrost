@@ -397,7 +397,12 @@ class FilePolicyService:
     ) -> bool:
         if organization_id is None:
             return True
-        if getattr(user, "is_platform_admin", False):
+        # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
+        # provider-org members (portal-hopping platform staff) reach any org's
+        # files, same as platform admins.
+        if getattr(user, "is_platform_admin", False) or getattr(
+            user, "is_provider_org", False
+        ):
             return True
         user_org = getattr(user, "organization_id", None)
         return user_org is not None and str(user_org) == str(organization_id)
