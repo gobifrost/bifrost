@@ -59,7 +59,6 @@ class SolutionCaptureSelectors:
     claims: list[UUID]
     configs: list[str]
     events: list[UUID] = field(default_factory=list)
-    file_policies: list[UUID] = field(default_factory=list)
 
 
 @dataclass
