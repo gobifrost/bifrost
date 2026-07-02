@@ -21,13 +21,8 @@ from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, re
 from src.models.contracts.policies import FileAction, FilePolicies
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.repositories.policy_rule import PolicyRuleRepository
-from src.services.audit import emit_audit
 
 logger = logging.getLogger(__name__)
-
-
-class FilePolicyDenied(PermissionError):
-    """Raised by ``check_allowed`` when no file policy grants the action."""
 
 
 class FilePolicyService:
@@ -373,37 +368,6 @@ class FilePolicyService:
             created_at=metadata.created_at if metadata is not None else None,
         )
         return evaluate_file_action(action, policies, context, user)
-
-    async def check_allowed(
-        self,
-        action: FileAction,
-        *,
-        organization_id: UUID | None,
-        location: str,
-        path: str,
-        user: Any,
-    ) -> None:
-        if await self.is_allowed(
-            action,
-            organization_id=organization_id,
-            location=location,
-            path=path,
-            user=user,
-        ):
-            return
-
-        await emit_audit(
-            self.db,
-            "policy.deny",
-            resource_type="file",
-            outcome="failure",
-            details={
-                "policy_action": action,
-                "location": location,
-                "path": path,
-            },
-        )
-        raise FilePolicyDenied("Access denied")
 
     async def _get_policy_exact(
         self,

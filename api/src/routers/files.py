@@ -49,6 +49,7 @@ from src.models import (
     SearchResponse,
     WorkflowIdConflict,
 )
+from src.services.audit import emit_audit
 from src.services.editor.search import search_files_db
 from src.services.file_backend import get_backend
 from src.services.file_storage import FileStorageService
@@ -424,6 +425,24 @@ async def _require_file_policy(
         organization_id=organization_id,
     )
     if not allowed:
+        # Record the denial before raising. This is the live enforcement path;
+        # the audit emit used to live in the (now-removed) FilePolicyService.
+        # check_allowed helper, which nothing called — so denials went
+        # unaudited. Mirror tables.py: emit then commit, because letting the
+        # HTTPException propagate rolls back the request-scoped session and
+        # loses the audit row.
+        await emit_audit(
+            ctx.db,
+            "policy.deny",
+            resource_type="file",
+            outcome="failure",
+            details={
+                "policy_action": action,
+                "location": location,
+                "path": path,
+            },
+        )
+        await ctx.db.commit()
         # A policy denial must identify its scope inputs (no user/token data —
         # every field is caller-supplied or derived from it): a scope-loss bug
         # reads as solution_id=null instead of a bare "Forbidden".

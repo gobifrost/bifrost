@@ -11,7 +11,7 @@ from src.models.contracts.policies import FilePolicies
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
-from src.services.file_policy_service import FilePolicyDenied, FilePolicyService
+from src.services.file_policy_service import FilePolicyService
 
 
 def _allow_all(action: str = "read") -> FilePolicies:
@@ -724,42 +724,57 @@ async def test_service_malformed_policy_json_denies(db_session, caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_denial_hook_emits_audit(monkeypatch, db_session) -> None:
-    from src.services import file_policy_service as service_module
+async def test_require_file_policy_denial_emits_audit(monkeypatch, db_session) -> None:
+    """The live enforcement path (_require_file_policy → 403) records the
+    denial. This audit used to live in FilePolicyService.check_allowed, which
+    had no callers; it now fires from the router helper on every real denial."""
+    from fastapi import HTTPException
+
+    from src.routers import files as files_module
 
     org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
     db_session.add(org)
     await db_session.flush()
+    # A non-"workspace" location so the request reaches real policy evaluation
+    # (workspace short-circuits to a superuser check with no policy).
     service = FilePolicyService(db_session)
     await service.upsert_policy(
         organization_id=org.id,
-        location="workspace",
+        location="attachments",
         path="private",
         policies=_deny_all(),
         created_by=uuid4(),
     )
-    emitted = {}
+    emitted: dict = {}
 
     async def fake_emit(db, action, **kwargs):
         emitted["action"] = action
         emitted.update(kwargs)
 
-    monkeypatch.setattr(service_module, "emit_audit", fake_emit)
+    monkeypatch.setattr(files_module, "emit_audit", fake_emit)
 
-    with pytest.raises(FilePolicyDenied):
-        await service.check_allowed(
-            "read",
-            organization_id=org.id,
-            location="workspace",
+    ctx = SimpleNamespace(
+        db=db_session,
+        user=_user(org.id),
+        org_id=org.id,
+        solution_id=None,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await files_module._require_file_policy(
+            ctx,  # type: ignore[arg-type]
+            action="read",
+            location="attachments",
+            scope=str(org.id),
             path="private/doc.txt",
-            user=_user(org.id),
         )
 
+    assert exc.value.status_code == 403
     assert emitted["action"] == "policy.deny"
     assert emitted["resource_type"] == "file"
     assert emitted["outcome"] == "failure"
     assert emitted["details"] == {
         "policy_action": "read",
-        "location": "workspace",
+        "location": "attachments",
         "path": "private/doc.txt",
     }
