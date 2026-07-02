@@ -1998,6 +1998,31 @@ def export_cmd(
         raise SystemExit(rc)
 
 
+def _vite_child_env(
+    base_env: dict[str, str],
+    *,
+    app_id: str,
+    org_id: str,
+    proxy_origin: str,
+    access_token: str,
+) -> dict[str, str]:
+    """Environment for the `solution start` Vite child.
+
+    The bundle-visible BIFROST_API_URL is the LOCAL PROXY origin, never the
+    upstream API: the proxy is where install scope is injected (?solution=,
+    auth, app header) and where local path::fn refs run in-process. Pointing
+    the bundle at the upstream bypasses all of that — local workflow edits
+    silently don't run, install-owned tables 404, declared-location file
+    writes 403 (drive finding, 2026-07-02).
+    """
+    env = dict(base_env)
+    env["VITE_BIFROST_APP_ID"] = app_id
+    env["VITE_BIFROST_ORG_ID"] = org_id
+    env["BIFROST_API_URL"] = proxy_origin
+    env["BIFROST_ACCESS_TOKEN"] = access_token
+    return env
+
+
 @solution_group.command(name="start", help="Run the app's dev server + local workflows (one origin).")
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
@@ -2056,11 +2081,13 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
         click.echo("Installing app dependencies (npm install)…")
         subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
 
-    vite_env = dict(os.environ)
-    vite_env["VITE_BIFROST_APP_ID"] = chosen.app_id
-    vite_env["VITE_BIFROST_ORG_ID"] = (org_info or {}).get("id", "")
-    vite_env["BIFROST_API_URL"] = client.api_url
-    vite_env["BIFROST_ACCESS_TOKEN"] = client._access_token
+    vite_env = _vite_child_env(
+        dict(os.environ),
+        app_id=chosen.app_id,
+        org_id=(org_info or {}).get("id", ""),
+        proxy_origin=f"http://127.0.0.1:{port}",
+        access_token=client._access_token,
+    )
 
     vite_port = port + 1
     # Run `npm run dev` in its OWN process group (start_new_session) so teardown
