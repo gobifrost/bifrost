@@ -11,8 +11,12 @@ requires-python = ">=3.11"
 [project.scripts]
 bifrost = "bifrost.cli:main"
 
-[tool.setuptools]
-packages = ["bifrost"]
+# Deterministic subpackage inclusion: an explicit `packages = ["bifrost"]`
+# list leaves bifrost.commands / bifrost.contracts inclusion up to the
+# builder's setuptools version (a pipx source install shipped without
+# bifrost.commands). find + include pins the recursive behavior.
+[tool.setuptools.packages.find]
+include = ["bifrost*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra -q --cov=. --cov-report=term-missing"
