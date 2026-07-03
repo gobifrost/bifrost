@@ -428,6 +428,54 @@ async def _authorize_file_policy(
     )
 
 
+async def _deny_file_policy(
+    ctx: Context,
+    *,
+    action: str,
+    location: str,
+    path: str,
+    scope: str | None = None,
+    solution_id: UUID | None = None,
+) -> None:
+    """Record a `policy.deny` audit row and raise 403. This is the single
+    choke point for every *final* file-policy denial (read or write) — call
+    it exactly once per request, at the point where the request is actually
+    being rejected, not at each per-tier/per-path `_authorize_file_policy`
+    probe along the way (those are non-final "is this tier usable" checks
+    and would over-count if audited individually).
+
+    Mirrors the tables.py pattern: emit then commit, because letting the
+    HTTPException propagate rolls back the request-scoped session and loses
+    the audit row.
+    """
+    await emit_audit(
+        ctx.db,
+        "policy.deny",
+        resource_type="file",
+        outcome="failure",
+        details={
+            "policy_action": action,
+            "location": location,
+            "path": path,
+        },
+    )
+    await ctx.db.commit()
+    # A policy denial must identify its scope inputs (no user/token data —
+    # every field is caller-supplied or derived from it): a scope-loss bug
+    # reads as solution_id=null instead of a bare "Forbidden".
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "message": "File policy denied",
+            "action": action,
+            "location": location,
+            "path": path,
+            "scope": scope,
+            "solution_id": str(solution_id) if solution_id else None,
+        },
+    )
+
+
 async def _require_file_policy(
     ctx: Context,
     *,
@@ -450,37 +498,13 @@ async def _require_file_policy(
         organization_id=organization_id,
     )
     if not allowed:
-        # Record the denial before raising. This is the live enforcement path;
-        # the audit emit used to live in the (now-removed) FilePolicyService.
-        # check_allowed helper, which nothing called — so denials went
-        # unaudited. Mirror tables.py: emit then commit, because letting the
-        # HTTPException propagate rolls back the request-scoped session and
-        # loses the audit row.
-        await emit_audit(
-            ctx.db,
-            "policy.deny",
-            resource_type="file",
-            outcome="failure",
-            details={
-                "policy_action": action,
-                "location": location,
-                "path": path,
-            },
-        )
-        await ctx.db.commit()
-        # A policy denial must identify its scope inputs (no user/token data —
-        # every field is caller-supplied or derived from it): a scope-loss bug
-        # reads as solution_id=null instead of a bare "Forbidden".
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "File policy denied",
-                "action": action,
-                "location": location,
-                "path": path,
-                "scope": scope,
-                "solution_id": str(solution_id) if solution_id else None,
-            },
+        await _deny_file_policy(
+            ctx,
+            action=action,
+            location=location,
+            path=path,
+            scope=scope,
+            solution_id=solution_id,
         )
 
 
@@ -935,7 +959,14 @@ async def _build_signed_url(
                         allowed_path = s3_path
                         break
                 if allowed_path is None:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                    await _deny_file_policy(
+                        ctx,
+                        action="signed_get",
+                        location=request.location,
+                        path=request.path,
+                        scope=request.scope,
+                        solution_id=solution_id,
+                    )
                 s3_path = allowed_path
         except HTTPException:
             raise
@@ -1091,7 +1122,14 @@ async def read_file(
 
         if content is None:
             if not had_allowed_tier:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                await _deny_file_policy(
+                    ctx,
+                    action="read",
+                    location=request.location,
+                    path=request.path,
+                    scope=request.scope,
+                    solution_id=_ctx_solution_id(ctx, request.location),
+                )
             raise FileNotFoundError(f"File not found: {request.path}")
 
         if request.binary:
@@ -1302,7 +1340,14 @@ async def list_files_simple(
                 if path in allowed_paths
             }
             if not directory_allowed and not s3_metadata:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                await _deny_file_policy(
+                    ctx,
+                    action="list",
+                    location=request.location,
+                    path=request.directory,
+                    scope=request.scope,
+                    solution_id=primary_tier.solution_id,
+                )
 
             # Look up updated_by from file_index
             from src.models.orm.file_index import FileIndex
@@ -1370,7 +1415,14 @@ async def list_files_simple(
                 seen.add(path)
                 files.append(path)
         if not any_directory_allowed and not files:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            await _deny_file_policy(
+                ctx,
+                action="list",
+                location=request.location,
+                path=request.directory,
+                scope=request.scope,
+                solution_id=primary_tier.solution_id,
+            )
         return FileListResponse(files=files)
 
     except ValueError as e:

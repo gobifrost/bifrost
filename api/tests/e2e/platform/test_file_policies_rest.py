@@ -209,6 +209,88 @@ def test_files_default_deny_by_location_without_policies(
     assert admin_read_without_policy.status_code == 403
 
 
+def _policy_deny_rows(e2e_client, platform_admin, user, *, resource_type: str = "file") -> list[dict[str, Any]]:
+    audit = e2e_client.get(
+        "/api/audit",
+        headers=platform_admin.headers,
+        params={
+            "action": "policy.deny",
+            "resource_type": resource_type,
+            "user_id": str(user.user_id),
+            "limit": 50,
+        },
+    )
+    assert audit.status_code == 200, audit.text
+    return audit.json()["entries"]
+
+
+@pytest.mark.e2e
+def test_denied_read_emits_policy_deny_audit_row(
+    e2e_client,
+    platform_admin,
+    org1_user,
+    org1,
+):
+    """READ denials go through `_authorize_file_policy` directly (not
+    `_require_file_policy`), so `/api/files/read` used to 403 with no audit
+    row. It must now emit exactly one `policy.deny` row per denial, same
+    shape as the write path."""
+    location, scope = "uploads", org1["id"]
+    path = f"read-deny-audit/{uuid.uuid4().hex}.txt"
+
+    before = len(_policy_deny_rows(e2e_client, platform_admin, org1_user))
+
+    denied_read = e2e_client.post(
+        "/api/files/read",
+        headers=org1_user.headers,
+        json=_read_body(path, location=location, scope=scope),
+    )
+    assert denied_read.status_code == 403
+
+    rows = _policy_deny_rows(e2e_client, platform_admin, org1_user)
+    assert len(rows) == before + 1, f"expected exactly one new policy.deny row for the denied read: {rows}"
+    entry = rows[0]
+    assert entry["action"] == "policy.deny"
+    assert entry["resource_type"] == "file"
+    assert entry["outcome"] == "failure"
+    assert entry["details"]["policy_action"] == "read"
+    assert entry["details"]["location"] == location
+    assert entry["details"]["path"] == path
+
+
+@pytest.mark.e2e
+def test_denied_write_emits_exactly_one_policy_deny_audit_row(
+    e2e_client,
+    platform_admin,
+    org1_user,
+    org1,
+):
+    """Denied writes already emitted via `_require_file_policy`; guard against
+    a regression where refactoring the emit choke point causes a double-emit
+    (e.g. if both `_authorize_file_policy` and `_require_file_policy` emit)."""
+    location, scope = "uploads", org1["id"]
+    path = f"write-deny-audit/{uuid.uuid4().hex}.txt"
+
+    before = len(_policy_deny_rows(e2e_client, platform_admin, org1_user))
+
+    denied_write = e2e_client.post(
+        "/api/files/write",
+        headers=org1_user.headers,
+        json=_body(path, location=location, scope=scope, content="blocked"),
+    )
+    assert denied_write.status_code == 403
+
+    rows = _policy_deny_rows(e2e_client, platform_admin, org1_user)
+    assert len(rows) == before + 1, f"expected exactly one new policy.deny row for the denied write, got double-emit or none: {rows}"
+    entry = rows[0]
+    assert entry["action"] == "policy.deny"
+    assert entry["resource_type"] == "file"
+    assert entry["outcome"] == "failure"
+    assert entry["details"]["policy_action"] == "write"
+    assert entry["details"]["location"] == location
+    assert entry["details"]["path"] == path
+
+
 @pytest.mark.e2e
 async def test_everyone_read_role_write_creator_cross_org_and_nested_prefix_matrix(
     e2e_client,
