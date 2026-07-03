@@ -187,7 +187,11 @@ async def resolve_solution_table_by_name(
         Table.name == name,
         Table.solution_id == solution_id,
     )
-    if not ctx.user.is_superuser:
+    # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
+    # provider-org members (portal-hopping platform staff) reach any org's
+    # install-owned table, same as platform admins. Row access is still decided
+    # by the client org's table/file policies after resolution.
+    if not (ctx.user.is_superuser or ctx.user.is_provider_org):
         own_stmt = own_stmt.where(
             or_(
                 Table.organization_id == target_org_id,
