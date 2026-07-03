@@ -184,9 +184,9 @@ def _execute_with_app(e2e_client, headers, workflow_ref: str, app_id: str) -> di
     return resp.json()
 
 
-def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | None = None) -> str:
+def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | None = None) -> dict:
     """Deploy a Solution install shipping workflows/main.py::main (returns the
-    marker) plus a standalone_v2 app; return the app's remapped DB id."""
+    marker) plus a standalone_v2 app; return {app_id, workflow_name, solution_id}."""
     from tests.e2e.platform.conftest import deploy_solution
 
     slug = f"twin-{marker}-{uuid.uuid4().hex[:8]}"
@@ -235,7 +235,11 @@ def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | Non
     # The app's DB id is the remapped uuid5(install, manifest_id).
     from src.services.solutions.deploy import solution_entity_id
 
-    return str(solution_entity_id(uuid.UUID(sid), uuid.UUID(app_id)))
+    return {
+        "app_id": str(solution_entity_id(uuid.UUID(sid), uuid.UUID(app_id))),
+        "workflow_name": f"main_{slug}",
+        "solution_id": sid,
+    }
 
 
 def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, platform_admin):
@@ -245,8 +249,8 @@ def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, plat
     workflow — deterministically, not a sibling install's that shares the path."""
     headers = platform_admin.headers
 
-    app_a = _deploy_install_with_app(e2e_client, headers, "aaa")
-    app_b = _deploy_install_with_app(e2e_client, headers, "bbb")
+    app_a = _deploy_install_with_app(e2e_client, headers, "aaa")["app_id"]
+    app_b = _deploy_install_with_app(e2e_client, headers, "bbb")["app_id"]
 
     # Each app's path-ref resolves to ITS OWN install's workflow.
     res_a = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_a)
@@ -264,8 +268,8 @@ def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
     workflow — same as tables/files already do."""
     headers = platform_admin.headers
 
-    app_a = _deploy_install_with_app(e2e_client, headers, "hdr-aaa")
-    app_b = _deploy_install_with_app(e2e_client, headers, "hdr-bbb")
+    app_a = _deploy_install_with_app(e2e_client, headers, "hdr-aaa")["app_id"]
+    app_b = _deploy_install_with_app(e2e_client, headers, "hdr-bbb")["app_id"]
 
     def _execute_with_header(app_id: str) -> dict:
         resp = e2e_client.post(
@@ -290,7 +294,7 @@ def test_workflow_404_includes_scope_diagnostics(e2e_client, platform_admin):
     `derived_solution_scope: null` instead of a mystery 404 (drive lesson —
     the unscoped courtesy fallback masked scope loss for a whole POC day)."""
     headers = platform_admin.headers
-    app_a = _deploy_install_with_app(e2e_client, headers, "diag")
+    app_a = _deploy_install_with_app(e2e_client, headers, "diag")["app_id"]
 
     resp = e2e_client.post(
         "/api/workflows/execute",
@@ -315,7 +319,7 @@ def test_admin_resolves_orgbound_install_path_ref_cross_org(
     match, exactly like resolve_solution_table_by_name does for tables.
     Global installs never caught this (their rows have organization_id NULL)."""
     headers = platform_admin.headers
-    app_a = _deploy_install_with_app(e2e_client, headers, "orgbound", org_id=org1["id"])
+    app_a = _deploy_install_with_app(e2e_client, headers, "orgbound", org_id=org1["id"])["app_id"]
 
     resp = e2e_client.post(
         "/api/workflows/execute",
@@ -328,6 +332,35 @@ def test_admin_resolves_orgbound_install_path_ref_cross_org(
     assert body["result"] == {"marker": "orgbound"}, body
 
 
+def test_all_three_ref_shapes_resolve_identically(e2e_client, platform_admin, org1):
+    """The calling contract: UUID, portable path::fn, AND bare workflow name
+    must all resolve a deployed install's own workflow through the same
+    header-scoped transport — including the hard case (ORG-BOUND install,
+    admin caller in a different org)."""
+    headers = platform_admin.headers
+    deployed = _deploy_install_with_app(e2e_client, headers, "refshapes", org_id=org1["id"])
+    app_id = deployed["app_id"]
+    wf_name = deployed["workflow_name"]
+
+    def _execute(ref: str) -> dict:
+        resp = e2e_client.post(
+            "/api/workflows/execute",
+            headers={**headers, "X-Bifrost-App": app_id},
+            json={"workflow_id": ref, "sync": True},
+        )
+        assert resp.status_code == 200, f"{ref!r} failed: {resp.status_code} {resp.text}"
+        return resp.json()
+
+    by_path = _execute("workflows/main.py::main")
+    by_name = _execute(wf_name)
+    by_uuid = _execute(by_path["workflow_id"])
+
+    for label, res in (("path", by_path), ("name", by_name), ("uuid", by_uuid)):
+        assert res["status"] == "Success", (label, res)
+        assert res["result"] == {"marker": "refshapes"}, (label, res)
+    assert by_path["workflow_id"] == by_name["workflow_id"] == by_uuid["workflow_id"]
+
+
 def test_foreign_app_header_cannot_reach_other_orgs_workflow(
     e2e_client, platform_admin, org1, org2_user
 ):
@@ -335,7 +368,7 @@ def test_foreign_app_header_cannot_reach_other_orgs_workflow(
     X-Bifrost-App must NOT execute org1's install workflow — the resolver's
     org gate (cascade scope) holds under ctx-first scoping."""
     headers = platform_admin.headers
-    app_a = _deploy_install_with_app(e2e_client, headers, "xorg", org_id=org1["id"])
+    app_a = _deploy_install_with_app(e2e_client, headers, "xorg", org_id=org1["id"])["app_id"]
 
     resp = e2e_client.post(
         "/api/workflows/execute",

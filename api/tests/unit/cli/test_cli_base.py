@@ -18,8 +18,10 @@ import httpx
 from click.testing import CliRunner
 
 from bifrost.commands.base import (
+    BifrostClient,
     entity_group,
     output_result,
+    pass_resolver,
     run_async,
 )
 from bifrost.refs import AmbiguousRefError, RefNotFoundError
@@ -170,6 +172,37 @@ class TestRunAsyncErrorSurfacing:
         result = runner.invoke(cmd, [])
         assert result.exit_code == 1
         assert "Not logged in" in result.output
+
+    def test_connection_selection_error_from_client_setup_exits_1(
+        self, monkeypatch
+    ) -> None:
+        runner = CliRunner()
+
+        @click.command()
+        @pass_resolver
+        @run_async
+        async def cmd(*, client, resolver) -> None:  # noqa: ARG001
+            raise AssertionError("client setup should fail before command body")
+
+        monkeypatch.setattr(
+            BifrostClient,
+            "get_instance",
+            staticmethod(
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError(
+                        "Multiple Bifrost connections are stored, but no "
+                        "default connection is selected."
+                    )
+                )
+            ),
+        )
+
+        result = runner.invoke(cmd, [])
+
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, RuntimeError)
+        assert "Multiple Bifrost connections" in result.output
+        assert "Traceback" not in result.output
 
 
 # ---------------------------------------------------------------------------

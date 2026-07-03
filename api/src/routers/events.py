@@ -1043,6 +1043,7 @@ async def list_events(
 )
 async def emit_topic_event(
     request: EmitEventRequest,
+    ctx: Context,
     user: CurrentSuperuser,
 ) -> EmitEventResponse:
     """Emit a topic event and return the event_id and subscriber count."""
@@ -1064,10 +1065,22 @@ async def emit_topic_event(
                 detail=f"Invalid scope: must be a UUID or 'GLOBAL', got '{request.scope}'",
             )
 
+    solution_id: UUID | None = None
+    requested_solution = request.solution or ctx.solution_id
+    if requested_solution:
+        try:
+            solution_id = UUID(str(requested_solution))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid solution: must be a UUID, got '{requested_solution}'",
+            )
+
     event_id, subscribers_notified = await emit_event(
         request.topic,
         request.data,
         organization_id=organization_id,
+        solution_id=solution_id,
         triggered_by=str(user.user_id),
     )
 

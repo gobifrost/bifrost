@@ -266,17 +266,22 @@ async def test_browser_accept_encoding_is_not_forwarded_upstream():
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
-    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="A",
+        org_id="O",
+        solution_id="S",
+    )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
         async with httpx.AsyncClient() as c:
             r = await c.get(
-                f"http://127.0.0.1:{dev_port}/api/tables/foo",
+                f"http://127.0.0.1:{dev_port}/api/auth/me",
                 headers={"Accept-Encoding": "br, gzip, zstd, x-browser-sentinel"},
             )
         assert r.status_code == 200
-        upstream_ae = record["other_accept_encoding"] or ""
-        assert "x-browser-sentinel" not in upstream_ae
+        assert record["other_accept_encoding"] == "identity"
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

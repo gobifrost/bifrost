@@ -59,7 +59,7 @@ The light/dark toggle only appears when the parent `<BifrostProvider supportsThe
 
 ## Workflow Hooks
 
-Three hooks for running Bifrost workflows from a v2 app. Workflow refs are portable `path::function` strings (e.g. `functions/hello.py::main`) or UUIDs — bare names are not supported because they are not unique.
+Three hooks for running Bifrost workflows from a v2 app. Workflow refs are portable `path::function` strings (e.g. `functions/hello.py::main`), UUIDs, or workflow names — all three resolve identically, scoped to THIS install via the app transport. Prefer `path::function`: it is portable across environments (UUIDs are per-install) and it is the shape `bifrost solution start` executes locally (name/UUID refs proxy to the deployed copy).
 
 ### useWorkflowQuery — READ
 

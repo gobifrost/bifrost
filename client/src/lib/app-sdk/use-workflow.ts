@@ -36,10 +36,12 @@ export interface UseWorkflowState<T> {
 type ExecuteResponse = components["schemas"]["WorkflowExecutionResponse"];
 
 /**
- * Run a Bifrost workflow by UUID or `path::function` ref from a v2 app. Bare
- * workflow names are NOT supported — names aren't unique, so the server's
- * `/api/workflows/execute` resolver only accepts a UUID or a portable
- * `path::function` ref (anything else 404s). Must be called within a
+ * Run a Bifrost workflow by UUID, portable `path::function` ref, or workflow
+ * name from a v2 app. All three resolve identically: the server scopes the
+ * ref to THIS install (via the X-Bifrost-App transport), so a name or path
+ * ref reaches the install's own workflow first. Prefer `path::function` —
+ * it's the ref shape that also runs locally under `bifrost solution start`
+ * (name/UUID refs proxy to the deployed copy there). Must be called within a
  * `<BifrostProvider>` (throws otherwise — same contract as `useBifrostContext`).
  */
 export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<T> {

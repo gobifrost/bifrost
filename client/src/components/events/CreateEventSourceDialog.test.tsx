@@ -224,6 +224,13 @@ describe("CreateEventSourceDialog — schedule branch", () => {
 		});
 
 		await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+		const validationBody = JSON.parse(
+			mockAuthFetch.mock.calls[0]![1].body as string,
+		);
+		expect(validationBody).toEqual({
+			expression: "0 9 * * *",
+			timezone: "UTC",
+		});
 		expect(
 			await screen.findByText(/every day at 9:00 am/i),
 		).toBeInTheDocument();
