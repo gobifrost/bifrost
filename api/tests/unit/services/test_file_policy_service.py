@@ -856,3 +856,49 @@ async def test_provider_org_member_reads_foreign_org_file(db_session) -> None:
         path="reports/q1.pdf",
         user=outsider,
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_is_external_matches_grant_rule_for_external_principal(
+    db_session,
+) -> None:
+    """An ``is_external``-keyed policy grants access to an external principal
+    and denies a non-external one — proving the evaluator resolves the
+    principal's ``is_external`` claim via the validator-allow-listed field."""
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    service = FilePolicyService(db_session)
+    await service.upsert_policy(
+        organization_id=org.id,
+        location="workspace",
+        path="reports",
+        policies=FilePolicies.model_validate({
+            "policies": [
+                {
+                    "name": "external_only",
+                    "actions": ["read"],
+                    "when": {"user": "is_external"},
+                }
+            ]
+        }),
+        created_by=uuid4(),
+    )
+
+    external_user = _user(org.id, is_external=True)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=external_user,
+    ) is True
+
+    internal_user = _user(org.id, is_external=False)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=internal_user,
+    ) is False
