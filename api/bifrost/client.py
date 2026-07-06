@@ -181,6 +181,31 @@ async def refresh_tokens() -> bool:
         return False
 
 
+def _refresh_tokens_sync() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(refresh_tokens())
+
+    result: bool | None = None
+    error: BaseException | None = None
+
+    def _run() -> None:
+        nonlocal result, error
+        try:
+            result = asyncio.run(refresh_tokens())
+        except BaseException as exc:
+            error = exc
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    thread.join()
+
+    if error is not None:
+        raise error
+    return bool(result)
+
+
 async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool:
     """
     Interactive device authorization flow.
@@ -417,18 +442,10 @@ class BifrostClient:
             # Check if token needs refresh
             if creds and is_token_expired():
                 # Try to refresh
-                try:
-                    # Try to get existing event loop
-                    asyncio.get_running_loop()
-                    # We're in an async context, can't use asyncio.run()
-                    # For now, just skip auto-refresh in this case
-                    creds = None  # Will trigger re-login if require_auth=True
-                except RuntimeError:
-                    # No running loop, safe to use asyncio.run()
-                    if asyncio.run(refresh_tokens()):
-                        creds = get_credentials()  # Reload fresh credentials
-                    else:
-                        creds = None  # Refresh failed, need to re-login
+                if _refresh_tokens_sync():
+                    creds = get_credentials()  # Reload fresh credentials
+                else:
+                    creds = None  # Refresh failed, need to re-login
 
             if creds:
                 # Use credentials from file
