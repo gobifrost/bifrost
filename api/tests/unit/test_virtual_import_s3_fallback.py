@@ -130,6 +130,28 @@ class TestModuleIndexS3Fallback:
             # Should not try to sadd empty set
             mock_redis.sadd.assert_not_called()
 
+    def test_api_index_fetch_sends_solution_id_param(self):
+        """Solution-scoped child index fetches ask the server for that install."""
+        from src.core.module_cache_sync import _fetch_module_index_from_api
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"paths": ["_solutions/sol-1/modules/helpers.py"]}
+
+        with (
+            patch("src.core.module_cache_sync._get_engine_credentials", return_value=("http://api", "token")),
+            patch("httpx.get", return_value=response) as mock_get,
+        ):
+            result = _fetch_module_index_from_api(solution_id="sol-1")
+
+        assert result == {"_solutions/sol-1/modules/helpers.py"}
+        mock_get.assert_called_once_with(
+            "http://api/api/sdk/modules-index",
+            headers={"Authorization": "Bearer token"},
+            params={"solution_id": "sol-1"},
+            timeout=10.0,
+        )
+
     def test_namespace_package_resolves_via_s3_index_fallback(self):
         """Integration: namespace package lookup succeeds when Redis index is cold but S3 has modules."""
         from src.services.execution.virtual_import import VirtualModuleFinder
@@ -152,6 +174,27 @@ class TestModuleIndexS3Fallback:
             assert spec is not None
             assert spec.origin is None  # namespace package
             assert spec.submodule_search_locations == ["features"]
+
+    def test_solution_submodule_detection_uses_api_index_when_s3_scrubbed(self):
+        """Solution namespace detection should not require direct S3 credentials."""
+        from src.core import module_cache_sync as mcs
+
+        solution_id = "12345678-1234-5678-1234-567812345678"
+        api_paths = {f"_solutions/{solution_id}/modules/helpers.py"}
+
+        mcs.set_solution_context(solution_id, global_repo_access=False)
+        try:
+            with (
+                patch("src.core.module_cache_sync._fetch_module_index_from_api", return_value=api_paths) as mock_api_index,
+                patch("src.core.module_cache_sync._get_s3_client") as mock_s3_client,
+                patch.dict("os.environ", {}, clear=True),
+            ):
+                assert mcs.solution_has_submodules("modules") is True
+
+            mock_api_index.assert_called_once_with(solution_id=solution_id)
+            mock_s3_client.assert_not_called()
+        finally:
+            mcs.clear_solution_context()
 
 
 class TestS3ClientCaching:

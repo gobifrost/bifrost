@@ -61,6 +61,14 @@ class SolutionStorage:
             await client.put_object(Bucket=self._bucket, Key=key, Body=content)
             return content_hash
 
+    async def read(self, path: str) -> bytes:
+        """Read a file from this install's prefix."""
+        async with self._get_client() as client:
+            key = self._key(path)
+            response = await client.get_object(Bucket=self._bucket, Key=key)
+            body = response["Body"]
+            return await body.read()
+
     async def delete(self, path: str) -> None:
         """Delete a file from this install's prefix."""
         async with self._get_client() as client:

@@ -82,6 +82,37 @@ class TestModuleCacheAsync:
             # Verify re-cached to Redis
             mock_client.setex.assert_called_once()
 
+    async def test_get_module_falls_back_to_solution_storage_for_solution_module(self, mock_redis_client):
+        """Cold solution module lookups read from _solutions storage and re-cache."""
+        mock_client, mock_redis = mock_redis_client
+        mock_client.get.return_value = None
+
+        solution_id = "12345678-1234-5678-1234-567812345678"
+        storage_path = f"_solutions/{solution_id}/workflows/triage.py"
+
+        mock_repo = AsyncMock()
+        mock_repo.read.side_effect = AssertionError("solution modules must not use RepoStorage")
+        mock_solution_storage = AsyncMock()
+        mock_solution_storage.read.return_value = b"print('from solution s3')"
+
+        with (
+            patch("src.core.module_cache.get_redis_client", return_value=mock_client),
+            patch("src.core.module_cache.RepoStorage", return_value=mock_repo),
+            patch("src.core.module_cache.SolutionStorage", return_value=mock_solution_storage) as solution_storage_cls,
+        ):
+            from src.core.module_cache import get_module
+
+            result = await get_module(storage_path)
+
+            assert result is not None
+            assert result["content"] == "print('from solution s3')"
+            assert result["path"] == storage_path
+            assert result["hash"]
+            solution_storage_cls.assert_called_once_with(solution_id)
+            mock_solution_storage.read.assert_called_once_with("workflows/triage.py")
+            mock_client.setex.assert_called_once()
+            mock_redis.sadd.assert_called_once_with("bifrost:module:index", storage_path)
+
     async def test_get_module_s3_not_found(self, mock_redis_client):
         """When both Redis and S3 miss, get_module returns None."""
         mock_client, _ = mock_redis_client
