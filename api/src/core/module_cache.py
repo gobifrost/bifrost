@@ -18,6 +18,7 @@ from typing import Awaitable, TypedDict, cast
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.services.repo_storage import RepoStorage
+from src.services.solutions.storage import SOLUTIONS_ROOT, SolutionStorage
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,15 @@ class CachedModule(TypedDict):
     content: str
     path: str
     hash: str
+
+
+async def _read_module_from_storage(path: str) -> bytes:
+    parts = path.split("/", 2)
+    if len(parts) == 3 and parts[0] == SOLUTIONS_ROOT:
+        solution_id, relative_path = parts[1], parts[2]
+        return await SolutionStorage(solution_id).read(relative_path)
+
+    return await RepoStorage().read(path)
 
 
 async def get_module(path: str) -> CachedModule | None:
@@ -56,8 +66,7 @@ async def get_module(path: str) -> CachedModule | None:
 
     # Redis miss — try S3 fallback
     try:
-        repo = RepoStorage()
-        content_bytes = await repo.read(path)
+        content_bytes = await _read_module_from_storage(path)
     except Exception:
         logger.debug(f"Module not in cache or S3: {log_safe(path)}")
         return None

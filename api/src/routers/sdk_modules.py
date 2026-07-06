@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from src.core.auth import get_current_superuser
 from src.core.module_cache import get_all_module_paths, get_module
 from src.core.requirements_cache import get_requirements
+from src.services.solutions.storage import SOLUTIONS_ROOT, SolutionStorage
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ async def fetch_module(
 @router.get("/modules-index")
 async def fetch_module_index(
     _user: Annotated[object, Depends(get_current_superuser)],
+    solution_id: str | None = None,
 ) -> JSONResponse:
     """
     Fetch the set of all known workspace module paths.
@@ -80,6 +82,15 @@ async def fetch_module_index(
     the Redis SET is cold.
     """
     paths = await get_all_module_paths()
+    if solution_id:
+        storage = SolutionStorage(solution_id)
+        solution_paths = await storage.list("")
+        solution_prefix = f"{SOLUTIONS_ROOT}/{solution_id}/"
+        paths.update(
+            f"{solution_prefix}{path}"
+            for path in solution_paths
+            if path.endswith(".py")
+        )
     return JSONResponse(content={"paths": sorted(paths)})
 
 
