@@ -188,13 +188,13 @@ def _refresh_tokens_sync() -> bool:
         return asyncio.run(refresh_tokens())
 
     result: bool | None = None
-    error: BaseException | None = None
+    error: Exception | None = None
 
     def _run() -> None:
         nonlocal result, error
         try:
             result = asyncio.run(refresh_tokens())
-        except BaseException as exc:
+        except Exception as exc:
             error = exc
 
     thread = threading.Thread(target=_run)
