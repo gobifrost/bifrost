@@ -489,5 +489,11 @@ class TestCliWorkflowsOrphanReplace:
                 f"Workflow {wf_id} should not be orphaned after replace"
             )
 
+            result = _invoke(["--json", "get", wf_id])
+            assert result.exit_code == 0, result.output
+            replaced = json.loads(result.output)
+            assert replaced["id"] == wf_id
+            assert replaced["function_name"] == new_fn
+
         finally:
             _invoke(["--json", "delete", wf_id, "--force"])

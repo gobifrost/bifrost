@@ -304,6 +304,7 @@ class WorkflowOrphanService:
 
         wf.path = source_path
         wf.function_name = function_name
+        wf.is_active = True
         wf.is_orphaned = False
         wf.updated_at = datetime.now(timezone.utc)
 

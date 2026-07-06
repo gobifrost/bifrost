@@ -298,6 +298,7 @@ class TestReplaceWorkflowASTSemantics:
         assert result.path == "workflows/new.py"
         assert result.function_name == "my_func"
         assert result.is_orphaned is False
+        assert result.is_active is True
         db.commit.assert_awaited_once()
 
 
