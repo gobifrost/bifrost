@@ -240,9 +240,10 @@ class BundlerService:
             for out in result["outputs"]:
                 rel = out["path"]
                 data = (out_dir / rel).read_bytes()
-                await self._app_storage.write_preview_file(app_id, rel, data) \
-                    if mode == "preview" \
-                    else await self._write_live(app_id, rel, data)
+                if mode == "preview":
+                    await self._app_storage.write_preview_file(app_id, rel, data)
+                else:
+                    await self._app_storage.write_live_file(app_id, rel, data)
                 uploaded.append(rel)
 
             # 7. Write manifest — only on success, so failures preserve
@@ -261,7 +262,9 @@ class BundlerService:
                     app_id, "manifest.json", manifest_bytes
                 )
             else:
-                await self._write_live(app_id, "manifest.json", manifest_bytes)
+                await self._app_storage.write_live_file(
+                    app_id, "manifest.json", manifest_bytes
+                )
 
             logger.info(
                 f"Bundler: built app={log_safe(app_id)} mode={log_safe(mode)} "
@@ -677,16 +680,6 @@ class BundlerService:
             lines.append(f"export const {n} = _p[{n!r}];")
 
         (pkg_dir / "index.js").write_text("\n".join(lines))
-
-    async def _write_live(self, app_id: str, rel: str, data: bytes) -> None:
-        """Write to _apps/{app_id}/live/ (not offered by AppStorageService yet)."""
-        key = self._app_storage._key(app_id, "live", rel)
-        async with self._app_storage._get_client() as c:
-            await c.put_object(
-                Bucket=self._app_storage._bucket,
-                Key=key,
-                Body=data,
-            )
 
     async def _run_esbuild(self, cfg: dict) -> dict:
         """Invoke the bundle.js Node subprocess.

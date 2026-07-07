@@ -107,6 +107,18 @@ services:
     tmpfs:
       - /data  # Ephemeral storage - fresh each run
 
+  # Azurite - Azure Blob-compatible object storage (Test)
+  # Contract tests use this to exercise the Azure Blob SDK path without secrets.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck"]
+    environment:
+      AZURITE_ACCOUNTS: "bifrostcontract:Ymlmcm9zdC1zdG9yYWdlLWNvbnRyYWN0LXRlc3QtYWNjb3VudC1rZXktMzJieXRlcy1taW5pbXVtLTIwMjY="
+    tmpfs:
+      - /data
+    profiles:
+      - test
+
   # Init Container (Test) - Runs migrations and warms module cache before API/workers start
   init:
     image: bifrost-test-api-dev:latest
@@ -324,6 +336,16 @@ services:
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
+      # Real backend contract coverage
+      BIFROST_STORAGE_CONTRACT_S3_BUCKET: bifrost-test
+      BIFROST_STORAGE_CONTRACT_S3_ENDPOINT_URL: http://seaweedfs:8333
+      BIFROST_STORAGE_CONTRACT_S3_ACCESS_KEY_ID: bifrost
+      BIFROST_STORAGE_CONTRACT_S3_SECRET_ACCESS_KEY: bifrost_test_key
+      BIFROST_STORAGE_CONTRACT_S3_REGION: us-east-1
+      BIFROST_STORAGE_CONTRACT_AZURE_BLOB_ACCOUNT_URL: http://azurite:10000/bifrostcontract
+      BIFROST_STORAGE_CONTRACT_AZURE_BLOB_CONTAINER: bifrost-contract
+      BIFROST_STORAGE_CONTRACT_AZURE_BLOB_ACCOUNT_NAME: bifrostcontract
+      BIFROST_STORAGE_CONTRACT_AZURE_BLOB_ACCOUNT_KEY: Ymlmcm9zdC1zdG9yYWdlLWNvbnRyYWN0LXRlc3QtYWNjb3VudC1rZXktMzJieXRlcy1taW5pbXVtLTIwMjY=
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
       PYTHONPATH: /app
@@ -387,6 +409,8 @@ services:
       redis:
         condition: service_healthy
       seaweedfs:
+        condition: service_started
+      azurite:
         condition: service_started
       init:
         condition: service_completed_successfully

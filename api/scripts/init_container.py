@@ -92,8 +92,8 @@ async def warm_requirements_cache() -> bool:
     Returns:
         True if requirements.txt was cached, False if not found
 
-    Raises:
-        Exception: If cache warming fails
+    Cache warming is best-effort: startup must not fail just because
+    requirements.txt is absent or object storage is unavailable.
     """
     logger.info("Warming requirements cache from S3...")
 
@@ -109,11 +109,11 @@ async def warm_requirements_cache() -> bool:
 
     except ImportError as e:
         logger.error(f"Failed to import requirements_cache: {e}")
-        raise
+        return False
 
     except Exception as e:
         logger.error(f"Failed to warm requirements cache: {e}")
-        raise
+        return False
 
 
 async def main() -> int:

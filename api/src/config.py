@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -170,8 +170,20 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     # ==========================================================================
-    # S3 Storage (for horizontal scaling)
+    # Object Storage
     # ==========================================================================
+    object_storage_provider: str = Field(
+        default="s3",
+        description="Object storage backend provider: s3 or azure_blob",
+    )
+
+    @field_validator("object_storage_provider", mode="before")
+    @classmethod
+    def normalize_object_storage_provider(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.lower()
+        return value
+
     s3_bucket: str | None = Field(
         default=None,
         description="S3 bucket name for workspace storage (required when S3 is configured)"
@@ -201,6 +213,38 @@ class Settings(BaseSettings):
         default=None,
         description="Public S3 endpoint URL for presigned URLs (falls back to s3_endpoint_url)"
     )
+
+    azure_blob_account_url: str | None = Field(
+        default=None,
+        description="Azure Blob account URL, e.g. https://acct.blob.core.windows.net",
+    )
+
+    azure_blob_container: str | None = Field(
+        default=None,
+        description="Azure Blob container name for workspace and upload storage",
+    )
+
+    azure_blob_auth: str = Field(
+        default="default_credential",
+        description="Azure Blob auth mode: default_credential or account_key",
+    )
+
+    azure_blob_account_key: str | None = Field(
+        default=None,
+        description="Azure Blob account key. Prefer managed identity/default credential in production.",
+    )
+
+    @computed_field
+    @property
+    def azure_blob_configured(self) -> bool:
+        """Check if Azure Blob storage is configured."""
+        if self.object_storage_provider != "azure_blob":
+            return False
+        if not self.azure_blob_account_url or not self.azure_blob_container:
+            return False
+        return self.azure_blob_auth == "default_credential" or bool(
+            self.azure_blob_account_key
+        )
 
     @computed_field
     @property
