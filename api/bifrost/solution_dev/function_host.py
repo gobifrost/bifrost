@@ -9,15 +9,100 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
+
+import yaml
 
 # Folders that never hold solution source — skip for speed and to avoid
 # importing build output / deps. (Discovery is intentionally layout-agnostic:
 # a @workflow anywhere is resolvable by its path::fn, exactly as the platform
 # resolves it — we don't restrict source to particular dirs.)
 _SKIP_DIRS = {"node_modules", "dist", ".venv", "venv", "__pycache__", ".git", ".bifrost"}
+
+
+class LocalWorkflowError(Exception):
+    """Base for local resolution errors the dev proxy surfaces to the app."""
+
+
+class LocalWorkflowResolutionError(LocalWorkflowError):
+    """A workflow name matched multiple local manifest entries."""
+
+
+class LocalWorkflowImportError(LocalWorkflowError):
+    """The ref's target file exists locally but failed to import."""
+
+
+@dataclass(frozen=True)
+class LocalWorkflowIndex:
+    by_ref: dict[str, str] = field(default_factory=dict)       # ref → local path::fn
+    ambiguous: dict[str, list[str]] = field(default_factory=dict)  # name → candidate refs
+    failed: dict[str, str] = field(default_factory=dict)       # ref → import error
+
+
+def _load_workflow_manifest_entries(workspace: Path) -> list[dict[str, Any]]:
+    manifest = workspace / ".bifrost" / "workflows.yaml"
+    if not manifest.is_file():
+        return []
+    data = yaml.safe_load(manifest.read_text()) or {}
+    workflows = data.get("workflows") or {}
+    if not isinstance(workflows, dict):
+        return []
+    entries: list[dict[str, Any]] = []
+    for workflow_id, body in workflows.items():
+        if not isinstance(body, dict):
+            continue
+        entry = dict(body)
+        entry.setdefault("id", str(workflow_id))
+        entries.append(entry)
+    return entries
+
+
+def build_local_workflow_index(
+    workspace: Path,
+    local_refs: set[str],
+    failures: dict[str, str],
+) -> LocalWorkflowIndex:
+    """Index every ref shape onto the discovered local functions.
+
+    Honors the manifest ``path`` key ONLY — the same key deploy's
+    ``_collect_workflows`` honors — so ``solution start`` and ``deploy``
+    agree about which entries exist.
+    """
+    by_ref = {ref: ref for ref in local_refs}
+    failed: dict[str, str] = {}
+    name_targets: dict[str, set[str]] = {}
+
+    for entry in _load_workflow_manifest_entries(workspace):
+        path = entry.get("path")
+        function_name = entry.get("function_name")
+        if not path or not function_name:
+            continue
+        local_ref = f"{path}::{function_name}"
+        uuid_alias = str(entry["id"])
+        name = entry.get("name")
+        if name:
+            name_targets.setdefault(str(name), set()).add(local_ref)
+
+        if local_ref in local_refs:
+            by_ref[uuid_alias] = local_ref
+        elif path in failures:
+            failed[uuid_alias] = failures[path]
+        # else: entry points at a file that doesn't exist locally → clean miss.
+
+    ambiguous: dict[str, list[str]] = {}
+    for name, targets in name_targets.items():
+        live = sorted(t for t in targets if t in local_refs)
+        broken = sorted(t for t in targets if t.split("::", 1)[0] in failures)
+        if len(live) > 1:
+            ambiguous[name] = live
+        elif len(live) == 1:
+            by_ref[name] = live[0]
+        elif broken:
+            failed[name] = failures[broken[0].split("::", 1)[0]]
+    return LocalWorkflowIndex(by_ref=by_ref, ambiguous=ambiguous, failed=failed)
 
 
 def discover_functions(
@@ -134,9 +219,13 @@ class FunctionHost:
         self._workspace = workspace
         self._fns: dict[str, Callable[..., Any]] = {}
         self._failures: dict[str, str] = {}
+        self._index = LocalWorkflowIndex()
 
     def reload(self) -> None:
         self._fns, self._failures = discover_functions(self._workspace)
+        self._index = build_local_workflow_index(
+            self._workspace, set(self._fns), self._failures
+        )
 
     def refs(self) -> list[str]:
         return sorted(self._fns)
@@ -144,8 +233,28 @@ class FunctionHost:
     def failures(self) -> dict[str, str]:
         return dict(self._failures)
 
-    def has(self, ref: str) -> bool:
-        return ref in self._fns
+    def resolve(self, ref: str) -> str | None:
+        """Local ``path::fn`` for any ref shape; None on a clean miss.
+
+        Raises LocalWorkflowResolutionError (ambiguous name) or
+        LocalWorkflowImportError (target file failed to import) — both must
+        surface to the developer, never fall through to the platform.
+        """
+        if ref in self._index.ambiguous:
+            candidates = ", ".join(self._index.ambiguous[ref])
+            raise LocalWorkflowResolutionError(
+                f"workflow name '{ref}' is ambiguous in .bifrost/workflows.yaml "
+                f"(matches: {candidates}); use a path::function ref"
+            )
+        err = self._index.failed.get(ref)
+        if err is None and "::" in ref:
+            err = self._failures.get(ref.split("::", 1)[0])
+        if err is not None:
+            raise LocalWorkflowImportError(
+                f"local workflow '{ref}' failed to import: {err} "
+                f"(fix the file — it hot-reloads on save)"
+            )
+        return self._index.by_ref.get(ref)
 
     async def run(self, ref: str, params: dict[str, Any]) -> Any:
         fn = self._fns[ref]  # KeyError → caller maps to 404
