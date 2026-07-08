@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
 	Card,
 	CardContent,
@@ -93,6 +94,13 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+} from "@/components/ui/sheet";
+import {
 	AlertDialog,
 	AlertDialogAction,
 	AlertDialogCancel,
@@ -108,6 +116,7 @@ import { SolutionCaptureDialog } from "@/components/solutions/SolutionCaptureDia
 import { SolutionActionsMenu } from "@/components/solutions/SolutionActionsMenu";
 import { ExportSolutionDialog } from "@/components/solutions/ExportSolutionDialog";
 import { FilesExplorer } from "@/components/files/FilesExplorer";
+import { EditUserDialog } from "@/components/users/EditUserDialog";
 import {
 	getSolutionEntities,
 	getSolutionSetup,
@@ -129,19 +138,34 @@ import { UpgradeDiffView } from "@/components/solutions/CreateEditSolution";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
 import { workflowKeysService } from "@/services/workflowKeys";
+import { useUser } from "@/hooks/useUsers";
 import type { components } from "@/lib/v1";
 
 type EntitySummary = components["schemas"]["SolutionEntitySummary"];
 type ConfigStatus = components["schemas"]["SolutionConfigStatus"];
 type ConfigType = components["schemas"]["ConfigType"];
 type SolutionDeletionSummary = components["schemas"]["SolutionDeletionSummary"];
+type AccessUserSummary = {
+	id: string;
+	name?: string | null;
+	email: string;
+};
+type AccessRoleSummary = {
+	id: string;
+	name: string;
+};
+type AccessEntitySummary = EntitySummary & {
+	role_ids?: string[];
+	role_names?: string[];
+	access_users?: AccessUserSummary[];
+};
 
 /** The three top-level tabs (down from 9). README leads Overview (it's the
  * description, not a section); the 6 entity inventories collapse into Contents
  * (type chips); config VALUES + integration connections live in Configuration;
  * Setup is no longer a tab — it's a STATE surfaced as an Overview banner + a
  * Configuration badge. */
-type TabKey = "overview" | "contents" | "configuration" | "exports";
+type TabKey = "overview" | "contents" | "access" | "configuration" | "exports";
 
 /** The entity kinds shown inside the Contents tab (the old per-entity tabs). */
 type EntityKind =
@@ -155,6 +179,18 @@ type EntityKind =
 
 /** Contents type-chip selection: a specific kind or the combined summary. */
 type ContentsFilter = "all" | EntityKind;
+
+type AccessRow = {
+	id: string;
+	kind: EntityKind;
+	name: string;
+	description?: string | null;
+	accessMode: string;
+	roles: AccessRoleSummary[];
+	users: AccessUserSummary[];
+	path?: string | null;
+	functionName?: string | null;
+};
 
 const ENTITY_TABS: {
 	key: EntityKind;
@@ -253,6 +289,93 @@ const ENTITY_TAB_LABEL: Record<EntityKind, string> = {
 	claims: "custom claims",
 	files: "files",
 };
+
+const ENTITY_KIND_LABEL: Record<EntityKind, string> = {
+	workflows: "Workflow",
+	apps: "App",
+	forms: "Form",
+	agents: "Agent",
+	tables: "Table",
+	claims: "Claim",
+	files: "File",
+};
+
+const ACCESS_BADGE_CLASS: Record<string, string> = {
+	"Role based":
+		"border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+	Authenticated:
+		"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+	Everyone:
+		"border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+	"Not exposed":
+		"border-muted-foreground/30 bg-muted/40 text-muted-foreground",
+};
+
+const KIND_BADGE_CLASS: Record<EntityKind, string> = {
+	workflows:
+		"border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+	apps:
+		"border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
+	forms:
+		"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+	agents:
+		"border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+	tables:
+		"border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+	claims:
+		"border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+	files:
+		"border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+};
+
+function readableAccessMode(entity: EntitySummary): string {
+	if (!entity.access_level) return "Not exposed";
+	return entity.access_level
+		.replace(/_/g, " ")
+		.replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function userLabel(user: AccessUserSummary): string {
+	return user.name?.trim() || user.email;
+}
+
+function userInitials(user: AccessUserSummary): string {
+	const label = userLabel(user);
+	const parts = label.split(/\s+/).filter(Boolean);
+	if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+	return label.slice(0, 2).toUpperCase();
+}
+
+function userSummary(row: AccessRow): string {
+	if (row.accessMode === "Everyone") return "Everyone";
+	if (row.accessMode === "Authenticated") return "All signed-in users";
+	if (row.users.length === 0) return "No users assigned";
+	return `${row.users.length} user${row.users.length === 1 ? "" : "s"}`;
+}
+
+function roleSummaries(item: AccessEntitySummary): AccessRoleSummary[] {
+	return (item.role_names ?? []).map((name, index) => ({
+		id: item.role_ids?.[index] ?? name,
+		name,
+	}));
+}
+
+function buildEntityAccessRows(
+	kind: "workflows" | "apps" | "forms" | "agents",
+	items: AccessEntitySummary[],
+): AccessRow[] {
+	return items.map((item) => ({
+		id: `${kind}:${item.id}`,
+		kind,
+		name: item.name,
+		description: item.description,
+		accessMode: readableAccessMode(item),
+		roles: roleSummaries(item),
+		users: item.access_users ?? [],
+		path: item.path,
+		functionName: item.function_name,
+	}));
+}
 
 const GRID_TABLE_ENTITY_TABS = new Set<EntityKind>([
 	"workflows",
@@ -1158,6 +1281,337 @@ function ContentsSummary({
 	);
 }
 
+function AccessModeBadge({ mode }: { mode: string }) {
+	return (
+		<Badge
+			variant="outline"
+			className={cn("gap-1", ACCESS_BADGE_CLASS[mode])}
+		>
+			<Shield className="h-3 w-3" />
+			{mode}
+		</Badge>
+	);
+}
+
+function EntityKindBadge({ kind }: { kind: EntityKind }) {
+	return (
+		<Badge
+			variant="outline"
+			className={cn("gap-1", KIND_BADGE_CLASS[kind])}
+		>
+			{ENTITY_KIND_LABEL[kind]}
+		</Badge>
+	);
+}
+
+function RoleLinkBadge({ role }: { role: AccessRoleSummary }) {
+	return (
+		<Badge
+			asChild
+			variant="outline"
+			className="border-indigo-500/30 bg-indigo-500/10 text-indigo-700 hover:bg-indigo-500/20 dark:text-indigo-300"
+		>
+			<Link to={`/roles/${role.id}`} onClick={(e) => e.stopPropagation()}>
+				{role.name}
+			</Link>
+		</Badge>
+	);
+}
+
+function UserDetailButton({
+	user,
+	onOpen,
+}: {
+	user: AccessUserSummary;
+	onOpen: (userId: string) => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => onOpen(user.id)}
+			className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+		>
+			<div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium">
+				{userInitials(user)}
+			</div>
+			<div className="min-w-0">
+				<div className="truncate text-sm font-medium">{userLabel(user)}</div>
+				<div className="truncate text-xs text-muted-foreground">
+					{user.email}
+				</div>
+			</div>
+		</button>
+	);
+}
+
+function AccessTab({
+	rows,
+	selected,
+	onSelect,
+	onClose,
+}: {
+	rows: AccessRow[];
+	selected: AccessRow | null;
+	onSelect: (row: AccessRow) => void;
+	onClose: () => void;
+}) {
+	const [search, setSearch] = useState("");
+	const [viewMode, setViewMode] = useState<"grid" | "table">("table");
+	const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+	const [userSearch, setUserSearch] = useState("");
+	const selectedUserQuery = useUser(selectedUserId ?? undefined);
+	const q = search.trim().toLowerCase();
+	const visibleRows = useMemo(() => {
+		if (!q) return rows;
+		return rows.filter((row) =>
+			[
+				row.name,
+				row.description,
+				row.kind,
+				row.accessMode,
+				row.path,
+				row.functionName,
+			].some((value) => value?.toLowerCase().includes(q)),
+		);
+	}, [q, rows]);
+	const visibleUsers = useMemo(() => {
+		if (!selected) return [];
+		const query = userSearch.trim().toLowerCase();
+		if (!query) return selected.users;
+		return selected.users.filter((user) =>
+			[user.name, user.email].some((value) =>
+				value?.toLowerCase().includes(query),
+			),
+		);
+	}, [selected, userSearch]);
+	const openAccessRow = (row: AccessRow) => {
+		setUserSearch("");
+		onSelect(row);
+	};
+
+	if (rows.length === 0) {
+		return (
+			<div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
+				This Solution has no deployed entities with access metadata.
+			</div>
+		);
+	}
+
+	return (
+		<>
+			<div className="flex min-h-0 max-h-full flex-col gap-3">
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<SearchBox
+						value={search}
+						onChange={setSearch}
+						placeholder="Search access..."
+						className="flex-1"
+					/>
+					<ToggleGroup
+						type="single"
+						value={viewMode}
+						onValueChange={(value: string) =>
+							value && setViewMode(value as "grid" | "table")
+						}
+					>
+						<ToggleGroupItem value="grid" aria-label="Grid view" size="sm">
+							<LayoutGrid className="h-4 w-4" />
+						</ToggleGroupItem>
+						<ToggleGroupItem value="table" aria-label="Table view" size="sm">
+							<TableIcon className="h-4 w-4" />
+						</ToggleGroupItem>
+					</ToggleGroup>
+				</div>
+
+				{visibleRows.length === 0 ? (
+					<div className="rounded-2xl border border-dashed py-8 text-center text-sm text-muted-foreground">
+						No access rows match “{search.trim()}”.
+					</div>
+				) : viewMode === "grid" ? (
+					<div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+						{visibleRows.map((row) => (
+							<div
+								key={row.id}
+								role="button"
+								tabIndex={0}
+								onClick={() => openAccessRow(row)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter" || event.key === " ") {
+										event.preventDefault();
+										openAccessRow(row);
+									}
+								}}
+								className="flex min-h-40 flex-col rounded-2xl bg-card p-4 text-left shadow-sm ring-1 ring-foreground/5 transition-colors hover:bg-accent/40 dark:ring-foreground/10"
+							>
+								<div className="flex items-center justify-between gap-2">
+									<EntityKindBadge kind={row.kind} />
+									<AccessModeBadge mode={row.accessMode} />
+								</div>
+								<div className="mt-3 font-medium">{row.name}</div>
+								<p className="mt-1 line-clamp-3 text-sm text-muted-foreground">
+									{row.description || "No description"}
+								</p>
+							</div>
+						))}
+					</div>
+				) : (
+					<DataTable className="max-h-full">
+						<DataTableHeader>
+							<DataTableRow>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									Type
+								</DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									Entity
+								</DataTableHead>
+								<DataTableHead>Description</DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									Access
+								</DataTableHead>
+							</DataTableRow>
+						</DataTableHeader>
+						<DataTableBody>
+							{visibleRows.map((row) => {
+								const isSelected = selected?.id === row.id;
+								return (
+									<DataTableRow
+										key={row.id}
+										clickable
+										className={[
+											"group/row",
+											isSelected ? "bg-muted/70" : "hover:bg-muted/50",
+										].join(" ")}
+										onClick={() => openAccessRow(row)}
+									>
+										<DataTableCell className="w-0 whitespace-nowrap">
+											<EntityKindBadge kind={row.kind} />
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap font-medium">
+											{row.name}
+										</DataTableCell>
+										<DataTableCell className="max-w-xl truncate text-muted-foreground">
+											{row.description || "-"}
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap">
+											<AccessModeBadge mode={row.accessMode} />
+										</DataTableCell>
+									</DataTableRow>
+								);
+							})}
+						</DataTableBody>
+					</DataTable>
+				)}
+			</div>
+
+			<Sheet open={!!selected} onOpenChange={(open) => !open && onClose()}>
+				<SheetContent side="right" className="w-full p-0 sm:max-w-xl">
+					{selected && (
+						<>
+							<SheetHeader className="border-b px-5 py-4">
+								<SheetTitle>{selected.name}</SheetTitle>
+								{selected.description ? (
+									<SheetDescription>{selected.description}</SheetDescription>
+								) : null}
+							</SheetHeader>
+
+							<div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-5 py-5">
+								{(selected.path || selected.functionName) && (
+									<section>
+										<h3 className="mb-2 text-sm font-semibold">Runtime reference</h3>
+										<div className="rounded-lg border bg-muted/30 p-3 font-mono text-xs">
+											{[selected.path, selected.functionName]
+												.filter(Boolean)
+												.join("::")}
+										</div>
+									</section>
+								)}
+
+								<section className="grid grid-cols-2 gap-3">
+									<div>
+										<div className="mb-1.5 text-xs font-medium text-muted-foreground">
+											Type
+										</div>
+										<EntityKindBadge kind={selected.kind} />
+									</div>
+									<div>
+										<div className="mb-1.5 text-xs font-medium text-muted-foreground">
+											Access
+										</div>
+										<AccessModeBadge mode={selected.accessMode} />
+									</div>
+								</section>
+
+								<section>
+									<h3 className="mb-2 text-sm font-semibold">Roles</h3>
+									{selected.roles.length > 0 ? (
+										<div className="flex flex-wrap gap-2">
+											{selected.roles.map((role) => (
+												<RoleLinkBadge key={role.id} role={role} />
+											))}
+										</div>
+									) : (
+										<p className="text-sm text-muted-foreground">
+											This entity does not require a role assignment.
+										</p>
+									)}
+								</section>
+
+								<section className="min-h-0">
+									<div className="mb-3 flex items-center justify-between gap-3">
+										<h3 className="text-sm font-semibold">Users</h3>
+										<span className="text-xs text-muted-foreground">
+											{selected.users.length}
+										</span>
+									</div>
+									{selected.users.length > 0 ? (
+										<>
+											<SearchBox
+												value={userSearch}
+												onChange={setUserSearch}
+												placeholder="Search users..."
+												debounceMs={0}
+												className="mb-3"
+											/>
+											{visibleUsers.length > 0 ? (
+												<div className="max-h-[min(34rem,calc(100vh-31rem))] divide-y overflow-auto rounded-lg border">
+													{visibleUsers.map((user) => (
+														<UserDetailButton
+															key={user.id}
+															user={user}
+															onOpen={setSelectedUserId}
+														/>
+													))}
+												</div>
+											) : (
+												<p className="rounded-lg border border-dashed px-3 py-6 text-sm text-muted-foreground">
+													No users match “{userSearch.trim()}”.
+												</p>
+											)}
+										</>
+									) : (
+										<p className="rounded-lg border border-dashed px-3 py-6 text-sm text-muted-foreground">
+											{selected.accessMode === "Role based"
+												? "No users are currently assigned through this Solution's roles."
+												: userSummary(selected)}
+										</p>
+									)}
+								</section>
+							</div>
+						</>
+					)}
+				</SheetContent>
+			</Sheet>
+			<EditUserDialog
+				user={selectedUserQuery.data}
+				open={Boolean(selectedUserId && selectedUserQuery.data)}
+				onOpenChange={(open) => {
+					if (!open) setSelectedUserId(null);
+				}}
+			/>
+		</>
+	);
+}
+
 /** Configuration = config VALUES (re-key over the install's life) + integration
  * connections (reconnect expired OAuth). This is the permanent home of what was
  * the one-time Setup wizard — revisited, not a wizard. */
@@ -1598,6 +2052,18 @@ export function SolutionDetail() {
 		[entityCounts],
 	);
 	const configsCount = data?.configs?.length ?? 0;
+	const accessRows = useMemo<AccessRow[]>(() => {
+		if (!data) return [];
+		return [
+			...buildEntityAccessRows("workflows", data.workflows ?? []),
+			...buildEntityAccessRows("apps", data.apps ?? []),
+			...buildEntityAccessRows("forms", data.forms ?? []),
+			...buildEntityAccessRows("agents", data.agents ?? []),
+		];
+	}, [data]);
+	const [selectedAccessId, setSelectedAccessId] = useState<string | null>(null);
+	const selectedAccessRow =
+		accessRows.find((row) => row.id === selectedAccessId) ?? null;
 
 	// `files` carries SolutionFileSummary[], not EntitySummary[] — EntityTabContent
 	// handles the files kind before it reaches the EntitySummary rendering path.
@@ -1852,6 +2318,17 @@ export function SolutionDetail() {
 								</span>
 							</TabsTrigger>
 							<TabsTrigger
+								value="access"
+								data-testid="tab-access"
+								className="gap-1.5"
+							>
+								<Shield className="h-4 w-4" />
+								Access
+								<span className="ml-1 text-xs text-muted-foreground">
+									{accessRows.length}
+								</span>
+							</TabsTrigger>
+							<TabsTrigger
 								value="configuration"
 								data-testid="tab-configuration"
 								className="gap-1.5"
@@ -1941,6 +2418,15 @@ export function SolutionDetail() {
 									/>
 								)}
 							</div>
+						</TabsContent>
+
+						<TabsContent value="access" className="flex-1 min-h-0 overflow-hidden">
+							<AccessTab
+								rows={accessRows}
+								selected={selectedAccessRow}
+								onSelect={(row) => setSelectedAccessId(row.id)}
+								onClose={() => setSelectedAccessId(null)}
+							/>
 						</TabsContent>
 
 						{/* CONFIGURATION — config VALUES + integration connections; the

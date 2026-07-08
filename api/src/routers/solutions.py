@@ -34,6 +34,7 @@ from starlette.background import BackgroundTask
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
     Solution as SolutionDTO,
+    SolutionAccessUserSummary,
     SolutionCaptureCandidates,
     SolutionCaptureRequest,
     SolutionCaptureResponse,
@@ -64,17 +65,20 @@ from src.models.contracts.solutions import (
     SolutionUpdate,
     SolutionUpgradeDiff,
 )
-from src.models.orm.agents import Agent
+from src.models.orm.agents import Agent, AgentRole
+from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.config import Config
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.file_metadata import FileMetadata
-from src.models.orm.forms import Form
+from src.models.orm.forms import Form, FormRole
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
+from src.models.orm.users import Role, User, UserRole
+from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
@@ -696,77 +700,160 @@ def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
+async def _access_details_by_entity(
+    ctx: Context,
+    junction: type,
+    fk_col: str,
+    entity_ids: list[UUID],
+) -> dict[UUID, tuple[list[UUID], list[str], list[SolutionAccessUserSummary]]]:
+    """Return role names and derived users for role-gated solution entities."""
+    if not entity_ids:
+        return {}
+
+    entity_col = getattr(junction, fk_col)
+    rows = (
+        await ctx.db.execute(
+            select(
+                entity_col,
+                Role.id,
+                Role.name,
+                User.id,
+                User.name,
+                User.email,
+            )
+            .join(Role, getattr(junction, "role_id") == Role.id)
+            .outerjoin(UserRole, UserRole.role_id == Role.id)
+            .outerjoin(User, User.id == UserRole.user_id)
+            .where(entity_col.in_(entity_ids))
+            .order_by(Role.name, User.email)
+        )
+    ).all()
+
+    role_ids_by_entity: dict[UUID, list[UUID]] = {}
+    role_names_by_entity: dict[UUID, list[str]] = {}
+    users_by_entity: dict[UUID, dict[UUID, SolutionAccessUserSummary]] = {}
+    for entity_id, role_id, role_name, user_id, user_name, user_email in rows:
+        role_ids_by_entity.setdefault(entity_id, [])
+        role_names_by_entity.setdefault(entity_id, [])
+        if role_id not in role_ids_by_entity[entity_id]:
+            role_ids_by_entity[entity_id].append(role_id)
+            role_names_by_entity[entity_id].append(role_name)
+        if user_id is not None and user_email is not None:
+            users_by_entity.setdefault(entity_id, {})[user_id] = SolutionAccessUserSummary(
+                id=user_id,
+                name=user_name,
+                email=user_email,
+            )
+
+    return {
+        entity_id: (
+            role_ids_by_entity.get(entity_id, []),
+            role_names_by_entity.get(entity_id, []),
+            list(users_by_entity.get(entity_id, {}).values()),
+        )
+        for entity_id in entity_ids
+    }
+
+
 async def _workflow_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
     rows = (await ctx.db.execute(select(Workflow).where(*where).order_by(Workflow.name))).scalars().all()
-    return [
-        SolutionEntitySummary(
-            id=row.id,
-            name=row.name,
-            description=row.description,
-            organization_id=row.organization_id,
-            path=row.path,
-            function_name=row.function_name,
-            type=row.type,
-            category=row.category,
-            access_level=row.access_level,
-            is_active=row.is_active,
-            created_at=row.created_at,
+    access = await _access_details_by_entity(ctx, WorkflowRole, "workflow_id", [row.id for row in rows])
+    summaries: list[SolutionEntitySummary] = []
+    for row in rows:
+        role_ids, role_names, access_users = access.get(row.id, ([], [], []))
+        summaries.append(
+            SolutionEntitySummary(
+                id=row.id,
+                name=row.name,
+                description=row.description,
+                organization_id=row.organization_id,
+                path=row.path,
+                function_name=row.function_name,
+                type=row.type,
+                category=row.category,
+                access_level=row.access_level,
+                is_active=row.is_active,
+                created_at=row.created_at,
+                role_ids=role_ids,
+                role_names=role_names,
+                access_users=access_users,
+            )
         )
-        for row in rows
-    ]
+    return summaries
 
 
 async def _app_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
     rows = (await ctx.db.execute(select(Application).where(*where).order_by(Application.name))).scalars().all()
-    return [
-        SolutionEntitySummary(
-            id=row.id,
-            name=row.name,
-            description=row.description,
-            organization_id=row.organization_id,
-            slug=row.slug,
-            path=row.repo_path,
-            access_level=row.access_level,
-            app_model=row.app_model,
-            logo=_logo_data_url(row.logo_data, row.logo_content_type),
-            created_at=row.created_at,
+    access = await _access_details_by_entity(ctx, AppRole, "app_id", [row.id for row in rows])
+    summaries: list[SolutionEntitySummary] = []
+    for row in rows:
+        role_ids, role_names, access_users = access.get(row.id, ([], [], []))
+        summaries.append(
+            SolutionEntitySummary(
+                id=row.id,
+                name=row.name,
+                description=row.description,
+                organization_id=row.organization_id,
+                slug=row.slug,
+                path=row.repo_path,
+                access_level=row.access_level,
+                app_model=row.app_model,
+                logo=_logo_data_url(row.logo_data, row.logo_content_type),
+                created_at=row.created_at,
+                role_ids=role_ids,
+                role_names=role_names,
+                access_users=access_users,
+            )
         )
-        for row in rows
-    ]
+    return summaries
 
 
 async def _form_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
     rows = (await ctx.db.execute(select(Form).where(*where).order_by(Form.name))).scalars().all()
-    return [
-        SolutionEntitySummary(
-            id=row.id,
-            name=row.name,
-            description=row.description,
-            organization_id=row.organization_id,
-            access_level=_enum_to_str(row.access_level),
-            is_active=row.is_active,
-            path=row.workflow_path,
-            function_name=row.workflow_function_name,
-            created_at=row.created_at,
+    access = await _access_details_by_entity(ctx, FormRole, "form_id", [row.id for row in rows])
+    summaries: list[SolutionEntitySummary] = []
+    for row in rows:
+        role_ids, role_names, access_users = access.get(row.id, ([], [], []))
+        summaries.append(
+            SolutionEntitySummary(
+                id=row.id,
+                name=row.name,
+                description=row.description,
+                organization_id=row.organization_id,
+                access_level=_enum_to_str(row.access_level),
+                is_active=row.is_active,
+                path=row.workflow_path,
+                function_name=row.workflow_function_name,
+                created_at=row.created_at,
+                role_ids=role_ids,
+                role_names=role_names,
+                access_users=access_users,
+            )
         )
-        for row in rows
-    ]
+    return summaries
 
 
 async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
     rows = (await ctx.db.execute(select(Agent).where(*where).order_by(Agent.name))).scalars().all()
-    return [
-        SolutionEntitySummary(
-            id=row.id,
-            name=row.name,
-            description=row.description,
-            organization_id=row.organization_id,
-            access_level=_enum_to_str(row.access_level),
-            is_active=row.is_active,
-            created_at=row.created_at,
+    access = await _access_details_by_entity(ctx, AgentRole, "agent_id", [row.id for row in rows])
+    summaries: list[SolutionEntitySummary] = []
+    for row in rows:
+        role_ids, role_names, access_users = access.get(row.id, ([], [], []))
+        summaries.append(
+            SolutionEntitySummary(
+                id=row.id,
+                name=row.name,
+                description=row.description,
+                organization_id=row.organization_id,
+                access_level=_enum_to_str(row.access_level),
+                is_active=row.is_active,
+                created_at=row.created_at,
+                role_ids=role_ids,
+                role_names=role_names,
+                access_users=access_users,
+            )
         )
-        for row in rows
-    ]
+    return summaries
 
 
 async def _table_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
