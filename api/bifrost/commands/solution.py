@@ -31,7 +31,8 @@ from typing import Any
 import click
 import yaml
 
-from bifrost.client import BifrostClient
+from bifrost.client import BifrostClient, refresh_tokens
+from bifrost.credentials import get_credentials
 from bifrost.org_target import org_option, resolve_org_target
 from bifrost.solution_binding import (
     SolutionBindingError,
@@ -2100,6 +2101,16 @@ def _vite_child_env(
     return env
 
 
+async def _refresh_solution_start_access_token(api_url: str) -> str | None:
+    if not await refresh_tokens():
+        return None
+    creds = get_credentials(api_url.rstrip("/"))
+    if not creds:
+        return None
+    token = creds.get("access_token")
+    return str(token) if token else None
+
+
 @solution_group.command(name="start", help="Run the app's dev server + local workflows (one origin).")
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
@@ -2645,12 +2656,16 @@ async def _serve(client, chosen, org_info, host, port, vite_port, workspace, sol
     from bifrost.solution_dev.proxy import DevProxyConfig, build_dev_app
     from bifrost.solution_dev.reload import start_function_watch
 
+    async def refresh_token() -> str | None:
+        return await _refresh_solution_start_access_token(client.api_url)
+
     cfg = DevProxyConfig(
         upstream_url=client.api_url.rstrip("/"),
         token=client._access_token,
         app_id=chosen.app_id,
         org_id=(org_info or {}).get("id"),
         solution_id=solution_id,
+        refresh_token=refresh_token,
     )
     app = build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}")
     runner = web.AppRunner(app)

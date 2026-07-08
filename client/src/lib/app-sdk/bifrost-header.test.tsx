@@ -59,6 +59,32 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     expect(screen.getByText("extra")).toBeInTheDocument();
   });
 
+  it("shows expired dev auth instead of the Account fallback", async () => {
+    const expiredAuth: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: "bifrost_dev_auth_expired",
+          detail: "Your CLI token has expired. Restart `bifrost solution start`.",
+        }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Bifrost-Dev-Auth": "expired",
+          },
+        },
+      );
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={expiredAuth}>
+        <BifrostHeader title="X" />
+      </BifrostProvider>,
+    );
+
+    expect(await screen.findByText("Session expired")).toBeInTheDocument();
+    expect(screen.queryByText("Account")).toBeNull();
+  });
+
   it("uses shrinkable and wrapping inline layout for narrow app viewports", () => {
     const { container } = render(
       <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} supportsTheme>

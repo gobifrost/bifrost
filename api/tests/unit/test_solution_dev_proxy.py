@@ -146,6 +146,32 @@ def _make_upstream(record):
     return app
 
 
+def _make_auth_refresh_upstream(record):
+    async def auth_me(request):
+        auth = request.headers.get("Authorization")
+        record.setdefault("auth_headers", []).append(auth)
+        if auth == "Bearer fresh-token":
+            return web.json_response({"email": "dev@gobifrost.com", "name": "Dev User"})
+        return web.json_response({"detail": "Not authenticated"}, status=401)
+
+    async def branding(_request):
+        record["branding_requested"] = True
+        return web.json_response(
+            {
+                "application_name": "Covi Ops",
+                "rectangle_logo_url": "/api/branding/logo/rectangle",
+                "square_logo_url": "/api/branding/logo/square",
+                "primary_color": "#aa3366",
+                "terminology": {},
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get("/api/auth/me", auth_me)
+    app.router.add_get("/api/branding", branding)
+    return app
+
+
 async def _serve(app, port):
     runner = web.AppRunner(app)
     await runner.setup()
@@ -284,6 +310,127 @@ async def test_browser_accept_encoding_is_not_forwarded_upstream():
         assert record["other_accept_encoding"] == "identity"
     finally:
         await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_api_proxy_refreshes_cli_token_once_after_401():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+    host = _StubHost(set())
+
+    async def refresh_token():
+        record["refresh_called"] = True
+        return "fresh-token"
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+        assert r.status_code == 200
+        assert r.json()["email"] == "dev@gobifrost.com"
+        assert record["refresh_called"] is True
+        assert record["auth_headers"] == ["Bearer stale-token", "Bearer fresh-token"]
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+    host = _StubHost(set())
+
+    async def refresh_token():
+        record["refresh_called"] = True
+        return None
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+        assert r.status_code == 401
+        assert r.headers["x-bifrost-dev-auth"] == "expired"
+        assert r.json() == {
+            "error": "bifrost_dev_auth_expired",
+            "detail": "Your CLI token has expired. Restart `bifrost solution start`.",
+        }
+        assert record["refresh_called"] is True
+        assert record["auth_headers"] == ["Bearer stale-token"]
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_vite_proxy_serves_branded_auth_expired_page_after_api_auth_failure():
+    record = {}
+    up_port, vite_port, dev_port = _free_port(), _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+
+    async def index(_request):
+        return web.Response(text="<html><body>Vite app</body></html>", content_type="text/html")
+
+    async def logo(_request):
+        return web.Response(text="<svg></svg>", content_type="image/svg+xml")
+
+    vite = web.Application()
+    vite.router.add_get("/", index)
+    vite.router.add_get("/logo.svg", logo)
+    vite_runner = await _serve(vite, vite_port)
+    host = _StubHost(set())
+
+    async def refresh_token():
+        return None
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            api = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+            page = await c.get(f"http://127.0.0.1:{dev_port}/", headers={"Accept": "text/html"})
+            logo_resp = await c.get(
+                f"http://127.0.0.1:{dev_port}/logo.svg",
+                headers={"Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},
+            )
+        assert api.status_code == 401
+        assert page.status_code == 401
+        assert logo_resp.status_code == 200
+        assert logo_resp.headers["content-type"].startswith("image/svg+xml")
+        assert logo_resp.text == "<svg></svg>"
+        assert record["branding_requested"] is True
+        assert "<title>Covi Ops Dev Auth Expired</title>" in page.text
+        assert "Something went wrong" in page.text
+        assert "What you can do:" in page.text
+        assert "/api/branding/logo/square" not in page.text
+        assert "/api/branding/logo/rectangle" not in page.text
+        assert "#aa3366" in page.text
+        assert "Your CLI token has expired" in page.text
+        assert "bifrost solution start" in page.text
+        assert "Vite app" not in page.text
+    finally:
+        await dev_runner.cleanup()
+        await vite_runner.cleanup()
         await up_runner.cleanup()
 
 

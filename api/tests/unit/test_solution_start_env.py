@@ -64,3 +64,39 @@ def test_vite_child_env_points_bundle_at_local_proxy():
     assert env["BIFROST_ACCESS_TOKEN"] == "tok"
     # Base env is inherited, not replaced.
     assert env["PATH"] == "/usr/bin"
+
+
+async def test_solution_start_token_refresher_returns_new_token_for_same_api(monkeypatch):
+    state = {"refreshed": False}
+
+    async def _refresh_tokens():
+        state["refreshed"] = True
+        return True
+
+    def _get_credentials(api_url=None):
+        assert api_url == "http://api.example"
+        return {"access_token": "fresh-token"}
+
+    monkeypatch.setattr(solution_cmd, "refresh_tokens", _refresh_tokens)
+    monkeypatch.setattr(solution_cmd, "get_credentials", _get_credentials)
+
+    token = await solution_cmd._refresh_solution_start_access_token("http://api.example")
+
+    assert state["refreshed"] is True
+    assert token == "fresh-token"
+
+
+async def test_solution_start_token_refresher_returns_none_when_refresh_fails(monkeypatch):
+    async def _refresh_tokens():
+        return False
+
+    monkeypatch.setattr(solution_cmd, "refresh_tokens", _refresh_tokens)
+    monkeypatch.setattr(
+        solution_cmd,
+        "get_credentials",
+        lambda api_url=None: {"access_token": "should-not-be-used"},
+    )
+
+    token = await solution_cmd._refresh_solution_start_access_token("http://api.example")
+
+    assert token is None

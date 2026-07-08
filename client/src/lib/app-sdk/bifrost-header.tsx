@@ -260,6 +260,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
   ensureStyle(C, themeKey);
 
   const [me, setMe] = useState<Me | null>(null);
+  const [authExpired, setAuthExpired] = useState(false);
   const [fetchedLogo, setFetchedLogo] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -268,8 +269,18 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
   useEffect(() => {
     let cancelled = false;
     authedFetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => !cancelled && d && setMe(d))
+      .then((r) => {
+        if (r.ok) return r.json();
+        if (r.status === 401 && r.headers.get("X-Bifrost-Dev-Auth") === "expired") {
+          setAuthExpired(true);
+        }
+        return null;
+      })
+      .then((d) => {
+        if (cancelled || !d) return;
+        setAuthExpired(false);
+        setMe(d);
+      })
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -315,7 +326,7 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
   }, [open]);
 
   const effectiveLogo = logo !== undefined ? logo : fetchedLogo;
-  const name = me?.name || me?.email?.split("@")[0] || "Account";
+  const name = authExpired ? "Session expired" : me?.name || me?.email?.split("@")[0] || "Account";
   const email = me?.email || "";
 
   return (

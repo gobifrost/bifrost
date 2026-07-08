@@ -23,8 +23,10 @@ side closes, the bridge tears down both sockets (no half-open pump leaks).
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
 
 import aiohttp
 import httpx
@@ -48,6 +50,9 @@ _STRIP = {
 
 class _UpstreamAuthorityError(ValueError):
     """The constructed proxy target's authority is not the trusted base's."""
+
+
+DEV_AUTH_EXPIRED_DETAIL = "Your CLI token has expired. Restart `bifrost solution start`."
 
 
 def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
@@ -83,13 +88,17 @@ def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
     return result
 
 
-@dataclass(frozen=True)
+@dataclass
 class DevProxyConfig:
     upstream_url: str   # the dev API, e.g. http://localhost:37791
     token: str          # CLI access token
     app_id: str         # chosen app's manifest UUID
     org_id: str | None  # bound install org id (or None for a global install)
     solution_id: str | None = None  # bound Solution install id
+    refresh_token: Callable[[], Awaitable[str | None]] | None = None
+    auth_expired: bool = False
+    branding: dict[str, Any] | None = None
+    branding_loaded: bool = False
 
 
 # Typed app keys (avoid aiohttp's NotAppKeyWarning for plain-string keys).
@@ -145,6 +154,342 @@ def _passthrough_headers(resp, default_content_type: str) -> dict[str, str]:
     if location:
         headers["location"] = location
     return headers
+
+
+async def _refresh_cli_token(cfg: DevProxyConfig) -> bool:
+    if cfg.refresh_token is None:
+        cfg.auth_expired = True
+        return False
+    try:
+        token = await cfg.refresh_token()
+    except Exception:
+        token = None
+    if not token:
+        cfg.auth_expired = True
+        return False
+    cfg.token = token
+    cfg.auth_expired = False
+    return True
+
+
+async def _authed_upstream_request(
+    request: web.Request,
+    method: str,
+    url: str,
+    **kwargs,
+) -> httpx.Response | None:
+    cfg: DevProxyConfig = request.app[_CFG]
+    http: httpx.AsyncClient = request.app[_HTTP]
+    resp = await http.request(
+        method,
+        url,
+        headers=_auth_headers(cfg, request.headers),
+        **kwargs,
+    )
+    if resp.status_code != 401:
+        return resp
+    if not await _refresh_cli_token(cfg):
+        return None
+    retry = await http.request(
+        method,
+        url,
+        headers=_auth_headers(cfg, request.headers),
+        **kwargs,
+    )
+    if retry.status_code == 401:
+        cfg.auth_expired = True
+        return None
+    return retry
+
+
+def _dev_auth_expired_json_response() -> web.Response:
+    return web.json_response(
+        {
+            "error": "bifrost_dev_auth_expired",
+            "detail": DEV_AUTH_EXPIRED_DETAIL,
+        },
+        status=401,
+        headers={"X-Bifrost-Dev-Auth": "expired"},
+    )
+
+
+async def _get_branding(request: web.Request) -> dict[str, Any]:
+    cfg: DevProxyConfig = request.app[_CFG]
+    if cfg.branding_loaded:
+        return cfg.branding or {}
+    cfg.branding_loaded = True
+    try:
+        resp = await request.app[_HTTP].get(f"{cfg.upstream_url}/api/branding")
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                cfg.branding = data
+    except (httpx.HTTPError, ValueError):
+        cfg.branding = None
+    return cfg.branding or {}
+
+
+def _clean_brand_color(value: Any) -> str:
+    if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+        return value
+    return "#0066CC"
+
+
+def _clean_brand_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return "Bifrost"
+    value = value.strip()
+    return value or "Bifrost"
+
+
+async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
+    branding = await _get_branding(request)
+    product_name = _clean_brand_text(branding.get("application_name"))
+    primary_color = _clean_brand_color(branding.get("primary_color"))
+    escaped_product_name = html.escape(product_name)
+    escaped_primary_color = html.escape(primary_color, quote=True)
+    escaped_detail = html.escape(DEV_AUTH_EXPIRED_DETAIL)
+    page_html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escaped_product_name} Dev Auth Expired</title>
+    <script>
+      try {{
+        if ((localStorage.getItem("theme") || "dark") === "dark") {{
+          document.documentElement.classList.add("dark");
+        }}
+      }} catch (_) {{
+        document.documentElement.classList.add("dark");
+      }}
+    </script>
+    <style>
+      :root {{ color-scheme: light dark; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #ffffff;
+        color: #0f172a;
+        padding: 16px;
+        box-sizing: border-box;
+      }}
+      .shell {{
+        width: min(672px, 100%);
+      }}
+      main {{
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 24px;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+        overflow: hidden;
+      }}
+      .header {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 20px 20px 0;
+      }}
+      .icon {{
+        flex: 0 0 auto;
+        display: flex;
+        width: 48px;
+        height: 48px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        background: rgba(220, 38, 38, 0.1);
+        color: #dc2626;
+      }}
+      h1 {{
+        margin: 0 0 4px;
+        color: #0f172a;
+        font-size: 1rem;
+        font-weight: 500;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }}
+      p {{
+        margin: 0;
+        color: #475569;
+        line-height: 1.55;
+      }}
+      .description {{
+        font-size: 0.875rem;
+      }}
+      .content {{
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 20px;
+      }}
+      .alert {{
+        border: 1px solid rgba(220, 38, 38, 0.22);
+        border-radius: 16px;
+        background: #ffffff;
+        color: #dc2626;
+        padding: 12px 16px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.875rem;
+        line-height: 1.5;
+      }}
+      .actions {{
+        border-radius: 8px;
+        background: #f4f4f5;
+        padding: 16px;
+      }}
+      h2 {{
+        margin: 0 0 8px;
+        color: #0f172a;
+        font-size: 0.875rem;
+        font-weight: 500;
+        letter-spacing: 0;
+      }}
+      ul {{
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        color: #71717a;
+        font-size: 0.875rem;
+        line-height: 1.55;
+      }}
+      li + li {{
+        margin-top: 4px;
+      }}
+      code {{
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        background: #f1f5f9;
+        color: #0f172a;
+        padding: 2px 6px;
+        font-size: 0.94em;
+      }}
+      .footer {{
+        display: flex;
+        gap: 8px;
+        padding: 0 20px 20px;
+      }}
+      button, a {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 0 12px;
+        font: inherit;
+        font-size: 0.875rem;
+        font-weight: 500;
+        line-height: 1;
+        text-decoration: none;
+        cursor: pointer;
+      }}
+      button {{
+        border: 1px solid transparent;
+        border-radius: 16px;
+        background: {escaped_primary_color};
+        color: #ffffff;
+      }}
+      a {{
+        border: 1px solid rgba(15, 23, 42, 0.12);
+        border-radius: 16px;
+        background: #ffffff;
+        color: #0f172a;
+      }}
+      button:hover {{
+        filter: brightness(0.94);
+      }}
+      a:hover {{
+        background: #f4f4f5;
+      }}
+      .dark body {{
+        background: #09090b;
+        color: #fafafa;
+      }}
+      .dark main {{
+        border-color: rgba(250, 250, 250, 0.08);
+        background: #171717;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      }}
+      .dark h1, .dark h2 {{
+        color: #fafafa;
+      }}
+      .dark p {{
+        color: #a1a1aa;
+      }}
+      .dark .alert {{
+        border-color: rgba(248, 113, 113, 0.26);
+        background: #171717;
+        color: #f87171;
+      }}
+      .dark .actions {{
+        background: #262626;
+      }}
+      .dark ul {{
+        color: #a1a1aa;
+      }}
+      .dark code {{
+        border-color: rgba(250, 250, 250, 0.12);
+        background: #262626;
+        color: #fafafa;
+      }}
+      .dark .actions code {{
+        background: #171717;
+      }}
+      .dark a {{
+        border-color: rgba(250, 250, 250, 0.1);
+        background: #171717;
+        color: #fafafa;
+      }}
+      .dark a:hover {{
+        background: #262626;
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <main>
+        <div class="header">
+          <div class="icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+              <path d="M12 9v4"></path>
+              <path d="M12 17h.01"></path>
+            </svg>
+          </div>
+          <div>
+            <h1>Something went wrong</h1>
+            <p class="description">The local Solution dev session can no longer authenticate requests.</p>
+          </div>
+        </div>
+        <div class="content">
+          <div class="alert">{escaped_detail}</div>
+          <div class="actions">
+            <h2>What you can do:</h2>
+            <ul>
+              <li>• Stop this server and restart <code>bifrost solution start</code></li>
+              <li>• If restarting does not fix it, run <code>bifrost login</code></li>
+              <li>• Refresh this page after the Solution dev server is running again</li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer">
+          <button type="button" onclick="window.location.reload()">Try Again</button>
+          <a href="/">Go to Home</a>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>
+"""
+    return web.Response(
+        text=page_html,
+        status=401,
+        content_type="text/html",
+        headers={"X-Bifrost-Dev-Auth": "expired"},
+    )
 
 
 def _is_ws_upgrade(request: web.Request) -> bool:
@@ -244,15 +589,18 @@ async def _execute_handler(request: web.Request) -> web.Response:
     if cfg.solution_id:
         body["solution_id"] = cfg.solution_id
     try:
-        resp = await request.app[_HTTP].post(
+        resp = await _authed_upstream_request(
+            request,
+            "POST",
             f"{cfg.upstream_url}/api/workflows/execute",
             json=body,
-            headers=_auth_headers(cfg, request.headers),
         )
     except httpx.HTTPError:
         return web.json_response(
             {"detail": f"Dev API unreachable at {cfg.upstream_url}"}, status=502
         )
+    if resp is None:
+        return _dev_auth_expired_json_response()
     return web.Response(
         body=resp.content, status=resp.status_code,
         headers=_passthrough_headers(resp, "application/json"),
@@ -266,19 +614,21 @@ async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
         return await _ws_proxy(request, target)
     data = await request.read()
     try:
-        resp = await request.app[_HTTP].request(
+        resp = await _authed_upstream_request(
+            request,
             request.method,
             _join_upstream(
                 cfg.upstream_url,
                 _with_solution_query(request.rel_url, cfg.solution_id),
             ),
             content=data or None,
-            headers=_auth_headers(cfg, request.headers),
         )
     except httpx.HTTPError:
         return web.json_response(
             {"detail": f"Dev API unreachable at {cfg.upstream_url}"}, status=502
         )
+    if resp is None:
+        return _dev_auth_expired_json_response()
     return web.Response(
         body=resp.content, status=resp.status_code,
         headers=_passthrough_headers(resp, "application/json"),
@@ -286,6 +636,11 @@ async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
 
 
 async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
+    cfg: DevProxyConfig = request.app[_CFG]
+    accept = request.headers.get("Accept", "")
+    fetch_dest = request.headers.get("Sec-Fetch-Dest", "")
+    if cfg.auth_expired and ("text/html" in accept or fetch_dest in {"document", "iframe"}):
+        return await _dev_auth_expired_page_response(request)
     vite_url = request.app[_VITE]
     if _is_ws_upgrade(request):
         target = _ws_scheme(_join_upstream(vite_url, request.rel_url))
