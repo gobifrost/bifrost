@@ -2048,7 +2048,17 @@ def _vite_child_env(
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
 @click.option("--port", default=3000, show_default=True, type=int, help="Local origin port.")
-def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None:
+@click.option("--host", "bind_host", default="127.0.0.1", show_default=True,
+              help="Address for the local origin to bind.")
+@click.option("--public-url", default=None,
+              help="Browser-visible origin for the local proxy, e.g. https://dev.example.")
+def start_cmd(
+    app_slug: str | None,
+    solution_ref: str | None,
+    port: int,
+    bind_host: str,
+    public_url: str | None,
+) -> None:
     import shutil
 
     from bifrost.client import BifrostClient
@@ -2102,11 +2112,12 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
         click.echo("Installing app dependencies (npm install)…")
         subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
 
+    proxy_origin = (public_url or f"http://127.0.0.1:{port}").rstrip("/")
     vite_env = _vite_child_env(
         dict(os.environ),
         app_id=chosen.app_id,
         org_id=(org_info or {}).get("id", ""),
-        proxy_origin=f"http://127.0.0.1:{port}",
+        proxy_origin=proxy_origin,
         access_token=client._access_token,
     )
 
@@ -2133,6 +2144,8 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
                 vite_port,
                 workspace,
                 binding.solution_id,
+                bind_host,
+                proxy_origin,
             )
         )
     finally:
@@ -2583,7 +2596,18 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
         _signal_group(signal.SIGKILL)
 
 
-async def _serve(client, chosen, org_info, host, port, vite_port, workspace, solution_id):
+async def _serve(
+    client,
+    chosen,
+    org_info,
+    host,
+    port,
+    vite_port,
+    workspace,
+    solution_id,
+    bind_host,
+    proxy_origin,
+):
     from aiohttp import web
 
     from bifrost.solution_dev.proxy import DevProxyConfig, build_dev_app
@@ -2599,10 +2623,11 @@ async def _serve(client, chosen, org_info, host, port, vite_port, workspace, sol
     app = build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}")
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, bind_host, port)
     await site.start()
     observer = start_function_watch(workspace, host)
-    click.echo(f"\n  Bifrost solution dev server → http://localhost:{port}\n")
+    click.echo(f"\n  Bifrost solution dev server → {proxy_origin}\n")
+    click.echo(f"  Bound to {bind_host}:{port}\n")
     click.echo("  Press Ctrl-C to stop.\n")
     try:
         while True:
