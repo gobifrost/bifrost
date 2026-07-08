@@ -1,8 +1,12 @@
 """The single-origin local dev server for `bifrost solution start`.
 
 Routes:
-  POST /api/workflows/execute  → local FunctionHost when the path::fn ref is one
-                                 of THIS workspace's functions; else upstream.
+  POST /api/workflows/execute  → local FunctionHost when the ref (path::fn,
+                                 manifest UUID, or name) resolves to THIS
+                                 workspace; misses fall back to the platform's
+                                 shared _repo/ content only when the descriptor
+                                 sets global_repo_access, with all install-scope
+                                 signals stripped from the fallback request.
   /api/*                       → reverse-proxy to the dev API (data-plane).
   /ws/*  (and /api/* upgrades) → bridge websockets to the dev API (realtime).
   everything else              → reverse-proxy to the Vite dev server (the app),
@@ -24,12 +28,16 @@ from __future__ import annotations
 
 import asyncio
 import re
+import uuid as _uuid
 from dataclasses import dataclass
 
 import aiohttp
+import click
 import httpx
 import yarl
 from aiohttp import web
+
+from bifrost.solution_dev.function_host import LocalWorkflowError
 
 # Headers we must not forward when reverse-proxying: hop-by-hop headers, plus
 # the browser's Accept-Encoding — browsers advertise encodings (br, zstd) that
@@ -90,6 +98,10 @@ class DevProxyConfig:
     app_id: str         # chosen app's manifest UUID
     org_id: str | None  # bound install org id (or None for a global install)
     solution_id: str | None = None  # bound Solution install id
+    # Whether bifrost.solution.yaml sets global_repo_access. Gates whether a
+    # workflow ref that misses locally may fall back to the platform's shared
+    # _repo/ content at all. Mirrors the module-loader semantics (§3.5).
+    global_repo_access: bool = False
 
 
 # Typed app keys (avoid aiohttp's NotAppKeyWarning for plain-string keys).
@@ -97,6 +109,7 @@ _CFG = web.AppKey("cfg", DevProxyConfig)
 _HOST = web.AppKey("host", object)
 _VITE = web.AppKey("vite_url", str)
 _HTTP = web.AppKey("http", httpx.AsyncClient)
+_WARNED_UUID_REFS = web.AppKey("warned_uuid_refs", set)
 
 
 def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
@@ -105,6 +118,7 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
     app[_HOST] = host
     app[_VITE] = vite_url.rstrip("/")
     app[_HTTP] = httpx.AsyncClient(timeout=120.0)
+    app[_WARNED_UUID_REFS] = set()
 
     app.router.add_post("/api/workflows/execute", _execute_handler)
     app.router.add_route("*", "/ws/{tail:.*}", _ws_handler)
@@ -218,36 +232,81 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return await _ws_proxy(request, target)
 
 
+def _is_uuid(ref: str) -> bool:
+    try:
+        _uuid.UUID(ref)
+        return True
+    except ValueError:
+        return False
+
+
+# Body fields the server derives install scope from (see
+# derive_execution_solution_scope: ctx/X-Bifrost-App > solution_id > form_id
+# > app_id). The global fallback must carry NONE of them: for capture-born
+# installs these ids exist server-side and would resolve the CLOUD copy of
+# this Solution's own workflows — the bug local-first resolution prevents.
+_SCOPE_BODY_FIELDS = ("solution_id", "form_id", "app_id")
+
+
 async def _execute_handler(request: web.Request) -> web.Response:
     cfg: DevProxyConfig = request.app[_CFG]
     host = request.app[_HOST]
     body = await request.json()
-    ref = body.get("workflow_id", "")
+    ref = str(body.get("workflow_id", ""))
 
-    # Local path::fn that we discovered → run it in-process (own-first, locally).
-    if "::" in str(ref) and host.has(ref):
+    # Surface resolution problems in the app: useWorkflow reads `body.error`
+    # on a 200 (the deployed error contract) and shows it; on a non-200 it
+    # only shows `statusText`, hiding the cause. Same contract as run errors.
+    try:
+        local_ref = host.resolve(ref)
+    except LocalWorkflowError as exc:
+        return web.json_response({"error": str(exc)})
+
+    if local_ref is not None:
+        if _is_uuid(ref) and ref not in request.app[_WARNED_UUID_REFS]:
+            request.app[_WARNED_UUID_REFS].add(ref)
+            click.echo(
+                f"  warning: workflow ref '{ref}' is a manifest UUID — it runs "
+                "locally, but deploy remaps entity ids, so this ref will NOT "
+                "resolve on a deployed install. Use the workflow name or "
+                f"'{local_ref}' instead.",
+                err=True,
+            )
         try:
-            result = await host.run(ref, body.get("input_data") or {})
+            result = await host.run(local_ref, body.get("input_data") or {})
         except Exception as exc:
-            # Surface the real error in the app: useWorkflow reads `body.error`
-            # on a 200 (the deployed error contract) and shows it; on a non-200 it
-            # only shows `statusText` ("Internal Server Error"), hiding the cause.
-            # Returning {"error": ...} at 200 gives the dev the actual traceback —
-            # the whole point of a local debug loop.
+            # Returning {"error": ...} at 200 gives the dev the actual
+            # traceback — the whole point of a local debug loop.
             import traceback
 
             tb = traceback.format_exc()
             return web.json_response({"error": f"{type(exc).__name__}: {exc}\n\n{tb}"})
         return web.json_response({"status": "completed", "result": result})
 
-    # Otherwise proxy to the dev API (UUIDs, _repo/ refs, sibling installs).
-    if cfg.solution_id:
-        body["solution_id"] = cfg.solution_id
+    if not cfg.global_repo_access:
+        known = ", ".join(host.refs()) or "(none discovered)"
+        return web.json_response({
+            "error": (
+                f"Workflow '{ref}' not found in this Solution workspace. "
+                f"Local refs: {known}. This Solution does not set "
+                "global_repo_access: true in bifrost.solution.yaml, so "
+                "`bifrost solution start` will not ask the platform to "
+                "resolve it."
+            )
+        })
+
+    # Shared _repo/ fallback, stripped of every install-scope signal.
+    fallback_body = {k: v for k, v in body.items() if k not in _SCOPE_BODY_FIELDS}
+    headers = {
+        k: v
+        for k, v in _auth_headers(cfg, request.headers).items()
+        if k.lower() != "x-bifrost-app"
+    }
     try:
         resp = await request.app[_HTTP].post(
             f"{cfg.upstream_url}/api/workflows/execute",
-            json=body,
-            headers=_auth_headers(cfg, request.headers),
+            json=fallback_body,
+            headers=headers,
         )
     except httpx.HTTPError:
         return web.json_response(

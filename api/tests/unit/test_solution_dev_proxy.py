@@ -6,6 +6,10 @@ import httpx
 import yarl
 from aiohttp import web
 
+from bifrost.solution_dev.function_host import (
+    LocalWorkflowImportError,
+    LocalWorkflowResolutionError,
+)
 from bifrost.solution_dev.proxy import DevProxyConfig, _join_upstream, build_dev_app
 
 
@@ -85,12 +89,23 @@ def _free_port() -> int:
 
 
 class _StubHost:
-    def __init__(self, refs):
+    """Stub of FunctionHost's resolver surface (resolve/refs/run)."""
+
+    def __init__(self, refs, aliases=None, error=None):
         self._refs = set(refs)
+        self._aliases = dict(aliases or {})
+        self._error = error  # raised by resolve() when set
         self.last_call = None
 
-    def has(self, ref):
-        return ref in self._refs
+    def refs(self):
+        return sorted(self._refs)
+
+    def resolve(self, ref):
+        if self._error is not None:
+            raise self._error
+        if ref in self._refs:
+            return ref
+        return self._aliases.get(ref)
 
     async def run(self, ref, params):
         self.last_call = (ref, params)
@@ -100,6 +115,7 @@ class _StubHost:
 def _make_upstream(record):
     async def execute(request):
         record["execute_body"] = await request.json()
+        record["execute_headers"] = dict(request.headers)
         return web.json_response({"ran_upstream": True})
 
     async def other(request):
@@ -175,8 +191,8 @@ async def test_local_path_ref_runs_in_function_host():
 
 
 class _RaisingHost:
-    def has(self, ref):
-        return True
+    def resolve(self, ref):
+        return ref
 
     async def run(self, ref, params):
         raise ValueError("boom in the workflow")
@@ -203,27 +219,161 @@ async def test_local_error_returns_200_with_error_field():
         await up_runner.cleanup()
 
 
-async def test_unknown_ref_proxies_to_upstream():
+async def test_local_name_ref_resolves_before_execute():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(
+        {"functions/preview.py::recipients"},
+        aliases={"Preview Recipients": "functions/preview.py::recipients"},
+    )
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t", app_id="A", org_id="O", solution_id="S",
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"workflow_id": "Preview Recipients", "input_data": {"x": 1}, "app_id": "A"},
+            )
+        assert r.status_code == 200
+        assert r.json()["result"] == {
+            "ran_local": "functions/preview.py::recipients",
+            "params": {"x": 1},
+        }
+        assert "execute_body" not in record
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_resolution_errors_surface_as_200_error_body():
+    # Ambiguity and import failures must be VISIBLE in the app: useWorkflow
+    # renders body.error only on HTTP 200 (non-200 shows bare statusText).
+    for error, needle in [
+        (LocalWorkflowResolutionError("workflow name 'Dup' is ambiguous"), "ambiguous"),
+        (LocalWorkflowImportError("local workflow 'x' failed to import: boom"), "boom"),
+    ]:
+        record = {}
+        up_port, dev_port = _free_port(), _free_port()
+        up_runner = await _serve(_make_upstream(record), up_port)
+        host = _StubHost(set(), error=error)
+        cfg = DevProxyConfig(
+            upstream_url=f"http://127.0.0.1:{up_port}",
+            token="t", app_id="A", org_id="O", solution_id="S",
+            global_repo_access=True,
+        )
+        dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+        try:
+            async with httpx.AsyncClient() as c:
+                r = await c.post(
+                    f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                    json={"workflow_id": "Dup", "input_data": {}},
+                )
+            assert r.status_code == 200
+            assert needle in r.json()["error"]
+            assert "execute_body" not in record  # even with global access: no proxy
+        finally:
+            await dev_runner.cleanup()
+            await up_runner.cleanup()
+
+
+async def test_unknown_ref_without_global_access_errors_locally():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost({"functions/hello.py::main"})
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t", app_id="A", org_id="O", solution_id="S",
+        global_repo_access=False,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"workflow_id": "Shared Global Workflow", "input_data": {}, "app_id": "A"},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert "not found" in body["error"]
+        assert "functions/hello.py::main" in body["error"]  # lists known refs
+        assert "global_repo_access" in body["error"]
+        assert "execute_body" not in record
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_unknown_ref_with_global_access_proxies_without_scope_signals():
     record = {}
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
     cfg = DevProxyConfig(
         upstream_url=f"http://127.0.0.1:{up_port}",
-        token="t",
-        app_id="A",
-        org_id="O",
-        solution_id="S",
+        token="t", app_id="A", org_id="O", solution_id="S",
+        global_repo_access=True,
     )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.post(f"http://127.0.0.1:{dev_port}/api/workflows/execute",
-                             json={"workflow_id": "11111111-1111-1111-1111-111111111111", "input_data": {}, "app_id": "A"})
+            r = await c.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={
+                    "workflow_id": "Shared Global Workflow",
+                    "input_data": {},
+                    "app_id": "A",
+                    "form_id": "F",
+                    "solution_id": "client-sent",
+                },
+            )
         assert r.status_code == 200
         assert r.json()["ran_upstream"] is True
-        assert record["execute_body"]["app_id"] == "A"
-        assert record["execute_body"]["solution_id"] == "S"
+        body = record["execute_body"]
+        assert body["workflow_id"] == "Shared Global Workflow"
+        # EVERY signal the server derives install scope from must be gone —
+        # for capture-born installs these ids exist server-side and would
+        # resolve the CLOUD copy of this Solution's workflows.
+        assert "solution_id" not in body
+        assert "app_id" not in body
+        assert "form_id" not in body
+        headers = {k.lower(): v for k, v in record["execute_headers"].items()}
+        assert "x-bifrost-app" not in headers
+        assert headers["x-bifrost-org"] == "O"          # org scope stays
+        assert headers["authorization"] == "Bearer t"   # auth stays
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_local_uuid_ref_warns_once(capsys):
+    uuid_ref = "11111111-1111-1111-1111-111111111111"
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost({"functions/a.py::main"}, aliases={uuid_ref: "functions/a.py::main"})
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t", app_id="A", org_id="O",
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r1 = await c.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"workflow_id": uuid_ref, "input_data": {}},
+            )
+            r2 = await c.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"workflow_id": uuid_ref, "input_data": {}},
+            )
+        assert r1.status_code == 200 and r2.status_code == 200
+        err = capsys.readouterr().err
+        assert err.count("manifest UUID") == 1  # warned exactly once
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()
