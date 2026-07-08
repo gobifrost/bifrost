@@ -241,6 +241,7 @@ Summarizer-generated `AIUsage` rows roll up into `AgentStats.total_cost_7d` (the
     -   Types are auto-generated from OpenAPI spec based on `models.py`
     -   Never manually write TypeScript types for API endpoints
 -   **API Services**: Create service files in `client/src/services/` for new endpoints
+-   **Scrollable content sizing**: Prefer "content-sized until constrained" for lists, tables, drawers, panels, and other scrollable regions. Let the region size to its contents when short; cap it with available-space `max-height` and apply `overflow-auto` only after it reaches that cap. Avoid `flex-1` / forced full-height scroll containers for short content unless the design explicitly calls for a fill-height workspace. In drawers and dialogs, keep fixed headers/metadata outside the scroller and put `overflow-auto` on the long content region itself.
 
 Example service pattern:
 ```typescript

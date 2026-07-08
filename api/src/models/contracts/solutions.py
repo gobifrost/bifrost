@@ -151,6 +151,14 @@ class SolutionConfigStatus(BaseModel):
     value_set: bool
 
 
+class SolutionAccessUserSummary(BaseModel):
+    """User who currently receives access through one of the entity's roles."""
+
+    id: UUID
+    name: str | None = None
+    email: str
+
+
 class SolutionEntitySummary(BaseModel):
     """Lightweight entity row for Solution-owned/capturable entity lists."""
 
@@ -170,6 +178,9 @@ class SolutionEntitySummary(BaseModel):
     source_table: str | None = None
     select: str | None = None
     created_at: datetime | None = None
+    role_ids: list[UUID] = Field(default_factory=list)
+    role_names: list[str] = Field(default_factory=list)
+    access_users: list[SolutionAccessUserSummary] = Field(default_factory=list)
 
 
 class SolutionFileSummary(BaseModel):
