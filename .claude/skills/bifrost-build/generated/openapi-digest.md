@@ -115,6 +115,7 @@
 | GET | `/api/dependencies/{entity_type}/{entity_id}` |
 | DELETE | `/api/endpoints/{workflow_id}` |
 | GET | `/api/endpoints/{workflow_id}` |
+| PATCH | `/api/endpoints/{workflow_id}` |
 | POST | `/api/endpoints/{workflow_id}` |
 | PUT | `/api/endpoints/{workflow_id}` |
 | GET | `/api/events/adapters` |

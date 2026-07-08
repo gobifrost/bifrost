@@ -227,7 +227,7 @@ async def execute_endpoint(
     )
 
 
-for _method in ("GET", "POST", "PUT", "DELETE"):
+for _method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
     router.add_api_route(
         "/{workflow_id}",
         execute_endpoint,

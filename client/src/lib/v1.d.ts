@@ -3882,7 +3882,11 @@ export interface paths {
         delete: operations["execute_endpoint_api_endpoints_workflow_id_delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Execute workflow via API key
+         * @description Execute an endpoint-enabled workflow using an API key for authentication
+         */
+        patch: operations["execute_endpoint_api_endpoints_workflow_id_patch"];
         trace?: never;
     };
     "/api/sdk/context": {
@@ -21977,7 +21981,7 @@ export interface components {
              * @default config
              * @enum {string}
              */
-            kind: "config" | "connection";
+            kind: "config" | "connection" | "workflow_endpoint_key";
             /**
              * Has Oauth
              * @default false
@@ -21988,6 +21992,12 @@ export interface components {
              * @default false
              */
             connected: boolean;
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Workflow Name */
+            workflow_name?: string | null;
+            /** Allowed Methods */
+            allowed_methods?: string[];
         };
         /**
          * SolutionSetupStatus
@@ -30669,6 +30679,39 @@ export interface operations {
         };
     };
     execute_endpoint_api_endpoints_workflow_id_delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Bifrost-Key": string;
+            };
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointExecuteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_endpoint_api_endpoints_workflow_id_patch: {
         parameters: {
             query?: never;
             header: {

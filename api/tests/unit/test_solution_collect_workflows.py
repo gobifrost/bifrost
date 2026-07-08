@@ -35,6 +35,7 @@ def test_collect_workflows_preserves_full_metadata(tmp_path) -> None:
         "    description: Pulls tickets\n"
         "    access_level: organization\n"
         "    endpoint_enabled: true\n"
+        "    allowed_methods: [GET, POST]\n"
         "    public_endpoint: true\n"
         "    timeout_seconds: 600\n"
         "    category: Tickets\n"
@@ -52,6 +53,7 @@ def test_collect_workflows_preserves_full_metadata(tmp_path) -> None:
     assert w["access_level"] == "organization"
     # These five are what a narrowed collector silently dropped (P2-e).
     assert w["endpoint_enabled"] is True
+    assert w["allowed_methods"] == ["GET", "POST"]
     assert w["public_endpoint"] is True
     assert w["timeout_seconds"] == 600
     assert w["category"] == "Tickets"

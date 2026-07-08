@@ -8,6 +8,7 @@ loading the row.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -139,6 +140,35 @@ class TestBeforeFlushBackstop:
         db = db_session
         _sol, wf = await self._managed_wf(db)
         await db.delete(wf)
+        with pytest.raises(SolutionManagedWriteError):
+            await db.flush()
+        await db.rollback()
+
+    async def test_workflow_api_key_runtime_fields_are_allowed(self, db_session) -> None:
+        db = db_session
+        _sol, wf = await self._managed_wf(db)
+
+        wf.api_key_hash = "a" * 64
+        wf.api_key_description = "setup generated"
+        wf.api_key_enabled = True
+        wf.api_key_created_by = "dev@gobifrost.com"
+        wf.api_key_created_at = datetime.now(timezone.utc)
+        wf.api_key_last_used_at = datetime.now(timezone.utc)
+        wf.api_key_expires_at = None
+
+        await db.flush()
+        await db.refresh(wf)
+        assert wf.api_key_enabled is True
+
+    async def test_workflow_api_key_plus_portable_field_is_blocked(self, db_session) -> None:
+        from src.services.solutions.guard import SolutionManagedWriteError
+
+        db = db_session
+        _sol, wf = await self._managed_wf(db)
+
+        wf.api_key_enabled = True
+        wf.display_name = "still-deploy-owned"
+
         with pytest.raises(SolutionManagedWriteError):
             await db.flush()
         await db.rollback()
