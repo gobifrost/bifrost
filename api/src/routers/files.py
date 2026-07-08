@@ -49,6 +49,7 @@ from src.models import (
     SearchResponse,
     WorkflowIdConflict,
 )
+from src.services.audit import emit_audit
 from src.services.editor.search import search_files_db
 from src.services.file_backend import get_backend
 from src.services.file_storage import FileStorageService
@@ -214,6 +215,8 @@ class FilePolicyPublic(BaseModel):
     location: str
     path: str
     policies: FilePolicies
+    # Non-null for deploy-owned solution-tier rows (read-only via CRUD).
+    solution_id: str | None = None
 
 
 class FilePolicyListResponse(BaseModel):
@@ -333,6 +336,29 @@ def _organization_id_for_policy(location: str, scope: str | None) -> UUID | None
     return UUID(scope)
 
 
+def _parse_solution_param(solution: str | None) -> UUID | None:
+    """Parse the admin ``solution`` query param (an install UUID) or None.
+
+    Used by the SUPERUSER-only policy-management endpoints to address an
+    install's deploy-owned solution tier explicitly (reads only — writes are
+    refused as deploy-owned)."""
+    if solution is None or solution == "":
+        return None
+    try:
+        return UUID(solution)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid solution id: {solution!r}",
+        ) from exc
+
+
+_SOLUTION_POLICY_READONLY = (
+    "Solution-tier file policies are managed by deployment methods and cannot be "
+    "edited directly."
+)
+
+
 async def _authorize_file_policy(
     ctx: Context,
     *,
@@ -402,6 +428,54 @@ async def _authorize_file_policy(
     )
 
 
+async def _deny_file_policy(
+    ctx: Context,
+    *,
+    action: str,
+    location: str,
+    path: str,
+    scope: str | None = None,
+    solution_id: UUID | None = None,
+) -> None:
+    """Record a `policy.deny` audit row and raise 403. This is the single
+    choke point for every *final* file-policy denial (read or write) — call
+    it exactly once per request, at the point where the request is actually
+    being rejected, not at each per-tier/per-path `_authorize_file_policy`
+    probe along the way (those are non-final "is this tier usable" checks
+    and would over-count if audited individually).
+
+    Mirrors the tables.py pattern: emit then commit, because letting the
+    HTTPException propagate rolls back the request-scoped session and loses
+    the audit row.
+    """
+    await emit_audit(
+        ctx.db,
+        "policy.deny",
+        resource_type="file",
+        outcome="failure",
+        details={
+            "policy_action": action,
+            "location": location,
+            "path": path,
+        },
+    )
+    await ctx.db.commit()
+    # A policy denial must identify its scope inputs (no user/token data —
+    # every field is caller-supplied or derived from it): a scope-loss bug
+    # reads as solution_id=null instead of a bare "Forbidden".
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "message": "File policy denied",
+            "action": action,
+            "location": location,
+            "path": path,
+            "scope": scope,
+            "solution_id": str(solution_id) if solution_id else None,
+        },
+    )
+
+
 async def _require_file_policy(
     ctx: Context,
     *,
@@ -424,19 +498,13 @@ async def _require_file_policy(
         organization_id=organization_id,
     )
     if not allowed:
-        # A policy denial must identify its scope inputs (no user/token data —
-        # every field is caller-supplied or derived from it): a scope-loss bug
-        # reads as solution_id=null instead of a bare "Forbidden".
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "File policy denied",
-                "action": action,
-                "location": location,
-                "path": path,
-                "scope": scope,
-                "solution_id": str(solution_id) if solution_id else None,
-            },
+        await _deny_file_policy(
+            ctx,
+            action=action,
+            location=location,
+            path=path,
+            scope=scope,
+            solution_id=solution_id,
         )
 
 
@@ -514,6 +582,7 @@ def _policy_public(row) -> FilePolicyPublic:
         location=row.location,
         path=row.path,
         policies=FilePolicies.model_validate(row.policies),
+        solution_id=str(row.solution_id) if getattr(row, "solution_id", None) else None,
     )
 
 
@@ -573,10 +642,23 @@ async def list_file_policies(
     location: str | None = Query(default=None),
     scope: str | None = Query(default=None),
     organization_id: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FilePolicyListResponse:
-    """List file policies for a location and optional org scope."""
+    """List file policies for a location and optional org/solution scope.
+
+    ``solution`` (an install UUID) lists that install's deploy-owned solution
+    tier — admins may SEE these; edits stay blocked (deploy-owned)."""
     from src.services.file_policy_service import FilePolicyService
+
+    solution_id = _parse_solution_param(solution)
+    if solution_id is not None:
+        rows = await FilePolicyService(db).list_policies(
+            organization_id=None,
+            location=location,
+            solution_id=solution_id,
+        )
+        return FilePolicyListResponse(policies=[_policy_public(row) for row in rows])
 
     target_scope = organization_id if organization_id is not None else scope
     try:
@@ -689,10 +771,24 @@ async def get_file_policy(
     user: CurrentSuperuser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FilePolicyPublic:
-    """Get the exact file policy for a location/path prefix."""
+    """Get the exact file policy for a location/path prefix.
+
+    ``solution`` reads the install's deploy-owned solution tier (read-only)."""
     from src.services.file_policy_service import FilePolicyService
+
+    solution_id = _parse_solution_param(solution)
+    if solution_id is not None:
+        row = await FilePolicyService(db).get_solution_policy_exact(
+            solution_id=solution_id,
+            location=location,
+            path=unquote(policy_path).strip("/"),
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File policy not found")
+        return _policy_public(row)
 
     try:
         org_id = _organization_id_for_policy(location, scope)
@@ -716,10 +812,19 @@ async def set_file_policy(
     user: CurrentSuperuser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FilePolicyPublic:
-    """Create or replace the file policy for a location/path prefix."""
+    """Create or replace the file policy for a location/path prefix.
+
+    Solution-tier rows (``solution`` set) are deploy-owned and refused (409)."""
     from src.services.file_policy_service import FilePolicyService
+
+    if _parse_solution_param(solution) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_SOLUTION_POLICY_READONLY,
+        )
 
     try:
         org_id = _organization_id_for_policy(location, scope)
@@ -763,10 +868,19 @@ async def delete_file_policy(
     user: CurrentSuperuser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
+    solution: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete the exact file policy for a location/path prefix."""
+    """Delete the exact file policy for a location/path prefix.
+
+    Solution-tier rows (``solution`` set) are deploy-owned and refused (409)."""
     from src.services.file_policy_service import FilePolicyService
+
+    if _parse_solution_param(solution) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_SOLUTION_POLICY_READONLY,
+        )
 
     try:
         org_id = _organization_id_for_policy(location, scope)
@@ -845,7 +959,14 @@ async def _build_signed_url(
                         allowed_path = s3_path
                         break
                 if allowed_path is None:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                    await _deny_file_policy(
+                        ctx,
+                        action="signed_get",
+                        location=request.location,
+                        path=request.path,
+                        scope=request.scope,
+                        solution_id=solution_id,
+                    )
                 s3_path = allowed_path
         except HTTPException:
             raise
@@ -1001,7 +1122,14 @@ async def read_file(
 
         if content is None:
             if not had_allowed_tier:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                await _deny_file_policy(
+                    ctx,
+                    action="read",
+                    location=request.location,
+                    path=request.path,
+                    scope=request.scope,
+                    solution_id=_ctx_solution_id(ctx, request.location),
+                )
             raise FileNotFoundError(f"File not found: {request.path}")
 
         if request.binary:
@@ -1212,7 +1340,14 @@ async def list_files_simple(
                 if path in allowed_paths
             }
             if not directory_allowed and not s3_metadata:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+                await _deny_file_policy(
+                    ctx,
+                    action="list",
+                    location=request.location,
+                    path=request.directory,
+                    scope=request.scope,
+                    solution_id=primary_tier.solution_id,
+                )
 
             # Look up updated_by from file_index
             from src.models.orm.file_index import FileIndex
@@ -1280,7 +1415,14 @@ async def list_files_simple(
                 seen.add(path)
                 files.append(path)
         if not any_directory_allowed and not files:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            await _deny_file_policy(
+                ctx,
+                action="list",
+                location=request.location,
+                path=request.directory,
+                scope=request.scope,
+                solution_id=primary_tier.solution_id,
+            )
         return FileListResponse(files=files)
 
     except ValueError as e:

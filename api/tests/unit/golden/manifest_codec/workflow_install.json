@@ -1,5 +1,8 @@
 {
   "access_level": "role_based",
+  "allowed_methods": [
+    "PUT"
+  ],
   "category": "InstallCat",
   "description": "install parity desc",
   "endpoint_enabled": true,

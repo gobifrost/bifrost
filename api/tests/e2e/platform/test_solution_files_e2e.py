@@ -41,8 +41,10 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from shared.file_paths import resolve_s3_key
 from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.tables import Table
+from src.services.file_storage import FileStorageService
 
 pytestmark = pytest.mark.e2e
 
@@ -222,11 +224,16 @@ def _make_install_zip(slug: str, table_name: str, table_bundle_id: str) -> bytes
 def _install_zip(
     e2e_client, headers, zip_bytes: bytes, *, query: str = ""
 ):
-    return e2e_client.post(
+    # Install is async (202 + poll); wait_for_install returns a terminal shim and
+    # passes synchronous refusals (the structured inactive-install 409) through.
+    from tests.e2e.platform.conftest import wait_for_install
+
+    r = e2e_client.post(
         f"/api/solutions/install{query}",
         headers=_upload_headers(headers),
         files={"file": ("sol.zip", zip_bytes, "application/zip")},
     )
+    return wait_for_install(e2e_client, r, headers)
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +685,19 @@ class TestSolutionInactiveLifecycleCapstone:
         assert not fm_remaining, (
             f"FileMetadata rows survived hard-delete timeout — FK cascade did not fire. "
             f"Remaining: {[str(fm.id) for fm in fm_remaining]}"
+        )
+
+        # ── HARD-DELETE-CASCADE: declared-location S3 bytes actually swept ─
+        # The file was written under location="solutions", so its S3 key sits at
+        # solutions/{sol_id}/{file_path} — a DIFFERENT prefix from the
+        # _solutions/{sol_id}/ install-manifest prefix the sweep clears separately.
+        # A cascaded FileMetadata row is not proof the S3 object is gone.
+        declared_key = resolve_s3_key("solutions", sol_id, file_path)
+        file_storage = FileStorageService(db_session)
+        remaining_keys = await file_storage.list_raw_s3(declared_key)
+        assert declared_key not in remaining_keys, (
+            f"Declared-location S3 object survived hard-delete: {declared_key!r} "
+            f"still present. list_raw_s3 returned: {remaining_keys}"
         )
 
         # ── HARD-DELETE-CASCADE: Table row cascaded away ──────────────────

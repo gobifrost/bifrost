@@ -82,6 +82,42 @@ def test_valid_table_policies_returns_ok():
     assert out.errors == []
 
 
+def test_is_provider_org_is_a_known_user_field():
+    """``{user: is_provider_org}`` must validate — it is a documented bypass
+    flag on the principal (KNOWN_USER_FIELDS), letting authors write policies
+    that admit portal-hopping provider-org staff."""
+    body = {
+        "policies": [
+            {
+                "name": "provider_bypass",
+                "actions": ["read"],
+                "when": {"user": "is_provider_org"},
+            }
+        ]
+    }
+    out = _run(body)
+    assert out.ok is True
+    assert out.errors == []
+
+
+def test_is_external_is_a_known_user_field():
+    """``{user: is_external}`` must validate — it is a documented predicate on
+    the principal (KNOWN_USER_FIELDS), letting authors write deny/restrict
+    rules that target external (guest/portal-external) users."""
+    body = {
+        "policies": [
+            {
+                "name": "deny_external",
+                "actions": ["read"],
+                "when": {"user": "is_external"},
+            }
+        ]
+    }
+    out = _run(body)
+    assert out.ok is True
+    assert out.errors == []
+
+
 def test_empty_policies_array_is_valid():
     """An empty policies list is a valid TablePolicies (the validator treats
     it as 'no rules' — same as the on-disk default for a new table)."""

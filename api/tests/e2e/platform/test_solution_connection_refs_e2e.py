@@ -44,7 +44,7 @@ from src.models.orm.integrations import Integration, IntegrationConfigSchema
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.workflows import Workflow
-from tests.e2e.platform.conftest import wait_for_deploy
+from tests.e2e.platform.conftest import wait_for_deploy, wait_for_install
 
 pytestmark = pytest.mark.e2e
 
@@ -406,11 +406,15 @@ async def test_zip_export_install_round_trip_surfaces_connection_and_readme(
     assert org_resp.status_code == 201, org_resp.text
     org_id = org_resp.json()["id"]
 
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=_upload_headers(headers),
-        files={"file": (f"{slug}.zip", zip_bytes, "application/zip")},
-        data={"organization_id": org_id},
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=_upload_headers(headers),
+            files={"file": (f"{slug}.zip", zip_bytes, "application/zip")},
+            data={"organization_id": org_id},
+        ),
+        headers,
     )
     assert inst.status_code in (200, 201), inst.text
     installed_id = inst.json()["id"]

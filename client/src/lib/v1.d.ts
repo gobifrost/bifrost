@@ -2535,7 +2535,10 @@ export interface paths {
         };
         /**
          * List File Policies
-         * @description List file policies for a location and optional org scope.
+         * @description List file policies for a location and optional org/solution scope.
+         *
+         *     ``solution`` (an install UUID) lists that install's deploy-owned solution
+         *     tier — admins may SEE these; edits stay blocked (deploy-owned).
          */
         get: operations["list_file_policies_api_files_policies_get"];
         put?: never;
@@ -2598,17 +2601,23 @@ export interface paths {
         /**
          * Get File Policy
          * @description Get the exact file policy for a location/path prefix.
+         *
+         *     ``solution`` reads the install's deploy-owned solution tier (read-only).
          */
         get: operations["get_file_policy_api_files_policies__policy_path__get"];
         /**
          * Set File Policy
          * @description Create or replace the file policy for a location/path prefix.
+         *
+         *     Solution-tier rows (``solution`` set) are deploy-owned and refused (409).
          */
         put: operations["set_file_policy_api_files_policies__policy_path__put"];
         post?: never;
         /**
          * Delete File Policy
          * @description Delete the exact file policy for a location/path prefix.
+         *
+         *     Solution-tier rows (``solution`` set) are deploy-owned and refused (409).
          */
         delete: operations["delete_file_policy_api_files_policies__policy_path__delete"];
         options?: never;
@@ -3873,7 +3882,11 @@ export interface paths {
         delete: operations["execute_endpoint_api_endpoints_workflow_id_delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Execute workflow via API key
+         * @description Execute an endpoint-enabled workflow using an API key for authentication
+         */
+        patch: operations["execute_endpoint_api_endpoints_workflow_id_patch"];
         trace?: never;
     };
     "/api/sdk/context": {
@@ -7259,7 +7272,11 @@ export interface paths {
          *     **This is irreversible.** Every owned row (tables, workflows, forms, agents,
          *     apps, claims, config declarations, events) is removed via the existing
          *     ``solution_id ondelete=CASCADE`` FKs when the Solution row is deleted.
-         *     The ``solutions/{id}/`` S3 prefix is swept after the DB commit.
+         *     S3 bytes are swept after the DB commit: the install's own
+         *     ``_solutions/{id}/`` manifest prefix, its source artifact, its compiled
+         *     app dists, AND every declared-location file object (each ``file_entries``
+         *     row's ``s3_key``, e.g. ``{location}/{id}/{path}``) — those live outside
+         *     the ``_solutions/{id}/`` prefix and are swept individually.
          *
          *     Requires ``?confirm=<slug>`` equal to the install's slug. A mismatch returns
          *     422 immediately — nothing is touched.
@@ -7736,10 +7753,19 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Install a Solution from a git repo (git-connected, admin only)
+         * Enqueue a Solution install from a git repo (git-connected, admin only)
          * @description Create a git-connected install from a repo (+ optional subpath/ref) and
-         *     deploy it. git-connected from birth: deploy is refused, auto-pull is the
-         *     only writer. 409 if an install of the same (slug, scope) already exists.
+         *     enqueue its first deploy as an async job. git-connected from birth: deploy is
+         *     refused, auto-pull is the only writer. 409 if an install of the same
+         *     (slug, scope) already exists.
+         *
+         *     Fail-fast synchronous validation runs BEFORE the job row / install row exist:
+         *     the clone (+ subpath/ref/descriptor checks) and the slug+scope 409. The
+         *     install row is then created and the build/deploy/finalize runs as a background
+         *     job under the per-install write lock (closes the from-repo lock race, audit
+         *     M7). Poll ``GET /deploy-jobs/{deploy_job_id}`` for the result; the terminal
+         *     ``result`` carries the installed ``solution_id``. If the first deploy fails,
+         *     the job removes the brand-new install so no empty git_connected orphan remains.
          */
         post: operations["install_from_repo_api_solutions_install_from_repo_post"];
         delete?: never;
@@ -7758,24 +7784,30 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Install a Solution zip (atomic deploy + config values, admin only)
-         * @description Atomically install a Solution from a workspace zip.
+         * Enqueue a Solution zip install (async deploy + config values, admin only)
+         * @description Enqueue an async install of a Solution from a workspace zip.
          *
-         *     Resolves-or-creates the install at the chosen scope (empty/absent
+         *     Fail-fast, synchronous validation runs BEFORE a job row exists: the
+         *     ``organization_id`` / ``config_values`` shape, the zip being a Solution
+         *     workspace, and — for a full-backup zip carrying ``.bifrost/secrets.enc`` — a
+         *     password decrypt-check (a wrong/missing password is a synchronous 422). The
+         *     heavy build/deploy/finalize then runs as a background job (``SolutionDeployJob``)
+         *     so the often-slow build no longer times out the CLI's HTTP request (Task H1).
+         *     Poll ``GET /deploy-jobs/{deploy_job_id}`` for the result; the terminal
+         *     ``result`` carries the installed ``solution_id``.
+         *
+         *     The job resolves-or-creates the install at the chosen scope (empty/absent
          *     ``organization_id`` → global NULL), runs the proven deploy under the
          *     per-install write lock, and — in the same locked section after the S3 finalize
-         *     — applies the provided ``config_values`` (a JSON object of key→value). A
-         *     missing required config does NOT block the install (warn-not-block).
+         *     — applies the provided ``config_values``. A missing required config does NOT
+         *     block the install (warn-not-block). Build-time refusals (unmet dependency,
+         *     content collision, git-connected install, downgrade) surface as a ``failed``
+         *     job with the error, mirroring the deploy job.
          *
-         *     Full-backup zips carry a ``.bifrost/secrets.enc`` blob; ``password`` is
-         *     required to decrypt it.  A wrong password is refused with 422 before
-         *     anything is written.  If the blob contains values for keys that already
-         *     have a Config row in the target org, the import is refused with 409 unless
-         *     ``replace_secrets=true`` (config values) or ``replace_data=true`` (table
-         *     data, Phase 4).
-         *
-         *     A zip whose descriptor ``version`` is OLDER than the installed version is
-         *     refused with 409 (downgrade gate, Task 20) unless ``?force=true``.
+         *     The inactive-install conflict is a synchronous 409 (structured
+         *     ``reason=inactive_install_exists`` detail): it is a caller-decision prompt —
+         *     pass ``?reactivate=true`` or delete the install first — so it must refuse on
+         *     the request itself, before a job row exists.
          */
         post: operations["install_solution_api_solutions_install_post"];
         delete?: never;
@@ -13647,6 +13679,11 @@ export interface components {
              * @description Organization scope: org UUID string or None for GLOBAL.
              */
             scope?: string | null;
+            /**
+             * Solution
+             * @description Solution install id from the execution context. When set, topic lookup resolves this install's event source before _repo sources.
+             */
+            solution?: string | null;
         };
         /**
          * EmitEventResponse
@@ -14839,6 +14876,8 @@ export interface components {
             /** Path */
             path: string;
             policies: components["schemas"]["FilePolicies"];
+            /** Solution Id */
+            solution_id?: string | null;
         };
         /** FilePolicyRule */
         FilePolicyRule: {
@@ -21546,11 +21585,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /**
-             * Install Id
-             * Format: uuid
-             */
-            install_id: string;
+            /** Install Id */
+            install_id?: string | null;
             /**
              * Status
              * @enum {string}
@@ -21945,7 +21981,7 @@ export interface components {
              * @default config
              * @enum {string}
              */
-            kind: "config" | "connection";
+            kind: "config" | "connection" | "workflow_endpoint_key";
             /**
              * Has Oauth
              * @default false
@@ -21956,6 +21992,12 @@ export interface components {
              * @default false
              */
             connected: boolean;
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Workflow Name */
+            workflow_name?: string | null;
+            /** Allowed Methods */
+            allowed_methods?: string[];
         };
         /**
          * SolutionSetupStatus
@@ -28382,6 +28424,7 @@ export interface operations {
                 location?: string | null;
                 scope?: string | null;
                 organization_id?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path?: never;
@@ -28480,6 +28523,7 @@ export interface operations {
             query?: {
                 location?: string;
                 scope?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path: {
@@ -28514,6 +28558,7 @@ export interface operations {
             query?: {
                 location?: string;
                 scope?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path: {
@@ -28552,6 +28597,7 @@ export interface operations {
             query?: {
                 location?: string;
                 scope?: string | null;
+                solution?: string | null;
             };
             header?: never;
             path: {
@@ -30633,6 +30679,39 @@ export interface operations {
         };
     };
     execute_endpoint_api_endpoints_workflow_id_delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Bifrost-Key": string;
+            };
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointExecuteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_endpoint_api_endpoints_workflow_id_patch: {
         parameters: {
             query?: never;
             header: {
@@ -37576,12 +37655,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Solution"];
+                    "application/json": components["schemas"]["SolutionDeployEnqueued"];
                 };
             };
             /** @description Validation Error */
@@ -37612,12 +37691,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Solution"];
+                    "application/json": components["schemas"]["SolutionDeployEnqueued"];
                 };
             };
             /** @description Validation Error */
@@ -40432,7 +40511,9 @@ export interface operations {
     };
     fetch_module_index_api_sdk_modules_index_get: {
         parameters: {
-            query?: never;
+            query?: {
+                solution_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -40446,6 +40527,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

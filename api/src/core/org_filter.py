@@ -158,10 +158,14 @@ def resolve_target_org(
         Non-superuser (any scope value):
             -> user.organization_id (always their own org, scope ignored)
 
+    Bypass is the canonical rule from repositories/README.md:
+    ``is_platform_admin OR is_provider_org`` — a provider-org member (portal-
+    hopping platform staff) targets other orgs / global just like a superuser.
+
     Raises:
         ValueError: If scope is not a valid UUID or "global"
     """
-    if user.is_superuser:
+    if user.is_superuser or user.is_provider_org:
         if scope is None:
             return default_org_id
         if scope == "global":
@@ -171,5 +175,5 @@ def resolve_target_org(
         except ValueError:
             raise ValueError(f"Invalid scope value: {scope}")
     else:
-        # Non-superusers always use their own org, scope is ignored
+        # Non-bypass callers always use their own org, scope is ignored
         return user.organization_id

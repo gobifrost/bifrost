@@ -447,7 +447,9 @@ class SolutionDeployJobStatus(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    install_id: UUID
+    # None for a zip install until it resolves-or-creates its target install
+    # inside the job — the succeeded ``result`` carries the solution_id.
+    install_id: UUID | None = None
     status: Literal["queued", "running", "succeeded", "failed"]
     error: str | None = None
     # Per-entity upsert/delete counts (and auto-created role names), present once
@@ -587,10 +589,14 @@ class SolutionSetupItem(BaseModel):
     is_set: bool
     description: str | None = None
     default: str | None = None
-    kind: Literal["config", "connection"] = "config"
+    kind: Literal["config", "connection", "workflow_endpoint_key"] = "config"
     # Connection-only meta (defaults for config items):
     has_oauth: bool = False  # template carried OAuth shape — WARN-ONLY, never gates
     connected: bool = False  # informational: a token/mapping resolves
+    # Workflow endpoint key-only meta:
+    workflow_id: str | None = None
+    workflow_name: str | None = None
+    allowed_methods: list[str] = Field(default_factory=list)
 
 
 class SolutionSetupStatus(BaseModel):

@@ -11,7 +11,7 @@ from src.models.contracts.policies import FilePolicies
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
-from src.services.file_policy_service import FilePolicyDenied, FilePolicyService
+from src.services.file_policy_service import FilePolicyService
 
 
 def _allow_all(action: str = "read") -> FilePolicies:
@@ -724,9 +724,107 @@ async def test_service_malformed_policy_json_denies(db_session, caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_denial_hook_emits_audit(monkeypatch, db_session) -> None:
-    from src.services import file_policy_service as service_module
+async def test_require_file_policy_denial_emits_audit(monkeypatch, db_session) -> None:
+    """The live enforcement path (_require_file_policy → 403) records the
+    denial. This audit used to live in FilePolicyService.check_allowed, which
+    had no callers; it now fires from the router helper on every real denial."""
+    from fastapi import HTTPException
 
+    from src.routers import files as files_module
+
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    # A non-"workspace" location so the request reaches real policy evaluation
+    # (workspace short-circuits to a superuser check with no policy).
+    service = FilePolicyService(db_session)
+    await service.upsert_policy(
+        organization_id=org.id,
+        location="attachments",
+        path="private",
+        policies=_deny_all(),
+        created_by=uuid4(),
+    )
+    emitted: dict = {}
+
+    async def fake_emit(db, action, **kwargs):
+        emitted["action"] = action
+        emitted.update(kwargs)
+
+    monkeypatch.setattr(files_module, "emit_audit", fake_emit)
+
+    ctx = SimpleNamespace(
+        db=db_session,
+        user=_user(org.id),
+        org_id=org.id,
+        solution_id=None,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await files_module._require_file_policy(
+            ctx,  # type: ignore[arg-type]
+            action="read",
+            location="attachments",
+            scope=str(org.id),
+            path="private/doc.txt",
+        )
+
+    assert exc.value.status_code == 403
+    assert emitted["action"] == "policy.deny"
+    assert emitted["resource_type"] == "file"
+    assert emitted["outcome"] == "failure"
+    assert emitted["details"] == {
+        "policy_action": "read",
+        "location": "attachments",
+        "path": "private/doc.txt",
+    }
+
+
+# ---------------------------------------------------------------------------
+# _principal_matches_org honors the two-flag bypass rule:
+# is_platform_admin OR is_provider_org. Provider-org members (portal-hopping
+# platform staff) reach any org's files just like platform admins; a plain org
+# user is still pinned to its own org, and a system/no-org user is admitted for
+# the global (org=None) scope only. (repositories/README.md — two bypass flags)
+# ---------------------------------------------------------------------------
+
+
+class TestPrincipalMatchesOrgBypass:
+    def _service(self) -> FilePolicyService:
+        return FilePolicyService.__new__(FilePolicyService)
+
+    def test_provider_org_member_matches_foreign_org(self) -> None:
+        svc = self._service()
+        foreign = uuid4()
+        user = _user(uuid4(), is_platform_admin=False, is_provider_org=True)
+        assert svc._principal_matches_org(user, foreign) is True
+
+    def test_plain_org_user_pinned_to_own_org(self) -> None:
+        svc = self._service()
+        own = uuid4()
+        user = _user(own, is_platform_admin=False, is_provider_org=False)
+        assert svc._principal_matches_org(user, own) is True
+        assert svc._principal_matches_org(user, uuid4()) is False
+
+    def test_platform_admin_matches_foreign_org(self) -> None:
+        svc = self._service()
+        user = _user(uuid4(), is_platform_admin=True, is_provider_org=False)
+        assert svc._principal_matches_org(user, uuid4()) is True
+
+    def test_system_no_org_user_gets_false_for_org_scope(self) -> None:
+        # No org and neither bypass flag: cannot reach an org-scoped policy.
+        svc = self._service()
+        user = _user(None, is_platform_admin=False, is_provider_org=False)
+        assert svc._principal_matches_org(user, uuid4()) is False
+        # …but the global (org=None) scope is open to everyone.
+        assert svc._principal_matches_org(user, None) is True
+
+
+@pytest.mark.asyncio
+async def test_provider_org_member_reads_foreign_org_file(db_session) -> None:
+    """End-to-end: a provider-org, non-admin user reads a file whose org
+    policy is scoped to a DIFFERENT org — the bypass carries through
+    is_allowed()'s _principal_matches_org pre-check."""
     org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
     db_session.add(org)
     await db_session.flush()
@@ -734,32 +832,73 @@ async def test_service_denial_hook_emits_audit(monkeypatch, db_session) -> None:
     await service.upsert_policy(
         organization_id=org.id,
         location="workspace",
-        path="private",
-        policies=_deny_all(),
+        path="reports",
+        policies=_allow_all("read"),
         created_by=uuid4(),
     )
-    emitted = {}
 
-    async def fake_emit(db, action, **kwargs):
-        emitted["action"] = action
-        emitted.update(kwargs)
+    # Caller belongs to a different org but is a provider-org member.
+    caller = _user(uuid4(), is_platform_admin=False, is_provider_org=True)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=caller,
+    ) is True
 
-    monkeypatch.setattr(service_module, "emit_audit", fake_emit)
+    # A plain org user from a different org is denied at the pre-check.
+    outsider = _user(uuid4(), is_platform_admin=False, is_provider_org=False)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=outsider,
+    ) is False
 
-    with pytest.raises(FilePolicyDenied):
-        await service.check_allowed(
-            "read",
-            organization_id=org.id,
-            location="workspace",
-            path="private/doc.txt",
-            user=_user(org.id),
-        )
 
-    assert emitted["action"] == "policy.deny"
-    assert emitted["resource_type"] == "file"
-    assert emitted["outcome"] == "failure"
-    assert emitted["details"] == {
-        "policy_action": "read",
-        "location": "workspace",
-        "path": "private/doc.txt",
-    }
+@pytest.mark.asyncio
+async def test_is_external_matches_grant_rule_for_external_principal(
+    db_session,
+) -> None:
+    """An ``is_external``-keyed policy grants access to an external principal
+    and denies a non-external one — proving the evaluator resolves the
+    principal's ``is_external`` claim via the validator-allow-listed field."""
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    service = FilePolicyService(db_session)
+    await service.upsert_policy(
+        organization_id=org.id,
+        location="workspace",
+        path="reports",
+        policies=FilePolicies.model_validate({
+            "policies": [
+                {
+                    "name": "external_only",
+                    "actions": ["read"],
+                    "when": {"user": "is_external"},
+                }
+            ]
+        }),
+        created_by=uuid4(),
+    )
+
+    external_user = _user(org.id, is_external=True)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=external_user,
+    ) is True
+
+    internal_user = _user(org.id, is_external=False)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        location="workspace",
+        path="reports/q1.pdf",
+        user=internal_user,
+    ) is False

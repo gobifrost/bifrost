@@ -14,6 +14,8 @@ import zipfile
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 pytestmark = pytest.mark.e2e
 
 
@@ -55,13 +57,20 @@ async def test_install_blocks_on_missing_module(e2e_client, platform_admin):
         workflow_src="from modules.absent import x\n\n\ndef run(sdk):\n    return x\n",
     )
 
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", data, "application/zip")},
-        data={"config_values": "{}"},
+    # The unmet-module gate is a build-time refusal: install now enqueues (202)
+    # and the gate fires inside the job, so wait_for_install surfaces it as a
+    # failed-job 409 (it was a synchronous 422 before install went async).
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", data, "application/zip")},
+            data={"config_values": "{}"},
+        ),
+        headers,
     )
-    assert inst.status_code == 422, inst.text
+    assert inst.status_code == 409, inst.text
     assert "modules.absent" in inst.text, inst.text
 
     # Nothing landed: the install for this slug must not exist.
@@ -84,11 +93,15 @@ async def test_install_succeeds_when_module_present(e2e_client, platform_admin):
         modules={"present.py": "x = 1\n"},
     )
 
-    inst = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", data, "application/zip")},
-        data={"config_values": "{}"},
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", data, "application/zip")},
+            data={"config_values": "{}"},
+        ),
+        headers,
     )
     assert inst.status_code in (200, 201), inst.text
 

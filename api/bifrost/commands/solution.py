@@ -1032,6 +1032,32 @@ def _collect_file_locations(workspace: pathlib.Path) -> list[str]:
     return ManifestFiles(locations=raw).locations
 
 
+def _collect_file_policies(workspace: pathlib.Path) -> list[dict]:
+    """Read solution-tier file policies from .bifrost/file-policies.yaml (keyed by UUID).
+
+    Each entry is a portable ``{id, location, path, policies}`` dict written by
+    export's INSTALL view (org/solution ids scrubbed). The server's deploy
+    re-stamps ``solution_id`` to the target install and upserts by natural key
+    ``(solution_id, location, path)``.
+    """
+    fp_file = _bifrost_manifest(workspace, "file-policies.yaml")
+    if fp_file is None or not fp_file.is_file():
+        return []
+    data = yaml.safe_load(fp_file.read_text()) or {}
+    raw = data.get("file_policies", {})
+    entries: list[dict] = []
+    for key, body in raw.items():
+        if not isinstance(body, dict):
+            continue
+        entries.append({
+            "id": body.get("id", key),
+            "location": body.get("location"),
+            "path": body.get("path", ""),
+            "policies": body.get("policies", []),
+        })
+    return entries
+
+
 def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
     """Read connection DECLARATIONS from .bifrost/connections.yaml (keyed by name).
 
@@ -1539,43 +1565,68 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
         raise SystemExit(rc)
 
 
-async def _poll_deploy_job(client, job_id: str, *, interval: float = 3.0) -> int:
-    """Poll a deploy job until terminal, printing a heartbeat each tick.
+async def _poll_deploy_job(
+    client, job_id: str, *, interval: float = 3.0, action: str = "Deploy"
+) -> int:
+    """Poll a deploy/install job until terminal, printing a heartbeat each tick.
 
-    The deploy endpoint runs the (often >100s) work as a background job and
-    returns immediately, so the CLI polls for the result instead of holding
-    one long HTTP request that times out client-side (Task 7 bug). Returns 0 on
+    The deploy and install endpoints run the (often >30s) work as a background job
+    and return immediately, so the CLI polls for the result instead of holding one
+    long HTTP request that times out client-side (Task 7 / Task H1). Returns 0 on
     ``succeeded``, 1 on ``failed`` (printing the server-captured error).
+
+    ``action`` is the verb used in the messages ("Deploy" / "Install"); the
+    grammar assumes ``<action>ing`` reads naturally ("Deploying" / "Installing").
     """
+    gerund = f"{action[:-1]}ing" if action.endswith("e") else f"{action}ing"
     start = time.monotonic()
     last_phase: str | None = None
     while True:
         resp = await client.get(f"/api/solutions/deploy-jobs/{job_id}")
         if resp.status_code != 200:
             click.echo(
-                f"Failed to read deploy status ({resp.status_code}): {resp.text[:200]}",
+                f"Failed to read {action.lower()} status "
+                f"({resp.status_code}): {resp.text[:200]}",
                 err=True,
             )
             return 1
         body = resp.json()
         status = body.get("status")
         if status == "succeeded":
-            click.echo("Deploy complete.")
+            result = body.get("result") or {}
+            sid = result.get("solution_id")
+            if sid:
+                slug = result.get("slug")
+                slug_note = f" (slug={slug})" if slug else ""
+                click.echo(f"{action} complete: solution {sid}{slug_note}.")
+            else:
+                click.echo(f"{action} complete.")
             return 0
         if status == "failed":
             error = body.get("error") or "unknown error"
-            # Task 20 downgrade gate now surfaces as a failed job — re-attach the
-            # deliberate-override hint so the operator knows how to proceed.
+            # The build gates now surface as a failed job — re-attach the
+            # deliberate-override hints so the operator knows how to proceed.
             if "older than installed" in error:
                 error = f"{error}\nRe-run with --force to downgrade."
-            click.echo(f"Deploy failed: {error}", err=True)
+            result = body.get("result") or {}
+            if result.get("reason") == "inactive_install_exists":
+                error = (
+                    f"{error}\nRe-run with --reactivate to reactivate it, "
+                    "or delete the existing install first."
+                )
+            elif "overwrite existing" in error:
+                error = (
+                    f"{error}\nRe-run with --replace-secrets to overwrite "
+                    "conflicting config values, or --replace-data for table data."
+                )
+            click.echo(f"{action} failed: {error}", err=True)
             return 1
         phase = (body.get("result") or {}).get("phase")
         if isinstance(phase, str) and phase and phase != last_phase:
-            click.echo(f"Deploy phase: {phase}")
+            click.echo(f"{action} phase: {phase}")
             last_phase = phase
         elapsed = int(time.monotonic() - start)
-        click.echo(f"Still deploying... {elapsed}s")
+        click.echo(f"Still {gerund.lower()}... {elapsed}s")
         await asyncio.sleep(interval)
 
 
@@ -1847,11 +1898,21 @@ def install_cmd(
         url = "/api/solutions/install"
         if reactivate:
             url += "?reactivate=true"
+        # Install is async server-side: the POST validates the zip + password
+        # synchronously and returns a job id quickly. Give the upload itself a
+        # generous timeout (large bundles) but never block on the deploy work —
+        # that is observed via the poll loop below.
         resp = await client.post(
             url,
             files={"file": (pathlib.Path(zip_path).name, zip_bytes, "application/zip")},
             data=form,
+            timeout=600,
         )
+        # Synchronous fail-fast refusals come back on the POST itself, before any
+        # job is created (wrong/missing password → 422; bad zip → 422; inactive
+        # install of the same slug → structured 409 prompt). The build gates
+        # (collision, downgrade, git-connected) surface as a FAILED job, read via
+        # the poll loop.
         if resp.status_code == 409:
             detail = resp.json().get("detail", {})
             if isinstance(detail, dict) and detail.get("reason") == "inactive_install_exists":
@@ -1866,23 +1927,18 @@ def install_cmd(
                     err=True,
                 )
             else:
-                click.echo(f"Install collision: {detail}", err=True)
-                click.echo(
-                    "Re-run with --replace-secrets to overwrite conflicting config values, "
-                    "or --replace-data for table data.",
-                    err=True,
-                )
+                click.echo(f"Install conflict: {detail}", err=True)
             return 1
         if resp.status_code == 422:
             detail = resp.json().get("detail", resp.text)
             click.echo(f"Install rejected: {detail}", err=True)
             return 1
-        if resp.status_code not in (200, 201):
+        if resp.status_code != 202:
             click.echo(f"Install failed: {resp.status_code} {resp.text}", err=True)
             return 1
-        body = resp.json()
-        click.echo(f"Installed solution {body['id']} (slug={body.get('slug')}).")
-        return 0
+        job_id = resp.json()["deploy_job_id"]
+        click.echo(f"Installing solution (job {job_id})...")
+        return await _poll_deploy_job(client, job_id, action="Install")
 
     rc = asyncio.run(_run())
     if rc:

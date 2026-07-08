@@ -41,6 +41,10 @@ export type SolutionExportJob =
 	components["schemas"]["SolutionExportJobPublic"];
 export type SolutionExportJobsList =
 	components["schemas"]["SolutionExportJobsList"];
+export type SolutionDeployEnqueued =
+	components["schemas"]["SolutionDeployEnqueued"];
+export type SolutionDeployJobStatus =
+	components["schemas"]["SolutionDeployJobStatus"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
@@ -199,7 +203,9 @@ export async function previewSolutionFromRepo(
 
 /**
  * Install a Solution sourced from a git repository. The server clones the repo
- * at the given ref/subpath and installs it, returning the created `Solution`.
+ * synchronously (the clone + slug/scope 409 are fail-fast), then runs the
+ * build/deploy as an async job (202 + `deploy_job_id`). We poll to a terminal
+ * state and resolve the installed `Solution`.
  */
 export async function installSolutionFromRepo(
 	body: SolutionRepoPreviewRequest,
@@ -213,7 +219,7 @@ export async function installSolutionFromRepo(
 	if (error) {
 		throw new Error(getErrorMessage(error, "Failed to install from repository"));
 	}
-	return data;
+	return pollDeployJobToSolution(data.deploy_job_id, { signal });
 }
 
 export async function getSolutionCaptureCandidates(
@@ -522,6 +528,59 @@ export async function previewInstall(
 	return response.json();
 }
 
+/** Fetch the current state of an async solution deploy/install job. */
+export async function getDeployJob(
+	jobId: string,
+	options: RequestOptions = {},
+): Promise<SolutionDeployJobStatus> {
+	const { signal } = options;
+	const { data, error } = await apiClient.GET(
+		"/api/solutions/deploy-jobs/{job_id}",
+		{ params: { path: { job_id: jobId } }, signal },
+	);
+	if (error) throw new Error(getErrorMessage(error, "Failed to read deploy job"));
+	return data;
+}
+
+/**
+ * Poll an async deploy/install job to a terminal state, then resolve the
+ * installed `Solution`.
+ *
+ * Install/deploy became async (202 + `deploy_job_id`): the heavy build runs as a
+ * background job, so callers poll here instead of holding one long request. On a
+ * `failed` job we throw an Error carrying the server-captured message AND a
+ * synthetic `status` (409 for the build-gate refusals — collision, downgrade,
+ * git-connected, inactive install), so the existing install-flow error branches
+ * (which key on 409 + message shape) keep working now that these refusals arrive
+ * as a failed job rather than a synchronous 409.
+ */
+export async function pollDeployJobToSolution(
+	jobId: string,
+	options: RequestOptions & { intervalMs?: number } = {},
+): Promise<Solution> {
+	const { signal, intervalMs = 2000 } = options;
+	for (;;) {
+		const job = await getDeployJob(jobId, { signal });
+		if (job.status === "succeeded") {
+			const solutionId =
+				(job.result?.solution_id as string | undefined) ?? job.install_id;
+			if (!solutionId) {
+				throw new Error("Install succeeded but returned no solution id");
+			}
+			return getSolution(solutionId, { signal });
+		}
+		if (job.status === "failed") {
+			const message = job.error || "Install failed";
+			const err = new Error(message) as Error & { status?: number };
+			// Build-gate refusals now surface as a failed job; re-attach a 409 so the
+			// caller's collision/downgrade branches (which expect 409) still fire.
+			err.status = 409;
+			throw err;
+		}
+		await new Promise((resolve) => setTimeout(resolve, intervalMs));
+	}
+}
+
 /**
  * Install a Solution zip. Posts a multipart `file`, optional `organization_id`
  * (empty string installs globally), and `config_values` (JSON-encoded map).
@@ -571,6 +630,10 @@ export async function installSolution(
 	const url = force
 		? "/api/solutions/install?force=true"
 		: "/api/solutions/install";
+	// Install is async server-side: the POST runs fail-fast validation (bad zip,
+	// wrong/missing password → synchronous 422) and returns 202 + a
+	// `deploy_job_id`; the heavy build runs as a background job we poll below. This
+	// keeps a slow (npm/vite) install from timing the request out.
 	const response = await authFetch(url, {
 		method: "POST",
 		body: formData,
@@ -587,5 +650,8 @@ export async function installSolution(
 		(err as Error & { status?: number }).status = response.status;
 		throw err;
 	}
-	return response.json();
+	const enqueued = (await response.json()) as SolutionDeployEnqueued;
+	return pollDeployJobToSolution(enqueued.deploy_job_id, {
+		signal: options.signal,
+	});
 }

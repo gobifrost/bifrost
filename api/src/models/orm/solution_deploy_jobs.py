@@ -28,10 +28,13 @@ class SolutionDeployJob(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    install_id: Mapped[UUID] = mapped_column(
+    # Nullable: a zip install (Task H1) resolves-or-creates its target install
+    # INSIDE the job, so the id isn't known at enqueue — the succeeded ``result``
+    # carries the solution_id. Deploy / install-from-repo jobs always set it.
+    install_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("solutions.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     status: Mapped[str] = mapped_column(

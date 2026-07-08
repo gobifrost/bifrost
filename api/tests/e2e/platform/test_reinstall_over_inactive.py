@@ -20,6 +20,8 @@ import zipfile
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 
 pytestmark = pytest.mark.e2e
 
@@ -64,13 +66,16 @@ def _make_zip(slug: str, table_name: str) -> bytes:
     return buf.getvalue()
 
 
-def _install(e2e_client, headers, zip_bytes: bytes, *, query: str = "") -> dict:
+def _install(e2e_client, headers, zip_bytes: bytes, *, query: str = ""):
+    # Install is async (202 + poll); wait_for_install returns a terminal shim.
+    # Synchronous refusals (the structured inactive-install 409) pass through
+    # unchanged, keeping the prompt contract this file asserts.
     r = e2e_client.post(
         f"/api/solutions/install{query}",
         headers=_upload_headers(headers),
         files={"file": ("sol.zip", zip_bytes, "application/zip")},
     )
-    return r
+    return wait_for_install(e2e_client, r, headers)
 
 
 def _uninstall(e2e_client, headers, solution_id: str) -> None:

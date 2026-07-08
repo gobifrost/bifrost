@@ -466,14 +466,18 @@ def _file_org_and_scope(
     if location == "workspace":
         return None, None
 
+    # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
+    # provider-org members (portal-hopping platform staff) can subscribe to any
+    # org's / the global file channel, same as platform admins.
+    bypass = user.is_platform_admin or user.is_provider_org
     scope = requested_scope or (str(user.organization_id) if user.organization_id else None)
     if scope is None:
         return None
     if scope == "global":
-        if not user.is_platform_admin:
+        if not bypass:
             return None
         return None, scope
-    if not user.is_platform_admin and str(user.organization_id) != scope:
+    if not bypass and str(user.organization_id) != scope:
         return None
     try:
         org_id = UUID(scope)

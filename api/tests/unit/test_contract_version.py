@@ -171,7 +171,14 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # PolicyRuleCreate + PolicyRuleUpdate added to CLI contract surface (2026-06-23).
     # ADDITIVE: new entity group (policy-rule), no existing DTOs changed.
     # Fingerprint refreshed only.
-    "4b9e5c8786bb8555000cb02744c501ef28b3dcf6e40257e4b0e7f7405177e12a"
+    #
+    # Solution install (zip + from-repo) is now async: POST /install and
+    # /install/from-repo return 202 + deploy_job_id (was 200/201 + Solution) and
+    # the CLI/UI poll SolutionDeployJobStatus for the solution_id. That job status'
+    # install_id widened to nullable (a zip install resolves its target inside the
+    # job) — a response-shape change the CLI parses (2026-07-02).
+    # CONTRACT_VERSION bumped to 7.
+    "1f1477ec0dfc512e231de4db2d6a8272554c4fa8fc4002b8bf31d215d575af03"
 )
 
 

@@ -206,8 +206,19 @@ describe("solutions service", () => {
 		).rejects.toThrow(/clone failed/);
 	});
 
-	it("installs a solution from a repo with the body", async () => {
-		mockPost.mockResolvedValue({ data: { id: "sol-9", slug: "demo" } });
+	it("installs a solution from a repo, then polls the job to the solution", async () => {
+		// Install is async: the POST returns 202 + a deploy_job_id; the service
+		// polls the deploy job and resolves the installed Solution.
+		mockPost.mockResolvedValue({ data: { deploy_job_id: "job-9" } });
+		mockGet
+			.mockResolvedValueOnce({
+				data: {
+					id: "job-9",
+					status: "succeeded",
+					result: { solution_id: "sol-9", slug: "demo" },
+				},
+			})
+			.mockResolvedValueOnce({ data: { id: "sol-9", slug: "demo" } });
 
 		const body = {
 			repo_url: "https://github.com/acme/demo",
@@ -217,7 +228,13 @@ describe("solutions service", () => {
 
 		expect(mockPost).toHaveBeenCalledWith("/api/solutions/install/from-repo", {
 			body,
+			signal: undefined,
 		});
+		// Polled the job, then fetched the solution.
+		expect(mockGet).toHaveBeenCalledWith(
+			"/api/solutions/deploy-jobs/{job_id}",
+			expect.objectContaining({ params: { path: { job_id: "job-9" } } }),
+		);
 		expect(out.id).toBe("sol-9");
 	});
 
@@ -279,11 +296,27 @@ describe("solutions service", () => {
 		expect(body.get("organization_id")).toBe("org-7");
 	});
 
-	it("installs a solution with file, organization_id, and config_values", async () => {
+	// Install is async: the multipart POST returns 202 + deploy_job_id, then the
+	// service polls the deploy job and resolves the installed Solution. This helper
+	// mocks that two-step poll (job succeeded → solution fetch).
+	function mockInstallPoll(jobId: string, solutionId: string) {
 		mockAuthFetch.mockResolvedValue({
 			ok: true,
-			json: () => Promise.resolve({ id: "sol-2", slug: "demo" }),
+			json: () => Promise.resolve({ deploy_job_id: jobId }),
 		});
+		mockGet
+			.mockResolvedValueOnce({
+				data: {
+					id: jobId,
+					status: "succeeded",
+					result: { solution_id: solutionId, slug: "demo" },
+				},
+			})
+			.mockResolvedValueOnce({ data: { id: solutionId, slug: "demo" } });
+	}
+
+	it("installs a solution with file, organization_id, and config_values", async () => {
+		mockInstallPoll("job-2", "sol-2");
 		const file = new File(["zip-bytes"], "demo.zip", {
 			type: "application/zip",
 		});
@@ -308,10 +341,7 @@ describe("solutions service", () => {
 	});
 
 	it("installs with ?force=true when force is set", async () => {
-		mockAuthFetch.mockResolvedValue({
-			ok: true,
-			json: () => Promise.resolve({ id: "sol-4" }),
-		});
+		mockInstallPoll("job-4", "sol-4");
 		const file = new File(["zip-bytes"], "demo.zip", {
 			type: "application/zip",
 		});
@@ -323,10 +353,7 @@ describe("solutions service", () => {
 	});
 
 	it("installs globally with empty organization_id when none given", async () => {
-		mockAuthFetch.mockResolvedValue({
-			ok: true,
-			json: () => Promise.resolve({ id: "sol-3" }),
-		});
+		mockInstallPoll("job-3", "sol-3");
 		const file = new File(["zip-bytes"], "demo.zip", {
 			type: "application/zip",
 		});
@@ -336,6 +363,49 @@ describe("solutions service", () => {
 		const body = mockAuthFetch.mock.calls[0][1].body as FormData;
 		expect(body.get("organization_id")).toBe("");
 		expect(body.get("config_values")).toBe("{}");
+	});
+
+	it("attaches the status and message when a build gate fails the job", async () => {
+		// A build-gate refusal (collision, downgrade, git-connected, inactive) now
+		// surfaces as a FAILED job; the poll re-raises it as a 409-flavored error so
+		// the install flow's existing 409 branches keep working.
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ deploy_job_id: "job-x" }),
+		});
+		mockGet.mockResolvedValueOnce({
+			data: {
+				id: "job-x",
+				status: "failed",
+				error: "bundle version 0.9.0 is older than installed 1.0.0",
+			},
+		});
+		const file = new File(["zip-bytes"], "demo.zip", {
+			type: "application/zip",
+		});
+
+		await expect(installSolution({ file })).rejects.toMatchObject({
+			message: expect.stringContaining("older than installed"),
+			status: 409,
+		});
+	});
+
+	it("throws a synchronous 422 (wrong password / bad zip) before polling", async () => {
+		mockAuthFetch.mockResolvedValue({
+			ok: false,
+			status: 422,
+			statusText: "Unprocessable Entity",
+			json: () => Promise.resolve({ detail: "wrong password for this bundle" }),
+		});
+		const file = new File(["zip-bytes"], "demo.zip", {
+			type: "application/zip",
+		});
+
+		await expect(installSolution({ file })).rejects.toMatchObject({
+			status: 422,
+		});
+		// Fail-fast: the job is never polled.
+		expect(mockGet).not.toHaveBeenCalled();
 	});
 
 	it("throws the server detail on a failed upload", async () => {

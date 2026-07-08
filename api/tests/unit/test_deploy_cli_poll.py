@@ -63,6 +63,41 @@ def test_poll_surfaces_failure(capsys):
     assert "diverged" in (captured.out + captured.err)
 
 
+def test_poll_install_action_reports_solution_id(capsys):
+    """The install command reuses the poll loop with ``action="Install"``; on
+    success it echoes the solution id the job's ``result`` carries."""
+    client = _FakeClient(
+        {
+            "status": "succeeded",
+            "error": None,
+            "install_id": None,
+            "result": {"solution_id": "sol-123", "slug": "acme"},
+        }
+    )
+    rc = _run(_poll_deploy_job(client, "job-i", interval=0.0, action="Install"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Still installing..." in out
+    assert "Install complete: solution sol-123 (slug=acme)." in out
+
+
+def test_poll_install_failure_reattaches_inactive_hint(capsys):
+    """A build-gate refusal surfaces as a failed job; the poll loop re-attaches
+    the reactivate hint when the job result flags an inactive install."""
+    client = _FakeClient(
+        {
+            "status": "failed",
+            "error": "An inactive install of 'acme' already exists",
+            "result": {"reason": "inactive_install_exists", "slug": "acme"},
+        }
+    )
+    rc = _run(_poll_deploy_job(client, "job-x", interval=0.0, action="Install"))
+    captured = capsys.readouterr()
+    assert rc == 1
+    combined = captured.out + captured.err
+    assert "--reactivate" in combined
+
+
 def test_poll_prints_phase_changes(capsys):
     class PhaseClient:
         def __init__(self) -> None:

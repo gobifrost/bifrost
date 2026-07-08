@@ -27,6 +27,14 @@ const USER_FIELDS: RefRow[] = [
 	{ term: "email", def: "Email address of the calling user." },
 	{ term: "organization_id", def: "Org UUID the user belongs to." },
 	{ term: "is_platform_admin", def: "Boolean. True for platform admins." },
+	{
+		term: "is_provider_org",
+		def: "Boolean. True when the user belongs to the provider organization (platform staff). Together with is_platform_admin, grants cross-org / global scope.",
+	},
+	{
+		term: "is_external",
+		def: "Boolean. True for external users (guests / portal-external principals). Typically used in deny/restrict positions — external users are the population you usually write restrictive rules for.",
+	},
 	{ term: "role_ids", def: "List of role UUIDs the user holds." },
 	{ term: "role_names", def: "List of role names the user holds." },
 ];

@@ -27,6 +27,8 @@ from typing import Any
 
 import pytest
 
+from tests.e2e.platform.conftest import wait_for_install
+
 pytestmark = pytest.mark.e2e
 
 
@@ -218,13 +220,17 @@ async def test_full_import_fills_empty_secret_slot(
     zip_bytes, _, _ = await make_full_backup_zip(values={"api_key": "xyz"}, password="pw")
     org = await make_org()
 
-    r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": ("s.zip", zip_bytes, "application/zip")},
-        data={"organization_id": str(org.id), "password": "pw"},
+    r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": ("s.zip", zip_bytes, "application/zip")},
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     sol_id = r.json()["id"]
 
     # Setup status must show api_key as set.
@@ -271,13 +277,17 @@ async def test_full_import_ignores_integration_owned_config_with_same_key(
     )
     await db_session.commit()
 
-    r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": ("s.zip", zip_bytes, "application/zip")},
-        data={"organization_id": str(org.id), "password": "pw"},
+    r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": ("s.zip", zip_bytes, "application/zip")},
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     sol_id = r.json()["id"]
 
     setup_r = e2e_client.get(f"/api/solutions/{sol_id}/setup", headers=headers)
@@ -319,13 +329,17 @@ async def test_full_import_collision_refuses_without_replace_flag(
     )
     org = await make_org()
     files1 = {"file": ("s.zip", z1, "application/zip")}
-    r0 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files1,
-        data={"organization_id": str(org.id), "password": "pw"},
+    r0 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files1,
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
-    assert r0.status_code == 200, r0.text
+    assert r0.status_code in (200, 201), r0.text
 
     # Second install: SAME source solution, updated value api_key=NEW → collision.
     # Re-using the same source solution keeps the config schema UUIDs identical,
@@ -338,11 +352,15 @@ async def test_full_import_collision_refuses_without_replace_flag(
         source_org_id=src_org_id,
     )
     files2 = {"file": ("s.zip", z2, "application/zip")}
-    r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files2,
-        data={"organization_id": str(org.id), "password": "pw"},
+    r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files2,
+            data={"organization_id": str(org.id), "password": "pw"},
+        ),
+        headers,
     )
     assert r.status_code == 409, r.text
     # The error body must name the colliding key.
@@ -350,13 +368,17 @@ async def test_full_import_collision_refuses_without_replace_flag(
 
     # Same zip again, but with replace_secrets=true → must succeed.
     files3 = {"file": ("s.zip", z2, "application/zip")}
-    r2 = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files=files3,
-        data={"organization_id": str(org.id), "password": "pw", "replace_secrets": "true"},
+    r2 = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files=files3,
+            data={"organization_id": str(org.id), "password": "pw", "replace_secrets": "true"},
+        ),
+        headers,
     )
-    assert r2.status_code == 200, r2.text
+    assert r2.status_code in (200, 201), r2.text
 
 
 # ---------------------------------------------------------------------------
@@ -377,12 +399,17 @@ async def test_wrong_password_rejected(
     )
     org = await make_org()
 
-    # Wrong password → must fail.
-    r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": ("s.zip", zip_bytes, "application/zip")},
-        data={"organization_id": str(org.id), "password": "WRONG"},
+    # Wrong password → must fail (synchronous fail-fast 422; wait_for_install
+    # passes the non-202 response through unchanged).
+    r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": ("s.zip", zip_bytes, "application/zip")},
+            data={"organization_id": str(org.id), "password": "WRONG"},
+        ),
+        headers,
     )
     assert r.status_code == 422, r.text
 

@@ -47,6 +47,7 @@ vi.mock("@/components/files/FilesExplorer", () => ({
 }));
 
 const mockGetSolutionEntities = vi.fn();
+const mockGetSolutionSetup = vi.fn();
 const mockUpdateSolution = vi.fn();
 const mockDeleteSolution = vi.fn();
 const mockUninstallSolution = vi.fn();
@@ -60,8 +61,11 @@ const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
 const mockSyncSolution = vi.fn();
 const mockGetSolutionReadme = vi.fn();
+const mockCreateWorkflowKey = vi.fn();
+const mockRevokeWorkflowKey = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	getSolutionEntities: (...a: unknown[]) => mockGetSolutionEntities(...a),
+	getSolutionSetup: (...a: unknown[]) => mockGetSolutionSetup(...a),
 	getSolutionReadme: (...a: unknown[]) => mockGetSolutionReadme(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
@@ -78,6 +82,13 @@ vi.mock("@/services/solutions", () => ({
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
 	captureSolutionEntities: (...a: unknown[]) => mockCaptureSolutionEntities(...a),
+}));
+
+vi.mock("@/services/workflowKeys", () => ({
+	workflowKeysService: {
+		createWorkflowKey: (...a: unknown[]) => mockCreateWorkflowKey(...a),
+		revokeWorkflowKey: (...a: unknown[]) => mockRevokeWorkflowKey(...a),
+	},
 }));
 
 function makeEntities(statusOverride = "active") {
@@ -168,6 +179,7 @@ async function renderPage() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetSolutionEntities.mockResolvedValue(makeEntities());
+	mockGetSolutionSetup.mockResolvedValue({ setup_complete: true, items: [] });
 	mockGetSolutionReadme.mockResolvedValue({ readme: null });
 	mockListSolutionExportJobs.mockResolvedValue({ jobs: [] });
 	mockCreateSolutionExportJob.mockResolvedValue({
@@ -273,6 +285,74 @@ describe("SolutionDetail", () => {
 		expect(configuration).toHaveTextContent("2");
 
 		expect(screen.getByTestId("tab-exports")).toHaveTextContent("Exports");
+	});
+
+	it("clears setup warnings from live setup status even when the persisted flag is stale", async () => {
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			setup_complete: false,
+		} as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+		mockGetSolutionSetup.mockResolvedValue({
+			setup_complete: true,
+			items: [
+				{
+					key: "wf-1",
+					type: "workflow_endpoint_key",
+					required: true,
+					is_set: true,
+					kind: "workflow_endpoint_key",
+					has_oauth: false,
+					connected: false,
+					workflow_id: "wf-1",
+					workflow_name: "Ticket Webhook",
+					allowed_methods: ["POST"],
+				},
+			],
+		});
+
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await waitFor(() =>
+			expect(screen.queryByTestId("continue-setup")).not.toBeInTheDocument(),
+		);
+		expect(screen.queryByTestId("incomplete-badge")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("config-tab-warning")).not.toBeInTheDocument();
+	});
+
+	it("returns to overview when completed setup is dismissed", async () => {
+		mockGetSolutionSetup.mockResolvedValue({
+			setup_complete: true,
+			items: [
+				{
+					key: "wf-1",
+					type: "workflow_endpoint_key",
+					required: true,
+					is_set: true,
+					kind: "workflow_endpoint_key",
+					has_oauth: false,
+					connected: false,
+					workflow_id: "wf-1",
+					workflow_name: "Ticket Webhook",
+					allowed_methods: ["POST"],
+				},
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-configuration"));
+		expect(await screen.findByText(/all required setup is complete/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /done/i }));
+
+		await waitFor(() =>
+			expect(screen.getByTestId("tab-overview")).toHaveAttribute(
+				"data-state",
+				"active",
+			),
+		);
 	});
 
 	it("lists backup export jobs on the Exports tab and downloads completed jobs", async () => {

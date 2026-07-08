@@ -128,6 +128,7 @@ import {
 import { UpgradeDiffView } from "@/components/solutions/CreateEditSolution";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
+import { workflowKeysService } from "@/services/workflowKeys";
 import type { components } from "@/lib/v1";
 
 type EntitySummary = components["schemas"]["SolutionEntitySummary"];
@@ -1168,6 +1169,8 @@ function ConfigurationTab({
 	setupError,
 	onInvalidate,
 	onSetConfig,
+	onGenerateWorkflowKey,
+	onFinish,
 }: {
 	configs: ConfigStatus[];
 	orgId: string | null;
@@ -1176,11 +1179,14 @@ function ConfigurationTab({
 	setupError: unknown;
 	onInvalidate: () => void;
 	onSetConfig: (key: string, value: string) => void | Promise<void>;
+	onGenerateWorkflowKey: (workflowId: string) => void | Promise<void>;
+	onFinish: () => void;
 }) {
 	const hasConnections = setupItems.some((i) => i.kind === "connection");
+	const hasSetupRequirements = setupItems.length > 0;
 	return (
 		<div className="flex flex-col gap-6">
-			{/* Integration connections (if the solution declares any). */}
+			{/* Setup requirements that are not plain config-value rows. */}
 			{setupError ? (
 				<div className="rounded-lg border border-destructive/40 bg-destructive/5 py-6 text-center text-sm text-destructive">
 					{setupError instanceof Error
@@ -1188,24 +1194,25 @@ function ConfigurationTab({
 						: "Couldn't load setup status"}
 				</div>
 			) : (
-				hasConnections && (
-					<section data-testid="config-connections">
-						<h3 className="mb-2 text-sm font-semibold">Connections</h3>
-						<SolutionSetupWizard
-							items={setupItems}
-							setupComplete={setupComplete}
-							onFinish={onInvalidate}
-							onSetConfig={onSetConfig}
-						/>
-					</section>
-				)
-			)}
-
-			{/* Config values. */}
-			<section data-testid="config-values">
-				{hasConnections && (
-					<h3 className="mb-2 text-sm font-semibold">Config values</h3>
+					hasSetupRequirements && (
+						<section data-testid="config-connections">
+							<h3 className="mb-2 text-sm font-semibold">Setup</h3>
+							<SolutionSetupWizard
+								items={setupItems}
+								setupComplete={setupComplete}
+								onFinish={onFinish}
+								onSetConfig={onSetConfig}
+								onGenerateWorkflowKey={onGenerateWorkflowKey}
+							/>
+						</section>
+					)
 				)}
+
+				{/* Config values. */}
+				<section data-testid="config-values">
+					{hasConnections && (
+						<h3 className="mb-2 text-sm font-semibold">Config values</h3>
+					)}
 				{configs.length > 0 ? (
 					<div className="space-y-3">
 						{configs.map((cfg) => (
@@ -1217,13 +1224,13 @@ function ConfigurationTab({
 							/>
 						))}
 					</div>
-				) : (
-					!hasConnections && (
-						<div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
-							This Solution declares no configuration.
-						</div>
-					)
-				)}
+					) : (
+						!hasSetupRequirements && (
+							<div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
+								This Solution declares no configuration.
+							</div>
+						)
+					)}
 			</section>
 		</div>
 	);
@@ -1351,6 +1358,10 @@ export function SolutionDetail() {
 	const [deletionSummary, setDeletionSummary] =
 		useState<SolutionDeletionSummary | null>(null);
 	const [deletionSummaryLoading, setDeletionSummaryLoading] = useState(false);
+	const [generatedEndpointKey, setGeneratedEndpointKey] = useState<{
+		workflowName: string;
+		rawKey: string;
+	} | null>(null);
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: ["solutions", solutionId, "entities"],
@@ -1394,7 +1405,36 @@ export function SolutionDetail() {
 		void refetchReadme();
 	};
 
+	const generateWorkflowEndpointKey = async (workflowId: string) => {
+		const item = setupData?.items.find((i) => i.workflow_id === workflowId);
+		try {
+			if (item?.is_set) {
+				await workflowKeysService.revokeWorkflowKey(workflowId);
+			}
+			const result = await workflowKeysService.createWorkflowKey({
+				workflow_id: workflowId,
+				description: "Generated during Solution setup",
+				disable_global_key: false,
+			});
+			if (result.raw_key) {
+				setGeneratedEndpointKey({
+					workflowName: item?.workflow_name ?? result.workflow_name ?? "Workflow endpoint",
+					rawKey: result.raw_key,
+				});
+			}
+			toast.success("Endpoint key generated");
+			invalidate();
+			void queryClient.invalidateQueries({ queryKey: ["workflow-keys"] });
+		} catch (err: unknown) {
+			toast.error("Failed to generate endpoint key", {
+				description: err instanceof Error ? err.message : undefined,
+			});
+		}
+	};
+
 	const sol = data?.solution;
+	const effectiveSetupComplete =
+		setupData?.setup_complete ?? sol?.setup_complete ?? true;
 
 	const exportMut = useMutation({
 		mutationFn: ({
@@ -1624,7 +1664,7 @@ export function SolutionDetail() {
 								<h1 className="text-3xl font-extrabold tracking-tight">
 									{sol.name}
 								</h1>
-								{sol.setup_complete === false && (
+								{effectiveSetupComplete === false && (
 									<Badge
 										data-testid="incomplete-badge"
 										variant="outline"
@@ -1702,7 +1742,7 @@ export function SolutionDetail() {
 							)}
 						</div>
 						<div className="flex shrink-0 items-center justify-end gap-2">
-							{sol.setup_complete === false && sol.status !== "inactive" && (
+							{effectiveSetupComplete === false && sol.status !== "inactive" && (
 								<Button
 									data-testid="continue-setup"
 									variant="outline"
@@ -1818,7 +1858,7 @@ export function SolutionDetail() {
 							>
 								<SlidersHorizontal className="h-4 w-4" />
 								Configuration
-								{sol.setup_complete === false ? (
+								{effectiveSetupComplete === false ? (
 									<AlertTriangle
 										data-testid="config-tab-warning"
 										className="ml-0.5 h-3.5 w-3.5 text-yellow-500"
@@ -1913,10 +1953,10 @@ export function SolutionDetail() {
 								configs={data.configs ?? []}
 								orgId={sol.organization_id ?? null}
 								setupItems={setupData?.items ?? []}
-								setupComplete={setupData?.setup_complete ?? sol.setup_complete}
+								setupComplete={effectiveSetupComplete}
 								setupError={setupError}
 								onInvalidate={invalidate}
-								onSetConfig={async (key, value) => {
+									onSetConfig={async (key, value) => {
 									try {
 										await setSolutionConfig({
 											key,
@@ -1934,10 +1974,15 @@ export function SolutionDetail() {
 											description:
 												err instanceof Error ? err.message : undefined,
 										});
-									}
-								}}
-							/>
-						</TabsContent>
+										}
+									}}
+									onGenerateWorkflowKey={generateWorkflowEndpointKey}
+									onFinish={() => {
+										invalidate();
+										if (effectiveSetupComplete) setTab("overview");
+									}}
+								/>
+							</TabsContent>
 
 						<TabsContent value="exports" className="flex-1 min-h-0 overflow-auto">
 							<ExportsTab
@@ -2053,7 +2098,7 @@ export function SolutionDetail() {
 					/>
 
 					{/* Export mode picker dialog */}
-					<ExportSolutionDialog
+						<ExportSolutionDialog
 						open={exportDialogOpen}
 						onOpenChange={setExportDialogOpen}
 						onExport={(mode, password, options) => {
@@ -2072,9 +2117,48 @@ export function SolutionDetail() {
 							exportMut.mutate({ mode, password, options });
 						}}
 						isPending={exportMut.isPending || backupExportMut.isPending}
-					/>
+						/>
 
-					{/* Hard-delete confirmation modal (type-the-slug to confirm) */}
+						<Dialog
+							open={generatedEndpointKey !== null}
+							onOpenChange={(open) => {
+								if (!open) setGeneratedEndpointKey(null);
+							}}
+						>
+							<DialogContent>
+								<DialogHeader>
+									<DialogTitle className="flex items-center gap-2">
+										<KeyRound className="h-4 w-4" />
+										Endpoint key generated
+									</DialogTitle>
+									<DialogDescription>
+										Copy this key now. It will not be shown again.
+									</DialogDescription>
+								</DialogHeader>
+								<div className="space-y-2">
+									<Label>{generatedEndpointKey?.workflowName}</Label>
+									<Input readOnly value={generatedEndpointKey?.rawKey ?? ""} />
+								</div>
+								<DialogFooter>
+									<Button
+										variant="outline"
+										onClick={() => {
+											if (generatedEndpointKey?.rawKey) {
+												void navigator.clipboard.writeText(generatedEndpointKey.rawKey);
+												toast.success("Copied endpoint key");
+											}
+										}}
+									>
+										Copy
+									</Button>
+									<Button onClick={() => setGeneratedEndpointKey(null)}>
+										Done
+									</Button>
+								</DialogFooter>
+							</DialogContent>
+						</Dialog>
+
+						{/* Hard-delete confirmation modal (type-the-slug to confirm) */}
 					<Dialog
 						open={hardDeleteOpen}
 						onOpenChange={(o) => {

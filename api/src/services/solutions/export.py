@@ -156,6 +156,17 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     allow_unicode=True,
                 ),
             )
+        # Solution-tier file policies (keyed by UUID). Env-specific fields
+        # (organization_id/solution_id) are already scrubbed by the INSTALL view;
+        # deploy re-stamps the target install. Mirrors tables.yaml keying.
+        if bundle.file_policies:
+            put(
+                ".bifrost/file-policies.yaml",
+                _manifest_yaml(
+                    "file_policies",
+                    {str(e["id"]): dict(e) for e in bundle.file_policies},
+                ),
+            )
         # Connection declarations (integrations.get("X") refs) — keyed by the
         # integration NAME (the natural key; no per-install id). Each entry is a
         # secret-scrubbed {integration_name, template, position} dict, the same

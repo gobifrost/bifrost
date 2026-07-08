@@ -21,13 +21,8 @@ from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, re
 from src.models.contracts.policies import FileAction, FilePolicies
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.repositories.policy_rule import PolicyRuleRepository
-from src.services.audit import emit_audit
 
 logger = logging.getLogger(__name__)
-
-
-class FilePolicyDenied(PermissionError):
-    """Raised by ``check_allowed`` when no file policy grants the action."""
 
 
 class FilePolicyService:
@@ -204,15 +199,41 @@ class FilePolicyService:
         *,
         organization_id: UUID | None,
         location: str | None = None,
+        solution_id: UUID | None = None,
     ) -> list[FilePolicy]:
-        stmt = select(FilePolicy).where(
-            FilePolicy.organization_id == organization_id,
-            FilePolicy.solution_id.is_(None),
-        )
+        """List file policies.
+
+        When ``solution_id`` is set, return that install's solution-tier rows
+        (``solution_id == …``) so an admin can SEE the deploy-owned policies —
+        writes to them stay blocked (deploy-owned; see the router). Otherwise
+        list the org/global workspace tier (``solution_id IS NULL``).
+        """
+        if solution_id is not None:
+            stmt = select(FilePolicy).where(FilePolicy.solution_id == solution_id)
+        else:
+            stmt = select(FilePolicy).where(
+                FilePolicy.organization_id == organization_id,
+                FilePolicy.solution_id.is_(None),
+            )
         if location is not None:
             stmt = stmt.where(FilePolicy.location == location)
         stmt = stmt.order_by(FilePolicy.location, FilePolicy.path)
         return list((await self.db.execute(stmt)).scalars().all())
+
+    async def get_solution_policy_exact(
+        self,
+        *,
+        solution_id: UUID,
+        location: str,
+        path: str,
+    ) -> FilePolicy | None:
+        """Fetch one solution-tier policy by natural key (read-only surface)."""
+        stmt = select(FilePolicy).where(
+            FilePolicy.solution_id == solution_id,
+            FilePolicy.location == location,
+            FilePolicy.path == path,
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def get_policy_exact(
         self,
@@ -374,37 +395,6 @@ class FilePolicyService:
         )
         return evaluate_file_action(action, policies, context, user)
 
-    async def check_allowed(
-        self,
-        action: FileAction,
-        *,
-        organization_id: UUID | None,
-        location: str,
-        path: str,
-        user: Any,
-    ) -> None:
-        if await self.is_allowed(
-            action,
-            organization_id=organization_id,
-            location=location,
-            path=path,
-            user=user,
-        ):
-            return
-
-        await emit_audit(
-            self.db,
-            "policy.deny",
-            resource_type="file",
-            outcome="failure",
-            details={
-                "policy_action": action,
-                "location": location,
-                "path": path,
-            },
-        )
-        raise FilePolicyDenied("Access denied")
-
     async def _get_policy_exact(
         self,
         *,
@@ -433,7 +423,12 @@ class FilePolicyService:
     ) -> bool:
         if organization_id is None:
             return True
-        if getattr(user, "is_platform_admin", False):
+        # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
+        # provider-org members (portal-hopping platform staff) reach any org's
+        # files, same as platform admins.
+        if getattr(user, "is_platform_admin", False) or getattr(
+            user, "is_provider_org", False
+        ):
             return True
         user_org = getattr(user, "organization_id", None)
         return user_org is not None and str(user_org) == str(organization_id)

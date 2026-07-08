@@ -24,7 +24,7 @@ import base64
 import uuid
 
 import pytest
-from tests.e2e.platform.conftest import wait_for_deploy
+from tests.e2e.platform.conftest import wait_for_deploy, wait_for_install
 
 pytestmark = pytest.mark.e2e
 
@@ -158,11 +158,15 @@ def test_shareable_export_installs_into_fresh_org(e2e_client, platform_admin):
     assert len(zip_bytes) > 0, "export returned empty body"
 
     # --- Install the exported zip into the target org ---
-    inst_r = e2e_client.post(
-        "/api/solutions/install",
-        headers=upload_headers,
-        files={"file": ("solution.zip", zip_bytes, "application/zip")},
-        data={"organization_id": target_org_id},
+    inst_r = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": ("solution.zip", zip_bytes, "application/zip")},
+            data={"organization_id": target_org_id},
+        ),
+        headers,
     )
     assert inst_r.status_code in (200, 201), inst_r.text
     installed_id = inst_r.json()["id"]

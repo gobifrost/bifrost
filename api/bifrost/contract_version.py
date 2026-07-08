@@ -19,7 +19,11 @@ integers agree and fails if a CLI-consumed contract changed without a decision.
 #     callers poll SolutionDeployJobStatus for the deploy summary (2026-06-17)
 # v6: Solution deploy uploads a workspace zip as multipart/form-data instead of
 #     the legacy JSON bundle request body (2026-06-21)
-CONTRACT_VERSION: int = 6
+# v7: Solution install (zip + from-repo) is async: POST /install and
+#     /install/from-repo return 202 + deploy_job_id (was 200/201 + Solution);
+#     callers poll SolutionDeployJobStatus (install_id now nullable) for the
+#     solution_id (2026-07-02)
+CONTRACT_VERSION: int = 7
 
 
 def get_contract_version() -> int:

@@ -141,6 +141,10 @@ class PreviewResult:
     claims: list[dict[str, Any]] = field(default_factory=list)
     config_schemas: list[dict[str, Any]] = field(default_factory=list)
     file_locations: list[str] = field(default_factory=list)
+    # Solution-tier file policies read from .bifrost/file-policies.yaml. Each is a
+    # ManifestFilePolicy-shaped {id, location, path, policies} dict; deploy
+    # re-stamps solution_id and upserts by (solution_id, location, path).
+    file_policies: list[dict[str, Any]] = field(default_factory=list)
     # Connection declarations read from .bifrost/connections.yaml (Task 14b).
     # Each: {integration_name, template, position}. Install pre-creates an empty
     # integration shell and persists a SolutionConnectionSchema row from each.
@@ -194,6 +198,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         _collect_connection_schemas,
         _collect_events,
         _collect_file_locations,
+        _collect_file_policies,
         _collect_forms,
         _collect_tables,
         _collect_workflows,
@@ -232,6 +237,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         claims=_collect_claims(workspace),
         config_schemas=_collect_config_schemas(workspace),
         file_locations=_collect_file_locations(workspace),
+        file_policies=_collect_file_policies(workspace),
         connection_schemas=_collect_connection_schemas(workspace),
         events=_collect_events(workspace),
         readme=_read_readme(workspace),
@@ -366,6 +372,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
         claims=preview.claims,
         config_schemas=preview.config_schemas,
         file_locations=preview.file_locations,
+        file_policies=preview.file_policies,
         connection_schemas=preview.connection_schemas,
         events=preview.events,
         version=preview.version,
@@ -504,6 +511,54 @@ async def install_zip_path(
             replace_data=replace_data,
             reactivate=reactivate,
         )
+
+
+def validate_install_zip(zip_path: Path, *, password: str | None) -> PreviewResult:
+    """Fail-fast, synchronous validation of an install zip BEFORE enqueue.
+
+    Runs the caller-input checks that must return a 4xx on the request itself —
+    NOT as a failed background job. Raises before any job row exists:
+
+    * ``ValueError`` / ``zipfile.BadZipFile`` — the zip is corrupt, zip-slips,
+      or is not a Solution workspace (missing ``bifrost.solution.yaml`` slug/name).
+    * ``BadExportPassword`` — the zip carries a ``.bifrost/secrets.enc`` blob and
+      the password is missing or wrong. We decrypt-check here so a wrong password
+      is a synchronous 422, mirroring the deploy endpoint's synchronous
+      ``preview_zip_path`` guard. The install job decrypts again inside the write
+      lock (idempotent) to apply the content.
+
+    Returns the parsed :class:`PreviewResult` so the endpoint can run further
+    synchronous conflict checks (e.g. the inactive-install 409 prompt needs the
+    slug) without re-extracting the zip.
+
+    The heavier build-time gates (unmet dependencies, content collisions,
+    downgrade, git-connected) intentionally stay in the job — they require the
+    built bundle / lock-held DB state and surface as a failed job, exactly as the
+    deploy job surfaces its equivalents.
+    """
+    with tempfile.TemporaryDirectory(prefix="bifrost-zip-validate-") as tmp:
+        _safe_extract_path(zip_path, tmp)
+        workspace = Path(tmp)
+        preview = _parse_workspace(workspace)
+        if not preview.slug or not preview.name:
+            raise ValueError(
+                "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
+            )
+        secrets_path = workspace / ".bifrost" / "secrets.enc"
+        if secrets_path.exists():
+            if not password:
+                raise BadExportPassword(
+                    "this bundle carries secrets — a password is required"
+                )
+            from cryptography.fernet import InvalidToken
+
+            from src.services.solutions.secrets_blob import decode_secrets_blob
+
+            try:
+                decode_secrets_blob(secrets_path.read_text(), password=password)
+            except InvalidToken as exc:
+                raise BadExportPassword("wrong password for this bundle") from exc
+        return preview
 
 
 async def _install_workspace(

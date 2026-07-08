@@ -4,6 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from bifrost._context import clear_execution_context, set_execution_context
+from bifrost._execution_context import ExecutionContext, Organization
+
 
 @pytest.fixture
 def mock_client():
@@ -82,3 +85,33 @@ async def test_emit_no_scope_resolves_context_scope(mock_client, mock_response_o
         await events.emit("user.invited", {"user_id": "xyz"})
 
     mock_resolve.assert_called_once_with(None)
+
+
+@pytest.mark.asyncio
+async def test_emit_includes_solution_from_execution_context(mock_client, mock_response_ok):
+    mock_client.post.return_value = mock_response_ok
+    solution_id = "22222222-2222-2222-2222-222222222222"
+    org = Organization(id="11111111-1111-1111-1111-111111111111", name="Org")
+    ctx = ExecutionContext(
+        user_id="u",
+        email="u@example.com",
+        name="User",
+        scope=org.id,
+        organization=org,
+        is_platform_admin=True,
+        is_function_key=False,
+        execution_id="exec",
+        solution_id=solution_id,
+    )
+    set_execution_context(ctx)
+    try:
+        with patch("bifrost.events.get_client", return_value=mock_client), \
+             patch("bifrost.events.raise_for_status_with_detail"), \
+             patch("bifrost.events.resolve_scope", return_value=org.id):
+            from bifrost.events import events
+            await events.emit("acme.deal_won", {})
+    finally:
+        clear_execution_context()
+
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["json"]["solution"] == solution_id

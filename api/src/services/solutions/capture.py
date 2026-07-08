@@ -359,6 +359,7 @@ class SolutionCaptureService:
         config_schemas = await self._config_entries(solution.id)
         connection_schemas = await self._connection_entries(solution.id)
         file_locations = await self._file_location_entries(solution.id)
+        file_policies = await self._file_policy_entries(solution.id)
         events = await self._event_entries(solution.id)
         python_files = await self._python_files(
             workflows, include_imports=include_imports
@@ -384,6 +385,7 @@ class SolutionCaptureService:
             config_schemas=config_schemas,
             connection_schemas=connection_schemas,
             file_locations=file_locations,
+            file_policies=file_policies,
             events=events,
             readme=solution.readme,
             version=solution.version,
@@ -879,6 +881,32 @@ class SolutionCaptureService:
             )
         ).scalars().all()
         return list(rows)
+
+    async def _file_policy_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
+        """Portable file-policy entries for this install's solution-tier rows.
+
+        Serialized via the canonical ``ManifestFilePolicy.from_row(...).view(
+        INSTALL)`` (same codec git-sync uses), which drops the environment
+        specific fields (``organization_id``, ``solution_id``) so only the
+        portable ``{id, location, path, policies}`` content travels. The seeded
+        root ``admin_bypass`` (``path=""``) is included too — a customized root
+        policy is deploy-owned content, and the deploy upsert treats ``path=""``
+        as an upsert target (never a double-insert on top of the seed).
+        """
+        from bifrost.manifest import ManifestFilePolicy
+        from bifrost.manifest_codec import Destination
+        from src.models.orm.file_metadata import FilePolicy
+
+        rows = (
+            await self.db.execute(
+                select(FilePolicy)
+                .where(FilePolicy.solution_id == solution_id)
+                .order_by(FilePolicy.location, FilePolicy.path)
+            )
+        ).scalars().all()
+        return [
+            ManifestFilePolicy.from_row(fp).view(Destination.INSTALL) for fp in rows
+        ]
 
     async def _python_files(
         self, workflows: list[dict[str, Any]], *, include_imports: bool = False

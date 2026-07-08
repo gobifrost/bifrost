@@ -11,6 +11,8 @@ setup_complete = all required configs set AND all declared integrations exist.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,7 @@ from src.models.orm.integrations import Integration
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solutions import Solution
+from src.models.orm.workflows import Workflow
 
 
 async def compute_setup_status(db: AsyncSession, solution: Solution) -> SolutionSetupStatus:
@@ -95,8 +98,59 @@ async def compute_setup_status(db: AsyncSession, solution: Solution) -> Solution
                 )
             )
 
+    # Endpoint workflows are externally callable when endpoint_enabled=True. If
+    # they are not public, the existing auth model requires an active per-workflow
+    # API key. There is intentionally no separate manifest auth declaration.
+    endpoint_workflows = (
+        await db.execute(
+            select(Workflow)
+            .where(Workflow.solution_id == solution.id)
+            .where(Workflow.is_active == True)  # noqa: E712
+            .where(Workflow.endpoint_enabled == True)  # noqa: E712
+            .where(Workflow.public_endpoint.is_not(True))
+            .order_by(Workflow.name)
+        )
+    ).scalars().all()
+    now = datetime.now(timezone.utc)
+    for wf in endpoint_workflows:
+        key_active = (
+            bool(wf.api_key_hash)
+            and bool(wf.api_key_enabled)
+            and (wf.api_key_expires_at is None or wf.api_key_expires_at > now)
+        )
+        items.append(
+            SolutionSetupItem(
+                key=str(wf.id),
+                type="workflow_endpoint_key",
+                required=True,
+                is_set=key_active,
+                description="Generate an API key before external callers can use this endpoint.",
+                kind="workflow_endpoint_key",
+                workflow_id=str(wf.id),
+                workflow_name=wf.display_name or wf.name,
+                allowed_methods=wf.allowed_methods or ["POST"],
+            )
+        )
+
     complete = (
         all(i.is_set for i in items if i.kind == "config" and i.required)
         and all(i.is_set for i in items if i.kind == "connection")
+        and all(i.is_set for i in items if i.kind == "workflow_endpoint_key")
     )
     return SolutionSetupStatus(setup_complete=complete, items=items)
+
+
+async def recompute_and_persist_setup_complete(
+    db: AsyncSession, solution: Solution
+) -> SolutionSetupStatus:
+    """Recompute setup status and mirror it onto the Solution row.
+
+    Setup values such as config secrets and workflow endpoint keys are
+    instance-owned runtime state. Whenever a setup mutation knows the owning
+    install, it should call this so list/detail surfaces do not keep showing the
+    stale install-time setup flag.
+    """
+    status = await compute_setup_status(db, solution)
+    solution.setup_complete = status.setup_complete
+    await db.flush()
+    return status
