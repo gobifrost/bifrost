@@ -21,6 +21,8 @@ from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models import Workflow
 from src.models import WorkflowKeyCreateRequest, WorkflowKeyResponse
+from src.models.orm.solutions import Solution
+from src.services.solutions.setup_status import recompute_and_persist_setup_complete
 from src.services.workflow_keys import generate_workflow_key
 
 logger = logging.getLogger(__name__)
@@ -169,6 +171,10 @@ async def create_key(
     workflow.api_key_expires_at = expires_at
 
     await db.flush()
+    if workflow.solution_id is not None:
+        solution = await db.get(Solution, workflow.solution_id)
+        if solution is not None:
+            await recompute_and_persist_setup_complete(db, solution)
     await db.refresh(workflow)
 
     logger.info(f"Created API key for workflow '{workflow.name}' (ID: {workflow.id}) by {user.email}")
@@ -228,6 +234,10 @@ async def revoke_key(
     workflow.api_key_enabled = False
 
     await db.flush()
+    if workflow.solution_id is not None:
+        solution = await db.get(Solution, workflow.solution_id)
+        if solution is not None:
+            await recompute_and_persist_setup_complete(db, solution)
     logger.info(f"Revoked API key for workflow '{log_safe(workflow.name)}' (ID: {log_safe(workflow_id)}) by {user.email}")
 
 

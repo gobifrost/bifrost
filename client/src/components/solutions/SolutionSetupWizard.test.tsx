@@ -29,6 +29,21 @@ const oauthConnection: SolutionSetupItem = {
 	connected: false,
 };
 
+const endpointKey: SolutionSetupItem = {
+	key: "22222222-2222-2222-2222-222222222222",
+	type: "workflow_endpoint_key",
+	required: true,
+	is_set: false,
+	kind: "workflow_endpoint_key",
+	description: null,
+	default: null,
+	has_oauth: false,
+	connected: false,
+	workflow_id: "22222222-2222-2222-2222-222222222222",
+	workflow_name: "Ticket Webhook",
+	allowed_methods: ["POST"],
+};
+
 describe("SolutionSetupWizard", () => {
 	it("warns about OAuth on a connection but does not gate completion on it", async () => {
 		render(
@@ -102,5 +117,31 @@ describe("SolutionSetupWizard", () => {
 		);
 		await userEvent.click(screen.getByRole("button", { name: /finish|done/i }));
 		expect(onFinish).toHaveBeenCalled();
+	});
+
+	it("includes workflow endpoint keys as their own setup step", async () => {
+		const onGenerateWorkflowKey = vi.fn().mockResolvedValue(undefined);
+		render(
+			<SolutionSetupWizard
+				items={[configItem, endpointKey]}
+				setupComplete={false}
+				onSetConfig={vi.fn()}
+				onGenerateWorkflowKey={onGenerateWorkflowKey}
+			/>,
+		);
+
+		expect(screen.getByText("API_URL")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /next/i }));
+
+		expect(
+			screen.getByRole("heading", { name: "Endpoint keys" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Ticket Webhook")).toBeInTheDocument();
+		await userEvent.click(
+			screen.getByRole("button", { name: /generate endpoint key/i }),
+		);
+		expect(onGenerateWorkflowKey).toHaveBeenCalledWith(
+			"22222222-2222-2222-2222-222222222222",
+		);
 	});
 });

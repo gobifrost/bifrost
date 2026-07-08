@@ -7,9 +7,10 @@ MCP tools, CLI mutation commands — must refuse to change it (success-criteria
 loading the target row, before applying any change.
 
 The instance still owns the few things that cannot be portable — OAuth token
-mappings and secret config *values* (criterion 7). Those live on their own
-records (OAuthToken / Config), not on the managed entity, so they simply never
-call this guard; the guard is about the portable entity itself.
+mappings, secret config *values*, and workflow endpoint API keys (criterion 7).
+OAuth/config values live on their own records, so they never call this guard.
+Workflow keys predate Solutions and are columns on Workflow; the backstop allows
+only those runtime key columns to change on a managed Workflow.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.inspection import inspect as sa_inspect
 
 SOLUTION_MANAGED_MESSAGE = (
     "Solution-managed entities can only be managed by deployment methods."
@@ -62,11 +64,37 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     "SolutionExportJob",
 }
 
+_WORKFLOW_RUNTIME_KEY_FIELDS = {
+    "api_key_hash",
+    "api_key_description",
+    "api_key_enabled",
+    "api_key_created_by",
+    "api_key_created_at",
+    "api_key_last_used_at",
+    "api_key_expires_at",
+}
+
 
 def _instance_is_managed(obj: Any) -> bool:
     if obj.__class__.__name__ in _OPERATIONAL_SOLUTION_ROW_NAMES:
         return False
     return getattr(obj, "solution_id", None) is not None
+
+
+def _changed_column_fields(obj: Any) -> set[str]:
+    state = sa_inspect(obj)
+    changed: set[str] = set()
+    for attr in state.mapper.column_attrs:
+        if state.attrs[attr.key].history.has_changes():
+            changed.add(attr.key)
+    return changed
+
+
+def _managed_dirty_change_is_allowed(obj: Any) -> bool:
+    if obj.__class__.__name__ != "Workflow":
+        return False
+    changed = _changed_column_fields(obj)
+    return bool(changed) and changed <= _WORKFLOW_RUNTIME_KEY_FIELDS
 
 
 def install_solution_write_guard() -> None:
@@ -86,7 +114,11 @@ def install_solution_write_guard() -> None:
     @event.listens_for(_SyncSession, "before_flush")
     def _before_flush(session, _flush_context, _instances):  # noqa: ANN001
         for obj in list(session.dirty):
-            if session.is_modified(obj, include_collections=False) and _instance_is_managed(obj):
+            if (
+                session.is_modified(obj, include_collections=False)
+                and _instance_is_managed(obj)
+                and not _managed_dirty_change_is_allowed(obj)
+            ):
                 raise SolutionManagedWriteError(SOLUTION_MANAGED_MESSAGE)
         for obj in list(session.deleted):
             if _instance_is_managed(obj):

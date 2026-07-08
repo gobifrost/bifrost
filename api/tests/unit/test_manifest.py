@@ -109,6 +109,7 @@ workflows:
     assert "type" not in wf  # default is "workflow"
     assert "access_level" not in wf  # default is "role_based"
     assert "endpoint_enabled" not in wf  # default is False
+    assert "allowed_methods" not in wf  # default is ["POST"]
     assert "timeout_seconds" not in wf  # default is 1800
     assert "roles" not in wf  # default is []
     assert "tags" not in wf  # default is []

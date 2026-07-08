@@ -25,6 +25,19 @@ const optionalSet: SolutionSetupItem = {
 	connected: false,
 };
 
+const endpointKeyItem: SolutionSetupItem = {
+	key: "11111111-1111-1111-1111-111111111111",
+	type: "workflow_endpoint_key",
+	required: true,
+	is_set: false,
+	kind: "workflow_endpoint_key",
+	has_oauth: false,
+	connected: false,
+	workflow_id: "11111111-1111-1111-1111-111111111111",
+	workflow_name: "Inbound Sync",
+	allowed_methods: ["GET", "POST"],
+};
+
 describe("SolutionSetupChecklist", () => {
 	it("lists required-unset configs and shows a Set control", () => {
 		render(
@@ -100,5 +113,26 @@ describe("SolutionSetupChecklist", () => {
 			/>,
 		);
 		expect(screen.getByPlaceholderText(/us-east-1/)).toBeInTheDocument();
+	});
+
+	it("renders workflow endpoint key requirements and calls generate", async () => {
+		const onGenerateWorkflowKey = vi.fn().mockResolvedValue(undefined);
+		render(
+			<SolutionSetupChecklist
+				items={[endpointKeyItem]}
+				setupComplete={false}
+				onSet={() => {}}
+				onGenerateWorkflowKey={onGenerateWorkflowKey}
+			/>,
+		);
+
+		expect(screen.getByText("Inbound Sync")).toBeInTheDocument();
+		expect(screen.getByText(/GET, POST endpoint callers/)).toBeInTheDocument();
+		await userEvent.click(
+			screen.getByRole("button", { name: /generate endpoint key/i }),
+		);
+		expect(onGenerateWorkflowKey).toHaveBeenCalledWith(
+			"11111111-1111-1111-1111-111111111111",
+		);
 	});
 });

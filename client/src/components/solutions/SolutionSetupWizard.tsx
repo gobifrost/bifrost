@@ -22,6 +22,7 @@ import {
 	ConfigItem,
 	ConnectionItem,
 	defaultIntegrationHref,
+	WorkflowEndpointKeyItem,
 } from "./SolutionSetupChecklist";
 
 export interface SolutionSetupWizardProps {
@@ -29,6 +30,7 @@ export interface SolutionSetupWizardProps {
 	setupComplete: boolean;
 	/** Called when the user submits a value for a config key. */
 	onSetConfig: (key: string, value: string) => void | Promise<void>;
+	onGenerateWorkflowKey?: (workflowId: string) => void | Promise<void>;
 	/** Supplies the href for a connection's "Set up integration" link. */
 	integrationHref?: (name: string) => string;
 	/** Invoked when the user clicks Finish/Done on the last step. */
@@ -36,7 +38,7 @@ export interface SolutionSetupWizardProps {
 }
 
 interface WizardStep {
-	id: "config" | "connection";
+	id: "config" | "connection" | "workflow_endpoint_key";
 	title: string;
 	items: SolutionSetupItem[];
 }
@@ -45,11 +47,13 @@ export function SolutionSetupWizard({
 	items,
 	setupComplete,
 	onSetConfig,
+	onGenerateWorkflowKey,
 	integrationHref = defaultIntegrationHref,
 	onFinish,
 }: SolutionSetupWizardProps) {
 	const configItems = items.filter((i) => i.kind === "config");
 	const connectionItems = items.filter((i) => i.kind === "connection");
+	const workflowEndpointKeyItems = items.filter((i) => i.kind === "workflow_endpoint_key");
 
 	// Only include a step if it has items — a solution with no connections is a
 	// single-step (config) wizard, and vice-versa.
@@ -62,6 +66,13 @@ export function SolutionSetupWizard({
 			id: "connection",
 			title: "Connections",
 			items: connectionItems,
+		});
+	}
+	if (workflowEndpointKeyItems.length > 0) {
+		steps.push({
+			id: "workflow_endpoint_key",
+			title: "Endpoint keys",
+			items: workflowEndpointKeyItems,
 		});
 	}
 
@@ -132,21 +143,29 @@ export function SolutionSetupWizard({
 
 			{/* Step body */}
 			<div className="space-y-3">
-				{current.id === "config"
-					? current.items.map((item) => (
-							<ConfigItem
-								key={item.key}
-								item={item}
-								onSet={onSetConfig}
-							/>
-						))
-					: current.items.map((item) => (
-							<ConnectionItem
-								key={item.key}
-								item={item}
-								integrationHref={integrationHref}
-							/>
-						))}
+					{current.id === "config"
+						? current.items.map((item) => (
+								<ConfigItem
+									key={item.key}
+									item={item}
+									onSet={onSetConfig}
+								/>
+							))
+						: current.id === "connection"
+							? current.items.map((item) => (
+								<ConnectionItem
+									key={item.key}
+									item={item}
+									integrationHref={integrationHref}
+								/>
+							))
+							: current.items.map((item) => (
+								<WorkflowEndpointKeyItem
+									key={item.key}
+									item={item}
+									onGenerateWorkflowKey={onGenerateWorkflowKey}
+								/>
+							))}
 			</div>
 
 			{/* Navigation */}
@@ -160,7 +179,9 @@ export function SolutionSetupWizard({
 				</Button>
 				{isLast ? (
 					// Finish is never gated by the OAuth warn-only nudge.
-					<Button onClick={() => onFinish?.()}>Finish</Button>
+					<Button onClick={() => onFinish?.()}>
+						{setupComplete ? "Done" : "Finish"}
+					</Button>
 				) : (
 					<Button onClick={() => setStepIndex((i) => i + 1)}>Next</Button>
 				)}
