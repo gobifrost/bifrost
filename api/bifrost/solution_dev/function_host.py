@@ -8,13 +8,10 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
-import logging
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
-
-logger = logging.getLogger("bifrost.solution_dev")
 
 # Folders that never hold solution source — skip for speed and to avoid
 # importing build output / deps. (Discovery is intentionally layout-agnostic:
@@ -23,12 +20,21 @@ logger = logging.getLogger("bifrost.solution_dev")
 _SKIP_DIRS = {"node_modules", "dist", ".venv", "venv", "__pycache__", ".git", ".bifrost"}
 
 
-def discover_functions(workspace: Path) -> dict[str, Callable[..., Any]]:
+def discover_functions(
+    workspace: Path,
+) -> tuple[dict[str, Callable[..., Any]], dict[str, str]]:
     """Map ``path::function_name`` → callable for every decorated function.
 
-    ``path`` is workspace-relative with POSIX separators (the same form app code
-    passes to ``useWorkflow``). The workspace root is placed on ``sys.path`` so a
-    function's ``from modules.x import y`` resolves against the solution root.
+    Also returns a map of workspace-relative paths that FAILED to import →
+    one-line error. A broken file must be a loud local error at resolution
+    time, not a silent drop that lets the ref fall through to the platform
+    (which would run the stale deployed copy — the exact confusion a local
+    debug loop exists to prevent).
+
+    ``path`` is workspace-relative with POSIX separators (the same form app
+    code passes to ``useWorkflow``). The workspace root is placed on
+    ``sys.path`` so a function's ``from modules.x import y`` resolves against
+    the solution root.
     """
     workspace = workspace.resolve()
     root_str = str(workspace)
@@ -36,37 +42,38 @@ def discover_functions(workspace: Path) -> dict[str, Callable[..., Any]]:
         sys.path.insert(0, root_str)
 
     out: dict[str, Callable[..., Any]] = {}
+    failures: dict[str, str] = {}
     for py in sorted(workspace.rglob("*.py")):
         rel_parts = py.relative_to(workspace).parts
         if any(part in _SKIP_DIRS for part in rel_parts):
             continue
         rel = py.relative_to(workspace).as_posix()
-        module = _load_module(py, rel)
+        module, err = _load_module(py, rel)
+        if err is not None:
+            failures[rel] = err
+            continue
         if module is None:
             continue
         for name in dir(module):
             obj = getattr(module, name)
             if callable(obj) and hasattr(obj, "_executable_metadata"):
                 out[f"{rel}::{name}"] = obj
-    return out
+    return out, failures
 
 
-def _load_module(py: Path, rel: str) -> ModuleType | None:
+def _load_module(py: Path, rel: str) -> tuple[ModuleType | None, str | None]:
     # A stable, unique module name per file so re-import on reload replaces it.
     mod_name = "bifrost_devhost_" + rel.replace("/", "_").removesuffix(".py")
     try:
         spec = importlib.util.spec_from_file_location(mod_name, py)
         if spec is None or spec.loader is None:
-            return None
+            return None, "could not build an import spec for this file"
         module = importlib.util.module_from_spec(spec)
         sys.modules[mod_name] = module
         spec.loader.exec_module(module)
-        return module
-    except Exception as exc:  # a broken file shouldn't kill discovery
-        # Logged, not raised: one un-importable file must not blank the whole map
-        # (the dev server stays useful; the user sees the error on first call).
-        logger.warning("solution start: could not import %s: %s", rel, exc)
-        return None
+        return module, None
+    except Exception as exc:  # one broken file must not blank the whole map
+        return None, f"{type(exc).__name__}: {exc}"
 
 
 def set_dev_execution_context(
@@ -126,12 +133,16 @@ class FunctionHost:
     def __init__(self, workspace: Path) -> None:
         self._workspace = workspace
         self._fns: dict[str, Callable[..., Any]] = {}
+        self._failures: dict[str, str] = {}
 
     def reload(self) -> None:
-        self._fns = discover_functions(self._workspace)
+        self._fns, self._failures = discover_functions(self._workspace)
 
     def refs(self) -> list[str]:
         return sorted(self._fns)
+
+    def failures(self) -> dict[str, str]:
+        return dict(self._failures)
 
     def has(self, ref: str) -> bool:
         return ref in self._fns
