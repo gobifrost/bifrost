@@ -2146,7 +2146,12 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
 
     host = FunctionHost(workspace)
     host.reload()
-    click.echo(f"Discovered {len(host.refs())} local function(s).")
+    refs = host.refs()
+    click.echo(f"Discovered {len(refs)} local function(s):")
+    for ref in refs:
+        click.echo(f"  {ref}")
+    for rel, err in sorted(host.failures().items()):
+        click.echo(f"  ⚠ import error in {rel}: {err}", err=True)
 
     # Spawn npm via the RESOLVED path: shutil.which honors PATHEXT (finds
     # `npm.cmd` on Windows) but CreateProcess with a literal "npm" argv[0] does
@@ -2189,6 +2194,7 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
                 vite_port,
                 workspace,
                 binding.solution_id,
+                descriptor.global_repo_access,
             )
         )
     finally:
@@ -2639,19 +2645,26 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
         _signal_group(signal.SIGKILL)
 
 
-async def _serve(client, chosen, org_info, host, port, vite_port, workspace, solution_id):
-    from aiohttp import web
+def _dev_proxy_config(client, chosen, org_info, solution_id, global_repo_access):
+    from bifrost.solution_dev.proxy import DevProxyConfig
 
-    from bifrost.solution_dev.proxy import DevProxyConfig, build_dev_app
-    from bifrost.solution_dev.reload import start_function_watch
-
-    cfg = DevProxyConfig(
+    return DevProxyConfig(
         upstream_url=client.api_url.rstrip("/"),
         token=client._access_token,
         app_id=chosen.app_id,
         org_id=(org_info or {}).get("id"),
         solution_id=solution_id,
+        global_repo_access=global_repo_access,
     )
+
+
+async def _serve(client, chosen, org_info, host, port, vite_port, workspace, solution_id, global_repo_access):
+    from aiohttp import web
+
+    from bifrost.solution_dev.proxy import build_dev_app
+    from bifrost.solution_dev.reload import start_function_watch
+
+    cfg = _dev_proxy_config(client, chosen, org_info, solution_id, global_repo_access)
     app = build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}")
     runner = web.AppRunner(app)
     await runner.setup()

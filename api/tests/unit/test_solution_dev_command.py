@@ -507,6 +507,9 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
         def refs(self):
             return []
 
+        def failures(self):
+            return {}
+
     monkeypatch.setattr(function_host, "FunctionHost", _FakeHost)
 
     npm_path = r"C:\nodejs\npm.cmd"
@@ -580,3 +583,26 @@ def test_handle_solution_renders_clickexception_not_traceback(tmp_path, monkeypa
     # Rendered as a one-line error, not a Python traceback.
     assert "Traceback" not in out.err and "Traceback" not in out.out
     assert "Multiple apps" in out.err or "Multiple apps" in out.out
+
+
+def test_dev_proxy_config_threads_descriptor_global_repo_access():
+    from bifrost.commands.solution import _dev_proxy_config
+
+    class _Client:
+        api_url = "http://127.0.0.1:8000/"
+        _access_token = "tok"
+
+    class _Chosen:
+        app_id = "app-uuid"
+
+    cfg = _dev_proxy_config(
+        _Client(), _Chosen(), {"id": "org-1"}, "install-1", True
+    )
+    assert cfg.global_repo_access is True
+    assert cfg.upstream_url == "http://127.0.0.1:8000"
+    assert cfg.solution_id == "install-1"
+    assert cfg.org_id == "org-1"
+
+    cfg = _dev_proxy_config(_Client(), _Chosen(), None, "install-1", False)
+    assert cfg.global_repo_access is False
+    assert cfg.org_id is None
