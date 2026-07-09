@@ -493,7 +493,7 @@ export default defineConfig(({ command }) => {
           "import.meta.env.VITE_BIFROST_API_URL": JSON.stringify(env.url),
           "import.meta.env.VITE_BIFROST_TOKEN": JSON.stringify(env.token),
           "import.meta.env.VITE_BIFROST_APP_ID": JSON.stringify(process.env.VITE_BIFROST_APP_ID || ""),
-          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || ""),
+          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || null),
         }
       : {};
   return {
@@ -2114,7 +2114,7 @@ def _vite_child_env(
     base_env: dict[str, str],
     *,
     app_id: str,
-    org_id: str,
+    org_id: str | None,
     proxy_origin: str,
     access_token: str,
 ) -> dict[str, str]:
@@ -2129,7 +2129,13 @@ def _vite_child_env(
     """
     env = dict(base_env)
     env["VITE_BIFROST_APP_ID"] = app_id
-    env["VITE_BIFROST_ORG_ID"] = org_id
+    # Omit the org var entirely for a global install: "" is not null once it
+    # reaches the app (`?? null` doesn't catch it), and the proxy config uses
+    # None for the same install — the two must agree (issue #463).
+    if org_id:
+        env["VITE_BIFROST_ORG_ID"] = org_id
+    else:
+        env.pop("VITE_BIFROST_ORG_ID", None)
     env["BIFROST_API_URL"] = proxy_origin
     env["BIFROST_ACCESS_TOKEN"] = access_token
     return env
@@ -2225,7 +2231,7 @@ def start_cmd(
     vite_env = _vite_child_env(
         dict(os.environ),
         app_id=chosen.app_id,
-        org_id=(org_info or {}).get("id", ""),
+        org_id=(org_info or {}).get("id"),
         proxy_origin=proxy_origin,
         access_token=client._access_token,
     )
