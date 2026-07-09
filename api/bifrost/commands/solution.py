@@ -1734,6 +1734,26 @@ def _build_deploy_zip(
     return buf.getvalue()
 
 
+def _vendor_repo_reader(client, failures: dict[str, str]):
+    """Reader for ``vendor_shared_deps``: 404 is a legitimate miss (a stdlib/
+    third-party import probe), but any OTHER failure must be recorded — treating
+    it as absence silently drops a shared module from the bundle and the deploy
+    "succeeds" broken (issue #465).
+    """
+
+    async def _read(path: str) -> str | None:
+        resp = await client.post("/api/files/read", json={
+            "path": path, "location": "workspace", "mode": "cloud",
+        })
+        if resp.status_code == 200:
+            return resp.json().get("content")
+        if resp.status_code != 404:
+            failures[path] = f"HTTP {resp.status_code}"
+        return None
+
+    return _read
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
@@ -1791,15 +1811,20 @@ def deploy_cmd(
             # the wait isn't a silent gap before the bundle summary.
             click.echo("Vendoring shared dependencies...")
 
-            async def _repo_read(path: str) -> str | None:
-                resp = await client.post("/api/files/read", json={
-                    "path": path, "location": "workspace", "mode": "cloud",
-                })
-                if resp.status_code != 200:
-                    return None
-                return resp.json().get("content")
-
-            vendored = await vendor_shared_deps(python_files, _repo_read)
+            read_failures: dict[str, str] = {}
+            vendored = await vendor_shared_deps(
+                python_files, _vendor_repo_reader(client, read_failures)
+            )
+            if read_failures:
+                detail = ", ".join(
+                    f"{p} ({err})" for p, err in sorted(read_failures.items())
+                )
+                raise click.ClickException(
+                    f"Could not read {len(read_failures)} shared module(s) from "
+                    f"_repo/: {detail}. Deploying would silently omit them and the "
+                    "Solution would break at runtime — retry; if it persists, check "
+                    "API connectivity and permissions."
+                )
             if vendored:
                 click.echo(f"  vendored {len(vendored)} shared dependency file(s).")
                 bundle_python = {**python_files, **vendored}
