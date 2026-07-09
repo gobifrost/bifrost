@@ -2296,24 +2296,46 @@ def start_cmd(
     npm = shutil.which("npm")
     if npm is None:
         raise click.ClickException("npm not found on PATH — install Node.js to run the dev server.")
-    healed = _heal_sdk_dep(chosen.app_dir, client.api_url)
-    if healed:
+    # Cheap, deterministic refusals come BEFORE a possibly-minutes install:
+    # aborting on a busy port after the user sat through npm is hostile.
+    vite_port = port + 1
+    _ensure_port_free(vite_port)
+
+    original_sdk_spec = _heal_sdk_dep(chosen.app_dir, client.api_url)
+    if original_sdk_spec is not None:
         click.echo(
             "Repointed the app's `bifrost` SDK dependency at this instance "
             "(package.json froze the scaffold-time URL) — reinstalling."
         )
-    if healed or not (chosen.app_dir / "node_modules").is_dir():
+    have_node_modules = (chosen.app_dir / "node_modules").is_dir()
+    if original_sdk_spec is not None or not have_node_modules:
         click.echo("Installing app dependencies (npm install)…")
         try:
             subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
         except subprocess.CalledProcessError as exc:
-            # First run on a fresh machine is when this most likely fails
-            # (registry hiccup, unreachable SDK download) — a one-line error,
-            # never a raw traceback (issue #459).
-            raise click.ClickException(
-                f"npm install failed in {chosen.app_dir} (exit {exc.returncode}) "
-                "— see the npm output above."
-            )
+            if original_sdk_spec is not None:
+                # Keep the retry signal alive: a healed manifest with a failed
+                # install would otherwise read as "already correct" next run
+                # and the stale SDK would never be replaced.
+                _restore_sdk_dep(chosen.app_dir, client.api_url, original_sdk_spec)
+            if original_sdk_spec is not None and have_node_modules:
+                # The pre-heal state was a WORKING install (possibly offline):
+                # keep the dev server usable rather than hard-failing; the next
+                # start retries the heal + reinstall.
+                click.echo(
+                    "  warning: reinstall after repointing the SDK failed — "
+                    "continuing with the previously installed dependencies "
+                    "(the SDK may be stale until npm install succeeds).",
+                    err=True,
+                )
+            else:
+                # First run on a fresh machine is when this most likely fails
+                # (registry hiccup, unreachable SDK download) — a one-line
+                # error, never a raw traceback (issue #459).
+                raise click.ClickException(
+                    f"npm install failed in {chosen.app_dir} (exit {exc.returncode}) "
+                    "— see the npm output above."
+                )
 
     proxy_origin = (public_url or f"http://127.0.0.1:{port}").rstrip("/")
     vite_env = _vite_child_env(
@@ -2324,13 +2346,11 @@ def start_cmd(
         access_token=client._access_token,
     )
 
-    vite_port = port + 1
     # Run `npm run dev` in its OWN process group (start_new_session) so teardown
     # can signal the WHOLE group: `npm` spawns the real `vite` node process as a
     # child, and a plain terminate() of `npm` orphans `vite` (it keeps the port
     # bound). Killing the group reaps both. (POSIX; Windows falls back to a plain
     # terminate of the npm process.)
-    _ensure_port_free(vite_port)
     vite_proc = subprocess.Popen(
         [npm, "run", "dev", "--", "--port", str(vite_port), "--strictPort"],
         cwd=chosen.app_dir, env=vite_env,
@@ -2810,7 +2830,10 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
         raise SystemExit(rc)
 
 
-def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> bool:
+_SDK_DOWNLOAD_SUFFIX = "/api/sdk/download"
+
+
+def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> str | None:
     """Repoint the scaffolded ``bifrost`` SDK dependency at the CURRENT instance.
 
     scaffold freezes ``<api_url>/api/sdk/download`` into package.json at
@@ -2819,29 +2842,58 @@ def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> bool:
     connecting the error back to the frozen URL (issue #464). ``start`` knows
     the bound instance's URL — heal before installing. Only the
     scaffold-written download-URL shape is touched: a user-pinned ``file:``
-    path or registry range is their choice. Returns True when the file changed.
+    path or registry range is their choice.
+
+    The rewrite is a single-occurrence text replacement, not a JSON re-dump —
+    the file is the USER'S manifest and a one-dep heal must not reformat it or
+    escape their non-ASCII content. Heal is best-effort: unreadable, malformed,
+    or ambiguous manifests are left alone (npm's own error is the message).
+
+    Returns the ORIGINAL dependency spec when the file was changed (the caller
+    reverts it if the reinstall fails, keeping the retry signal alive), else
+    None.
     """
     pkg_file = app_dir / "package.json"
-    if not pkg_file.is_file():
-        return False
     try:
-        pkg = json.loads(pkg_file.read_text(encoding="utf-8"))
-    except ValueError:
-        return False  # malformed → npm's own parse error is the right message
+        # utf-8-sig: Windows editors BOM-prefix manifests npm happily accepts.
+        text = pkg_file.read_text(encoding="utf-8-sig")
+        pkg = json.loads(text)
+    except (OSError, ValueError):
+        return None
     deps = pkg.get("dependencies")
     if not isinstance(deps, dict):
-        return False
+        return None
     current = deps.get("bifrost")
-    expected = f"{api_url.rstrip('/')}/api/sdk/download"
+    expected = f"{api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
     if (
         not isinstance(current, str)
-        or not current.endswith("/api/sdk/download")
+        or not current.endswith(_SDK_DOWNLOAD_SUFFIX)
         or current == expected
+        or text.count(current) != 1
     ):
-        return False
-    deps["bifrost"] = expected
-    pkg_file.write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
-    return True
+        return None
+    try:
+        pkg_file.write_text(text.replace(current, expected), encoding="utf-8")
+    except OSError:
+        return None
+    return current
+
+
+def _restore_sdk_dep(app_dir: pathlib.Path, api_url: str, original: str) -> None:
+    """Undo a heal whose reinstall failed, so the NEXT start retries both.
+
+    Leaving the healed URL in place with a failed install permanently consumes
+    the reinstall signal: the next run sees a correct manifest plus an existing
+    node_modules and never replaces the stale SDK tarball.
+    """
+    pkg_file = app_dir / "package.json"
+    expected = f"{api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
+    try:
+        text = pkg_file.read_text(encoding="utf-8-sig")
+        if text.count(expected) == 1:
+            pkg_file.write_text(text.replace(expected, original), encoding="utf-8")
+    except OSError:
+        pass  # best-effort: worst case the user re-heals on a later start
 
 
 def _ensure_port_free(port: int) -> None:

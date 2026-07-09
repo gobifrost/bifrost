@@ -1012,7 +1012,8 @@ def test_heal_sdk_dep_repoints_stale_download_url(tmp_path):
         },
     }, indent=2))
 
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399/") is True
+    original = _heal_sdk_dep(tmp_path, "http://localhost:30399/")
+    assert original == "http://localhost:39999/api/sdk/download"
     data = _json.loads(pkg.read_text())
     assert data["dependencies"]["bifrost"] == "http://localhost:30399/api/sdk/download"
     assert data["dependencies"]["react"] == "^18.2.0"  # untouched
@@ -1030,7 +1031,7 @@ def test_heal_sdk_dep_noop_when_url_already_current(tmp_path):
     }))
     before = pkg.read_text()
 
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None
     assert pkg.read_text() == before  # no rewrite, no reformat
 
 
@@ -1044,16 +1045,16 @@ def test_heal_sdk_dep_leaves_custom_dep_specs_alone(tmp_path):
     for spec in ("file:../sdk/bifrost.tgz", "^2.0.0"):
         pkg = tmp_path / "package.json"
         pkg.write_text(_json.dumps({"dependencies": {"bifrost": spec}}))
-        assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False
+        assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None
         assert _json.loads(pkg.read_text())["dependencies"]["bifrost"] == spec
 
 
 def test_heal_sdk_dep_tolerates_missing_or_malformed_manifest(tmp_path):
     from bifrost.commands.solution import _heal_sdk_dep
 
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False  # absent
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None  # absent
     (tmp_path / "package.json").write_text("{not json")
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False  # malformed
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None  # malformed
 
 
 def test_start_reinstalls_after_healing_even_with_node_modules(tmp_path, monkeypatch):
@@ -1089,3 +1090,115 @@ def test_start_reinstalls_after_healing_even_with_node_modules(tmp_path, monkeyp
     assert any("install" in argv for argv in spawned), spawned
     healed = _json.loads((app_dir / "package.json").read_text())
     assert healed["dependencies"]["bifrost"] == "http://localhost:8000/api/sdk/download"
+
+
+def test_heal_sdk_dep_preserves_user_formatting_and_unicode(tmp_path):
+    """The manifest is the USER'S file: healing one dep must not reformat it
+    or escape their non-ASCII content (review finding on the json re-dump)."""
+    from bifrost.commands.solution import _heal_sdk_dep
+
+    pkg = tmp_path / "package.json"
+    pkg.write_text(
+        '{\n'
+        '    "name": "app",\n'
+        '    "author": "Jos\u00e9 \U0001f389",\n'
+        '    "dependencies": {\n'
+        '        "bifrost": "http://localhost:39999/api/sdk/download"\n'
+        '    }\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is not None
+    text = pkg.read_text(encoding="utf-8")
+    assert '    "name": "app",' in text          # 4-space indent survives
+    assert "Jos\u00e9 \U0001f389" in text            # unicode NOT escaped
+    assert "http://localhost:30399/api/sdk/download" in text
+
+
+def test_heal_sdk_dep_reads_bom_prefixed_manifests(tmp_path):
+    """Windows editors BOM-prefix package.json; npm tolerates it, so must we
+    — silently skipping the heal leaves the exact #464 symptom unfixed."""
+    import json as _json
+
+    from bifrost.commands.solution import _heal_sdk_dep
+
+    pkg = tmp_path / "package.json"
+    body = _json.dumps({"dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"}})
+    pkg.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is not None
+    assert "30399" in pkg.read_text(encoding="utf-8-sig")
+
+
+def test_restore_sdk_dep_reverts_a_heal(tmp_path):
+    import json as _json
+
+    from bifrost.commands.solution import _heal_sdk_dep, _restore_sdk_dep
+
+    pkg = tmp_path / "package.json"
+    pkg.write_text(_json.dumps({"dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"}}))
+    original = _heal_sdk_dep(tmp_path, "http://localhost:30399")
+    assert original is not None
+
+    _restore_sdk_dep(tmp_path, "http://localhost:30399", original)
+    assert _json.loads(pkg.read_text())["dependencies"]["bifrost"] == original
+
+
+def test_start_failed_reinstall_after_heal_reverts_and_continues(tmp_path, monkeypatch):
+    """Install failure after a heal must (a) restore the original spec so the
+    NEXT start retries heal+reinstall, and (b) keep a previously-working
+    node_modules usable (offline starts worked before the heal existed)."""
+    import json as _json
+
+    subprocess = _start_workspace(tmp_path, monkeypatch)
+    app_dir = tmp_path / "apps" / "dash"
+    (app_dir / "node_modules").mkdir(parents=True)
+    (app_dir / "package.json").write_text(_json.dumps({
+        "dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"},
+    }))
+
+    def _failing_run(argv, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=argv)
+
+    monkeypatch.setattr(subprocess, "run", _failing_run)
+
+    class _FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **k: _FakeProc())
+
+    async def _fake_serve(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
+    monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
+    monkeypatch.setattr("bifrost.commands.solution._terminate_process_group", lambda proc: None)
+
+    result = CliRunner().invoke(solution_group, ["start"])
+    assert result.exit_code == 0, result.output  # continues with old modules
+    assert "may be stale" in result.output
+    reverted = _json.loads((app_dir / "package.json").read_text())
+    assert reverted["dependencies"]["bifrost"] == "http://localhost:39999/api/sdk/download"
+
+
+def test_start_port_conflict_is_reported_before_any_npm_work(tmp_path, monkeypatch):
+    """The deterministic port refusal must come before a possibly-minutes
+    npm install — aborting AFTER the install wastes the wait and mutates
+    package.json for a command that never starts."""
+    import click
+
+    subprocess = _start_workspace(tmp_path, monkeypatch)
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **k: spawned.append(list(argv)))
+
+    def _busy(port):
+        raise click.ClickException(f"Port {port} is already in use")
+
+    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", _busy)
+
+    result = CliRunner().invoke(solution_group, ["start"])
+    assert result.exit_code == 1
+    assert "already in use" in result.output
+    assert spawned == []  # no npm install happened
