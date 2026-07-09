@@ -74,10 +74,10 @@ def _make_client(captured: dict) -> mock.AsyncMock:
     return client
 
 
-def _invoke(args: list[str], captured: dict):
+def _invoke(args: list[str], captured: dict, input: str | None = None):
     client = _make_client(captured)
     with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=client):
-        return CliRunner().invoke(solution_group, ["capture", *args])
+        return CliRunner().invoke(solution_group, ["capture", *args], input=input)
 
 
 def test_dry_run_previews_without_applying() -> None:
@@ -98,7 +98,7 @@ def test_dry_run_previews_without_applying() -> None:
 
 def test_apply_captures_and_reports_counts() -> None:
     captured: dict = {}
-    result = _invoke([SOL, "--workflow", WF_ID, "--table", "orders"], captured)
+    result = _invoke([SOL, "--workflow", WF_ID, "--table", "orders", "--yes"], captured)
     assert result.exit_code == 0, result.output
     posted_paths = [p for p, _ in captured["posts"]]
     assert f"/api/solutions/{SOL}/capture" in posted_paths
@@ -110,7 +110,7 @@ def test_apply_captures_and_reports_counts() -> None:
 
 def test_include_imports_flag_forwarded() -> None:
     captured: dict = {}
-    result = _invoke([SOL, "--workflow", WF_ID, "--include-imports"], captured)
+    result = _invoke([SOL, "--workflow", WF_ID, "--include-imports", "--yes"], captured)
     assert result.exit_code == 0, result.output
     body = next(b for p, b in captured["posts"] if p.endswith(f"{SOL}/capture"))
     assert body["include_imports"] is True
@@ -128,3 +128,40 @@ def test_no_selectors_errors() -> None:
     result = _invoke([SOL], captured)
     assert result.exit_code != 0
     assert "no entities" in result.output.lower() or "at least one" in result.output.lower()
+
+
+def test_apply_without_yes_prompts_and_declining_captures_nothing() -> None:
+    """Capture is terminal (a later deploy replaces unpulled captured state),
+    so a bare apply must warn and confirm (issue #466)."""
+    captured: dict = {}
+    result = _invoke([SOL, "--workflow", WF_ID], captured, input="n\n")
+    assert result.exit_code == 0, result.output
+    assert "cannot be undone" in result.output
+    assert "nothing was captured" in result.output.lower()
+    posted_paths = [p for p, _ in captured.get("posts", [])]
+    assert f"/api/solutions/{SOL}/capture" not in posted_paths
+
+
+def test_apply_without_yes_confirming_proceeds() -> None:
+    captured: dict = {}
+    result = _invoke([SOL, "--workflow", WF_ID], captured, input="y\n")
+    assert result.exit_code == 0, result.output
+    posted_paths = [p for p, _ in captured["posts"]]
+    assert f"/api/solutions/{SOL}/capture" in posted_paths
+
+
+def test_apply_without_yes_non_interactive_aborts_cleanly() -> None:
+    # EOF on the prompt (scripted use without --yes) must abort without a
+    # traceback and without capturing.
+    captured: dict = {}
+    result = _invoke([SOL, "--workflow", WF_ID], captured)
+    assert result.exit_code == 0, result.output
+    posted_paths = [p for p, _ in captured.get("posts", [])]
+    assert f"/api/solutions/{SOL}/capture" not in posted_paths
+
+
+def test_dry_run_never_prompts() -> None:
+    captured: dict = {}
+    result = _invoke([SOL, "--workflow", WF_ID, "--dry-run"], captured)
+    assert result.exit_code == 0, result.output
+    assert "cannot be undone" not in result.output

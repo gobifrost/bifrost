@@ -2376,6 +2376,8 @@ def _print_capture_preview(preview: dict) -> None:
 )
 @click.option("--dry-run", is_flag=True, default=False,
               help="Preview the dependency closure + outside references; capture nothing.")
+@click.option("--yes", is_flag=True, default=False,
+              help="Skip the confirmation prompt (capture is terminal).")
 def capture_cmd(
     solution_id: str,
     workflows: tuple[str, ...],
@@ -2387,6 +2389,7 @@ def capture_cmd(
     configs: tuple[str, ...],
     include_imports: bool,
     dry_run: bool,
+    yes: bool,
 ) -> None:
     raw = {
         "workflows": workflows, "tables": tables, "apps": apps, "forms": forms,
@@ -2397,6 +2400,25 @@ def capture_cmd(
             "no entities selected — pass at least one of "
             "--workflow/--table/--app/--form/--agent/--claim/--config."
         )
+
+    if not dry_run and not yes:
+        click.echo(
+            "Capture is terminal: the selected _repo/ entities are adopted into "
+            f"install {solution_id} and stop being loose/global. A later "
+            "`bifrost deploy` of this Solution replaces captured state that was "
+            "never pulled into the workspace. This cannot be undone by "
+            "uninstall. Use --dry-run to preview first.",
+            err=True,
+        )
+        try:
+            proceed = click.confirm("Proceed with capture?")
+        except click.exceptions.Abort:
+            # EOF / Ctrl-C on the prompt (e.g. scripted use without --yes):
+            # decline, don't traceback — handle_solution doesn't catch Abort.
+            proceed = False
+        if not proceed:
+            click.echo("Aborted — nothing was captured. Re-run with --yes to skip the prompt.")
+            return
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
