@@ -254,6 +254,27 @@ async def _execute_handler(request: web.Request) -> web.Response:
     body = await request.json()
     ref = str(body.get("workflow_id", ""))
 
+    if not ref:
+        # Inline `code` execution (no workflow ref) — nothing to resolve
+        # locally, and the install context still applies (module imports).
+        # Forward exactly as the data plane does, scope intact.
+        if cfg.solution_id:
+            body["solution_id"] = cfg.solution_id
+        try:
+            resp = await request.app[_HTTP].post(
+                f"{cfg.upstream_url}/api/workflows/execute",
+                json=body,
+                headers=_auth_headers(cfg, request.headers),
+            )
+        except httpx.HTTPError:
+            return web.json_response(
+                {"detail": f"Dev API unreachable at {cfg.upstream_url}"}, status=502
+            )
+        return web.Response(
+            body=resp.content, status=resp.status_code,
+            headers=_passthrough_headers(resp, "application/json"),
+        )
+
     # Surface resolution problems in the app: useWorkflow reads `body.error`
     # on a 200 (the deployed error contract) and shows it; on a non-200 it
     # only shows `statusText`, hiding the cause. Same contract as run errors.

@@ -971,15 +971,21 @@ _WORKFLOW_DECORATOR_RE = re.compile(r"^\s*@workflow\b", re.MULTILINE)
 def _unregistered_workflow_files(
     python_files: dict[str, str], workflows: list[dict]
 ) -> list[str]:
-    """Bundled .py files that define @workflow functions but have no
-    .bifrost/workflows.yaml entry — they deploy as source with no Workflow row,
-    so their refs 404 on the install while working fine under `solution start`.
+    """Bundled .py files whose @workflow function count exceeds their
+    .bifrost/workflows.yaml entry count — the surplus functions deploy as
+    source with no Workflow row, so their refs 404 on the install while
+    working fine under `solution start`. Count-based (not name-parsed): a
+    decorator hit in source is cheap to detect; extracting decorated function
+    names from source is not worth the false positives for a warning.
     """
-    registered = {str(w.get("path")) for w in workflows}
+    entries_per_path: dict[str, int] = {}
+    for w in workflows:
+        path = str(w.get("path"))
+        entries_per_path[path] = entries_per_path.get(path, 0) + 1
     return sorted(
         rel
         for rel, src in python_files.items()
-        if rel not in registered and _WORKFLOW_DECORATOR_RE.search(src)
+        if len(_WORKFLOW_DECORATOR_RE.findall(src)) > entries_per_path.get(rel, 0)
     )
 
 
@@ -1756,9 +1762,10 @@ def deploy_cmd(
 
     for rel in _unregistered_workflow_files(python_files, workflows):
         click.echo(
-            f"  warning: {rel} defines @workflow function(s) but has no entry in "
-            ".bifrost/workflows.yaml — it deploys as source only and its refs "
-            "will 404 on the install. Add a workflows.yaml entry to register it.",
+            f"  warning: {rel} defines more @workflow function(s) than "
+            ".bifrost/workflows.yaml registers for it — it deploys as source only "
+            "and its refs will 404 on the install. Add a workflows.yaml entry to "
+            "register it.",
             err=True,
         )
 

@@ -483,6 +483,33 @@ async def test_ws_proxy_echoes_subprotocol():
         await up_runner.cleanup()
 
 
+async def test_code_only_request_forwards_upstream_with_scope():
+    # Inline `code` execution has no workflow ref to resolve locally — it must
+    # forward even with global_repo_access off, keeping the install context.
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(set())
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t", app_id="A", org_id="O", solution_id="S",
+        global_repo_access=False,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"code": "print('hi')", "input_data": {}},
+            )
+        assert r.status_code == 200
+        assert r.json()["ran_upstream"] is True
+        assert record["execute_body"]["solution_id"] == "S"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
 async def test_ws_proxy_closes_upstream_when_client_disconnects():
     # Half-close: when the browser side goes away (every page reload), the
     # proxy must tear down the upstream socket instead of leaking the pump,
