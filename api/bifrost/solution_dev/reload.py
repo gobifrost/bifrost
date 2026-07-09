@@ -34,7 +34,11 @@ class _PyChangeHandler(FileSystemEventHandler):
                 return
             if any(part in _SKIP_DIRS for part in parts):
                 return
-        self._host.reload()
+        try:
+            self._host.reload()
+        except Exception as exc:  # noqa: BLE001 — an escaped error kills the watcher thread
+            click.echo(f"  ⚠ reload failed: {type(exc).__name__}: {exc}", err=True)
+            return
         click.echo(f"  reloaded — {len(self._host.refs())} local function(s)")
         for rel, err in sorted(self._host.failures().items()):
             click.echo(f"  ⚠ import error in {rel}: {err}", err=True)

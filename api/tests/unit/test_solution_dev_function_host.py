@@ -207,3 +207,25 @@ def test_host_manifest_entry_without_local_file_is_a_clean_miss(tmp_path: Path):
     host.reload()
 
     assert host.resolve("Ghost") is None
+
+
+def test_host_survives_malformed_workflow_manifest(tmp_path: Path):
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: demo\nname: Demo\n")
+    _write(tmp_path / "functions/hello.py", '''
+        from bifrost import workflow
+
+        @workflow
+        async def main():
+            return {"ok": True}
+    ''')
+    _write(tmp_path / ".bifrost/workflows.yaml", '''
+        workflows:
+          bad: [unclosed
+    ''')
+
+    host = FunctionHost(tmp_path)
+    host.reload()  # must not raise
+
+    assert host.resolve("functions/hello.py::main") == "functions/hello.py::main"
+    assert host.resolve("hello") is None  # aliases unavailable, clean miss
+    assert "invalid YAML" in host.failures()[".bifrost/workflows.yaml"]

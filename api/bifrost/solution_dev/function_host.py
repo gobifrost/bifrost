@@ -61,11 +61,11 @@ def _load_workflow_manifest_entries(workspace: Path) -> list[dict[str, Any]]:
 
 
 def build_local_workflow_index(
-    workspace: Path,
+    entries: list[dict[str, Any]],
     local_refs: set[str],
     failures: dict[str, str],
 ) -> LocalWorkflowIndex:
-    """Index every ref shape onto the discovered local functions.
+    """Index every manifest entry's ref shapes onto the discovered local functions.
 
     Honors the manifest ``path`` key ONLY — the same key deploy's
     ``_collect_workflows`` honors — so ``solution start`` and ``deploy``
@@ -75,7 +75,7 @@ def build_local_workflow_index(
     failed: dict[str, str] = {}
     name_targets: dict[str, set[str]] = {}
 
-    for entry in _load_workflow_manifest_entries(workspace):
+    for entry in entries:
         path = entry.get("path")
         function_name = entry.get("function_name")
         if not path or not function_name:
@@ -223,9 +223,14 @@ class FunctionHost:
 
     def reload(self) -> None:
         self._fns, self._failures = discover_functions(self._workspace)
-        self._index = build_local_workflow_index(
-            self._workspace, set(self._fns), self._failures
-        )
+        try:
+            entries = _load_workflow_manifest_entries(self._workspace)
+        except yaml.YAMLError as exc:
+            # A mid-edit save must degrade to "no aliases + loud failure line",
+            # never an exception — an escaped error kills the watcher thread.
+            self._failures[".bifrost/workflows.yaml"] = f"invalid YAML: {exc}"
+            entries = []
+        self._index = build_local_workflow_index(entries, set(self._fns), self._failures)
 
     def refs(self) -> list[str]:
         return sorted(self._fns)

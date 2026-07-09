@@ -135,3 +135,20 @@ def test_handler_echoes_import_failures(capsys):
     err = capsys.readouterr().err
     assert "functions/broken.py" in err
     assert "boom" in err
+
+
+def test_handler_survives_reload_exception(capsys):
+    class _ExplodingHost(_RecordingHost):
+        def reload(self):
+            raise RuntimeError("boom during reload")
+
+    host = _ExplodingHost()
+    handler = _PyChangeHandler(host)
+
+    class _Evt:
+        is_directory = False
+        src_path = "/ws/functions/hello.py"
+
+    handler.on_modified(_Evt())  # must not raise
+    err = capsys.readouterr().err
+    assert "reload failed" in err and "boom during reload" in err
