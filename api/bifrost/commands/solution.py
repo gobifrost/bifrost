@@ -2167,10 +2167,13 @@ def start_cmd(
     from bifrost.solution_dev.function_host import FunctionHost, set_dev_execution_context
     from bifrost.solution_dev.scaffold_check import PATCH_HINT, main_tsx_needs_dev_fallback
 
-    workspace = pathlib.Path(".").resolve()
-    if not is_solution_workspace(workspace):
+    # Walk up to the solution root like scaffold-app and `bifrost run` do —
+    # requiring cwd == root fails from apps/<slug>/ for no reason (issue #462).
+    workspace = find_solution_root(pathlib.Path.cwd())
+    if workspace is None:
         raise click.ClickException(
-            f"Not a Solution workspace (no {DESCRIPTOR_FILENAME}). Run `bifrost solution init` first."
+            f"Not inside a Solution workspace (no {DESCRIPTOR_FILENAME} here or in any "
+            "parent directory). Run `bifrost solution init` first."
         )
     descriptor = load_descriptor(workspace)
 
