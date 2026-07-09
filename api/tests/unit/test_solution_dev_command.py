@@ -534,6 +534,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
         return None
 
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
     monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
@@ -626,6 +627,7 @@ def test_start_accepts_bind_host_and_public_url(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "Popen", _fake_popen)
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
     monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
@@ -785,6 +787,7 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
     monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
@@ -811,8 +814,8 @@ def test_workspace_from_path_arg_walks_up_only_for_default(tmp_path, monkeypatch
 
 
 def _start_workspace(tmp_path, monkeypatch):
-    """Shared minimal start_cmd fixture: bound workspace + fakes for network,
-    host, and npm spawns. Returns the `spawned` argv list."""
+    """Shared minimal start_cmd fixture: bound workspace + fakes for network
+    and host. Returns the (monkeypatch-ready) `subprocess` module."""
     import shutil
     import subprocess
 
@@ -956,31 +959,37 @@ def test_terminate_windows_tree_taskkills_the_whole_tree(monkeypatch):
     assert calls == [["taskkill", "/T", "/F", "/PID", "4242"]]
 
 
-def test_wait_for_vite_detects_orphan_serving_the_port():
-    """A connect success is only readiness if OUR child is still alive: an
-    orphaned vite from a previous run can hold the port while the new child
-    dies under --strictPort — serving the STALE app (live-drive finding)."""
+def test_ensure_port_free_rejects_an_occupied_port():
+    """An orphaned vite from a previous run holding the port would make the
+    new child die under --strictPort while readiness probes connect to the
+    LEFTOVER — start must refuse BEFORE spawning (live-drive finding; the
+    post-spawn grace re-check was a race against npm's cold start)."""
     import socket
 
     import click
     import pytest as _pytest
 
-    from bifrost.commands.solution import _wait_for_vite
-
-    class _DiesAfterFirstPoll:
-        def __init__(self):
-            self.polls = 0
-
-        def poll(self):
-            self.polls += 1
-            return None if self.polls <= 1 else 7
+    from bifrost.commands.solution import _ensure_port_free
 
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
     server.listen(1)
     port = server.getsockname()[1]
     try:
-        with _pytest.raises(click.ClickException, match="another process"):
-            _wait_for_vite(_DiesAfterFirstPoll(), port=port, timeout=5, grace=0.1)
+        with _pytest.raises(click.ClickException, match="already in use"):
+            _ensure_port_free(port)
     finally:
         server.close()
+
+
+def test_ensure_port_free_passes_a_free_port():
+    import socket
+
+    from bifrost.commands.solution import _ensure_port_free
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    _ensure_port_free(port)  # must not raise

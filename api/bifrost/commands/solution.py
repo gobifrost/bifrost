@@ -2324,6 +2324,7 @@ def start_cmd(
     # child, and a plain terminate() of `npm` orphans `vite` (it keeps the port
     # bound). Killing the group reaps both. (POSIX; Windows falls back to a plain
     # terminate of the npm process.)
+    _ensure_port_free(vite_port)
     vite_proc = subprocess.Popen(
         [npm, "run", "dev", "--", "--port", str(vite_port), "--strictPort"],
         cwd=chosen.app_dir, env=vite_env,
@@ -2331,7 +2332,10 @@ def start_cmd(
     )
     try:
         _wait_for_vite(vite_proc, vite_port)
-    except click.ClickException:
+    except BaseException:
+        # BaseException: a Ctrl-C during the (up to 60s) readiness wait must
+        # tear the detached npm+vite group down too, or it survives orphaned
+        # and holds the port for the next start.
         _terminate_process_group(vite_proc)
         raise
 
@@ -2800,17 +2804,36 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
         raise SystemExit(rc)
 
 
-def _wait_for_vite(
-    proc: "subprocess.Popen", port: int, timeout: float = 60.0, grace: float = 1.5
-) -> None:
-    """Block until OUR Vite child serves the port; fail fast if it dies.
+def _ensure_port_free(port: int) -> None:
+    """Refuse to spawn vite onto a port something already serves.
+
+    An orphaned dev server from a previous run holding the port makes the new
+    child die under ``--strictPort`` while readiness probes happily connect to
+    the LEFTOVER — `start` would silently serve the stale app (live-drive
+    finding). Checking before the spawn is deterministic; probing after it is
+    a race against npm's cold start.
+    """
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            pass
+    except OSError:
+        return
+    raise click.ClickException(
+        f"Port {port} is already in use — an orphaned app dev server from a "
+        "previous run is the usual cause. Kill the process holding it (or "
+        "pass --port to pick a different pair) and re-run."
+    )
+
+
+def _wait_for_vite(proc: "subprocess.Popen", port: int, timeout: float = 60.0) -> None:
+    """Block until the Vite child accepts TCP connections; fail fast if it dies.
 
     ``--strictPort`` makes Vite exit when its port is taken; without this
     check the proxy serves unexplained 502s while the only clue scrolls past
-    in npm output (issue #460). A connect success alone is NOT readiness: an
-    orphaned vite from a previous run can hold the port while the new child
-    dies — `start` would then silently serve the STALE app (live-drive
-    finding). After connecting, wait ``grace`` and re-check the child.
+    in npm output (issue #460). ``_ensure_port_free`` ran before the spawn,
+    so a connect success here can only be our child.
     """
     import socket
 
@@ -2820,25 +2843,13 @@ def _wait_for_vite(
         if code is not None:
             raise click.ClickException(
                 f"The app dev server (vite) exited with code {code} before "
-                f"serving — see its output above. Is port {port} already in use?"
+                f"serving — see its output above."
             )
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                pass
+                return
         except OSError:
             time.sleep(0.25)
-            continue
-        # Port accepts — make sure it's OUR child serving it, not a leftover.
-        time.sleep(grace)
-        code = proc.poll()
-        if code is not None:
-            raise click.ClickException(
-                f"Port {port} is served by another process but this app's vite "
-                f"exited with code {code} — an orphaned dev server from a "
-                "previous run is likely holding the port. Kill it (or use "
-                "--port to pick a different one) and re-run."
-            )
-        return
     raise click.ClickException(
         f"vite did not start listening on port {port} within {int(timeout)}s — "
         "see its output above."
@@ -2852,11 +2863,17 @@ def _terminate_windows_tree(proc: "subprocess.Popen") -> None:
     orphans its vite child, which keeps the port bound and breaks the next
     start under --strictPort (issue #461). ``taskkill /T`` kills the tree.
     """
-    subprocess.run(
-        ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        # taskkill missing from PATH (stripped CI shell): at minimum reap the
+        # direct child like the pre-taskkill code did, rather than crash the
+        # teardown and leave the whole tree running.
+        proc.terminate()
 
 
 def _terminate_process_group(proc: "subprocess.Popen") -> None:
@@ -2877,10 +2894,14 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
         return
 
     def _signal_group(sig: int) -> None:
+        # start_new_session=True guarantees pgid == proc.pid, and the group
+        # outlives a reaped leader: os.getpgid(pid) raises ESRCH once poll()
+        # reaps npm, silently skipping the kill while vite lives on. Signal
+        # the group id directly.
         try:
-            os.killpg(os.getpgid(proc.pid), sig)
+            os.killpg(proc.pid, sig)
         except (ProcessLookupError, PermissionError):
-            pass  # already gone / not our group
+            pass  # whole group already gone / not ours
 
     _signal_group(signal.SIGTERM)
     try:

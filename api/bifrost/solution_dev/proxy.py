@@ -738,7 +738,7 @@ async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
             content=data or None,
             headers=headers,
         )
-    except httpx.HTTPError:
+    except httpx.ConnectError:
         # A dead Vite child must be an EXPLAINED 502 (like the API handler's),
         # not a bare 500 — "the page won't load" with no cause was issue #460.
         return web.json_response(
@@ -749,6 +749,14 @@ async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
                     "solution start` terminal."
                 )
             },
+            status=502,
+        )
+    except httpx.HTTPError as exc:
+        # A live-but-misbehaving vite (read timeout during cold dependency
+        # pre-bundling, protocol error mid-response) is NOT a startup failure
+        # — say what actually happened instead of sending the user hunting one.
+        return web.json_response(
+            {"detail": f"Error talking to the app dev server (vite): {type(exc).__name__}: {exc}"},
             status=502,
         )
     return web.Response(
