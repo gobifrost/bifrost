@@ -80,3 +80,16 @@ def test_collect_workflows_rejects_manifest_path_outside_workspace(
 
     with pytest.raises(click.ClickException, match="escapes the workspace"):
         _collect_workflows(ws)
+
+
+def test_unregistered_workflow_files_flags_decorated_source_without_manifest_entry():
+    from bifrost.commands.solution import _unregistered_workflow_files
+
+    python_files = {
+        "functions/registered.py": "from bifrost import workflow\n\n@workflow\nasync def main():\n    return 1\n",
+        "functions/loose.py": "from bifrost import workflow\n\n@workflow(name='Loose')\nasync def main():\n    return 2\n",
+        "modules/helper.py": "def util():\n    return 3\n",
+    }
+    workflows = [{"path": "functions/registered.py", "function_name": "main", "name": "reg"}]
+
+    assert _unregistered_workflow_files(python_files, workflows) == ["functions/loose.py"]

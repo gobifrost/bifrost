@@ -23,6 +23,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 import zipfile
@@ -964,6 +965,24 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+_WORKFLOW_DECORATOR_RE = re.compile(r"^\s*@workflow\b", re.MULTILINE)
+
+
+def _unregistered_workflow_files(
+    python_files: dict[str, str], workflows: list[dict]
+) -> list[str]:
+    """Bundled .py files that define @workflow functions but have no
+    .bifrost/workflows.yaml entry — they deploy as source with no Workflow row,
+    so their refs 404 on the install while working fine under `solution start`.
+    """
+    registered = {str(w.get("path")) for w in workflows}
+    return sorted(
+        rel
+        for rel, src in python_files.items()
+        if rel not in registered and _WORKFLOW_DECORATOR_RE.search(src)
+    )
+
+
 def _collect_tables(workspace: pathlib.Path) -> list[dict]:
     """Read table SCHEMA/POLICIES from .bifrost/tables.yaml (keyed by UUID).
 
@@ -1734,6 +1753,14 @@ def deploy_cmd(
         f"  found {len(python_files)} python file(s), {len(workflows)} workflow(s), "
         f"{len(apps)} app(s), {len(forms)} form(s), {len(agents)} agent(s)."
     )
+
+    for rel in _unregistered_workflow_files(python_files, workflows):
+        click.echo(
+            f"  warning: {rel} defines @workflow function(s) but has no entry in "
+            ".bifrost/workflows.yaml — it deploys as source only and its refs "
+            "will 404 on the install. Add a workflows.yaml entry to register it.",
+            err=True,
+        )
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
