@@ -135,7 +135,9 @@ def test_apply_without_yes_prompts_and_declining_captures_nothing() -> None:
     so a bare apply must warn and confirm (issue #466)."""
     captured: dict = {}
     result = _invoke([SOL, "--workflow", WF_ID], captured, input="n\n")
-    assert result.exit_code == 0, result.output
+    # Non-zero exit: a scripted `capture && deploy` chain must NOT proceed
+    # past a declined capture (review F1).
+    assert result.exit_code == 1, result.output
     assert "cannot be undone" in result.output
     assert "nothing was captured" in result.output.lower()
     posted_paths = [p for p, _ in captured.get("posts", [])]
@@ -155,7 +157,7 @@ def test_apply_without_yes_non_interactive_aborts_cleanly() -> None:
     # traceback and without capturing.
     captured: dict = {}
     result = _invoke([SOL, "--workflow", WF_ID], captured)
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     posted_paths = [p for p, _ in captured.get("posts", [])]
     assert f"/api/solutions/{SOL}/capture" not in posted_paths
 

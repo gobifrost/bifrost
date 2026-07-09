@@ -23,3 +23,22 @@ def test_stale_main_tsx_flagged(tmp_path: Path):
 
 def test_missing_file_is_not_flagged(tmp_path: Path):
     assert main_tsx_needs_dev_fallback(tmp_path / "src" / "main.tsx") is False
+
+
+def test_vite_config_needs_org_null_detects_stale_empty_string(tmp_path):
+    from bifrost.solution_dev.scaffold_check import vite_config_needs_org_null
+
+    stale = tmp_path / "vite.config.ts"
+    stale.write_text(
+        '"import.meta.env.VITE_BIFROST_ORG_ID": '
+        'JSON.stringify(process.env.VITE_BIFROST_ORG_ID || ""),'
+    )
+    assert vite_config_needs_org_null(stale) is True
+
+    fresh = tmp_path / "fresh.config.ts"
+    fresh.write_text(
+        '"import.meta.env.VITE_BIFROST_ORG_ID": '
+        'JSON.stringify(process.env.VITE_BIFROST_ORG_ID || null),'
+    )
+    assert vite_config_needs_org_null(fresh) is False
+    assert vite_config_needs_org_null(tmp_path / "absent.config.ts") is False

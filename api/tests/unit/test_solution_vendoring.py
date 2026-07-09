@@ -101,3 +101,20 @@ async def test_vendor_repo_reader_distinguishes_absent_from_failed() -> None:
     assert await read("shared/absent.py") is None
     assert await read("shared/flaky.py") is None
     assert failures == {"shared/flaky.py": "HTTP 503"}
+
+
+def test_unresolved_vendor_failures_ignores_covered_candidates() -> None:
+    """A probe failure only matters if the module actually missed the bundle:
+    pkg.py failing while pkg/__init__.py vendored fine must not abort (review F2)."""
+    from bifrost.commands.solution import _unresolved_vendor_failures
+
+    failures = {
+        "shared/utils.py": "HTTP 500",        # sibling __init__ WAS vendored
+        "shared/calc.py": "HTTP 503",         # truly unresolved
+        "shared/ok.py": "HTTP 500",           # itself bundled after a retry path
+    }
+    bundled = {"shared/utils/__init__.py", "shared/ok.py", "workflows/main.py"}
+
+    assert _unresolved_vendor_failures(failures, bundled) == {
+        "shared/calc.py": "HTTP 503",
+    }

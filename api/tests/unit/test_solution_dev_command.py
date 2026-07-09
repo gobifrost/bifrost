@@ -791,3 +791,17 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     # The host was rooted at the SOLUTION ROOT, not the subdirectory cwd.
     assert hosts and str(hosts[0].workspace) == str(tmp_path.resolve())
+
+
+def test_workspace_from_path_arg_walks_up_only_for_default(tmp_path, monkeypatch):
+    """deploy/pull/bind share start's one-directory-deep friction: the implicit
+    "." walks up to the root, an EXPLICIT path is honored as-is (review F5)."""
+    from bifrost.commands.solution import _workspace_from_path_arg
+
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\n")
+    sub = tmp_path / "apps" / "dash"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+
+    assert str(_workspace_from_path_arg(".")) == str(tmp_path.resolve())
+    assert str(_workspace_from_path_arg(str(sub))) == str(sub.resolve())
