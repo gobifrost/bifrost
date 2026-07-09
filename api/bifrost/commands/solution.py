@@ -23,6 +23,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 import zipfile
@@ -569,11 +570,11 @@ function Home() {
   //   useWorkflowQuery(ref)    → READ: auto-runs on mount, has { data, refresh }.
   //   useWorkflowMutation(ref) → ACTION: runs on mutate(), has { mutate }.
   // This sample is a button (an action), so it uses the mutation hook. The ref
-  // is a workflow UUID, a portable `path::function` ref (e.g.
-  // "functions/hello.py::main", shipped with this scaffold), or a workflow
-  // name — all resolve to THIS install's own workflow. Prefer `path::function`:
-  // it's the shape `bifrost solution start` runs LOCALLY (name/UUID refs
-  // proxy to the deployed copy).
+  // is a portable `path::function` ref (e.g. "functions/hello.py::main",
+  // shipped with this scaffold) or a workflow name — both resolve to THIS
+  // install's own workflow when deployed, and `bifrost solution start` runs
+  // both from your local files. (Avoid raw UUID refs: deploy remaps entity
+  // ids per install, so a hardcoded UUID won't resolve on a deployed install.)
   const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
   return (
     <main style={{ padding: 24 }}>
@@ -963,6 +964,30 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
             entry["source"] = source
         entries.append(entry)
     return entries
+
+
+_WORKFLOW_DECORATOR_RE = re.compile(r"^\s*@workflow\b", re.MULTILINE)
+
+
+def _unregistered_workflow_files(
+    python_files: dict[str, str], workflows: list[dict]
+) -> list[str]:
+    """Bundled .py files whose @workflow function count exceeds their
+    .bifrost/workflows.yaml entry count — the surplus functions deploy as
+    source with no Workflow row, so their refs 404 on the install while
+    working fine under `solution start`. Count-based (not name-parsed): a
+    decorator hit in source is cheap to detect; extracting decorated function
+    names from source is not worth the false positives for a warning.
+    """
+    entries_per_path: dict[str, int] = {}
+    for w in workflows:
+        path = str(w.get("path"))
+        entries_per_path[path] = entries_per_path.get(path, 0) + 1
+    return sorted(
+        rel
+        for rel, src in python_files.items()
+        if len(_WORKFLOW_DECORATOR_RE.findall(src)) > entries_per_path.get(rel, 0)
+    )
 
 
 def _collect_tables(workspace: pathlib.Path) -> list[dict]:
@@ -1736,6 +1761,15 @@ def deploy_cmd(
         f"{len(apps)} app(s), {len(forms)} form(s), {len(agents)} agent(s)."
     )
 
+    for rel in _unregistered_workflow_files(python_files, workflows):
+        click.echo(
+            f"  warning: {rel} defines more @workflow function(s) than "
+            ".bifrost/workflows.yaml registers for it — it deploys as source only "
+            "and its refs will 404 on the install. Add a workflows.yaml entry to "
+            "register it.",
+            err=True,
+        )
+
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
         binding = await _resolve_bound_solution(
@@ -2167,7 +2201,12 @@ def start_cmd(
 
     host = FunctionHost(workspace)
     host.reload()
-    click.echo(f"Discovered {len(host.refs())} local function(s).")
+    refs = host.refs()
+    click.echo(f"Discovered {len(refs)} local function(s):")
+    for ref in refs:
+        click.echo(f"  {ref}")
+    for rel, err in sorted(host.failures().items()):
+        click.echo(f"  ⚠ import error in {rel}: {err}", err=True)
 
     # Spawn npm via the RESOLVED path: shutil.which honors PATHEXT (finds
     # `npm.cmd` on Windows) but CreateProcess with a literal "npm" argv[0] does
@@ -2213,6 +2252,7 @@ def start_cmd(
                 binding.solution_id,
                 bind_host,
                 proxy_origin,
+                descriptor.global_repo_access,
             )
         )
     finally:
@@ -2663,6 +2703,22 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
         _signal_group(signal.SIGKILL)
 
 
+def _dev_proxy_config(
+    client, chosen, org_info, solution_id, global_repo_access, refresh_token=None
+):
+    from bifrost.solution_dev.proxy import DevProxyConfig
+
+    return DevProxyConfig(
+        upstream_url=client.api_url.rstrip("/"),
+        token=client._access_token,
+        app_id=chosen.app_id,
+        org_id=(org_info or {}).get("id"),
+        solution_id=solution_id,
+        global_repo_access=global_repo_access,
+        refresh_token=refresh_token,
+    )
+
+
 async def _serve(
     client,
     chosen,
@@ -2674,22 +2730,18 @@ async def _serve(
     solution_id,
     bind_host,
     proxy_origin,
+    global_repo_access,
 ):
     from aiohttp import web
 
-    from bifrost.solution_dev.proxy import DevProxyConfig, build_dev_app
+    from bifrost.solution_dev.proxy import build_dev_app
     from bifrost.solution_dev.reload import start_function_watch
 
     async def refresh_token() -> str | None:
         return await _refresh_solution_start_access_token(client.api_url)
 
-    cfg = DevProxyConfig(
-        upstream_url=client.api_url.rstrip("/"),
-        token=client._access_token,
-        app_id=chosen.app_id,
-        org_id=(org_info or {}).get("id"),
-        solution_id=solution_id,
-        refresh_token=refresh_token,
+    cfg = _dev_proxy_config(
+        client, chosen, org_info, solution_id, global_repo_access, refresh_token
     )
     app = build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}")
     runner = web.AppRunner(app)
