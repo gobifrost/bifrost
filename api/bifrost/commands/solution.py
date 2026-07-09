@@ -2890,6 +2890,9 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            # taskkill /F already force-killed the tree; a wait timing out
+            # here means Windows is slow to reap — nothing more to do, and
+            # teardown must not raise.
             pass
         return
 
