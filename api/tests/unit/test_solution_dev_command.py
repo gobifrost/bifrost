@@ -711,3 +711,97 @@ def test_dev_proxy_config_threads_descriptor_global_repo_access():
     cfg = _dev_proxy_config(_Client(), _Chosen(), None, "install-1", False)
     assert cfg.global_repo_access is False
     assert cfg.org_id is None
+
+
+def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
+    """`bifrost solution start` from apps/<slug>/ must walk up to the root.
+
+    scaffold-app and `bifrost run` already use find_solution_root; start
+    requiring cwd == root was an inconsistency that blamed the user for
+    being one directory deep (issue #462).
+    """
+    import shutil
+    import subprocess
+
+    import bifrost.client as client_mod
+    from bifrost.solution_dev import function_host
+
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
+    (tmp_path / ".env").write_text(
+        "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
+        "BIFROST_SOLUTION_SLUG=s\n"
+        "BIFROST_SOLUTION_ORG_ID=org-1\n"
+        "BIFROST_SOLUTION_SCOPE=org\n"
+    )
+    (tmp_path / ".bifrost").mkdir()
+    (tmp_path / ".bifrost" / "apps.yaml").write_text(
+        yaml.safe_dump({"apps": {
+            "a": {"id": "a", "slug": "dash", "path": "apps/dash", "app_model": "standalone_v2"},
+        }})
+    )
+    (tmp_path / "apps" / "dash").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "apps" / "dash")
+
+    class _FakeClient:
+        organization = {"id": "org-1"}
+        user = {"id": "u", "is_superuser": True}
+        api_url = "http://localhost:8000"
+        _access_token = "tok"
+
+    monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient()))
+    monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
+
+    class _FakeHost:
+        def __init__(self, workspace):
+            self.workspace = workspace
+
+        def reload(self):
+            pass
+
+        def refs(self):
+            return []
+
+        def failures(self):
+            return {}
+
+    hosts: list[object] = []
+    def _make_host(workspace):
+        host = _FakeHost(workspace)
+        hosts.append(host)
+        return host
+
+    monkeypatch.setattr(function_host, "FunctionHost", _make_host)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/npm" if name == "npm" else None)
+    monkeypatch.setattr(subprocess, "run", lambda argv, **k: None)
+
+    class _FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **k: _FakeProc())
+
+    async def _fake_serve(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr(
+        "bifrost.commands.solution._terminate_process_group", lambda proc: None
+    )
+
+    result = CliRunner().invoke(solution_group, ["start"])
+    assert result.exit_code == 0, result.output
+    # The host was rooted at the SOLUTION ROOT, not the subdirectory cwd.
+    assert hosts and str(hosts[0].workspace) == str(tmp_path.resolve())
+
+
+def test_workspace_from_path_arg_walks_up_only_for_default(tmp_path, monkeypatch):
+    """deploy/pull/bind share start's one-directory-deep friction: the implicit
+    "." walks up to the root, an EXPLICIT path is honored as-is (review F5)."""
+    from bifrost.commands.solution import _workspace_from_path_arg
+
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\n")
+    sub = tmp_path / "apps" / "dash"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+
+    assert str(_workspace_from_path_arg(".")) == str(tmp_path.resolve())
+    assert str(_workspace_from_path_arg(str(sub))) == str(sub.resolve())

@@ -221,6 +221,20 @@ def init_cmd(
     )
 
 
+def _workspace_from_path_arg(path: str) -> pathlib.Path:
+    """Resolve a command's PATH argument to the solution root.
+
+    An explicit path is honored as-is; the implicit default "." walks up like
+    `start` does, so sibling commands (bind/pull/deploy) don't fail one
+    directory deep in the workspace (issue #462).
+    """
+    if path == ".":
+        root = find_solution_root(pathlib.Path.cwd())
+        if root is not None:
+            return root
+    return pathlib.Path(path).resolve()
+
+
 @solution_group.command(
     name="bind",
     help="Bind this local Solution workspace to an existing install.",
@@ -229,7 +243,7 @@ def init_cmd(
 @click.option("--solution", "solution_ref", required=True, help="Install id or unique slug.")
 def bind_cmd(path: str, solution_ref: str) -> None:
     """Bind a local descriptor to an existing remote install without creating one."""
-    workspace = pathlib.Path(path).resolve()
+    workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
             f"No {DESCRIPTOR_FILENAME} in {workspace} - not a Solution workspace. "
@@ -493,7 +507,7 @@ export default defineConfig(({ command }) => {
           "import.meta.env.VITE_BIFROST_API_URL": JSON.stringify(env.url),
           "import.meta.env.VITE_BIFROST_TOKEN": JSON.stringify(env.token),
           "import.meta.env.VITE_BIFROST_APP_ID": JSON.stringify(process.env.VITE_BIFROST_APP_ID || ""),
-          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || ""),
+          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || null),
         }
       : {};
   return {
@@ -1512,7 +1526,7 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     import io
     import zipfile
 
-    workspace = pathlib.Path(path).resolve()
+    workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
             f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
@@ -1734,6 +1748,50 @@ def _build_deploy_zip(
     return buf.getvalue()
 
 
+def _unresolved_vendor_failures(
+    failures: dict[str, str], bundled: set[str]
+) -> dict[str, str]:
+    """Failures that actually left a module out of the bundle.
+
+    ``vendor_shared_deps`` probes each module at several candidate paths
+    (``pkg.py`` then ``pkg/__init__.py``); a probe that failed on one candidate
+    is irrelevant when the module resolved via its sibling — aborting there
+    would block a deploy whose bundle is complete.
+    """
+    out: dict[str, str] = {}
+    for path, err in failures.items():
+        if path in bundled:
+            continue
+        if path.endswith("/__init__.py"):
+            sibling = path.removesuffix("/__init__.py") + ".py"
+        else:
+            sibling = path.removesuffix(".py") + "/__init__.py"
+        if sibling in bundled:
+            continue
+        out[path] = err
+    return out
+
+
+def _vendor_repo_reader(client, failures: dict[str, str]):
+    """Reader for ``vendor_shared_deps``: 404 is a legitimate miss (a stdlib/
+    third-party import probe), but any OTHER failure must be recorded — treating
+    it as absence silently drops a shared module from the bundle and the deploy
+    "succeeds" broken (issue #465).
+    """
+
+    async def _read(path: str) -> str | None:
+        resp = await client.post("/api/files/read", json={
+            "path": path, "location": "workspace", "mode": "cloud",
+        })
+        if resp.status_code == 200:
+            return resp.json().get("content")
+        if resp.status_code != 404:
+            failures[path] = f"HTTP {resp.status_code}"
+        return None
+
+    return _read
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
@@ -1742,7 +1800,7 @@ def _build_deploy_zip(
 def deploy_cmd(
     path: str, solution_ref: str | None, force: bool
 ) -> None:
-    workspace = pathlib.Path(path).resolve()
+    workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
             f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
@@ -1791,15 +1849,23 @@ def deploy_cmd(
             # the wait isn't a silent gap before the bundle summary.
             click.echo("Vendoring shared dependencies...")
 
-            async def _repo_read(path: str) -> str | None:
-                resp = await client.post("/api/files/read", json={
-                    "path": path, "location": "workspace", "mode": "cloud",
-                })
-                if resp.status_code != 200:
-                    return None
-                return resp.json().get("content")
-
-            vendored = await vendor_shared_deps(python_files, _repo_read)
+            read_failures: dict[str, str] = {}
+            vendored = await vendor_shared_deps(
+                python_files, _vendor_repo_reader(client, read_failures)
+            )
+            read_failures = _unresolved_vendor_failures(
+                read_failures, set(python_files) | set(vendored)
+            )
+            if read_failures:
+                detail = ", ".join(
+                    f"{p} ({err})" for p, err in sorted(read_failures.items())
+                )
+                raise click.ClickException(
+                    f"Could not read {len(read_failures)} shared module(s) from "
+                    f"_repo/: {detail}. Deploying would silently omit them and the "
+                    "Solution would break at runtime — retry; if it persists, check "
+                    "API connectivity and permissions."
+                )
             if vendored:
                 click.echo(f"  vendored {len(vendored)} shared dependency file(s).")
                 bundle_python = {**python_files, **vendored}
@@ -2114,7 +2180,7 @@ def _vite_child_env(
     base_env: dict[str, str],
     *,
     app_id: str,
-    org_id: str,
+    org_id: str | None,
     proxy_origin: str,
     access_token: str,
 ) -> dict[str, str]:
@@ -2129,7 +2195,13 @@ def _vite_child_env(
     """
     env = dict(base_env)
     env["VITE_BIFROST_APP_ID"] = app_id
-    env["VITE_BIFROST_ORG_ID"] = org_id
+    # Omit the org var entirely for a global install: "" is not null once it
+    # reaches the app (`?? null` doesn't catch it), and the proxy config uses
+    # None for the same install — the two must agree (issue #463).
+    if org_id:
+        env["VITE_BIFROST_ORG_ID"] = org_id
+    else:
+        env.pop("VITE_BIFROST_ORG_ID", None)
     env["BIFROST_API_URL"] = proxy_origin
     env["BIFROST_ACCESS_TOKEN"] = access_token
     return env
@@ -2165,12 +2237,20 @@ def start_cmd(
     from bifrost.client import BifrostClient
     from bifrost.solution_dev.app_select import AppSelectionError, select_app
     from bifrost.solution_dev.function_host import FunctionHost, set_dev_execution_context
-    from bifrost.solution_dev.scaffold_check import PATCH_HINT, main_tsx_needs_dev_fallback
+    from bifrost.solution_dev.scaffold_check import (
+        ORG_NULL_HINT,
+        PATCH_HINT,
+        main_tsx_needs_dev_fallback,
+        vite_config_needs_org_null,
+    )
 
-    workspace = pathlib.Path(".").resolve()
-    if not is_solution_workspace(workspace):
+    # Walk up to the solution root like scaffold-app and `bifrost run` do —
+    # requiring cwd == root fails from apps/<slug>/ for no reason (issue #462).
+    workspace = find_solution_root(pathlib.Path.cwd())
+    if workspace is None:
         raise click.ClickException(
-            f"Not a Solution workspace (no {DESCRIPTOR_FILENAME}). Run `bifrost solution init` first."
+            f"Not inside a Solution workspace (no {DESCRIPTOR_FILENAME} here or in any "
+            "parent directory). Run `bifrost solution init` first."
         )
     descriptor = load_descriptor(workspace)
 
@@ -2192,6 +2272,8 @@ def start_cmd(
     main_tsx = chosen.app_dir / "src" / "main.tsx"
     if main_tsx_needs_dev_fallback(main_tsx):
         click.echo(PATCH_HINT, err=True)
+    if vite_config_needs_org_null(chosen.app_dir / "vite.config.ts"):
+        click.echo(ORG_NULL_HINT, err=True)
 
     click.echo(f"Using Solution install id: {binding.solution_id}")
 
@@ -2222,7 +2304,7 @@ def start_cmd(
     vite_env = _vite_child_env(
         dict(os.environ),
         app_id=chosen.app_id,
-        org_id=(org_info or {}).get("id", ""),
+        org_id=(org_info or {}).get("id"),
         proxy_origin=proxy_origin,
         access_token=client._access_token,
     )
@@ -2342,6 +2424,8 @@ def _print_capture_preview(preview: dict) -> None:
 )
 @click.option("--dry-run", is_flag=True, default=False,
               help="Preview the dependency closure + outside references; capture nothing.")
+@click.option("--yes", is_flag=True, default=False,
+              help="Skip the confirmation prompt (capture is terminal).")
 def capture_cmd(
     solution_id: str,
     workflows: tuple[str, ...],
@@ -2353,6 +2437,7 @@ def capture_cmd(
     configs: tuple[str, ...],
     include_imports: bool,
     dry_run: bool,
+    yes: bool,
 ) -> None:
     raw = {
         "workflows": workflows, "tables": tables, "apps": apps, "forms": forms,
@@ -2363,6 +2448,29 @@ def capture_cmd(
             "no entities selected — pass at least one of "
             "--workflow/--table/--app/--form/--agent/--claim/--config."
         )
+
+    if not dry_run and not yes:
+        # Warning and prompt on the SAME stream (stdout, where click.confirm
+        # prompts) — split streams leave a redirected user staring at a
+        # seemingly hung terminal with the question in their log file.
+        click.echo(
+            "Capture is terminal: the selected _repo/ entities are adopted into "
+            f"install {solution_id} and stop being loose/global. A later "
+            "`bifrost deploy` of this Solution replaces captured state that was "
+            "never pulled into the workspace. This cannot be undone by "
+            "uninstall. Use --dry-run to preview first."
+        )
+        try:
+            proceed = click.confirm("Proceed with capture?")
+        except click.exceptions.Abort:
+            # EOF / Ctrl-C on the prompt (e.g. scripted use without --yes):
+            # decline, don't traceback — handle_solution doesn't catch Abort.
+            proceed = False
+        if not proceed:
+            click.echo("Aborted — nothing was captured. Re-run with --yes to skip the prompt.")
+            # Non-zero: a scripted `capture && deploy` chain must not roll on
+            # past a capture that never happened.
+            raise SystemExit(1)
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)

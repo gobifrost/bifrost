@@ -69,3 +69,52 @@ async def test_from_namespace_pkg_import_submodule() -> None:
     repo = {"shared/calc.py": "VALUE = 1\n"}  # no shared/__init__.py
     out = await vendor_shared_deps(bundle, _reader(repo))
     assert out == {"shared/calc.py": "VALUE = 1\n"}
+
+
+async def test_vendor_repo_reader_distinguishes_absent_from_failed() -> None:
+    """404 = legitimately absent (stdlib/third-party import) — NOT a failure.
+    Any other non-200 must be recorded so deploy can refuse to ship a bundle
+    with silently omitted shared modules (issue #465)."""
+    from bifrost.commands.solution import _vendor_repo_reader
+
+    class _Resp:
+        def __init__(self, status_code, content=None):
+            self.status_code = status_code
+            self._content = content
+
+        def json(self):
+            return {"content": self._content}
+
+    class _FakeClient:
+        async def post(self, path, json=None, **kwargs):
+            target = json["path"]
+            if target == "shared/ok.py":
+                return _Resp(200, "OK_SOURCE")
+            if target == "shared/absent.py":
+                return _Resp(404)
+            return _Resp(503)
+
+    failures: dict[str, str] = {}
+    read = _vendor_repo_reader(_FakeClient(), failures)
+
+    assert await read("shared/ok.py") == "OK_SOURCE"
+    assert await read("shared/absent.py") is None
+    assert await read("shared/flaky.py") is None
+    assert failures == {"shared/flaky.py": "HTTP 503"}
+
+
+def test_unresolved_vendor_failures_ignores_covered_candidates() -> None:
+    """A probe failure only matters if the module actually missed the bundle:
+    pkg.py failing while pkg/__init__.py vendored fine must not abort (review F2)."""
+    from bifrost.commands.solution import _unresolved_vendor_failures
+
+    failures = {
+        "shared/utils.py": "HTTP 500",        # sibling __init__ WAS vendored
+        "shared/calc.py": "HTTP 503",         # truly unresolved
+        "shared/ok.py": "HTTP 500",           # itself bundled after a retry path
+    }
+    bundled = {"shared/utils/__init__.py", "shared/ok.py", "workflows/main.py"}
+
+    assert _unresolved_vendor_failures(failures, bundled) == {
+        "shared/calc.py": "HTTP 503",
+    }

@@ -1766,6 +1766,8 @@ Options:
                                   no-include-imports]
   --dry-run                       Preview the dependency closure + outside
                                   references; capture nothing.
+  --yes                           Skip the confirmation prompt (capture is
+                                  terminal).
   --help                          Show this message and exit.
 ```
 
