@@ -954,3 +954,33 @@ def test_terminate_windows_tree_taskkills_the_whole_tree(monkeypatch):
 
     _terminate_windows_tree(_Proc())
     assert calls == [["taskkill", "/T", "/F", "/PID", "4242"]]
+
+
+def test_wait_for_vite_detects_orphan_serving_the_port():
+    """A connect success is only readiness if OUR child is still alive: an
+    orphaned vite from a previous run can hold the port while the new child
+    dies under --strictPort — serving the STALE app (live-drive finding)."""
+    import socket
+
+    import click
+    import pytest as _pytest
+
+    from bifrost.commands.solution import _wait_for_vite
+
+    class _DiesAfterFirstPoll:
+        def __init__(self):
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls <= 1 else 7
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        with _pytest.raises(click.ClickException, match="another process"):
+            _wait_for_vite(_DiesAfterFirstPoll(), port=port, timeout=5, grace=0.1)
+    finally:
+        server.close()

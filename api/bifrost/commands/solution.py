@@ -2800,12 +2800,17 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
         raise SystemExit(rc)
 
 
-def _wait_for_vite(proc: "subprocess.Popen", port: int, timeout: float = 60.0) -> None:
-    """Block until the Vite child accepts TCP connections; fail fast if it dies.
+def _wait_for_vite(
+    proc: "subprocess.Popen", port: int, timeout: float = 60.0, grace: float = 1.5
+) -> None:
+    """Block until OUR Vite child serves the port; fail fast if it dies.
 
     ``--strictPort`` makes Vite exit when its port is taken; without this
     check the proxy serves unexplained 502s while the only clue scrolls past
-    in npm output (issue #460).
+    in npm output (issue #460). A connect success alone is NOT readiness: an
+    orphaned vite from a previous run can hold the port while the new child
+    dies — `start` would then silently serve the STALE app (live-drive
+    finding). After connecting, wait ``grace`` and re-check the child.
     """
     import socket
 
@@ -2819,9 +2824,21 @@ def _wait_for_vite(proc: "subprocess.Popen", port: int, timeout: float = 60.0) -
             )
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return
+                pass
         except OSError:
             time.sleep(0.25)
+            continue
+        # Port accepts — make sure it's OUR child serving it, not a leftover.
+        time.sleep(grace)
+        code = proc.poll()
+        if code is not None:
+            raise click.ClickException(
+                f"Port {port} is served by another process but this app's vite "
+                f"exited with code {code} — an orphaned dev server from a "
+                "previous run is likely holding the port. Kill it (or use "
+                "--port to pick a different one) and re-run."
+            )
+        return
     raise click.ClickException(
         f"vite did not start listening on port {port} within {int(timeout)}s — "
         "see its output above."
