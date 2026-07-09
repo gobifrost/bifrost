@@ -680,3 +680,26 @@ async def test_ws_proxy_closes_upstream_when_client_disconnects():
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()
+
+
+async def test_vite_proxy_returns_502_when_vite_is_down():
+    """A dead Vite child must surface as an explained 502, not a bare 500 —
+    the API proxy handler already does this; the vite handler didn't (issue #460)."""
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    host = _StubHost(set())
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t", app_id="A", org_id="O",
+    )
+    dead_vite = f"http://127.0.0.1:{_free_port()}"
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url=dead_vite), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"http://127.0.0.1:{dev_port}/")
+        assert r.status_code == 502
+        assert "vite" in r.json()["detail"].lower()
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()

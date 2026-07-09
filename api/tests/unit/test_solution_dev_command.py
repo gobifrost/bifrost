@@ -534,6 +534,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
         return None
 
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
     )
@@ -625,6 +626,7 @@ def test_start_accepts_bind_host_and_public_url(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "Popen", _fake_popen)
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
     )
@@ -783,6 +785,7 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
     )
@@ -805,3 +808,149 @@ def test_workspace_from_path_arg_walks_up_only_for_default(tmp_path, monkeypatch
 
     assert str(_workspace_from_path_arg(".")) == str(tmp_path.resolve())
     assert str(_workspace_from_path_arg(str(sub))) == str(sub.resolve())
+
+
+def _start_workspace(tmp_path, monkeypatch):
+    """Shared minimal start_cmd fixture: bound workspace + fakes for network,
+    host, and npm spawns. Returns the `spawned` argv list."""
+    import shutil
+    import subprocess
+
+    import bifrost.client as client_mod
+    from bifrost.solution_dev import function_host
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
+    (tmp_path / ".env").write_text(
+        "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
+        "BIFROST_SOLUTION_SLUG=s\n"
+        "BIFROST_SOLUTION_ORG_ID=org-1\n"
+        "BIFROST_SOLUTION_SCOPE=org\n"
+    )
+    (tmp_path / ".bifrost").mkdir()
+    (tmp_path / ".bifrost" / "apps.yaml").write_text(
+        yaml.safe_dump({"apps": {
+            "a": {"id": "a", "slug": "dash", "path": "apps/dash", "app_model": "standalone_v2"},
+        }})
+    )
+    (tmp_path / "apps" / "dash").mkdir(parents=True)
+
+    class _FakeClient:
+        organization = {"id": "org-1"}
+        user = {"id": "u", "is_superuser": True}
+        api_url = "http://localhost:8000"
+        _access_token = "tok"
+
+    monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient()))
+    monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
+
+    class _FakeHost:
+        def __init__(self, workspace):
+            pass
+
+        def reload(self):
+            pass
+
+        def refs(self):
+            return []
+
+        def failures(self):
+            return {}
+
+    monkeypatch.setattr(function_host, "FunctionHost", _FakeHost)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/npm" if name == "npm" else None)
+    return subprocess
+
+
+def test_start_npm_install_failure_is_a_clean_click_error(tmp_path, monkeypatch):
+    """A failed npm install must be a one-line ClickException, not a raw
+    CalledProcessError traceback (issue #459) — first run on a fresh machine
+    is exactly when the install is most likely to fail."""
+    subprocess = _start_workspace(tmp_path, monkeypatch)
+
+    def _failing_run(argv, **kwargs):
+        raise subprocess.CalledProcessError(returncode=254, cmd=argv)
+
+    monkeypatch.setattr(subprocess, "run", _failing_run)
+
+    result = CliRunner().invoke(solution_group, ["start"])
+    assert result.exit_code == 1, result.output
+    assert "npm install failed" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_wait_for_vite_fails_fast_when_process_dies(monkeypatch):
+    """--strictPort makes vite exit when its port is taken; start must fail
+    with the exit code instead of serving unexplained 502s (issue #460)."""
+    import click
+    import pytest as _pytest
+
+    from bifrost.commands.solution import _wait_for_vite
+
+    class _DeadProc:
+        def poll(self):
+            return 7
+
+    with _pytest.raises(click.ClickException, match="exited with code 7"):
+        _wait_for_vite(_DeadProc(), port=1)
+
+
+def test_wait_for_vite_returns_when_port_accepts():
+    import socket
+
+    from bifrost.commands.solution import _wait_for_vite
+
+    class _LiveProc:
+        def poll(self):
+            return None
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        _wait_for_vite(_LiveProc(), port=port, timeout=5)
+    finally:
+        server.close()
+
+
+def test_wait_for_vite_times_out_with_clean_error():
+    import socket
+
+    import click
+    import pytest as _pytest
+
+    from bifrost.commands.solution import _wait_for_vite
+
+    class _LiveProc:
+        def poll(self):
+            return None
+
+    # A port nothing listens on: bind-then-close guarantees it's free.
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    with _pytest.raises(click.ClickException, match="did not start listening"):
+        _wait_for_vite(_LiveProc(), port=port, timeout=0.6)
+
+
+def test_terminate_windows_tree_taskkills_the_whole_tree(monkeypatch):
+    """On Windows there are no process groups: a bare terminate() reaps npm but
+    orphans its vite child, which keeps the port bound and breaks the next
+    start under --strictPort (issue #461). taskkill /T kills the tree."""
+    import subprocess as _subprocess
+
+    from bifrost.commands.solution import _terminate_windows_tree
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        _subprocess, "run", lambda argv, **k: calls.append(list(argv))
+    )
+
+    class _Proc:
+        pid = 4242
+
+    _terminate_windows_tree(_Proc())
+    assert calls == [["taskkill", "/T", "/F", "/PID", "4242"]]

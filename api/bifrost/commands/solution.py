@@ -2298,7 +2298,16 @@ def start_cmd(
         raise click.ClickException("npm not found on PATH — install Node.js to run the dev server.")
     if not (chosen.app_dir / "node_modules").is_dir():
         click.echo("Installing app dependencies (npm install)…")
-        subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
+        try:
+            subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
+        except subprocess.CalledProcessError as exc:
+            # First run on a fresh machine is when this most likely fails
+            # (registry hiccup, unreachable SDK download) — a one-line error,
+            # never a raw traceback (issue #459).
+            raise click.ClickException(
+                f"npm install failed in {chosen.app_dir} (exit {exc.returncode}) "
+                "— see the npm output above."
+            )
 
     proxy_origin = (public_url or f"http://127.0.0.1:{port}").rstrip("/")
     vite_env = _vite_child_env(
@@ -2320,6 +2329,11 @@ def start_cmd(
         cwd=chosen.app_dir, env=vite_env,
         start_new_session=True,
     )
+    try:
+        _wait_for_vite(vite_proc, vite_port)
+    except click.ClickException:
+        _terminate_process_group(vite_proc)
+        raise
 
     try:
         asyncio.run(
@@ -2786,6 +2800,48 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
         raise SystemExit(rc)
 
 
+def _wait_for_vite(proc: "subprocess.Popen", port: int, timeout: float = 60.0) -> None:
+    """Block until the Vite child accepts TCP connections; fail fast if it dies.
+
+    ``--strictPort`` makes Vite exit when its port is taken; without this
+    check the proxy serves unexplained 502s while the only clue scrolls past
+    in npm output (issue #460).
+    """
+    import socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        code = proc.poll()
+        if code is not None:
+            raise click.ClickException(
+                f"The app dev server (vite) exited with code {code} before "
+                f"serving — see its output above. Is port {port} already in use?"
+            )
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.25)
+    raise click.ClickException(
+        f"vite did not start listening on port {port} within {int(timeout)}s — "
+        "see its output above."
+    )
+
+
+def _terminate_windows_tree(proc: "subprocess.Popen") -> None:
+    """Kill the npm process AND its children on Windows.
+
+    There are no process groups there: a bare terminate() reaps npm but
+    orphans its vite child, which keeps the port bound and breaks the next
+    start under --strictPort (issue #461). ``taskkill /T`` kills the tree.
+    """
+    subprocess.run(
+        ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+        capture_output=True,
+        check=False,
+    )
+
+
 def _terminate_process_group(proc: "subprocess.Popen") -> None:
     """Stop a child and any grandchildren it spawned in its process group.
 
@@ -2794,15 +2850,20 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
     """
     import signal
 
+    if not hasattr(os, "killpg"):
+        # Windows: no process groups — taskkill the whole tree instead.
+        _terminate_windows_tree(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        return
+
     def _signal_group(sig: int) -> None:
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(os.getpgid(proc.pid), sig)
-                return
-            except (ProcessLookupError, PermissionError):
-                return  # already gone / not our group — fall through to proc-level
-        # No process groups (Windows): signal the process itself.
-        proc.send_signal(sig)
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError):
+            pass  # already gone / not our group
 
     _signal_group(signal.SIGTERM)
     try:
