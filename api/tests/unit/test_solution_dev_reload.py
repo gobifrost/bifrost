@@ -10,6 +10,12 @@ class _RecordingHost:
     def reload(self):
         self.reloads += 1
 
+    def refs(self):
+        return ["functions/hello.py::main"]
+
+    def failures(self):
+        return {}
+
 
 def test_handler_reloads_on_py_change(tmp_path: Path):
     host = _RecordingHost()
@@ -71,3 +77,61 @@ def test_handler_still_reloads_normal_workspace_py():
 
     handler.on_modified(_Evt())
     assert host.reloads == 1
+
+
+def test_handler_reloads_on_workflow_manifest_change():
+    host = _RecordingHost()
+    handler = _PyChangeHandler(host)
+
+    class _Evt:
+        is_directory = False
+        src_path = "/ws/.bifrost/workflows.yaml"
+
+    handler.on_modified(_Evt())
+    assert host.reloads == 1
+
+
+def test_handler_ignores_other_manifests():
+    host = _RecordingHost()
+    handler = _PyChangeHandler(host)
+
+    class _Evt:
+        is_directory = False
+        src_path = "/ws/.bifrost/apps.yaml"
+
+    handler.on_modified(_Evt())
+    assert host.reloads == 0
+
+
+def test_handler_echoes_reload_summary(capsys):
+    host = _RecordingHost()
+    handler = _PyChangeHandler(host)
+
+    class _Evt:
+        is_directory = False
+        src_path = "/ws/functions/hello.py"
+
+    handler.on_modified(_Evt())
+    out = capsys.readouterr().out
+    assert "1 local function(s)" in out
+
+
+def test_handler_echoes_import_failures(capsys):
+    class _FailingHost(_RecordingHost):
+        def refs(self):
+            return []
+
+        def failures(self):
+            return {"functions/broken.py": "ImportError: boom"}
+
+    host = _FailingHost()
+    handler = _PyChangeHandler(host)
+
+    class _Evt:
+        is_directory = False
+        src_path = "/ws/functions/broken.py"
+
+    handler.on_modified(_Evt())
+    err = capsys.readouterr().err
+    assert "functions/broken.py" in err
+    assert "boom" in err
