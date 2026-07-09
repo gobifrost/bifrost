@@ -993,3 +993,99 @@ def test_ensure_port_free_passes_a_free_port():
     probe.close()
 
     _ensure_port_free(port)  # must not raise
+
+
+def test_heal_sdk_dep_repoints_stale_download_url(tmp_path):
+    """scaffold freezes `<api_url>/api/sdk/download` into package.json; against
+    a dead debug-stack port npm install fails days later with no clue back to
+    the scaffold-time URL (issue #464). start knows the right URL — heal it."""
+    import json as _json
+
+    from bifrost.commands.solution import _heal_sdk_dep
+
+    pkg = tmp_path / "package.json"
+    pkg.write_text(_json.dumps({
+        "name": "app",
+        "dependencies": {
+            "bifrost": "http://localhost:39999/api/sdk/download",
+            "react": "^18.2.0",
+        },
+    }, indent=2))
+
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399/") is True
+    data = _json.loads(pkg.read_text())
+    assert data["dependencies"]["bifrost"] == "http://localhost:30399/api/sdk/download"
+    assert data["dependencies"]["react"] == "^18.2.0"  # untouched
+    assert data["name"] == "app"
+
+
+def test_heal_sdk_dep_noop_when_url_already_current(tmp_path):
+    import json as _json
+
+    from bifrost.commands.solution import _heal_sdk_dep
+
+    pkg = tmp_path / "package.json"
+    pkg.write_text(_json.dumps({
+        "dependencies": {"bifrost": "http://localhost:30399/api/sdk/download"},
+    }))
+    before = pkg.read_text()
+
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False
+    assert pkg.read_text() == before  # no rewrite, no reformat
+
+
+def test_heal_sdk_dep_leaves_custom_dep_specs_alone(tmp_path):
+    """Only the scaffold-written download-URL shape is healed — a user-pinned
+    file: path or registry range is their choice, not ours to rewrite."""
+    import json as _json
+
+    from bifrost.commands.solution import _heal_sdk_dep
+
+    for spec in ("file:../sdk/bifrost.tgz", "^2.0.0"):
+        pkg = tmp_path / "package.json"
+        pkg.write_text(_json.dumps({"dependencies": {"bifrost": spec}}))
+        assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False
+        assert _json.loads(pkg.read_text())["dependencies"]["bifrost"] == spec
+
+
+def test_heal_sdk_dep_tolerates_missing_or_malformed_manifest(tmp_path):
+    from bifrost.commands.solution import _heal_sdk_dep
+
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False  # absent
+    (tmp_path / "package.json").write_text("{not json")
+    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is False  # malformed
+
+
+def test_start_reinstalls_after_healing_even_with_node_modules(tmp_path, monkeypatch):
+    """A healed SDK URL must trigger npm install even when node_modules exists
+    — the stale tarball is exactly what needs replacing."""
+    import json as _json
+
+    subprocess = _start_workspace(tmp_path, monkeypatch)
+    app_dir = tmp_path / "apps" / "dash"
+    (app_dir / "node_modules").mkdir(parents=True)
+    (app_dir / "package.json").write_text(_json.dumps({
+        "dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"},
+    }))
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **k: spawned.append(list(argv)))
+
+    class _FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **k: _FakeProc())
+
+    async def _fake_serve(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
+    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
+    monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
+    monkeypatch.setattr("bifrost.commands.solution._terminate_process_group", lambda proc: None)
+
+    result = CliRunner().invoke(solution_group, ["start"])
+    assert result.exit_code == 0, result.output
+    assert any("install" in argv for argv in spawned), spawned
+    healed = _json.loads((app_dir / "package.json").read_text())
+    assert healed["dependencies"]["bifrost"] == "http://localhost:8000/api/sdk/download"

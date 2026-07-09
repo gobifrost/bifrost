@@ -2296,7 +2296,13 @@ def start_cmd(
     npm = shutil.which("npm")
     if npm is None:
         raise click.ClickException("npm not found on PATH — install Node.js to run the dev server.")
-    if not (chosen.app_dir / "node_modules").is_dir():
+    healed = _heal_sdk_dep(chosen.app_dir, client.api_url)
+    if healed:
+        click.echo(
+            "Repointed the app's `bifrost` SDK dependency at this instance "
+            "(package.json froze the scaffold-time URL) — reinstalling."
+        )
+    if healed or not (chosen.app_dir / "node_modules").is_dir():
         click.echo("Installing app dependencies (npm install)…")
         try:
             subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
@@ -2802,6 +2808,40 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
     rc = asyncio.run(_run())
     if rc:
         raise SystemExit(rc)
+
+
+def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> bool:
+    """Repoint the scaffolded ``bifrost`` SDK dependency at the CURRENT instance.
+
+    scaffold freezes ``<api_url>/api/sdk/download`` into package.json at
+    scaffold time; against a dead debug-stack port (or the offline
+    localhost:8000 fallback) ``npm install`` fails days later with nothing
+    connecting the error back to the frozen URL (issue #464). ``start`` knows
+    the bound instance's URL — heal before installing. Only the
+    scaffold-written download-URL shape is touched: a user-pinned ``file:``
+    path or registry range is their choice. Returns True when the file changed.
+    """
+    pkg_file = app_dir / "package.json"
+    if not pkg_file.is_file():
+        return False
+    try:
+        pkg = json.loads(pkg_file.read_text(encoding="utf-8"))
+    except ValueError:
+        return False  # malformed → npm's own parse error is the right message
+    deps = pkg.get("dependencies")
+    if not isinstance(deps, dict):
+        return False
+    current = deps.get("bifrost")
+    expected = f"{api_url.rstrip('/')}/api/sdk/download"
+    if (
+        not isinstance(current, str)
+        or not current.endswith("/api/sdk/download")
+        or current == expected
+    ):
+        return False
+    deps["bifrost"] = expected
+    pkg_file.write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
+    return True
 
 
 def _ensure_port_free(port: int) -> None:
