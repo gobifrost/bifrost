@@ -168,7 +168,7 @@ async def test_cancelled_refresh_lock_waiter_does_not_leak_lock() -> None:
     lock.release()
 
     with pytest.raises(asyncio.CancelledError):
-        await waiter
+        await asyncio.wait_for(waiter, timeout=1)
     assert lock.acquire(blocking=False) is True
     lock.release()
 
