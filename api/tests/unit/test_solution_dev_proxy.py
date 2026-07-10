@@ -469,8 +469,8 @@ async def test_api_proxy_refreshes_cli_token_once_after_401():
     up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
     host = _StubHost(set())
 
-    async def refresh_token():
-        record["refresh_called"] = True
+    async def refresh_token(observed_token):
+        record["refresh_called"] = observed_token
         return "fresh-token"
 
     cfg = DevProxyConfig(
@@ -486,7 +486,7 @@ async def test_api_proxy_refreshes_cli_token_once_after_401():
             r = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
         assert r.status_code == 200
         assert r.json()["email"] == "dev@gobifrost.com"
-        assert record["refresh_called"] is True
+        assert record["refresh_called"] == "stale-token"
         assert record["auth_headers"] == ["Bearer stale-token", "Bearer fresh-token"]
     finally:
         await dev_runner.cleanup()
@@ -499,8 +499,8 @@ async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
     up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
     host = _StubHost(set())
 
-    async def refresh_token():
-        record["refresh_called"] = True
+    async def refresh_token(observed_token):
+        record["refresh_called"] = observed_token
         return None
 
     cfg = DevProxyConfig(
@@ -520,7 +520,7 @@ async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
             "error": "bifrost_dev_auth_expired",
             "detail": "Your CLI token has expired. Restart `bifrost solution start`.",
         }
-        assert record["refresh_called"] is True
+        assert record["refresh_called"] == "stale-token"
         assert record["auth_headers"] == ["Bearer stale-token"]
     finally:
         await dev_runner.cleanup()
@@ -544,7 +544,7 @@ async def test_vite_proxy_serves_branded_auth_expired_page_after_api_auth_failur
     vite_runner = await _serve(vite, vite_port)
     host = _StubHost(set())
 
-    async def refresh_token():
+    async def refresh_token(_observed_token):
         return None
 
     cfg = DevProxyConfig(

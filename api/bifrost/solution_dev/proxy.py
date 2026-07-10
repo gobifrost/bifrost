@@ -107,7 +107,7 @@ class DevProxyConfig:
     # workflow ref that misses locally may fall back to the platform's shared
     # _repo/ content at all. Mirrors the module-loader semantics (§3.5).
     global_repo_access: bool = False
-    refresh_token: Callable[[], Awaitable[str | None]] | None = None
+    refresh_token: Callable[[str], Awaitable[str | None]] | None = None
     auth_expired: bool = False
     branding: dict[str, Any] | None = None
     branding_loaded: bool = False
@@ -170,12 +170,12 @@ def _passthrough_headers(resp, default_content_type: str) -> dict[str, str]:
     return headers
 
 
-async def _refresh_cli_token(cfg: DevProxyConfig) -> bool:
+async def _refresh_cli_token(cfg: DevProxyConfig, observed_access_token: str) -> bool:
     if cfg.refresh_token is None:
         cfg.auth_expired = True
         return False
     try:
-        token = await cfg.refresh_token()
+        token = await cfg.refresh_token(observed_access_token)
     except Exception:
         token = None
     if not token:
@@ -209,10 +209,11 @@ async def _authed_upstream_request(
             headers = {k: v for k, v in headers.items() if k.lower() not in drop_headers}
         return headers
 
+    observed_access_token = cfg.token
     resp = await http.request(method, url, headers=_headers(), **kwargs)
     if resp.status_code != 401:
         return resp
-    if not await _refresh_cli_token(cfg):
+    if not await _refresh_cli_token(cfg, observed_access_token):
         return None
     retry = await http.request(method, url, headers=_headers(), **kwargs)
     if retry.status_code == 401:

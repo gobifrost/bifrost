@@ -701,6 +701,9 @@ def test_dev_proxy_config_threads_descriptor_global_repo_access():
         api_url = "http://127.0.0.1:8000/"
         _access_token = "tok"
 
+        async def refresh_access_token(self, observed_access_token):
+            return observed_access_token
+
     class _Chosen:
         app_id = "app-uuid"
 
@@ -711,6 +714,7 @@ def test_dev_proxy_config_threads_descriptor_global_repo_access():
     assert cfg.upstream_url == "http://127.0.0.1:8000"
     assert cfg.solution_id == "install-1"
     assert cfg.org_id == "org-1"
+    assert cfg.refresh_token is not None
 
     cfg = _dev_proxy_config(_Client(), _Chosen(), None, "install-1", False)
     assert cfg.global_repo_access is False

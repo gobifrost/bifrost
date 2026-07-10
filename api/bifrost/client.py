@@ -24,6 +24,7 @@ from .credentials import (
     clear_credentials,
     get_credentials,
     is_token_expired,
+    replace_env_credentials,
     resolve_current_connection,
     save_credentials,
 )
@@ -32,6 +33,22 @@ logger = logging.getLogger(__name__)
 
 # Global client injection for platform mode
 _injected_client: Optional["BifrostClient"] = None
+
+
+class BifrostAPIError(httpx.HTTPStatusError):
+    """An authenticated Bifrost API request returned a non-success status."""
+
+
+class BifrostAuthenticationError(BifrostAPIError):
+    """The active Bifrost session could not authenticate the request."""
+
+
+class BifrostAuthorizationError(BifrostAPIError):
+    """The active Bifrost identity may not perform the request."""
+
+
+class BifrostDependencyError(BifrostAPIError):
+    """A declared Bifrost dependency is unavailable."""
 
 # Retry config for transient 5xx — see workstream E of issue #171.
 # SDK is machine-to-machine, so the retry budget is more generous than
@@ -110,19 +127,66 @@ def raise_for_status_with_detail(response: httpx.Response) -> None:
         # Response wasn't JSON or didn't have dict-like .get — fall back to raise_for_status
         logger.debug(f"could not extract error detail from response body: {e}")
 
+    error_type: type[BifrostAPIError]
+    if response.status_code == 401:
+        error_type = BifrostAuthenticationError
+    elif response.status_code == 403:
+        error_type = BifrostAuthorizationError
+    elif response.status_code == 424:
+        error_type = BifrostDependencyError
+    else:
+        error_type = BifrostAPIError
+    message = f"{response.status_code} {response.reason_phrase}"
     if detail:
-        raise httpx.HTTPStatusError(
-            message=f"{response.status_code} {response.reason_phrase}: {detail}",
-            request=response.request,
-            response=response,
-        )
-
-    response.raise_for_status()
+        message += f": {detail}"
+    raise error_type(message=message, request=response.request, response=response)
 
 # Thread-local storage for per-thread singleton instances
 # This is needed because thread workers create new event loops via asyncio.run(),
 # and httpx.AsyncClient is bound to the event loop that created it.
 _thread_local = threading.local()
+
+
+class _ConnectionRefreshCoordinator:
+    """Loop-agnostic single-flight state for one normalized API URL."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.latest_access_token: str | None = None
+        self.latest_refresh_token: str | None = None
+
+
+_refresh_coordinators: dict[str, _ConnectionRefreshCoordinator] = {}
+_refresh_coordinators_lock = threading.Lock()
+
+
+def _refresh_coordinator(api_url: str) -> _ConnectionRefreshCoordinator:
+    normalized = api_url.rstrip("/")
+    with _refresh_coordinators_lock:
+        coordinator = _refresh_coordinators.get(normalized)
+        if coordinator is None:
+            coordinator = _ConnectionRefreshCoordinator()
+            _refresh_coordinators[normalized] = coordinator
+        return coordinator
+
+
+def _reset_refresh_coordinators_for_tests() -> None:
+    """Clear process refresh state so credential tests remain isolated."""
+    with _refresh_coordinators_lock:
+        _refresh_coordinators.clear()
+
+
+async def _acquire_refresh_lock(lock: threading.Lock) -> None:
+    """Acquire a thread lock without leaking it when the waiter is cancelled."""
+    acquire_task = asyncio.create_task(asyncio.to_thread(lock.acquire))
+    try:
+        await asyncio.shield(acquire_task)
+    except asyncio.CancelledError:
+        # to_thread keeps running after cancellation. Wait until it owns the lock,
+        # release it, then preserve cancellation for the request task.
+        await acquire_task
+        lock.release()
+        raise
 
 # Auto-load .env file if present (for local development).
 # Walk upward from cwd, not from this file. With pipx-installed CLIs, __file__
@@ -136,7 +200,89 @@ except ImportError:
     pass  # dotenv not installed, rely on environment variables
 
 
-async def refresh_tokens() -> bool:
+async def refresh_connection_access_token(
+    api_url: str,
+    observed_access_token: str | None,
+) -> str | None:
+    """Return the authoritative access token for one stale credential generation.
+
+    Concurrent callers for the same connection are serialized with a threading
+    lock so the coordinator works across threads and event loops. After waiting,
+    a caller re-reads stored credentials and reuses a token already installed by
+    another caller instead of rotating the same refresh token twice.
+    """
+    normalized_url = api_url.rstrip("/")
+    coordinator = _refresh_coordinator(normalized_url)
+    await _acquire_refresh_lock(coordinator.lock)
+    try:
+        creds = get_credentials(normalized_url)
+        if not creds:
+            return None
+
+        stored_access_token = str(creds["access_token"])
+        stored_refresh_token = str(creds["refresh_token"])
+        env_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
+        env_backed = (
+            env_url == normalized_url
+            and bool(os.environ.get("BIFROST_ACCESS_TOKEN"))
+            and bool(os.environ.get("BIFROST_REFRESH_TOKEN"))
+        )
+
+        if coordinator.latest_access_token is not None:
+            if observed_access_token != coordinator.latest_access_token:
+                return coordinator.latest_access_token
+            if not env_backed and stored_access_token != coordinator.latest_access_token:
+                coordinator.latest_access_token = stored_access_token
+                coordinator.latest_refresh_token = stored_refresh_token
+                return stored_access_token
+        elif observed_access_token is not None and stored_access_token != observed_access_token:
+            coordinator.latest_access_token = stored_access_token
+            coordinator.latest_refresh_token = stored_refresh_token
+            return stored_access_token
+
+        refresh_token = coordinator.latest_refresh_token or stored_refresh_token
+
+        async with httpx.AsyncClient(base_url=normalized_url, timeout=30.0) as client:
+            response = await client.post(
+                "/auth/refresh",
+                json={"refresh_token": refresh_token},
+            )
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        access_token = str(data["access_token"])
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=data.get("expires_in", 1800)
+        )
+        new_refresh_token = str(data["refresh_token"])
+        replaced_env = replace_env_credentials(
+            normalized_url,
+            stored_access_token,
+            refresh_token,
+            access_token,
+            new_refresh_token,
+        )
+        if not replaced_env:
+            save_credentials(
+                api_url=normalized_url,
+                access_token=access_token,
+                refresh_token=new_refresh_token,
+                expires_at=expires_at.isoformat(),
+            )
+        coordinator.latest_access_token = access_token
+        coordinator.latest_refresh_token = new_refresh_token
+        return access_token
+    except Exception:
+        return None
+    finally:
+        coordinator.lock.release()
+
+
+async def refresh_tokens(
+    api_url: str | None = None,
+    observed_access_token: str | None = None,
+) -> bool:
     """
     Refresh access token using refresh token.
 
@@ -146,54 +292,48 @@ async def refresh_tokens() -> bool:
     Returns:
         True if refresh successful, False otherwise
     """
-    creds = get_credentials()
+    creds = get_credentials(api_url)
     if not creds:
         return False
+    observed = observed_access_token or str(creds["access_token"])
+    token = await refresh_connection_access_token(str(creds["api_url"]), observed)
+    return token is not None
 
-    api_url = creds["api_url"]
-    refresh_token = creds["refresh_token"]
 
-    try:
-        async with httpx.AsyncClient(base_url=api_url, timeout=30.0) as client:
-            response = await client.post(
-                "/auth/refresh",
-                json={"refresh_token": refresh_token}
-            )
-
-            if response.status_code != 200:
-                return False
-
-            data = response.json()
-
-            # Calculate expiry time (30 minutes from now)
-            expires_at = datetime.now(timezone.utc) + timedelta(seconds=data.get("expires_in", 1800))
-
-            # Save new credentials
-            save_credentials(
-                api_url=api_url,
-                access_token=data["access_token"],
-                refresh_token=data["refresh_token"],
-                expires_at=expires_at.isoformat(),
-            )
-
-            return True
-    except Exception:
+def _refresh_tokens_sync(
+    api_url: str | None = None,
+    observed_access_token: str | None = None,
+) -> bool:
+    creds = get_credentials(api_url)
+    if not creds:
         return False
+    token = _refresh_connection_access_token_sync(
+        str(creds["api_url"]),
+        observed_access_token or str(creds["access_token"]),
+    )
+    return token is not None
 
 
-def _refresh_tokens_sync() -> bool:
+def _refresh_connection_access_token_sync(
+    api_url: str,
+    observed_access_token: str,
+) -> str | None:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(refresh_tokens())
+        return asyncio.run(
+            refresh_connection_access_token(api_url, observed_access_token)
+        )
 
-    result: bool | None = None
+    result: str | None = None
     error: Exception | None = None
 
     def _run() -> None:
         nonlocal result, error
         try:
-            result = asyncio.run(refresh_tokens())
+            result = asyncio.run(
+                refresh_connection_access_token(api_url, observed_access_token)
+            )
         except Exception as exc:
             error = exc
 
@@ -203,7 +343,7 @@ def _refresh_tokens_sync() -> bool:
 
     if error is not None:
         raise error
-    return bool(result)
+    return result
 
 
 async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool:
@@ -442,8 +582,13 @@ class BifrostClient:
             # Check if token needs refresh
             if creds and is_token_expired():
                 # Try to refresh
-                if _refresh_tokens_sync():
-                    creds = get_credentials()  # Reload fresh credentials
+                access_token = _refresh_connection_access_token_sync(
+                    creds["api_url"], creds["access_token"]
+                )
+                if access_token is not None:
+                    # Use the coordinator result directly so startup and
+                    # request-time refresh share the same token generation.
+                    creds = {**creds, "access_token": access_token}
                 else:
                     creds = None  # Refresh failed, need to re-login
 
@@ -499,7 +644,7 @@ class BifrostClient:
     def _fetch_context_sync(self) -> dict[str, Any]:
         """Fetch development context synchronously."""
         if self._context is None:
-            response = self._sync_http.get("/api/sdk/context")
+            response = self.get_sync("/api/sdk/context")
             raise_for_status_with_detail(response)
             self._context = response.json()
         return self._context or {}
@@ -507,8 +652,7 @@ class BifrostClient:
     async def _fetch_context(self) -> dict[str, Any]:
         """Fetch development context."""
         if self._context is None:
-            http = self._get_async_client()
-            response = await http.get("/api/sdk/context")
+            response = await self.get("/api/sdk/context")
             raise_for_status_with_detail(response)
             self._context = response.json()
         return self._context or {}
@@ -533,18 +677,58 @@ class BifrostClient:
         """Get default workflow parameters."""
         return self.context.get("default_parameters", {})
 
-    async def _refresh_and_update(self) -> bool:
-        """Refresh tokens and update this client's auth headers."""
-        if await refresh_tokens():
-            creds = get_credentials()
-            if creds:
-                self._access_token = creds["access_token"]
-                # Force new async client on next request (with new token)
-                self._http = None
-                # Update sync client headers too
-                self._sync_http.headers["Authorization"] = f"Bearer {self._access_token}"
-                return True
-        return False
+    def install_access_token(self, access_token: str) -> None:
+        """Install one access token across every transport owned by this client."""
+        if access_token == self._access_token:
+            return
+        self._access_token = access_token
+        # Force a new async client on the next request. An in-flight request may
+        # still finish on the old client, but its retry resolves a fresh one.
+        self._http = None
+        self._http_loop = None
+        self._sync_http.headers["Authorization"] = f"Bearer {access_token}"
+
+    async def refresh_access_token(
+        self, observed_access_token: str | None = None
+    ) -> str | None:
+        """Refresh or adopt the token replacing the one used by a failed request."""
+        observed = observed_access_token or self._access_token
+        token = await refresh_connection_access_token(self.api_url, observed)
+        if token is not None:
+            self.install_access_token(token)
+        return token
+
+    async def _refresh_and_update(
+        self, observed_access_token: str | None = None
+    ) -> bool:
+        """Backward-compatible boolean wrapper used by CLI request loops."""
+        return await self.refresh_access_token(observed_access_token) is not None
+
+    def _refresh_and_update_sync(
+        self, observed_access_token: str | None = None
+    ) -> bool:
+        """Synchronous counterpart used by context and legacy SDK requests."""
+        observed = observed_access_token or self._access_token
+        token = _refresh_connection_access_token_sync(self.api_url, observed)
+        if token is None:
+            return False
+        self.install_access_token(token)
+        return True
+
+    def _request_with_refresh_sync(
+        self, method: str, path: str, **kwargs
+    ) -> httpx.Response:
+        """Make a synchronous request, refreshing on 401 and retrying once."""
+        def _send() -> httpx.Response:
+            observed_access_token = self._access_token
+            response = self._sync_http.request(method.upper(), path, **kwargs)
+            if response.status_code == 401 and self._refresh_and_update_sync(
+                observed_access_token
+            ):
+                response = self._sync_http.request(method.upper(), path, **kwargs)
+            return response
+
+        return _send_sync_with_5xx_retry(method, _send)
 
     async def _request_with_refresh(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Make an HTTP request, refreshing token on 401 and retrying once.
@@ -556,9 +740,10 @@ class BifrostClient:
         """
         async def _send() -> httpx.Response:
             http = self._get_async_client()
+            observed_access_token = self._access_token
             response = await getattr(http, method)(path, **kwargs)
             if response.status_code == 401:
-                if await self._refresh_and_update():
+                if await self._refresh_and_update(observed_access_token):
                     http = self._get_async_client()
                     response = await getattr(http, method)(path, **kwargs)
             return response
@@ -600,9 +785,10 @@ class BifrostClient:
         """
         async def _send() -> httpx.Response:
             http = self._get_async_client()
+            observed_access_token = self._access_token
             response = await http.request(method.upper(), path, **kwargs)
             if response.status_code == 401:
-                if await self._refresh_and_update():
+                if await self._refresh_and_update(observed_access_token):
                     http = self._get_async_client()
                     response = await http.request(method.upper(), path, **kwargs)
             return response
@@ -626,11 +812,11 @@ class BifrostClient:
         Wrapped with :func:`_send_sync_with_5xx_retry` so transient 502/503/504
         from rolling API deploys are retried.
         """
-        return _send_sync_with_5xx_retry("GET", lambda: self._sync_http.get(path, **kwargs))
+        return self._request_with_refresh_sync("GET", path, **kwargs)
 
     def post_sync(self, path: str, **kwargs) -> httpx.Response:
         """Make synchronous POST request."""
-        return self._sync_http.post(path, **kwargs)
+        return self._request_with_refresh_sync("POST", path, **kwargs)
 
     async def close(self):
         """Close HTTP clients."""

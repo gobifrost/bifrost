@@ -548,6 +548,66 @@ def save_credentials(
     get_persistent_backend().save(creds)
 
 
+def replace_env_credentials(
+    api_url: str,
+    observed_access_token: str,
+    observed_refresh_token: str,
+    access_token: str,
+    refresh_token: str,
+) -> bool:
+    """Replace one rotating credential generation sourced from environment.
+
+    Password-grant development sessions are loaded from a workspace ``.env``.
+    Their backend is intentionally isolated from the persistent keychain/store,
+    but a read-only environment snapshot cannot survive refresh-token rotation.
+    Update the current process and, when the same generation came from the
+    nearest ``.env``, update that file so the next CLI process can continue it.
+
+    Returns ``True`` only when the observed generation is the active env source.
+    """
+    normalized_url = api_url.rstrip("/")
+    current = EnvBackend().get(normalized_url)
+    if (
+        current is None
+        or current.access_token != observed_access_token
+        or current.refresh_token != observed_refresh_token
+    ):
+        return False
+
+    try:
+        from dotenv import dotenv_values, find_dotenv, set_key
+
+        env_path = find_dotenv(usecwd=True)
+        if env_path:
+            values = dotenv_values(env_path)
+            file_url = str(values.get("BIFROST_API_URL") or "").rstrip("/")
+            if (
+                file_url == normalized_url
+                and values.get("BIFROST_ACCESS_TOKEN") == observed_access_token
+                and values.get("BIFROST_REFRESH_TOKEN") == observed_refresh_token
+            ):
+                set_key(
+                    env_path,
+                    "BIFROST_ACCESS_TOKEN",
+                    access_token,
+                    quote_mode="never",
+                )
+                set_key(
+                    env_path,
+                    "BIFROST_REFRESH_TOKEN",
+                    refresh_token,
+                    quote_mode="never",
+                )
+    except OSError:
+        # The running process can still continue even if its source file became
+        # unwritable after login.
+        pass
+
+    os.environ["BIFROST_ACCESS_TOKEN"] = access_token
+    os.environ["BIFROST_REFRESH_TOKEN"] = refresh_token
+    return True
+
+
 def clear_credentials(api_url: str | None = None) -> None:
     """
     Remove a single URL's credentials from the persistent backend.

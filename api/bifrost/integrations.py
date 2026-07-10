@@ -8,14 +8,9 @@ All methods are async and must be awaited.
 
 from __future__ import annotations
 
-import logging
-
-from .client import get_client
+from .client import get_client, raise_for_status_with_detail
 from .models import IntegrationData, IntegrationMappingResponse
 from ._context import resolve_scope, _execution_context
-
-logger = logging.getLogger(__name__)
-
 
 def _current_context():
     """Return the active ExecutionContext, or None if not in a workflow execution."""
@@ -122,9 +117,8 @@ class integrations:
                     if val:
                         register_secret(str(val))
             return data
-        else:
-            logger.warning(f"Integrations API call failed: {response.status_code}")
-            return None
+        raise_for_status_with_detail(response)
+        raise AssertionError("unreachable")
 
     @staticmethod
     async def list_mappings(
@@ -177,9 +171,8 @@ class integrations:
             items = json_result.get("items", [])
             # Convert to IntegrationMappingResponse models
             return [IntegrationMappingResponse.model_validate(item) for item in items]
-        else:
-            logger.warning(f"Integrations API call failed: {response.status_code}")
-            return None
+        raise_for_status_with_detail(response)
+        raise AssertionError("unreachable")
 
     @staticmethod
     async def get_mapping(
@@ -229,9 +222,8 @@ class integrations:
             if result is None:
                 return None
             return IntegrationMappingResponse.model_validate(result)
-        else:
-            logger.warning(f"Integrations get_mapping API call failed: {response.status_code}")
-            return None
+        raise_for_status_with_detail(response)
+        raise AssertionError("unreachable")
 
     @staticmethod
     async def upsert_mapping(
@@ -320,6 +312,5 @@ class integrations:
 
         if response.status_code == 200:
             return response.json().get("deleted", False)
-        else:
-            logger.warning(f"Integrations delete_mapping API call failed: {response.status_code}")
-            return False
+        raise_for_status_with_detail(response)
+        raise AssertionError("unreachable")
