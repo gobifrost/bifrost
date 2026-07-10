@@ -184,8 +184,8 @@ async def _acquire_refresh_lock(lock: threading.Lock) -> None:
     except asyncio.CancelledError:
         # to_thread keeps running after cancellation. Wait until it owns the lock,
         # release it, then preserve cancellation for the request task.
-        await acquire_task
-        lock.release()
+        if await acquire_task:
+            lock.release()
         raise
 
 # Auto-load .env file if present (for local development).

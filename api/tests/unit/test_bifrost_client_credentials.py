@@ -1,6 +1,7 @@
 """Tests for BifrostClient credential resolution and refresh coordination."""
 
 import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -152,6 +153,24 @@ async def test_concurrent_refreshes_for_same_stale_token_are_coalesced(
     assert first == second == "fresh-access-token"
     assert refresh_calls == 1
     assert isolated_credentials.get_credentials(api_url)["access_token"] == "fresh-access-token"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_refresh_lock_waiter_does_not_leak_lock() -> None:
+    from bifrost import client as client_mod
+
+    lock = threading.Lock()
+    lock.acquire()
+    waiter = asyncio.create_task(client_mod._acquire_refresh_lock(lock))
+    await asyncio.sleep(0)
+
+    waiter.cancel()
+    lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert lock.acquire(blocking=False) is True
+    lock.release()
 
 
 @pytest.mark.asyncio
