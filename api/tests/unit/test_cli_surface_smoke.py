@@ -36,6 +36,7 @@ TOP_LEVEL_COMMANDS = {
     "migrate-imports",
     "skill",
     "login",
+    "update",
     "logout",
     "auth",
     "help",

@@ -19,7 +19,9 @@ import json
 import logging
 import os
 import pathlib
+import shlex
 import shutil
+import subprocess
 import sys
 import textwrap
 import time
@@ -635,19 +637,24 @@ def main(args: list[str] | None = None) -> int:
         print(f"bifrost {__version__}")
         return 0
 
+    command = args[0].lower()
     help_requested = any(a in ("-h", "--help") for a in args)
     if args[0].lower() == "help" or args[0] in ("-h", "--help"):
         print_help()
         return 0
 
-    if not help_requested:
+    # An incompatible CLI must still be able to replace itself. Running the
+    # compatibility gate before `update` would block the recovery command in
+    # exactly the state where it is needed most.
+    if not help_requested and command != "update":
         _check_cli_version()
 
     try:
-        command = args[0].lower()
-
         if command == "login":
             return handle_login(args[1:])
+
+        if command == "update":
+            return handle_update(args[1:])
 
         if command == "logout":
             return handle_logout(args[1:])
@@ -727,6 +734,7 @@ Commands:
   migrate-imports  Rewrite "bifrost" imports into user/lucide/router imports
   skill       Install / update / remove agent skills (.claude/skills + .agents/skills)
   login       Authenticate (browser device-code by default; password-grant with --email/--password)
+  update      Update this CLI from the selected Bifrost instance
   logout      Clear stored credentials for one URL
   auth        Inspect stored credentials (auth list)
   help        Show this help message
@@ -804,10 +812,126 @@ Examples:
   bifrost migrate-imports apps/my-app --yes
   bifrost login
   bifrost login --url https://app.gobifrost.com
+  bifrost update
+  bifrost update --url https://app.gobifrost.com
   bifrost logout
 
 For more information, visit: https://docs.gobifrost.com
 """.strip())
+
+
+def _update_install_command(download_url: str) -> list[str]:
+    """Return the installer command for the environment running this CLI."""
+    pipx_metadata = pathlib.Path(sys.prefix) / "pipx_metadata.json"
+    if pipx_metadata.is_file():
+        pipx = shutil.which("pipx")
+        if not pipx:
+            raise RuntimeError(
+                "This CLI is managed by pipx, but the pipx command is not on PATH."
+            )
+        return [pipx, "install", "--force", download_url]
+    return [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        download_url,
+    ]
+
+
+def _format_update_command(command: list[str]) -> str:
+    """Format an argv list for a copyable platform-appropriate error message."""
+    if os.name == "nt":
+        return subprocess.list2cmdline(command)
+    return shlex.join(command)
+
+
+def handle_update(args: list[str]) -> int:
+    """Handle ``bifrost update`` by reinstalling from a Bifrost instance."""
+    api_url: str | None = None
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--url", "-u"):
+            if i + 1 >= len(args):
+                print("Error: --url requires a value", file=sys.stderr)
+                return 1
+            api_url = args[i + 1]
+            i += 2
+        elif arg in ("--help", "-h"):
+            print("""
+Usage: bifrost update [options]
+
+Update this CLI from the selected Bifrost instance. If --url is omitted,
+the current connection is resolved from BIFROST_API_URL, the selected default,
+or the only stored connection. If several connections exist with no default,
+an interactive terminal prompts you to choose one.
+
+Options:
+  --url, -u URL   Bifrost instance to update from
+  --help, -h      Show this help message
+
+Examples:
+  bifrost update
+  bifrost update --url https://app.gobifrost.com
+""".strip())
+            return 0
+        else:
+            print(f"Unknown option: {arg}", file=sys.stderr)
+            return 1
+
+    resolved_url, _source = credentials.resolve_current_connection(
+        api_url,
+        prompt_for_default=True,
+    )
+    if not resolved_url:
+        print(
+            "Error: no Bifrost connection selected. Pass --url, run "
+            "`bifrost auth use <url>`, or log in first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    resolved_url = resolved_url.rstrip("/")
+    download_url = f"{resolved_url}/api/cli/download"
+    try:
+        command = _update_install_command(download_url)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        print(
+            f"Install pipx, then run: pipx install --force {download_url}",
+            file=sys.stderr,
+        )
+        return 1
+
+    from bifrost import __version__
+
+    print(f"Updating Bifrost CLI {__version__} from {resolved_url}...")
+    try:
+        result = subprocess.run(command, check=False)
+    except OSError as exc:
+        print(f"Error: could not start the installer: {exc}", file=sys.stderr)
+        print(
+            f"Run manually: {_format_update_command(command)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if result.returncode != 0:
+        print(
+            f"Error: CLI update failed with exit code {result.returncode}.",
+            file=sys.stderr,
+        )
+        print(
+            f"Run manually: {_format_update_command(command)}",
+            file=sys.stderr,
+        )
+        return result.returncode or 1
+
+    print("Bifrost CLI updated successfully. Run `bifrost --version` to verify.")
+    return 0
 
 
 def handle_login(args: list[str]) -> int:
