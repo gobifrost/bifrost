@@ -1766,6 +1766,8 @@ Options:
                                   no-include-imports]
   --dry-run                       Preview the dependency closure + outside
                                   references; capture nothing.
+  --yes                           Skip the confirmation prompt (capture is
+                                  terminal).
   --help                          Show this message and exit.
 ```
 
@@ -1936,9 +1938,13 @@ Usage: solution start [OPTIONS] [APP_SLUG]
   Run the app's dev server + local workflows (one origin).
 
 Options:
-  --solution TEXT  Install id or unique slug.
-  --port INTEGER   Local origin port.  [default: 3000]
-  --help           Show this message and exit.
+  --solution TEXT    Install id or unique slug.
+  --port INTEGER     Local origin port.  [default: 3000]
+  --host TEXT        Address for the local origin to bind.  [default:
+                     127.0.0.1]
+  --public-url TEXT  Browser-visible origin for the local proxy, e.g.
+                     https://dev.example.
+  --help             Show this message and exit.
 ```
 
 ### `solution swap-slugs`

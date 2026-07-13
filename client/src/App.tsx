@@ -410,6 +410,14 @@ function AppRoutes() {
 								</ProtectedRoute>
 							}
 						/>
+						<Route
+							path="users/:userId"
+							element={
+								<ProtectedRoute requirePlatformAdmin>
+									<Users />
+								</ProtectedRoute>
+							}
+						/>
 
 						{/* Roles - PlatformAdmin only */}
 						<Route

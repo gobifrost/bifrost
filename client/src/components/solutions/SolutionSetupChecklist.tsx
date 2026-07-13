@@ -8,7 +8,7 @@
  */
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, ExternalLink, KeyRound, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ export interface SolutionSetupChecklistProps {
 	setupComplete: boolean;
 	/** Called when the user submits a value for a config key. */
 	onSet: (key: string, value: string) => void | Promise<void>;
+	onGenerateWorkflowKey?: (workflowId: string) => void | Promise<void>;
 	/**
 	 * Supplies the href for a connection item's "Set up integration" link.
 	 * Defaults to the global Integrations page (opened in a new tab so the
@@ -219,10 +220,91 @@ export function ConnectionItem({
 	);
 }
 
+export function WorkflowEndpointKeyItem({
+	item,
+	onGenerateWorkflowKey,
+}: {
+	item: SolutionSetupItem;
+	onGenerateWorkflowKey?: (workflowId: string) => void | Promise<void>;
+}) {
+	const [pending, setPending] = useState(false);
+	const workflowId = item.workflow_id ?? item.key;
+	const label = item.workflow_name ?? item.key;
+	const methods = item.allowed_methods?.length
+		? item.allowed_methods.join(", ")
+		: "POST";
+
+	const handleGenerate = async () => {
+		if (!workflowId || !onGenerateWorkflowKey) return;
+		setPending(true);
+		try {
+			await onGenerateWorkflowKey(workflowId);
+		} finally {
+			setPending(false);
+		}
+	};
+
+	return (
+		<div
+			className={
+				"rounded-lg border p-4 " +
+				(item.required && !item.is_set ? "border-yellow-500/60 bg-yellow-500/5" : "")
+			}
+		>
+			<div className="flex items-center justify-between gap-3">
+				<div className="flex min-w-0 items-center gap-2">
+					<KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+					<span className="truncate text-sm font-medium">{label}</span>
+					<Badge variant="outline" className="shrink-0 text-[10px]">
+						endpoint key
+					</Badge>
+					{item.required && (
+						<span className="shrink-0 text-xs text-destructive">required</span>
+					)}
+				</div>
+				<span
+					className={
+						"flex shrink-0 items-center gap-1 text-xs font-medium " +
+						(item.is_set
+							? "text-green-600 dark:text-green-500"
+							: "text-muted-foreground")
+					}
+				>
+					{item.is_set ? (
+						<CheckCircle2 className="h-3.5 w-3.5" />
+					) : (
+						<Circle className="h-3.5 w-3.5" />
+					)}
+					{item.is_set ? "Key generated" : "Missing"}
+				</span>
+			</div>
+			<p className="mt-1 text-xs text-muted-foreground">
+				{methods} endpoint callers need an API key.
+			</p>
+			<div className="mt-3">
+				<Button
+					variant={item.is_set ? "outline" : "default"}
+					size="sm"
+					disabled={pending || !onGenerateWorkflowKey}
+					onClick={() => void handleGenerate()}
+				>
+					{pending ? (
+						<Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+					) : (
+						<KeyRound className="mr-1.5 h-3.5 w-3.5" />
+					)}
+					{item.is_set ? "Rotate endpoint key" : "Generate endpoint key"}
+				</Button>
+			</div>
+		</div>
+	);
+}
+
 export function SolutionSetupChecklist({
 	items,
 	setupComplete,
 	onSet,
+	onGenerateWorkflowKey,
 	integrationHref,
 }: SolutionSetupChecklistProps) {
 	if (items.length === 0) {
@@ -246,14 +328,20 @@ export function SolutionSetupChecklist({
 			)}
 			{items.map((item) =>
 				item.kind === "connection" ? (
-					<ConnectionItem
-						key={`connection:${item.key}`}
-						item={item}
-						integrationHref={integrationHref}
-					/>
-				) : (
-					<ConfigItem key={`config:${item.key}`} item={item} onSet={onSet} />
-				),
+						<ConnectionItem
+							key={`connection:${item.key}`}
+							item={item}
+							integrationHref={integrationHref}
+						/>
+					) : item.kind === "workflow_endpoint_key" ? (
+						<WorkflowEndpointKeyItem
+							key={`workflow-endpoint-key:${item.key}`}
+							item={item}
+							onGenerateWorkflowKey={onGenerateWorkflowKey}
+						/>
+					) : (
+						<ConfigItem key={`config:${item.key}`} item={item} onSet={onSet} />
+					),
 			)}
 		</div>
 	);

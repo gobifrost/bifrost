@@ -421,13 +421,14 @@ class TestSolutionDeployReconcile:
             solution=sol,
             workflows=[{
                 "id": wf_id, "name": "m", "function_name": "run", "path": "workflows/m.py",
-                "endpoint_enabled": True, "timeout_seconds": 42,
+                "endpoint_enabled": True, "allowed_methods": ["GET", "POST"], "timeout_seconds": 42,
                 "category": "Billing", "tags": ["a", "b"],
             }],
         ))
         await db.flush()
         wf = await db.get(Workflow, solution_entity_id(sol.id, uuid_module.UUID(wf_id)))
         assert wf.endpoint_enabled is True
+        assert wf.allowed_methods == ["GET", "POST"]
         assert wf.timeout_seconds == 42
         assert wf.category == "Billing"
         assert wf.tags == ["a", "b"]
@@ -440,6 +441,7 @@ class TestSolutionDeployReconcile:
         await db.flush()
         await db.refresh(wf)
         assert wf.endpoint_enabled is False
+        assert wf.allowed_methods == ["POST"]
         assert wf.timeout_seconds == 1800
         assert wf.category == "General"
         assert wf.tags == []

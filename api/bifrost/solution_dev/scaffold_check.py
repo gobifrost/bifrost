@@ -17,3 +17,19 @@ def main_tsx_needs_dev_fallback(main_tsx: Path) -> bool:
         return False
     text = main_tsx.read_text(encoding="utf-8")
     return "VITE_BIFROST_APP_ID" not in text
+
+
+ORG_NULL_HINT = (
+    "Your app's vite.config.ts predates the null-orgScope fix: it bakes a "
+    'missing org var to "" (which `?? null` never catches), so a global '
+    "install sees orgScope \"\" instead of null. Change the define to:\n\n"
+    '  "import.meta.env.VITE_BIFROST_ORG_ID": '
+    "JSON.stringify(process.env.VITE_BIFROST_ORG_ID || null),\n"
+)
+
+
+def vite_config_needs_org_null(vite_config: Path) -> bool:
+    """True if the file exists and still coerces a missing org var to ""."""
+    if not vite_config.is_file():
+        return False
+    return 'VITE_BIFROST_ORG_ID || ""' in vite_config.read_text(encoding="utf-8")

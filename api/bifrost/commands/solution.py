@@ -23,6 +23,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 import zipfile
@@ -219,6 +220,20 @@ def init_cmd(
     )
 
 
+def _workspace_from_path_arg(path: str) -> pathlib.Path:
+    """Resolve a command's PATH argument to the solution root.
+
+    An explicit path is honored as-is; the implicit default "." walks up like
+    `start` does, so sibling commands (bind/pull/deploy) don't fail one
+    directory deep in the workspace (issue #462).
+    """
+    if path == ".":
+        root = find_solution_root(pathlib.Path.cwd())
+        if root is not None:
+            return root
+    return pathlib.Path(path).resolve()
+
+
 @solution_group.command(
     name="bind",
     help="Bind this local Solution workspace to an existing install.",
@@ -227,7 +242,7 @@ def init_cmd(
 @click.option("--solution", "solution_ref", required=True, help="Install id or unique slug.")
 def bind_cmd(path: str, solution_ref: str) -> None:
     """Bind a local descriptor to an existing remote install without creating one."""
-    workspace = pathlib.Path(path).resolve()
+    workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
             f"No {DESCRIPTOR_FILENAME} in {workspace} - not a Solution workspace. "
@@ -491,7 +506,7 @@ export default defineConfig(({ command }) => {
           "import.meta.env.VITE_BIFROST_API_URL": JSON.stringify(env.url),
           "import.meta.env.VITE_BIFROST_TOKEN": JSON.stringify(env.token),
           "import.meta.env.VITE_BIFROST_APP_ID": JSON.stringify(process.env.VITE_BIFROST_APP_ID || ""),
-          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || ""),
+          "import.meta.env.VITE_BIFROST_ORG_ID": JSON.stringify(process.env.VITE_BIFROST_ORG_ID || null),
         }
       : {};
   return {
@@ -568,11 +583,11 @@ function Home() {
   //   useWorkflowQuery(ref)    → READ: auto-runs on mount, has { data, refresh }.
   //   useWorkflowMutation(ref) → ACTION: runs on mutate(), has { mutate }.
   // This sample is a button (an action), so it uses the mutation hook. The ref
-  // is a workflow UUID, a portable `path::function` ref (e.g.
-  // "functions/hello.py::main", shipped with this scaffold), or a workflow
-  // name — all resolve to THIS install's own workflow. Prefer `path::function`:
-  // it's the shape `bifrost solution start` runs LOCALLY (name/UUID refs
-  // proxy to the deployed copy).
+  // is a portable `path::function` ref (e.g. "functions/hello.py::main",
+  // shipped with this scaffold) or a workflow name — both resolve to THIS
+  // install's own workflow when deployed, and `bifrost solution start` runs
+  // both from your local files. (Avoid raw UUID refs: deploy remaps entity
+  // ids per install, so a hardcoded UUID won't resolve on a deployed install.)
   const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
   return (
     <main style={{ padding: 24 }}>
@@ -962,6 +977,30 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
             entry["source"] = source
         entries.append(entry)
     return entries
+
+
+_WORKFLOW_DECORATOR_RE = re.compile(r"^\s*@workflow\b", re.MULTILINE)
+
+
+def _unregistered_workflow_files(
+    python_files: dict[str, str], workflows: list[dict]
+) -> list[str]:
+    """Bundled .py files whose @workflow function count exceeds their
+    .bifrost/workflows.yaml entry count — the surplus functions deploy as
+    source with no Workflow row, so their refs 404 on the install while
+    working fine under `solution start`. Count-based (not name-parsed): a
+    decorator hit in source is cheap to detect; extracting decorated function
+    names from source is not worth the false positives for a warning.
+    """
+    entries_per_path: dict[str, int] = {}
+    for w in workflows:
+        path = str(w.get("path"))
+        entries_per_path[path] = entries_per_path.get(path, 0) + 1
+    return sorted(
+        rel
+        for rel, src in python_files.items()
+        if len(_WORKFLOW_DECORATOR_RE.findall(src)) > entries_per_path.get(rel, 0)
+    )
 
 
 def _collect_tables(workspace: pathlib.Path) -> list[dict]:
@@ -1486,7 +1525,7 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     import io
     import zipfile
 
-    workspace = pathlib.Path(path).resolve()
+    workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
             f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
@@ -1708,6 +1747,50 @@ def _build_deploy_zip(
     return buf.getvalue()
 
 
+def _unresolved_vendor_failures(
+    failures: dict[str, str], bundled: set[str]
+) -> dict[str, str]:
+    """Failures that actually left a module out of the bundle.
+
+    ``vendor_shared_deps`` probes each module at several candidate paths
+    (``pkg.py`` then ``pkg/__init__.py``); a probe that failed on one candidate
+    is irrelevant when the module resolved via its sibling — aborting there
+    would block a deploy whose bundle is complete.
+    """
+    out: dict[str, str] = {}
+    for path, err in failures.items():
+        if path in bundled:
+            continue
+        if path.endswith("/__init__.py"):
+            sibling = path.removesuffix("/__init__.py") + ".py"
+        else:
+            sibling = path.removesuffix(".py") + "/__init__.py"
+        if sibling in bundled:
+            continue
+        out[path] = err
+    return out
+
+
+def _vendor_repo_reader(client, failures: dict[str, str]):
+    """Reader for ``vendor_shared_deps``: 404 is a legitimate miss (a stdlib/
+    third-party import probe), but any OTHER failure must be recorded — treating
+    it as absence silently drops a shared module from the bundle and the deploy
+    "succeeds" broken (issue #465).
+    """
+
+    async def _read(path: str) -> str | None:
+        resp = await client.post("/api/files/read", json={
+            "path": path, "location": "workspace", "mode": "cloud",
+        })
+        if resp.status_code == 200:
+            return resp.json().get("content")
+        if resp.status_code != 404:
+            failures[path] = f"HTTP {resp.status_code}"
+        return None
+
+    return _read
+
+
 @solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
@@ -1716,7 +1799,7 @@ def _build_deploy_zip(
 def deploy_cmd(
     path: str, solution_ref: str | None, force: bool
 ) -> None:
-    workspace = pathlib.Path(path).resolve()
+    workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
             f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
@@ -1734,6 +1817,15 @@ def deploy_cmd(
         f"  found {len(python_files)} python file(s), {len(workflows)} workflow(s), "
         f"{len(apps)} app(s), {len(forms)} form(s), {len(agents)} agent(s)."
     )
+
+    for rel in _unregistered_workflow_files(python_files, workflows):
+        click.echo(
+            f"  warning: {rel} defines more @workflow function(s) than "
+            ".bifrost/workflows.yaml registers for it — it deploys as source only "
+            "and its refs will 404 on the install. Add a workflows.yaml entry to "
+            "register it.",
+            err=True,
+        )
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -1756,15 +1848,23 @@ def deploy_cmd(
             # the wait isn't a silent gap before the bundle summary.
             click.echo("Vendoring shared dependencies...")
 
-            async def _repo_read(path: str) -> str | None:
-                resp = await client.post("/api/files/read", json={
-                    "path": path, "location": "workspace", "mode": "cloud",
-                })
-                if resp.status_code != 200:
-                    return None
-                return resp.json().get("content")
-
-            vendored = await vendor_shared_deps(python_files, _repo_read)
+            read_failures: dict[str, str] = {}
+            vendored = await vendor_shared_deps(
+                python_files, _vendor_repo_reader(client, read_failures)
+            )
+            read_failures = _unresolved_vendor_failures(
+                read_failures, set(python_files) | set(vendored)
+            )
+            if read_failures:
+                detail = ", ".join(
+                    f"{p} ({err})" for p, err in sorted(read_failures.items())
+                )
+                raise click.ClickException(
+                    f"Could not read {len(read_failures)} shared module(s) from "
+                    f"_repo/: {detail}. Deploying would silently omit them and the "
+                    "Solution would break at runtime — retry; if it persists, check "
+                    "API connectivity and permissions."
+                )
             if vendored:
                 click.echo(f"  vendored {len(vendored)} shared dependency file(s).")
                 bundle_python = {**python_files, **vendored}
@@ -2079,7 +2179,7 @@ def _vite_child_env(
     base_env: dict[str, str],
     *,
     app_id: str,
-    org_id: str,
+    org_id: str | None,
     proxy_origin: str,
     access_token: str,
 ) -> dict[str, str]:
@@ -2094,7 +2194,13 @@ def _vite_child_env(
     """
     env = dict(base_env)
     env["VITE_BIFROST_APP_ID"] = app_id
-    env["VITE_BIFROST_ORG_ID"] = org_id
+    # Omit the org var entirely for a global install: "" is not null once it
+    # reaches the app (`?? null` doesn't catch it), and the proxy config uses
+    # None for the same install — the two must agree (issue #463).
+    if org_id:
+        env["VITE_BIFROST_ORG_ID"] = org_id
+    else:
+        env.pop("VITE_BIFROST_ORG_ID", None)
     env["BIFROST_API_URL"] = proxy_origin
     env["BIFROST_ACCESS_TOKEN"] = access_token
     return env
@@ -2104,18 +2210,36 @@ def _vite_child_env(
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
 @click.option("--port", default=3000, show_default=True, type=int, help="Local origin port.")
-def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None:
+@click.option("--host", "bind_host", default="127.0.0.1", show_default=True,
+              help="Address for the local origin to bind.")
+@click.option("--public-url", default=None,
+              help="Browser-visible origin for the local proxy, e.g. https://dev.example.")
+def start_cmd(
+    app_slug: str | None,
+    solution_ref: str | None,
+    port: int,
+    bind_host: str,
+    public_url: str | None,
+) -> None:
     import shutil
 
     from bifrost.client import BifrostClient
     from bifrost.solution_dev.app_select import AppSelectionError, select_app
     from bifrost.solution_dev.function_host import FunctionHost, set_dev_execution_context
-    from bifrost.solution_dev.scaffold_check import PATCH_HINT, main_tsx_needs_dev_fallback
+    from bifrost.solution_dev.scaffold_check import (
+        ORG_NULL_HINT,
+        PATCH_HINT,
+        main_tsx_needs_dev_fallback,
+        vite_config_needs_org_null,
+    )
 
-    workspace = pathlib.Path(".").resolve()
-    if not is_solution_workspace(workspace):
+    # Walk up to the solution root like scaffold-app and `bifrost run` do —
+    # requiring cwd == root fails from apps/<slug>/ for no reason (issue #462).
+    workspace = find_solution_root(pathlib.Path.cwd())
+    if workspace is None:
         raise click.ClickException(
-            f"Not a Solution workspace (no {DESCRIPTOR_FILENAME}). Run `bifrost solution init` first."
+            f"Not inside a Solution workspace (no {DESCRIPTOR_FILENAME} here or in any "
+            "parent directory). Run `bifrost solution init` first."
         )
     descriptor = load_descriptor(workspace)
 
@@ -2137,6 +2261,8 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
     main_tsx = chosen.app_dir / "src" / "main.tsx"
     if main_tsx_needs_dev_fallback(main_tsx):
         click.echo(PATCH_HINT, err=True)
+    if vite_config_needs_org_null(chosen.app_dir / "vite.config.ts"):
+        click.echo(ORG_NULL_HINT, err=True)
 
     click.echo(f"Using Solution install id: {binding.solution_id}")
 
@@ -2146,7 +2272,12 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
 
     host = FunctionHost(workspace)
     host.reload()
-    click.echo(f"Discovered {len(host.refs())} local function(s).")
+    refs = host.refs()
+    click.echo(f"Discovered {len(refs)} local function(s):")
+    for ref in refs:
+        click.echo(f"  {ref}")
+    for rel, err in sorted(host.failures().items()):
+        click.echo(f"  ⚠ import error in {rel}: {err}", err=True)
 
     # Spawn npm via the RESOLVED path: shutil.which honors PATHEXT (finds
     # `npm.cmd` on Windows) but CreateProcess with a literal "npm" argv[0] does
@@ -2154,19 +2285,56 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
     npm = shutil.which("npm")
     if npm is None:
         raise click.ClickException("npm not found on PATH — install Node.js to run the dev server.")
-    if not (chosen.app_dir / "node_modules").is_dir():
-        click.echo("Installing app dependencies (npm install)…")
-        subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
+    # Cheap, deterministic refusals come BEFORE a possibly-minutes install:
+    # aborting on a busy port after the user sat through npm is hostile.
+    vite_port = port + 1
+    _ensure_port_free(vite_port)
 
+    original_sdk_spec = _heal_sdk_dep(chosen.app_dir, client.api_url)
+    if original_sdk_spec is not None:
+        click.echo(
+            "Repointed the app's `bifrost` SDK dependency at this instance "
+            "(package.json froze the scaffold-time URL) — reinstalling."
+        )
+    have_node_modules = (chosen.app_dir / "node_modules").is_dir()
+    if original_sdk_spec is not None or not have_node_modules:
+        click.echo("Installing app dependencies (npm install)…")
+        try:
+            subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
+        except subprocess.CalledProcessError as exc:
+            if original_sdk_spec is not None:
+                # Keep the retry signal alive: a healed manifest with a failed
+                # install would otherwise read as "already correct" next run
+                # and the stale SDK would never be replaced.
+                _restore_sdk_dep(chosen.app_dir, client.api_url, original_sdk_spec)
+            if original_sdk_spec is not None and have_node_modules:
+                # The pre-heal state was a WORKING install (possibly offline):
+                # keep the dev server usable rather than hard-failing; the next
+                # start retries the heal + reinstall.
+                click.echo(
+                    "  warning: reinstall after repointing the SDK failed — "
+                    "continuing with the previously installed dependencies "
+                    "(the SDK may be stale until npm install succeeds).",
+                    err=True,
+                )
+            else:
+                # First run on a fresh machine is when this most likely fails
+                # (registry hiccup, unreachable SDK download) — a one-line
+                # error, never a raw traceback (issue #459).
+                raise click.ClickException(
+                    f"npm install failed in {chosen.app_dir} (exit {exc.returncode}) "
+                    "— see the npm output above."
+                )
+
+    proxy_origin = (public_url or f"http://127.0.0.1:{port}").rstrip("/")
     vite_env = _vite_child_env(
         dict(os.environ),
         app_id=chosen.app_id,
-        org_id=(org_info or {}).get("id", ""),
-        proxy_origin=f"http://127.0.0.1:{port}",
+        org_id=(org_info or {}).get("id"),
+        proxy_origin=proxy_origin,
         access_token=client._access_token,
     )
 
-    vite_port = port + 1
     # Run `npm run dev` in its OWN process group (start_new_session) so teardown
     # can signal the WHOLE group: `npm` spawns the real `vite` node process as a
     # child, and a plain terminate() of `npm` orphans `vite` (it keeps the port
@@ -2177,6 +2345,14 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
         cwd=chosen.app_dir, env=vite_env,
         start_new_session=True,
     )
+    try:
+        _wait_for_vite(vite_proc, vite_port)
+    except BaseException:
+        # BaseException: a Ctrl-C during the (up to 60s) readiness wait must
+        # tear the detached npm+vite group down too, or it survives orphaned
+        # and holds the port for the next start.
+        _terminate_process_group(vite_proc)
+        raise
 
     try:
         asyncio.run(
@@ -2189,6 +2365,9 @@ def start_cmd(app_slug: str | None, solution_ref: str | None, port: int) -> None
                 vite_port,
                 workspace,
                 binding.solution_id,
+                bind_host,
+                proxy_origin,
+                descriptor.global_repo_access,
             )
         )
     finally:
@@ -2278,6 +2457,8 @@ def _print_capture_preview(preview: dict) -> None:
 )
 @click.option("--dry-run", is_flag=True, default=False,
               help="Preview the dependency closure + outside references; capture nothing.")
+@click.option("--yes", is_flag=True, default=False,
+              help="Skip the confirmation prompt (capture is terminal).")
 def capture_cmd(
     solution_id: str,
     workflows: tuple[str, ...],
@@ -2289,6 +2470,7 @@ def capture_cmd(
     configs: tuple[str, ...],
     include_imports: bool,
     dry_run: bool,
+    yes: bool,
 ) -> None:
     raw = {
         "workflows": workflows, "tables": tables, "apps": apps, "forms": forms,
@@ -2299,6 +2481,29 @@ def capture_cmd(
             "no entities selected — pass at least one of "
             "--workflow/--table/--app/--form/--agent/--claim/--config."
         )
+
+    if not dry_run and not yes:
+        # Warning and prompt on the SAME stream (stdout, where click.confirm
+        # prompts) — split streams leave a redirected user staring at a
+        # seemingly hung terminal with the question in their log file.
+        click.echo(
+            "Capture is terminal: the selected _repo/ entities are adopted into "
+            f"install {solution_id} and stop being loose/global. A later "
+            "`bifrost deploy` of this Solution replaces captured state that was "
+            "never pulled into the workspace. This cannot be undone by "
+            "uninstall. Use --dry-run to preview first."
+        )
+        try:
+            proceed = click.confirm("Proceed with capture?")
+        except click.exceptions.Abort:
+            # EOF / Ctrl-C on the prompt (e.g. scripted use without --yes):
+            # decline, don't traceback — handle_solution doesn't catch Abort.
+            proceed = False
+        if not proceed:
+            click.echo("Aborted — nothing was captured. Re-run with --yes to skip the prompt.")
+            # Non-zero: a scripted `capture && deploy` chain must not roll on
+            # past a capture that never happened.
+            raise SystemExit(1)
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
@@ -2614,6 +2819,144 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
         raise SystemExit(rc)
 
 
+_SDK_DOWNLOAD_SUFFIX = "/api/sdk/download"
+
+
+def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> str | None:
+    """Repoint the scaffolded ``bifrost`` SDK dependency at the CURRENT instance.
+
+    scaffold freezes ``<api_url>/api/sdk/download`` into package.json at
+    scaffold time; against a dead debug-stack port (or the offline
+    localhost:8000 fallback) ``npm install`` fails days later with nothing
+    connecting the error back to the frozen URL (issue #464). ``start`` knows
+    the bound instance's URL — heal before installing. Only the
+    scaffold-written download-URL shape is touched: a user-pinned ``file:``
+    path or registry range is their choice.
+
+    The rewrite is a single-occurrence text replacement, not a JSON re-dump —
+    the file is the USER'S manifest and a one-dep heal must not reformat it or
+    escape their non-ASCII content. Heal is best-effort: unreadable, malformed,
+    or ambiguous manifests are left alone (npm's own error is the message).
+
+    Returns the ORIGINAL dependency spec when the file was changed (the caller
+    reverts it if the reinstall fails, keeping the retry signal alive), else
+    None.
+    """
+    pkg_file = app_dir / "package.json"
+    try:
+        # utf-8-sig: Windows editors BOM-prefix manifests npm happily accepts.
+        text = pkg_file.read_text(encoding="utf-8-sig")
+        pkg = json.loads(text)
+    except (OSError, ValueError):
+        return None
+    deps = pkg.get("dependencies")
+    if not isinstance(deps, dict):
+        return None
+    current = deps.get("bifrost")
+    expected = f"{api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
+    if (
+        not isinstance(current, str)
+        or not current.endswith(_SDK_DOWNLOAD_SUFFIX)
+        or current == expected
+        or text.count(current) != 1
+    ):
+        return None
+    try:
+        pkg_file.write_text(text.replace(current, expected), encoding="utf-8")
+    except OSError:
+        return None
+    return current
+
+
+def _restore_sdk_dep(app_dir: pathlib.Path, api_url: str, original: str) -> None:
+    """Undo a heal whose reinstall failed, so the NEXT start retries both.
+
+    Leaving the healed URL in place with a failed install permanently consumes
+    the reinstall signal: the next run sees a correct manifest plus an existing
+    node_modules and never replaces the stale SDK tarball.
+    """
+    pkg_file = app_dir / "package.json"
+    expected = f"{api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
+    try:
+        text = pkg_file.read_text(encoding="utf-8-sig")
+        if text.count(expected) == 1:
+            pkg_file.write_text(text.replace(expected, original), encoding="utf-8")
+    except OSError:
+        pass  # best-effort: worst case the user re-heals on a later start
+
+
+def _ensure_port_free(port: int) -> None:
+    """Refuse to spawn vite onto a port something already serves.
+
+    An orphaned dev server from a previous run holding the port makes the new
+    child die under ``--strictPort`` while readiness probes happily connect to
+    the LEFTOVER — `start` would silently serve the stale app (live-drive
+    finding). Checking before the spawn is deterministic; probing after it is
+    a race against npm's cold start.
+    """
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            pass
+    except OSError:
+        return
+    raise click.ClickException(
+        f"Port {port} is already in use — an orphaned app dev server from a "
+        "previous run is the usual cause. Kill the process holding it (or "
+        "pass --port to pick a different pair) and re-run."
+    )
+
+
+def _wait_for_vite(proc: "subprocess.Popen", port: int, timeout: float = 60.0) -> None:
+    """Block until the Vite child accepts TCP connections; fail fast if it dies.
+
+    ``--strictPort`` makes Vite exit when its port is taken; without this
+    check the proxy serves unexplained 502s while the only clue scrolls past
+    in npm output (issue #460). ``_ensure_port_free`` ran before the spawn,
+    so a connect success here can only be our child.
+    """
+    import socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        code = proc.poll()
+        if code is not None:
+            raise click.ClickException(
+                f"The app dev server (vite) exited with code {code} before "
+                f"serving — see its output above."
+            )
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.25)
+    raise click.ClickException(
+        f"vite did not start listening on port {port} within {int(timeout)}s — "
+        "see its output above."
+    )
+
+
+def _terminate_windows_tree(proc: "subprocess.Popen") -> None:
+    """Kill the npm process AND its children on Windows.
+
+    There are no process groups there: a bare terminate() reaps npm but
+    orphans its vite child, which keeps the port bound and breaks the next
+    start under --strictPort (issue #461). ``taskkill /T`` kills the tree.
+    """
+    try:
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        # taskkill missing from PATH (stripped CI shell): at minimum reap the
+        # direct child like the pre-taskkill code did, rather than crash the
+        # teardown and leave the whole tree running.
+        proc.terminate()
+
+
 def _terminate_process_group(proc: "subprocess.Popen") -> None:
     """Stop a child and any grandchildren it spawned in its process group.
 
@@ -2622,15 +2965,27 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
     """
     import signal
 
+    if not hasattr(os, "killpg"):
+        # Windows: no process groups — taskkill the whole tree instead.
+        _terminate_windows_tree(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # taskkill /F already force-killed the tree; a wait timing out
+            # here means Windows is slow to reap — nothing more to do, and
+            # teardown must not raise.
+            pass
+        return
+
     def _signal_group(sig: int) -> None:
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(os.getpgid(proc.pid), sig)
-                return
-            except (ProcessLookupError, PermissionError):
-                return  # already gone / not our group — fall through to proc-level
-        # No process groups (Windows): signal the process itself.
-        proc.send_signal(sig)
+        # start_new_session=True guarantees pgid == proc.pid, and the group
+        # outlives a reaped leader: os.getpgid(pid) raises ESRCH once poll()
+        # reaps npm, silently skipping the kill while vite lives on. Signal
+        # the group id directly.
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass  # whole group already gone / not ours
 
     _signal_group(signal.SIGTERM)
     try:
@@ -2639,26 +2994,49 @@ def _terminate_process_group(proc: "subprocess.Popen") -> None:
         _signal_group(signal.SIGKILL)
 
 
-async def _serve(client, chosen, org_info, host, port, vite_port, workspace, solution_id):
-    from aiohttp import web
+def _dev_proxy_config(client, chosen, org_info, solution_id, global_repo_access):
+    from bifrost.solution_dev.proxy import DevProxyConfig
 
-    from bifrost.solution_dev.proxy import DevProxyConfig, build_dev_app
-    from bifrost.solution_dev.reload import start_function_watch
-
-    cfg = DevProxyConfig(
+    return DevProxyConfig(
         upstream_url=client.api_url.rstrip("/"),
         token=client._access_token,
         app_id=chosen.app_id,
         org_id=(org_info or {}).get("id"),
         solution_id=solution_id,
+        global_repo_access=global_repo_access,
+        refresh_token=client.refresh_access_token,
+    )
+
+
+async def _serve(
+    client,
+    chosen,
+    org_info,
+    host,
+    port,
+    vite_port,
+    workspace,
+    solution_id,
+    bind_host,
+    proxy_origin,
+    global_repo_access,
+):
+    from aiohttp import web
+
+    from bifrost.solution_dev.proxy import build_dev_app
+    from bifrost.solution_dev.reload import start_function_watch
+
+    cfg = _dev_proxy_config(
+        client, chosen, org_info, solution_id, global_repo_access
     )
     app = build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}")
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
+    site = web.TCPSite(runner, bind_host, port)
     await site.start()
     observer = start_function_watch(workspace, host)
-    click.echo(f"\n  Bifrost solution dev server → http://localhost:{port}\n")
+    click.echo(f"\n  Bifrost solution dev server → {proxy_origin}\n")
+    click.echo(f"  Bound to {bind_host}:{port}\n")
     click.echo("  Press Ctrl-C to stop.\n")
     try:
         while True:

@@ -151,6 +151,14 @@ class SolutionConfigStatus(BaseModel):
     value_set: bool
 
 
+class SolutionAccessUserSummary(BaseModel):
+    """User who currently receives access through one of the entity's roles."""
+
+    id: UUID
+    name: str | None = None
+    email: str
+
+
 class SolutionEntitySummary(BaseModel):
     """Lightweight entity row for Solution-owned/capturable entity lists."""
 
@@ -170,6 +178,9 @@ class SolutionEntitySummary(BaseModel):
     source_table: str | None = None
     select: str | None = None
     created_at: datetime | None = None
+    role_ids: list[UUID] = Field(default_factory=list)
+    role_names: list[str] = Field(default_factory=list)
+    access_users: list[SolutionAccessUserSummary] = Field(default_factory=list)
 
 
 class SolutionFileSummary(BaseModel):
@@ -589,10 +600,14 @@ class SolutionSetupItem(BaseModel):
     is_set: bool
     description: str | None = None
     default: str | None = None
-    kind: Literal["config", "connection"] = "config"
+    kind: Literal["config", "connection", "workflow_endpoint_key"] = "config"
     # Connection-only meta (defaults for config items):
     has_oauth: bool = False  # template carried OAuth shape — WARN-ONLY, never gates
     connected: bool = False  # informational: a token/mapping resolves
+    # Workflow endpoint key-only meta:
+    workflow_id: str | None = None
+    workflow_name: str | None = None
+    allowed_methods: list[str] = Field(default_factory=list)
 
 
 class SolutionSetupStatus(BaseModel):

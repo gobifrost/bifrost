@@ -1,5 +1,9 @@
 {
   "access_level": "authenticated",
+  "allowed_methods": [
+    "GET",
+    "POST"
+  ],
   "category": "TestCat",
   "description": "parity test desc",
   "endpoint_enabled": true,
