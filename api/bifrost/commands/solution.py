@@ -2326,6 +2326,39 @@ def start_cmd(
                     "— see the npm output above."
                 )
 
+    async def _fetch_server_version() -> tuple[str | None, int | None]:
+        resp = await client.get("/api/version")
+        if resp.status_code != 200:
+            return None, None
+        data = resp.json()
+        fp = data.get("sdk_fingerprint")
+        fp = fp if isinstance(fp, str) else None
+        if fp == "unavailable":
+            # Server's own toolchain failed to compute a fingerprint — no
+            # signal to compare against, treat like an old server.
+            fp = None
+        contract = data.get("sdk_contract_version")
+        contract = contract if isinstance(contract, int) else None
+        return fp, contract
+
+    try:
+        server_fp, server_contract = asyncio.run(_fetch_server_version())
+    except Exception:
+        # The staleness check must never block `start`: network errors, an
+        # old server without this field, bad JSON, or anything else the
+        # server does wrong all degrade to "no warning", not a crash.
+        server_fp, server_contract = None, None
+
+    warning = sdk_staleness_warning(
+        installed_sdk_fingerprint(chosen.app_dir),
+        server_fp,
+        installed_sdk_contract(chosen.app_dir),
+        server_contract,
+    )
+    if warning is not None:
+        message, severity = warning
+        click.secho(message, fg="red" if severity == "breaking" else "yellow")
+
     proxy_origin = (public_url or f"http://127.0.0.1:{port}").rstrip("/")
     vite_env = _vite_child_env(
         dict(os.environ),
@@ -2900,6 +2933,48 @@ def installed_sdk_fingerprint(app_dir: pathlib.Path) -> str | None:
         return None
     fingerprint = stamp.get("fingerprint")
     return fingerprint if isinstance(fingerprint, str) else None
+
+
+def sdk_staleness_warning(
+    installed_fp: str | None,
+    server_fp: str | None,
+    installed_contract: int | None,
+    server_contract: int | None,
+) -> tuple[str, str] | None:  # (message, severity: "warn"|"breaking") or None
+    """Decide whether `solution start` should warn that the locally-installed
+    web SDK is stale relative to the server. Pure/no-network — callers own
+    fetching `server_fp`/`server_contract` from `GET /api/version` and reading
+    `installed_fp`/`installed_contract` via `installed_sdk_fingerprint` /
+    `installed_sdk_contract`.
+
+    Tiered: "no change" is silent, "non-breaking" is gentle (yellow), a
+    contract mismatch is loud (red) since hooks may actually fail.
+    """
+    if server_fp is None:
+        # Old server (predates the staleness gate), fetch failure, or the
+        # server's own toolchain couldn't compute a fingerprint — no signal,
+        # so stay silent rather than nag.
+        return None
+    if installed_fp is not None and installed_fp == server_fp:
+        return None  # nothing changed -> never prompts
+
+    update_hint = "Run: bifrost solution sdk update"
+    if (
+        installed_contract is not None
+        and server_contract is not None
+        and installed_contract != server_contract
+    ):
+        return (
+            f"Web SDK is incompatible with this server (SDK contract "
+            f"v{installed_contract}, server v{server_contract}) — hooks may "
+            f"fail. {update_hint}",
+            "breaking",
+        )
+
+    return (
+        f"Web SDK update available (non-breaking). {update_hint}",
+        "warn",
+    )
 
 
 def installed_sdk_contract(app_dir: pathlib.Path) -> int | None:
