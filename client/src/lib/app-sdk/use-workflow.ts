@@ -164,6 +164,11 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
           let settled = false;
           let pollTimer: ReturnType<typeof setInterval> | null = null;
           let unsubscribe: () => void = () => {};
+          // Set once a terminal ws frame has been seen. There's no client
+          // deadline, so if the one post-terminal fetch fails transiently we
+          // must not just give up — arm the poll fallback so the run still
+          // settles instead of hanging forever.
+          let sawTerminal = false;
           const settle = (fn: () => void) => {
             if (settled) return;
             settled = true;
@@ -187,6 +192,13 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
             } catch {
               // Transient fetch failure — the stream/poll keeps driving; a
               // persistent failure surfaces on the next terminal fetch attempt.
+              // If this was the post-terminal-event fetch, there's no further
+              // status frame coming and the socket may stay open (so
+              // onSocketDown never fires) — arm the poll fallback so the run
+              // still settles instead of hanging forever.
+              if (sawTerminal && !settled && !pollTimer) {
+                pollTimer = setInterval(checkOnce, POLL_INTERVAL_MS);
+              }
             }
           };
           unsubscribe = subscribeToExecution(
@@ -198,7 +210,10 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
               }
               if (evt.type === "status") {
                 if (seq === seqRef.current && evt.status) setStatus(evt.status);
-                if (evt.isTerminal) void checkOnce();
+                if (evt.isTerminal) {
+                  sawTerminal = true;
+                  void checkOnce();
+                }
               }
             },
             () => {

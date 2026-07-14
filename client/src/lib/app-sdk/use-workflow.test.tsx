@@ -489,4 +489,75 @@ describe("useWorkflow", () => {
     await waitFor(() => expect(rejections).toHaveLength(1));
     expect(rejections[0].message).toBe("boom");
   });
+
+  it("arms the poll fallback when the post-terminal-event fetch fails transiently", async () => {
+    vi.useFakeTimers();
+    let streamCb: (evt: unknown) => void = () => {};
+    (subscribeToExecution as Mock).mockImplementation((_id: string, cb: (evt: unknown) => void) => {
+      streamCb = cb;
+      return vi.fn();
+    });
+
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (isExecute(url)) {
+        return new Response(JSON.stringify({ execution_id: "e6", status: "Pending" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (isGetExecution(url, "e6")) {
+        getCount += 1;
+        // 1st GET: immediate post-subscribe check (Running).
+        // 2nd GET: fired by the terminal ws event — fails transiently.
+        // 3rd GET: fired by the poll fallback — returns the terminal result.
+        if (getCount === 1) {
+          return new Response(JSON.stringify({ status: "Running" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (getCount === 2) {
+          throw new Error("network error");
+        }
+        return new Response(
+          JSON.stringify({ status: "Success", result: { recovered: true } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unhandled fetch: ${url}`);
+    });
+
+    const onResult = vi.fn();
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-x"
+        fetchImpl={fetchMock as unknown as typeof fetch}
+      >
+        <StreamRunner onResult={onResult} />
+      </BifrostProvider>,
+    );
+    await act(async () => {
+      screen.getByText("go").click();
+    });
+
+    await vi.waitFor(() => expect(subscribeToExecution).toHaveBeenCalled());
+    await vi.waitFor(() => expect(screen.getByTestId("execId").textContent).toBe("e6"));
+
+    await act(async () => {
+      streamCb({ type: "status", status: "Success", isTerminal: true });
+      // let the failing fetch's rejection settle
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(onResult).toHaveBeenCalledWith({ recovered: true });
+    vi.useRealTimers();
+  });
 });
