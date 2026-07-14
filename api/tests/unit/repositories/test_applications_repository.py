@@ -68,17 +68,29 @@ async def test_create_application_takes_slug_advisory_lock_first(db_session, mon
     ), "duplicate-check SELECT not found after the lock"
 
 
-async def test_create_application_barks_on_v2_default(db_session):
-    """A bare `apps create` defaults to standalone_v2, but a loose (non-solution)
-    v2 app can never render (only a Solution deploy builds its dist). So
-    create_application REFUSES v2 with a message pointing at the Solution flow.
-    Solution apps are created by deploy, not this path."""
+async def test_create_application_builds_loose_v2_from_authored_source(
+    db_session, monkeypatch
+):
+    """Loose v2 is the migration staging model: build it, do not v1-scaffold it."""
     repo = ApplicationRepository(db_session, org_id=None, user_id=None, is_superuser=True)
-    with pytest.raises(ValueError, match="Solution"):
-        await repo.create_application(
-            ApplicationCreate(name="V2 loose", slug=f"v2-{uuid.uuid4().hex[:8]}"),
-            created_by="dev@x",
-        )
+    built: list[Application] = []
+
+    async def _fake_build(app: Application) -> None:
+        built.append(app)
+
+    async def _unexpected_scaffold(_slug: str) -> None:
+        raise AssertionError("standalone_v2 must not receive the inline_v1 scaffold")
+
+    monkeypatch.setattr(repo, "_build_loose_v2_dist", _fake_build)
+    monkeypatch.setattr(repo, "_scaffold_code_files", _unexpected_scaffold)
+
+    app = await repo.create_application(
+        ApplicationCreate(name="V2 loose", slug=f"v2-{uuid.uuid4().hex[:8]}"),
+        created_by="dev@x",
+    )
+
+    assert app.app_model == "standalone_v2"
+    assert built == [app]
 
 
 async def test_create_application_default_is_v2():

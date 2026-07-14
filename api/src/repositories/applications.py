@@ -7,6 +7,7 @@ HTTP-handler-only surface. See docs/plans/2026-05-26-org-scoping-consolidation.m
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -170,22 +171,6 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         if existing:
             raise ValueError(f"Application with slug '{data.slug}' already exists")
 
-        # standalone_v2 apps render only from a built dist, and the ONLY thing
-        # that builds + serves that dist is a Solution deploy (deploy.py builds
-        # to _apps/{id}/). A bare `apps create` makes a LOOSE (non-solution) app
-        # — solution apps are created by deploy, not here — so a v2 app created
-        # this way could never render. Bark instead of silently making a dead
-        # app. v2 = a Solutions thing: scaffold with `bifrost solution
-        # scaffold-app` and deploy. inline_v1 is the standalone/legacy model.
-        if data.app_model == "standalone_v2":
-            raise ValueError(
-                "standalone_v2 apps live in a Solution (only a Solution deploy "
-                "builds + serves their dist). Create one with "
-                "`bifrost solution scaffold-app <slug>` inside a Solution "
-                "workspace, then `bifrost solution deploy`. To make a legacy "
-                "standalone app here, pass app_model='inline_v1' explicitly."
-            )
-
         application = Application(
             name=data.name,
             slug=data.slug,
@@ -200,8 +185,16 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         self.session.add(application)
         await self.session.flush()
 
-        # Scaffold initial files via FileStorageService
-        await self._scaffold_code_files(application.slug)
+        if data.app_model == "standalone_v2":
+            # Migration staging deliberately creates a loose v2 app first so it
+            # can run against loose backing entities, participate in a slug
+            # swap, and only then be captured by a Solution. Build the already-
+            # authored _repo source into the same _apps/{id}/dist location used
+            # by Solution apps; never replace it with the inline-v1 scaffold.
+            await self._build_loose_v2_dist(application)
+        else:
+            # Legacy inline apps keep the App Builder scaffold behavior.
+            await self._scaffold_code_files(application.slug)
 
         # Add role associations if role_based access
         if data.access_level == "role_based" and data.role_ids:
@@ -218,6 +211,45 @@ class ApplicationRepository(OrgScopedRepository[Application]):
 
         logger.info(f"Created application '{log_safe(data.slug)}' in org {self.org_id} with access_level={log_safe(data.access_level)}")
         return application
+
+    async def _build_loose_v2_dist(self, application: Application) -> None:
+        """Build an authored loose standalone_v2 app from its _repo source."""
+        from src.services.file_storage import FileStorageService
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        prefix = application.repo_prefix
+        storage = FileStorageService(self.session)
+        entries = await storage.list_files(prefix.rstrip("/"), recursive=True)
+        src_files: dict[str, bytes] = {}
+        for entry in entries:
+            full_path = str(entry.path)
+            if not full_path.startswith(prefix):
+                continue
+            relative_path = full_path[len(prefix):]
+            if not relative_path:
+                continue
+            content, _metadata = await storage.read_file(full_path)
+            src_files[relative_path] = content
+
+        if "package.json" not in src_files or "index.html" not in src_files:
+            raise ValueError(
+                f"standalone_v2 source must already exist under {prefix} "
+                "and include package.json plus index.html; push the app source first"
+            )
+
+        builder = SolutionAppBuilder()
+        try:
+            dist = await asyncio.to_thread(
+                builder.compile_dist,
+                application.id,
+                src_files,
+                application.dependencies or {},
+            )
+            await builder.upload_dist(application.id, dist)
+        except Exception as exc:
+            raise ValueError(
+                f"standalone_v2 build failed for {application.slug}: {exc}"
+            ) from exc
 
     async def update_application(
         self,
@@ -661,4 +693,3 @@ export default function RootLayout() {
         Published snapshots are immutable point-in-time captures.
         """
         raise ValueError("Version rollback is not supported. Use published snapshots instead.")
-
