@@ -612,10 +612,10 @@ def clear_credentials(api_url: str | None = None) -> None:
     """
     Remove a single URL's credentials from the persistent backend.
 
-    No-arg behavior uses the same resolution as get_credentials(): env var,
-    then first URL in store. So a `bifrost logout` after a `bifrost login`
-    targets the same record `get_credentials()` would have returned, even
-    when multiple URLs are present.
+    No-arg behavior uses the same resolution as get_credentials(): an explicit
+    environment/folder binding, the saved default, or the sole stored URL. So
+    a `bifrost logout` targets the same connection `get_credentials()` would
+    have returned.
     """
     target = _resolve_url(api_url)
     if target is None:

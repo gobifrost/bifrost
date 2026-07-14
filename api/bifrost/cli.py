@@ -494,7 +494,8 @@ def logout_flow(api_url: str | None = None) -> tuple[bool, str | None]:
 
     Args:
         api_url: URL to log out from. If None, resolves the same way
-            get_credentials() does (env var, then first stored URL).
+            get_credentials() does (folder/env binding, saved default, then
+            the sole stored connection).
 
     Returns:
         (cleared, url) — cleared is True if a record was removed; url is
@@ -581,29 +582,45 @@ def _write_env_url(api_url: str) -> None:
             pass
 
 
-def _remove_env_url_line(api_url: str) -> bool:
-    """
-    Remove a `BIFROST_API_URL=<api_url>` line from CWD's .env, if present.
+def _line_assigns_env_var(line: str, key: str) -> bool:
+    stripped = line.lstrip()
+    return stripped.startswith(f"{key}=") or stripped.startswith(f"export {key}=")
 
-    Returns True if a line was removed.
+
+def _remove_env_connection(api_url: str) -> bool:
+    """
+    Remove a matching folder-local Bifrost connection from CWD's .env.
+
+    The URL is the binding key. Only when it matches ``api_url`` do we remove
+    the URL plus any password-grant access and refresh tokens from that file.
+    Browser login writes only the URL, while password-grant login writes all
+    three values.
+
+    Returns True if a matching connection was removed.
     """
     env_path = pathlib.Path.cwd() / ".env"
     lines = _read_env_file(env_path)
     if not lines:
         return False
     target = api_url.rstrip("/")
-    kept: list[str] = []
-    removed = False
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith("BIFROST_API_URL=") or stripped.startswith("export BIFROST_API_URL="):
-            value = line.split("=", 1)[1].strip().strip('"').strip("'").rstrip("/")
-            if value == target:
-                removed = True
-                continue
-        kept.append(line)
-    if not removed:
+    has_matching_url = any(
+        _line_assigns_env_var(line, "BIFROST_API_URL")
+        and line.split("=", 1)[1].strip().strip('"').strip("'").rstrip("/") == target
+        for line in lines
+    )
+    if not has_matching_url:
         return False
+
+    connection_keys = {
+        "BIFROST_API_URL",
+        "BIFROST_ACCESS_TOKEN",
+        "BIFROST_REFRESH_TOKEN",
+    }
+    kept = [
+        line
+        for line in lines
+        if not any(_line_assigns_env_var(line, key) for key in connection_keys)
+    ]
     if all(not line.strip() for line in kept):
         env_path.unlink()
     else:
@@ -1095,15 +1112,18 @@ Usage: bifrost logout [options]
 Clear stored credentials for one Bifrost URL.
 
 If --url is omitted, logs out from the URL resolved by the same rules as
-`bifrost api ...` (BIFROST_API_URL env var, then the first stored URL).
+`bifrost api ...` (folder/env binding, saved default, then the sole stored
+connection).
 
-After clearing the keychain entry, if the current directory's .env contains
-a BIFROST_API_URL line for that URL, you'll be prompted to remove it.
+After clearing persistent credentials, if the current directory's .env is
+bound to that URL, you'll be prompted to remove the complete folder binding.
+For browser login this is the URL; for password login it also includes the
+folder-local access and refresh tokens.
 
 Options:
   --url, -u URL   Specific URL to log out from
   --yes, -y       Auto-confirm the .env removal prompt
-  --no-prompt     Skip the .env prompt entirely (leaves it as-is)
+  --no-prompt     Skip the .env prompt entirely (leaves the folder binding as-is)
   --help, -h      Show this help message
 
 Examples:
@@ -1119,14 +1139,14 @@ Examples:
     if not cleared or target_url is None:
         return 0
 
-    # Prompt to remove the matching .env line, if present
+    # Prompt to remove the matching folder-local connection, if present.
     if no_prompt:
         return 0
     env_path = pathlib.Path.cwd() / ".env"
     if not env_path.exists():
         return 0
     has_match = any(
-        line.lstrip().startswith(("BIFROST_API_URL=", "export BIFROST_API_URL="))
+        _line_assigns_env_var(line, "BIFROST_API_URL")
         and line.split("=", 1)[1].strip().strip('"').strip("'").rstrip("/") == target_url.rstrip("/")
         for line in _read_env_file(env_path)
     )
@@ -1137,12 +1157,14 @@ Examples:
         confirm = "y"
     else:
         try:
-            confirm = input(f"Remove BIFROST_API_URL={target_url} from {env_path}? [y/N] ").strip().lower()
+            confirm = input(
+                f"Remove Bifrost connection for {target_url} from {env_path}? [y/N] "
+            ).strip().lower()
         except EOFError:
             confirm = "n"
     if confirm in ("y", "yes"):
-        if _remove_env_url_line(target_url):
-            print(f"Removed BIFROST_API_URL line from {env_path}")
+        if _remove_env_connection(target_url):
+            print(f"Removed Bifrost connection for {target_url} from {env_path}")
     return 0
 
 

@@ -52,37 +52,43 @@ The user picks the mode by setting (or not setting) `NETBIRD_SETUP_KEY` in `~/.c
 
 4. **Point at logs if they ask.** `./debug.sh logs <service>` — services include `api`, `client`, `worker`, `scheduler`, `postgres`, `rabbitmq`, `redis`, `minio`.
 
-## Auto-connect the CLI in this folder
+## Connect the CLI
 
-After `./debug.sh up`, wire the per-folder CLI to target this stack. Tokens for multiple instances coexist in the OS keychain, keyed by URL — the user's prod token (if any) is not affected.
+Bifrost can keep credentials for several instances. A folder's nearest `.env`
+selects the connection for commands run there; otherwise the CLI uses the
+user's saved default. Debug should use its own folder binding and must not
+change that saved default.
 
-1. Run the standard browser login against the debug URL:
-
-   ```bash
-   bifrost login --url <URL_FROM_DEBUG_STATUS>
-   ```
-
-   This opens the device-code page, the user accepts, and the token lands in the keychain (or the JSON fallback on headless Linux). On success, `bifrost login` also writes `BIFROST_API_URL=<URL>` to `.env` in the current directory and adds `.env` to `.gitignore` if it isn't already.
-
-2. Tell the user: *"Stack up at <URL>. CLI in this folder is now connected — token is in your keychain alongside any other instances you've logged into."*
-
-On `./debug.sh down`, run:
+After the stack is up, create one scratch directory for this worktree. Never
+run debug CLI commands from bare `/tmp`.
 
 ```bash
-bifrost logout --url <URL>
+mkdir -p /tmp/bifrost-cli-<worktree-name>
+cd /tmp/bifrost-cli-<worktree-name>
+touch .env
+python3 -m venv .venv
+./.venv/bin/pip install --quiet --upgrade pip
+./.venv/bin/pip install --quiet "<URL_FROM_DEBUG_STATUS>/api/cli/download"
+./.venv/bin/bifrost login --url <URL_FROM_DEBUG_STATUS> \
+  --email dev@gobifrost.com --password password
 ```
 
-That removes the keychain entry and prompts to remove the matching `BIFROST_API_URL` line from `.env`.
+The empty `.env` created before the first CLI call prevents an unrelated
+parent `.env` from being loaded. Login then writes this debug stack's URL and
+tokens into that scratch `.env`. Run all later debug-instance CLI commands
+from the same scratch directory with `./.venv/bin/bifrost ...`.
 
-### When to use password-grant instead
+Run `./debug.sh` commands from the worktree, never from the scratch directory.
+If the connection is ever unclear, `bifrost auth default` is a read-only check:
+the `Current connection` line is what commands in that folder will use.
 
-If the user wants tokens that *don't* persist anywhere — POC folders, throwaway sessions — use the password-grant path:
+When explicitly tearing down the stack, clear its folder binding before or
+after `./debug.sh down`:
 
 ```bash
-bifrost login --url <URL> --email dev@gobifrost.com --password password
+cd /tmp/bifrost-cli-<worktree-name>
+./.venv/bin/bifrost logout --url <URL_FROM_DEBUG_STATUS> --yes
 ```
-
-This prints three `BIFROST_*` lines to stdout and writes nothing to disk. The caller can `eval` them or pipe them into `.env`. Only works on instances with `BIFROST_MFA_ENABLED=false`. Do not suggest this as the default — it exists for the "leave no trace" use case.
 
 ## Lifecycle: who tears down what
 
