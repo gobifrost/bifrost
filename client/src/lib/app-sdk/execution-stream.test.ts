@@ -1,16 +1,19 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { subscribeToExecution } from "./execution-stream";
+import type { ExecutionStreamEvent } from "./execution-stream";
+
+type MockEvent = { data?: string; code?: number };
 
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   url: string;
   sent: string[] = [];
-  listeners: Record<string, ((e: any) => void)[]> = {};
+  listeners: Record<string, ((e: MockEvent) => void)[]> = {};
   constructor(url: string) {
     this.url = url;
     MockWebSocket.instances.push(this);
   }
-  addEventListener(type: string, cb: (e: any) => void) {
+  addEventListener(type: string, cb: (e: MockEvent) => void) {
     (this.listeners[type] ??= []).push(cb);
   }
   send(data: string) {
@@ -19,7 +22,7 @@ class MockWebSocket {
   close() {
     this.emit("close", { code: 1000 });
   }
-  emit(type: string, e: any) {
+  emit(type: string, e: MockEvent) {
     (this.listeners[type] ?? []).forEach((cb) => cb(e));
   }
 }
@@ -42,7 +45,7 @@ describe("subscribeToExecution", () => {
   });
 
   it("maps execution_update frames to status events with terminal detection", () => {
-    const events: any[] = [];
+    const events: ExecutionStreamEvent[] = [];
     subscribeToExecution("abc-123", (e) => events.push(e));
     const ws = MockWebSocket.instances[0];
     ws.emit("open", {});
@@ -68,7 +71,7 @@ describe("subscribeToExecution", () => {
   });
 
   it("maps execution_log frames to log events", () => {
-    const events: any[] = [];
+    const events: ExecutionStreamEvent[] = [];
     subscribeToExecution("abc-123", (e) => events.push(e));
     const ws = MockWebSocket.instances[0];
     ws.emit("open", {});
@@ -108,7 +111,7 @@ describe("subscribeToExecution", () => {
   });
 
   it("ignores unparseable frames", () => {
-    const events: any[] = [];
+    const events: ExecutionStreamEvent[] = [];
     subscribeToExecution("abc-123", (e) => events.push(e));
     const ws = MockWebSocket.instances[0];
     ws.emit("message", { data: "not json" });
