@@ -14398,15 +14398,76 @@ export interface components {
          */
         ExecutionStatus: "Scheduled" | "Pending" | "Running" | "Success" | "Failed" | "Timeout" | "Stuck" | "CompletedWithErrors" | "Cancelling" | "Cancelled";
         /**
+         * ExecutionSummary
+         * @description Execution metadata without payloads — what list views return.
+         *
+         *     Deliberately omits input_data/result/logs/variables/execution_context so
+         *     list responses never select or serialize multi-megabyte payloads. Fetch a
+         *     single execution for those.
+         */
+        ExecutionSummary: {
+            /** Execution Id */
+            execution_id: string;
+            /** Workflow Name */
+            workflow_name: string;
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Org Id */
+            org_id?: string | null;
+            /** Org Name */
+            org_name?: string | null;
+            /** Form Id */
+            form_id?: string | null;
+            /** Executed By */
+            executed_by: string;
+            /** Executed By Name */
+            executed_by_name: string;
+            /** Executed By Email */
+            executed_by_email?: string | null;
+            status: components["schemas"]["ExecutionStatus"];
+            /** Result Type */
+            result_type?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Scheduled At */
+            scheduled_at?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Peak Memory Bytes */
+            peak_memory_bytes?: number | null;
+            /** Process Rss Bytes */
+            process_rss_bytes?: number | null;
+            /** Cpu Total Seconds */
+            cpu_total_seconds?: number | null;
+            /** Execution Model */
+            execution_model?: string | null;
+            /**
+             * Time Saved
+             * @default 0
+             */
+            time_saved: number;
+            /**
+             * Value
+             * @default 0
+             */
+            value: number;
+        };
+        /**
          * ExecutionsListResponse
          * @description Response model for listing workflow executions with pagination
          */
         ExecutionsListResponse: {
             /**
              * Executions
-             * @description List of workflow executions
+             * @description List of workflow execution summaries (no input/result payloads — fetch a single execution for those)
              */
-            executions: components["schemas"]["WorkflowExecution"][];
+            executions: components["schemas"]["ExecutionSummary"][];
             /**
              * Continuation Token
              * @description Continuation token for next page (opaque, base64-encoded). Presence of token indicates more results available.
@@ -23315,7 +23376,7 @@ export interface components {
         };
         /**
          * WorkflowExecution
-         * @description Workflow execution entity
+         * @description Workflow execution entity — summary fields plus full payloads.
          */
         WorkflowExecution: {
             /** Execution Id */
@@ -23337,14 +23398,6 @@ export interface components {
             /** Executed By Email */
             executed_by_email?: string | null;
             status: components["schemas"]["ExecutionStatus"];
-            /** Input Data */
-            input_data: {
-                [key: string]: unknown;
-            };
-            /** Result */
-            result?: {
-                [key: string]: unknown;
-            } | unknown[] | string | null;
             /** Result Type */
             result_type?: string | null;
             /** Error Message */
@@ -23357,14 +23410,6 @@ export interface components {
             completed_at?: string | null;
             /** Scheduled At */
             scheduled_at?: string | null;
-            /** Logs */
-            logs?: {
-                [key: string]: unknown;
-            }[] | null;
-            /** Variables */
-            variables?: {
-                [key: string]: unknown;
-            } | null;
             /** Session Id */
             session_id?: string | null;
             /** Peak Memory Bytes */
@@ -23385,6 +23430,22 @@ export interface components {
              * @default 0
              */
             value: number;
+            /** Input Data */
+            input_data: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | unknown[] | string | null;
+            /** Logs */
+            logs?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Variables */
+            variables?: {
+                [key: string]: unknown;
+            } | null;
             /** Ai Usage */
             ai_usage?: components["schemas"]["AIUsagePublicSimple"][] | null;
             ai_totals?: components["schemas"]["AIUsageTotalsSimple"] | null;

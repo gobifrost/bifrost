@@ -67,8 +67,13 @@ class AIUsageTotalsSimple(BaseModel):
     call_count: int = 0
 
 
-class WorkflowExecution(BaseModel):
-    """Workflow execution entity"""
+class ExecutionSummary(BaseModel):
+    """Execution metadata without payloads — what list views return.
+
+    Deliberately omits input_data/result/logs/variables/execution_context so
+    list responses never select or serialize multi-megabyte payloads. Fetch a
+    single execution for those.
+    """
     execution_id: str
     workflow_name: str
     workflow_id: str | None = None  # FK to workflows table (null for inline scripts/legacy)
@@ -79,16 +84,12 @@ class WorkflowExecution(BaseModel):
     executed_by_name: str  # Display name of user who executed
     executed_by_email: str | None = None  # Email of user who executed
     status: ExecutionStatus
-    input_data: dict[str, Any]
-    result: dict[str, Any] | list[Any] | str | None = Field(default=None)  # Can be dict/list (JSON) or str (HTML/text)
     result_type: str | None = None  # How to render result (json, html, text)
     error_message: str | None = None
     duration_ms: int | None = None
     started_at: datetime | None = None  # May be None if not started yet
     completed_at: datetime | None = None
     scheduled_at: datetime | None = None  # For Scheduled rows, when the row is due to promote
-    logs: list[dict[str, Any]] | None = None  # Structured logger output (replaces old ExecutionLog format)
-    variables: dict[str, Any] | None = None  # Runtime variables captured from execution scope
     # CLI session tracking
     session_id: str | None = None  # CLI session ID if executed from local runner
     # Resource metrics (admin only, null for non-admins)
@@ -100,6 +101,14 @@ class WorkflowExecution(BaseModel):
     # ROI economics (admin only)
     time_saved: int = 0  # Minutes saved
     value: float = 0  # Value generated
+
+
+class WorkflowExecution(ExecutionSummary):
+    """Workflow execution entity — summary fields plus full payloads."""
+    input_data: dict[str, Any]
+    result: dict[str, Any] | list[Any] | str | None = Field(default=None)  # Can be dict/list (JSON) or str (HTML/text)
+    logs: list[dict[str, Any]] | None = None  # Structured logger output (replaces old ExecutionLog format)
+    variables: dict[str, Any] | None = None  # Runtime variables captured from execution scope
     # AI usage tracking
     ai_usage: list[AIUsagePublicSimple] | None = None
     ai_totals: AIUsageTotalsSimple | None = None
@@ -190,7 +199,7 @@ class WorkflowExecutionResponse(BaseModel):
 
 class ExecutionsListResponse(BaseModel):
     """Response model for listing workflow executions with pagination"""
-    executions: list[WorkflowExecution] = Field(..., description="List of workflow executions")
+    executions: list[ExecutionSummary] = Field(..., description="List of workflow execution summaries (no input/result payloads — fetch a single execution for those)")
     continuation_token: str | None = Field(default=None, description="Continuation token for next page (opaque, base64-encoded). Presence of token indicates more results available.")
 
 

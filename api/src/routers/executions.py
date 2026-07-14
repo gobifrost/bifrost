@@ -27,6 +27,7 @@ from src.models import (
 from src.models.contracts.executions import (
     AIUsagePublicSimple,
     AIUsageTotalsSimple,
+    ExecutionSummary,
     LogsListResponse,
     LogListEntry,
 )
@@ -71,7 +72,7 @@ class ExecutionRepository:
         exclude_local: bool = True,
         limit: int = 25,
         offset: int = 0,
-    ) -> tuple[list[WorkflowExecution], str | None]:
+    ) -> tuple[list[ExecutionSummary], str | None]:
         """List executions with filtering."""
         query = select(ExecutionModel).options(
             selectinload(ExecutionModel.organization),
@@ -149,9 +150,7 @@ class ExecutionRepository:
         if has_more:
             next_token = str(offset + limit)
 
-        return [
-            self._to_pydantic(e, user, include_payload=False) for e in executions
-        ], next_token
+        return [ExecutionRepository._to_summary(e) for e in executions], next_token
 
     async def get_execution(
         self,
@@ -490,12 +489,45 @@ class ExecutionRepository:
 
         return self._to_pydantic(execution, user), None
 
+    @staticmethod
+    def _org_name(execution: ExecutionModel) -> str | None:
+        """Display name for the execution's effective scope."""
+        if execution.organization_id:
+            if hasattr(execution, 'organization') and execution.organization is not None:
+                return execution.organization.name
+            return None  # Will be populated by caller if needed
+        return "Global"  # No org_id means global scope
+
+    @staticmethod
+    def _to_summary(execution: ExecutionModel) -> ExecutionSummary:
+        """Convert SQLAlchemy model to the payload-free list model.
+
+        Must only touch columns the list query loads — the payload columns
+        (parameters/result/variables/execution_context) are deferred with
+        raiseload=True so History never selects or serializes them.
+        """
+        return ExecutionSummary(
+            execution_id=str(execution.id),
+            workflow_name=execution.workflow_name,
+            workflow_id=str(execution.workflow_id) if execution.workflow_id else None,
+            org_id=str(execution.organization_id) if execution.organization_id else None,
+            org_name=ExecutionRepository._org_name(execution),
+            form_id=str(execution.form_id) if execution.form_id else None,
+            executed_by=str(execution.executed_by),
+            executed_by_name=execution.executed_by_name or str(execution.executed_by),
+            executed_by_email=execution.executed_by_user.email if hasattr(execution, 'executed_by_user') and execution.executed_by_user else None,
+            status=ExecutionStatus(execution.status),
+            result_type=execution.result_type,
+            error_message=execution.error_message,
+            duration_ms=execution.duration_ms,
+            started_at=execution.started_at,
+            completed_at=execution.completed_at,
+            scheduled_at=execution.scheduled_at,
+            session_id=str(execution.session_id) if execution.session_id else None,
+        )
+
     def _to_pydantic(
-        self,
-        execution: ExecutionModel,
-        user: UserPrincipal | None = None,
-        *,
-        include_payload: bool = True,
+        self, execution: ExecutionModel, user: UserPrincipal | None = None
     ) -> WorkflowExecution:
         """Convert SQLAlchemy model to Pydantic model.
 
@@ -506,35 +538,22 @@ class ExecutionRepository:
             execution: The SQLAlchemy execution model
             user: Optional user for permission checks. If provided, admin-only
                   fields (variables) are gated based on is_superuser.
-            include_payload: Include input, result, variables, and execution
-                context. List views disable this so multi-megabyte results are
-                neither selected from PostgreSQL nor serialized into history.
         """
         is_admin = user.is_superuser if user else False
-        # Determine org_name: use organization relationship if loaded, otherwise None for global
-        org_name: str | None = None
-        if execution.organization_id:
-            # Try to get name from loaded relationship, fall back to "Unknown" if not loaded
-            if hasattr(execution, 'organization') and execution.organization is not None:
-                org_name = execution.organization.name
-            else:
-                org_name = None  # Will be populated by caller if needed
-        else:
-            org_name = "Global"  # No org_id means global scope
 
         return WorkflowExecution(
             execution_id=str(execution.id),
             workflow_name=execution.workflow_name,
             workflow_id=str(execution.workflow_id) if execution.workflow_id else None,
             org_id=str(execution.organization_id) if execution.organization_id else None,
-            org_name=org_name,
+            org_name=self._org_name(execution),
             form_id=str(execution.form_id) if execution.form_id else None,
             executed_by=str(execution.executed_by),
             executed_by_name=execution.executed_by_name or str(execution.executed_by),
             executed_by_email=execution.executed_by_user.email if hasattr(execution, 'executed_by_user') and execution.executed_by_user else None,
             status=ExecutionStatus(execution.status),
-            input_data=(execution.parameters or {}) if include_payload else {},
-            result=execution.result if include_payload else None,
+            input_data=execution.parameters or {},
+            result=execution.result,
             result_type=execution.result_type,
             error_message=execution.error_message,
             duration_ms=execution.duration_ms,
@@ -542,14 +561,8 @@ class ExecutionRepository:
             completed_at=execution.completed_at,
             scheduled_at=execution.scheduled_at,
             logs=None,  # Fetched separately via /logs endpoint
-            variables=(
-                execution.variables if is_admin and include_payload else None
-            ),
-            execution_context=(
-                execution.execution_context
-                if is_admin and include_payload
-                else None
-            ),
+            variables=execution.variables if is_admin else None,
+            execution_context=execution.execution_context if is_admin else None,
             session_id=str(execution.session_id) if execution.session_id else None,
         )
 

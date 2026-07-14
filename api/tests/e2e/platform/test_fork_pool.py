@@ -220,8 +220,12 @@ class TestForkBasedExecution:
             if execution["execution_id"] == data["execution_id"]
         ]
         assert len(matching) == 1
-        assert matching[0]["result"] is None
-        assert matching[0]["input_data"] == {}
+        # List items are summaries: payload fields are omitted entirely, not
+        # returned as null/{} (which would read as "this run had no result").
+        assert "result" not in matching[0]
+        assert "input_data" not in matching[0]
+        assert "variables" not in matching[0]
+        assert "execution_context" not in matching[0]
 
     def test_concurrent_executions(self, e2e_client, platform_admin, concurrent_workflow):
         """Multiple concurrent executions should complete without interference."""

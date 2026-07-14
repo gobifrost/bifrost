@@ -42,7 +42,10 @@ class executions:
             limit: Maximum number of results (default: 50, max: 1000)
 
         Returns:
-            list[WorkflowExecution]: List of execution objects with attributes:
+            list[WorkflowExecution]: List of execution SUMMARIES. Summaries
+            carry metadata only — ``input_data``, ``result``, ``logs``, and
+            ``variables`` are always None here; call ``executions.get(id)``
+            for a specific execution's payload. Summary attributes:
                 - execution_id: str - Unique execution ID
                 - workflow_name: str - Name of the workflow
                 - org_id: str | None - Organization ID
@@ -50,14 +53,10 @@ class executions:
                 - executed_by: str - User ID who executed
                 - executed_by_name: str - Display name of user
                 - status: str - Current status
-                - input_data: dict - Input parameters
-                - result: Any - Execution result
                 - result_type: str | None - How to render result
                 - error_message: str | None - Error if failed
                 - duration_ms: int | None - Execution duration
                 - started_at, completed_at: datetime | None
-                - logs: list[dict] | None - Execution logs
-                - variables: dict | None - Runtime variables
                 - session_id: str | None - CLI session ID
                 - peak_memory_bytes, cpu_total_seconds: Resource metrics
 
