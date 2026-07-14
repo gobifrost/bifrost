@@ -49,6 +49,28 @@ async def e2e_fork_timeout(sleep_seconds: int = 60) -> dict:
     return {"status": "completed"}
 '''
 
+LARGE_FLAT_RESULT_WORKFLOW = '''
+"""Production-shaped flat result regression for issue #480."""
+from bifrost import workflow
+
+@workflow(name="e2e_large_flat_result", execution_mode="async")
+async def e2e_large_flat_result(row_count: int = 5395) -> list[dict[str, str]]:
+    """Return the scrubbed production row shape without customer values."""
+    return [
+        {
+            "Attendees": "x",
+            "Cost": "x" * 5,
+            "Cost Formatted": "x" * 6,
+            "Duration": "x" * 3,
+            "End Date": "x" * 19,
+            "Start Date": "x" * 19,
+            "Subject": "x" * 24,
+            "Total Hours": "xx",
+        }
+        for _ in range(row_count)
+    ]
+'''
+
 
 @pytest.fixture(scope="module")
 def simple_workflow(e2e_client, platform_admin):
@@ -104,6 +126,23 @@ def timeout_workflow(e2e_client, platform_admin):
     )
 
 
+@pytest.fixture(scope="module")
+def large_flat_result_workflow(e2e_client, platform_admin):
+    """Create the sanitized 5,395-row production-shape reproduction."""
+    result = write_and_register(
+        e2e_client,
+        platform_admin.headers,
+        "e2e_large_flat_result.py",
+        LARGE_FLAT_RESULT_WORKFLOW,
+        "e2e_large_flat_result",
+    )
+    yield result
+    e2e_client.delete(
+        "/api/files/editor?path=e2e_large_flat_result.py",
+        headers=platform_admin.headers,
+    )
+
+
 @pytest.mark.e2e
 class TestForkBasedExecution:
     """Test that workflows execute correctly with fork-based pool."""
@@ -136,6 +175,57 @@ class TestForkBasedExecution:
         assert data["status"] == "Success"
         result = data.get("result", {})
         assert result.get("value") == 999
+
+    def test_large_flat_result_returns_without_polluting_history_payload(
+        self,
+        e2e_client,
+        platform_admin,
+        large_flat_result_workflow,
+    ):
+        """Sync callers get all rows while history remains summary-only."""
+        data = execute_workflow_sync(
+            e2e_client,
+            platform_admin.headers,
+            large_flat_result_workflow["id"],
+            {"row_count": 5395},
+            max_wait=30.0,
+            request_sync=True,
+            request_timeout=30.0,
+        )
+
+        assert data["status"] == "Success", f"Unexpected status: {data}"
+        rows = data["result"]
+        assert len(rows) == 5395
+        assert set(rows[0]) == {
+            "Attendees",
+            "Cost",
+            "Cost Formatted",
+            "Duration",
+            "End Date",
+            "Start Date",
+            "Subject",
+            "Total Hours",
+        }
+
+        history_response = e2e_client.get(
+            "/api/executions",
+            headers=platform_admin.headers,
+            params={"workflowId": large_flat_result_workflow["id"], "limit": 10},
+        )
+        assert history_response.status_code == 200
+        executions = history_response.json()["executions"]
+        matching = [
+            execution
+            for execution in executions
+            if execution["execution_id"] == data["execution_id"]
+        ]
+        assert len(matching) == 1
+        # List items are summaries: payload fields are omitted entirely, not
+        # returned as null/{} (which would read as "this run had no result").
+        assert "result" not in matching[0]
+        assert "input_data" not in matching[0]
+        assert "variables" not in matching[0]
+        assert "execution_context" not in matching[0]
 
     def test_concurrent_executions(self, e2e_client, platform_admin, concurrent_workflow):
         """Multiple concurrent executions should complete without interference."""

@@ -210,6 +210,35 @@ describe("PrettyInputDisplay — mini table for uniform object arrays", () => {
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 		expect(screen.getByText(/"nested"/)).toBeInTheDocument();
 	});
+
+	it("previews a production-sized flat result without rendering every row", () => {
+		const rows = Array.from({ length: 5395 }, (_, index) => ({
+			Subject: `row-${index}`,
+			Duration: "1",
+		}));
+
+		renderWithProviders(<PrettyInputDisplay inputData={{ rows }} />);
+
+		expect(screen.getByRole("table")).toBeInTheDocument();
+		expect(
+			screen.getByText("Showing first 50 of 5,395 rows"),
+		).toBeInTheDocument();
+		expect(screen.getByText("row-49")).toBeInTheDocument();
+		expect(screen.queryByText("row-50")).not.toBeInTheDocument();
+	});
+});
+
+describe("PrettyInputDisplay — large scalar values", () => {
+	it("truncates multi-megabyte strings in the DOM", () => {
+		const largeHtml = `<table>${"x".repeat(3_225_167)}</table>`;
+
+		renderWithProviders(
+			<PrettyInputDisplay inputData={{ table_html: largeHtml }} />,
+		);
+
+		expect(screen.getByText(/3,225,182 characters total/)).toBeInTheDocument();
+		expect(screen.queryByText(largeHtml)).not.toBeInTheDocument();
+	});
 });
 
 describe("PrettyInputDisplay — top-level arrays", () => {

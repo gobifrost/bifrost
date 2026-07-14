@@ -231,6 +231,18 @@ def _template_main(
     del os.environ["BIFROST_SECRET_KEY"]
     logger.info("SECRET_KEY scrubbed: settings cache primed with inert sentinel, env var removed")
 
+    # Preload the platform execution runtime after credential scrubbing. Every
+    # execution runs in a fresh one-shot fork; leaving this import to the child
+    # makes each request pay the full SDK + engine import cost before the engine
+    # duration timer even starts. Forked children inherit these modules through
+    # copy-on-write, so the pod pays that cost once while workflow code itself
+    # remains freshly loaded per execution.
+    import bifrost.credentials  # noqa: F401
+    import src.models.enums  # noqa: F401
+    import src.sdk.context  # noqa: F401
+    import src.services.execution.engine  # noqa: F401
+    import src.services.execution.worker  # noqa: F401
+
     logger.info("Template process ready — all dependencies loaded")
     pipe.send({"status": "ready", "pid": os.getpid()})
 

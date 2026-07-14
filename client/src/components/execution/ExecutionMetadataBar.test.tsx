@@ -90,6 +90,22 @@ describe("ExecutionMetadataBar — duration formatting", () => {
 		);
 		expect(screen.getByText(expected)).toBeInTheDocument();
 	});
+
+	it("distinguishes total elapsed time from workflow execution time", () => {
+		renderWithProviders(
+			<ExecutionMetadataBar
+				workflowName="x"
+				status="Success"
+				durationMs={118}
+				totalDurationMs={20_000}
+			/>,
+		);
+
+		expect(screen.getByText("Total")).toBeInTheDocument();
+		expect(screen.getByText("20.0s")).toBeInTheDocument();
+		expect(screen.getByText("Workflow")).toBeInTheDocument();
+		expect(screen.getByText("118ms")).toBeInTheDocument();
+	});
 });
 
 describe("ExecutionMetadataBar — provided metadata", () => {

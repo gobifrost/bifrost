@@ -184,11 +184,11 @@ describe("classify — object tables", () => {
 		).toBe("object-table");
 	});
 
-	it("falls back to json beyond the row cap", () => {
+	it("keeps large flat arrays table-shaped so the renderer can preview them", () => {
 		const make = (n: number) =>
 			Array.from({ length: n }, (_, i) => ({ label: `r${i}`, value: i }));
 		expect(classify(make(MAX_TABLE_ROWS))).toBe("object-table");
-		expect(classify(make(MAX_TABLE_ROWS + 1))).toBe("json");
+		expect(classify(make(5395))).toBe("object-table");
 	});
 
 	it("falls back to json beyond the column cap", () => {

@@ -106,7 +106,12 @@ class ExecutionLog(BaseModel):
 
 
 class WorkflowExecution(BaseModel):
-    """Workflow execution record."""
+    """Workflow execution record.
+
+    List responses are summaries: the server omits input_data, result, logs,
+    and variables entirely, so those default to None there. Fetch a single
+    execution (``executions.get``) for the full payload.
+    """
 
     execution_id: str
     workflow_name: str
@@ -115,15 +120,15 @@ class WorkflowExecution(BaseModel):
     executed_by: str | None
     executed_by_name: str | None
     status: str
-    input_data: dict | None
-    result: Any
+    input_data: dict | None = None
+    result: Any = None
     result_type: str | None
     error_message: str | None
     duration_ms: int | None
     started_at: datetime | None
     completed_at: datetime | None
-    logs: list[dict] | None
-    variables: dict | None
+    logs: list[dict] | None = None
+    variables: dict | None = None
     session_id: str | None
     peak_memory_bytes: int | None
     process_rss_bytes: int | None
