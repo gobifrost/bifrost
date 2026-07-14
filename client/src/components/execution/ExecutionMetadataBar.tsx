@@ -15,6 +15,7 @@ interface ExecutionMetadataBarProps {
 	orgName?: string | null;
 	startedAt?: string | null;
 	durationMs?: number | null;
+	totalDurationMs?: number | null;
 	queuePosition?: number;
 	waitReason?: string;
 	availableMemoryMb?: number;
@@ -36,6 +37,7 @@ export function ExecutionMetadataBar({
 	orgName,
 	startedAt,
 	durationMs,
+	totalDurationMs,
 	queuePosition,
 	waitReason,
 	availableMemoryMb,
@@ -73,10 +75,24 @@ export function ExecutionMetadataBar({
 					<Clock className="h-3 w-3" />
 					{startedAt ? formatRelativeTime(startedAt) : "Not started"}
 				</span>
-				<span className="flex items-center gap-1">
+				{totalDurationMs != null && (
+					<span
+						className="flex items-center gap-1"
+						title="Total platform time from worker start through persisted completion"
+					>
+						<Timer className="h-3 w-3" />
+						<span>Total</span>
+						<span>{formatDuration(totalDurationMs)}</span>
+					</span>
+				)}
+				<span
+					className="flex items-center gap-1"
+					title="Time spent executing workflow code"
+				>
 					<Timer className="h-3 w-3" />
+					<span>Workflow</span>
 					{durationMs != null
-						? formatDuration(durationMs)
+						? <span>{formatDuration(durationMs)}</span>
 						: "In progress..."}
 				</span>
 			</div>

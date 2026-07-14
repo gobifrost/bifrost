@@ -47,6 +47,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { copyToClipboard } from "@/lib/clipboard";
+import { parseBackendDate } from "@/lib/utils";
 import type { StreamingLog } from "@/stores/executionStreamStore";
 
 type ExecutionStatus =
@@ -216,6 +217,19 @@ export function ExecutionDetails({
 		executionStatus === "CompletedWithErrors" ||
 		executionStatus === "Timeout" ||
 		executionStatus === "Cancelled";
+	const totalDurationMs = (() => {
+		if (!execution?.started_at || !execution.completed_at) return null;
+		const startedAt = parseBackendDate(execution.started_at).getTime();
+		const completedAt = parseBackendDate(execution.completed_at).getTime();
+		if (
+			Number.isNaN(startedAt) ||
+			Number.isNaN(completedAt) ||
+			completedAt < startedAt
+		) {
+			return null;
+		}
+		return completedAt - startedAt;
+	})();
 
 	// Data now comes from single API call - create adapter variables for compatibility
 	const resultData = execution
@@ -578,6 +592,7 @@ export function ExecutionDetails({
 						orgName={execution.org_name}
 						startedAt={execution.started_at}
 						durationMs={execution.duration_ms}
+						totalDurationMs={totalDurationMs}
 						queuePosition={streamState?.queuePosition}
 						waitReason={streamState?.waitReason}
 						availableMemoryMb={streamState?.availableMemoryMb}

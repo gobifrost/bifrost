@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 # Import existing Pydantic models for API compatibility
 from src.models import (
@@ -73,7 +73,14 @@ class ExecutionRepository:
         offset: int = 0,
     ) -> tuple[list[WorkflowExecution], str | None]:
         """List executions with filtering."""
-        query = select(ExecutionModel).options(selectinload(ExecutionModel.organization), selectinload(ExecutionModel.executed_by_user))
+        query = select(ExecutionModel).options(
+            selectinload(ExecutionModel.organization),
+            selectinload(ExecutionModel.executed_by_user),
+            defer(ExecutionModel.parameters, raiseload=True),
+            defer(ExecutionModel.result, raiseload=True),
+            defer(ExecutionModel.variables, raiseload=True),
+            defer(ExecutionModel.execution_context, raiseload=True),
+        )
 
         # Organization scoping
         if org_id:
@@ -142,7 +149,9 @@ class ExecutionRepository:
         if has_more:
             next_token = str(offset + limit)
 
-        return [self._to_pydantic(e, user) for e in executions], next_token
+        return [
+            self._to_pydantic(e, user, include_payload=False) for e in executions
+        ], next_token
 
     async def get_execution(
         self,
@@ -482,7 +491,11 @@ class ExecutionRepository:
         return self._to_pydantic(execution, user), None
 
     def _to_pydantic(
-        self, execution: ExecutionModel, user: UserPrincipal | None = None
+        self,
+        execution: ExecutionModel,
+        user: UserPrincipal | None = None,
+        *,
+        include_payload: bool = True,
     ) -> WorkflowExecution:
         """Convert SQLAlchemy model to Pydantic model.
 
@@ -493,6 +506,9 @@ class ExecutionRepository:
             execution: The SQLAlchemy execution model
             user: Optional user for permission checks. If provided, admin-only
                   fields (variables) are gated based on is_superuser.
+            include_payload: Include input, result, variables, and execution
+                context. List views disable this so multi-megabyte results are
+                neither selected from PostgreSQL nor serialized into history.
         """
         is_admin = user.is_superuser if user else False
         # Determine org_name: use organization relationship if loaded, otherwise None for global
@@ -517,8 +533,8 @@ class ExecutionRepository:
             executed_by_name=execution.executed_by_name or str(execution.executed_by),
             executed_by_email=execution.executed_by_user.email if hasattr(execution, 'executed_by_user') and execution.executed_by_user else None,
             status=ExecutionStatus(execution.status),
-            input_data=execution.parameters or {},
-            result=execution.result,
+            input_data=(execution.parameters or {}) if include_payload else {},
+            result=execution.result if include_payload else None,
             result_type=execution.result_type,
             error_message=execution.error_message,
             duration_ms=execution.duration_ms,
@@ -526,8 +542,14 @@ class ExecutionRepository:
             completed_at=execution.completed_at,
             scheduled_at=execution.scheduled_at,
             logs=None,  # Fetched separately via /logs endpoint
-            variables=execution.variables if is_admin else None,
-            execution_context=execution.execution_context if is_admin else None,
+            variables=(
+                execution.variables if is_admin and include_payload else None
+            ),
+            execution_context=(
+                execution.execution_context
+                if is_admin and include_payload
+                else None
+            ),
             session_id=str(execution.session_id) if execution.session_id else None,
         )
 

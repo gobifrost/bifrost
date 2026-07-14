@@ -24,7 +24,7 @@ export type PrettyShape =
 export const MAX_OBJECT_DEPTH = 3;
 /** Objects with more keys than this fall back to JSON. */
 export const MAX_OBJECT_KEYS = 20;
-/** Arrays with more rows than this are too big for a mini table. */
+/** Maximum rows inspected and rendered for a table preview. */
 export const MAX_TABLE_ROWS = 50;
 /** Tables with more columns than this fall back to JSON. */
 export const MAX_TABLE_COLUMNS = 8;
@@ -52,18 +52,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Derive the column set for an array that should render as a mini table.
  *
  * Returns the columns in first-seen key order, or null when the array is not
- * table-shaped: any non-object item, any non-scalar cell, an empty/oversized
- * array, too many columns, or a column present on fewer than
- * TABLE_KEY_COVERAGE of the rows (ragged shapes).
+ * table-shaped: any sampled non-object item, any sampled non-scalar cell, an
+ * empty array, too many columns, or a column present on fewer than
+ * TABLE_KEY_COVERAGE of the sampled rows (ragged shapes). Large arrays are
+ * deliberately sampled so they remain eligible for a bounded table preview
+ * instead of falling into the expensive syntax-highlighted JSON fallback.
  */
 export function tableColumns(value: unknown): string[] | null {
 	if (!Array.isArray(value)) return null;
-	if (value.length === 0 || value.length > MAX_TABLE_ROWS) return null;
+	if (value.length === 0) return null;
+	const sampledRows = value.slice(0, MAX_TABLE_ROWS);
 
 	const columns: string[] = [];
 	const counts = new Map<string, number>();
 
-	for (const item of value) {
+	for (const item of sampledRows) {
 		if (!isPlainObject(item)) return null;
 		const keys = Object.keys(item);
 		if (keys.length === 0) return null;
@@ -79,7 +82,7 @@ export function tableColumns(value: unknown): string[] | null {
 	}
 
 	for (const key of columns) {
-		if ((counts.get(key) ?? 0) / value.length < TABLE_KEY_COVERAGE) {
+		if ((counts.get(key) ?? 0) / sampledRows.length < TABLE_KEY_COVERAGE) {
 			return null;
 		}
 	}

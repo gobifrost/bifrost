@@ -7,7 +7,10 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { VariablesTreeView } from "@/components/ui/variables-tree-view";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { classify, tableColumns } from "./prettyShape";
+import { classify, tableColumns, MAX_TABLE_ROWS } from "./prettyShape";
+
+const MAX_SCALAR_DISPLAY_CHARS = 1000;
+const MAX_HIGHLIGHTED_JSON_CHARS = 25_000;
 
 interface PrettyInputDisplayProps {
 	inputData: Record<string, unknown> | unknown[];
@@ -73,6 +76,13 @@ function formatScalar(value: unknown): { display: string; badge?: string } {
 	}
 
 	if (typeof value === "string") {
+		if (value.length > MAX_SCALAR_DISPLAY_CHARS) {
+			return {
+				display: `${value.slice(0, MAX_SCALAR_DISPLAY_CHARS)}…`,
+				badge: `${value.length.toLocaleString()} characters total`,
+			};
+		}
+
 		// Check if it's a URL
 		try {
 			new URL(value);
@@ -116,6 +126,23 @@ function badgeFor(value: unknown): string | undefined {
 
 /** Syntax-highlighted JSON block — the ladder's last resort. */
 function JsonBlock({ value }: { value: unknown }) {
+	const json = JSON.stringify(value, null, 2);
+	if (json.length > MAX_HIGHLIGHTED_JSON_CHARS) {
+		return (
+			<div className="mt-1 space-y-1.5">
+				<p className="text-xs text-muted-foreground">
+					Showing the first {MAX_HIGHLIGHTED_JSON_CHARS.toLocaleString()} of{" "}
+					{json.length.toLocaleString()} JSON characters. Copy retains the full
+					value.
+				</p>
+				<pre className="max-h-64 max-w-full overflow-auto rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">
+					{json.slice(0, MAX_HIGHLIGHTED_JSON_CHARS)}
+					{"\n…"}
+				</pre>
+			</div>
+		);
+	}
+
 	return (
 		<SyntaxHighlighter
 			language="json"
@@ -129,7 +156,7 @@ function JsonBlock({ value }: { value: unknown }) {
 				overflow: "auto",
 			}}
 		>
-			{JSON.stringify(value, null, 2)}
+			{json}
 		</SyntaxHighlighter>
 	);
 }
@@ -144,14 +171,22 @@ function MiniTable({
 }) {
 	const columns = tableColumns(items);
 	if (columns === null) return <JsonBlock value={items} />;
+	const previewItems = items.slice(0, MAX_TABLE_ROWS);
 
 	return (
-		<div
-			className={cn(
-				"overflow-x-auto rounded-md ring-1 ring-foreground/5",
-				className,
+		<div className="space-y-1.5">
+			{items.length > previewItems.length && (
+				<p className="text-xs text-muted-foreground">
+					Showing first {previewItems.length.toLocaleString()} of{" "}
+					{items.length.toLocaleString()} rows
+				</p>
 			)}
-		>
+			<div
+				className={cn(
+					"overflow-x-auto rounded-md ring-1 ring-foreground/5",
+					className,
+				)}
+			>
 			<table className="w-full text-sm">
 				<thead>
 					<tr className="bg-muted">
@@ -166,7 +201,7 @@ function MiniTable({
 					</tr>
 				</thead>
 				<tbody className="divide-y divide-border/60">
-					{items.map((item, i) => (
+					{previewItems.map((item, i) => (
 						<tr key={i}>
 							{columns.map((col) => {
 								const cell = item[col];
@@ -189,6 +224,7 @@ function MiniTable({
 					))}
 				</tbody>
 			</table>
+			</div>
 		</div>
 	);
 }
