@@ -28,6 +28,7 @@ _SRC_FILES = [
     "use-table.ts",
     "use-infinite-table.ts",
     "ws-client.ts",
+    "execution-stream.ts",
     "use-workflow.ts",
     "use-workflow-hooks.ts",
     "files.ts",
@@ -54,6 +55,7 @@ def _ensure_sdk_src() -> bool:
     for f in _SRC_FILES:
         shutil.copy(client / f, dst / f)
     shutil.copy(client / "index.v2.ts", dst / "index.ts")
+    shutil.copy(client / "sdk-contract.json", dst / "sdk-contract.json")
     return True
 
 
@@ -65,6 +67,7 @@ def test_build_sdk_tarball_cached_per_version(monkeypatch):
     import src.services.sdk_package as sdkpkg
 
     sdkpkg.build_sdk_tarball.cache_clear()
+    sdkpkg._built_bundle.cache_clear()
     calls: list[Path] = []
 
     def _fake_bundle(workdir: Path) -> bytes:
@@ -78,6 +81,7 @@ def test_build_sdk_tarball_cached_per_version(monkeypatch):
     finally:
         # Don't leak the fake-bundle tarball into other tests via the cache.
         sdkpkg.build_sdk_tarball.cache_clear()
+        sdkpkg._built_bundle.cache_clear()
 
     assert first == second
     assert len(calls) == 1, "builder ran more than once for the same version"

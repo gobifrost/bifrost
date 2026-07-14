@@ -91,6 +91,7 @@ COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/use-table.ts \
      client/src/lib/app-sdk/use-infinite-table.ts \
      client/src/lib/app-sdk/ws-client.ts \
+     client/src/lib/app-sdk/execution-stream.ts \
      client/src/lib/app-sdk/use-workflow.ts \
      client/src/lib/app-sdk/use-workflow-hooks.ts \
      client/src/lib/app-sdk/files.ts \
@@ -98,6 +99,9 @@ COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/bifrost-header.tsx \
      /app/src/services/sdk_package/sdk_src/
 COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.ts
+# Contract version stamp (read directly by Python, not bundled by esbuild) —
+# see sdk_contract_version() in sdk_package/__init__.py.
+COPY client/src/lib/app-sdk/sdk-contract.json /app/src/services/sdk_package/sdk_src/sdk-contract.json
 RUN chmod -R a+rX /app/src/services/sdk_package
 
 # Copy entrypoint script
