@@ -11,12 +11,33 @@ Build Bifrost artifacts — apps, workflows, forms, agents, tables, and files. T
 
 ```bash
 echo "SDK: $BIFROST_SDK_INSTALLED | Login: $BIFROST_LOGGED_IN | MCP: $BIFROST_MCP_CONFIGURED"
-echo "Source: $BIFROST_HAS_SOURCE | Path: $BIFROST_SOURCE_PATH | URL: $BIFROST_DEV_URL"
+echo "Source: $BIFROST_HAS_SOURCE | Path: $BIFROST_SOURCE_PATH"
+command -v bifrost >/dev/null && bifrost auth default
 ```
 
-**If SDK or Login is false/empty:** Direct user to run `/bifrost:setup` first.
+**If the SDK is false/empty or the CLI is not authenticated:** Direct the user
+to run `/bifrost:setup` first.
 
-**If `BIFROST_DEV_URL` is empty:** Ask the user: "I don't see `BIFROST_DEV_URL` set — what URL should I use for previews and platform links?" Never invent a `*.gobifrost.com` / `*.musick.gg` / etc. host.
+## Connection model
+
+Bifrost can store credentials for multiple instance URLs. The nearest `.env`
+in the current folder or a parent binds that workspace to one connection; a
+folder without a binding uses the user's saved default.
+
+`bifrost auth default` is read-only. Its `Default connection` line shows the
+saved fallback, while `Current connection` shows what commands from this
+folder will use. Before discovery or mutation, confirm the current connection
+is the intended instance. If it is wrong, run from the intended workspace or
+neutral folder. Do not change the saved default merely to work with a debug
+stack; the debug skill creates a dedicated folder binding.
+
+Most entity commands do not accept `--url`; the folder binding is their
+connection selector. Never repoint a bound folder by overriding only
+`BIFROST_API_URL`, because folder-loaded tokens may belong to its original URL.
+
+`BIFROST_DEV_URL` is only a base for preview and platform links. It does not
+select or prove the authenticated CLI connection. If it is empty and a link is
+needed, ask the user for the base URL. Never invent a host.
 
 ## Step 1: Detect Workspace Mode
 

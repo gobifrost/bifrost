@@ -18,6 +18,17 @@ Before running any commands, introduce the setup process to the user:
 >
 > Let me check your current setup status...
 
+## Connection model
+
+Bifrost stores credentials separately for each instance URL, so several
+connections can coexist on one computer. A folder's nearest `.env` binds CLI
+commands in that workspace to one of those connections. Without a folder
+binding, the CLI uses the user's saved default.
+
+`bifrost auth default` only reports these values; it changes nothing. Only
+`bifrost auth use <url>` changes the saved default, so never run it unless the
+user explicitly asks to change their default connection.
+
 ## Check Current State
 
 Run this command to check environment (set by SessionStart hook):
@@ -25,13 +36,17 @@ Run this command to check environment (set by SessionStart hook):
 ```bash
 echo "SDK: $BIFROST_SDK_INSTALLED | Login: $BIFROST_LOGGED_IN | MCP: $BIFROST_MCP_CONFIGURED"
 echo "Python: $BIFROST_PYTHON_CMD ($BIFROST_PYTHON_VERSION) | Pip: $BIFROST_PIP_CMD | OS: $BIFROST_OS"
+command -v bifrost >/dev/null && bifrost auth default
 ```
+
+The environment flags are hints. When the CLI is installed, the read-only
+`bifrost auth default` output is the source of truth for the current folder.
 
 ## Resume Logic
 
 Based on the environment state:
 
-1. **All true** -> Setup complete! Inform user they're ready to use `/bifrost:build`
+1. **All true and current connection is intended** -> Setup complete! Inform user they're ready to use `/bifrost:build`
 2. **SDK installed + logged in, MCP not configured** -> SDK-first development is ready! MCP is optional — the CLI (`bifrost api`, `bifrost watch`) handles most operations. MCP is only needed for creating forms/apps/agents and knowledge search. Ask if they want to configure it.
 3. **SDK not installed** -> Go to SDK Installation
 4. **SDK installed but not logged in** -> Go to Login
@@ -98,11 +113,15 @@ winget or python.org, then use `py -3.11` explicitly. Do not use plain
 
 ### Get Bifrost URL
 
-**If `$BIFROST_DEV_URL` is set:** Use that URL (already detected from credentials).
+If `bifrost auth default` already shows the intended current connection, reuse
+that URL and do not log in again.
 
 **Otherwise:** Ask the user: "What is your Bifrost instance URL? (e.g., https://yourcompany.gobifrost.com)"
 
 Do NOT suggest placeholder URLs - every Bifrost instance has a unique URL provided by the user's organization.
+
+`BIFROST_DEV_URL` is for preview and platform links. Do not use it as evidence
+of the authenticated CLI connection.
 
 ### Install SDK
 
@@ -128,14 +147,26 @@ If `bifrost` is not on PATH yet, open a new PowerShell window or run it from
 
 ## Login
 
+Run login from the project folder the user wants connected:
+
 ```bash
 bifrost login --url {url}
+bifrost auth default
 ```
 
 This opens a browser for authentication. On Windows, credentials are stored in
 Windows Credential Manager when keyring is available, with
 `%APPDATA%\Bifrost\credentials.json` as the fallback. On Linux/macOS, keyring is
-used when available with `~/.bifrost/credentials.json` as the fallback.
+used when available with `~/.bifrost/credentials.json` as the fallback. Login
+also writes the URL to the current folder's `.env`, binding that folder to the
+connection. Tokens for other instance URLs remain available.
+
+For the repository's local debug stack, use the `bifrost-debug` skill instead;
+it knows the default `dev@gobifrost.com` / `password` credentials and creates a
+dedicated scratch-folder binding without changing the saved default.
+
+To disconnect a specific instance, use `bifrost logout --url {url}`. It clears
+that URL's stored credentials and offers to remove a matching folder binding.
 
 ## MCP Configuration
 
