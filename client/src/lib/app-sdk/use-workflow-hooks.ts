@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect } from "react";
 
-import { useWorkflow, type UseWorkflowState } from "./use-workflow";
+import { useWorkflow, type UseWorkflowState, type WorkflowLogEntry } from "./use-workflow";
 
 export interface UseWorkflowQueryState<T> {
   /** Last successful result, or null before the first run completes. */
@@ -30,6 +30,12 @@ export interface UseWorkflowQueryState<T> {
   error: Error | null;
   /** Re-run the query (e.g. a refresh button). Resolves to the new result. */
   refresh: (input?: Record<string, unknown>) => Promise<T>;
+  /** Live log stream for the latest run. Reset to `[]` at the start of each run. */
+  logs: WorkflowLogEntry[];
+  /** Latest run's status (e.g. "Pending", "Running", "Success"), or null before the first run. */
+  status: string | null;
+  /** Latest run's execution id, or null before the first run. */
+  executionId: string | null;
 }
 
 export interface UseWorkflowMutationState<T> {
@@ -41,6 +47,12 @@ export interface UseWorkflowMutationState<T> {
   loading: boolean;
   /** Last error, or null. */
   error: Error | null;
+  /** Live log stream for the latest mutate. Reset to `[]` at the start of each mutate. */
+  logs: WorkflowLogEntry[];
+  /** Latest mutate's status (e.g. "Pending", "Running", "Success"), or null before the first mutate. */
+  status: string | null;
+  /** Latest mutate's execution id, or null before the first mutate. */
+  executionId: string | null;
 }
 
 /**
@@ -52,7 +64,7 @@ export function useWorkflowQuery<T = unknown>(
   workflowRef: string,
   params?: Record<string, unknown>,
 ): UseWorkflowQueryState<T> {
-  const { data, loading, error, run }: UseWorkflowState<T> = useWorkflow<T>(workflowRef);
+  const { data, loading, error, run, logs, status, executionId }: UseWorkflowState<T> = useWorkflow<T>(workflowRef);
 
   // Serialize params for a stable effect dep without re-running on every render
   // (a fresh object literal each render would otherwise loop). JSON is enough —
@@ -80,7 +92,7 @@ export function useWorkflowQuery<T = unknown>(
     [run, paramsKey],
   );
 
-  return { data, loading, error, refresh };
+  return { data, loading, error, refresh, logs, status, executionId };
 }
 
 /**
@@ -90,6 +102,6 @@ export function useWorkflowQuery<T = unknown>(
 export function useWorkflowMutation<T = unknown>(
   workflowRef: string,
 ): UseWorkflowMutationState<T> {
-  const { data, loading, error, run }: UseWorkflowState<T> = useWorkflow<T>(workflowRef);
-  return { mutate: run, data, loading, error };
+  const { data, loading, error, run, logs, status, executionId }: UseWorkflowState<T> = useWorkflow<T>(workflowRef);
+  return { mutate: run, data, loading, error, logs, status, executionId };
 }

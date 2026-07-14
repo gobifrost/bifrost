@@ -1,8 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 
 import { BifrostProvider } from "./provider";
 import { useWorkflowMutation, useWorkflowQuery } from "./use-workflow-hooks";
+import * as useWorkflowModule from "./use-workflow";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function fakeFetchReturning(result: unknown, record?: (body: unknown) => void) {
   return (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -15,6 +20,48 @@ function fakeFetchReturning(result: unknown, record?: (body: unknown) => void) {
 }
 
 describe("useWorkflowQuery (auto-running, React-Query-shaped)", () => {
+  it("exposes logs, status, and executionId from the underlying useWorkflow", async () => {
+    const mockLogs = [
+      { level: "info", message: "Started", timestamp: "2026-07-14T00:00:00Z", sequence: 1 },
+      { level: "debug", message: "Processing", timestamp: "2026-07-14T00:00:01Z", sequence: 2 },
+    ];
+    const mockStatus = "Running";
+    const mockExecutionId = "exec-123";
+
+    vi.spyOn(useWorkflowModule, "useWorkflow").mockReturnValue({
+      data: { result: "test-result" },
+      loading: false,
+      error: null,
+      run: vi.fn(async () => ({ result: "test-result" })),
+      logs: mockLogs,
+      status: mockStatus,
+      executionId: mockExecutionId,
+    });
+
+    function View() {
+      const { logs, status, executionId } = useWorkflowQuery<{ result: string }>("wf::test");
+      return (
+        <div>
+          <span data-testid="logs">{logs.length}</span>
+          <span data-testid="status">{status}</span>
+          <span data-testid="executionId">{executionId}</span>
+        </div>
+      );
+    }
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={fakeFetchReturning({})}>
+        <View />
+      </BifrostProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("logs").textContent).toBe("2");
+      expect(screen.getByTestId("status").textContent).toBe("Running");
+      expect(screen.getByTestId("executionId").textContent).toBe("exec-123");
+    });
+  });
+
   it("auto-runs on mount and exposes data + refresh", async () => {
     let runs = 0;
     const fetchImpl = (async () => {
@@ -94,6 +141,47 @@ function QueryWithParams() {
 }
 
 describe("useWorkflowMutation (imperative, React-Query-shaped)", () => {
+  it("exposes logs, status, and executionId from the underlying useWorkflow", async () => {
+    const mockLogs = [
+      { level: "info", message: "Mutation started", timestamp: "2026-07-14T00:00:00Z", sequence: 1 },
+    ];
+    const mockStatus = "Success";
+    const mockExecutionId = "exec-456";
+
+    vi.spyOn(useWorkflowModule, "useWorkflow").mockReturnValue({
+      data: { done: true },
+      loading: false,
+      error: null,
+      run: vi.fn(async () => ({ done: true })),
+      logs: mockLogs,
+      status: mockStatus,
+      executionId: mockExecutionId,
+    });
+
+    function View() {
+      const { logs, status, executionId } = useWorkflowMutation<{ done: boolean }>("wf::test");
+      return (
+        <div>
+          <span data-testid="logs">{logs.length}</span>
+          <span data-testid="status">{status}</span>
+          <span data-testid="executionId">{executionId}</span>
+        </div>
+      );
+    }
+
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={fakeFetchReturning({})}>
+        <View />
+      </BifrostProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("logs").textContent).toBe("1");
+      expect(screen.getByTestId("status").textContent).toBe("Success");
+      expect(screen.getByTestId("executionId").textContent).toBe("exec-456");
+    });
+  });
+
   it("does NOT auto-run; mutate() triggers and returns the result", async () => {
     let runs = 0;
     const fetchImpl = (async () => {
