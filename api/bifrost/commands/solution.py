@@ -2885,6 +2885,140 @@ def _restore_sdk_dep(app_dir: pathlib.Path, api_url: str, original: str) -> None
         pass  # best-effort: worst case the user re-heals on a later start
 
 
+def installed_sdk_fingerprint(app_dir: pathlib.Path) -> str | None:
+    """Read the ``bifrost.fingerprint`` stamp from the installed SDK's
+    ``package.json``, or ``None`` if it's missing, unreadable, or unstamped
+    (an old SDK predating the staleness gate). Pure/no-network — Task 6
+    reuses this to decide whether the app's SDK needs `sdk update`."""
+    pkg_file = app_dir / "node_modules" / "bifrost" / "package.json"
+    try:
+        pkg = json.loads(pkg_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    stamp = pkg.get("bifrost")
+    if not isinstance(stamp, dict):
+        return None
+    fingerprint = stamp.get("fingerprint")
+    return fingerprint if isinstance(fingerprint, str) else None
+
+
+def installed_sdk_contract(app_dir: pathlib.Path) -> int | None:
+    """Read the ``bifrost.contract`` stamp from the installed SDK's
+    ``package.json``, or ``None`` if missing/unreadable/unstamped. Sibling to
+    ``installed_sdk_fingerprint``; Task 6 reuses this for the CLI/SDK contract
+    version gate."""
+    pkg_file = app_dir / "node_modules" / "bifrost" / "package.json"
+    try:
+        pkg = json.loads(pkg_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    stamp = pkg.get("bifrost")
+    if not isinstance(stamp, dict):
+        return None
+    contract = stamp.get("contract")
+    return contract if isinstance(contract, int) else None
+
+
+@click.group(name="sdk", help="Manage the app's vendored Bifrost SDK.")
+def sdk_group() -> None:
+    pass
+
+
+solution_group.add_command(sdk_group)
+
+
+@sdk_group.command(name="update", help="Re-vendor the Bifrost SDK into the app (re-download + reinstall).")
+@click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
+def sdk_update_cmd(path: str) -> None:
+    import shutil
+
+    from bifrost.solution_dev.app_select import AppSelectionError, select_app
+
+    workspace = _workspace_from_path_arg(path)
+    if not is_solution_workspace(workspace):
+        raise click.ClickException(
+            f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
+            f"Run `bifrost solution init` first."
+        )
+    descriptor = load_descriptor(workspace)
+
+    client = BifrostClient.get_instance(require_auth=True)
+    binding = asyncio.run(
+        _resolve_bound_solution(client, workspace, descriptor, None)
+    )
+    click.echo(f"Using Solution install id: {binding.solution_id}")
+
+    try:
+        chosen = select_app(workspace, slug=None)
+    except AppSelectionError as exc:
+        raise click.ClickException(str(exc))
+
+    async def _fetch_server_fingerprint() -> str | None:
+        resp = await client.get("/api/version")
+        if resp.status_code != 200:
+            click.echo(
+                f"  warning: could not reach /api/version ({resp.status_code}) — "
+                "continuing without server-side verification.",
+                err=True,
+            )
+            return None
+        try:
+            data = resp.json()
+        except ValueError:
+            return None
+        fingerprint = data.get("sdk_fingerprint")
+        return fingerprint if isinstance(fingerprint, str) else None
+
+    server_fingerprint = asyncio.run(_fetch_server_fingerprint())
+    if server_fingerprint is None:
+        click.echo(
+            "  note: this server does not report sdk_fingerprint (predates the "
+            "staleness gate) — updating without verification."
+        )
+    elif server_fingerprint == "unavailable":
+        click.echo(
+            "  note: server could not compute its own SDK fingerprint "
+            "(toolchain failure) — updating without verification."
+        )
+        server_fingerprint = None
+
+    old_fingerprint = installed_sdk_fingerprint(chosen.app_dir)
+
+    if server_fingerprint is not None and old_fingerprint == server_fingerprint:
+        click.echo(f"SDK already up to date ({old_fingerprint})")
+        return
+
+    bifrost_modules = chosen.app_dir / "node_modules" / "bifrost"
+    if bifrost_modules.is_dir():
+        shutil.rmtree(bifrost_modules)
+
+    npm = shutil.which("npm")
+    if npm is None:
+        raise click.ClickException("npm not found on PATH — install Node.js to run this command.")
+
+    dep_spec = f"bifrost@{client.api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
+    click.echo(f"Reinstalling {dep_spec}...")
+    try:
+        subprocess.run([npm, "install", "--force", dep_spec], cwd=chosen.app_dir, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(
+            f"npm install failed in {chosen.app_dir} (exit {exc.returncode}) "
+            "— see the npm output above."
+        )
+
+    new_fingerprint = installed_sdk_fingerprint(chosen.app_dir)
+
+    if server_fingerprint is not None and new_fingerprint != server_fingerprint:
+        raise click.ClickException(
+            f"SDK still stale after reinstall: was {old_fingerprint!r}, now "
+            f"{new_fingerprint!r}, server wants {server_fingerprint!r}. The npm "
+            "registry/cache may be serving an old tarball — try again or check "
+            "the SDK download endpoint."
+        )
+
+    click.echo(f"SDK updated: {old_fingerprint} -> {new_fingerprint}")
+
+
 def _ensure_port_free(port: int) -> None:
     """Refuse to spawn vite onto a port something already serves.
 
