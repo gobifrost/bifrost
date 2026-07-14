@@ -4,6 +4,8 @@ Executions Router
 Provides access to workflow execution history with filtering capabilities.
 """
 
+import base64
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -11,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select, and_, desc, func
+from sqlalchemy import select, and_, desc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
@@ -50,6 +52,43 @@ router = APIRouter(prefix="/api/executions", tags=["Executions"])
 
 
 # =============================================================================
+# History pagination cursor
+# =============================================================================
+#
+# History pagination is keyset-based: the continuation token names the last
+# row the client saw — (started_at, id) — and the next page is "rows strictly
+# older than that". An offset token ("give me rows 26–50") re-serves the
+# previous page's tail whenever new executions land between page loads, which
+# on a busy instance is every pagination: users stepping into the past see
+# today's rows (and a "Today" day header) at the top of every page.
+
+
+def _encode_history_cursor(started_at: datetime | None, row_id: UUID) -> str:
+    """Encode the last-served row's position as an opaque token."""
+    payload = {
+        "v": 1,
+        "s": started_at.isoformat() if started_at else None,
+        "i": str(row_id),
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+def _decode_history_cursor(token: str) -> tuple[datetime | None, UUID] | None:
+    """Decode a keyset cursor; None for legacy offsets or malformed tokens."""
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(token.encode()))
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            return None
+        raw_started = payload.get("s")
+        started_at = datetime.fromisoformat(raw_started) if raw_started else None
+        return started_at, UUID(payload["i"])
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        # Not a keyset cursor (legacy numeric offset, or garbage) — the caller
+        # falls back to legacy offset parsing / first page.
+        return None
+
+
+# =============================================================================
 # Repository
 # =============================================================================
 
@@ -72,8 +111,14 @@ class ExecutionRepository:
         exclude_local: bool = True,
         limit: int = 25,
         offset: int = 0,
+        cursor: tuple[datetime | None, UUID] | None = None,
     ) -> tuple[list[ExecutionSummary], str | None]:
-        """List executions with filtering."""
+        """List executions with filtering.
+
+        `cursor` is the keyset position (last row's started_at + id); `offset`
+        is only honored for legacy numeric tokens still in flight from before
+        the keyset change. New continuation tokens are always keyset.
+        """
         query = select(ExecutionModel).options(
             selectinload(ExecutionModel.organization),
             selectinload(ExecutionModel.executed_by_user),
@@ -131,11 +176,50 @@ class ExecutionRepository:
         if exclude_local:
             query = query.where(ExecutionModel.is_local_execution == False)  # noqa: E712
 
-        # Order by newest first
-        query = query.order_by(desc(ExecutionModel.started_at))
+        # Order newest first with an id tiebreaker so the order is total:
+        # never-started rows (Scheduled/Pending, NULL started_at) sort first
+        # deterministically instead of "arbitrarily on the server" per page.
+        query = query.order_by(
+            desc(ExecutionModel.started_at).nulls_first(),
+            desc(ExecutionModel.id),
+        )
 
-        # Pagination
-        query = query.offset(offset).limit(limit + 1)  # +1 to check for more
+        # Pagination: keyset when the caller has a cursor, legacy offset
+        # otherwise (first page, or an old numeric token still in flight).
+        if cursor is not None:
+            cursor_started, cursor_id = cursor
+            if cursor_started is None:
+                # Last row served was in the leading NULL block: continue
+                # through older NULL rows, then everything started.
+                query = query.where(
+                    or_(
+                        and_(
+                            ExecutionModel.started_at.is_(None),
+                            ExecutionModel.id < cursor_id,
+                        ),
+                        ExecutionModel.started_at.is_not(None),
+                    )
+                )
+            else:
+                # Strictly older than the cursor row. Excludes the NULL block
+                # (already served on page one) — new Scheduled rows don't
+                # inject themselves into the middle of a pagination either.
+                query = query.where(
+                    and_(
+                        ExecutionModel.started_at.is_not(None),
+                        or_(
+                            ExecutionModel.started_at < cursor_started,
+                            and_(
+                                ExecutionModel.started_at == cursor_started,
+                                ExecutionModel.id < cursor_id,
+                            ),
+                        ),
+                    )
+                )
+        elif offset:
+            query = query.offset(offset)
+
+        query = query.limit(limit + 1)  # +1 to check for more
 
         result = await self.db.execute(query)
         executions = list(result.scalars().all())
@@ -145,10 +229,11 @@ class ExecutionRepository:
         if has_more:
             executions = executions[:limit]
 
-        # Generate continuation token
+        # Continuation token: keyset position of the last row served.
         next_token = None
-        if has_more:
-            next_token = str(offset + limit)
+        if has_more and executions:
+            last = executions[-1]
+            next_token = _encode_history_cursor(last.started_at, last.id)
 
         return [ExecutionRepository._to_summary(e) for e in executions], next_token
 
@@ -619,14 +704,18 @@ async def list_executions(
 
     repo = ExecutionRepository(ctx.db)
 
-    # Parse continuation token as offset
+    # Parse continuation token: keyset cursor, with legacy numeric-offset
+    # fallback for tokens minted before the keyset change.
     offset = 0
+    cursor = None
     if continuationToken:
-        try:
-            offset = int(continuationToken)
-        except ValueError as e:
-            # Malformed continuation token — start from beginning
-            logger.debug(f"invalid continuationToken {log_safe(continuationToken)!r}, starting from offset 0: {log_safe(e)}")
+        cursor = _decode_history_cursor(continuationToken)
+        if cursor is None:
+            try:
+                offset = int(continuationToken)
+            except ValueError as e:
+                # Malformed continuation token — start from beginning
+                logger.debug(f"invalid continuationToken {log_safe(continuationToken)!r}, starting from offset 0: {log_safe(e)}")
 
     # Parse workflowId to UUID if provided
     parsed_workflow_id = UUID(workflowId) if workflowId else None
@@ -642,6 +731,7 @@ async def list_executions(
         exclude_local=excludeLocal,
         limit=limit,
         offset=offset,
+        cursor=cursor,
     )
 
     return ExecutionsListResponse(
