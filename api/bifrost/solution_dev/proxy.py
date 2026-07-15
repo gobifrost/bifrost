@@ -599,6 +599,25 @@ def _is_uuid(ref: str) -> bool:
 _SCOPE_BODY_FIELDS = ("solution_id", "form_id", "app_id")
 
 
+def _local_execution_response(*, result: Any = None, error: str | None = None) -> web.Response:
+    """Return a terminal execution shape for an in-process local workflow.
+
+    Local runs have no durable execution row to stream or poll. The canonical
+    terminal status lets the current SDK settle inline; the additive fields
+    remain compatible with pre-streaming SDKs, which read ``result``/``error``
+    directly from this same 200 response.
+    """
+    payload: dict[str, Any] = {
+        "execution_id": f"solution-start-{_uuid.uuid4()}",
+        "is_transient": True,
+    }
+    if error is None:
+        payload.update({"status": "Success", "result": result})
+    else:
+        payload.update({"status": "Failed", "error": error})
+    return web.json_response(payload)
+
+
 async def _execute_handler(request: web.Request) -> web.Response:
     cfg: DevProxyConfig = request.app[_CFG]
     host = request.app[_HOST]
@@ -635,7 +654,7 @@ async def _execute_handler(request: web.Request) -> web.Response:
     try:
         local_ref = host.resolve(ref)
     except LocalWorkflowError as exc:
-        return web.json_response({"error": str(exc)})
+        return _local_execution_response(error=str(exc))
 
     if local_ref is not None:
         if _is_uuid(ref) and ref not in request.app[_WARNED_UUID_REFS]:
@@ -655,20 +674,22 @@ async def _execute_handler(request: web.Request) -> web.Response:
             import traceback
 
             tb = traceback.format_exc()
-            return web.json_response({"error": f"{type(exc).__name__}: {exc}\n\n{tb}"})
-        return web.json_response({"status": "completed", "result": result})
+            return _local_execution_response(
+                error=f"{type(exc).__name__}: {exc}\n\n{tb}"
+            )
+        return _local_execution_response(result=result)
 
     if not cfg.global_repo_access:
         known = ", ".join(host.refs()) or "(none discovered)"
-        return web.json_response({
-            "error": (
+        return _local_execution_response(
+            error=(
                 f"Workflow '{ref}' not found in this Solution workspace. "
                 f"Local refs: {known}. This Solution does not set "
                 "global_repo_access: true in bifrost.solution.yaml, so "
                 "`bifrost solution start` will not ask the platform to "
                 "resolve it."
             )
-        })
+        )
 
     # Shared _repo/ fallback, stripped of every install-scope signal.
     fallback_body = {k: v for k, v in body.items() if k not in _SCOPE_BODY_FIELDS}

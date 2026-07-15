@@ -205,10 +205,28 @@ async def test_local_path_ref_runs_in_function_host():
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.post(f"http://127.0.0.1:{dev_port}/api/workflows/execute",
-                             json={"workflow_id": "functions/hello.py::main", "input_data": {"x": 1}, "app_id": "A"})
-        assert r.status_code == 200
-        assert r.json()["result"] == {"ran_local": "functions/hello.py::main", "params": {"x": 1}}
+            responses = [
+                await c.post(
+                    f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                    json={
+                        "workflow_id": "functions/hello.py::main",
+                        "input_data": {"x": 1},
+                        "app_id": "A",
+                        **({"sync": True} if legacy else {}),
+                    },
+                )
+                for legacy in (False, True)
+            ]
+        for response in responses:
+            assert response.status_code == 200
+            body = response.json()
+            assert body["execution_id"].startswith("solution-start-")
+            assert body["is_transient"] is True
+            assert body["status"] == "Success"
+            assert body["result"] == {
+                "ran_local": "functions/hello.py::main",
+                "params": {"x": 1},
+            }
         assert host.last_call == ("functions/hello.py::main", {"x": 1})
         assert "execute_body" not in record  # never hit upstream
     finally:
@@ -224,10 +242,12 @@ class _RaisingHost:
         raise ValueError("boom in the workflow")
 
 
-async def test_local_error_returns_200_with_error_field():
+async def test_local_error_returns_inline_terminal_failure():
     # A local workflow exception must surface the real error to the SDK, which
     # reads `body.error` on a 200 (deployed contract); a non-200 would only show
-    # statusText. So the proxy returns 200 + {"error": "...boom..."}.
+    # statusText. The response is terminal so the streaming SDK does not poll
+    # an execution that exists only inside this process. A pre-streaming SDK
+    # still rejects the unchanged `error` field.
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream({}), up_port)
     cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
@@ -237,7 +257,11 @@ async def test_local_error_returns_200_with_error_field():
             r = await c.post(f"http://127.0.0.1:{dev_port}/api/workflows/execute",
                              json={"workflow_id": "functions/boom.py::main", "input_data": {}})
         assert r.status_code == 200
-        err = r.json()["error"]
+        body = r.json()
+        assert body["execution_id"].startswith("solution-start-")
+        assert body["is_transient"] is True
+        assert body["status"] == "Failed"
+        err = body["error"]
         assert "boom in the workflow" in err
         assert "ValueError" in err  # includes the exception type + traceback
     finally:
@@ -299,7 +323,11 @@ async def test_resolution_errors_surface_as_200_error_body():
                     json={"workflow_id": "Dup", "input_data": {}},
                 )
             assert r.status_code == 200
-            assert needle in r.json()["error"]
+            body = r.json()
+            assert body["execution_id"].startswith("solution-start-")
+            assert body["is_transient"] is True
+            assert body["status"] == "Failed"
+            assert needle in body["error"]
             assert "execute_body" not in record  # even with global access: no proxy
         finally:
             await dev_runner.cleanup()
@@ -325,6 +353,9 @@ async def test_unknown_ref_without_global_access_errors_locally():
             )
         assert r.status_code == 200
         body = r.json()
+        assert body["execution_id"].startswith("solution-start-")
+        assert body["is_transient"] is True
+        assert body["status"] == "Failed"
         assert "not found" in body["error"]
         assert "functions/hello.py::main" in body["error"]  # lists known refs
         assert "global_repo_access" in body["error"]
