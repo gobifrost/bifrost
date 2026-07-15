@@ -520,14 +520,14 @@ export default defineConfig(({ command }) => {
 """
     index_html = f"""\
 <!doctype html>
-<html lang="en">
+<html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
     <meta name="bifrost-app-runtime" content="mount-v1" />
     <title>{slug}</title>
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

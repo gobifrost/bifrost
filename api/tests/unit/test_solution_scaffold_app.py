@@ -58,7 +58,11 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     # main.tsx follows the explicit lifecycle contract: the immutable module
     # registers mount(), receives bootstrap directly, and returns teardown.
     main = files["src/main.tsx"]
-    assert 'name="bifrost-app-runtime" content="mount-v1"' in files["index.html"]
+    index_html = files["index.html"]
+    assert 'name="bifrost-app-runtime" content="mount-v1"' in index_html
+    assert '<html lang="en" class="h-full">' in index_html
+    assert '<body class="h-full">' in index_html
+    assert '<div id="root" class="h-full"></div>' in index_html
     assert "createRoot" in main
     assert "export function mount" in main
     assert "__BIFROST_APP_MODULES__" in main
