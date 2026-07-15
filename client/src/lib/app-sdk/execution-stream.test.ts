@@ -91,6 +91,41 @@ describe("subscribeToExecution", () => {
     });
   });
 
+  it("emits ready only after the server acknowledges the execution subscription", () => {
+    const events: ExecutionStreamEvent[] = [];
+    subscribeToExecution("abc-123", (e) => events.push(e));
+    const ws = MockWebSocket.instances[0];
+    ws.emit("open", {});
+    expect(events).toEqual([]);
+    ws.emit("message", {
+      data: JSON.stringify({ type: "subscribed", channel: "execution:abc-123" }),
+    });
+    expect(events).toEqual([{ type: "ready" }]);
+  });
+
+  it("falls back when the server rejects or revokes the subscription", () => {
+    const rejected = vi.fn();
+    subscribeToExecution("abc-123", () => {}, rejected);
+    MockWebSocket.instances[0].emit("message", {
+      data: JSON.stringify({
+        type: "error",
+        channel: "execution:abc-123",
+        message: "Access denied",
+      }),
+    });
+    expect(rejected).toHaveBeenCalledTimes(1);
+
+    const revoked = vi.fn();
+    subscribeToExecution("def-456", () => {}, revoked);
+    MockWebSocket.instances[1].emit("message", {
+      data: JSON.stringify({
+        type: "subscription_revoked",
+        channel: "execution:def-456",
+      }),
+    });
+    expect(revoked).toHaveBeenCalledTimes(1);
+  });
+
   it("fires onSocketDown on error and on unexpected close, but not on unsubscribe", () => {
     const down = vi.fn();
     const unsub = subscribeToExecution("abc-123", () => {}, down);

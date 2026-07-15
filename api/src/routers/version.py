@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -43,6 +44,8 @@ async def get_version_info() -> VersionResponse:
     return VersionResponse(
         version=get_version(),
         contract_version=get_contract_version(),
-        sdk_fingerprint=get_sdk_fingerprint(),
+        # The cold path shells out to node/esbuild (up to 120s). Keep that
+        # synchronous build off the API event loop, matching /api/sdk/download.
+        sdk_fingerprint=await asyncio.to_thread(get_sdk_fingerprint),
         sdk_contract_version=sdk_contract_version(),
     )

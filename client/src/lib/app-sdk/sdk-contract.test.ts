@@ -38,7 +38,7 @@ function fnv1aHex(input: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-const SNAPSHOT_HASH = "bcffced8";
+const SNAPSHOT_HASH = "5dc39567";
 
 describe("SDK wire-surface tripwire", () => {
   it("matches the committed snapshot hash", () => {

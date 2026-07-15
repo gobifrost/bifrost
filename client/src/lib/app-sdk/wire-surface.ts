@@ -92,6 +92,10 @@ export const wireSurface = {
       type: "subscribe",
       channels: ["name", "filter", "scope"],
     },
+    subscribedFrame: {
+      type: "subscribed",
+      fields: ["channel"],
+    },
     // Inbound frames read by tables.ts (via ws-client.ts subscribeToTable).
     tableChangeFrame: {
       type: "document_change",

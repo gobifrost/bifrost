@@ -19,7 +19,7 @@ const TERMINAL_STATUSES = new Set([
 ]);
 
 export interface ExecutionStreamEvent {
-  type: "status" | "log";
+  type: "ready" | "status" | "log";
   status?: string;
   isTerminal?: boolean;
   log?: { level: string; message: string; timestamp: string; sequence?: number };
@@ -31,14 +31,22 @@ export function subscribeToExecution(
   onSocketDown?: () => void,
 ): () => void {
   const ws = new WebSocket(buildWsUrl());
+  const channel = `execution:${executionId}`;
   let closedByClient = false;
   let downFired = false;
+
+  const fireSocketDown = () => {
+    if (!closedByClient && !downFired) {
+      downFired = true;
+      onSocketDown?.();
+    }
+  };
 
   ws.addEventListener("open", () => {
     ws.send(
       JSON.stringify({
         type: "subscribe",
-        channels: [{ name: `execution:${executionId}` }],
+        channels: [{ name: channel }],
       }),
     );
   });
@@ -46,7 +54,19 @@ export function subscribeToExecution(
   ws.addEventListener("message", (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === "execution_update" && msg.executionId === executionId) {
+      if (msg.type === "subscribed" && msg.channel === channel) {
+        // The server adds the socket to the channel before acknowledging it.
+        // A result check at this point closes the gap between the initial GET
+        // and the live subscription becoming authoritative.
+        onEvent({ type: "ready" });
+      } else if (
+        (msg.type === "error" && (msg.channel === undefined || msg.channel === channel)) ||
+        (msg.type === "subscription_revoked" && msg.channel === channel)
+      ) {
+        console.warn("[bifrost-sdk] execution stream subscription unavailable");
+        fireSocketDown();
+        ws.close();
+      } else if (msg.type === "execution_update" && msg.executionId === executionId) {
         onEvent({
           type: "status",
           status: msg.status,
@@ -70,17 +90,13 @@ export function subscribeToExecution(
 
   ws.addEventListener("error", () => {
     console.warn("[bifrost-sdk] execution stream socket error");
-    if (!closedByClient && !downFired) {
-      downFired = true;
-      onSocketDown?.();
-    }
+    fireSocketDown();
   });
 
   ws.addEventListener("close", (e) => {
     if (!closedByClient && !downFired) {
-      downFired = true;
       console.warn("[bifrost-sdk] execution stream closed", e.code);
-      onSocketDown?.();
+      fireSocketDown();
     }
   });
 

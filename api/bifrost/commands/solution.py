@@ -3002,9 +3002,18 @@ def sdk_group() -> None:
 solution_group.add_command(sdk_group)
 
 
-@sdk_group.command(name="update", help="Re-vendor the Bifrost SDK into the app (re-download + reinstall).")
+@sdk_group.command(
+    name="update",
+    help="Re-vendor the Bifrost SDK into the app (re-download + reinstall).",
+)
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
-def sdk_update_cmd(path: str) -> None:
+@click.option(
+    "--app",
+    "app_slug",
+    default=None,
+    help="standalone_v2 app slug (required when the Solution has multiple apps).",
+)
+def sdk_update_cmd(path: str, app_slug: str | None) -> None:
     import shutil
 
     from bifrost.solution_dev.app_select import AppSelectionError, select_app
@@ -3024,9 +3033,12 @@ def sdk_update_cmd(path: str) -> None:
     click.echo(f"Using Solution install id: {binding.solution_id}")
 
     try:
-        chosen = select_app(workspace, slug=None)
+        chosen = select_app(workspace, slug=app_slug)
     except AppSelectionError as exc:
-        raise click.ClickException(str(exc))
+        message = str(exc)
+        if app_slug is None and message.startswith("Multiple apps found"):
+            message = f"{message} For SDK updates, pass --app <slug>."
+        raise click.ClickException(message)
 
     async def _fetch_server_fingerprint() -> str | None:
         resp = await client.get("/api/version")

@@ -50,7 +50,13 @@ def test_installed_sdk_contract_none_when_missing(tmp_path):
     assert installed_sdk_contract(tmp_path) is None
 
 
-def _sdk_update_workspace(tmp_path, monkeypatch, *, installed_fingerprint):
+def _sdk_update_workspace(
+    tmp_path,
+    monkeypatch,
+    *,
+    installed_fingerprint,
+    app_slugs=("dash",),
+):
     """Bound workspace with a single standalone_v2 app, mirroring
     `_start_workspace` in test_solution_dev_command.py but scoped to what
     `sdk update` needs: no FunctionHost/vite fakes, just client + app dir."""
@@ -65,13 +71,21 @@ def _sdk_update_workspace(tmp_path, monkeypatch, *, installed_fingerprint):
         "BIFROST_SOLUTION_SCOPE=org\n"
     )
     (tmp_path / ".bifrost").mkdir()
+    apps = {
+        f"app-{index}": {
+            "id": f"app-{index}",
+            "slug": slug,
+            "path": f"apps/{slug}",
+            "app_model": "standalone_v2",
+        }
+        for index, slug in enumerate(app_slugs)
+    }
     (tmp_path / ".bifrost" / "apps.yaml").write_text(
-        yaml.safe_dump({"apps": {
-            "a": {"id": "a", "slug": "dash", "path": "apps/dash", "app_model": "standalone_v2"},
-        }})
+        yaml.safe_dump({"apps": apps})
     )
-    app_dir = tmp_path / "apps" / "dash"
-    app_dir.mkdir(parents=True)
+    for slug in app_slugs:
+        (tmp_path / "apps" / slug).mkdir(parents=True)
+    app_dir = tmp_path / "apps" / app_slugs[0]
     if installed_fingerprint is not None:
         _write_installed_sdk(app_dir, installed_fingerprint)
 
@@ -143,6 +157,49 @@ def test_sdk_update_reinstalls_and_verifies(tmp_path, monkeypatch):
     assert argv[0].endswith("npm")  # resolved via shutil.which, so may be a full path
     assert argv[1:3] == ["install", "--force"]
     assert "bifrost@http://localhost:8000/api/sdk/download" in argv
+
+
+def test_sdk_update_selects_app_in_multi_app_solution(tmp_path, monkeypatch):
+    import subprocess
+
+    _sdk_update_workspace(
+        tmp_path,
+        monkeypatch,
+        installed_fingerprint="oldoldoldoldold1",
+        app_slugs=("dash", "reports"),
+    )
+    reports_dir = tmp_path / "apps" / "reports"
+    _write_installed_sdk(reports_dir, "oldoldoldoldold1")
+    spawned = []
+
+    def _fake_run(argv, **kwargs):
+        spawned.append((list(argv), kwargs["cwd"]))
+        _write_installed_sdk(reports_dir, "newnewnewnewnew1")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = CliRunner().invoke(
+        solution_group,
+        ["sdk", "update", ".", "--app", "reports"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert spawned[0][1] == reports_dir
+    assert "newnewnewnewnew1" in result.output
+
+
+def test_sdk_update_multi_app_error_names_selector(tmp_path, monkeypatch):
+    _sdk_update_workspace(
+        tmp_path,
+        monkeypatch,
+        installed_fingerprint="oldoldoldoldold1",
+        app_slugs=("dash", "reports"),
+    )
+
+    result = CliRunner().invoke(solution_group, ["sdk", "update", "."])
+
+    assert result.exit_code == 1
+    assert "--app <slug>" in result.output
 
 
 def _fake_run_reinstalls(app_dir, spawned):

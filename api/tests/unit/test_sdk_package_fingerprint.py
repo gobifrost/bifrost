@@ -78,6 +78,26 @@ def test_version_endpoint_reports_sdk_fingerprint_and_contract(monkeypatch):
     assert "sdk_contract_version" in version_router.VersionResponse.model_fields
 
 
+def test_version_endpoint_builds_fingerprint_off_event_loop(monkeypatch):
+    import asyncio
+
+    from src.routers import version as version_router
+
+    calls = []
+
+    async def _fake_to_thread(func, *args):
+        calls.append((func, args))
+        return func(*args)
+
+    monkeypatch.setattr(version_router.asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(version_router, "get_sdk_fingerprint", lambda: "threaded-fp")
+    monkeypatch.setattr(version_router, "sdk_contract_version", lambda: 1)
+
+    resp = asyncio.run(version_router.get_version_info())
+    assert resp.sdk_fingerprint == "threaded-fp"
+    assert calls == [(version_router.get_sdk_fingerprint, ())]
+
+
 def test_get_sdk_fingerprint_degrades_gracefully_on_build_failure(monkeypatch):
     """A broken node toolchain must not take down /api/version."""
     from src.routers import version as version_router

@@ -75,6 +75,19 @@ const TERMINAL_STATUSES = new Set([
 
 const POLL_INTERVAL_MS = 2000;
 
+class ExecutionFetchError extends Error {
+  readonly retryable: boolean;
+
+  constructor(status: number, statusText: string) {
+    super(`failed to fetch execution: ${status}${statusText ? ` ${statusText}` : ""}`);
+    this.name = "ExecutionFetchError";
+    // A just-created execution can briefly 404, and transient overload/server
+    // failures can recover. Other 4xx responses (notably an expired/forbidden
+    // token) will not improve by polling forever.
+    this.retryable = status === 404 || status === 408 || status === 429 || status >= 500;
+  }
+}
+
 /**
  * Run a Bifrost workflow by UUID, portable `path::function` ref, or workflow
  * name from a v2 app. All three resolve identically: the server scopes the
@@ -106,6 +119,7 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
       setError(null);
       setLogs([]);
       setStatus("Pending");
+      setExecutionId(null);
 
       const settleFromExecution = (exec: {
         status?: string;
@@ -115,11 +129,13 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
         if (exec.status === "Success" || exec.status === "CompletedWithErrors") {
           return exec.result as T;
         }
-        throw new Error(exec.error_message ?? `Workflow ${exec.status ?? "failed"}`);
+        throw new Error(
+          exec.error_message ?? `Workflow failed (status: ${exec.status ?? "unknown"})`,
+        );
       };
       const fetchExecution = async (id: string) => {
         const r = await authedFetch(`/api/executions/${id}`);
-        if (!r.ok) throw new Error(`failed to fetch execution: ${r.status}`);
+        if (!r.ok) throw new ExecutionFetchError(r.status, r.statusText);
         return (await r.json()) as {
           status?: string;
           result?: unknown;
@@ -149,14 +165,13 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
         // Transient (data-provider-style) and already-terminal responses
         // settle inline — never touch the websocket.
         if (body.is_transient || TERMINAL_STATUSES.has(body.status)) {
-          if (body.error || body.status === "Failed") {
-            throw new Error(body.error ?? `Workflow failed (status: ${body.status})`);
-          }
-          const result = body.result as T;
-          if (seq === seqRef.current) {
-            setData(result);
-            setStatus(body.status);
-          }
+          if (seq === seqRef.current) setStatus(body.status);
+          const result = settleFromExecution({
+            status: body.status,
+            result: body.result,
+            error_message: body.error,
+          });
+          if (seq === seqRef.current) setData(result);
           return result;
         }
 
@@ -177,8 +192,13 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
             fn();
           };
           const checkOnce = async () => {
+            if (settled) return;
             try {
               const exec = await fetchExecution(execId);
+              // Another concurrent check (ready ack, terminal frame, or poll)
+              // may have settled while this request was in flight. Never let
+              // its older snapshot regress terminal state after resolution.
+              if (settled) return;
               if (seq === seqRef.current && exec.status) setStatus(exec.status);
               if (exec.status && TERMINAL_STATUSES.has(exec.status)) {
                 settle(() => {
@@ -189,9 +209,13 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
                   }
                 });
               }
-            } catch {
+            } catch (fetchError) {
+              if (settled) return;
+              if (fetchError instanceof ExecutionFetchError && !fetchError.retryable) {
+                settle(() => reject(fetchError));
+                return;
+              }
               // Transient fetch failure — the stream/poll keeps driving; a
-              // persistent failure surfaces on the next terminal fetch attempt.
               // If this was the post-terminal-event fetch, there's no further
               // status frame coming and the socket may stay open (so
               // onSocketDown never fires) — arm the poll fallback so the run
@@ -204,6 +228,12 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
           unsubscribe = subscribeToExecution(
             execId,
             (evt: ExecutionStreamEvent) => {
+              if (evt.type === "ready") {
+                // The server has installed the subscription. Re-check now so a
+                // terminal transition between the initial GET and this ack
+                // cannot be lost forever.
+                void checkOnce();
+              }
               if (evt.type === "log" && evt.log && seq === seqRef.current) {
                 const log = evt.log;
                 setLogs((prev) => [...prev, log]);

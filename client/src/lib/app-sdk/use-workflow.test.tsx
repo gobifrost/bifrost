@@ -354,6 +354,32 @@ describe("useWorkflow", () => {
     expect(subscribeToExecution).not.toHaveBeenCalled();
   });
 
+  it.each(["Timeout", "Cancelled"])(
+    "rejects an inline %s terminal response instead of resolving undefined",
+    async (terminalStatus) => {
+      const fakeFetch = (async () =>
+        new Response(
+          JSON.stringify({ execution_id: "e-terminal", status: terminalStatus, result: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as typeof fetch;
+
+      const onResult = vi.fn();
+      const rejections: Error[] = [];
+      render(
+        <BifrostProvider baseUrl="https://dev.example" token="tok-x" fetchImpl={fakeFetch}>
+          <StreamRunner onResult={onResult} onError={(e) => rejections.push(e)} />
+        </BifrostProvider>,
+      );
+      screen.getByText("go").click();
+
+      await waitFor(() => expect(rejections).toHaveLength(1));
+      expect(onResult).not.toHaveBeenCalled();
+      expect(rejections[0].message).toContain(terminalStatus);
+      expect(screen.getByTestId("status").textContent).toBe(terminalStatus);
+      expect(subscribeToExecution).not.toHaveBeenCalled();
+    },
+  );
+
   it("settles from the immediate check when the run finished before the socket", async () => {
     (subscribeToExecution as Mock).mockImplementation(() => vi.fn());
 
@@ -374,6 +400,156 @@ describe("useWorkflow", () => {
     screen.getByText("go").click();
 
     await waitFor(() => expect(onResult).toHaveBeenCalledWith({ fast: true }));
+  });
+
+  it("re-checks on subscription acknowledgement so a pre-ack terminal event is not lost", async () => {
+    let streamCb: (evt: unknown) => void = () => {};
+    (subscribeToExecution as Mock).mockImplementation(
+      (_id: string, cb: (evt: unknown) => void) => {
+        streamCb = cb;
+        return vi.fn();
+      },
+    );
+
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (isExecute(url)) {
+        return new Response(JSON.stringify({ execution_id: "e-ack", status: "Pending" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (isGetExecution(url, "e-ack")) {
+        getCount += 1;
+        return new Response(
+          JSON.stringify(
+            getCount === 1
+              ? { status: "Running" }
+              : { status: "Success", result: { ackRecovered: true } },
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unhandled fetch: ${url}`);
+    });
+
+    const onResult = vi.fn();
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-x"
+        fetchImpl={fetchMock as unknown as typeof fetch}
+      >
+        <StreamRunner onResult={onResult} />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+    await waitFor(() => expect(getCount).toBe(1));
+
+    // The workflow completed after the first GET but before the websocket
+    // subscription was installed, so no terminal frame reached the client.
+    act(() => streamCb({ type: "ready" }));
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith({ ackRecovered: true }));
+    expect(getCount).toBe(2);
+  });
+
+  it("ignores an older nonterminal GET that returns after a concurrent terminal check", async () => {
+    let streamCb: (evt: unknown) => void = () => {};
+    (subscribeToExecution as Mock).mockImplementation(
+      (_id: string, cb: (evt: unknown) => void) => {
+        streamCb = cb;
+        return vi.fn();
+      },
+    );
+
+    let resolveInitialGet: ((response: Response) => void) | undefined;
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (isExecute(url)) {
+        return new Response(JSON.stringify({ execution_id: "e-reordered", status: "Pending" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (isGetExecution(url, "e-reordered")) {
+        getCount += 1;
+        if (getCount === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveInitialGet = resolve;
+          });
+        }
+        return new Response(
+          JSON.stringify({ status: "Success", result: { reordered: true } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unhandled fetch: ${url}`);
+    });
+
+    const onResult = vi.fn();
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-x"
+        fetchImpl={fetchMock as unknown as typeof fetch}
+      >
+        <StreamRunner onResult={onResult} />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+    await waitFor(() => expect(resolveInitialGet).toBeDefined());
+
+    act(() => streamCb({ type: "ready" }));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith({ reordered: true }));
+    expect(screen.getByTestId("status").textContent).toBe("Success");
+
+    await act(async () => {
+      resolveInitialGet!(
+        new Response(JSON.stringify({ status: "Running" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("status").textContent).toBe("Success");
+  });
+
+  it("rejects a permanent execution-fetch failure instead of polling forever", async () => {
+    (subscribeToExecution as Mock).mockImplementation(() => vi.fn());
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (isExecute(url)) {
+        return new Response(JSON.stringify({ execution_id: "e-forbidden", status: "Pending" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (isGetExecution(url, "e-forbidden")) {
+        return new Response("forbidden", { status: 403, statusText: "Forbidden" });
+      }
+      throw new Error(`unhandled fetch: ${url}`);
+    });
+
+    const rejections: Error[] = [];
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-x"
+        fetchImpl={fetchMock as unknown as typeof fetch}
+      >
+        <StreamRunner onResult={() => {}} onError={(e) => rejections.push(e)} />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+
+    await waitFor(() => expect(rejections).toHaveLength(1));
+    expect(rejections[0].message).toBe("failed to fetch execution: 403 Forbidden");
+    expect(screen.getByTestId("state").textContent).toBe("error");
   });
 
   it("falls back to polling when the socket drops", async () => {

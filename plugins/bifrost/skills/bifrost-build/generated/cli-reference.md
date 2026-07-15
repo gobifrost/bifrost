@@ -1953,7 +1953,9 @@ Usage: solution sdk update [OPTIONS] [PATH]
   Re-vendor the Bifrost SDK into the app (re-download + reinstall).
 
 Options:
-  --help  Show this message and exit.
+  --app TEXT  standalone_v2 app slug (required when the Solution has multiple
+              apps).
+  --help      Show this message and exit.
 ```
 
 ### `solution start`
