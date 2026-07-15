@@ -364,10 +364,9 @@ async def _execute_async(execution_id: str, worker_id: str) -> dict[str, Any]:
     # _clear_workspace_modules keys off the active install (get_solution_context);
     # if it ran with no context (as the template_process fork path did), a prior
     # install's same-name module could survive the hash check and shadow this
-    # install's file, breaking multi-install isolation (Codex #9). _run_execution
-    # re-applies the same context for the run itself; setting it here is the
-    # idempotent prerequisite for a correctly-scoped eviction.
-    from src.core.module_cache_sync import set_solution_context
+    # install's file, breaking multi-install isolation (Codex #9). This context is
+    # temporary: _run_execution activates it again after credential bootstrap.
+    from src.core.module_cache_sync import clear_solution_context, set_solution_context
 
     _exec_solution_id = context.get("solution_id")
     if _exec_solution_id:
@@ -375,7 +374,12 @@ async def _execute_async(execution_id: str, worker_id: str) -> dict[str, Any]:
             _exec_solution_id,
             global_repo_access=bool(context.get("solution_global_repo_access", False)),
         )
-    _clear_workspace_modules()
+    try:
+        _clear_workspace_modules()
+    finally:
+        # Credential backend imports must run without Solution namespace probing;
+        # otherwise their own API credential lookup can recursively import them.
+        clear_solution_context()
 
     # 2. Run the execution using existing worker logic
     # This reuses the shared _run_execution() from worker.py

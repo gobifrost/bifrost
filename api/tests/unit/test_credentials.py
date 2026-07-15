@@ -348,6 +348,26 @@ class TestBackendSelection:
         assert "keyring" in captured.err.lower()
         assert "fallback" in captured.err.lower() or "falling back" in captured.err.lower()
 
+    def test_partial_keyring_module_falls_back_to_json(self, monkeypatch):
+        """A cached keyring.errors module may not be attached to its parent."""
+        from bifrost.credentials import JsonBackend, _select_persistent_backend
+
+        creds_mod._reset_persistent_backend_for_tests()
+        import keyring
+        import keyring.errors
+
+        errors_module = keyring.errors
+
+        def fake_get_password(_service, _username):
+            raise errors_module.NoKeyringError("no backend")
+
+        monkeypatch.setattr(keyring, "get_password", fake_get_password)
+        monkeypatch.delattr(keyring, "errors")
+
+        backend = _select_persistent_backend()
+
+        assert isinstance(backend, JsonBackend)
+
     def test_keyring_import_error_falls_back_to_json(self, monkeypatch):
         from bifrost.credentials import JsonBackend, _select_persistent_backend
         creds_mod._reset_persistent_backend_for_tests()

@@ -278,7 +278,7 @@ def _select_persistent_backend() -> Backend:
         # when the backend is nominally available but the OS service isn't.
         keyring.get_password(KEYRING_SERVICE, "__probe__")
         return KeyringBackend(_keyring=keyring)
-    except (keyring.errors.NoKeyringError, keyring.errors.KeyringError, Exception) as e:
+    except Exception as e:  # noqa: BLE001 - any unusable OS backend falls back to JSON
         _keyring_fallback_reason = type(e).__name__
         return JsonBackend()
 

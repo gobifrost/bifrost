@@ -116,12 +116,16 @@ async def test_execute_async_sets_solution_context_before_clearing_modules(monke
     def _fake_clear():
         calls.append(("clear_modules", None))
 
+    def _fake_clear_ctx():
+        calls.append(("clear_context", None))
+
     async def _fake_run(_eid, _ctx):
         calls.append(("run", None))
         return {"status": "Success", "result": {}, "metrics": {}}
 
     monkeypatch.setattr(sw, "_read_context_from_redis", _fake_read_context)
     monkeypatch.setattr(mcs, "set_solution_context", _fake_set_ctx)
+    monkeypatch.setattr(mcs, "clear_solution_context", _fake_clear_ctx)
     monkeypatch.setattr(sw, "_clear_workspace_modules", _fake_clear)
     monkeypatch.setattr(sw, "_get_pss_bytes", lambda: 0)
     # _run_execution is imported inside the function from worker; patch there.
@@ -134,6 +138,9 @@ async def test_execute_async_sets_solution_context_before_clearing_modules(monke
     assert order.index("set_context") < order.index("clear_modules"), (
         f"context must be set before clearing modules; got {order}"
     )
-    assert order.index("clear_modules") < order.index("run")
+    assert order.index("clear_modules") < order.index("clear_context")
+    assert order.index("clear_context") < order.index("run"), (
+        f"eviction-only context must be clear before credential bootstrap; got {order}"
+    )
     # The context activated is THIS execution's install.
     assert ("set_context", sid) in calls
