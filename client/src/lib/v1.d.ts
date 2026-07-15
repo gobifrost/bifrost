@@ -23146,6 +23146,10 @@ export interface components {
             version: string;
             /** Contract Version */
             contract_version: number;
+            /** Sdk Fingerprint */
+            sdk_fingerprint: string;
+            /** Sdk Contract Version */
+            sdk_contract_version: number;
         };
         /**
          * WatchSessionRequest

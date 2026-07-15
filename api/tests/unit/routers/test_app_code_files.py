@@ -3,7 +3,30 @@
 import pytest
 from fastapi import HTTPException
 
-from src.routers.app_code_files import validate_file_path
+from src.routers.app_code_files import standalone_v2_runtime_contract, validate_file_path
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        '<meta name="bifrost-app-runtime" content="mount-v1">',
+        "<META content='mount-v1' data-x='1' name='bifrost-app-runtime'>",
+    ],
+)
+def test_standalone_v2_runtime_contract_detects_mount_marker(meta: str):
+    assert standalone_v2_runtime_contract(f"<html><head>{meta}</head></html>") == "mount-v1"
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<html><head></head></html>",
+        '<meta name="bifrost-app-runtime" content="future-v2">',
+        '<meta name="something-else" content="mount-v1">',
+    ],
+)
+def test_standalone_v2_runtime_contract_rejects_missing_or_unknown_marker(html: str):
+    assert standalone_v2_runtime_contract(html) is None
 
 
 class TestValidateFilePath:

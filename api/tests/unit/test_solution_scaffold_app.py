@@ -55,19 +55,21 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     # The README must NOT tell the developer to paste a token.
     assert "paste" not in files["README.md"].lower()
 
-    # main.tsx follows the runtime contract: reads window.__BIFROST_APP__,
-    # createRoot, registers unmount, falls back to the dev env.
+    # main.tsx follows the explicit lifecycle contract: the immutable module
+    # registers mount(), receives bootstrap directly, and returns teardown.
     main = files["src/main.tsx"]
-    assert "window.__BIFROST_APP__" in main
+    assert 'name="bifrost-app-runtime" content="mount-v1"' in files["index.html"]
     assert "createRoot" in main
-    assert "registerUnmount" in main
+    assert "export function mount" in main
+    assert "__BIFROST_APP_MODULES__" in main
+    assert "return () => root.unmount()" in main
     assert "VITE_BIFROST_TOKEN" in main
-    assert "BrowserRouter basename" in main
-    # Codex #9: prefer the per-mount registry keyed by THIS entry's `m` nonce so
-    # a fast app→app navigation can't make our still-loading entry read another
-    # app's bootstrap. Reads the nonce from import.meta.url + the registry.
-    assert "__BIFROST_APPS__" in main
+    assert "BrowserRouter basename={bootstrap.basename}" in main
+    assert "if (import.meta.env.DEV)" in main
     assert "import.meta.url" in main
+    assert "__BIFROST_APP__" not in main
+    assert "registerUnmount" not in main
+    assert 'searchParams.get("m")' not in main
 
     # App.tsx composes the optional platform header + shows a workflow call.
     app = files["src/App.tsx"]

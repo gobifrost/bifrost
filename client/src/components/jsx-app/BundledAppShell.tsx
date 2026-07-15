@@ -31,7 +31,10 @@ import {
 } from "@/services/websocket";
 import { useAppBuilderStore } from "@/stores/app-builder.store";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
-import { StandaloneV2App } from "./StandaloneV2App";
+import {
+	StandaloneV2App,
+	type StandaloneV2RuntimeContract,
+} from "./StandaloneV2App";
 
 // jsDelivr — JSPM's CDN 404s on floating tags (`@2`), only exact versions
 // resolve. Pinned to an exact version for reproducible loads.
@@ -125,6 +128,9 @@ interface BundleManifest {
 	// bundle inline) | 'standalone_v2' (the app is a normal React project served
 	// as its own dist/index.html and mounted standalone). Absent => inline_v1.
 	app_model?: "inline_v1" | "standalone_v2";
+	// Explicit lifecycle contract for standalone_v2. Absent/null is a legacy
+	// side-effect entry retained for compatibility.
+	runtime_contract?: StandaloneV2RuntimeContract;
 }
 
 interface BundledAppShellProps {
@@ -155,6 +161,7 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 		entry: string;
 		css: string | null;
 		baseUrl: string;
+		runtimeContract: StandaloneV2RuntimeContract;
 	} | null>(null);
 	// Reset the v2 mount DURING RENDER when the app changes (React's "adjust
 	// state on prop change" pattern). This shell instance is reused across app
@@ -284,6 +291,7 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 							entry: manifest.entry,
 							css: manifest.css,
 							baseUrl: manifest.base_url,
+							runtimeContract: manifest.runtime_contract ?? null,
 						});
 						setAppModel("standalone_v2");
 						return "standalone_v2";
@@ -443,6 +451,7 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				css={v2Mount.css}
 				baseUrl={v2Mount.baseUrl}
 				appOrgId={appOrgId}
+				runtimeContract={v2Mount.runtimeContract}
 			/>
 		);
 	}

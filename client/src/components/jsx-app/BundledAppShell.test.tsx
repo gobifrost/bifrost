@@ -17,6 +17,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
+const { mockStandaloneV2App } = vi.hoisted(() => ({
+	mockStandaloneV2App: vi.fn(),
+}));
+
+vi.mock("./StandaloneV2App", () => ({
+	StandaloneV2App: (props: Record<string, unknown>) => {
+		mockStandaloneV2App(props);
+		return <div data-testid="solution-v2-app-root" />;
+	},
+}));
+
 // -----------------------------------------------------------------------------
 // Mocks
 // -----------------------------------------------------------------------------
@@ -71,6 +82,7 @@ function mockManifestOk(
 		dependencies: Record<string, string>;
 		migrated: boolean;
 		app_model: string;
+		runtime_contract: "mount-v1" | null;
 	}> = {},
 ) {
 	mockAuthFetch.mockResolvedValueOnce({
@@ -93,6 +105,7 @@ beforeEach(() => {
 	mockAuthFetch.mockReset();
 	mockConnectToAppDraft.mockClear();
 	mockOnAppCodeFileUpdate.mockClear();
+	mockStandaloneV2App.mockClear();
 	localStorage.clear();
 });
 
@@ -201,6 +214,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			app_model: "standalone_v2",
 			entry: "assets/main-abc.js",
 			base_url: "/api/applications/app-1/dist",
+			runtime_contract: "mount-v1",
 		});
 		// The host token the shell injects for the app.
 		localStorage.setItem("bifrost_access_token", "tok-xyz");
@@ -213,13 +227,15 @@ describe("BundledAppShell — app_model render branch", () => {
 		expect(root).toBeInTheDocument();
 		expect(root.querySelector("iframe")).toBeNull();
 
-		// The bootstrap the app's main.tsx reads was injected with the viewer's
-		// token + the /apps/{slug} basename so deep-links resolve.
-		await waitFor(() => expect(window.__BIFROST_APP__).toBeDefined());
-		expect(window.__BIFROST_APP__!.token).toBe("tok-xyz");
-		// basename is built from the app slug (renderShell uses "my-app").
-		expect(window.__BIFROST_APP__!.basename).toBe("/apps/my-app/preview");
-		expect(window.__BIFROST_APP__!.mountEl).toBe(root);
+		await waitFor(() => expect(mockStandaloneV2App).toHaveBeenCalled());
+		expect(mockStandaloneV2App).toHaveBeenCalledWith(
+			expect.objectContaining({
+				appId: "app-1",
+				appSlug: "my-app",
+				entry: "assets/main-abc.js",
+				runtimeContract: "mount-v1",
+			}),
+		);
 
 		// v2 is deploy-driven, not hot-reload — no draft subscription.
 		expect(mockConnectToAppDraft).not.toHaveBeenCalled();
@@ -265,8 +281,12 @@ describe("BundledAppShell — app_model render branch", () => {
 		const { rerender } = renderWithProviders(
 			<BundledAppShell appId="app-A" appSlug="aaa" isPreview />,
 		);
-		const rootA = await screen.findByTestId("solution-v2-app-root");
-		await waitFor(() => expect(rootA.dataset.bifrostEntry).toContain("A-entry.js"));
+		await screen.findByTestId("solution-v2-app-root");
+		await waitFor(() =>
+			expect(mockStandaloneV2App).toHaveBeenCalledWith(
+				expect.objectContaining({ entry: "assets/A-entry.js" }),
+			),
+		);
 
 		// Navigate to app B; B's manifest fetch is PENDING (never resolves here).
 		mockAuthFetch.mockImplementationOnce(() => new Promise<Response>(() => {}));

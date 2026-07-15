@@ -1,103 +1,213 @@
 /**
- * StandaloneV2App — mounts a standalone_v2 Solution app in the SAME document at
- * /apps/{slug} (NOT an iframe).
+ * StandaloneV2App mounts a standalone_v2 Solution app in the same document.
  *
- * Why not an iframe: an iframe at /api/.../dist/index.html keeps the OUTER
- * browser URL pinned to /apps/{slug} while the app navigates internally, so the
- * app's routes never reach the address bar — refresh, deep-links and bookmarks
- * all break (Codex P1-b/G7). Mounting in the same document means the real URL is
- * /apps/{slug}/whatever, so the app's <BrowserRouter basename="/apps/{slug}">
- * matches window.location and deep-links work.
- *
- * The app is a normal Vite build: its bundled entry is side-effecting — on
- * import it runs its OWN createRoot into the element we hand it via
- * `window.__BIFROST_APP__`, with its OWN React (vite-bundled). That's an
- * independent root, which is correct for v2: a v2 app brings its own
- * React/Router/Provider and does NOT inherit host context (unlike the v1 inline
- * path). The host supplies auth + basename through the injected config because
- * the per-viewer token can't be baked into a shared build, and the slug is
- * runtime-only (an app can be renamed).
+ * The app's immutable Vite entry is loaded through its canonical URL. The
+ * entry registers a reusable mount function, and the shell calls that function
+ * once per host mount. This preserves browser ES-module identity across lazy
+ * chunks while still giving every mount its own React root and bootstrap.
  */
 import { useEffect, useRef, useState } from "react";
 
-import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
 import { useOrgScope } from "@/hooks/useOrgScope";
+import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
 
-/**
- * The runtime contract a v2 app's `main.tsx` reads. The platform sets this on
- * `window` BEFORE the entry module is imported; the app uses it to wire its
- * createRoot mount node, router basename, and `<BifrostProvider>` auth.
- */
 export interface BifrostAppBootstrap {
-	/** The element the app should `createRoot()` into. */
-	mountEl: HTMLElement;
-	/** Router basename so the app's URLs are `/apps/{slug}/...` (or /preview). */
+	/** Router basename so app URLs live below /apps/{slug}. */
 	basename: string;
-	/** Absolute API base (same-origin host) for BifrostProvider. */
+	/** Absolute API base for BifrostProvider. */
 	baseUrl: string;
-	/** The current viewer's bearer token. */
+	/** Current viewer bearer token. */
 	token: string;
-	/** Active org scope (UUID) or null for the caller's default. */
+	/** Active organization scope, or null for the caller's default. */
 	orgScope: string | null;
-	/**
-	 * This app's id. The SDK sends it on /api/workflows/execute so a
-	 * `path::function` workflow ref resolves to THIS install's own workflow,
-	 * not a sibling install's that happens to share the path (Codex #8 P1).
-	 */
+	/** Installed app id used to scope portable workflow references. */
 	appId: string;
-	/** Ask the platform to log out (the app may expose a logout affordance). */
+	/** Ask the platform to log out. */
 	onLogout: () => void;
-	/**
-	 * The platform's current theme ("light" | "dark"), so a theme-aware app
-	 * starts in sync with the platform instead of flashing the wrong theme.
-	 * Apps that don't support theming ignore it.
-	 */
+	/** Platform theme at mount time. */
 	theme: "light" | "dark";
-	/**
-	 * The app MUST call this right after `createRoot(...)` with a teardown fn
-	 * (`() => root.unmount()`). The shell invokes it when the user navigates
-	 * away, so the app's React root, effects, timers, and websocket
-	 * subscriptions are actually torn down — replacing DOM nodes alone leaks
-	 * them (Codex R4). A well-behaved scaffold always registers this.
-	 */
+}
+
+export interface StandaloneV2Module {
+	mount: (
+		mountEl: HTMLElement,
+		bootstrap: BifrostAppBootstrap,
+	) => () => void;
+}
+
+interface LegacyBifrostAppBootstrap extends BifrostAppBootstrap {
+	mountEl: HTMLElement;
 	registerUnmount: (teardown: () => void) => void;
 }
 
 declare global {
 	interface Window {
-		/**
-		 * Legacy single-object bootstrap (last mount wins). Kept for back-compat:
-		 * an older scaffold reads this directly. Newer scaffolds prefer the
-		 * per-mount registry below, keyed by the entry URL's `m` nonce, so a
-		 * fast A→B navigation can't let app A's still-loading entry read app B's
-		 * bootstrap and mount into B's node (Codex #9).
-		 */
-		__BIFROST_APP__?: BifrostAppBootstrap;
-		/** Per-mount bootstrap registry, keyed by the entry URL's `m` nonce. */
-		__BIFROST_APPS__?: Record<string, BifrostAppBootstrap>;
+		/** Static module factories keyed by the canonical entry URL. */
+		__BIFROST_APP_MODULES__?: Map<string, StandaloneV2Module>;
+		/** Legacy side-effect entry transport. New apps do not read this. */
+		__BIFROST_APP__?: LegacyBifrostAppBootstrap;
 	}
 }
 
-// Monotonic per-mount nonce. The app entry is a side-effecting ES module (it
-// runs createRoot on import); the browser caches it by URL, so revisiting the
-// same app would return the cached module WITHOUT re-running createRoot —
-// leaving a blank mount after the prior root was torn down (Codex R5-P1). A
-// fresh query per mount forces re-execution. Module-level + monotonic so it's
-// deterministic (no Date.now/random).
-let _mountNonce = 0;
+export type StandaloneV2RuntimeContract = "mount-v1" | null;
+
+const moduleLoads = new Map<string, Promise<StandaloneV2Module>>();
+const loadedLegacyEntries = new Set<string>();
+const activeLegacyEntries = new Set<string>();
+let legacyLoadQueue: Promise<void> = Promise.resolve();
+let activeLegacyLoadEntry: string | null = null;
+
+interface PendingLegacyLoad {
+	bootstrap: LegacyBifrostAppBootstrap;
+	promise: Promise<LegacyLoadResult>;
+}
+
+const pendingLegacyLoads = new Map<string, PendingLegacyLoad>();
+
+function registeredModule(entryUrl: string): StandaloneV2Module | undefined {
+	return window.__BIFROST_APP_MODULES__?.get(entryUrl);
+}
+
+/**
+ * Load a mount-v1 module with a real module script. Using import() here would
+ * make the host's Vite dev transform append `?import`, splitting the module
+ * identity from the canonical URLs emitted inside the app's own chunk graph.
+ */
+function loadMountModule(entryUrl: string): Promise<StandaloneV2Module> {
+	const registered = registeredModule(entryUrl);
+	if (registered) return Promise.resolve(registered);
+
+	const pending = moduleLoads.get(entryUrl);
+	if (pending) return pending;
+
+	const load = new Promise<StandaloneV2Module>((resolve, reject) => {
+		const script = document.createElement("script");
+		script.type = "module";
+		script.src = entryUrl;
+		script.dataset.bifrostAppEntry = entryUrl;
+		const cleanup = () => script.remove();
+		script.onload = () => {
+			cleanup();
+			const appModule = registeredModule(entryUrl);
+			if (!appModule) {
+				reject(
+					new Error(
+						"The application declares the mount-v1 runtime but did not register a mount() function.",
+					),
+				);
+				return;
+			}
+			resolve(appModule);
+		};
+		script.onerror = () => {
+			cleanup();
+			reject(new Error(`Failed to load the application entry: ${entryUrl}`));
+		};
+		document.head.appendChild(script);
+	}).catch((error: unknown) => {
+		moduleLoads.delete(entryUrl);
+		throw error;
+	});
+
+	moduleLoads.set(entryUrl, load);
+	return load;
+}
+
+type LegacyLoadResult =
+	| { kind: "module"; appModule: StandaloneV2Module }
+	| { kind: "legacy-loaded" }
+	| { kind: "legacy-reload" }
+	| { kind: "legacy-concurrent" };
+
+/**
+ * Old Apps v2 entries mount as a top-level side effect. Serialize their first
+ * evaluation so a slow, cancelled entry can only observe its own tombstoned
+ * bootstrap, never a newer app's live mount. Once a legacy entry has been
+ * torn down it needs a fresh document module map, so re-entry reloads the page.
+ */
+function loadLegacyOrUnmarkedModule(
+	entryUrl: string,
+	bootstrap: LegacyBifrostAppBootstrap,
+): Promise<LegacyLoadResult> {
+	const existing = pendingLegacyLoads.get(entryUrl);
+	if (existing) {
+		if (existing.bootstrap.mountEl.isConnected) {
+			return Promise.resolve({ kind: "legacy-concurrent" });
+		}
+		// React development StrictMode performs setup → cleanup → setup before a
+		// pending module script executes. Transfer that one in-flight legacy load
+		// to the current mount; distinct entry URLs remain serialized below.
+		existing.bootstrap = bootstrap;
+		if (activeLegacyLoadEntry === entryUrl) {
+			window.__BIFROST_APP__ = bootstrap;
+		}
+		return existing.promise;
+	}
+
+	const pending: PendingLegacyLoad = {
+		bootstrap,
+		promise: Promise.resolve({ kind: "legacy-loaded" }),
+	};
+	const task = legacyLoadQueue.then(async (): Promise<LegacyLoadResult> => {
+		const appModule = registeredModule(entryUrl);
+		if (appModule) return { kind: "module", appModule };
+
+		if (loadedLegacyEntries.has(entryUrl)) {
+			return activeLegacyEntries.has(entryUrl)
+				? { kind: "legacy-concurrent" }
+				: { kind: "legacy-reload" };
+		}
+
+		activeLegacyLoadEntry = entryUrl;
+		window.__BIFROST_APP__ = pending.bootstrap;
+		await new Promise<void>((resolve, reject) => {
+			const script = document.createElement("script");
+			script.type = "module";
+			script.src = entryUrl;
+			script.dataset.bifrostLegacyAppEntry = entryUrl;
+			const cleanup = () => script.remove();
+			script.onload = () => {
+				cleanup();
+				resolve();
+			};
+			script.onerror = () => {
+				cleanup();
+				reject(new Error(`Failed to load the legacy application entry: ${entryUrl}`));
+			};
+			document.head.appendChild(script);
+		});
+
+		const registeredAfterLoad = registeredModule(entryUrl);
+		if (registeredAfterLoad) {
+			return { kind: "module", appModule: registeredAfterLoad };
+		}
+		loadedLegacyEntries.add(entryUrl);
+		return { kind: "legacy-loaded" };
+	}).finally(() => {
+		if (activeLegacyLoadEntry === entryUrl) activeLegacyLoadEntry = null;
+		if (pendingLegacyLoads.get(entryUrl) === pending) {
+			pendingLegacyLoads.delete(entryUrl);
+		}
+	});
+
+	pending.promise = task;
+	pendingLegacyLoads.set(entryUrl, pending);
+	legacyLoadQueue = task.then(
+		() => undefined,
+		() => undefined,
+	);
+	return task;
+}
 
 interface StandaloneV2AppProps {
 	appId: string;
 	appSlug: string;
 	isPreview: boolean;
-	/** Hashed entry chunk (relative to the dist base), from the bundle manifest. */
 	entry: string;
-	/** Hashed CSS file (relative to the dist base), if any. */
 	css: string | null;
-	/** The dist base URL, e.g. `/api/applications/{id}/dist`. */
 	baseUrl: string;
-	/** App org scope from the manifest (null for global apps). */
 	appOrgId: string | null;
+	runtimeContract: StandaloneV2RuntimeContract;
 }
 
 export function StandaloneV2App({
@@ -108,13 +218,12 @@ export function StandaloneV2App({
 	css,
 	baseUrl,
 	appOrgId,
+	runtimeContract,
 }: StandaloneV2AppProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const { scope } = useOrgScope();
 
-	// Read synchronously at render so the unauthenticated case is a derived
-	// render state, not an effect side effect.
 	const token = getActiveToken();
 	const error = token ? loadError : "Not authenticated — cannot mount the application.";
 
@@ -122,38 +231,26 @@ export function StandaloneV2App({
 		const mountEl = containerRef.current;
 		if (!mountEl || !token) return;
 
-		// The app routes under /apps/{slug} (and /apps/{slug}/preview in preview),
-		// so its basename matches the real URL and deep-links resolve.
+		setLoadError(null);
 		const basename = isPreview
 			? `/apps/${appSlug}/preview`
 			: `/apps/${appSlug}`;
-		// Prefer the app's own org (org-scoped apps), else the active platform
-		// scope, else the caller's default.
 		const orgScope =
 			appOrgId ?? (scope.type === "organization" ? scope.orgId : null);
+		const entryUrl = new URL(`${baseUrl}/${entry}`, window.location.origin).href;
+		mountEl.dataset.bifrostEntry = entryUrl;
 
-		const mode = isPreview ? "draft" : "live";
-		// `m` busts the ES module cache so a revisit re-runs the entry's
-		// top-level createRoot (R5-P1) AND keys this mount's bootstrap in the
-		// registry so concurrent mounts never read each other's. CSS has no side
-		// effect, so it's left un-busted (the browser may reuse it).
-		const nonce = String(++_mountNonce);
-		const entryUrl = `${baseUrl}/${entry}?mode=${mode}&m=${nonce}`;
 		let cssEl: HTMLLinkElement | null = null;
 		if (css) {
 			cssEl = document.createElement("link");
 			cssEl.rel = "stylesheet";
-			cssEl.href = `${baseUrl}/${css}?mode=${mode}`;
+			cssEl.href = new URL(`${baseUrl}/${css}`, window.location.origin).href;
 			document.head.appendChild(cssEl);
 		}
 
-		// The app calls registerUnmount(() => root.unmount()) after createRoot; we
-		// invoke it on cleanup so the app's React root (effects/timers/sockets) is
-		// actually torn down, not just detached from the DOM.
+		let cancelled = false;
 		let appTeardown: (() => void) | null = null;
-
 		const bootstrap: BifrostAppBootstrap = {
-			mountEl,
 			basename,
 			baseUrl: window.location.origin,
 			token,
@@ -163,73 +260,88 @@ export function StandaloneV2App({
 				clearAuthTokens();
 				window.location.assign("/login");
 			},
-			// The platform reflects its theme as the `dark` class on the document
-			// root (see ThemeContext). Hand the app the current theme so a
-			// theme-aware app starts in sync.
 			theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
-			registerUnmount: (teardown: () => void) => {
-				appTeardown = teardown;
-			},
 		};
-		// Per-mount registry entry (this mount's nonce) — the authoritative slot a
-		// newer mount can't clobber. Plus the legacy single object for older
-		// scaffolds that read it directly.
-		(window.__BIFROST_APPS__ ??= {})[nonce] = bootstrap;
-		window.__BIFROST_APP__ = bootstrap;
 
-		let cancelled = false;
-		// Expose the loaded entry URL for tests/debugging (carries the cache-bust).
-		mountEl.dataset.bifrostEntry = entryUrl;
-		// Side-effecting import: the app's entry runs its own createRoot(mountEl).
-		import(/* @vite-ignore */ entryUrl).catch((e: unknown) => {
+		const reportError = (value: unknown) => {
 			if (!cancelled) {
 				setLoadError(
-					e instanceof Error ? e.message : "Failed to load the application.",
+					value instanceof Error ? value.message : "Failed to load the application.",
 				);
 			}
-		});
+		};
+		const mountModule = (appModule: StandaloneV2Module) => {
+			if (cancelled) return;
+			const teardown = appModule.mount(mountEl, bootstrap);
+			if (typeof teardown !== "function") {
+				throw new Error("The application's mount() function must return an unmount function.");
+			}
+			appTeardown = teardown;
+		};
+
+		let legacyBootstrap: LegacyBifrostAppBootstrap | null = null;
+		if (runtimeContract === "mount-v1") {
+			loadMountModule(entryUrl).then(mountModule).catch(reportError);
+		} else {
+			legacyBootstrap = {
+				...bootstrap,
+				mountEl,
+				registerUnmount: (teardown: () => void) => {
+					appTeardown = teardown;
+				},
+			};
+			loadLegacyOrUnmarkedModule(entryUrl, legacyBootstrap)
+				.then((result) => {
+					if (cancelled) return;
+					if (result.kind === "module") {
+						mountModule(result.appModule);
+					} else if (result.kind === "legacy-loaded") {
+						activeLegacyEntries.add(entryUrl);
+					} else if (result.kind === "legacy-reload") {
+						window.location.reload();
+					} else {
+						throw new Error(
+							"This legacy Apps v2 entry cannot be mounted concurrently. Redeploy it with the mount-v1 lifecycle.",
+						);
+					}
+				})
+				.catch(reportError);
+		}
 
 		return () => {
 			cancelled = true;
 			cssEl?.remove();
-			// Unmount the app's own React root (best-effort — a well-behaved app
-			// registers it; falls back to detaching the DOM).
+			activeLegacyEntries.delete(entryUrl);
 			try {
 				appTeardown?.();
 			} catch {
-				// app teardown threw — still detach below; nothing else to do.
+				// The root is detached below even if application teardown throws.
 			}
-			// Don't `delete` the bootstrap: an entry chunk whose dynamic import
-			// was still in flight when we tore down will run its top-level code
-			// *after* this cleanup, read its bootstrap, find it gone, and fall
-			// back to `document.getElementById("root")` — mounting a stale app
-			// into the PLATFORM root after the shell unmounted (R7-P2-e). We
-			// can't change every scaffolded entry, so we leave a DISABLED
-			// TOMBSTONE: `mountEl` is a throwaway detached node (so a late mount
-			// goes nowhere visible) and `registerUnmount` tears the late root
-			// down the instant it registers.
-			const disable = (b: BifrostAppBootstrap) => {
-				b.mountEl = document.createElement("div");
-				b.registerUnmount = (teardown: () => void) => {
+
+			if (legacyBootstrap) {
+				legacyBootstrap.mountEl = document.createElement("div");
+				legacyBootstrap.registerUnmount = (teardown: () => void) => {
 					try {
 						teardown();
 					} catch {
-						// teardown threw — the late root is already orphaned in a
-						// detached node; nothing else to do.
+						// A late legacy root is already isolated in a detached node.
 					}
 				};
-			};
-			// Tombstone THIS mount's registry slot (keyed by our nonce, always
-			// ours — a newer mount uses a different nonce, so we never clobber it).
-			const ownEntry = window.__BIFROST_APPS__?.[nonce];
-			if (ownEntry) disable(ownEntry);
-			// Tombstone the legacy single object ONLY if it's still ours (a newer
-			// mount may have replaced it; we must not disable the live newer app).
-			if (window.__BIFROST_APP__ === bootstrap) disable(window.__BIFROST_APP__);
-			if (mountEl) mountEl.replaceChildren();
+			}
+			mountEl.replaceChildren();
 		};
-		// appId is stable per mount; re-run only if the served entry changes.
-	}, [appId, appSlug, isPreview, entry, css, baseUrl, appOrgId, scope, token]);
+	}, [
+		appId,
+		appSlug,
+		isPreview,
+		entry,
+		css,
+		baseUrl,
+		appOrgId,
+		runtimeContract,
+		scope,
+		token,
+	]);
 
 	if (error) {
 		return (

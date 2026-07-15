@@ -40,6 +40,7 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
     # Realistic Vite output: quoted attrs, asset URLs under the --base dist route.
     index_html = (
         '<!doctype html><html><head>'
+        '<meta name="bifrost-app-runtime" content="mount-v1">'
         f'<script type="module" crossorigin src="/api/applications/{real_id}/dist/assets/main-abc.js"></script>'
         '<link rel="stylesheet" href="/api/applications/{aid}/dist/assets/main-abc.css">'
         '</head><body><div id="root"></div></body></html>'
@@ -107,6 +108,7 @@ def test_v2_app_deploys_builds_dist_and_reports_model(e2e_client, platform_admin
     # relative to the dist base (the shell re-joins base + entry/css).
     assert mbody["entry"] == "assets/main-abc.js"
     assert mbody["css"] == "assets/main-abc.css"
+    assert mbody["runtime_contract"] == "mount-v1"
 
 
 def test_redeploy_without_app_removes_it_for_this_install(e2e_client, platform_admin):

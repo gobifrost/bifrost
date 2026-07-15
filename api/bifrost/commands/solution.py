@@ -400,9 +400,9 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
     Designed so a developer's local ``npm run dev`` works with ZERO token
     pasting: ``vite.config.ts`` reads the CLI's own ``BIFROST_API_URL`` +
     ``BIFROST_ACCESS_TOKEN`` (the ones ``bifrost login`` already wrote to .env)
-    and exposes them to the app. Deployed, the platform injects
-    ``window.__BIFROST_APP__`` instead; ``main.tsx`` prefers that and falls back
-    to the dev env, so one source builds + runs in both places (Codex R4 DX).
+    and exposes them to the app. Deployed, the platform calls the app's explicit
+    ``mount()`` lifecycle with per-mount bootstrap data. Local Vite dev invokes
+    that same lifecycle with the dev env, so one source runs in both places.
     """
     pkg = {
         "name": slug,
@@ -450,7 +450,7 @@ import { defineConfig } from "vite";
 //      stores the token in the OS keyring / ~/.bifrost/credentials.json (NOT a
 //      .env), so without this the normal login path leaves `npm run dev`
 //      tokenless (R7-P2-f).
-// Deployed, window.__BIFROST_APP__ supplies these instead and main.tsx prefers it.
+// Deployed, the platform passes these values to the app's mount() lifecycle.
 function readBifrostEnv() {
   const out = {
     url: process.env.BIFROST_API_URL || "",
@@ -498,8 +498,8 @@ export default defineConfig(({ command }) => {
   // SECURITY: the dev token is injected ONLY for `vite` (serve / `npm run dev`),
   // never for `vite build`. Baking BIFROST_ACCESS_TOKEN into the production
   // bundle via `define` would ship a usable credential to every app user
-  // (Codex R6-P1-c). In a deployed build the token comes from
-  // window.__BIFROST_APP__ at runtime (per viewer); the bundle stays tokenless.
+  // (Codex R6-P1-c). In a deployed build the token comes from the platform's
+  // per-mount bootstrap at runtime; the bundle stays tokenless.
   const define =
     command === "serve"
       ? {
@@ -521,7 +521,11 @@ export default defineConfig(({ command }) => {
     index_html = f"""\
 <!doctype html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><title>{slug}</title></head>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="bifrost-app-runtime" content="mount-v1" />
+    <title>{slug}</title>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
@@ -537,42 +541,66 @@ import { BifrostProvider } from "bifrost";
 import App from "./App";
 import "./index.css";
 
-// Deployed: the platform injects this app's bootstrap (mount node, basename,
-// per-viewer token, org). It keys the bootstrap by THIS entry's `m` nonce in a
-// registry, so a fast navigation between two apps can't make our still-loading
-// entry read the OTHER app's bootstrap (Codex #9). Read our own nonce from this
-// module's URL and prefer the registry; fall back to the legacy single object
-// (older hosts) and finally to a local #root for `npm run dev`.
-const __m = new URL(import.meta.url).searchParams.get("m");
-const boot =
-  (__m && window.__BIFROST_APPS__ && window.__BIFROST_APPS__[__m]) ||
-  window.__BIFROST_APP__;
-const mountEl = boot?.mountEl ?? document.getElementById("root")!;
-const basename = boot?.basename ?? "/";
-const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
-const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
-// Precedence (boot over VITE env) is locked by client/src/lib/app-sdk/dev-bootstrap.test.ts
-const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
-// This app's id, so useWorkflow scopes path refs to THIS install's workflow.
-const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;
-// Platform theme, so the app starts in sync. supportsTheme is ON by default:
-// the scaffold ships Tailwind + the shadcn `.dark` token layer, so the app DOES
-// respond to theme — which makes BifrostHeader show the light/dark toggle.
-const theme = boot?.theme ?? "light";
+export interface BifrostAppBootstrap {
+  basename: string;
+  baseUrl: string;
+  token: string;
+  orgScope: string | null;
+  appId: string | null;
+  onLogout: () => void;
+  theme: "light" | "dark";
+}
 
-const root = createRoot(mountEl);
-// Let the platform tear this root down on navigation (no leak).
-boot?.registerUnmount?.(() => root.unmount());
+interface BifrostAppModule {
+  mount: (mountEl: HTMLElement, bootstrap: BifrostAppBootstrap) => () => void;
+}
 
-root.render(
-  <StrictMode>
-    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} appId={appId} theme={theme} supportsTheme onLogout={boot?.onLogout}>
-      <BrowserRouter basename={basename}>
-        <App />
-      </BrowserRouter>
-    </BifrostProvider>
-  </StrictMode>,
-);
+declare global {
+  interface Window {
+    __BIFROST_APP_MODULES__?: Map<string, BifrostAppModule>;
+  }
+}
+
+export function mount(mountEl: HTMLElement, bootstrap: BifrostAppBootstrap) {
+  const root = createRoot(mountEl);
+  root.render(
+    <StrictMode>
+      <BifrostProvider
+        baseUrl={bootstrap.baseUrl}
+        token={bootstrap.token}
+        orgScope={bootstrap.orgScope}
+        appId={bootstrap.appId}
+        theme={bootstrap.theme}
+        supportsTheme
+        onLogout={bootstrap.onLogout}
+      >
+        <BrowserRouter basename={bootstrap.basename}>
+          <App />
+        </BrowserRouter>
+      </BifrostProvider>
+    </StrictMode>,
+  );
+  return () => root.unmount();
+}
+
+// Register the reusable factory under this immutable entry's canonical URL.
+// Child chunks import this exact URL, so the browser evaluates the graph once.
+(window.__BIFROST_APP_MODULES__ ??= new Map()).set(import.meta.url, { mount });
+
+// Vite dev serves this entry directly; production mounting is owned by the host.
+if (import.meta.env.DEV) {
+  const mountEl = document.getElementById("root");
+  if (!mountEl) throw new Error("Missing #root mount element");
+  mount(mountEl, {
+    basename: "/",
+    baseUrl: import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin,
+    token: import.meta.env.VITE_BIFROST_TOKEN ?? "",
+    orgScope: import.meta.env.VITE_BIFROST_ORG_ID ?? null,
+    appId: import.meta.env.VITE_BIFROST_APP_ID ?? null,
+    onLogout: () => window.location.assign("/login"),
+    theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+  });
+}
 """
     app_tsx = """\
 import { Routes, Route, Link } from "react-router-dom";
@@ -1245,8 +1273,8 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
                 # `.env.local` holds BIFROST_ACCESS_TOKEN (the documented local
                 # dev override) — shipping it lets the server-side Vite build
                 # bake the token into the public JS, leaking it to every app
-                # user (Codex R6-P1-c). The token reaches the runtime via
-                # window.__BIFROST_APP__, never the bundle.
+                # user (Codex R6-P1-c). The host passes the token through the
+                # per-mount bootstrap at runtime, never through the bundle.
                 if f.name == ".env" or f.name.startswith(".env."):
                     continue
                 rel_parts = f.relative_to(app_dir).parts
@@ -2229,7 +2257,9 @@ def start_cmd(
     from bifrost.solution_dev.scaffold_check import (
         ORG_NULL_HINT,
         PATCH_HINT,
+        MOUNT_RUNTIME_HINT,
         main_tsx_needs_dev_fallback,
+        main_tsx_needs_mount_runtime,
         vite_config_needs_org_null,
     )
 
@@ -2261,6 +2291,8 @@ def start_cmd(
     main_tsx = chosen.app_dir / "src" / "main.tsx"
     if main_tsx_needs_dev_fallback(main_tsx):
         click.echo(PATCH_HINT, err=True)
+    if main_tsx_needs_mount_runtime(main_tsx):
+        click.echo(MOUNT_RUNTIME_HINT, err=True)
     if vite_config_needs_org_null(chosen.app_dir / "vite.config.ts"):
         click.echo(ORG_NULL_HINT, err=True)
 

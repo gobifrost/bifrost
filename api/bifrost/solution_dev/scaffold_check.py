@@ -19,6 +19,23 @@ def main_tsx_needs_dev_fallback(main_tsx: Path) -> bool:
     return "VITE_BIFROST_APP_ID" not in text
 
 
+MOUNT_RUNTIME_HINT = (
+    "Your app's src/main.tsx uses the legacy side-effect mount contract. It is "
+    "supported for migration, but cannot remount in the same document. Update "
+    "from a current `bifrost solution scaffold-app` main.tsx: export mount(el, "
+    "bootstrap), register it in window.__BIFROST_APP_MODULES__ by import.meta.url, "
+    "return root.unmount, and add <meta name=\"bifrost-app-runtime\" "
+    "content=\"mount-v1\"> to index.html.\n"
+)
+
+
+def main_tsx_needs_mount_runtime(main_tsx: Path) -> bool:
+    """True for an existing v2 entry that lacks the reusable mount registry."""
+    if not main_tsx.is_file():
+        return False
+    return "__BIFROST_APP_MODULES__" not in main_tsx.read_text(encoding="utf-8")
+
+
 ORG_NULL_HINT = (
     "Your app's vite.config.ts predates the null-orgScope fix: it bakes a "
     'missing org var to "" (which `?? null` never catches), so a global '

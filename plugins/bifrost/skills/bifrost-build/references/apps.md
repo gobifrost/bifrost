@@ -30,7 +30,7 @@ my-solution/
   bifrost.solution.yaml   # Solution descriptor
 ```
 
-The app's `main.tsx` wraps the tree in `<BifrostProvider>`. **Use the `main.tsx` that `bifrost solution scaffold-app` writes verbatim — do not hand-roll it or copy a snippet from memory.** It reads a per-viewer bootstrap (base URL, token, org scope, app id, theme, mount element) the platform injects at runtime, keyed by this entry's nonce so multiple apps on one page don't read each other's bootstrap, and falls back to Vite env vars for local dev. The scaffold's actual shape (do not retype this — let `scaffold-app` write it):
+The app's `main.tsx` wraps the tree in `<BifrostProvider>`. **Use the `main.tsx` that `bifrost solution scaffold-app` writes verbatim — do not hand-roll it or copy a snippet from memory.** It exports a reusable `mount(mountEl, bootstrap)` lifecycle. The platform loads the content-hashed entry at its canonical Vite URL once, then passes per-mount bootstrap data directly to `mount`; local Vite dev calls the same lifecycle with env values. `index.html` declares `<meta name="bifrost-app-runtime" content="mount-v1">`. The scaffold's actual shape (abridged here; let `scaffold-app` write it):
 
 ```tsx
 import { StrictMode } from "react";
@@ -40,36 +40,44 @@ import { BifrostProvider } from "bifrost";
 import App from "./App";
 import "./index.css";
 
-// Read THIS entry's nonce from its own module URL (NOT document.currentScript —
-// that's null for module scripts the platform loads) and prefer the registry so
-// co-mounted apps don't cross-read; fall back to the legacy single object, then
-// to Vite env for `npm run dev`.
-const __m = new URL(import.meta.url).searchParams.get("m");
-const boot =
-  (__m && window.__BIFROST_APPS__ && window.__BIFROST_APPS__[__m]) ||
-  window.__BIFROST_APP__;
-const mountEl = boot?.mountEl ?? document.getElementById("root")!;
-const basename = boot?.basename ?? "/";
-const baseUrl = boot?.baseUrl ?? import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin;
-const token = boot?.token ?? import.meta.env.VITE_BIFROST_TOKEN ?? "";
-const orgScope = boot?.orgScope ?? import.meta.env.VITE_BIFROST_ORG_ID ?? null;
-const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;
-const theme = boot?.theme ?? "light";
+interface Bootstrap {
+  basename: string;
+  baseUrl: string;
+  token: string;
+  orgScope: string | null;
+  appId: string | null;
+  theme: "light" | "dark";
+  onLogout: () => void;
+}
 
-const root = createRoot(mountEl);
-boot?.registerUnmount?.(() => root.unmount());   // platform tears the root down on nav
-root.render(
-  <StrictMode>
-    <BifrostProvider baseUrl={baseUrl} token={token} orgScope={orgScope} appId={appId} theme={theme} supportsTheme onLogout={boot?.onLogout}>
-      <BrowserRouter basename={basename}>
-        <App />
-      </BrowserRouter>
-    </BifrostProvider>
-  </StrictMode>,
-);
+export function mount(mountEl: HTMLElement, boot: Bootstrap) {
+  const root = createRoot(mountEl);
+  root.render(
+    <StrictMode>
+      <BifrostProvider {...boot} supportsTheme>
+        <BrowserRouter basename={boot.basename}><App /></BrowserRouter>
+      </BifrostProvider>
+    </StrictMode>,
+  );
+  return () => root.unmount();
+}
+
+(window.__BIFROST_APP_MODULES__ ??= new Map()).set(import.meta.url, { mount });
+
+if (import.meta.env.DEV) {
+  mount(document.getElementById("root")!, {
+    basename: "/",
+    baseUrl: import.meta.env.VITE_BIFROST_API_URL ?? window.location.origin,
+    token: import.meta.env.VITE_BIFROST_TOKEN ?? "",
+    orgScope: import.meta.env.VITE_BIFROST_ORG_ID ?? null,
+    appId: import.meta.env.VITE_BIFROST_APP_ID ?? null,
+    theme: "light",
+    onLogout: () => window.location.assign("/login"),
+  });
+}
 ```
 
-(The old `window.__BIFROST_API_URL__` / `window.__BIFROST_TOKEN__` globals AND `document.currentScript?.dataset?.m` are stale — the current boot protocol is the `new URL(import.meta.url)` nonce + registry above. Just keep the scaffolded `main.tsx`.)
+Older side-effect entries that read `window.__BIFROST_APP__` are a migration-only compatibility path. They can load once through a canonical URL, but cannot be re-executed within the same document without violating ES-module identity. Re-scaffold or port `index.html` and `main.tsx` to `mount-v1`; do not add query strings to the entry, inline dynamic imports, or remove `React.lazy()`.
 
 Imports in a **v2 standalone app** (this is NOT the v1 surface — see the warning below):
 - **SDK hooks/providers ONLY come from `"bifrost"`**: `import { BifrostProvider, BifrostHeader, useWorkflowQuery, useWorkflowMutation, useWorkflow, useTable, useInfiniteTable, tables, files, useFiles } from "bifrost"`. That export list is the whole SDK — see `references/web-sdk-v2.md` / `generated/web-sdk-surface.md`. Nothing else lives in `"bifrost"`.

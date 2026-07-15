@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from bifrost.solution_dev.scaffold_check import main_tsx_needs_dev_fallback
+from bifrost.solution_dev.scaffold_check import (
+    main_tsx_needs_dev_fallback,
+    main_tsx_needs_mount_runtime,
+)
 
 
 FRESH = '''const appId = boot?.appId ?? import.meta.env.VITE_BIFROST_APP_ID ?? null;'''
@@ -23,6 +26,19 @@ def test_stale_main_tsx_flagged(tmp_path: Path):
 
 def test_missing_file_is_not_flagged(tmp_path: Path):
     assert main_tsx_needs_dev_fallback(tmp_path / "src" / "main.tsx") is False
+
+
+def test_mount_runtime_check_flags_legacy_entry(tmp_path: Path):
+    entry = tmp_path / "src" / "main.tsx"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("const boot = window.__BIFROST_APP__; createRoot(boot.mountEl)")
+    assert main_tsx_needs_mount_runtime(entry) is True
+
+    entry.write_text(
+        "(window.__BIFROST_APP_MODULES__ ??= new Map()).set(import.meta.url, { mount });"
+    )
+    assert main_tsx_needs_mount_runtime(entry) is False
+    assert main_tsx_needs_mount_runtime(tmp_path / "missing.tsx") is False
 
 
 def test_vite_config_needs_org_null_detects_stale_empty_string(tmp_path):

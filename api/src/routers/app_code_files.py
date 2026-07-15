@@ -79,6 +79,20 @@ _PKG_NAME_RE = re.compile(r"^(@[a-z0-9-]+/)?[a-z0-9][a-z0-9._-]*$")
 _VERSION_RE = re.compile(r"^\^?~?\d+(\.\d+){0,2}$")
 _MAX_DEPENDENCIES = 20
 
+_V2_MOUNT_RUNTIME_META_RE = re.compile(
+    r"""<meta\b
+        (?=[^>]*\bname\s*=\s*["']bifrost-app-runtime["'])
+        (?=[^>]*\bcontent\s*=\s*["']mount-v1["'])
+        [^>]*>
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def standalone_v2_runtime_contract(html: str) -> str | None:
+    """Return the explicit lifecycle contract declared by a v2 dist."""
+    return "mount-v1" if _V2_MOUNT_RUNTIME_META_RE.search(html) else None
+
 
 def validate_file_path(path: str) -> None:
     """Validate file path against conventions.
@@ -585,8 +599,6 @@ async def get_bundle_manifest(
     # refresh; Codex P1-b/G7). The client reads these instead of scraping
     # index.html.
     if app.app_model == "standalone_v2":
-        import re as _re
-
         from src.services.solutions.app_build import SolutionAppBuilder
 
         # The entry chunk + CSS are whatever index.html references — Vite may emit
@@ -595,12 +607,14 @@ async def get_bundle_manifest(
         # "first .js" guess.
         entry: str | None = None
         css: str | None = None
+        runtime_contract: str | None = None
         try:
             html = (await SolutionAppBuilder().read_dist(app_id_str, "index.html")).decode()
-            if m := _re.search(r'<script[^>]+type="module"[^>]+src="([^"]+)"', html):
+            if m := re.search(r'<script[^>]+type="module"[^>]+src="([^"]+)"', html):
                 entry = m.group(1).split("/dist/")[-1].lstrip("/")
-            if m := _re.search(r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', html):
+            if m := re.search(r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', html):
                 css = m.group(1).split("/dist/")[-1].lstrip("/")
+            runtime_contract = standalone_v2_runtime_contract(html)
         except Exception:  # noqa: BLE001 - missing/unbuilt dist → entry stays None, shell shows a clear error
             pass
         return {
@@ -612,6 +626,7 @@ async def get_bundle_manifest(
             "migrated": False,
             "organization_id": str(app.organization_id) if app.organization_id else None,
             "app_model": "standalone_v2",
+            "runtime_contract": runtime_contract,
         }
 
     import json as _json
