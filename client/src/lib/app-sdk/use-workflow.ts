@@ -215,12 +215,12 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
                 settle(() => reject(fetchError));
                 return;
               }
-              // Transient fetch failure — the stream/poll keeps driving; a
+              // Transient fetch failure — the stream/poll keeps driving.
               // If this was the post-terminal-event fetch, there's no further
               // status frame coming and the socket may stay open (so
               // onSocketDown never fires) — arm the poll fallback so the run
               // still settles instead of hanging forever.
-              if (sawTerminal && !settled && !pollTimer) {
+              if (sawTerminal && !pollTimer) {
                 pollTimer = setInterval(checkOnce, POLL_INTERVAL_MS);
               }
             }

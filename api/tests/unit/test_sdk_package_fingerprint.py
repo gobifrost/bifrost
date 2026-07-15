@@ -45,7 +45,6 @@ def test_sdk_contract_version_is_positive_int():
 
 def test_sdk_contract_version_matches_json_file():
     import json as _json
-    from pathlib import Path
 
     from src.services.sdk_package import _SDK_SRC, sdk_contract_version
 
@@ -129,8 +128,6 @@ def test_version_endpoint_tolerates_fingerprint_failure(monkeypatch):
 def test_sdk_fingerprint_does_not_cache_failures(monkeypatch):
     """A transient node hiccup must be retryable on the next call, not
     permanently cached as a failure."""
-    from src.services.sdk_package import sdk_fingerprint
-
     import src.services.sdk_package as sdkpkg
 
     calls = {"n": 0}
@@ -144,10 +141,10 @@ def test_sdk_fingerprint_does_not_cache_failures(monkeypatch):
     monkeypatch.setattr(sdkpkg, "_built_bundle", _flaky)
 
     with pytest.raises(RuntimeError):
-        sdk_fingerprint("v9.9.9-fingerprint-cache-test")
+        sdkpkg.sdk_fingerprint("v9.9.9-fingerprint-cache-test")
 
     # Second call retries the underlying build rather than replaying a cached
     # exception.
-    result = sdk_fingerprint("v9.9.9-fingerprint-cache-test")
+    result = sdkpkg.sdk_fingerprint("v9.9.9-fingerprint-cache-test")
     assert isinstance(result, str)
     assert calls["n"] == 2

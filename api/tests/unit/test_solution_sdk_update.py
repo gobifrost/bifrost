@@ -114,7 +114,7 @@ class _VersionResp:
 def test_sdk_update_skips_when_current(tmp_path, monkeypatch):
     import subprocess
 
-    app_dir = _sdk_update_workspace(tmp_path, monkeypatch, installed_fingerprint="newnewnewnewnew1")
+    _sdk_update_workspace(tmp_path, monkeypatch, installed_fingerprint="newnewnewnewnew1")
 
     spawned = []
     monkeypatch.setattr(subprocess, "run", lambda argv, **k: spawned.append(list(argv)))
@@ -203,8 +203,6 @@ def test_sdk_update_multi_app_error_names_selector(tmp_path, monkeypatch):
 
 
 def _fake_run_reinstalls(app_dir, spawned):
-    import subprocess
-
     def _fake_run(argv, **kwargs):
         spawned.append(list(argv))
         import shutil as _shutil
@@ -229,7 +227,11 @@ def test_sdk_update_continues_unverified_when_field_missing(tmp_path, monkeypatc
         def json(self):
             return {}
 
-    app_dir = _sdk_update_workspace(tmp_path, monkeypatch, installed_fingerprint="oldoldoldoldold1")
+    app_dir = _sdk_update_workspace(
+        tmp_path,
+        monkeypatch,
+        installed_fingerprint="oldoldoldoldold1",
+    )
 
     import bifrost.client as client_mod
 
@@ -296,7 +298,7 @@ def test_sdk_update_continues_unverified_when_unavailable(tmp_path, monkeypatch)
 def test_sdk_update_fails_loud_when_still_stale(tmp_path, monkeypatch):
     import subprocess
 
-    app_dir = _sdk_update_workspace(tmp_path, monkeypatch, installed_fingerprint="oldoldoldoldold1")
+    _sdk_update_workspace(tmp_path, monkeypatch, installed_fingerprint="oldoldoldoldold1")
 
     def _noop_run(argv, **kwargs):
         # npm install is mocked as a no-op: node_modules/bifrost keeps the old stamp.
