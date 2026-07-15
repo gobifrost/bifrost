@@ -141,10 +141,15 @@ renders UNSTYLED. Verify with `vite build` (step 8) AND a screenshot, not just a
 - **package.json**: union of the scaffold's deps + everything the import scan surfaced (every
   `lucide-react`, `react-router-dom`, each shadcn dep, `clsx`, `tailwind-merge`, …). Don't ship
   deps nothing imports.
-- **BifrostProvider + theme**: the scaffold already wraps the tree and passes `theme={theme}` from
-  the platform boot. If the app is theme-aware (keys styles off the `dark` class / Tailwind
-  `dark:`), add `supportsTheme` to `<BifrostProvider>` so `BifrostHeader` shows the light/dark
-  toggle and recolors its own chrome. If the app has hardcoded light colors, omit `supportsTheme`.
+- **BifrostProvider + theme**: the scaffold passes the platform theme and opts into
+  `supportsTheme`, which makes `BifrostHeader` show the light/dark toggle. Treat that prop as an
+  **app-wide contract**, not a header option. Before retaining it, migrate every route, layout,
+  dialog, table, form control, empty/loading/error state, and chart surface to semantic theme
+  tokens (`bg-background`, `text-foreground`, `bg-card`, `text-card-foreground`, `border-border`,
+  `bg-muted`, `text-muted-foreground`, etc.). Replace hardcoded light utilities such as `bg-white`,
+  `text-slate-*`, and `border-gray-*`; for intentional brand/data colors, define paired `:root`
+  and `.dark` CSS variables. Use `dark:` only when a semantic token cannot express the design.
+  If the full app is not theme-aware, remove `supportsTheme` so the toggle is not exposed.
 - **BifrostHeader**: keep it in `App.tsx` for the familiar chrome (back-to-Bifrost, user menu).
 - **basename**: the scaffold sets `basename` from the boot; v2 apps mount at `/apps/{slug}`.
 - **brand icon**: port the tracked image in both scopes. Set the Solution-root-relative `logo:` in
@@ -179,7 +184,9 @@ Then drive it:
 bifrost solution start <new-slug>     # app Vite server + local @workflow functions, one origin
 ```
 Open the printed URL; click every page. (Skip this loop only if the user opted out in the prefs.)
-Iterate on layout/theme until it matches the v1 app.
+Iterate on layout/theme until it matches the v1 app. When `supportsTheme` is present, toggle light
+and dark mode and inspect every route plus overlays and interactive states; a dark header above a
+light-only app is a failed migration.
 
 ### 9. Cutover by slug swap + capture the backing entities
 
@@ -227,6 +234,8 @@ A's Solution would orphan B's reference across the scope boundary. Report it; le
 ## Verification before declaring done
 
 - The v2 app builds + runs under `bifrost solution start`, every page works.
+- If `supportsTheme` is present, every page and overlay is visually verified in both light and dark
+  mode and uses theme tokens throughout; otherwise the theme toggle is absent.
 - Capture `--dry-run` shows no dangling refs after rename (refs rewritten).
 - The live slug now serves the v2 app (`bifrost api GET /api/applications/<old-slug>` → the v2 row).
 - Both the Solution catalog record and application record carry the migrated logo when the v1 app

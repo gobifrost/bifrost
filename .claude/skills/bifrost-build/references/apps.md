@@ -327,6 +327,21 @@ if (!state?.name) return <Navigate to="/" />;
 
 Apps go through the platform's per-app Tailwind v4 pipeline at bundle time.
 
+`supportsTheme` on `<BifrostProvider>` is an **app-wide capability contract**. It does not theme the
+application for you; it exposes the `BifrostHeader` toggle and applies the root `.dark` class. Keep
+it only when the entire app responds correctly. Audit every route, layout, overlay, form control,
+table, chart, and loading/empty/error state—not just the header.
+
+- Prefer semantic tokens: `bg-background`, `text-foreground`, `bg-card`,
+  `text-card-foreground`, `border-border`, `bg-muted`, `text-muted-foreground`, `bg-primary`,
+  `text-primary-foreground`, and `text-destructive`.
+- Replace hardcoded light utilities such as `bg-white`, `text-slate-*`, and `border-gray-*`.
+- For intentional brand or data-series colors, define paired `:root` and `.dark` variables. Use
+  `dark:` variants only when the semantic token system cannot express the design.
+- Verify every route and overlay after toggling both light and dark modes. A themed header above a
+  light-only app is a failure. If full support is out of scope, remove `supportsTheme` so the toggle
+  is not shown.
+
 What works: all standard utilities, host shadcn theme tokens (`bg-background`, `text-muted-foreground`), arbitrary values, `@apply` in `styles.css`, `@layer components`, `:root` and `.dark` CSS variable blocks, per-app `tailwind.config.ts` with `theme.extend`.
 
 What is NOT supported: Tailwind plugins beyond `@tailwindcss/typography`; `@source` directives outside the app root.

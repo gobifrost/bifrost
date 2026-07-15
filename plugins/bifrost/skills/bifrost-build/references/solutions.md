@@ -27,6 +27,12 @@ Scaffolds a `standalone_v2` React app under `apps/my-app/`. Config files sit at 
 
 > The scaffold wires up Tailwind (`@tailwindcss/vite` + shadcn theme tokens in `src/index.css`) but the generated `App.tsx` uses minimal **inline styles** (`style={{ padding: 24 }}`) as a plain starting point. Replace them with Tailwind classes (`className="p-6 ..."`) before building — the infrastructure is ready. See `references/apps.md` for v2 styling patterns.
 
+> The scaffold also opts into `<BifrostProvider supportsTheme>`, so `BifrostHeader` exposes the
+> theme toggle. Before deploy, make the **whole app** theme-aware with semantic tokens and verify
+> every route/overlay in light and dark mode. If that work is intentionally out of scope, remove
+> `supportsTheme`; never ship a toggle that changes only the header. See the theme contract in
+> `references/apps.md`.
+
 To migrate a v1 inline app to standalone_v2, use `bifrost solution migrate-app <source-slug> <v2-slug>` — it ports source + rewrites imports + prints a judgment checklist.
 
 ### Logos have two independent scopes

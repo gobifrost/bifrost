@@ -28,7 +28,7 @@ Key props:
 | `token` | yes | Bearer access token |
 | `orgScope` | no | Active org UUID; null = caller's default |
 | `appId` | no | This install's app UUID — required for correct `path::function` resolution at deploy; omit in dev |
-| `supportsTheme` | no (default false) | When true, BifrostHeader shows the light/dark toggle |
+| `supportsTheme` | no (default false) | Declares app-wide theme support and makes BifrostHeader show the light/dark toggle |
 | `fetchImpl` | no | Override fetch (tests / non-browser) |
 | `onLogout` | no | Called when the app requests logout |
 | `theme` / `onThemeChange` | no | Host-controlled theme sync |
@@ -55,7 +55,12 @@ import { BifrostHeader } from "bifrost";
 <BifrostHeader title="My App" />
 ```
 
-The light/dark toggle only appears when the parent `<BifrostProvider supportsTheme>` prop is set. An app with hardcoded colors should omit `supportsTheme` so the toggle is never shown.
+The light/dark toggle only appears when the parent `<BifrostProvider supportsTheme>` prop is set.
+This is an app-wide capability declaration: the provider applies the root `.dark` class, but the
+application must use semantic theme tokens or paired light/dark variables for all of its own
+surfaces and states. Verify every route and overlay in both modes. An app with hardcoded light
+colors must be converted before retaining `supportsTheme`, or omit the prop so the toggle is never
+shown. See `references/apps.md` for the required styling audit.
 
 The platform does not add this header automatically. A v2 app owns its layout and composes `<BifrostHeader>` when it wants Bifrost chrome. The SDK header carries its own responsive inline styling: title text ellipsizes, right-side controls can wrap on narrow screens, and the account menu stays within the viewport.
 
