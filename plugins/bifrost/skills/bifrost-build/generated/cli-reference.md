@@ -1728,6 +1728,7 @@ Commands:
   migrate-app   Migrate a v1 inline app dir to a scaffolded standalone_v2...
   pull          Pull captured entities into the local .bifrost/ manifest...
   scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
+  sdk           Manage the app's vendored Bifrost SDK.
   start         Run the app's dev server + local workflows (one origin).
   swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
 ```
@@ -1928,6 +1929,33 @@ Options:
   --api-url TEXT  Instance URL the app resolves `bifrost` from (default:
                   $BIFROST_API_URL).
   --help          Show this message and exit.
+```
+
+### `solution sdk`
+
+```
+Usage: solution sdk [OPTIONS] COMMAND [ARGS]...
+
+  Manage the app's vendored Bifrost SDK.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  update  Re-vendor the Bifrost SDK into the app (re-download + reinstall).
+```
+
+#### `solution sdk update`
+
+```
+Usage: solution sdk update [OPTIONS] [PATH]
+
+  Re-vendor the Bifrost SDK into the app (re-download + reinstall).
+
+Options:
+  --app TEXT  standalone_v2 app slug (required when the Solution has multiple
+              apps).
+  --help      Show this message and exit.
 ```
 
 ### `solution start`

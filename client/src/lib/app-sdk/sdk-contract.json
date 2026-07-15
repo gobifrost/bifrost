@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "history": {
+    "1": "Baseline. v2 SDKs built before the streaming workflow transport (this PR) POSTed /api/workflows/execute and read the result straight off the response. The new transport starts the run the same way, then subscribes to a websocket for live status/log frames and fetches GET /api/executions/{id} for the terminal result -- but a pre-streaming SDK's synchronous POST/response flow still works unmodified against the new server (the server still returns a usable response, and old SDKs never subscribed to the socket in the first place). Additive, not breaking. No contract bump."
+  }
+}

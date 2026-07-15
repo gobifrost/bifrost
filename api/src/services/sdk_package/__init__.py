@@ -15,6 +15,7 @@ the consuming app provides them so React stays a singleton).
 from __future__ import annotations
 
 import functools
+import hashlib
 import io
 import json
 import subprocess
@@ -67,6 +68,48 @@ def _bundle(workdir: Path) -> bytes:
     return out.read_bytes()
 
 
+# Caching is safe: the bundle is a pure function of version + the SDK source
+# baked into the image. maxsize=2 covers a rolling-upgrade window. Shared by
+# build_sdk_tarball and sdk_fingerprint so both agree on the exact bytes and
+# esbuild only runs once per version.
+@functools.lru_cache(maxsize=2)
+def _built_bundle(version: str) -> bytes:
+    """esbuild output for the SDK source baked into this image. Cached: pure
+    function of the source; ``version`` keys the cache for rolling upgrades."""
+    with tempfile.TemporaryDirectory(prefix="bifrost-sdk-build-") as tmp:
+        return _bundle(Path(tmp))
+
+
+def sdk_fingerprint(version: str) -> str:
+    """Content fingerprint of the shipped SDK bundle (sha256, 16 hex chars).
+
+    Pure function of the SDK source: changes exactly when the built SDK
+    changes. This is what ``bifrost solution start`` compares against an
+    app's installed copy — no manual bump anywhere. Raises on a build
+    failure (e.g. broken node toolchain); callers that need a
+    never-fails read (``/api/version``) must catch and degrade — see
+    ``get_sdk_fingerprint`` in ``src.routers.version``. Not caught here:
+    ``_built_bundle`` is lru_cached, and functools does not cache raised
+    exceptions, so a transient failure is retried on the next call rather
+    than permanently poisoning the cache.
+    """
+    return hashlib.sha256(_built_bundle(version)).hexdigest()[:16]
+
+
+@functools.lru_cache(maxsize=1)
+def sdk_contract_version() -> int:
+    """The SDK<->server wire contract version (see ``sdk-contract.json``).
+
+    Bumped only on a DECIDED breaking change to the SDK's wire surface —
+    mirrors the CLI's ``CONTRACT_VERSION`` two-tier model (content
+    fingerprint = automatic, contract version = manual/tripwire-forced).
+    The JSON file is baked into the image alongside the SDK source (see
+    Dockerfile), so this resolves identically in dev and in the built image.
+    """
+    contract = json.loads((_SDK_SRC / "sdk-contract.json").read_text())
+    return contract["version"]
+
+
 # Caching is safe: the tarball is a pure function of version + the SDK source
 # baked into the image. maxsize=2 covers a rolling-upgrade window.
 @functools.lru_cache(maxsize=2)
@@ -75,31 +118,32 @@ def build_sdk_tarball(version: str) -> bytes:
     stamped. Layout: ``package/package.json`` (name ``bifrost``, ESM ``module``
     entry, React peer deps) + ``package/dist/index.mjs`` (the bundle)."""
     pkg_version = _pep440ish(version)
+    bundle = _built_bundle(version)
 
-    with tempfile.TemporaryDirectory(prefix="bifrost-sdk-build-") as tmp:
-        workdir = Path(tmp)
-        bundle = _bundle(workdir)
+    package_json = {
+        "name": "bifrost",
+        "version": pkg_version,
+        "description": "Bifrost web SDK for standalone v2 apps.",
+        "type": "module",
+        "module": "dist/index.mjs",
+        "main": "dist/index.mjs",
+        "exports": {".": {"import": "./dist/index.mjs"}},
+        "peerDependencies": _PEER_DEPS,
+        "bifrost": {
+            "fingerprint": sdk_fingerprint(version),
+            "contract": sdk_contract_version(),
+        },
+    }
 
-        package_json = {
-            "name": "bifrost",
-            "version": pkg_version,
-            "description": "Bifrost web SDK for standalone v2 apps.",
-            "type": "module",
-            "module": "dist/index.mjs",
-            "main": "dist/index.mjs",
-            "exports": {".": {"import": "./dist/index.mjs"}},
-            "peerDependencies": _PEER_DEPS,
-        }
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        def _add(name: str, data: bytes) -> None:
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tar.addfile(info, fileobj=io.BytesIO(data))
 
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-            def _add(name: str, data: bytes) -> None:
-                info = tarfile.TarInfo(name=name)
-                info.size = len(data)
-                tar.addfile(info, fileobj=io.BytesIO(data))
+        # npm expects everything under a top-level "package/" dir.
+        _add("package/package.json", json.dumps(package_json, indent=2).encode())
+        _add("package/dist/index.mjs", bundle)
 
-            # npm expects everything under a top-level "package/" dir.
-            _add("package/package.json", json.dumps(package_json, indent=2).encode())
-            _add("package/dist/index.mjs", bundle)
-
-        return buffer.getvalue()
+    return buffer.getvalue()
