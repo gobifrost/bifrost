@@ -147,6 +147,9 @@ renders UNSTYLED. Verify with `vite build` (step 8) AND a screenshot, not just a
   toggle and recolors its own chrome. If the app has hardcoded light colors, omit `supportsTheme`.
 - **BifrostHeader**: keep it in `App.tsx` for the familiar chrome (back-to-Bifrost, user menu).
 - **basename**: the scaffold sets `basename` from the boot; v2 apps mount at `/apps/{slug}`.
+- **brand icon**: port the tracked image in both scopes. Set the Solution-root-relative `logo:` in
+  `bifrost.solution.yaml` for the catalog card, and set the app-relative `logo:` under the app's
+  `.bifrost/apps.yaml` entry for `BifrostHeader`. See the Build skill's `references/solutions.md`.
 
 ### 7. Rename workflows to the org convention (ref-safe)
 
@@ -226,6 +229,8 @@ A's Solution would orphan B's reference across the scope boundary. Report it; le
 - The v2 app builds + runs under `bifrost solution start`, every page works.
 - Capture `--dry-run` shows no dangling refs after rename (refs rewritten).
 - The live slug now serves the v2 app (`bifrost api GET /api/applications/<old-slug>` → the v2 row).
+- Both the Solution catalog record and application record carry the migrated logo when the v1 app
+  had one; verify the two logo scopes separately after deploy.
 - Backing entities are solution-owned (`bifrost api GET /api/solutions/<id>/entities`).
 - A shared-entity report exists for anything irreducibly shared.
 

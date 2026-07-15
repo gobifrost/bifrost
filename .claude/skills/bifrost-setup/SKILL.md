@@ -41,6 +41,10 @@ command -v bifrost >/dev/null && bifrost auth default
 
 The environment flags are hints. When the CLI is installed, the read-only
 `bifrost auth default` output is the source of truth for the current folder.
+If a Codex sandbox reports no credentials, rerun that command with host access
+from the exact intended workspace before entering the Login flow. Sandboxing
+can hide the OS keyring; a successful host probe means the user is already
+logged in and the existing connection must be reused.
 
 ## Resume Logic
 
@@ -144,6 +148,39 @@ bifrost help
 
 If `bifrost` is not on PATH yet, open a new PowerShell window or run it from
 `%USERPROFILE%\.local\bin\bifrost.exe`.
+
+## Update an Existing Installation
+
+Treat these as three independent update planes. Updating one does not update
+the others; update the CLI first because it supplies the SDK-update command.
+
+1. **CLI from the intended Bifrost instance:**
+   ```bash
+   pipx install --force {url}/api/cli/download
+   bifrost --version
+   ```
+   On native Windows, use
+   `py -3.11 -m pipx install --force {url}/api/cli/download`.
+2. **Vendored web SDK in each Solution workspace:**
+   ```bash
+   cd /path/to/solution
+   bifrost solution sdk update
+   ```
+   Review and commit the changed vendored SDK files, then rerun
+   `bifrost solution start` and confirm any stale-SDK warning is gone.
+3. **Installed Codex plugin:**
+   ```bash
+   codex plugin marketplace upgrade bifrost
+   codex plugin list
+   ```
+   If the installed version remains stale, refresh its cached content:
+   ```bash
+   codex plugin remove bifrost@bifrost
+   codex plugin add bifrost@bifrost
+   codex plugin list
+   ```
+   Start a new Codex task (or restart Codex) afterward; the current task keeps
+   the skill text it loaded at startup.
 
 ## Login
 

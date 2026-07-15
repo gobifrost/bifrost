@@ -31,6 +31,12 @@ is the intended instance. If it is wrong, run from the intended workspace or
 neutral folder. Do not change the saved default merely to work with a debug
 stack; the debug skill creates a dedicated folder binding.
 
+A Codex sandbox may be unable to read the host OS keyring and can therefore
+make an existing login look absent. Before invoking setup or login, rerun the
+same read-only `bifrost auth default` probe with host access from the exact
+workspace you intend to use. If that host probe succeeds, reuse it; never log
+in again merely to work around a sandbox-only credential failure.
+
 Most entity commands do not accept `--url`; the folder binding is their
 connection selector. Never repoint a bound folder by overriding only
 `BIFROST_API_URL`, because folder-loaded tokens may belong to its original URL.

@@ -64,7 +64,7 @@ references:
       - api/src/models/contracts/solutions.py
       - api/src/services/solution_files.py
       - api/src/services/solutions/*.py
-    verified_at_sha: 236d0f4753b4b14cfc05c42dccbe9db26b411a77
+    verified_at_sha: 44fed5904f8b36b2f8ace25c17e144a8fb89dc87
 
   - file: references/tables.md
     source_globs:

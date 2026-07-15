@@ -29,6 +29,30 @@ Scaffolds a `standalone_v2` React app under `apps/my-app/`. Config files sit at 
 
 To migrate a v1 inline app to standalone_v2, use `bifrost solution migrate-app <source-slug> <v2-slug>` — it ports source + rewrites imports + prints a judgment checklist.
 
+### Logos have two independent scopes
+
+Port both when a Solution app has a brand icon:
+
+```yaml
+# bifrost.solution.yaml — path relative to the Solution root
+logo: apps/my-app/public/logo.svg
+```
+
+```yaml
+# .bifrost/apps.yaml — path relative to that app's `path`
+apps:
+  <app-manifest-id>:
+    path: apps/my-app
+    logo: public/logo.svg
+```
+
+The descriptor logo is the Solution-catalog icon served by
+`GET /api/solutions/{solution_id}/logo`. The app-manifest logo is the
+`BifrostHeader` icon served by `GET /api/applications/{app_id}/logo`.
+Deploy owns and full-replaces both, so setting only one leaves the other UI
+surface blank. Keep the image tracked inside the workspace and verify both
+live records after deploy.
+
 ### 3. Write workflows in `functions/`
 
 Python workflows live in `functions/` (e.g. `functions/hello.py`). Reference them by portable `path::function` strings, never by UUID or bare name:
@@ -71,6 +95,15 @@ bifrost solution start
 Runs the app's Vite dev server and local workflow functions behind one origin — no deploy required. Hot reload works for both app code and workflow code. `start` requires the workspace's `.env` Solution binding, or an explicit `--solution <id-or-slug>` override; install scope comes from that binding, not `--org`.
 
 Open the origin the command prints (the **proxy** port; `--port` sets it, default 3000). Vite itself binds to **`--port + 1`** behind the proxy — drive the app at the proxy port the command prints, not the Vite port.
+
+After any CLI, server, or web-SDK execution-transport change, drive an actual
+bound app through this origin; a scaffold or mocked unit test is not enough.
+For a local workflow, verify the terminal `POST /api/workflows/execute`
+response contains a non-empty `execution_id`, terminal `status`,
+`is_transient: true`, and the appropriate legacy inline `result` or `error`.
+The app must settle that response inline without opening a websocket or
+polling `GET /api/executions/{execution_id}`. Keep those inline fields when
+adding transport metadata because pre-streaming SDKs consume them directly.
 
 ### 5. Deploy
 
