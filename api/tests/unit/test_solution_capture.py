@@ -219,6 +219,8 @@ async def test_capture_app_skips_secret_and_build_files(db_session) -> None:
         "apps/portal/node_modules/dep/index.js": b"module.exports = {}",
         "apps/portal/dist/bundle.js": b"compiled",
         "apps/portal/.DS_Store": b"\x00\x01",
+        "apps/portal/.claude/projects/session.jsonl": b"private transcript",
+        "apps/portal/.codex/sessions/session.jsonl": b"private transcript",
     })
 
     await SolutionCaptureService(db, repo=repo).capture(
@@ -237,8 +239,15 @@ async def test_capture_app_skips_secret_and_build_files(db_session) -> None:
     app_dir = apps_yaml["apps"][str(app.id)]["path"]
     assert f"{app_dir}/src/App.tsx" in names
     # Secrets + build junk are excluded — no entry under the app dir for them.
-    for skipped in (".env", ".env.production", "node_modules/dep/index.js",
-                    "dist/bundle.js", ".DS_Store"):
+    for skipped in (
+        ".env",
+        ".env.production",
+        "node_modules/dep/index.js",
+        "dist/bundle.js",
+        ".DS_Store",
+        ".claude/projects/session.jsonl",
+        ".codex/sessions/session.jsonl",
+    ):
         assert f"{app_dir}/{skipped}" not in names, f"{skipped} leaked into export"
 
 

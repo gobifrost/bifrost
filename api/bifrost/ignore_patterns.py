@@ -17,6 +17,12 @@ from __future__ import annotations
 #: and must never leave the workspace via sync OR Solution capture/export.
 DEFAULT_IGNORE_PATTERNS: list[str] = [
     ".git/",
+    # Agent state can contain full conversation transcripts, tool results,
+    # credentials, and caches. Keep explicit entries here as defense in depth
+    # for collectors that use this canonical list without the CLI's blanket
+    # hidden-path rule (for example Solution capture).
+    ".claude/",
+    ".codex/",
     "__pycache__/",
     ".ruff_cache/",
     ".mypy_cache/",

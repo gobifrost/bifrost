@@ -381,3 +381,72 @@ async def test_incoming_delete_evicts_cache(tmp_path: pathlib.Path) -> None:
         state=state,
     )
     assert state.get_known_hash(repo_path) is None
+
+
+@pytest.mark.asyncio
+async def test_incoming_files_drop_hidden_out_of_prefix_and_unsafe_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Inbound events are filtered before the CLI reads or writes them."""
+    root = tmp_path / "workspace"
+    root.mkdir()
+    valid = "apps/demo/src/main.py"
+    rejected = (
+        "apps/demo/.claude/projects/session.jsonl",
+        "apps/demo/src/.codex/session.jsonl",
+        "apps/other/src/main.py",
+        "apps/demo-evil/src/main.py",
+        "apps/demo/../../escape.txt",
+    )
+    server_files = {valid: b"print('ok')\n"}
+    server_files.update({path: b"private\n" for path in rejected})
+    state = _WatchState(root)
+    client: Any = _RecordingClient(server_files=server_files)
+
+    await _process_incoming(
+        client,
+        files=[([valid, *rejected], "user_a")],
+        deletes=[],
+        base_path=root,
+        repo_prefix="apps/demo",
+        state=state,
+    )
+
+    reads = [payload["path"] for url, payload in client.posted if url == "/api/files/read"]
+    assert reads == [valid]
+    assert (root / "src" / "main.py").read_bytes() == b"print('ok')\n"
+    assert not (tmp_path / "escape.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_incoming_deletes_drop_hidden_and_out_of_prefix_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "workspace"
+    valid = root / "src" / "remove.py"
+    hidden = root / ".claude" / "session.jsonl"
+    out_of_prefix = root / "apps" / "other" / "keep.py"
+    for local_file in (valid, hidden, out_of_prefix):
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        local_file.write_text("keep\n")
+
+    state = _WatchState(root)
+    client: Any = _RecordingClient(server_files={})
+    await _process_incoming(
+        client,
+        files=[],
+        deletes=[
+            ([
+                "apps/demo/src/remove.py",
+                "apps/demo/.claude/session.jsonl",
+                "apps/other/keep.py",
+            ], "user_a"),
+        ],
+        base_path=root,
+        repo_prefix="apps/demo",
+        state=state,
+    )
+
+    assert not valid.exists()
+    assert hidden.exists()
+    assert out_of_prefix.exists()

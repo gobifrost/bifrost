@@ -292,6 +292,30 @@ def test_watch_handler_respects_gitignore(tmp_path):
     assert str(real_path) in state.pending_changes
 
 
+def test_watch_handler_drops_all_hidden_path_events(tmp_path):
+    """Root and nested hidden paths must never enter the watch queue."""
+    state = _WatchState(tmp_path)
+    handler = _WatchChangeHandler(state)
+
+    hidden_paths = (
+        tmp_path / ".bash_history",
+        tmp_path / ".claude" / "projects" / "session.jsonl",
+        tmp_path / ".codex" / "sessions" / "session.jsonl",
+        tmp_path / "src" / ".cache" / "mcp.log",
+    )
+    for hidden_path in hidden_paths:
+        hidden_path.parent.mkdir(parents=True, exist_ok=True)
+        hidden_path.write_text("private\n")
+        handler.dispatch(_fake_event("modified", str(hidden_path)))
+
+    visible_path = tmp_path / "src" / "workflow.py"
+    visible_path.write_text("print('ok')\n")
+    handler.dispatch(_fake_event("modified", str(visible_path)))
+
+    assert state.pending_changes == {str(visible_path)}
+    assert state.pending_deletes == set()
+
+
 def test_watch_handler_respects_root_gitignore_for_subdirectory_watch(tmp_path):
     """Root .gitignore patterns should apply when watching a subdirectory."""
     (tmp_path / ".gitignore").write_text("/apps/my-app/generated/\n*.local\n")
@@ -395,6 +419,18 @@ def test_watch_allowed_in_plain_repo_workspace(tmp_path):
             handle_watch([str(tmp_path)])
         except RuntimeError as e:
             assert str(e) == "stop-after-guard"
+
+
+def test_watch_refuses_home_directory(tmp_path, monkeypatch, capsys):
+    """A mistaken watch from $HOME must fail before auth or filesystem work."""
+    from bifrost.cli import handle_watch
+
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    with patch("bifrost.cli.WorkspaceLock") as mock_lock:
+        assert handle_watch([str(tmp_path)]) == 1
+
+    assert "refusing to watch your home directory" in capsys.readouterr().err
+    mock_lock.assert_not_called()
 
 
 # =============================================================================

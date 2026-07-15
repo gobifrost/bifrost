@@ -71,6 +71,48 @@ def test_file_filter_excludes_common_tool_caches(tmp_path: pathlib.Path) -> None
     assert files.keys() == {"workflow.py"}
 
 
+def test_file_filter_excludes_all_hidden_paths(tmp_path: pathlib.Path) -> None:
+    hidden_files = (
+        ".bash_history",
+        ".claude/projects/session.jsonl",
+        ".codex/sessions/session.jsonl",
+        "src/.cache/mcp.log",
+        "src/.private.txt",
+    )
+    for relative in hidden_files:
+        hidden_file = tmp_path / relative
+        hidden_file.parent.mkdir(parents=True, exist_ok=True)
+        hidden_file.write_text("private\n")
+    (tmp_path / "workflow.py").write_text("print('ok')\n")
+
+    files, skipped = cli._collect_push_files(tmp_path, "")
+
+    assert skipped == 0
+    assert files.keys() == {"workflow.py"}
+
+
+def test_gitignore_cannot_reinclude_hidden_or_canonical_ignored_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / ".gitignore").write_text(
+        "!.bash_history\n!.claude/**\n!node_modules/**\n"
+    )
+    for relative in (
+        ".bash_history",
+        ".claude/projects/session.jsonl",
+        "node_modules/package/index.js",
+    ):
+        ignored_file = tmp_path / relative
+        ignored_file.parent.mkdir(parents=True, exist_ok=True)
+        ignored_file.write_text("private\n")
+    (tmp_path / "workflow.py").write_text("print('ok')\n")
+
+    files, skipped = cli._collect_push_files(tmp_path, "")
+
+    assert skipped == 0
+    assert files.keys() == {"workflow.py"}
+
+
 def test_subdirectory_push_respects_root_gitignore(tmp_path: pathlib.Path) -> None:
     (tmp_path / ".gitignore").write_text("/apps/my-app/generated/\n*.local\n")
     app_dir = tmp_path / "apps" / "my-app"

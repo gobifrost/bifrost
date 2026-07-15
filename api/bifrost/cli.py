@@ -171,9 +171,7 @@ def _build_file_filter(local_root: pathlib.Path) -> "pathspec.PathSpec":
     """
     import pathspec
 
-    # Always start with defaults (.git/, __pycache__, etc.) — .gitignore
-    # never lists .git/ because git handles it implicitly, but we need it.
-    lines = list(_DEFAULT_IGNORE_PATTERNS)
+    lines: list[str] = []
 
     workspace_root = _workspace_root_for(local_root)
     workspace_gitignore = workspace_root / ".gitignore"
@@ -183,6 +181,10 @@ def _build_file_filter(local_root: pathlib.Path) -> "pathspec.PathSpec":
     gitignore_path = local_root / ".gitignore"
     if gitignore_path != workspace_gitignore and gitignore_path.is_file():
         lines.extend(gitignore_path.read_text(encoding="utf-8").splitlines())
+
+    # Canonical safety exclusions are appended last so a .gitignore negation
+    # cannot re-include secrets, agent state, dependency trees, or build output.
+    lines.extend(_DEFAULT_IGNORE_PATTERNS)
 
     return pathspec.PathSpec.from_lines("gitwildmatch", lines)
 
@@ -2210,6 +2212,14 @@ Examples:
         print(f"Error: {parsed.local_path} is not a valid directory", file=sys.stderr)
         return 1
 
+    if resolved == pathlib.Path.home().resolve():
+        print(
+            "Error: refusing to watch your home directory. "
+            "Choose a project or workspace subdirectory instead.",
+            file=sys.stderr,
+        )
+        return 1
+
     # Refuse inside a Solution workspace (D1). `watch` only ever syncs to the
     # global `_repo/` workspace; a Solution developer running it here would
     # silently push their apps/ and workflows/ to `_repo/` instead of the
@@ -2891,10 +2901,15 @@ async def _process_incoming(
     and drops the no-op push.
     """
     ts = datetime.now().strftime('%H:%M:%S')
+    spec = _build_file_filter(base_path)
+    resolved_base = base_path.resolve()
 
     # Process incoming file changes
     for paths, user_name in files:
         for repo_path in paths:
+            rel = _incoming_relative_path(repo_path, repo_prefix)
+            if rel is None or _should_skip_path(rel, spec, repo_path):
+                continue
             try:
                 resp = await client.post("/api/files/read", json={
                     "path": repo_path,
@@ -2906,14 +2921,11 @@ async def _process_incoming(
                     data = resp.json()
                     content = base64.b64decode(data["content"])
                     content_hash = _hash_for_cache(content)
-                    # Convert repo_path to local path
-                    if repo_prefix and repo_path.startswith(repo_prefix + "/"):
-                        rel = repo_path[len(repo_prefix) + 1:]
-                    elif repo_prefix and repo_path.startswith(repo_prefix):
-                        rel = repo_path[len(repo_prefix):]
-                    else:
-                        rel = repo_path
-                    local_file = base_path / rel
+                    local_file = (base_path / rel).resolve()
+                    try:
+                        local_file.relative_to(resolved_base)
+                    except ValueError:
+                        continue
                     local_file.parent.mkdir(parents=True, exist_ok=True)
                     # Skip if we already know the server has this content and
                     # the local file matches (cache hit). Falls back to a byte
@@ -2953,13 +2965,14 @@ async def _process_incoming(
     # Process incoming deletes
     for paths, user_name in deletes:
         for repo_path in paths:
-            if repo_prefix and repo_path.startswith(repo_prefix + "/"):
-                rel = repo_path[len(repo_prefix) + 1:]
-            elif repo_prefix and repo_path.startswith(repo_prefix):
-                rel = repo_path[len(repo_prefix):]
-            else:
-                rel = repo_path
-            local_file = base_path / rel
+            rel = _incoming_relative_path(repo_path, repo_prefix)
+            if rel is None or _should_skip_path(rel, spec, repo_path):
+                continue
+            local_file = (base_path / rel).resolve()
+            try:
+                local_file.relative_to(resolved_base)
+            except ValueError:
+                continue
             if local_file.exists():
                 try:
                     local_file.unlink()
@@ -3202,15 +3215,43 @@ def _strip_repo_prefix(repo_path: str, repo_prefix: str) -> str:
     return repo_path
 
 
+def _has_hidden_path_component(path: str) -> bool:
+    """Return whether a POSIX repo path contains a hidden component."""
+    normalized = path.replace("\\", "/")
+    return any(part.startswith(".") for part in pathlib.PurePosixPath(normalized).parts)
+
+
 def _should_skip_path(
     rel_path: str,
     spec: "pathspec.PathSpec",
     repo_path: str | None = None,
 ) -> bool:
-    """Check if a relative path should be skipped during push/watch."""
+    """Apply hidden-path, canonical, and gitignore filtering."""
+    if _has_hidden_path_component(rel_path):
+        return True
+    if repo_path is not None and _has_hidden_path_component(repo_path):
+        return True
     if spec.match_file(rel_path):
         return True
     return repo_path is not None and repo_path != rel_path and spec.match_file(repo_path)
+
+
+def _incoming_relative_path(repo_path: str, repo_prefix: str) -> str | None:
+    """Map an incoming repo key to a safe, in-scope local relative path."""
+    normalized = repo_path.replace("\\", "/")
+    if not normalized or normalized.startswith("/"):
+        return None
+    if any(part in ("", ".", "..") for part in normalized.split("/")):
+        return None
+
+    if repo_prefix:
+        prefix = repo_prefix.replace("\\", "/").strip("/")
+        prefix_with_slash = prefix + "/"
+        if not normalized.startswith(prefix_with_slash):
+            return None
+        normalized = normalized[len(prefix_with_slash):]
+
+    return normalized or None
 
 
 def _collect_push_files(
