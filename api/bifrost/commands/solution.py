@@ -2208,17 +2208,16 @@ def _vite_child_env(
     *,
     app_id: str,
     org_id: str | None,
-    proxy_origin: str,
     access_token: str,
 ) -> dict[str, str]:
     """Environment for the `solution start` Vite child.
 
-    The bundle-visible BIFROST_API_URL is the LOCAL PROXY origin, never the
-    upstream API: the proxy is where install scope is injected (?solution=,
-    auth, app header) and where local path::fn refs run in-process. Pointing
-    the bundle at the upstream bypasses all of that — local workflow edits
-    silently don't run, install-owned tables 404, declared-location file
-    writes 403 (drive finding, 2026-07-02).
+    The bundle-visible BIFROST_API_URL is `/`, meaning the browser's current
+    origin. That origin is the LOCAL PROXY even when an outer development
+    proxy remaps its loopback port (for example Codex exposing local :3000 as
+    browser-visible :62464). An absolute internal URL would bypass the outer
+    proxy from browser JavaScript. Pointing at the upstream API is also wrong:
+    the local proxy injects install scope and runs local path::fn refs.
     """
     env = dict(base_env)
     env["VITE_BIFROST_APP_ID"] = app_id
@@ -2229,7 +2228,7 @@ def _vite_child_env(
         env["VITE_BIFROST_ORG_ID"] = org_id
     else:
         env.pop("VITE_BIFROST_ORG_ID", None)
-    env["BIFROST_API_URL"] = proxy_origin
+    env["BIFROST_API_URL"] = "/"
     env["BIFROST_ACCESS_TOKEN"] = access_token
     return env
 
@@ -2396,7 +2395,6 @@ def start_cmd(
         dict(os.environ),
         app_id=chosen.app_id,
         org_id=(org_info or {}).get("id"),
-        proxy_origin=proxy_origin,
         access_token=client._access_token,
     )
 

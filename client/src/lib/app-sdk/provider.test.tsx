@@ -64,6 +64,31 @@ describe("BifrostProvider", () => {
     expect(captured!.auth).toBe("Bearer tok-abc");
   });
 
+  it("treats / as the browser's same-origin transport", async () => {
+    let captured: string | null = null;
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      captured = String(input);
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    function Caller() {
+      const { baseUrl, authedFetch } = useBifrostContext();
+      void authedFetch("/api/auth/me");
+      return <span>{baseUrl || "same-origin"}</span>;
+    }
+
+    render(
+      <BifrostProvider baseUrl="/" token="tok-forwarded" fetchImpl={fakeFetch}>
+        <Caller />
+      </BifrostProvider>,
+    );
+    await Promise.resolve();
+
+    expect(screen.getByText("same-origin")).toBeInTheDocument();
+    expect(captured).toBe("/api/auth/me");
+    expect(getBifrostTransport().baseUrl).toBe("");
+  });
+
   it("attaches X-Bifrost-App on authedFetch so workflow calls carry the app scope", async () => {
     // Tables/files scope via the transport's X-Bifrost-App header; workflow
     // execution goes through authedFetch. Both must carry the same context

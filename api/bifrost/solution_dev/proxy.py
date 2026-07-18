@@ -745,8 +745,42 @@ async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
     cfg: DevProxyConfig = request.app[_CFG]
     accept = request.headers.get("Accept", "")
     fetch_dest = request.headers.get("Sec-Fetch-Dest", "")
-    if cfg.auth_expired and ("text/html" in accept or fetch_dest in {"document", "iframe"}):
-        return await _dev_auth_expired_page_response(request)
+    is_document = "text/html" in accept or fetch_dest in {"document", "iframe"}
+    if is_document:
+        # A Solution app must never render into a plausible half-authenticated
+        # state (the SDK header historically collapsed every auth failure to
+        # "Account"). Verify the CLI-backed proxy session before handing the
+        # document to Vite. This also refreshes a stale access token once via
+        # the same coordinated authority used by API calls. On failure, reuse
+        # the branded dev diagnostics page before any app JavaScript runs.
+        if cfg.auth_expired:
+            return await _dev_auth_expired_page_response(request)
+        try:
+            auth = await _authed_upstream_request(
+                request,
+                "GET",
+                f"{cfg.upstream_url}/api/auth/me",
+            )
+        except httpx.HTTPError:
+            # Do not render the app into the same misleading "Account" state
+            # when the upstream itself is unavailable. This is connectivity,
+            # not expired auth, so leave cfg.auth_expired untouched.
+            return web.json_response(
+                {"detail": f"Dev API unreachable at {cfg.upstream_url}"},
+                status=502,
+            )
+        if auth is None:
+            return await _dev_auth_expired_page_response(request)
+        if auth.status_code != 200:
+            return web.json_response(
+                {
+                    "detail": (
+                        "Dev API authentication check failed "
+                        f"({auth.status_code}): {auth.text[:200]}"
+                    )
+                },
+                status=502,
+            )
     vite_url = request.app[_VITE]
     if _is_ws_upgrade(request):
         target = _ws_scheme(_join_upstream(vite_url, request.rel_url))
