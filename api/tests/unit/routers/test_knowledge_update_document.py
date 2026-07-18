@@ -14,6 +14,7 @@ flat per-chunk vector per row, and upserts (replaces) the document's prior
 rows.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from unittest.mock import AsyncMock, patch
@@ -27,6 +28,7 @@ from src.models.contracts.knowledge import (
     KnowledgeDocumentUpdate,
 )
 from src.models.orm.knowledge import KnowledgeStore
+from src.models.orm.users import User
 from src.repositories.knowledge import KnowledgeRepository
 from src.routers.knowledge_sources import (
     create_document,
@@ -667,3 +669,173 @@ async def test_update_embed_valueerror_maps_to_503(db_session):
             )
     assert exc.value.status_code == 503
     assert "Embedding service unavailable" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_update_via_sibling_chunk_preserves_canonical_document_id(db_session):
+    """Every chunk id addresses one logical document, but chunk zero owns its
+    stable public id. Updating through a sibling must not promote that sibling
+    and invalidate references to the canonical id.
+    """
+    user = _User()
+    with _patch_embedder():
+        created = await create_document(
+            namespace="ku14",
+            data=KnowledgeDocumentCreate(
+                content="multi chunk original. " * 1000,
+                key="canonical",
+            ),
+            db=db_session,
+            user=user,
+            scope=None,
+        )
+        rows = (
+            await db_session.execute(
+                select(KnowledgeStore)
+                .where(KnowledgeStore.namespace == "ku14")
+                .order_by(KnowledgeStore.chunk_index)
+            )
+        ).scalars().all()
+        assert len(rows) > 1
+
+        updated = await update_document(
+            namespace="ku14",
+            doc_id=rows[1].id,
+            data=KnowledgeDocumentUpdate(content="replacement"),
+            db=db_session,
+            user=user,
+            scope=None,
+        )
+
+        assert updated.id == created.id
+        fetched = await get_document(
+            namespace="ku14",
+            doc_id=UUID(created.id),
+            db=db_session,
+            user=user,
+        )
+        assert fetched.content == "replacement"
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_original_creator(db_session):
+    """Replacing chunk rows during an edit must retain creator attribution."""
+    creator_id = uuid4()
+    editor_id = uuid4()
+    db_session.add_all(
+        [
+            User(
+                id=creator_id,
+                email=f"creator-{uuid4()}@example.com",
+                is_superuser=True,
+            ),
+            User(
+                id=editor_id,
+                email=f"editor-{uuid4()}@example.com",
+                is_superuser=True,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    creator = _User()
+    creator.user_id = creator_id
+    editor = _User()
+    editor.user_id = editor_id
+
+    with _patch_embedder():
+        created = await create_document(
+            namespace="ku15",
+            data=KnowledgeDocumentCreate(content="original", key="audit"),
+            db=db_session,
+            user=creator,
+            scope=None,
+        )
+        await update_document(
+            namespace="ku15",
+            doc_id=UUID(created.id),
+            data=KnowledgeDocumentUpdate(content="edited"),
+            db=db_session,
+            user=editor,
+            scope=None,
+        )
+
+    stored_creator = (
+        await db_session.execute(
+            select(KnowledgeStore.created_by).where(
+                KnowledgeStore.id == UUID(created.id)
+            )
+        )
+    ).scalar_one()
+    assert stored_creator == creator_id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_updates_via_different_chunks_serialize(
+    db_session, async_session_factory
+):
+    """Chunk aliases must converge on one lock; locking the addressed rows
+    separately lets the two group-wide replacements deadlock each other.
+    """
+    user = _User()
+    with _patch_embedder():
+        created = await create_document(
+            namespace="ku16",
+            data=KnowledgeDocumentCreate(
+                content="concurrent original. " * 1000,
+                key="serialized",
+            ),
+            db=db_session,
+            user=user,
+            scope=None,
+        )
+    rows = (
+        await db_session.execute(
+            select(KnowledgeStore)
+            .where(KnowledgeStore.namespace == "ku16")
+            .order_by(KnowledgeStore.chunk_index)
+        )
+    ).scalars().all()
+    assert len(rows) > 1
+    canonical_id = UUID(created.id)
+    sibling_id = rows[1].id
+    await db_session.commit()
+
+    async def edit(addressed_id: UUID, content: str):
+        async with async_session_factory() as session:
+            updated = await update_document(
+                namespace="ku16",
+                doc_id=addressed_id,
+                data=KnowledgeDocumentUpdate(content=content),
+                db=session,
+                user=user,
+                scope=None,
+            )
+            await session.commit()
+            return updated
+
+    original_lock = KnowledgeRepository.lock_document
+    lock_barrier = asyncio.Barrier(2)
+
+    async def synchronized_lock(repo, namespace, key, organization_id):
+        # Make both requests resolve their addressed chunk before either gets
+        # the canonical lock. They must then serialize on that one row.
+        await lock_barrier.wait()
+        return await original_lock(repo, namespace, key, organization_id)
+
+    with (
+        patch.object(KnowledgeRepository, "lock_document", synchronized_lock),
+        _patch_embedder(),
+    ):
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                edit(canonical_id, "first concurrent edit"),
+                edit(sibling_id, "second concurrent edit"),
+                return_exceptions=True,
+            ),
+            timeout=10,
+        )
+
+    failures = [result for result in results if isinstance(result, BaseException)]
+    assert not failures, failures
+    assert {result.id for result in results} == {str(canonical_id)}

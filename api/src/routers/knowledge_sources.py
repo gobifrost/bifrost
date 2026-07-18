@@ -502,20 +502,30 @@ async def update_document(
     document already holding the same identity in the target scope 409s
     unless ``replace=true``.
     """
-    # FOR UPDATE serializes concurrent edits of the same document — without
-    # it, two racing PUTs both delete-then-insert the same identity and the
-    # loser dies on the unique constraint at commit.
+    # First resolve the addressed physical chunk without locking it. Every
+    # chunk id is an alias for one logical document, so locking this row would
+    # let requests through different chunks deadlock during group replacement.
     result = await db.execute(
-        select(KnowledgeStore).where(KnowledgeStore.id == doc_id).with_for_update()
+        select(KnowledgeStore).where(KnowledgeStore.id == doc_id)
     )
-    doc = result.scalar_one_or_none()
-    if not doc or doc.namespace != namespace:
+    addressed = result.scalar_one_or_none()
+    if not addressed or addressed.namespace != namespace:
         raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
 
-    # Snapshot identity/audit fields — replace_chunked deletes these rows.
+    # Resolve every alias to chunk zero and lock that persistent canonical row.
+    # This gives concurrent edits one lock order and one stable public id.
+    source_repo = KnowledgeRepository(session=db, org_id=addressed.organization_id)
+    doc = await source_repo.lock_document(
+        namespace, addressed.key, addressed.organization_id
+    )
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+
+    # Snapshot identity/audit fields before sibling replacement.
     doc_key = doc.key
     current_org_id = doc.organization_id
     original_created_at = doc.created_at
+    original_created_by = doc.created_by
     metadata = data.metadata if data.metadata is not None else (doc.doc_metadata or {})
 
     # Resolve the target scope (defaults to the doc's current org when unchanged).
@@ -561,14 +571,14 @@ async def update_document(
 
     try:
         doc_ids = await repo.replace_chunked(
-            doc_id=doc_id,
+            doc_id=doc.id,
             content=data.content,
             namespace=namespace,
             key=doc_key,
             current_organization_id=current_org_id,
             organization_id=target_org_id,
             metadata=metadata,
-            created_by=user.user_id,
+            created_by=original_created_by,
             created_at=original_created_at,
             embedder=client,
         )

@@ -128,8 +128,10 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         metadata: dict[str, Any] | None,
         organization_id: UUID | None,
         created_by: UUID | None,
+        start_index: int = 0,
+        chunk_count: int | None = None,
     ) -> list[KnowledgeStore]:
-        chunk_count = len(chunks)
+        total_chunk_count = chunk_count if chunk_count is not None else len(chunks)
         return [
             KnowledgeStore(
                 namespace=namespace,
@@ -140,9 +142,11 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
                 embedding=embedding,
                 created_by=created_by,
                 chunk_index=index,
-                chunk_count=chunk_count,
+                chunk_count=total_chunk_count,
             )
-            for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+            for index, (chunk, embedding) in enumerate(
+                zip(chunks, embeddings), start=start_index
+            )
         ]
 
     async def store_chunked(
@@ -214,10 +218,12 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
     ) -> list[str]:
         """
         Replace one logical document with freshly chunked-and-embedded rows,
-        keeping its public identity: the first new row reuses ``doc_id`` (so
-        stored references survive edits) and every new row carries the
-        original ``created_at`` (so edits don't reorder created_at-sorted
-        listings). ``updated_at`` resets to now on the new rows.
+        keeping its public identity: the canonical chunk-zero row is updated
+        in place while its sibling rows are replaced. Keeping that row alive
+        lets the route use it as the common lock for every chunk alias, and
+        preserves stored references across edits. Every row carries the
+        original audit fields so edits don't reorder created-at-sorted lists
+        or change creator attribution. ``updated_at`` resets to now.
 
         Old rows are deleted by document identity in the *current* scope and
         new rows are written to ``organization_id`` — when the two differ a
@@ -232,28 +238,49 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         """
         chunks, embeddings = await self._embed_chunks(content, embedder)
 
+        canonical_result = await self.session.execute(
+            select(KnowledgeStore).where(KnowledgeStore.id == doc_id)
+        )
+        canonical = canonical_result.scalar_one()
+
+        # The canonical row is the stable public identity and serialization
+        # lock. Delete only its siblings, then update it in place.
         await self.session.execute(
             delete(KnowledgeStore).where(
-                *self._identity_clauses(namespace, key, current_organization_id)
+                *self._identity_clauses(namespace, key, current_organization_id),
+                KnowledgeStore.id != doc_id,
             )
         )
         await self.session.flush()
 
-        rows = self._build_chunk_rows(
-            chunks,
-            embeddings,
+        sibling_rows = self._build_chunk_rows(
+            chunks[1:],
+            embeddings[1:],
             namespace=namespace,
             key=key,
             metadata=metadata,
             organization_id=organization_id,
             created_by=created_by,
+            start_index=1,
+            chunk_count=len(chunks),
         )
-        rows[0].id = doc_id
-        for row in rows:
+
+        canonical.namespace = namespace
+        canonical.organization_id = organization_id
+        canonical.key = key
+        canonical.content = chunks[0]
+        canonical.doc_metadata = metadata or {}
+        canonical.embedding = embeddings[0]
+        canonical.created_by = created_by
+        canonical.created_at = created_at
+        canonical.chunk_index = 0
+        canonical.chunk_count = len(chunks)
+
+        for row in sibling_rows:
             row.created_at = created_at
-        self.session.add_all(rows)
+        self.session.add_all(sibling_rows)
         await self.session.flush()
-        return [str(row.id) for row in rows]
+        return [str(canonical.id), *(str(row.id) for row in sibling_rows)]
 
     async def find_document_id(
         self,
@@ -272,6 +299,29 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
                 *self._identity_clauses(namespace, key, organization_id),
                 KnowledgeStore.chunk_index == 0,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def lock_document(
+        self,
+        namespace: str,
+        key: str | None,
+        organization_id: UUID | None,
+    ) -> KnowledgeStore | None:
+        """Resolve a logical document to chunk zero and lock that stable row.
+
+        Requests may address any physical chunk id. Resolving first makes
+        every alias acquire the same row lock, preventing cross-chunk update
+        deadlocks while preserving the canonical public id.
+        """
+        canonical_id = await self.find_document_id(namespace, key, organization_id)
+        if canonical_id is None:
+            return None
+
+        result = await self.session.execute(
+            select(KnowledgeStore)
+            .where(KnowledgeStore.id == canonical_id)
+            .with_for_update()
         )
         return result.scalar_one_or_none()
 
