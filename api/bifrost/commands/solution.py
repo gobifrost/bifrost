@@ -24,16 +24,20 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 import zipfile
 from typing import Any
+from uuid import UUID, uuid5
 
 import click
 import yaml
 
 from bifrost.client import BifrostClient
 from bifrost.org_target import org_option, resolve_org_target
+from bifrost.solution_jobs import DEPLOY_JOB_TIMEOUT_SECONDS
 from bifrost.solution_binding import (
     SolutionBindingError,
     binding_from_install,
@@ -1348,6 +1352,221 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
     return entries
 
 
+_LOCAL_BUILD_STEP_TIMEOUT_SECONDS = 10 * 60
+
+
+def _safe_app_build_path(workdir: pathlib.Path, rel: str) -> pathlib.Path:
+    rel_path = pathlib.PurePosixPath(rel)
+    if rel_path.is_absolute() or ".." in rel_path.parts:
+        raise click.ClickException(f"refusing unsafe app build path: {rel}")
+    return workdir.joinpath(*rel_path.parts)
+
+
+def _materialize_local_app(
+    workdir: pathlib.Path,
+    app: dict,
+    api_url: str,
+) -> None:
+    """Write one collected app to an isolated local build directory."""
+    import base64
+
+    for rel, content in (app.get("src_files") or {}).items():
+        target = _safe_app_build_path(workdir, rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    for rel, content in (app.get("bin_files") or {}).items():
+        target = _safe_app_build_path(workdir, rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_bytes(base64.b64decode(content, validate=True))
+        except (ValueError, TypeError) as exc:
+            raise click.ClickException(
+                f"app '{app.get('slug')}': invalid base64 asset {rel}"
+            ) from exc
+
+    package_path = workdir / "package.json"
+    if package_path.exists():
+        try:
+            package = json.loads(package_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException(
+                f"app '{app.get('slug')}': package.json is invalid: {exc}"
+            ) from exc
+        if not isinstance(package, dict):
+            raise click.ClickException(
+                f"app '{app.get('slug')}': package.json must contain an object"
+            )
+    else:
+        package = {"name": app.get("slug") or "bifrost-app", "private": True}
+
+    package_dependencies = package.get("dependencies") or {}
+    manifest_dependencies = app.get("dependencies") or {}
+    if not isinstance(package_dependencies, dict) or not isinstance(
+        manifest_dependencies, dict
+    ):
+        raise click.ClickException(
+            f"app '{app.get('slug')}': dependencies must contain an object"
+        )
+    package["dependencies"] = {
+        **package_dependencies,
+        **manifest_dependencies,
+        "bifrost": f"{api_url.rstrip('/')}/api/sdk/download",
+    }
+    package_path.write_text(json.dumps(package, indent=2), encoding="utf-8")
+
+
+def _run_local_vite_build(
+    workdir: pathlib.Path,
+    *,
+    npm: str,
+    npx: str,
+    base: str,
+) -> None:
+    """Install dependencies and compile one app with the local Node toolchain."""
+    subprocess.run(  # noqa: S603 - executable resolved by shutil.which
+        [npm, "install", "--no-audit", "--no-fund"],
+        cwd=str(workdir),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=_LOCAL_BUILD_STEP_TIMEOUT_SECONDS,
+    )
+    subprocess.run(  # noqa: S603 - executable resolved by shutil.which
+        [npx, "vite", "build", "--base", base],
+        cwd=str(workdir),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=_LOCAL_BUILD_STEP_TIMEOUT_SECONDS,
+    )
+
+
+def _prebuild_apps(
+    workspace: pathlib.Path,
+    apps: list[dict],
+    *,
+    install_id: str | UUID,
+    api_url: str,
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Compile source-backed apps locally and return manifest dist overlays.
+
+    Source remains in the uploaded workspace. Only the generated ``dist`` is
+    added to the manifest carried by that upload, allowing the API to take its
+    existing prebuilt fast-path without running npm/Vite in the API pod.
+    """
+    import base64
+
+    del workspace  # collection already confined and materialized the workspace
+    source_apps = [
+        app
+        for app in apps
+        if (app.get("src_files") or app.get("bin_files"))
+    ]
+    if not source_apps:
+        return {}
+
+    try:
+        install_uuid = UUID(str(install_id))
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Solution install id must be a UUID, got {install_id!r}"
+        ) from exc
+
+    npm = shutil.which("npm")
+    npx = shutil.which("npx")
+    if npm is None or npx is None:
+        raise click.ClickException(
+            "Solution app builds require npm and npx on this machine. Install "
+            "Node.js, then re-run `bifrost solution deploy`."
+        )
+
+    built: dict[str, dict[str, dict[str, str]]] = {}
+    for app in source_apps:
+        app_id_text = str(app.get("id") or "")
+        try:
+            manifest_id = UUID(app_id_text)
+        except ValueError as exc:
+            raise click.ClickException(
+                f"app '{app.get('slug')}': id must be a UUID, got {app_id_text!r}"
+            ) from exc
+        deployed_id = uuid5(install_uuid, str(manifest_id))
+        click.echo(f"Building app {app.get('slug') or app_id_text} locally...")
+        try:
+            with tempfile.TemporaryDirectory(prefix="bifrost-app-build-") as tmp:
+                workdir = pathlib.Path(tmp)
+                _materialize_local_app(workdir, app, api_url)
+                _run_local_vite_build(
+                    workdir,
+                    npm=npm,
+                    npx=npx,
+                    base=f"/api/applications/{deployed_id}/dist/",
+                )
+                dist_dir = workdir / "dist"
+                dist_paths = [p for p in dist_dir.rglob("*") if p.is_file()]
+                if not dist_paths:
+                    raise click.ClickException(
+                        f"app '{app.get('slug')}': local build produced no dist files"
+                    )
+                dist_files: dict[str, str] = {}
+                bin_dist_files: dict[str, str] = {}
+                for path in dist_paths:
+                    rel = path.relative_to(dist_dir).as_posix()
+                    data = path.read_bytes()
+                    try:
+                        dist_files[rel] = data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        bin_dist_files[rel] = base64.b64encode(data).decode("ascii")
+        except subprocess.TimeoutExpired as exc:
+            raise click.ClickException(
+                f"app '{app.get('slug')}': local build step timed out after "
+                f"{_LOCAL_BUILD_STEP_TIMEOUT_SECONDS // 60} minutes"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            output = (exc.stderr or exc.stdout or "").strip()
+            detail = output[-2000:] if output else f"command exited {exc.returncode}"
+            raise click.ClickException(
+                f"app '{app.get('slug')}': local build failed:\n{detail}"
+            ) from exc
+
+        built[app_id_text] = {
+            "dist_files": dist_files,
+            "bin_dist_files": bin_dist_files,
+        }
+    return built
+
+
+def _apps_manifest_with_prebuilt_dist(
+    workspace: pathlib.Path,
+    prebuilt: dict[str, dict[str, dict[str, str]]],
+) -> str:
+    """Overlay local build output into the uploaded apps manifest only."""
+    apps_file = _bifrost_manifest(workspace, "apps.yaml")
+    if apps_file is None or not apps_file.is_file():
+        raise click.ClickException("cannot add local builds: .bifrost/apps.yaml is missing")
+    data = yaml.safe_load(apps_file.read_text(encoding="utf-8")) or {}
+    entries = data.get("apps") or {}
+    if not isinstance(entries, dict):
+        raise click.ClickException(".bifrost/apps.yaml: apps must contain an object")
+
+    remaining = set(prebuilt)
+    for key, body in entries.items():
+        if not isinstance(body, dict):
+            continue
+        app_id = str(body.get("id", key))
+        dist = prebuilt.get(app_id)
+        if dist is None:
+            continue
+        body["dist_files"] = dist["dist_files"]
+        body["bin_dist_files"] = dist["bin_dist_files"]
+        remaining.discard(app_id)
+    if remaining:
+        raise click.ClickException(
+            "local build output has no apps.yaml entry for: "
+            + ", ".join(sorted(remaining))
+        )
+    return yaml.safe_dump(data, sort_keys=False)
+
+
 class _AmbiguousInstall(Exception):
     """More than one existing install matches (slug, scope); deploy can't pick."""
 
@@ -1633,7 +1852,12 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
 
 
 async def _poll_deploy_job(
-    client, job_id: str, *, interval: float = 3.0, action: str = "Deploy"
+    client,
+    job_id: str,
+    *,
+    interval: float = 3.0,
+    action: str = "Deploy",
+    timeout_seconds: float = DEPLOY_JOB_TIMEOUT_SECONDS,
 ) -> int:
     """Poll a deploy/install job until terminal, printing a heartbeat each tick.
 
@@ -1692,7 +1916,15 @@ async def _poll_deploy_job(
         if isinstance(phase, str) and phase and phase != last_phase:
             click.echo(f"{action} phase: {phase}")
             last_phase = phase
-        elapsed = int(time.monotonic() - start)
+        elapsed_seconds = time.monotonic() - start
+        if elapsed_seconds >= timeout_seconds:
+            click.echo(
+                f"{action} timed out after {int(timeout_seconds)}s "
+                f"(job {job_id}). Check the job status before retrying.",
+                err=True,
+            )
+            return 1
+        elapsed = int(elapsed_seconds)
         click.echo(f"Still {gerund.lower()}... {elapsed}s")
         await asyncio.sleep(interval)
 
@@ -1899,9 +2131,31 @@ def deploy_cmd(
             else:
                 click.echo("  no shared dependencies to vendor.")
 
+        source_apps = [
+            app for app in apps if (app.get("src_files") or app.get("bin_files"))
+        ]
+        prebuilt = (
+            _prebuild_apps(
+                workspace,
+                source_apps,
+                install_id=target_id,
+                api_url=client.api_url,
+            )
+            if source_apps
+            else {}
+        )
+        extra_text_files = dict(vendored)
+        if prebuilt:
+            extra_text_files[".bifrost/apps.yaml"] = (
+                _apps_manifest_with_prebuilt_dist(workspace, prebuilt)
+            )
+
         summary = summarize_bundle(bundle_python, apps, len(vendored))
         click.echo(summary.message, err=summary.warn)
-        zip_bytes = _build_deploy_zip(workspace, extra_text_files=vendored)
+        zip_bytes = _build_deploy_zip(
+            workspace,
+            extra_text_files=extra_text_files,
+        )
 
         click.echo("Uploading workspace zip...")
         # Deploy is async server-side; the POST returns a job id quickly. We give

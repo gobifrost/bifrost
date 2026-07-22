@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
+
+from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.routers.solutions import DEPLOY_JOB_TIMEOUT
 
 pytestmark = pytest.mark.e2e
 
@@ -133,3 +137,29 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
     assert status == "failed", f"expected failed, got {body}"
     assert body["error"]
     assert "missing" in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_polling_expires_abandoned_deploy_job(
+    e2e_client, platform_admin, db_session
+):
+    now = datetime.now(timezone.utc)
+    job = SolutionDeployJob(
+        install_id=None,
+        status="running",
+        result={"phase": "building app dist"},
+        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
+        updated_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    response = e2e_client.get(
+        f"/api/solutions/deploy-jobs/{job.id}", headers=platform_admin.headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["result"] is None
+    assert "15-minute" in body["error"]
