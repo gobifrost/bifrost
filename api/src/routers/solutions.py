@@ -10,6 +10,7 @@ what end users see (the Solution is invisible to them — criterion 16).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -31,6 +32,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 from starlette.background import BackgroundTask
 
+from bifrost.solution_jobs import (
+    DEPLOY_JOB_TIMEOUT,
+    DEPLOY_JOB_TIMEOUT_ERROR,
+    DEPLOY_JOB_TIMEOUT_SECONDS,
+)
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
     Solution as SolutionDTO,
@@ -99,7 +105,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
 
-DEPLOY_JOB_ORPHAN_THRESHOLD = timedelta(minutes=15)
+DEPLOY_JOB_ORPHAN_THRESHOLD = DEPLOY_JOB_TIMEOUT
 UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 _ZIP_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -155,6 +161,27 @@ async def reconcile_orphaned_deploy_jobs(
         job.error = error
         job.updated_at = resolved_now
     return len(jobs)
+
+
+def expire_deploy_job_if_timed_out(
+    job: SolutionDeployJob,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Move an abandoned queued/running job to a terminal failed state."""
+    if job.status not in ("queued", "running"):
+        return False
+    resolved_now = now or datetime.now(timezone.utc)
+    created_at = job.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    if created_at + DEPLOY_JOB_TIMEOUT > resolved_now:
+        return False
+    job.status = "failed"
+    job.error = DEPLOY_JOB_TIMEOUT_ERROR
+    job.result = None
+    job.updated_at = resolved_now
+    return True
 
 
 @router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)")
@@ -1291,21 +1318,28 @@ async def _run_deploy_job(
         status_value: str,
         error: str | None = None,
         result: dict | None = None,
-    ) -> None:
+    ) -> bool:
         async with get_db_context() as db:
             job = await db.get(SolutionDeployJob, job_id)
             if job is None:
-                return
+                return False
+            if job.status in ("succeeded", "failed"):
+                return False
             job.status = status_value
             job.error = error
             job.result = result
+            return True
 
     async def _set_phase(phase: str) -> None:
         await _set_status("running", result={"phase": phase})
 
-    await _set_status("running")
+    if not await _set_status("running"):
+        _cleanup_file(zip_path)
+        return
     deploy_result: dict | None = None
-    try:
+
+    async def _execute() -> None:
+        nonlocal deploy_result
         async with get_db_context() as db:
             async with solution_write_lock(solution_id):
                 solution = await db.get(SolutionORM, solution_id)
@@ -1337,6 +1371,13 @@ async def _run_deploy_job(
                     "integrations_shell_created": result.integrations_shell_created,
                     "roles_created": list(result.roles_created),
                 }
+    try:
+        await asyncio.wait_for(
+            _execute(),
+            timeout=DEPLOY_JOB_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        await _set_status("failed", DEPLOY_JOB_TIMEOUT_ERROR)
     except SolutionWriteLockHeld:
         await _set_status(
             "failed",
@@ -1412,18 +1453,27 @@ async def _run_install_job(
         status_value: str,
         error: str | None = None,
         result: dict | None = None,
-    ) -> None:
+    ) -> bool:
         async with get_db_context() as db:
             job = await db.get(SolutionDeployJob, job_id)
             if job is None:
-                return
+                return False
+            if job.status in ("succeeded", "failed"):
+                return False
             job.status = status_value
             job.error = error
             job.result = result
+            return True
 
-    await _set_status("running", result={"phase": "building and deploying bundle"})
+    if not await _set_status(
+        "running", result={"phase": "building and deploying bundle"}
+    ):
+        _cleanup_file(zip_path)
+        return
     install_result: dict | None = None
-    try:
+
+    async def _execute() -> None:
+        nonlocal install_result
         async with get_db_context() as db:
             solution = await install_zip_path(
                 db,
@@ -1438,6 +1488,13 @@ async def _run_install_job(
                 reactivate=reactivate,
             )
             install_result = {"solution_id": str(solution.id), "slug": solution.slug}
+    try:
+        await asyncio.wait_for(
+            _execute(),
+            timeout=DEPLOY_JOB_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        await _set_status("failed", DEPLOY_JOB_TIMEOUT_ERROR)
     except InactiveInstallExists as exc:
         await _set_status(
             "failed",
@@ -1511,14 +1568,17 @@ async def _run_install_from_repo_job(
         status_value: str,
         error: str | None = None,
         result: dict | None = None,
-    ) -> None:
+    ) -> bool:
         async with get_db_context() as db:
             job = await db.get(SolutionDeployJob, job_id)
             if job is None:
-                return
+                return False
+            if job.status in ("succeeded", "failed"):
+                return False
             job.status = status_value
             job.error = error
             job.result = result
+            return True
 
     async def _delete_orphan_install() -> None:
         async with get_db_context() as db:
@@ -1534,9 +1594,15 @@ async def _run_install_from_repo_job(
             if row is not None:
                 await db.delete(row)
 
-    await _set_status("running", result={"phase": "deploying from repo checkout"})
+    if not await _set_status(
+        "running", result={"phase": "deploying from repo checkout"}
+    ):
+        shutil.rmtree(clone_tmp, ignore_errors=True)
+        return
     install_result: dict | None = None
-    try:
+
+    async def _execute() -> None:
+        nonlocal install_result
         async with get_db_context() as db:
             async with solution_write_lock(solution_id):
                 solution = await db.get(SolutionORM, solution_id)
@@ -1549,6 +1615,14 @@ async def _run_install_from_repo_job(
                     "solution_id": str(solution_id),
                     "slug": solution.slug,
                 }
+    try:
+        await asyncio.wait_for(
+            _execute(),
+            timeout=DEPLOY_JOB_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        await _delete_orphan_install()
+        await _set_status("failed", DEPLOY_JOB_TIMEOUT_ERROR)
     except SolutionWriteLockHeld:
         await _set_status(
             "failed",
@@ -1666,6 +1740,9 @@ async def get_deploy_job(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
         )
+    if expire_deploy_job_if_timed_out(job):
+        await ctx.db.commit()
+        await ctx.db.refresh(job)
     return SolutionDeployJobStatus.model_validate(job)
 
 

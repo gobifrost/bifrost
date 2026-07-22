@@ -136,3 +136,57 @@ def test_deploy_uploads_workspace_zip_not_json_bundle(tmp_path) -> None:
         names = set(zf.namelist())
     assert "bifrost.solution.yaml" in names
     assert "workflows/hello.py" in names
+
+
+def test_deploy_embeds_local_prebuild_without_mutating_workspace(tmp_path) -> None:
+    captured: dict = {}
+    ws = _scaffold(tmp_path)
+    app_id = "11111111-1111-1111-1111-111111111111"
+    (ws / ".bifrost").mkdir()
+    app_dir = ws / "apps" / "dash"
+    app_dir.mkdir(parents=True)
+    (app_dir / "index.html").write_text("<div id='root'></div>")
+    apps_manifest = ws / ".bifrost" / "apps.yaml"
+    apps_manifest.write_text(
+        "apps:\n"
+        f"  {app_id}:\n"
+        f"    id: {app_id}\n"
+        "    slug: dash\n"
+        "    name: Dashboard\n"
+        "    path: apps/dash\n"
+        "    app_model: standalone_v2\n"
+    )
+
+    prebuilt = {
+        app_id: {
+            "dist_files": {"index.html": "<html>built locally</html>"},
+            "bin_dist_files": {"asset.bin": "_wA="},
+        }
+    }
+    with (
+        mock.patch(
+            "bifrost.client.BifrostClient.get_instance",
+            return_value=_client(captured),
+        ),
+        mock.patch(
+            "bifrost.commands.solution._prebuild_apps",
+            return_value=prebuilt,
+        ),
+    ):
+        result = CliRunner().invoke(
+            solution_group, ["deploy", str(ws)], catch_exceptions=False
+        )
+
+    assert result.exit_code == 0, result.output
+    deploy_call = next(
+        kwargs for path, kwargs in captured["posts"] if path.endswith("/deploy")
+    )
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(deploy_call["files"]["file"][1])) as zf:
+        uploaded = yaml.safe_load(zf.read(".bifrost/apps.yaml"))
+        assert zf.read("apps/dash/index.html") == b"<div id='root'></div>"
+    assert uploaded["apps"][app_id]["dist_files"] == prebuilt[app_id]["dist_files"]
+    assert uploaded["apps"][app_id]["bin_dist_files"] == prebuilt[app_id]["bin_dist_files"]
+    assert "dist_files" not in yaml.safe_load(apps_manifest.read_text())["apps"][app_id]

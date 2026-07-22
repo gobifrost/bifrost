@@ -118,3 +118,17 @@ def test_poll_prints_phase_changes(capsys):
     assert "storing source artifact" in out
     assert "building app dist" in out
     assert out.count("building app dist") == 1
+
+
+def test_poll_stops_at_job_timeout(capsys):
+    client = _FakeClient({"status": "succeeded"}, running_count=10)
+
+    rc = _run(
+        _poll_deploy_job(client, "job-timeout", interval=0.0, timeout_seconds=0.0)
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert client.calls == 1
+    assert "timed out" in (captured.out + captured.err).lower()
+    assert "job-timeout" in (captured.out + captured.err)
