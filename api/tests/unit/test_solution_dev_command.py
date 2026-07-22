@@ -548,7 +548,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
         assert argv[0] == npm_path, f"npm spawn used {argv[0]!r}, not the which() result"
 
 
-def test_start_accepts_bind_host_and_public_url(tmp_path: Path, monkeypatch):
+def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path: Path, monkeypatch):
     import shutil
     import subprocess
 
@@ -652,7 +652,10 @@ def test_start_accepts_bind_host_and_public_url(tmp_path: Path, monkeypatch):
         "port": 3000,
         "proxy_origin": "http://devbox.test:3000",
     }
-    assert popen_envs[0]["BIFROST_API_URL"] == "http://devbox.test:3000"
+    # --public-url only describes the URL printed to the user. The browser
+    # transport stays relative so a second forwarding proxy may rewrite that
+    # origin again without breaking API calls.
+    assert popen_envs[0]["BIFROST_API_URL"] == "/"
 
 
 def test_handle_solution_renders_clickexception_not_traceback(tmp_path, monkeypatch, capsys):

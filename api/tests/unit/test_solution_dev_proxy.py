@@ -558,7 +558,45 @@ async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
         await up_runner.cleanup()
 
 
-async def test_vite_proxy_serves_branded_auth_expired_page_after_api_auth_failure():
+async def test_vite_proxy_authenticates_before_serving_the_app():
+    record = {}
+    up_port, vite_port, dev_port = _free_port(), _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+
+    async def index(_request):
+        return web.Response(text="<html><body>Vite app</body></html>", content_type="text/html")
+
+    vite = web.Application()
+    vite.router.add_get("/", index)
+    vite_runner = await _serve(vite, vite_port)
+    host = _StubHost(set())
+
+    async def refresh_token(observed_token):
+        record["refresh_called"] = observed_token
+        return "fresh-token"
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}"), dev_port)
+    try:
+        async with httpx.AsyncClient() as c:
+            page = await c.get(f"http://127.0.0.1:{dev_port}/", headers={"Accept": "text/html"})
+        assert page.status_code == 200
+        assert "Vite app" in page.text
+        assert record["refresh_called"] == "stale-token"
+        assert record["auth_headers"] == ["Bearer stale-token", "Bearer fresh-token"]
+    finally:
+        await dev_runner.cleanup()
+        await vite_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_vite_proxy_serves_branded_auth_expired_page_before_the_app():
     record = {}
     up_port, vite_port, dev_port = _free_port(), _free_port(), _free_port()
     up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
@@ -588,13 +626,11 @@ async def test_vite_proxy_serves_branded_auth_expired_page_after_api_auth_failur
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url=f"http://127.0.0.1:{vite_port}"), dev_port)
     try:
         async with httpx.AsyncClient() as c:
-            api = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
             page = await c.get(f"http://127.0.0.1:{dev_port}/", headers={"Accept": "text/html"})
             logo_resp = await c.get(
                 f"http://127.0.0.1:{dev_port}/logo.svg",
                 headers={"Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},
             )
-        assert api.status_code == 401
         assert page.status_code == 401
         assert logo_resp.status_code == 200
         assert logo_resp.headers["content-type"].startswith("image/svg+xml")
@@ -609,10 +645,44 @@ async def test_vite_proxy_serves_branded_auth_expired_page_after_api_auth_failur
         assert "Your CLI token has expired" in page.text
         assert "bifrost solution start" in page.text
         assert "Vite app" not in page.text
+        assert record["auth_headers"] == ["Bearer stale-token"]
     finally:
         await dev_runner.cleanup()
         await vite_runner.cleanup()
         await up_runner.cleanup()
+
+
+async def test_vite_proxy_refuses_to_render_app_when_auth_preflight_cannot_reach_api():
+    vite_port, dev_port = _free_port(), _free_port()
+
+    async def index(_request):
+        return web.Response(text="<html><body>Vite app</body></html>", content_type="text/html")
+
+    vite = web.Application()
+    vite.router.add_get("/", index)
+    vite_runner = await _serve(vite, vite_port)
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{_free_port()}",
+        token="token",
+        app_id="A",
+        org_id="O",
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url=f"http://127.0.0.1:{vite_port}"),
+        dev_port,
+    )
+    try:
+        async with httpx.AsyncClient() as c:
+            page = await c.get(
+                f"http://127.0.0.1:{dev_port}/",
+                headers={"Accept": "text/html"},
+            )
+        assert page.status_code == 502
+        assert "Dev API unreachable" in page.json()["detail"]
+        assert "Vite app" not in page.text
+    finally:
+        await dev_runner.cleanup()
+        await vite_runner.cleanup()
 
 
 async def test_ws_upgrade_bridges_to_upstream():

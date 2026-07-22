@@ -4,8 +4,9 @@ The proxy is where install scope gets injected (?solution=, auth, app header).
 Pointing the app bundle's BIFROST_API_URL at the upstream API bypasses that
 injection entirely: local workflow edits silently don't run locally, the
 install's own tables 404, and declared-location file writes 403 (drive
-finding, 2026-07-02). The one authoritative origin for a `solution start`
-browser session is the proxy origin.
+finding, 2026-07-02). The browser must address that proxy through its own
+successful origin, not an internal loopback URL that an outer Codex/VPN proxy
+may have remapped to a different browser-visible port.
 """
 from bifrost.commands import solution as solution_cmd
 from bifrost.commands.solution import _scaffold_api_url, _vite_child_env
@@ -49,16 +50,17 @@ class TestScaffoldApiUrl:
         assert _scaffold_api_url(None) == "http://localhost:8000"
 
 
-def test_vite_child_env_points_bundle_at_local_proxy():
+def test_vite_child_env_points_bundle_at_browser_same_origin():
     env = _vite_child_env(
         {"PATH": "/usr/bin", "BIFROST_API_URL": "http://upstream:34173"},
         app_id="2a9d06da-cc86-49ff-b3b5-26748c31f73e",
         org_id="org-1",
-        proxy_origin="http://127.0.0.1:3777",
         access_token="tok",
     )
-    # The bundle-visible API URL is the PROXY, never the upstream.
-    assert env["BIFROST_API_URL"] == "http://127.0.0.1:3777"
+    # `/` tells BifrostProvider to use the browser's current origin. If Codex
+    # exposes localhost:3777 as localhost:62464, API + websocket traffic must
+    # stay on :62464 so the outer forwarder can carry it to the local proxy.
+    assert env["BIFROST_API_URL"] == "/"
     assert env["VITE_BIFROST_APP_ID"] == "2a9d06da-cc86-49ff-b3b5-26748c31f73e"
     assert env["VITE_BIFROST_ORG_ID"] == "org-1"
     assert env["BIFROST_ACCESS_TOKEN"] == "tok"
@@ -77,7 +79,6 @@ def test_vite_child_env_omits_org_var_for_global_installs():
         {"PATH": "/usr/bin"},
         app_id="2a9d06da-cc86-49ff-b3b5-26748c31f73e",
         org_id=None,
-        proxy_origin="http://127.0.0.1:3777",
         access_token="tok",
     )
     assert "VITE_BIFROST_ORG_ID" not in env
