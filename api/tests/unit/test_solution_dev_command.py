@@ -534,7 +534,11 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
         return None
 
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
-    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
+    checked_ports: list[int] = []
+    monkeypatch.setattr(
+        "bifrost.commands.solution._ensure_port_free",
+        checked_ports.append,
+    )
     monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
@@ -546,6 +550,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
     assert len(spawned) == 2
     for argv in spawned:
         assert argv[0] == npm_path, f"npm spawn used {argv[0]!r}, not the which() result"
+    assert checked_ports == [3000, 3001]
 
 
 def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path: Path, monkeypatch):
@@ -627,7 +632,11 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
 
     monkeypatch.setattr(subprocess, "Popen", _fake_popen)
     monkeypatch.setattr("bifrost.commands.solution._serve", _fake_serve)
-    monkeypatch.setattr("bifrost.commands.solution._ensure_port_free", lambda port: None)
+    checked_ports: list[int] = []
+    monkeypatch.setattr(
+        "bifrost.commands.solution._ensure_port_free",
+        checked_ports.append,
+    )
     monkeypatch.setattr("bifrost.commands.solution._wait_for_vite", lambda proc, port: None)
     monkeypatch.setattr(
         "bifrost.commands.solution._terminate_process_group", lambda proc: None
@@ -652,6 +661,7 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
         "port": 3000,
         "proxy_origin": "http://devbox.test:3000",
     }
+    assert checked_ports == [3000, 3001]
     # --public-url only describes the URL printed to the user. The browser
     # transport stays relative so a second forwarding proxy may rewrite that
     # origin again without breaking API calls.
@@ -1209,3 +1219,13 @@ def test_start_port_conflict_is_reported_before_any_npm_work(tmp_path, monkeypat
     assert result.exit_code == 1
     assert "already in use" in result.output
     assert spawned == []  # no npm install happened
+
+
+def test_start_help_documents_stable_preview_origin():
+    result = CliRunner().invoke(solution_group, ["start", "--help"])
+
+    assert result.exit_code == 0
+    help_text = result.output.lower()
+    assert "renewed automatically" in help_text
+    assert "stable local proxy origin" in help_text
+    assert "reuse it across restarts" in help_text

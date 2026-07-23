@@ -1729,7 +1729,7 @@ Commands:
   pull          Pull captured entities into the local .bifrost/ manifest...
   scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
   sdk           Manage the app's vendored Bifrost SDK.
-  start         Run the app's dev server + local workflows (one origin).
+  start         Run the app's dev server + local workflows on one stable...
   swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
 ```
 
@@ -1963,11 +1963,13 @@ Options:
 ```
 Usage: solution start [OPTIONS] [APP_SLUG]
 
-  Run the app's dev server + local workflows (one origin).
+  Run the app's dev server + local workflows on one stable origin. Preview
+  credentials are renewed automatically.
 
 Options:
   --solution TEXT    Install id or unique slug.
-  --port INTEGER     Local origin port.  [default: 3000]
+  --port INTEGER     Stable local proxy origin port; reuse it across restarts.
+                     [default: 3000]
   --host TEXT        Address for the local origin to bind.  [default:
                      127.0.0.1]
   --public-url TEXT  Browser-visible origin for the local proxy, e.g.
