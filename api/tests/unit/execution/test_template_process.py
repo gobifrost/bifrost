@@ -181,6 +181,7 @@ class TestTemplateProcessFork:
                 try:
                     os.kill(child_pid, signal.SIGKILL)
                 except ProcessLookupError:
+                    # Expected once the template has already reaped the child.
                     pass
             template.shutdown()
 
