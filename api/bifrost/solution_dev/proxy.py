@@ -203,7 +203,7 @@ def _jwt_expiry(token: str) -> float | None:
         if isinstance(expiry, (int, float)) and not isinstance(expiry, bool):
             return float(expiry)
     except (IndexError, ValueError, TypeError):
-        pass
+        return None
     return None
 
 
