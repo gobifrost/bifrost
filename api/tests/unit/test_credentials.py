@@ -70,6 +70,193 @@ class TestEnvBackend:
         assert os.environ.get("BIFROST_ACCESS_TOKEN") in (None, "")  # didn't pollute env
 
 
+# ---------- Credential provenance ----------
+
+class TestCredentialProvenance:
+    @pytest.fixture
+    def isolated_store(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            creds_mod,
+            "get_credentials_path",
+            lambda: tmp_path / "credentials.json",
+        )
+        monkeypatch.setattr(
+            creds_mod,
+            "get_config_path",
+            lambda: tmp_path / "config.json",
+        )
+        creds_mod._reset_persistent_backend_for_tests()
+        monkeypatch.setattr(creds_mod, "_persistent_backend", JsonBackend())
+        monkeypatch.delenv("BIFROST_API_URL", raising=False)
+        monkeypatch.delenv("BIFROST_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("BIFROST_SOLUTION_ID", raising=False)
+        monkeypatch.chdir(tmp_path)
+        yield tmp_path
+        creds_mod._reset_persistent_backend_for_tests()
+
+    def test_url_only_process_override_does_not_borrow_dotenv_tokens(
+        self, isolated_store, monkeypatch, caplog
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+        creds_mod.save_credentials(
+            "https://prod.example.com",
+            "production-access",
+            "production-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        monkeypatch.setenv("BIFROST_API_URL", "https://prod.example.com")
+        caplog.set_level("WARNING", logger="bifrost.credentials")
+
+        creds_mod.load_dotenv_context()
+        result = creds_mod.get_credentials()
+        repeated_result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert repeated_result == result
+        assert result["api_url"] == "https://prod.example.com"
+        assert result["access_token"] == "production-access"
+        assert result["refresh_token"] == "production-refresh"
+        assert "BIFROST_ACCESS_TOKEN" not in os.environ
+        assert "BIFROST_REFRESH_TOKEN" not in os.environ
+        assert len(caplog.records) == 1
+        warning = caplog.records[0]
+        assert warning.args == (
+            "http://localhost:36092",
+            "https://prod.example.com",
+        )
+        assert "localhost-access" not in warning.getMessage()
+        assert "localhost-refresh" not in warning.getMessage()
+
+    def test_complete_process_tuple_wins_over_dotenv_and_persistent(
+        self, isolated_store, monkeypatch
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+        creds_mod.save_credentials(
+            "https://prod.example.com",
+            "stored-access",
+            "stored-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        monkeypatch.setenv("BIFROST_API_URL", "https://prod.example.com")
+        monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "process-access")
+        monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "process-refresh")
+
+        creds_mod.load_dotenv_context()
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["access_token"] == "process-access"
+        assert result["refresh_token"] == "process-refresh"
+
+    def test_complete_nearest_dotenv_tuple_is_used(self, isolated_store):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["api_url"] == "http://localhost:36092"
+        assert result["access_token"] == "localhost-access"
+        assert result["refresh_token"] == "localhost-refresh"
+
+    def test_matching_url_only_process_override_uses_complete_dotenv_tuple(
+        self, isolated_store, monkeypatch
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+        monkeypatch.setenv("BIFROST_API_URL", "http://localhost:36092")
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["access_token"] == "localhost-access"
+        assert result["refresh_token"] == "localhost-refresh"
+
+    def test_child_url_only_dotenv_uses_persistent_credentials_not_parent_tokens(
+        self, isolated_store, monkeypatch
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+        child = isolated_store / "solutions" / "sales"
+        child.mkdir(parents=True)
+        (child / ".env").write_text("BIFROST_API_URL=https://prod.example.com\n")
+        creds_mod.save_credentials(
+            "https://prod.example.com",
+            "production-access",
+            "production-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        creds_mod.save_credentials(
+            "http://localhost:36092",
+            "stored-local-access",
+            "stored-local-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        monkeypatch.chdir(child)
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["api_url"] == "https://prod.example.com"
+        assert result["access_token"] == "production-access"
+        assert result["refresh_token"] == "production-refresh"
+
+    def test_partial_dotenv_tuple_falls_through_to_persistent(
+        self, isolated_store
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=https://prod.example.com\n"
+            "BIFROST_ACCESS_TOKEN=partial-access\n"
+        )
+        creds_mod.save_credentials(
+            "https://prod.example.com",
+            "production-access",
+            "production-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+
+        result = creds_mod.get_credentials()
+
+        assert result is not None
+        assert result["access_token"] == "production-access"
+        assert result["refresh_token"] == "production-refresh"
+
+    def test_filtered_dotenv_bootstrap_preserves_non_auth_context(
+        self, isolated_store
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+            "BIFROST_SOLUTION_ID=solution-id\n"
+        )
+
+        creds_mod.load_dotenv_context()
+
+        assert os.environ["BIFROST_SOLUTION_ID"] == "solution-id"
+        assert "BIFROST_API_URL" not in os.environ
+        assert "BIFROST_ACCESS_TOKEN" not in os.environ
+        assert "BIFROST_REFRESH_TOKEN" not in os.environ
+
+
 # ---------- JsonBackend (multi-record) ----------
 
 class TestJsonBackendMultiRecord:
