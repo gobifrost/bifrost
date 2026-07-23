@@ -127,11 +127,11 @@ export function AgentRunDetailPage() {
 		string | null
 	>(null);
 	const [expandedDelegationsByRun, setExpandedDelegationsByRun] = useState<
-		Record<string, ReadonlySet<string>>
-	>({});
+		ReadonlyMap<string, ReadonlySet<string>>
+	>(() => new Map());
 	const [restoreActivityByRun, setRestoreActivityByRun] = useState<
-		Record<string, string>
-	>({});
+		ReadonlyMap<string, string>
+	>(() => new Map());
 
 	const setVerdict = useSetVerdict();
 	const clearVerdict = useClearVerdict();
@@ -258,23 +258,26 @@ export function AgentRunDetailPage() {
 	) {
 		if (!runId) return;
 		setExpandedDelegationsByRun((current) => {
-			const nextForRun = new Set(current[runId] ?? []);
+			const nextForRun = new Set(current.get(runId) ?? []);
 			if (expanded) {
 				nextForRun.add(activityId);
 			} else {
 				nextForRun.delete(activityId);
 			}
-			return { ...current, [runId]: nextForRun };
+			const next = new Map(current);
+			next.set(runId, nextForRun);
+			return next;
 		});
 	}
 
 	function handleOpenChildRun(activityId: string) {
 		if (!runId) return;
 		setPreviewedActivityId(null);
-		setRestoreActivityByRun((current) => ({
-			...current,
-			[runId]: activityId,
-		}));
+		setRestoreActivityByRun((current) => {
+			const next = new Map(current);
+			next.set(runId, activityId);
+			return next;
+		});
 	}
 
 	if (isLoading) {
@@ -487,7 +490,9 @@ export function AgentRunDetailPage() {
 									highlightedActivityId={previewedActivityId}
 									expandedDelegationIds={
 										runId
-											? expandedDelegationsByRun[runId]
+											? expandedDelegationsByRun.get(
+													runId,
+												)
 											: undefined
 									}
 									onDelegationExpandedChange={
@@ -495,7 +500,7 @@ export function AgentRunDetailPage() {
 									}
 									restoreActivityId={
 										runId
-											? restoreActivityByRun[runId]
+											? restoreActivityByRun.get(runId)
 											: null
 									}
 									onOpenChildRun={handleOpenChildRun}
