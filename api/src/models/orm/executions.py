@@ -109,6 +109,7 @@ class Execution(Base):
     __table_args__ = (
         Index("ix_executions_org_status", "organization_id", "status"),
         Index("ix_executions_created", "created_at"),
+        Index("ix_executions_started_at", "started_at"),
         Index("ix_executions_user", "executed_by"),
         Index("ix_executions_workflow", "workflow_name"),
         Index("ix_executions_is_local_execution", "is_local_execution"),

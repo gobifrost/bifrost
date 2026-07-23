@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useDashboardMetrics } from "@/hooks/useDashboardMetrics";
 import { useAuth } from "@/contexts/AuthContext";
-import { useExecutionsWindow } from "@/hooks/useExecutionsWindow";
+import { useExecutionTimeSeries } from "@/hooks/useExecutionTimeSeries";
 import {
 	ExecutionsOverTimeCard,
 	WINDOW_LABELS,
 } from "@/components/dashboard/ExecutionsOverTimeCard";
 import { DashboardStatCards } from "@/components/dashboard/DashboardStatCards";
-import { summarizeOutcomes, type ChartWindow } from "@/lib/execution-buckets";
+import type { ChartWindow, OutcomeSummary } from "@/lib/execution-buckets";
 import { $api } from "@/lib/api-client";
 
 export function Dashboard() {
@@ -21,20 +21,20 @@ export function Dashboard() {
 
 	const [chartWindow, setChartWindow] = useState<ChartWindow>("7d");
 	const {
-		data: executionsData,
+		data: executionTimeSeries,
 		isLoading: executionsLoading,
 		isError: executionsError,
 		refetch: refetchExecutions,
-	} = useExecutionsWindow(chartWindow);
+	} = useExecutionTimeSeries(chartWindow);
 
-	// The window fetch is capped at one page (limit=1000). When the API
-	// returns a continuation token the window is truncated — the cards and
-	// chart annotate themselves and the chart clamps its time domain.
-	const windowExecutions = executionsData?.executions;
-	const windowTruncated = Boolean(executionsData?.continuation_token);
-	const outcomes = useMemo(
-		() => summarizeOutcomes(windowExecutions ?? []),
-		[windowExecutions],
+	const outcomes: OutcomeSummary = useMemo(
+		() => ({
+			success: executionTimeSeries?.success_count ?? 0,
+			failed: executionTimeSeries?.failed_count ?? 0,
+			total: executionTimeSeries?.total_count ?? 0,
+			successRate: executionTimeSeries?.success_rate ?? null,
+		}),
+		[executionTimeSeries],
 	);
 
 	const {
@@ -112,7 +112,6 @@ export function Dashboard() {
 			<DashboardStatCards
 				windowLabel={WINDOW_LABELS[chartWindow]}
 				outcomes={outcomes}
-				truncated={windowTruncated}
 				executionsLoading={executionsLoading}
 				executionsError={executionsError}
 				inventory={{
@@ -139,9 +138,8 @@ export function Dashboard() {
 			<ExecutionsOverTimeCard
 				window={chartWindow}
 				onWindowChange={setChartWindow}
-				executions={windowExecutions}
+				buckets={executionTimeSeries?.buckets}
 				outcomes={outcomes}
-				truncated={windowTruncated}
 				isLoading={executionsLoading}
 				isError={executionsError}
 			/>

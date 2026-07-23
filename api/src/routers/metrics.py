@@ -13,6 +13,7 @@ Endpoint Structure:
 
 import logging
 from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, func, case, desc
@@ -20,6 +21,8 @@ from sqlalchemy import select, func, case, desc
 from src.models import (
     DashboardMetricsResponse,
     ExecutionStats,
+    ExecutionTimeSeriesBucket,
+    ExecutionTimeSeriesResponse,
     RecentFailure,
     ROISnapshot,
     PlatformMetricsResponse,
@@ -38,6 +41,7 @@ from src.models import ExecutionMetricsDaily, Organization
 from src.models.orm import PlatformMetricsSnapshot as PlatformMetricsSnapshotORM
 from src.models.enums import ExecutionStatus
 from src.services.roi_settings_service import ROISettingsService
+from shared.execution_timeseries import get_execution_time_series
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +200,70 @@ async def get_metrics_snapshot(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get metrics snapshot",
         )
+
+
+@router.get(
+    "/executions/timeseries",
+    response_model=ExecutionTimeSeriesResponse,
+    summary="Get dashboard execution time series",
+    description=(
+        "Get zero-filled hourly or daily execution outcomes for a dashboard "
+        "chart window."
+    ),
+)
+async def get_dashboard_execution_time_series(
+    ctx: Context,
+    window: Literal["24h", "7d", "30d"] = Query(
+        default="7d",
+        description="Dashboard chart window",
+    ),
+    timezone_name: str = Query(
+        default="UTC",
+        alias="timezone",
+        min_length=1,
+        max_length=64,
+        description="IANA timezone used for hour and day boundaries",
+    ),
+    scope: str | None = Query(
+        default=None,
+        description=(
+            "Filter scope: omit for all (superusers), 'global' for global only, "
+            "or an organization UUID."
+        ),
+    ),
+) -> ExecutionTimeSeriesResponse:
+    """Return the dashboard chart aggregate with execution-list visibility."""
+
+    try:
+        series = await get_execution_time_series(
+            ctx.db,
+            ctx.user,
+            window,
+            timezone_name,
+            scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    return ExecutionTimeSeriesResponse(
+        window=series.window,
+        timezone=series.timezone,
+        buckets=[
+            ExecutionTimeSeriesBucket(
+                start=bucket.start,
+                success_count=bucket.success_count,
+                failed_count=bucket.failed_count,
+            )
+            for bucket in series.buckets
+        ],
+        success_count=series.success_count,
+        failed_count=series.failed_count,
+        total_count=series.total_count,
+        success_rate=series.success_rate,
+    )
 
 
 @router.get(

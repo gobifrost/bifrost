@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { DashboardStatCards } from "./DashboardStatCards";
-import { summarizeOutcomes } from "@/lib/execution-buckets";
 
 const INVENTORY = { workflows: 8, forms: 4, agents: 3, apps: 2 };
 const ROI = { timeSavedMinutes: 95, value: 1234.5, valueUnit: "USD" };
@@ -14,11 +13,7 @@ function renderCards(
 ) {
 	const props = {
 		windowLabel: "Last 7 days",
-		outcomes: summarizeOutcomes([
-			...Array.from({ length: 9 }, () => ({ status: "Success" })),
-			...Array.from({ length: 3 }, () => ({ status: "Failed" })),
-		]),
-		truncated: false,
+		outcomes: { success: 9, failed: 3, total: 12, successRate: 75 },
 		executionsLoading: false,
 		executionsError: false,
 		inventory: INVENTORY,
@@ -42,14 +37,6 @@ describe("DashboardStatCards", () => {
 		expect(screen.getAllByText("Last 7 days")).toHaveLength(2);
 	});
 
-	it("annotates the window label when the fetch was truncated", () => {
-		renderCards({ truncated: true });
-		expect(
-			screen.getAllByText("Last 7 days · latest 1,000 runs"),
-		).toHaveLength(2);
-		expect(screen.queryByText("Last 7 days")).not.toBeInTheDocument();
-	});
-
 	it("shows skeletons while the executions window is loading", () => {
 		const { container } = renderCards({ executionsLoading: true });
 		expect(
@@ -60,7 +47,7 @@ describe("DashboardStatCards", () => {
 	it("shows a dash when the executions fetch failed or there are no runs", () => {
 		renderCards({
 			executionsError: true,
-			outcomes: summarizeOutcomes([]),
+			outcomes: { success: 0, failed: 0, total: 0, successRate: null },
 		});
 		expect(screen.getAllByText("—")).toHaveLength(2);
 	});

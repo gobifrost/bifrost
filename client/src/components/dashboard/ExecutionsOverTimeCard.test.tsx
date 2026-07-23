@@ -2,28 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ExecutionsOverTimeCard } from "./ExecutionsOverTimeCard";
-import {
-	summarizeOutcomes,
-	type BucketableExecution,
-} from "@/lib/execution-buckets";
 
 function renderCard(
 	overrides: Partial<
 		React.ComponentProps<typeof ExecutionsOverTimeCard>
 	> = {},
 ) {
-	const executions =
-		"executions" in overrides
-			? overrides.executions
-			: ([] as BucketableExecution[]);
 	const props = {
 		window: "7d" as const,
 		onWindowChange: vi.fn(),
-		executions,
-		// The card shares the stat cards' outcome summary in production
-		// (Dashboard computes it once); mirror that wiring here.
-		outcomes: summarizeOutcomes(executions ?? []),
-		truncated: false,
+		buckets: [],
+		outcomes: { success: 0, failed: 0, total: 0, successRate: null },
 		isLoading: false,
 		isError: false,
 		...overrides,
@@ -40,7 +29,7 @@ describe("ExecutionsOverTimeCard", () => {
 	it("shows a skeleton while loading", () => {
 		const { container } = renderCard({
 			isLoading: true,
-			executions: undefined,
+			buckets: undefined,
 		});
 		expect(
 			container.querySelector('[data-slot="skeleton"]'),
@@ -51,14 +40,14 @@ describe("ExecutionsOverTimeCard", () => {
 	});
 
 	it("shows an error state when the fetch failed", () => {
-		renderCard({ isError: true, executions: undefined });
+		renderCard({ isError: true, buckets: undefined });
 		expect(
 			screen.getByTestId("executions-chart-error"),
 		).toBeInTheDocument();
 	});
 
 	it("shows an empty state when the window has no terminal runs", () => {
-		renderCard({ executions: [] });
+		renderCard();
 		expect(
 			screen.getByTestId("executions-chart-empty"),
 		).toBeInTheDocument();
@@ -69,11 +58,14 @@ describe("ExecutionsOverTimeCard", () => {
 
 	it("summarizes run totals and links the failed count to filtered history", () => {
 		renderCard({
-			executions: [
-				{ status: "Success", started_at: new Date().toISOString() },
-				{ status: "Success", started_at: new Date().toISOString() },
-				{ status: "Failed", started_at: new Date().toISOString() },
+			buckets: [
+				{
+					start: new Date().toISOString(),
+					success_count: 2,
+					failed_count: 1,
+				},
 			],
+			outcomes: { success: 2, failed: 1, total: 3, successRate: 2 / 3 },
 		});
 		expect(screen.getByText(/Last 7 days · 3 runs/)).toBeInTheDocument();
 		expect(
@@ -86,9 +78,14 @@ describe("ExecutionsOverTimeCard", () => {
 
 	it("omits the failed link when nothing failed", () => {
 		renderCard({
-			executions: [
-				{ status: "Success", started_at: new Date().toISOString() },
+			buckets: [
+				{
+					start: new Date().toISOString(),
+					success_count: 1,
+					failed_count: 0,
+				},
 			],
+			outcomes: { success: 1, failed: 0, total: 1, successRate: 100 },
 		});
 		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
@@ -99,26 +96,17 @@ describe("ExecutionsOverTimeCard", () => {
 		expect(props.onWindowChange).toHaveBeenCalledWith("24h");
 	});
 
-	it("annotates the subtitle when the window fetch was truncated", () => {
+	it("renders a complete 30-day aggregate without a truncation warning", () => {
 		renderCard({
-			executions: [
-				{ status: "Success", started_at: new Date().toISOString() },
-			],
-			truncated: true,
+			window: "30d",
+			buckets: Array.from({ length: 30 }, (_, index) => ({
+				start: new Date(2026, 5, index + 1).toISOString(),
+				success_count: index + 1,
+				failed_count: 0,
+			})),
+			outcomes: { success: 465, failed: 0, total: 465, successRate: 100 },
 		});
-		expect(
-			screen.getByTestId("executions-chart-truncated"),
-		).toHaveTextContent(/showing latest 1,000 runs/);
-	});
-
-	it("omits the truncation annotation for complete windows", () => {
-		renderCard({
-			executions: [
-				{ status: "Success", started_at: new Date().toISOString() },
-			],
-		});
-		expect(
-			screen.queryByTestId("executions-chart-truncated"),
-		).not.toBeInTheDocument();
+		expect(screen.getByText(/Last 30 days · 465 runs/)).toBeInTheDocument();
+		expect(screen.queryByText(/latest 1,000/)).not.toBeInTheDocument();
 	});
 });

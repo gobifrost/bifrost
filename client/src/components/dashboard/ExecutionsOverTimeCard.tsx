@@ -19,9 +19,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
-	bucketExecutions,
-	clampBucketsToData,
-	type BucketableExecution,
+	formatExecutionBuckets,
+	type AggregatedExecutionBucket,
 	type ChartWindow,
 	type OutcomeSummary,
 } from "@/lib/execution-buckets";
@@ -29,11 +28,9 @@ import {
 interface ExecutionsOverTimeCardProps {
 	window: ChartWindow;
 	onWindowChange: (window: ChartWindow) => void;
-	executions: readonly BucketableExecution[] | undefined;
+	buckets: readonly AggregatedExecutionBucket[] | undefined;
 	/** Shared outcome tally — the same object the stat cards render. */
 	outcomes: OutcomeSummary;
-	/** True when the window fetch hit the API row cap (more rows exist). */
-	truncated: boolean;
 	isLoading: boolean;
 	isError: boolean;
 }
@@ -58,18 +55,15 @@ export const WINDOW_LABELS: Record<ChartWindow, string> = {
 export function ExecutionsOverTimeCard({
 	window,
 	onWindowChange,
-	executions,
+	buckets: aggregateBuckets,
 	outcomes,
-	truncated,
 	isLoading,
 	isError,
 }: ExecutionsOverTimeCardProps) {
-	// Truncated fetches only cover [oldest fetched row, now]; clamping the
-	// bucket range keeps older buckets from rendering as a fake-zero cliff.
-	const buckets = useMemo(() => {
-		const full = bucketExecutions(executions ?? [], window);
-		return truncated ? clampBucketsToData(full, executions ?? []) : full;
-	}, [executions, window, truncated]);
+	const buckets = useMemo(
+		() => formatExecutionBuckets(aggregateBuckets ?? [], window),
+		[aggregateBuckets, window],
+	);
 
 	return (
 		<Card>
@@ -93,11 +87,6 @@ export function ExecutionsOverTimeCard({
 										{outcomes.failed.toLocaleString()} failed
 									</Link>
 								</>
-							)}
-							{truncated && (
-								<span data-testid="executions-chart-truncated">
-									{" · showing latest 1,000 runs"}
-								</span>
 							)}
 						</>
 					)}

@@ -523,6 +523,179 @@ class TestMetrics:
         assert response.status_code == 403, \
             f"Org user should not access daily metrics: {response.status_code}"
 
+    @pytest.mark.asyncio
+    async def test_execution_timeseries_is_complete_above_history_page_limit(
+        self,
+        e2e_client,
+        platform_admin,
+        db_session,
+    ):
+        """Seven-day aggregates remain complete when today exceeds 1,000 runs."""
+        from datetime import datetime, timedelta, timezone
+        from uuid import uuid4
+
+        from sqlalchemy import delete
+
+        from src.models.enums import ExecutionStatus
+        from src.models.orm.executions import Execution
+        from src.models.orm.organizations import Organization
+
+        workflow_name = f"timeseries-volume-{uuid4()}"
+        organization = Organization(
+            name=workflow_name,
+            created_by=platform_admin.name,
+        )
+        db_session.add(organization)
+        await db_session.flush()
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        executions = [
+            Execution(
+                workflow_name=workflow_name,
+                status=ExecutionStatus.SUCCESS,
+                started_at=now - timedelta(seconds=1),
+                completed_at=now,
+                executed_by=platform_admin.user_id,
+                executed_by_name=platform_admin.name,
+                organization_id=organization.id,
+            )
+            for _ in range(1005)
+        ]
+        previous_statuses = [
+            ExecutionStatus.FAILED,
+            ExecutionStatus.TIMEOUT,
+            ExecutionStatus.STUCK,
+            ExecutionStatus.COMPLETED_WITH_ERRORS,
+            ExecutionStatus.SUCCESS,
+            ExecutionStatus.FAILED,
+        ]
+        executions.extend(
+            Execution(
+                workflow_name=workflow_name,
+                status=status,
+                started_at=today_start - timedelta(days=offset) + timedelta(hours=12),
+                completed_at=today_start - timedelta(days=offset) + timedelta(hours=13),
+                executed_by=platform_admin.user_id,
+                executed_by_name=platform_admin.name,
+                organization_id=organization.id,
+            )
+            for offset, status in enumerate(previous_statuses, start=1)
+        )
+        executions.extend(
+            [
+                Execution(
+                    workflow_name=workflow_name,
+                    status=ExecutionStatus.RUNNING,
+                    started_at=now - timedelta(seconds=1),
+                    executed_by=platform_admin.user_id,
+                    executed_by_name=platform_admin.name,
+                    organization_id=organization.id,
+                ),
+                Execution(
+                    workflow_name=workflow_name,
+                    status=ExecutionStatus.SUCCESS,
+                    started_at=now - timedelta(seconds=1),
+                    completed_at=now,
+                    executed_by=platform_admin.user_id,
+                    executed_by_name=platform_admin.name,
+                    organization_id=organization.id,
+                    is_local_execution=True,
+                ),
+            ]
+        )
+        db_session.add_all(executions)
+        await db_session.commit()
+
+        try:
+            response = e2e_client.get(
+                "/api/metrics/executions/timeseries",
+                headers=platform_admin.headers,
+                params={
+                    "window": "7d",
+                    "timezone": "UTC",
+                    "scope": str(organization.id),
+                },
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+
+            assert len(data["buckets"]) == 7
+            assert all(
+                bucket["success_count"] + bucket["failed_count"] > 0
+                for bucket in data["buckets"]
+            )
+            assert data["buckets"][-1]["success_count"] == 1005
+            assert data["success_count"] == 1006
+            assert data["failed_count"] == 5
+            assert data["total_count"] == 1011
+        finally:
+            await db_session.execute(
+                delete(Execution).where(Execution.workflow_name == workflow_name)
+            )
+            await db_session.delete(organization)
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_execution_timeseries_matches_history_visibility(
+        self,
+        e2e_client,
+        org1_user,
+        platform_admin,
+        org1,
+        db_session,
+    ):
+        """Org users only aggregate their own non-local executions."""
+        from datetime import datetime, timedelta, timezone
+        from uuid import UUID, uuid4
+
+        from sqlalchemy import delete
+
+        from src.models.enums import ExecutionStatus
+        from src.models.orm.executions import Execution
+
+        workflow_name = f"timeseries-scope-{uuid4()}"
+        now = datetime.now(timezone.utc)
+        db_session.add_all(
+            [
+                Execution(
+                    workflow_name=workflow_name,
+                    status=ExecutionStatus.SUCCESS,
+                    started_at=now - timedelta(minutes=2),
+                    completed_at=now - timedelta(minutes=1),
+                    executed_by=org1_user.user_id,
+                    executed_by_name=org1_user.name,
+                    organization_id=UUID(org1["id"]),
+                ),
+                Execution(
+                    workflow_name=workflow_name,
+                    status=ExecutionStatus.FAILED,
+                    started_at=now - timedelta(minutes=2),
+                    completed_at=now - timedelta(minutes=1),
+                    executed_by=platform_admin.user_id,
+                    executed_by_name=platform_admin.name,
+                    organization_id=UUID(org1["id"]),
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        try:
+            response = e2e_client.get(
+                "/api/metrics/executions/timeseries",
+                headers=org1_user.headers,
+                params={"window": "24h", "timezone": "UTC"},
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["success_count"] == 1
+            assert data["failed_count"] == 0
+            assert data["total_count"] == 1
+        finally:
+            await db_session.execute(
+                delete(Execution).where(Execution.workflow_name == workflow_name)
+            )
+            await db_session.commit()
+
 
 # TestLogs removed: the /api/logs stub endpoint was replaced by /api/audit.
 # See tests/e2e/api/test_audit_log.py for the audit log test coverage.

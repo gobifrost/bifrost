@@ -2,7 +2,8 @@
 Dashboard and metrics contract models for Bifrost.
 """
 
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +49,26 @@ class DashboardMetricsResponse(BaseModel):
     execution_stats: ExecutionStats
     recent_failures: list[RecentFailure]
     roi_24h: ROISnapshot | None = None
+
+
+class ExecutionTimeSeriesBucket(BaseModel):
+    """One zero-filled execution chart bucket."""
+
+    start: datetime
+    success_count: int
+    failed_count: int
+
+
+class ExecutionTimeSeriesResponse(BaseModel):
+    """Volume-independent execution outcomes for a dashboard chart window."""
+
+    window: Literal["24h", "7d", "30d"]
+    timezone: str
+    buckets: list[ExecutionTimeSeriesBucket]
+    success_count: int
+    failed_count: int
+    total_count: int
+    success_rate: float | None
 
 
 class PlatformMetricsResponse(BaseModel):

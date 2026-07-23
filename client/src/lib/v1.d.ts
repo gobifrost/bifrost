@@ -3125,6 +3125,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metrics/executions/timeseries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get dashboard execution time series
+         * @description Get zero-filled hourly or daily execution outcomes for a dashboard chart window.
+         */
+        get: operations["get_dashboard_execution_time_series_api_metrics_executions_timeseries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metrics/executions/daily": {
         parameters: {
             query?: never;
@@ -14471,6 +14491,44 @@ export interface components {
              * @default 0
              */
             value: number;
+        };
+        /**
+         * ExecutionTimeSeriesBucket
+         * @description One zero-filled execution chart bucket.
+         */
+        ExecutionTimeSeriesBucket: {
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Success Count */
+            success_count: number;
+            /** Failed Count */
+            failed_count: number;
+        };
+        /**
+         * ExecutionTimeSeriesResponse
+         * @description Volume-independent execution outcomes for a dashboard chart window.
+         */
+        ExecutionTimeSeriesResponse: {
+            /**
+             * Window
+             * @enum {string}
+             */
+            window: "24h" | "7d" | "30d";
+            /** Timezone */
+            timezone: string;
+            /** Buckets */
+            buckets: components["schemas"]["ExecutionTimeSeriesBucket"][];
+            /** Success Count */
+            success_count: number;
+            /** Failed Count */
+            failed_count: number;
+            /** Total Count */
+            total_count: number;
+            /** Success Rate */
+            success_rate: number | null;
         };
         /**
          * ExecutionsListResponse
@@ -29541,6 +29599,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlatformMetricsResponse"];
+                };
+            };
+        };
+    };
+    get_dashboard_execution_time_series_api_metrics_executions_timeseries_get: {
+        parameters: {
+            query?: {
+                /** @description Dashboard chart window */
+                window?: "24h" | "7d" | "30d";
+                /** @description IANA timezone used for hour and day boundaries */
+                timezone?: string;
+                /** @description Filter scope: omit for all (superusers), 'global' for global only, or an organization UUID. */
+                scope?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionTimeSeriesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

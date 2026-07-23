@@ -280,6 +280,7 @@
 | GET | `/api/me/mcp-connections/{connection_id}/connect` |
 | GET | `/api/metrics` |
 | GET | `/api/metrics/executions/daily` |
+| GET | `/api/metrics/executions/timeseries` |
 | GET | `/api/metrics/organizations` |
 | GET | `/api/metrics/resources` |
 | GET | `/api/metrics/snapshot` |
