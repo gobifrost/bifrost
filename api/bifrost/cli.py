@@ -231,14 +231,6 @@ def _check_cli_version() -> None:
     if installed in ("unknown", "0.0.0+source"):
         return  # dev/source install — nothing to compare against
 
-    # Re-load dotenv so a CWD-local .env's BIFROST_API_URL is honored even
-    # if bifrost.client's import-time load happened against a different cwd.
-    try:
-        from dotenv import find_dotenv, load_dotenv
-        load_dotenv(find_dotenv(usecwd=True), override=False)
-    except ImportError:
-        pass  # python-dotenv is optional; without it, only os.environ is consulted
-
     # Use credentials._resolve_url (not get_credentials) because the version
     # check only needs the URL — get_credentials returns None unless full
     # tokens are present too, which would skip the check on a logged-out CLI.
@@ -1027,11 +1019,12 @@ Examples:
         return 1
 
     is_password_grant = email is not None and password is not None
+    environment_url = credentials.resolve_environment_url()
 
     if is_password_grant:
         # Resolve URL: --url > BIFROST_API_URL env var > error. No default.
         if not api_url:
-            api_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
+            api_url = environment_url
         if not api_url:
             print(
                 "Error: password-grant login requires --url or BIFROST_API_URL env var "
@@ -1068,13 +1061,14 @@ Examples:
         return rc
 
     # Browser device-code flow (persistent → keychain or JSON fallback).
-    success = asyncio.run(login_flow(api_url=api_url, auto_open=auto_open))
+    login_url = api_url or environment_url
+    success = asyncio.run(login_flow(api_url=login_url, auto_open=auto_open))
     if not success:
         return 1
 
     # Wire up the CWD .env so subsequent commands in this folder target this URL.
     # The token lives in the keychain keyed by URL; .env just carries the URL.
-    resolved_url = (api_url or os.environ.get("BIFROST_API_URL") or "").rstrip("/")
+    resolved_url = (login_url or "").rstrip("/")
     if not resolved_url:
         # login_flow's default — match what login_flow used so the .env line agrees
         # with where the token landed.

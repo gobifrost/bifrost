@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from unittest.mock import patch
 
 import httpx
@@ -241,21 +242,25 @@ class TestUrlResolution:
             url = urlopen.call_args[0][0]
             assert url == "http://from-credentials.example/api/version"
 
-    def test_loads_dotenv_before_resolving(self, monkeypatch, tmp_path):
+    def test_resolves_dotenv_without_mutating_process_auth(self, monkeypatch, tmp_path):
         """A project ``.env`` containing BIFROST_API_URL is honored.
 
-        ``_check_cli_version`` runs before the rest of the CLI imports
-        ``bifrost.client`` (which is where dotenv is normally loaded). The
-        check must load dotenv itself so a CWD-local ``.env`` resolves the
-        URL just like the rest of the CLI would.
+        The credential resolver reads the nearest dotenv directly. The version
+        check must honor that URL without copying auth fields into ``os.environ``.
         """
         env_file = tmp_path / ".env"
-        env_file.write_text("BIFROST_API_URL=http://from-dotenv.example\n")
+        env_file.write_text(
+            "BIFROST_API_URL=http://from-dotenv.example\n"
+            "BIFROST_ACCESS_TOKEN=dotenv-access\n"
+            "BIFROST_REFRESH_TOKEN=dotenv-refresh\n"
+        )
 
         monkeypatch.chdir(tmp_path)
         # Make sure the env var isn't already set in the test process so we
         # know the value got there via dotenv, not inheritance.
         monkeypatch.delenv("BIFROST_API_URL", raising=False)
+        monkeypatch.delenv("BIFROST_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
 
         _patch_version(monkeypatch, "1.2.3")
         from bifrost import cli
@@ -277,6 +282,9 @@ class TestUrlResolution:
         assert urlopen.called, "httpx.get never called — dotenv URL not resolved"
         url = urlopen.call_args[0][0]
         assert url == "http://from-dotenv.example/api/version"
+        assert "BIFROST_API_URL" not in os.environ
+        assert "BIFROST_ACCESS_TOKEN" not in os.environ
+        assert "BIFROST_REFRESH_TOKEN" not in os.environ
 
 
 class TestTransport:

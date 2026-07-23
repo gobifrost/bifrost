@@ -36,6 +36,7 @@ import click
 import yaml
 
 from bifrost.client import BifrostClient
+from bifrost.credentials import resolve_environment_url
 from bifrost.org_target import org_option, resolve_org_target
 from bifrost.solution_jobs import DEPLOY_JOB_TIMEOUT_SECONDS
 from bifrost.solution_binding import (
@@ -302,7 +303,7 @@ def _scaffold_api_url(api_url: str | None) -> str:
     baking it while logged in against a real instance broke the app's
     `npm install` (the SDK dependency pointed at a dead port; drive finding,
     2026-07-02)."""
-    resolved = api_url or os.getenv("BIFROST_API_URL")
+    resolved = api_url or resolve_environment_url()
     if resolved:
         return resolved
     try:

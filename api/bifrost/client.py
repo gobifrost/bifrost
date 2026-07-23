@@ -9,7 +9,6 @@ Supports two modes:
 
 import asyncio
 import logging
-import os
 import sys
 import threading
 import time
@@ -24,8 +23,11 @@ from .credentials import (
     clear_credentials,
     get_credentials,
     is_token_expired,
-    replace_env_credentials,
+    load_dotenv_context,
+    resolve_credentials,
     resolve_current_connection,
+    resolve_environment_url,
+    save_refreshed_credentials,
     save_credentials,
 )
 
@@ -188,16 +190,9 @@ async def _acquire_refresh_lock(lock: threading.Lock) -> None:
             lock.release()
         raise
 
-# Auto-load .env file if present (for local development).
-# Walk upward from cwd, not from this file. With pipx-installed CLIs, __file__
-# lives in the pipx venv and the default upward walk never reaches the user's
-# workspace, so a .env in the project root is silently ignored.
-try:
-    from dotenv import find_dotenv, load_dotenv
-
-    load_dotenv(find_dotenv(usecwd=True))
-except ImportError:
-    pass  # dotenv not installed, rely on environment variables
+# Preserve non-auth project context without merging auth fields from different
+# sources into one synthetic os.environ tuple.
+load_dotenv_context()
 
 
 async def refresh_connection_access_token(
@@ -213,20 +208,22 @@ async def refresh_connection_access_token(
     """
     normalized_url = api_url.rstrip("/")
     coordinator = _refresh_coordinator(normalized_url)
+    credential_source = "unknown"
     await _acquire_refresh_lock(coordinator.lock)
     try:
-        creds = get_credentials(normalized_url)
-        if not creds:
+        resolved = resolve_credentials(normalized_url)
+        if resolved is None:
+            logger.warning(
+                "Bifrost token refresh failed for %s: no credentials resolved",
+                normalized_url,
+            )
             return None
+        credential_source = resolved.source
+        creds = resolved.credentials
 
-        stored_access_token = str(creds["access_token"])
-        stored_refresh_token = str(creds["refresh_token"])
-        env_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
-        env_backed = (
-            env_url == normalized_url
-            and bool(os.environ.get("BIFROST_ACCESS_TOKEN"))
-            and bool(os.environ.get("BIFROST_REFRESH_TOKEN"))
-        )
+        stored_access_token = creds.access_token
+        stored_refresh_token = creds.refresh_token
+        env_backed = resolved.source in {"process", "dotenv"}
 
         if coordinator.latest_access_token is not None:
             if observed_access_token != coordinator.latest_access_token:
@@ -248,6 +245,12 @@ async def refresh_connection_access_token(
                 json={"refresh_token": refresh_token},
             )
         if response.status_code != 200:
+            logger.warning(
+                "Bifrost token refresh failed for %s using %s credentials: HTTP %s",
+                normalized_url,
+                credential_source,
+                response.status_code,
+            )
             return None
 
         data = response.json()
@@ -256,24 +259,31 @@ async def refresh_connection_access_token(
             seconds=data.get("expires_in", 1800)
         )
         new_refresh_token = str(data["refresh_token"])
-        replaced_env = replace_env_credentials(
-            normalized_url,
+        saved = save_refreshed_credentials(
+            resolved,
             stored_access_token,
             refresh_token,
             access_token,
             new_refresh_token,
+            expires_at.isoformat(),
         )
-        if not replaced_env:
-            save_credentials(
-                api_url=normalized_url,
-                access_token=access_token,
-                refresh_token=new_refresh_token,
-                expires_at=expires_at.isoformat(),
+        if not saved:
+            logger.warning(
+                "Bifrost token refresh succeeded for %s, but the %s credential "
+                "source changed before rotated tokens could be written back",
+                normalized_url,
+                credential_source,
             )
         coordinator.latest_access_token = access_token
         coordinator.latest_refresh_token = new_refresh_token
         return access_token
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Bifrost token refresh failed for %s using %s credentials: %s",
+            normalized_url,
+            credential_source,
+            type(exc).__name__,
+        )
         return None
     finally:
         coordinator.lock.release()
@@ -365,7 +375,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
     """
     # Get API URL
     if not api_url:
-        api_url = os.getenv("BIFROST_API_URL", "http://localhost:8000")
+        api_url = resolve_environment_url() or "http://localhost:8000"
 
     api_url = api_url.rstrip("/")
 
