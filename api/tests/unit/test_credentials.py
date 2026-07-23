@@ -123,11 +123,14 @@ class TestCredentialProvenance:
         assert result["refresh_token"] == "production-refresh"
         assert "BIFROST_ACCESS_TOKEN" not in os.environ
         assert "BIFROST_REFRESH_TOKEN" not in os.environ
-        assert "http://localhost:36092" in caplog.text
-        assert "https://prod.example.com" in caplog.text
-        assert caplog.text.count("Ignoring complete dotenv credentials") == 1
-        assert "localhost-access" not in caplog.text
-        assert "localhost-refresh" not in caplog.text
+        assert len(caplog.records) == 1
+        warning = caplog.records[0]
+        assert warning.args == (
+            "http://localhost:36092",
+            "https://prod.example.com",
+        )
+        assert "localhost-access" not in warning.getMessage()
+        assert "localhost-refresh" not in warning.getMessage()
 
     def test_complete_process_tuple_wins_over_dotenv_and_persistent(
         self, isolated_store, monkeypatch

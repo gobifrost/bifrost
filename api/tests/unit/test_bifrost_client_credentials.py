@@ -368,11 +368,11 @@ async def test_failed_refresh_logs_status_and_source_without_tokens(
     )
 
     assert result is None
-    assert api_url in caplog.text
-    assert "persistent" in caplog.text
-    assert "401" in caplog.text
-    assert "secret-access" not in caplog.text
-    assert "secret-refresh" not in caplog.text
+    assert len(caplog.records) == 1
+    warning = caplog.records[0]
+    assert warning.args == (api_url, "persistent", 401)
+    assert "secret-access" not in warning.getMessage()
+    assert "secret-refresh" not in warning.getMessage()
 
 
 @pytest.mark.asyncio
@@ -411,11 +411,11 @@ async def test_refresh_exception_logs_class_without_exception_message_or_tokens(
     )
 
     assert result is None
-    assert api_url in caplog.text
-    assert "persistent" in caplog.text
-    assert "RuntimeError" in caplog.text
-    assert "secret-access" not in caplog.text
-    assert "secret-refresh" not in caplog.text
+    assert len(caplog.records) == 1
+    warning = caplog.records[0]
+    assert warning.args == (api_url, "persistent", "RuntimeError")
+    assert "secret-access" not in warning.getMessage()
+    assert "secret-refresh" not in warning.getMessage()
 
 
 @pytest.mark.asyncio
