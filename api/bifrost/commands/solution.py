@@ -403,11 +403,11 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
     """The files for a working standalone_v2 app skeleton.
 
     Designed so a developer's local ``npm run dev`` works with ZERO token
-    pasting: ``vite.config.ts`` reads the CLI's own ``BIFROST_API_URL`` +
-    ``BIFROST_ACCESS_TOKEN`` (the ones ``bifrost login`` already wrote to .env)
-    and exposes them to the app. Deployed, the platform calls the app's explicit
-    ``mount()`` lifecycle with per-mount bootstrap data. Local Vite dev invokes
-    that same lifecycle with the dev env, so one source runs in both places.
+    pasting: ``vite.config.ts`` reads an optional local URL selector, then asks
+    the CLI for that URL's globally stored token. Deployed, the platform calls
+    the app's explicit ``mount()`` lifecycle with per-mount bootstrap data.
+    Local Vite dev invokes that same lifecycle with the dev env, so one source
+    runs in both places.
     """
     pkg = {
         "name": slug,
@@ -441,7 +441,7 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
     vite_config = """\
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, parse } from "node:path";
+import { join } from "node:path";
 
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -449,34 +449,25 @@ import { defineConfig } from "vite";
 
 // Tokenless local dev — three sources, in order:
 //   1. process env (the CLI exported BIFROST_API_URL/BIFROST_ACCESS_TOKEN), then
-//   2. the nearest .env walking UP from this app dir (password-grant `login`
-//      writes one), then
+//   2. a BIFROST_API_URL selector from .env in this exact invocation directory,
+//      then
 //   3. the CLI credential store via `bifrost auth token` — device-code login
-//      stores the token in the OS keyring / ~/.bifrost/credentials.json (NOT a
-//      .env), so without this the normal login path leaves `npm run dev`
-//      tokenless (R7-P2-f).
+//      and password-grant login store tokens globally by URL, never in .env.
 // Deployed, the platform passes these values to the app's mount() lifecycle.
 function readBifrostEnv() {
   const out = {
     url: process.env.BIFROST_API_URL || "",
     token: process.env.BIFROST_ACCESS_TOKEN || "",
   };
-  let dir = process.cwd();
-  while (!(out.url && out.token)) {
-    const envPath = join(dir, ".env");
-    if (existsSync(envPath)) {
-      for (const line of readFileSync(envPath, "utf8").split("\\n")) {
-        const m = line.match(/^\\s*(BIFROST_API_URL|BIFROST_ACCESS_TOKEN)\\s*=\\s*(.*)\\s*$/);
-        if (m) {
-          const v = m[2].replace(/^["']|["']$/g, "");
-          if (m[1] === "BIFROST_API_URL" && !out.url) out.url = v;
-          if (m[1] === "BIFROST_ACCESS_TOKEN" && !out.token) out.token = v;
-        }
+  const envPath = join(process.cwd(), ".env");
+  if (existsSync(envPath)) {
+    for (const line of readFileSync(envPath, "utf8").split("\\n")) {
+      const m = line.match(/^\\s*BIFROST_API_URL\\s*=\\s*(.*)\\s*$/);
+      if (m) {
+        const v = m[1].replace(/^["']|["']$/g, "");
+        if (!out.url) out.url = v;
       }
     }
-    const parent = dirname(dir);
-    if (parent === dir || dir === parse(dir).root) break;
-    dir = parent;
   }
   // Fall back to the CLI credential store (keyring / credentials.json).
   if (!out.token) {
@@ -660,11 +651,10 @@ export default function App() {
 }
 """
     env_example = """\
-# OPTIONAL. You normally DON'T need this file: `npm run dev` auto-discovers the
-# token `bifrost login` wrote (env, or the nearest .env up the tree). Create a
-# .env here only to override the instance URL / token for this app.
+# OPTIONAL. You normally DON'T need this file: `npm run dev` uses the CLI's
+# saved default connection. Create .env here only to override the instance URL
+# for this app; credentials remain in the CLI's global URL-keyed store.
 # BIFROST_API_URL=http://localhost:8000
-# BIFROST_ACCESS_TOKEN=
 """
     readme = f"""\
 # {slug} — a Bifrost standalone_v2 app
@@ -672,14 +662,15 @@ export default function App() {
 ## Local dev (no token pasting)
 
 You only need to be logged in with the CLI once — `npm run dev` reads the token
-`bifrost login` already wrote (from the environment, or the nearest `.env` up
-the directory tree). So from your logged-in solution workspace:
+from an explicit process/current-directory override or the CLI's saved default.
+So from your logged-in solution workspace:
 
     npm install     # resolves `bifrost` from {api_url}
     npm run dev     # http://localhost:5173 — already authenticated
 
-(If you run `npm run dev` somewhere the CLI's `.env` isn't reachable, copy
-`.env.example` to `.env` and set the two BIFROST_* values.)
+(To override the saved default for this app, copy `.env.example` to `.env` in
+the directory where you run Vite and set BIFROST_API_URL. Authenticate that URL
+once with the CLI; its credentials remain in the global credential store.)
 
 ## Deploy
 

@@ -8,10 +8,10 @@ concerns the gate must honor regardless of which gate fires:
 * Skip silently for source/dev installs (``__version__`` of ``"unknown"`` or
   ``"0.0.0+source"``).
 * Resolve the API URL via ``credentials._resolve_url`` so a project
-  ``.env`` (loaded by python-dotenv before the call) is honored alongside
-  the keyring/JSON store. We use ``_resolve_url`` (not ``get_credentials``)
-  because the version check only needs the URL — a logged-out CLI with
-  ``BIFROST_API_URL`` set in ``.env`` should still get checked.
+  ``.env`` URL selector is honored alongside the keyring/JSON store. We use
+  ``_resolve_url`` (not ``get_credentials``) because the version check only
+  needs the URL — a logged-out CLI with ``BIFROST_API_URL`` set in ``.env``
+  should still get checked.
 * Route the request through httpx (not urllib) so CDN/WAF UA blocking doesn't
   silently no-op the check.
 
@@ -40,10 +40,9 @@ def _isolate_version_check_state():
 
     * The memoized ``_persistent_backend`` global in ``bifrost.credentials``,
       which downstream credentials tests rely on being unset.
-    * ``BIFROST_API_URL`` written to ``os.environ`` by ``python-dotenv`` in
-      the dotenv-resolution test — monkeypatch doesn't track it because
-      load_dotenv writes to os.environ directly. Subsequent SDK credentials
-      tests assume the env var is unset and resolve via the JSON store.
+    * Any ``BIFROST_API_URL`` inherited from a previous test. Subsequent SDK
+      credential tests assume the env var is unset and resolve via the global
+      URL-keyed store.
     """
     import os
 
@@ -219,11 +218,10 @@ class TestUrlResolution:
     def test_delegates_to_credentials_resolve_url(self, monkeypatch):
         """Version check must delegate URL resolution to credentials._resolve_url.
 
-        ``_resolve_url`` already implements the full chain (env → keyring/JSON
-        store) and honors python-dotenv-loaded BIFROST_API_URL. The check
-        should not reinvent it. Using ``_resolve_url`` (not
-        ``get_credentials``) means a logged-out CLI in an env with
-        ``BIFROST_API_URL`` set still gets a version check — we only need the
+        ``_resolve_url`` already implements the full selector chain and honors
+        exact-directory BIFROST_API_URL. The check should not reinvent it.
+        Using ``_resolve_url`` (not ``get_credentials``) means a logged-out CLI
+        with a local URL selector still gets a version check — we only need the
         URL, not full tokens.
         """
         _patch_version(monkeypatch, "1.2.3")
@@ -245,8 +243,9 @@ class TestUrlResolution:
     def test_resolves_dotenv_without_mutating_process_auth(self, monkeypatch, tmp_path):
         """A project ``.env`` containing BIFROST_API_URL is honored.
 
-        The credential resolver reads the nearest dotenv directly. The version
-        check must honor that URL without copying auth fields into ``os.environ``.
+        The credential resolver reads the current directory's dotenv directly.
+        The version check must honor that URL without copying auth fields into
+        ``os.environ``.
         """
         env_file = tmp_path / ".env"
         env_file.write_text(
@@ -265,8 +264,8 @@ class TestUrlResolution:
         _patch_version(monkeypatch, "1.2.3")
         from bifrost import cli
 
-        # No persistent-store credentials should be returned — we want the
-        # resolution to land on the env var written by dotenv.
+        # No persistent-store credentials are needed — URL resolution reads the
+        # selector directly from the exact-directory dotenv.
         with patch(
             "bifrost.credentials.get_persistent_backend"
         ) as get_backend, patch(

@@ -42,7 +42,7 @@ Use this whenever you need a running Bifrost instance to exercise — clicking a
    ```
    The download endpoint serves the build matching the running API; installing this version avoids the version-mismatch warning that otherwise short-circuits subcommand output.
 
-3. **Log in** inside the scratch directory using password-grant. This writes `.env` (with `BIFROST_API_URL`, `BIFROST_ACCESS_TOKEN`, `BIFROST_REFRESH_TOKEN`) so subsequent commands in this directory pick the tokens up automatically:
+3. **Log in** inside the scratch directory using password-grant. This stores credentials globally under the stack URL and writes only `BIFROST_API_URL` to the scratch directory's `.env`, so subsequent commands there select the correct credentials automatically:
    ```bash
    ./.venv/bin/bifrost login --url <API_URL> --email dev@gobifrost.com --password password
    ```

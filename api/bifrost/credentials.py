@@ -9,12 +9,12 @@ across multiple Bifrost instances simultaneously, with three backends:
 - JsonBackend: ~/.bifrost/credentials.json as a dict-of-URLs
 - User config: ~/.bifrost/config.json stores the default connection pointer
 
-Resolution keeps process, nearest-dotenv, and persistent credential tuples
-separate, then selects a complete tuple for the effective API URL.
+The process or current-directory dotenv may select an API URL. Credentials
+come from an explicit process tuple or the global URL-keyed persistent store;
+dotenv files never own credentials.
 """
 
 import json
-import logging
 import os
 import platform
 import sys
@@ -29,10 +29,6 @@ AUTH_ENV_KEYS = frozenset({
     "BIFROST_ACCESS_TOKEN",
     "BIFROST_REFRESH_TOKEN",
 })
-
-logger = logging.getLogger(__name__)
-_warned_dotenv_mismatches: set[tuple[str, str]] = set()
-
 
 # --------------------------------------------------------------------------- #
 # Public dataclass
@@ -60,7 +56,7 @@ class Credentials:
         )
 
 
-CredentialSource = Literal["process", "dotenv", "persistent", "legacy"]
+CredentialSource = Literal["process", "persistent", "legacy"]
 
 
 @dataclass(frozen=True)
@@ -69,27 +65,6 @@ class ResolvedCredentials:
 
     credentials: Credentials
     source: CredentialSource
-    dotenv_path: Path | None = None
-
-
-@dataclass(frozen=True)
-class _DotenvConnection:
-    """Bifrost auth fields read together from one nearest dotenv file."""
-
-    path: Path
-    api_url: str
-    access_token: str
-    refresh_token: str
-
-    def credentials(self) -> Credentials | None:
-        if not self.api_url or not self.access_token or not self.refresh_token:
-            return None
-        return Credentials(
-            api_url=self.api_url,
-            access_token=self.access_token,
-            refresh_token=self.refresh_token,
-            expires_at="2099-01-01T00:00:00+00:00",
-        )
 
 
 # --------------------------------------------------------------------------- #
@@ -113,44 +88,45 @@ def get_config_path() -> Path:
     return get_config_dir() / "config.json"
 
 
-def _nearest_dotenv_values() -> tuple[Path, dict[str, str | None]] | None:
-    """Read the nearest dotenv without copying any values into the process."""
+def _current_dotenv_values() -> tuple[Path, dict[str, str | None]] | None:
+    """Read only ``./.env`` without copying values into the process.
+
+    Ancestor dotenv files are ambient state, not an explicit connection choice
+    for this invocation. Local-development scratch directories remain supported
+    because their commands run from the directory that owns the dotenv.
+    """
     try:
-        from dotenv import dotenv_values, find_dotenv
+        from dotenv import dotenv_values
     except ImportError:
         return None
 
-    env_path = find_dotenv(usecwd=True)
-    if not env_path:
+    env_path = Path.cwd() / ".env"
+    if not env_path.is_file():
         return None
     try:
         values = dotenv_values(env_path)
     except OSError:
         return None
-    return Path(env_path), dict(values)
+    return env_path, dict(values)
 
 
-def _nearest_dotenv_connection() -> _DotenvConnection | None:
-    snapshot = _nearest_dotenv_values()
+def _current_dotenv_url() -> str | None:
+    snapshot = _current_dotenv_values()
     if snapshot is None:
         return None
-    path, values = snapshot
-    return _DotenvConnection(
-        path=path,
-        api_url=str(values.get("BIFROST_API_URL") or "").rstrip("/"),
-        access_token=str(values.get("BIFROST_ACCESS_TOKEN") or ""),
-        refresh_token=str(values.get("BIFROST_REFRESH_TOKEN") or ""),
-    )
+    _path, values = snapshot
+    api_url = str(values.get("BIFROST_API_URL") or "").rstrip("/")
+    return api_url or None
 
 
 def load_dotenv_context() -> None:
-    """Load non-auth dotenv context without destroying credential provenance.
+    """Load current-directory non-auth context without mixing credentials.
 
-    Solution bindings and CLI behavior flags historically rely on the nearest
-    dotenv being available through ``os.environ``. The three authentication
-    fields are deliberately excluded and are resolved together on demand.
+    Bifrost URL and token fields are deliberately excluded. The URL is read
+    separately as a selector; credentials always come from process state or
+    the global URL-keyed store. Ancestor dotenv files are never loaded.
     """
-    snapshot = _nearest_dotenv_values()
+    snapshot = _current_dotenv_values()
     if snapshot is None:
         return
     _path, values = snapshot
@@ -160,28 +136,11 @@ def load_dotenv_context() -> None:
 
 
 def resolve_environment_url() -> str | None:
-    """Resolve only the process/dotenv URL, without stored defaults."""
+    """Resolve only the process/current-directory URL, without stored defaults."""
     process_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
     if process_url:
         return process_url
-    dotenv = _nearest_dotenv_connection()
-    if dotenv is not None and dotenv.api_url:
-        return dotenv.api_url
-    return None
-
-
-def _warn_dotenv_mismatch(dotenv_url: str, selected_url: str) -> None:
-    """Emit one secret-safe mismatch diagnostic per URL pair and process."""
-    mismatch = (dotenv_url, selected_url)
-    if mismatch in _warned_dotenv_mismatches:
-        return
-    _warned_dotenv_mismatches.add(mismatch)
-    logger.warning(
-        "Ignoring complete dotenv credentials for %s because the selected "
-        "API URL is %s; using stored credentials for the selected URL",
-        dotenv_url,
-        selected_url,
-    )
+    return _current_dotenv_url()
 
 
 # --------------------------------------------------------------------------- #
@@ -431,7 +390,6 @@ def _reset_persistent_backend_for_tests() -> None:
     global _persistent_backend, _keyring_fallback_reason
     _persistent_backend = None
     _keyring_fallback_reason = None
-    _warned_dotenv_mismatches.clear()
 
 
 def _load_config() -> dict[str, str]:
@@ -513,7 +471,7 @@ def resolve_current_connection(
     Order:
       1. The argument (if given).
       2. BIFROST_API_URL env var.
-      3. BIFROST_API_URL from the nearest dotenv file.
+      3. BIFROST_API_URL from ``./.env``.
       4. The user-selected default connection.
       5. The only stored URL, when exactly one exists.
       6. Optional interactive selection when multiple URLs exist.
@@ -523,9 +481,9 @@ def resolve_current_connection(
     env_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
     if env_url:
         return env_url, "BIFROST_API_URL"
-    dotenv = _nearest_dotenv_connection()
-    if dotenv is not None and dotenv.api_url:
-        return dotenv.api_url, ".env"
+    dotenv_url = _current_dotenv_url()
+    if dotenv_url:
+        return dotenv_url, ".env"
 
     urls = get_persistent_backend().list_urls()
     default_url = get_default_connection()
@@ -610,9 +568,8 @@ def resolve_credentials(
 
     Resolution order:
       1. Complete process tuple (EnvBackend) — for ephemeral sessions.
-      2. Complete nearest-dotenv tuple for the same target URL.
-      3. Persistent backend (keychain or JSON) — for long-lived sessions.
-      4. Legacy single-record JSON — lazily migrated.
+      2. Persistent backend (keychain or JSON) for the selected URL.
+      3. Legacy single-record JSON — lazily migrated.
 
     If api_url is None, the URL is resolved via ``resolve_current_connection``.
     When even that fails, the legacy file is a last resort for learning one.
@@ -634,28 +591,12 @@ def resolve_credentials(
     if env_creds is not None:
         return ResolvedCredentials(env_creds, "process")
 
-    # 2. Dotenv credentials are one indivisible tuple. They are safe only when
-    # the URL recorded beside the tokens matches the selected target.
-    dotenv = _nearest_dotenv_connection()
-    dotenv_creds = dotenv.credentials() if dotenv is not None else None
-    if dotenv_creds is not None:
-        if dotenv_creds.api_url.rstrip("/") == resolved:
-            return ResolvedCredentials(
-                dotenv_creds,
-                "dotenv",
-                dotenv_path=dotenv.path if dotenv is not None else None,
-            )
-        _warn_dotenv_mismatch(
-            dotenv_creds.api_url,
-            resolved,
-        )
-
-    # 3. Persistent backend
+    # 2. Persistent credentials are keyed globally by the selected URL.
     creds = get_persistent_backend().get(resolved)
     if creds is not None:
         return ResolvedCredentials(creds, "persistent")
 
-    # 4. Legacy fallback (and migrate if found)
+    # 3. Legacy fallback (and migrate if found)
     legacy = _try_migrate_legacy()
     if legacy is not None and legacy.api_url.rstrip("/") == resolved:
         return ResolvedCredentials(legacy, "legacy")
@@ -717,36 +658,6 @@ def save_refreshed_credentials(
         os.environ["BIFROST_REFRESH_TOKEN"] = refresh_token
         return True
 
-    if resolved.source == "dotenv":
-        if resolved.dotenv_path is None:
-            return False
-        try:
-            from dotenv import dotenv_values, set_key
-
-            values = dotenv_values(resolved.dotenv_path)
-            file_url = str(values.get("BIFROST_API_URL") or "").rstrip("/")
-            if (
-                file_url != normalized_url
-                or values.get("BIFROST_ACCESS_TOKEN") != observed_access_token
-                or values.get("BIFROST_REFRESH_TOKEN") != observed_refresh_token
-            ):
-                return False
-            set_key(
-                str(resolved.dotenv_path),
-                "BIFROST_ACCESS_TOKEN",
-                access_token,
-                quote_mode="never",
-            )
-            set_key(
-                str(resolved.dotenv_path),
-                "BIFROST_REFRESH_TOKEN",
-                refresh_token,
-                quote_mode="never",
-            )
-        except (ImportError, OSError):
-            return False
-        return True
-
     save_credentials(
         api_url=normalized_url,
         access_token=access_token,
@@ -761,7 +672,7 @@ def clear_credentials(api_url: str | None = None) -> None:
     Remove a single URL's credentials from the persistent backend.
 
     No-arg behavior uses the same resolution as get_credentials(): an explicit
-    environment/folder binding, the saved default, or the sole stored URL. So
+    environment/folder URL selector, the saved default, or the sole stored URL. So
     a `bifrost logout` targets the same connection `get_credentials()` would
     have returned.
     """

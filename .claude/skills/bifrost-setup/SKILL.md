@@ -21,9 +21,11 @@ Before running any commands, introduce the setup process to the user:
 ## Connection model
 
 Bifrost stores credentials separately for each instance URL, so several
-connections can coexist on one computer. A folder's nearest `.env` binds CLI
-commands in that workspace to one of those connections. Without a folder
-binding, the CLI uses the user's saved default.
+connections can coexist on one computer. Only `.env` in the exact invocation
+directory selects a URL; ancestor dotenv files are never discovered
+implicitly. Credentials remain in the global store keyed by URL and are never
+loaded from `.env`. Without that local selector, the CLI uses the user's saved
+default transparently.
 
 `bifrost auth default` only reports these values; it changes nothing. Only
 `bifrost auth use <url>` changes the saved default, so never run it unless the
@@ -124,8 +126,9 @@ that URL and do not log in again.
 
 Do NOT suggest placeholder URLs - every Bifrost instance has a unique URL provided by the user's organization.
 
-`BIFROST_DEV_URL` is for preview and platform links. Do not use it as evidence
-of the authenticated CLI connection.
+`BIFROST_DEV_URL` is an optional override for preview and platform links. Do
+not use it as evidence of the authenticated CLI connection; when it is absent,
+the authenticated current connection is the default link base.
 
 ### Install SDK
 
@@ -195,15 +198,15 @@ This opens a browser for authentication. On Windows, credentials are stored in
 Windows Credential Manager when keyring is available, with
 `%APPDATA%\Bifrost\credentials.json` as the fallback. On Linux/macOS, keyring is
 used when available with `~/.bifrost/credentials.json` as the fallback. Login
-also writes the URL to the current folder's `.env`, binding that folder to the
-connection. Tokens for other instance URLs remain available.
+also writes the URL to the current folder's `.env`, selecting that connection
+for commands run there. Tokens for other instance URLs remain available.
 
 For the repository's local debug stack, use the `bifrost-debug` skill instead;
 it knows the default `dev@gobifrost.com` / `password` credentials and creates a
-dedicated scratch-folder binding without changing the saved default.
+dedicated scratch-folder selector without changing the saved default.
 
 To disconnect a specific instance, use `bifrost logout --url {url}`. It clears
-that URL's stored credentials and offers to remove a matching folder binding.
+that URL's stored credentials and offers to remove a matching folder selector.
 
 ## MCP Configuration
 

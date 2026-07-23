@@ -20,16 +20,18 @@ to run `/bifrost:setup` first.
 
 ## Connection model
 
-Bifrost can store credentials for multiple instance URLs. The nearest `.env`
-in the current folder or a parent binds that workspace to one connection; a
-folder without a binding uses the user's saved default.
+Bifrost can store credentials for multiple instance URLs. Only `.env` in the
+exact invocation directory can select a URL; ancestor dotenv files are never
+discovered implicitly. Credentials remain in the global store keyed by URL and
+are never loaded from `.env`. Without a local URL selector, the CLI uses the
+user's saved default transparently.
 
 `bifrost auth default` is read-only. Its `Default connection` line shows the
 saved fallback, while `Current connection` shows what commands from this
 folder will use. Before discovery or mutation, confirm the current connection
 is the intended instance. If it is wrong, run from the intended workspace or
 neutral folder. Do not change the saved default merely to work with a debug
-stack; the debug skill creates a dedicated folder binding.
+stack; the debug skill creates a dedicated folder selector.
 
 A Codex sandbox may be unable to read the host OS keyring and can therefore
 make an existing login look absent. Before invoking setup or login, rerun the
@@ -37,13 +39,15 @@ same read-only `bifrost auth default` probe with host access from the exact
 workspace you intend to use. If that host probe succeeds, reuse it; never log
 in again merely to work around a sandbox-only credential failure.
 
-Most entity commands do not accept `--url`; the folder binding is their
-connection selector. Never repoint a bound folder by overriding only
-`BIFROST_API_URL`, because folder-loaded tokens may belong to its original URL.
+Most entity commands do not accept `--url`; the exact-directory selector is
+how a workspace overrides the default. The selected URL must already have
+globally stored credentials; authenticate it once if it does not.
 
-`BIFROST_DEV_URL` is only a base for preview and platform links. It does not
-select or prove the authenticated CLI connection. If it is empty and a link is
-needed, ask the user for the base URL. Never invent a host.
+`BIFROST_DEV_URL` is an optional explicit base override for preview and
+platform links. It does not select or prove the authenticated CLI connection.
+When it is empty, use the authenticated `Current connection` reported by
+`bifrost auth default` as the link base. Ask the user only when neither value
+resolves; never invent a host.
 
 ## Step 1: Detect Workspace Mode
 

@@ -54,10 +54,11 @@ The user picks the mode by setting (or not setting) `NETBIRD_SETUP_KEY` in `~/.c
 
 ## Connect the CLI
 
-Bifrost can keep credentials for several instances. A folder's nearest `.env`
-selects the connection for commands run there; otherwise the CLI uses the
-user's saved default. Debug should use its own folder binding and must not
-change that saved default.
+Bifrost can keep credentials for several instances. Only `.env` in the exact
+invocation directory selects the URL for commands run there; ancestor dotenv
+files are never discovered implicitly. Credentials remain in the global store
+keyed by URL. Otherwise the CLI uses the user's saved default. Debug should use
+its own scratch-directory selector and must not change that saved default.
 
 After the stack is up, create one scratch directory for this worktree. Never
 run debug CLI commands from bare `/tmp`.
@@ -73,10 +74,11 @@ python3 -m venv .venv
   --email dev@gobifrost.com --password password
 ```
 
-The empty `.env` created before the first CLI call prevents an unrelated
-parent `.env` from being loaded. Login then writes this debug stack's URL and
-tokens into that scratch `.env`. Run all later debug-instance CLI commands
-from the same scratch directory with `./.venv/bin/bifrost ...`.
+The scratch directory's own `.env` is the only local selector the CLI reads;
+ancestor dotenv files are ignored. Login writes only this debug stack's URL
+there and stores its credentials globally under that URL. Run all later
+debug-instance CLI commands from the same scratch directory with
+`./.venv/bin/bifrost ...`.
 
 Run `./debug.sh` commands from the worktree, never from the scratch directory.
 If the connection is ever unclear, `bifrost auth default` is a read-only check:
