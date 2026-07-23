@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { ExecuteWorkflow } from "./ExecuteWorkflow";
 
 // -----------------------------------------------------------------------------
 // Mocks
@@ -71,7 +72,6 @@ beforeEach(() => {
 });
 
 async function renderPage() {
-	const { ExecuteWorkflow } = await import("./ExecuteWorkflow");
 	return renderWithProviders(<ExecuteWorkflow />);
 }
 

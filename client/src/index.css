@@ -108,6 +108,76 @@
 
 /* ----------------------- end shadcn/tailwind.css ------------------- */
 
+/* Agent history surfaces are bounded workspaces on standard desktop viewports.
+ * The page context remains fixed while the repeated collection owns overflow.
+ * Runs caps expanded filters separately; Overview lets Recent activity and the
+ * sidebar scroll independently. Narrow or short viewports intentionally retain
+ * ordinary document scrolling.
+ */
+@media (min-width: 64rem) and (min-height: 45rem) {
+	.agent-overview-workspace,
+	.agent-runs-workspace {
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.agent-overview-workspace .agent-overview-tab {
+		min-height: 0;
+		flex: 1 1 0%;
+		overflow: hidden;
+	}
+
+	.agent-overview-workspace .agent-overview-main {
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.agent-overview-workspace .agent-overview-recent {
+		display: flex;
+		min-height: 0;
+		flex: 1 1 0%;
+		flex-direction: column;
+	}
+
+	.agent-overview-workspace .agent-overview-recent-list {
+		min-height: 0;
+		flex: 1 1 0%;
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+	}
+
+	.agent-overview-workspace .agent-overview-sidebar {
+		min-height: 0;
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+		scrollbar-gutter: stable;
+		padding-inline-end: 0.25rem;
+	}
+
+	.agent-runs-workspace .agent-runs-tab {
+		min-height: 0;
+		flex: 1 1 0%;
+		overflow: hidden;
+	}
+
+	.agent-runs-workspace .agent-runs-filter-region {
+		max-height: min(12rem, 30vh);
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+		scrollbar-gutter: stable;
+		padding-inline-end: 0.25rem;
+	}
+
+	.agent-runs-workspace .agent-runs-scroll-region {
+		min-height: 0;
+		flex: 1 1 0%;
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+		padding-block-end: 0.25rem;
+	}
+}
+
 :root {
 	--radius: 0.65rem;
 	--background: oklch(1 0 0);

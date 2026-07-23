@@ -5,6 +5,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from src.models.contracts.executions import WorkflowExecutionResponse
+from src.models.enums import ExecutionStatus
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
@@ -121,8 +123,10 @@ class TestAutonomousAgentExecutor:
     async def test_run_with_tool_calls(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
         """Run executes tools and continues the loop until no more tool calls."""
         workflow_id = uuid4()
+        workflow_execution_id = str(uuid4())
+        mock_agent.system_tools = ["system_tool"]
         mock_resolve_tools.return_value = (
-            [MagicMock(name="my_tool")],
+            [MagicMock(name="my_tool"), MagicMock(name="system_tool")],
             {"my_tool": workflow_id},
         )
 
@@ -131,7 +135,10 @@ class TestAutonomousAgentExecutor:
         mock_llm.complete = AsyncMock(side_effect=[
             LLMResponse(
                 content=None,
-                tool_calls=[ToolCallRequest(id="tc1", name="my_tool", arguments={"x": 1})],
+                tool_calls=[
+                    ToolCallRequest(id="tc1", name="my_tool", arguments={"x": 1}),
+                    ToolCallRequest(id="tc2", name="system_tool", arguments={}),
+                ],
                 finish_reason="tool_use",
                 input_tokens=100,
                 output_tokens=50,
@@ -148,9 +155,14 @@ class TestAutonomousAgentExecutor:
 
         # Mock the workflow tool execution (imported inside _execute_tool)
         with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
-            mock_exec_tool.return_value = MagicMock(result="tool output", status=MagicMock(value="completed"))
+            mock_exec_tool.return_value = WorkflowExecutionResponse(
+                execution_id=workflow_execution_id,
+                status=ExecutionStatus.SUCCESS,
+                result="tool output",
+            )
 
             executor = AutonomousAgentExecutor(mock_session)
+            executor._execute_system_tool = AsyncMock(return_value="system output")
             result = await executor.run(
                 agent=mock_agent,
                 input_data={"task": "do something"},
@@ -161,6 +173,88 @@ class TestAutonomousAgentExecutor:
         assert result["output"] == "Final answer"
         assert result["iterations_used"] == 2
         assert result["tokens_used"] == 450  # 150 + 300
+        tool_result_steps = {
+            step["content"]["tool_name"]: step["content"]
+            for step in executor._pending_steps
+            if step["type"] == "tool_result"
+        }
+        assert tool_result_steps["my_tool"]["execution_id"] == workflow_execution_id
+        assert tool_result_steps["my_tool"]["is_error"] is False
+        assert "execution_id" not in tool_result_steps["system_tool"]
+        assert tool_result_steps["system_tool"]["is_error"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "workflow_status",
+        [
+            ExecutionStatus.FAILED,
+            ExecutionStatus.TIMEOUT,
+            ExecutionStatus.CANCELLED,
+            ExecutionStatus.COMPLETED_WITH_ERRORS,
+        ],
+    )
+    @patch("src.services.execution.autonomous_agent_executor.get_llm_client")
+    @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+    async def test_run_marks_terminal_workflow_failures_as_errored_results(
+        self,
+        mock_resolve_tools,
+        mock_get_llm,
+        mock_session,
+        mock_agent,
+        workflow_status,
+    ):
+        """Terminal non-success workflow responses retain their ID and record an error."""
+        workflow_execution_id = str(uuid4())
+        mock_resolve_tools.return_value = (
+            [MagicMock(name="my_tool")],
+            {"my_tool": uuid4()},
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="tc1",
+                            name="my_tool",
+                            arguments={},
+                        )
+                    ],
+                    finish_reason="tool_use",
+                    input_tokens=10,
+                    output_tokens=5,
+                ),
+                LLMResponse(
+                    content="Handled failure",
+                    tool_calls=None,
+                    finish_reason="end_turn",
+                    input_tokens=10,
+                    output_tokens=5,
+                ),
+            ]
+        )
+        mock_get_llm.return_value = mock_llm
+
+        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+            mock_exec_tool.return_value = WorkflowExecutionResponse(
+                execution_id=workflow_execution_id,
+                status=workflow_status,
+                error=f"Workflow ended with {workflow_status.value}",
+            )
+
+            executor = AutonomousAgentExecutor(mock_session)
+            await executor.run(agent=mock_agent, run_id=str(uuid4()))
+
+        tool_result = next(
+            step["content"]
+            for step in executor._pending_steps
+            if step["type"] == "tool_result"
+        )
+        assert tool_result["execution_id"] == workflow_execution_id
+        assert tool_result["is_error"] is True
+        assert tool_result["result"].startswith("Error:")
 
     @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.get_llm_client")

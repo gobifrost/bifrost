@@ -123,7 +123,14 @@ async function renderPage(path = "/agents/agent-1/review") {
 	const { AgentReviewPage } = await import("./AgentReviewPage");
 	function LocationProbe() {
 		const loc = useLocation();
-		return <div data-testid="location">{loc.pathname}</div>;
+		return (
+			<div
+				data-testid="location"
+				data-navigation-state={JSON.stringify(loc.state)}
+			>
+				{loc.pathname}
+			</div>
+		);
 	}
 	return renderWithProviders(
 		<Routes>
@@ -138,6 +145,10 @@ async function renderPage(path = "/agents/agent-1/review") {
 			/>
 			<Route
 				path="/agents/:id"
+				element={<LocationProbe />}
+			/>
+			<Route
+				path="/agents/:id/runs/:runId"
 				element={<LocationProbe />}
 			/>
 		</Routes>,
@@ -176,6 +187,26 @@ describe("AgentReviewPage — basic render", () => {
 });
 
 describe("AgentReviewPage — navigation", () => {
+	it("keeps the review queue as the origin for full run details", async () => {
+		const { user } = await renderPage(
+			"/agents/agent-1/review?filter=flagged",
+		);
+
+		await user.click(screen.getByTestId("open-detail"));
+		expect(screen.getByTestId("location")).toHaveTextContent(
+			"/agents/agent-1/runs/a",
+		);
+		expect(screen.getByTestId("location")).toHaveAttribute(
+			"data-navigation-state",
+			JSON.stringify({
+				agentRunOrigin: {
+					href: "/agents/agent-1/review?filter=flagged",
+					label: "Back to Tier-1 Triage review queue",
+				},
+			}),
+		);
+	});
+
 	it("right arrow advances to the next run", async () => {
 		await renderPage();
 		expect(screen.getByTestId("review-counter")).toHaveTextContent(

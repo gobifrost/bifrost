@@ -204,7 +204,10 @@ function workspaceZip(): Buffer {
 				},
 			}),
 		},
-		{ path: ".bifrost/files.yaml", content: JSON.stringify({ locations: ["docs"] }) },
+		{
+			path: ".bifrost/files.yaml",
+			content: JSON.stringify({ locations: ["docs"] }),
+		},
 		{
 			path: ".bifrost/apps.yaml",
 			content: JSON.stringify({
@@ -218,7 +221,10 @@ function workspaceZip(): Buffer {
 						access_level: "authenticated",
 						path: `apps/${APP_SLUG}`,
 						// Prebuilt fast-path: no src_files, dist carried inline.
-						dist_files: { "index.html": INDEX_HTML, "main.js": ENTRY_JS },
+						dist_files: {
+							"index.html": INDEX_HTML,
+							"main.js": ENTRY_JS,
+						},
 					},
 				},
 			}),
@@ -227,6 +233,20 @@ function workspaceZip(): Buffer {
 }
 
 test.describe("deployed solution runtime contract", () => {
+	let createdSolutionId: string | null = null;
+
+	test.afterEach(async ({ api }) => {
+		if (!createdSolutionId) return;
+		const cleanup = await api.delete(
+			`/api/solutions/${createdSolutionId}`,
+			{
+				params: { confirm: SLUG },
+			},
+		);
+		expect(cleanup.ok(), await cleanup.text()).toBeTruthy();
+		createdSolutionId = null;
+	});
+
 	test("workflow/table/file resolve via the header contract in the browser", async ({
 		page,
 		api,
@@ -240,27 +260,37 @@ test.describe("deployed solution runtime contract", () => {
 
 		// --- create the install, then deploy the workspace zip ---
 		const sol = await api.post("/api/solutions", {
-			data: { slug: SLUG, name: SLUG, scope: "global", global_repo_access: false },
+			data: {
+				slug: SLUG,
+				name: SLUG,
+				organization_id: null,
+				global_repo_access: false,
+			},
 		});
 		expect(sol.ok(), await sol.text()).toBeTruthy();
 		const sid = (await sol.json()).id;
+		createdSolutionId = sid;
 
-		const dep = await page.context().request.post(`/api/solutions/${sid}/deploy`, {
-			headers: await api.csrfHeader(),
-			multipart: {
-				file: {
-					name: "solution.zip",
-					mimeType: "application/zip",
-					buffer: workspaceZip(),
+		const dep = await page
+			.context()
+			.request.post(`/api/solutions/${sid}/deploy`, {
+				headers: await api.csrfHeader(),
+				multipart: {
+					file: {
+						name: "solution.zip",
+						mimeType: "application/zip",
+						buffer: workspaceZip(),
+					},
 				},
-			},
-		});
+			});
 		expect(dep.status(), await dep.text()).toBe(202);
 		const jobId = (await dep.json()).deploy_job_id;
 		await expect
 			.poll(
 				async () => {
-					const st = await api.get(`/api/solutions/deploy-jobs/${jobId}`);
+					const st = await api.get(
+						`/api/solutions/deploy-jobs/${jobId}`,
+					);
 					const body = await st.json();
 					if (body.status === "failed") {
 						throw new Error(`deploy failed: ${body.error}`);

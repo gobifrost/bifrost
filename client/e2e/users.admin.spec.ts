@@ -26,14 +26,13 @@ test.describe("User Listing", () => {
 			page.getByRole("heading", { name: /users/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Either we see users in the table or an empty state message
-		const hasUsers = (await page.locator("table tbody tr").count()) > 0;
-		const hasEmptyState = await page
-			.getByText(/no users/i)
-			.isVisible()
-			.catch(() => false);
-
-		expect(hasUsers || hasEmptyState).toBe(true);
+		// The heading renders before the users query settles. Wait for the
+		// loaded table or its empty state instead of sampling during skeletons.
+		const userRows = page.locator("table tbody tr");
+		const emptyState = page.getByText(/no users/i);
+		await expect(userRows.first().or(emptyState)).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test("should show create user button", async ({ page }) => {
@@ -60,6 +59,8 @@ test.describe("User Details", () => {
 
 		// Find a user row
 		const userRow = page.locator("table tbody tr").first();
+		const emptyState = page.getByText(/no users/i);
+		await expect(userRow.or(emptyState)).toBeVisible({ timeout: 10000 });
 		const hasUserRow = await userRow.isVisible().catch(() => false);
 
 		if (hasUserRow) {

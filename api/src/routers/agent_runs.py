@@ -12,7 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func, literal_column, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from src.core.auth import CurrentActiveUser
 from src.core.cache.keys import agent_run_steps_stream_key
@@ -26,6 +26,7 @@ from src.models.contracts.agent_run_flag_conversations import (
 )
 from src.models.contracts.agent_runs import (
     AgentRunCreateRequest,
+    AgentRunChildResponse,
     AgentRunDetailResponse,
     AgentRunListResponse,
     AgentRunRerunResponse,
@@ -142,8 +143,12 @@ async def list_agent_runs(
     offset: int = Query(0, ge=0),
 ) -> AgentRunListResponse:
     """List agent runs with optional filters."""
-    # Build base query — exclude delegation sub-runs from top-level list
-    query = select(AgentRun).join(AgentRun.agent).where(AgentRun.parent_run_id.is_(None))
+    # Global history stays root-only so one orchestration is counted once.
+    # An individual agent's history includes delegated runs because those are
+    # real executions of that agent and should not disappear from its Runs tab.
+    query = select(AgentRun).join(AgentRun.agent)
+    if agent_id is None:
+        query = query.where(AgentRun.parent_run_id.is_(None))
 
     # Org filter: non-superusers see only their org's runs
     if not user.is_superuser:
@@ -496,13 +501,30 @@ async def get_agent_run(
             call_count=int(totals_row.call_count or 0),
         )
 
-    # Fetch child run IDs for delegation sub-runs
-    child_ids_result = await db.execute(
-        select(AgentRun.id)
+    # Fetch delegation sub-runs and their agents in one ordered query. Keep the
+    # legacy ID list while also returning enough context for a user-facing view.
+    child_runs_result = await db.execute(
+        select(AgentRun)
+        .options(joinedload(AgentRun.agent))
         .where(AgentRun.parent_run_id == run_id)
-        .order_by(AgentRun.created_at)
+        .order_by(AgentRun.created_at, AgentRun.id)
     )
-    child_run_ids = [row[0] for row in child_ids_result.all()]
+    child_runs = child_runs_result.scalars().all()
+    child_run_ids = [child.id for child in child_runs]
+    child_runs_response = [
+        AgentRunChildResponse(
+            id=child.id,
+            agent_id=child.agent_id,
+            agent_name=child.agent.name,
+            status=child.status,
+            asked=child.asked,
+            did=child.did,
+            answered=child.answered,
+            duration_ms=child.duration_ms,
+            created_at=child.created_at,
+        )
+        for child in child_runs
+    ]
 
     # Dual-read steps: Redis Stream when in-progress, DB when complete
     steps_response: list[AgentRunStepResponse] = []
@@ -590,6 +612,7 @@ async def get_agent_run(
         completed_at=run.completed_at,
         parent_run_id=run.parent_run_id,
         child_run_ids=child_run_ids,
+        child_runs=child_runs_response,
         steps=steps_response,
         ai_usage=ai_usage_list,
         ai_totals=ai_totals_response,
@@ -1272,5 +1295,3 @@ async def cancel_backfill_job(
     )
 
     return SummaryBackfillJobResponse.model_validate(job)
-
-

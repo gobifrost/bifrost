@@ -11,7 +11,12 @@
  */
 
 import { useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+	Link,
+	useNavigate,
+	useParams,
+	useSearchParams,
+} from "react-router-dom";
 import { toast } from "sonner";
 import {
 	ArrowLeft,
@@ -133,7 +138,13 @@ export function AgentDetailPage() {
 	}
 
 	return (
-		<div className="mx-auto flex max-w-[1400px] flex-col gap-5 p-7">
+		<div
+			className={cn(
+				"mx-auto flex w-full max-w-[1400px] flex-col gap-5 p-7",
+				tab === "overview" && "agent-overview-workspace",
+				tab === "runs" && "agent-runs-workspace",
+			)}
+		>
 			{/* Breadcrumb */}
 			<div
 				className={cn(
@@ -174,7 +185,12 @@ export function AgentDetailPage() {
 						/>
 					) : null}
 					<div className="min-w-0 flex-1">
-						<h1 className={cn("flex items-center gap-2.5", TYPE_PAGE_TITLE)}>
+						<h1
+							className={cn(
+								"flex items-center gap-2.5",
+								TYPE_PAGE_TITLE,
+							)}
+						>
 							<span className="truncate">
 								{isCreate
 									? "New agent"
@@ -186,21 +202,30 @@ export function AgentDetailPage() {
 								isActive ? (
 									<span className={PILL_ACTIVE}>Active</span>
 								) : (
-									<Badge variant="secondary" className="text-[11px]">
+									<Badge
+										variant="secondary"
+										className="text-[11px]"
+									>
 										Paused
 									</Badge>
 								)
 							) : null}
 						</h1>
 						{!isCreate && agent?.description ? (
-							<p className={cn("mt-1 line-clamp-2", TYPE_BODY, TONE_MUTED)}>
+							<p
+								className={cn(
+									"mt-1 line-clamp-2",
+									TYPE_BODY,
+									TONE_MUTED,
+								)}
+							>
 								{agent.description}
 							</p>
 						) : null}
 					</div>
 				</div>
 				{!isCreate && agent ? (
-					<div className="flex items-center gap-2">
+					<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
 						{hasChat ? (
 							<TooltipProvider>
 								<Tooltip>
@@ -238,8 +263,13 @@ export function AgentDetailPage() {
 							size="sm"
 							onClick={() =>
 								updateAgent.mutate({
-									params: { path: { agent_id: agent.id ?? "" } },
-									body: { is_active: !isActive, clear_roles: false },
+									params: {
+										path: { agent_id: agent.id ?? "" },
+									},
+									body: {
+										is_active: !isActive,
+										clear_roles: false,
+									},
 								})
 							}
 						>
@@ -249,7 +279,8 @@ export function AgentDetailPage() {
 								</>
 							) : (
 								<>
-									<PlayCircle className="h-3.5 w-3.5" /> Activate
+									<PlayCircle className="h-3.5 w-3.5" />{" "}
+									Activate
 								</>
 							)}
 						</Button>
@@ -265,7 +296,9 @@ export function AgentDetailPage() {
 							<Trash2 className="h-3.5 w-3.5" />
 						</Button>
 						{isPlatformAdmin ? (
-							<SummaryBackfillButton agentId={agent.id ?? undefined} />
+							<SummaryBackfillButton
+								agentId={agent.id ?? undefined}
+							/>
 						) : null}
 					</div>
 				) : null}

@@ -7,8 +7,9 @@
  * component is purely presentational.
  */
 
-import { ExternalLink, Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { ExternalLink, ListTree, Sparkles } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 
 import {
 	Sheet,
@@ -16,19 +17,21 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-	Tabs,
-	TabsContent,
-	TabsList,
-	TabsTrigger,
-} from "@/components/ui/tabs";
+	createAgentRunNavigationState,
+	getLocationHref,
+} from "@/lib/agent-run-navigation";
 import type { components } from "@/lib/v1";
 
 import { FlagConversation } from "./FlagConversation";
 import { RunReviewPanel, type Verdict } from "./RunReviewPanel";
+import { Timeline } from "./Timeline";
+import { activityDomId } from "./run-activity";
 
 type AgentRunDetail = components["schemas"]["AgentRunDetailResponse"];
-type FlagConversationResponse = components["schemas"]["FlagConversationResponse"];
+type FlagConversationResponse =
+	components["schemas"]["FlagConversationResponse"];
 
 export interface RunReviewSheetProps {
 	open: boolean;
@@ -59,9 +62,46 @@ export function RunReviewSheet({
 	onTestAgainstRun,
 	defaultTab = "review",
 }: RunReviewSheetProps) {
+	const location = useLocation();
+	const [activityPreview, setActivityPreview] = useState<{
+		runId: string;
+		activityId: string;
+	} | null>(null);
+
 	if (!run) return null;
+	const runId = run.id;
+	const runNavigationOrigin = {
+		href: getLocationHref(location),
+		label: `Back to ${run.agent_name ?? "agent"} runs`,
+	};
+
+	const highlightedActivityId =
+		activityPreview?.runId === runId ? activityPreview.activityId : null;
+
+	function handleActivityReferencePreview(activityId: string | null) {
+		setActivityPreview(activityId ? { runId, activityId } : null);
+	}
+
+	function handleActivityReferenceActivate(activityId: string) {
+		const target = document.getElementById(activityDomId(activityId));
+		if (!target) return;
+		const reduceMotion =
+			window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ??
+			false;
+		target.scrollIntoView({
+			behavior: reduceMotion ? "auto" : "smooth",
+			block: "center",
+		});
+		target.focus({ preventScroll: true });
+	}
+
+	function handleOpenChange(nextOpen: boolean) {
+		if (!nextOpen) setActivityPreview(null);
+		onOpenChange(nextOpen);
+	}
+
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
+		<Sheet open={open} onOpenChange={handleOpenChange}>
 			<SheetContent
 				side="right"
 				aria-label="Run review"
@@ -80,6 +120,9 @@ export function RunReviewSheet({
 						</SheetTitle>
 						<Link
 							to={`/agents/${run.agent_id}/runs/${run.id}`}
+							state={createAgentRunNavigationState(
+								runNavigationOrigin,
+							)}
 							className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
 							aria-label="Open full run page"
 						>
@@ -109,7 +152,40 @@ export function RunReviewSheet({
 							onVerdict={onVerdict}
 							onNote={onNote}
 							variant="drawer"
+							runNavigationOrigin={runNavigationOrigin}
+							onActivityReferencePreview={
+								handleActivityReferencePreview
+							}
+							onActivityReferenceActivate={
+								handleActivityReferenceActivate
+							}
 						/>
+						<section
+							className="border-t px-4 pb-5 pt-4"
+							data-slot="run-activity"
+							aria-labelledby="run-review-sheet-activity-title"
+						>
+							<div className="mb-4">
+								<h3
+									id="run-review-sheet-activity-title"
+									className="flex items-center gap-2 text-sm font-semibold"
+								>
+									<ListTree className="h-4 w-4 text-muted-foreground" />
+									Activity
+								</h3>
+								<p className="mt-1 text-xs text-muted-foreground">
+									How the agent handled this run, in order
+								</p>
+							</div>
+							<Timeline
+								steps={run.steps ?? []}
+								childRunIds={run.child_run_ids ?? []}
+								childRuns={run.child_runs ?? []}
+								runStatus={run.status}
+								highlightedActivityId={highlightedActivityId}
+								childRunOrigin={runNavigationOrigin}
+							/>
+						</section>
 					</TabsContent>
 					<TabsContent
 						value="tune"

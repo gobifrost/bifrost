@@ -16,9 +16,10 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockUseAgent = vi.fn();
 vi.mock("@/hooks/useAgents", async () => {
-	const actual = await vi.importActual<typeof import("@/hooks/useAgents")>(
-		"@/hooks/useAgents",
-	);
+	const actual =
+		await vi.importActual<typeof import("@/hooks/useAgents")>(
+			"@/hooks/useAgents",
+		);
 	return {
 		...actual,
 		useAgent: (id: string | undefined) => mockUseAgent(id),
@@ -58,10 +59,7 @@ vi.mock("@/components/agents/AgentSettingsTab", () => ({
 		<div data-testid="settings-tab" data-mode={mode}>
 			settings-{mode}
 			{onCreated ? (
-				<button
-					type="button"
-					onClick={() => onCreated("new-agent-id")}
-				>
+				<button type="button" onClick={() => onCreated("new-agent-id")}>
 					trigger-create
 				</button>
 			) : null}
@@ -157,6 +155,25 @@ describe("AgentDetailPage — edit mode", () => {
 		expect(await screen.findByTestId("runs-tab")).toHaveTextContent(
 			"runs-agent-1",
 		);
+	});
+
+	it("uses a bounded workspace for Overview and Runs, but not Settings", async () => {
+		const { container, user } = await renderAtRoute(
+			"/agents/agent-1?tab=runs",
+		);
+
+		expect(container.querySelector(".agent-runs-workspace")).not.toBeNull();
+		expect(container.querySelector(".agent-overview-workspace")).toBeNull();
+
+		await user.click(screen.getByRole("tab", { name: /overview/i }));
+		expect(container.querySelector(".agent-runs-workspace")).toBeNull();
+		expect(
+			container.querySelector(".agent-overview-workspace"),
+		).not.toBeNull();
+
+		await user.click(screen.getByRole("tab", { name: /settings/i }));
+		expect(container.querySelector(".agent-runs-workspace")).toBeNull();
+		expect(container.querySelector(".agent-overview-workspace")).toBeNull();
 	});
 
 	it("switches to the Settings tab and renders edit mode", async () => {

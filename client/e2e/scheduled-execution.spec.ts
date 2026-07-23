@@ -179,17 +179,13 @@ test.describe("Scheduled executions", () => {
 		expect(body.status).toBe("Scheduled");
 
 		await page.goto("/history");
-		await page.getByRole("tab", { name: "Scheduled" }).click();
 
-		const row = rowForWorkflow(page, WORKFLOW_FUNCTION, "Scheduled");
-		await expect(row).toBeVisible({ timeout: 15_000 });
-		await expect(row.getByText("Scheduled", { exact: true })).toBeVisible();
-
-		// Poll: hit refresh, check for `Completed` on ANY tab. Once the
-		// promoter fires, the row leaves the Scheduled tab (status becomes
-		// Pending → Running → Success/Completed), so we switch to All to
-		// keep the row locator stable.
-		await page.getByRole("tab", { name: "All" }).click();
+		// The API response above proves the run was initially Scheduled. The
+		// promoter can tick between that response and the first page paint, so
+		// pinning this assertion to the Scheduled tab is inherently racy: the
+		// row may already be Pending or Running. The long-delay cancellation
+		// test covers the Scheduled badge itself; follow this short-delay run
+		// from All so its locator remains stable through every transition.
 		const rowOnAll = rowForWorkflow(page, WORKFLOW_FUNCTION);
 
 		// Target the status badge specifically to avoid matching the

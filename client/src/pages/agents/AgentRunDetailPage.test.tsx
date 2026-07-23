@@ -6,8 +6,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Routes, Route } from "react-router-dom";
+import { Link, Routes, Route } from "react-router-dom";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { createAgentRunNavigationState } from "@/lib/agent-run-navigation";
 
 // -----------------------------------------------------------------------------
 // Mocks
@@ -57,14 +58,24 @@ vi.mock("@/contexts/AuthContext", () => ({
 
 // Stub heavy children
 vi.mock("@/components/agents/RunReviewPanel", () => ({
+	RunPayloads: () => (
+		<div>
+			<button type="button">Raw input</button>
+			<button type="button">Raw output</button>
+		</div>
+	),
 	RunReviewPanel: ({
 		run,
 		verdict,
 		onVerdict,
+		onActivityReferencePreview,
+		onActivityReferenceActivate,
 	}: {
 		run: { id: string };
 		verdict: string | null;
 		onVerdict: (v: string | null) => void;
+		onActivityReferencePreview?: (activityId: string | null) => void;
+		onActivityReferenceActivate?: (activityId: string) => void;
 	}) => (
 		<div data-testid="run-review-panel" data-run-id={run.id}>
 			<span data-testid="verdict-label">{verdict ?? "none"}</span>
@@ -88,6 +99,14 @@ vi.mock("@/components/agents/RunReviewPanel", () => ({
 				data-testid="clear-verdict"
 			>
 				clear
+			</button>
+			<button
+				type="button"
+				onMouseEnter={() => onActivityReferencePreview?.("step-1")}
+				onMouseLeave={() => onActivityReferencePreview?.(null)}
+				onClick={() => onActivityReferenceActivate?.("step-1")}
+			>
+				activity reference
 			</button>
 		</div>
 	),
@@ -131,6 +150,8 @@ function makeRun(overrides: Record<string, unknown> = {}) {
 		caller_email: "alice@acme.com",
 		caller_name: "Alice",
 		steps: [],
+		child_run_ids: [],
+		child_runs: [],
 		ai_usage: [],
 		ai_totals: null,
 		...overrides,
@@ -184,12 +205,116 @@ describe("AgentRunDetailPage — header + summary", () => {
 
 	it("renders the agent name in the breadcrumb", async () => {
 		await renderPage();
-		const links = screen.getAllByRole("link", { name: /tier-1 triage/i });
-		// Both breadcrumb and the sidebar Agent card link to the same URL.
+		const links = screen.getAllByRole("link", {
+			name: /back to tier-1 triage/i,
+		});
 		expect(links.length).toBeGreaterThan(0);
 		for (const link of links) {
 			expect(link).toHaveAttribute("href", "/agents/agent-1");
 		}
+	});
+
+	it("returns to the exact in-app origin from the contextual breadcrumb", async () => {
+		const { AgentRunDetailPage } = await import("./AgentRunDetailPage");
+		const { user } = renderWithProviders(
+			<Routes>
+				<Route
+					path="/parent-run"
+					element={
+						<div>
+							<h1>Parent run restored</h1>
+							<Link
+								to="/agents/agent-1/runs/run-1"
+								state={createAgentRunNavigationState({
+									href: "/parent-run",
+									label: "Back to Service Desk Triage run",
+								})}
+							>
+								Open child run
+							</Link>
+						</div>
+					}
+				/>
+				<Route
+					path="/agents/:agentId/runs/:runId"
+					element={<AgentRunDetailPage />}
+				/>
+			</Routes>,
+			{ initialEntries: ["/parent-run"] },
+		);
+
+		await user.click(
+			screen.getByRole("link", { name: "Open child run" }),
+		);
+		const back = screen.getByTestId("run-context-back");
+		expect(back).toHaveTextContent("Back to Service Desk Triage run");
+		expect(back).toHaveAttribute("href", "/parent-run");
+
+		await user.click(back);
+		expect(
+			screen.getByRole("heading", { name: "Parent run restored" }),
+		).toBeInTheDocument();
+	});
+
+	it("falls back to the parent run for a directly opened delegated run", async () => {
+		mockUseAgentRun.mockImplementation((id: string | undefined) => {
+			if (id === "parent-run") {
+				return {
+					data: makeRun({
+						id: "parent-run",
+						agent_id: "parent-agent",
+						agent_name: "Service Desk Triage",
+						parent_run_id: null,
+					}),
+					isLoading: false,
+				};
+			}
+			return {
+				data: makeRun({
+					id: "child-run",
+					agent_id: "child-agent",
+					agent_name: "Troubleshooting Specialist",
+					parent_run_id: "parent-run",
+				}),
+				isLoading: false,
+			};
+		});
+
+		await renderPage("/agents/child-agent/runs/child-run");
+		const back = screen.getByTestId("run-context-back");
+		expect(back).toHaveTextContent("Back to Service Desk Triage run");
+		expect(back).toHaveAttribute(
+			"href",
+			"/agents/parent-agent/runs/parent-run",
+		);
+	});
+
+	it("uses the run owner for a direct root-run fallback", async () => {
+		mockUseAgentRun.mockImplementation((id: string | undefined) => ({
+			data:
+				id === "run-1"
+					? makeRun({
+							agent_id: "actual-agent",
+							agent_name: "Actual Owner",
+						})
+					: undefined,
+			isLoading: false,
+		}));
+		mockUseAgent.mockImplementation((id: string | undefined) => ({
+			data: {
+				...baseAgent,
+				id,
+				name: "Actual Owner",
+			},
+			isLoading: false,
+		}));
+
+		await renderPage("/agents/stale-route-agent/runs/run-1");
+		expect(mockUseAgent).toHaveBeenCalledWith("actual-agent");
+		expect(screen.getByTestId("run-context-back")).toHaveAttribute(
+			"href",
+			"/agents/actual-agent",
+		);
 	});
 
 	it("renders the RunReviewPanel with the run id", async () => {
@@ -198,6 +323,97 @@ describe("AgentRunDetailPage — header + summary", () => {
 			"data-run-id",
 			"run-1",
 		);
+	});
+
+	it("keeps grouped work units in Advanced and nests the raw executor trace", async () => {
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({
+				steps: [
+					{
+						id: "step-1",
+						run_id: "run-1",
+						step_number: 1,
+						type: "tool_result",
+						content: {
+							tool_name: "get_ticket",
+							result: { ticket_id: 428950 },
+						},
+						created_at: "2026-04-20T12:35:00Z",
+					},
+				],
+			}),
+			isLoading: false,
+		});
+		const { user } = await renderPage();
+
+		expect(screen.getByText("Looked up ticket")).toBeInTheDocument();
+		expect(screen.getByText("Ticket: 428950")).toBeInTheDocument();
+		expect(
+			screen.queryByText(/result from get_ticket/i),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText("Raw input")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /advanced/i }));
+		expect(screen.getByText(/result from get_ticket/i)).not.toBeVisible();
+		expect(screen.getByText("Looked up ticket")).toBeInTheDocument();
+		expect(screen.getByText("Raw input")).toBeInTheDocument();
+		await user.click(screen.getByText("Details", { exact: true }));
+		expect(
+			screen.getByText("get_ticket", { exact: true }),
+		).toBeInTheDocument();
+		expect(screen.getByText("ticket_id:")).toBeInTheDocument();
+		expect(screen.getByText("428950")).toBeInTheDocument();
+
+		await user.click(
+			screen.getByText("Raw executor trace", { exact: true }),
+		);
+		expect(screen.getByText(/result from get_ticket/i)).toBeInTheDocument();
+	});
+
+	it("previews and scrolls to the activity referenced by summary prose", async () => {
+		const scrollIntoView = vi.fn();
+		Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+			configurable: true,
+			value: scrollIntoView,
+		});
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({
+				steps: [
+					{
+						id: "step-1",
+						run_id: "run-1",
+						step_number: 1,
+						type: "tool_call",
+						content: {
+							tool_name: "get_ticket",
+							arguments: { ticket_id: 428950 },
+						},
+						created_at: "2026-04-20T12:35:00Z",
+					},
+				],
+			}),
+			isLoading: false,
+		});
+		const { user, container } = await renderPage();
+		const reference = screen.getByRole("button", {
+			name: "activity reference",
+		});
+		const activity = container.querySelector('[data-activity-id="step-1"]');
+		expect(activity).toHaveAttribute("data-highlighted", "false");
+
+		await user.hover(reference);
+		expect(activity).toHaveAttribute("data-highlighted", "true");
+		await user.unhover(reference);
+		expect(activity).toHaveAttribute("data-highlighted", "false");
+
+		await user.click(reference);
+		expect(scrollIntoView).toHaveBeenCalledWith({
+			behavior: "smooth",
+			block: "center",
+		});
+		await user.unhover(reference);
+		expect(activity).toHaveAttribute("data-highlighted", "false");
+		expect(activity).toHaveFocus();
 	});
 });
 
@@ -247,16 +463,18 @@ describe("AgentRunDetailPage — verdict actions", () => {
 });
 
 describe("AgentRunDetailPage — sidebar metadata", () => {
-	it("renders run id, model, caller and trigger in the sidebar", async () => {
-		await renderPage();
-		// Run ID rendered
-		expect(screen.getByText(/run-1/)).toBeInTheDocument();
-		// Model
-		expect(screen.getByText(/claude-opus-4-7/)).toBeInTheDocument();
-		// Trigger type
+	it("keeps technical metadata in Advanced while retaining operational context", async () => {
+		const { user } = await renderPage();
+		expect(screen.queryByText(/run-1/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/claude-opus-4-7/)).not.toBeInTheDocument();
 		expect(screen.getByText(/test/)).toBeInTheDocument();
-		// Caller name preferred over email
 		expect(screen.getByText(/alice/i)).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /advanced/i }));
+		expect(screen.getByText(/run-1/)).toBeInTheDocument();
+		expect(screen.getByText(/claude-opus-4-7/)).toBeInTheDocument();
+		expect(screen.getByText("Iterations")).toBeInTheDocument();
+		expect(screen.getByText("Tokens")).toBeInTheDocument();
 	});
 });
 
@@ -369,14 +587,14 @@ describe("AgentRunDetailPage — AI usage card", () => {
 			}),
 			isLoading: false,
 		});
-		await renderPage();
+		const { user } = await renderPage();
+		expect(screen.queryByTestId("ai-usage-card")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /advanced/i }));
 		expect(screen.getByTestId("ai-usage-card")).toBeInTheDocument();
 	});
 
 	it("hides the AI usage card when there is no usage data", async () => {
 		await renderPage();
-		expect(
-			screen.queryByTestId("ai-usage-card"),
-		).not.toBeInTheDocument();
+		expect(screen.queryByTestId("ai-usage-card")).not.toBeInTheDocument();
 	});
 });

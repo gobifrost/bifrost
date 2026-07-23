@@ -1,144 +1,115 @@
-/**
- * DidNarrative tests — markers split correctly, chips match steps, and the
- * popover surfaces args/result for matched tool calls.
- */
-
-import { describe, it, expect } from "vitest";
-import { fireEvent } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
 import { renderWithProviders, screen } from "@/test-utils";
+
 import { DidNarrative } from "./DidNarrative";
-import type { components } from "@/lib/v1";
-
-type AgentRunStep = components["schemas"]["AgentRunStepResponse"];
-
-function makeStep(
-	type: string,
-	content: Record<string, unknown>,
-	overrides: Partial<AgentRunStep> = {},
-): AgentRunStep {
-	return {
-		id: `s-${Math.random().toString(36).slice(2, 8)}`,
-		run_id: "00000000-0000-0000-0000-000000000001",
-		step_number: 1,
-		type,
-		content,
-		duration_ms: null,
-		created_at: "2026-04-24T00:00:00Z",
-		...overrides,
-	};
-}
 
 describe("DidNarrative", () => {
-	it("renders plain prose with chips for [tool] markers", () => {
-		const steps = [
-			makeStep(
-				"tool_call",
-				{
-					tool_name: "ai_ticketing_get_ticket_details",
-					arguments: { ticket_id: 423068 },
-				},
-				{ duration_ms: 120 },
-			),
-			makeStep("tool_result", {
-				tool_name: "ai_ticketing_get_ticket_details",
-				result: "ticket #423068 details...",
-			}),
-		];
+	it("replaces machine markers with quiet human-readable references", () => {
 		renderWithProviders(
-			<DidNarrative
-				text="I called [ai_ticketing_get_ticket_details] to fetch the ticket."
-				steps={steps}
-			/>,
+			<DidNarrative text="I used [ai_ticketing_get_ticket_details] to fetch the ticket." />,
 		);
-		// Chip renders the tool name; surrounding prose renders too.
+
+		expect(screen.getByText("Get ticket details")).toBeInTheDocument();
 		expect(
-			screen.getByText("ai_ticketing_get_ticket_details"),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(/I called/i),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(/to fetch the ticket/i),
-		).toBeInTheDocument();
+			screen.queryByText("ai_ticketing_get_ticket_details"),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
 
-	it("clicking a chip pops a panel with args + result for that call", () => {
-		const steps = [
-			makeStep(
-				"tool_call",
-				{
-					tool_name: "send_email",
-					arguments: { to: "user@x.com", subject: "Hi" },
-				},
-				{ duration_ms: 80 },
-			),
-			makeStep("tool_result", {
-				tool_name: "send_email",
-				result: "Email queued (id=42)",
-			}),
-		];
-		renderWithProviders(
+	it("links a verified marker to its recorded activity and previews it on hover", async () => {
+		const onPreview = vi.fn();
+		const onActivate = vi.fn();
+		const { user } = renderWithProviders(
 			<DidNarrative
-				text="Then I called [send_email] to confirm."
-				steps={steps}
+				text="Then [send_email] confirmed the update."
+				activityReferences={{
+					send_email: [
+						{
+							activityId: "activity-1",
+							label: "Sent email",
+						},
+					],
+				}}
+				onReferencePreview={onPreview}
+				onReferenceActivate={onActivate}
 			/>,
 		);
-		fireEvent.click(
-			screen.getByRole("button", { name: /show details for send_email/i }),
-		);
-		// Args + result both surface inside the popover. Use getAllByText
-		// because the matched tool name appears in trigger and popover header.
-		expect(screen.getByText(/Arguments/i)).toBeInTheDocument();
-		expect(screen.getByText(/Result/i)).toBeInTheDocument();
-		expect(
-			screen.getByText(/Email queued \(id=42\)/),
-		).toBeInTheDocument();
-	});
 
-	it("renders an unmatched chip when the marker has no recorded call", () => {
-		// Defensive: summarizer might hallucinate a tool name that wasn't
-		// actually called. Chip should still render so the prose isn't
-		// fragmented, but the styling indicates 'no record'.
-		renderWithProviders(
-			<DidNarrative
-				text="Maybe I called [phantom_tool] once."
-				steps={[]}
-			/>,
-		);
-		const btn = screen.getByRole("button", {
-			name: /phantom_tool.*no matching call recorded/i,
+		const reference = screen.getByRole("link", {
+			name: "Show Sent email in Activity",
 		});
-		expect(btn).toBeInTheDocument();
+		expect(reference).toHaveAttribute(
+			"href",
+			"#run-activity-item-activity-1",
+		);
+
+		await user.hover(reference);
+		expect(onPreview).toHaveBeenLastCalledWith("activity-1");
+		await user.unhover(reference);
+		expect(onPreview).toHaveBeenLastCalledWith(null);
+		await user.click(reference);
+		expect(onActivate).toHaveBeenCalledWith("activity-1");
 	});
 
-	it("returns the fallback when text is empty/null", () => {
+	it("uses the recorded child agent name for delegation references", () => {
+		renderWithProviders(
+			<DidNarrative
+				text="I asked [delegate_to_troubleshooting_agent] to investigate."
+				activityReferences={{
+					delegate_to_troubleshooting_agent: [
+						{
+							activityId: "delegation-1",
+							label: "Troubleshooting Specialist",
+						},
+					],
+				}}
+				onReferenceActivate={() => {}}
+			/>,
+		);
+
+		const reference = screen.getByText("Troubleshooting Specialist");
+		expect(reference).toHaveAttribute("data-slot", "activity-reference");
+		expect(
+			screen.queryByText("delegate_to_troubleshooting_agent"),
+		).not.toBeInTheDocument();
+	});
+
+	it("uses a neutral delegation label when no child run was recorded", () => {
+		renderWithProviders(
+			<DidNarrative text="I asked [delegate_to_missing_agent] to investigate." />,
+		);
+		expect(screen.getByText("Delegated agent")).toBeInTheDocument();
+		expect(screen.queryByText("Missing Agent")).not.toBeInTheDocument();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
+	});
+
+	it("returns the fallback when text is empty", () => {
 		renderWithProviders(
 			<DidNarrative
 				text={null}
-				steps={[]}
-				fallback={<span data-testid="fb">placeholder</span>}
+				fallback={<span data-testid="fallback">No summary</span>}
 			/>,
 		);
-		expect(screen.getByTestId("fb")).toBeInTheDocument();
+		expect(screen.getByTestId("fallback")).toBeInTheDocument();
 	});
 
-	it("supports multiple chips on one line in order", () => {
-		const steps = [
-			makeStep("tool_call", { tool_name: "alpha", arguments: {} }),
-			makeStep("tool_call", { tool_name: "beta", arguments: {} }),
-		];
+	it("pairs repeated markers with recorded activity occurrences in order", () => {
 		const { container } = renderWithProviders(
 			<DidNarrative
-				text="First [alpha] then [beta]."
-				steps={steps}
+				text="First [search_knowledge], then [search_knowledge]."
+				activityReferences={{
+					search_knowledge: [
+						{ activityId: "search-1", label: "Searched knowledge" },
+						{ activityId: "search-2", label: "Searched knowledge" },
+					],
+				}}
+				onReferenceActivate={() => {}}
 			/>,
 		);
-		const buttons = container.querySelectorAll("button");
-		const labels = Array.from(buttons).map((b) =>
-			b.getAttribute("aria-label") ?? "",
-		);
-		expect(labels[0]).toMatch(/alpha/);
-		expect(labels[1]).toMatch(/beta/);
+		const references = Array.from(
+			container.querySelectorAll('[data-slot="activity-reference"]'),
+		).map((element) => element.getAttribute("data-activity-reference-id"));
+		expect(references).toEqual(["search-1", "search-2"]);
 	});
 });

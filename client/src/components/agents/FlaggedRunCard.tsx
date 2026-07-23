@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ChevronDown, ThumbsDown } from "lucide-react";
+import { useLocation } from "react-router-dom";
 
+import { getLocationHref } from "@/lib/agent-run-navigation";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentRun } from "@/services/agentRuns";
@@ -17,6 +19,7 @@ export interface FlaggedRunCardProps {
 }
 
 export function FlaggedRunCard({ run }: FlaggedRunCardProps) {
+	const location = useLocation();
 	const [open, setOpen] = useState(false);
 	const { data: detail, isLoading } = useAgentRun(
 		open ? run.id : undefined,
@@ -70,6 +73,10 @@ export function FlaggedRunCard({ run }: FlaggedRunCardProps) {
 							onVerdict={() => {}}
 							onNote={() => {}}
 							hideVerdictBar
+							runNavigationOrigin={{
+								href: getLocationHref(location),
+								label: `Back to ${run.agent_name ?? "agent"} tuning`,
+							}}
 						/>
 					)}
 				</div>

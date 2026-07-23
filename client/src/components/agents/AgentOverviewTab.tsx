@@ -6,16 +6,13 @@
  *   side column  →  needs-attention card (red), Configuration KV, Budgets KV
  */
 
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
 	Activity,
 	AlertTriangle,
-	CheckCircle,
-	Clock,
 	Info,
 	ThumbsDown,
 	ThumbsUp,
-	XCircle,
 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,18 +30,17 @@ import {
 } from "@/components/agents/design-tokens";
 import { Sparkline } from "@/components/agents/Sparkline";
 import { StatCard } from "@/components/agents/StatCard";
-import { SummaryPlaceholder } from "@/components/agents/SummaryPlaceholder";
+import { RunSummaryContent } from "@/components/agents/RunSummaryContent";
 import { useAgent } from "@/hooks/useAgents";
 import { useAgentRunUpdates } from "@/hooks/useAgentRunUpdates";
 import { useAgentRuns } from "@/services/agentRuns";
 import { useAgentStats } from "@/services/agents";
 import {
-	cn,
-	formatCost,
-	formatDuration,
-	formatNumber,
-	formatRelativeTime,
-} from "@/lib/utils";
+	createAgentRunNavigationState,
+	getLocationHref,
+	type AgentRunNavigationOrigin,
+} from "@/lib/agent-run-navigation";
+import { cn, formatCost, formatDuration, formatNumber } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
@@ -54,6 +50,7 @@ export interface AgentOverviewTabProps {
 }
 
 export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
+	const location = useLocation();
 	const { data: agent } = useAgent(agentId);
 	const { data: stats, isLoading: statsLoading } = useAgentStats(agentId);
 	const { data: runsList, isLoading: runsLoading } = useAgentRuns({
@@ -68,20 +65,44 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 
 	const successRate = stats?.success_rate ?? 0;
 	const sparkColor = successRateTone(successRate);
+	const runNavigationOrigin: AgentRunNavigationOrigin = {
+		href: getLocationHref(location),
+		label: `Back to ${agent?.name ?? "agent"} overview`,
+	};
 
 	return (
-		<div className={cn("grid lg:grid-cols-[minmax(0,1fr)_320px]", GAP_CARD)}>
+		<div
+			className={cn(
+				"agent-overview-tab grid min-w-0 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_320px]",
+				GAP_CARD,
+			)}
+		>
 			{/* Main column */}
-			<div className={cn("flex flex-col", GAP_CARD)}>
+			<div
+				className={cn(
+					"agent-overview-main flex min-w-0 flex-col",
+					GAP_CARD,
+				)}
+			>
 				{/* Stat row — 4 stats */}
 				{statsLoading ? (
-					<div className={cn("grid grid-cols-2 md:grid-cols-4", GAP_CARD)}>
+					<div
+						className={cn(
+							"grid grid-cols-2 md:grid-cols-4",
+							GAP_CARD,
+						)}
+					>
 						{[...Array(4)].map((_, i) => (
 							<Skeleton key={i} className="h-[92px] w-full" />
 						))}
 					</div>
 				) : stats ? (
-					<div className={cn("grid grid-cols-2 md:grid-cols-4", GAP_CARD)}>
+					<div
+						className={cn(
+							"grid grid-cols-2 md:grid-cols-4",
+							GAP_CARD,
+						)}
+					>
 						<StatCard
 							label="Runs (7d)"
 							value={formatNumber(stats.runs_7d)}
@@ -90,7 +111,9 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 							label="Success rate"
 							value={`${Math.round(successRate * 100)}%`}
 							delta={
-								stats.runs_7d > 0 ? `${stats.runs_7d} runs` : "—"
+								stats.runs_7d > 0
+									? `${stats.runs_7d} runs`
+									: "—"
 							}
 						/>
 						<StatCard
@@ -112,9 +135,14 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 							CARD_HEADER,
 						)}
 					>
-						<div className={cn("flex items-center gap-2", TYPE_CARD_TITLE)}>
-							<Activity className="h-3.5 w-3.5" /> Activity — last 7
-							days
+						<div
+							className={cn(
+								"flex items-center gap-2",
+								TYPE_CARD_TITLE,
+							)}
+						>
+							<Activity className="h-3.5 w-3.5" /> Activity — last
+							7 days
 						</div>
 						<span className={TYPE_MUTED}>Daily buckets</span>
 					</div>
@@ -135,7 +163,12 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 				</div>
 
 				{/* Recent activity */}
-				<div className={cn(CARD_SURFACE, "overflow-hidden")}>
+				<div
+					className={cn(
+						CARD_SURFACE,
+						"agent-overview-recent overflow-hidden",
+					)}
+				>
 					<div
 						className={cn(
 							"flex items-center justify-between",
@@ -143,13 +176,8 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 						)}
 					>
 						<div className={TYPE_CARD_TITLE}>Recent activity</div>
-						<button
-							type="button"
-							onClick={() => {
-								document.querySelector<HTMLElement>(
-									'[role="tab"][value="runs"]',
-								)?.click();
-							}}
+						<Link
+							to={`/agents/${agentId}?tab=runs`}
 							className={cn(
 								TYPE_SMALL,
 								TONE_MUTED,
@@ -157,9 +185,13 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 							)}
 						>
 							View all runs →
-						</button>
+						</Link>
 					</div>
-					<div>
+					<div
+						className="agent-overview-recent-list"
+						role="region"
+						aria-label="Recent activity"
+					>
 						{runsLoading ? (
 							<div className="space-y-1 p-3">
 								<Skeleton className="h-12 w-full" />
@@ -171,20 +203,29 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 								No runs yet for this agent.
 							</p>
 						) : (
-							recentRuns.slice(0, 6).map((r) => (
-								<ActivityRow
-									key={r.id}
-									run={r}
-									agentId={agentId}
-								/>
-							))
+							recentRuns
+								.slice(0, 6)
+								.map((r) => (
+									<ActivityRow
+										key={r.id}
+										run={r}
+										runNavigationOrigin={
+											runNavigationOrigin
+										}
+									/>
+								))
 						)}
 					</div>
 				</div>
 			</div>
 
 			{/* Side column */}
-			<div className={cn("flex flex-col", GAP_CARD)}>
+			<div
+				className={cn(
+					"agent-overview-sidebar flex min-w-0 flex-col",
+					GAP_CARD,
+				)}
+			>
 				{needsReview > 0 ? (
 					<Link
 						to={`/agents/${agentId}/review`}
@@ -212,7 +253,8 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 							{unreviewed > 0 ? (
 								<div className="text-muted-foreground">
 									{unreviewed} completed run
-									{unreviewed === 1 ? "" : "s"} awaiting review
+									{unreviewed === 1 ? "" : "s"} awaiting
+									review
 								</div>
 							) : null}
 							<div className="mt-1 w-full rounded-md bg-rose-500/15 px-3 py-1.5 text-center text-[12.5px] font-medium text-rose-500">
@@ -229,7 +271,12 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 						)}
 					>
 						<div className={CARD_HEADER}>
-							<div className={cn("flex items-center gap-2", TYPE_CARD_TITLE)}>
+							<div
+								className={cn(
+									"flex items-center gap-2",
+									TYPE_CARD_TITLE,
+								)}
+							>
 								<Info className="h-3.5 w-3.5" />
 								{unreviewed} to review
 							</div>
@@ -257,7 +304,9 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 						)}
 					>
 						<dt className={TONE_MUTED}>Model</dt>
-						<dd className={TYPE_MONO}>{agent?.llm_model ?? "default"}</dd>
+						<dd className={TYPE_MONO}>
+							{agent?.llm_model ?? "default"}
+						</dd>
 						<dt className={TONE_MUTED}>Channels</dt>
 						<dd>{(agent?.channels ?? []).join(", ") || "—"}</dd>
 						<dt className={TONE_MUTED}>Access</dt>
@@ -303,70 +352,38 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 
 function ActivityRow({
 	run,
-	agentId,
+	runNavigationOrigin,
 }: {
 	run: AgentRun;
-	agentId: string;
+	runNavigationOrigin: AgentRunNavigationOrigin;
 }) {
-	const status = (run.status ?? "").toLowerCase();
-	const iconTone =
-		status === "completed"
-			? "bg-emerald-500/15 text-emerald-500"
-			: status === "failed" || status === "budget_exceeded"
-				? "bg-rose-500/15 text-rose-500"
-				: "bg-muted text-muted-foreground";
-	const Icon =
-		status === "completed"
-			? CheckCircle
-			: status === "running"
-				? Clock
-				: XCircle;
-
 	return (
 		<Link
-			to={`/agents/${agentId}/runs/${run.id}`}
-			className="flex items-center gap-3 border-b px-4 py-3 text-[13px] last:border-b-0 hover:bg-accent/40"
+			to={`/agents/${run.agent_id}/runs/${run.id}`}
+			state={createAgentRunNavigationState(runNavigationOrigin)}
+			className="flex items-start border-b px-4 py-3 last:border-b-0 hover:bg-accent/40"
 		>
-			<div
-				className={cn(
-					"grid h-6 w-6 shrink-0 place-items-center rounded-full",
-					iconTone,
-				)}
-			>
-				<Icon className="h-3 w-3" />
-			</div>
-			<div className="min-w-0 flex-1">
-				<div className="truncate" title={run.asked ?? undefined}>
-					{run.asked || (
-						<SummaryPlaceholder
-							status={run.summary_status}
-							runStatus={run.status}
-						/>
-					)}
-				</div>
-				<div
-					className="mt-0.5 truncate text-[12px] text-muted-foreground"
-					title={run.did ?? undefined}
-				>
-					{run.did || (
-						<SummaryPlaceholder
-							status={run.summary_status}
-							runStatus={run.status}
-							muted
-						/>
-					)}{" "}
-					·{" "}
-					{formatRelativeTime(run.started_at ?? run.created_at ?? "")}{" "}
-					·{" "}
-					{formatDuration(run.duration_ms ?? 0)}
-				</div>
-			</div>
-			{run.verdict === "up" ? (
-				<ThumbsUp className="h-3.5 w-3.5 text-emerald-500" />
-			) : run.verdict === "down" ? (
-				<ThumbsDown className="h-3.5 w-3.5 text-rose-500" />
-			) : null}
+			<RunSummaryContent
+				run={run}
+				density="compact"
+				titleTrailing={
+					run.verdict === "up" ? (
+						<span role="img" aria-label="Verdict: Good">
+							<ThumbsUp
+								aria-hidden="true"
+								className="h-3.5 w-3.5 text-emerald-500"
+							/>
+						</span>
+					) : run.verdict === "down" ? (
+						<span role="img" aria-label="Verdict: Wrong">
+							<ThumbsDown
+								aria-hidden="true"
+								className="h-3.5 w-3.5 text-rose-500"
+							/>
+						</span>
+					) : null
+				}
+			/>
 		</Link>
 	);
 }
-

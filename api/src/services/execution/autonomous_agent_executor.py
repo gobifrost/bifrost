@@ -77,6 +77,8 @@ class AutonomousAgentExecutor:
         self._tool_workflow_id_map: dict[str, UUID] = {}
         self._current_run_id: str = ""
         self._last_delegation_run_id: str | None = None
+        self._last_workflow_execution_id: str | None = None
+        self._last_workflow_execution_is_error = False
         # Caller_user_id for the active run, threaded into MCP dispatch.
         # ``None`` means the run is autonomous (scheduled / webhook /
         # event-trigger), in which case dispatch resolves to the
@@ -295,17 +297,25 @@ class AutonomousAgentExecutor:
 
                 tool_start = time.time()
                 try:
+                    # Workflow execution IDs are captured as transient
+                    # per-invocation metadata by _execute_tool. Reset before
+                    # every dispatch so non-workflow calls cannot inherit the
+                    # previous workflow's execution ID.
+                    self._last_workflow_execution_id = None
+                    self._last_workflow_execution_is_error = False
                     result = await self._execute_tool(tc, agent)
                     tool_duration = int((time.time() - tool_start) * 1000)
 
                     step_content: dict = {
                         "tool_name": tc.name,
                         "result": str(result)[:20000],
-                        "is_error": False,
+                        "is_error": self._last_workflow_execution_is_error,
                     }
                     # Include child_run_id for delegation steps
                     if tc.name.startswith("delegate_to_") and self._last_delegation_run_id:
                         step_content["child_run_id"] = self._last_delegation_run_id
+                    if self._last_workflow_execution_id:
+                        step_content["execution_id"] = self._last_workflow_execution_id
 
                     step_number += 1
                     await self._record_step(run_id, step_number, "tool_result", step_content, duration_ms=tool_duration)
@@ -463,8 +473,10 @@ class AutonomousAgentExecutor:
             is_platform_admin=False,
             is_agent=True,
         )
+        self._last_workflow_execution_id = response.execution_id
+        self._last_workflow_execution_is_error = response.status.value != "Success"
 
-        if response.status.value != "Success":
+        if self._last_workflow_execution_is_error:
             error_msg = response.error or f"Tool execution failed with status: {response.status.value}"
             return f"Error: {error_msg}"
 

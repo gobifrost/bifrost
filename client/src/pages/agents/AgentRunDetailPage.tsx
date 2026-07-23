@@ -5,9 +5,9 @@
  *   /agents/:agentId/runs/:runId  → this page
  *
  * Layout:
- *   - Page header (breadcrumb back to agent + run summary + status badge)
- *   - Main column: <RunReviewPanel variant="page"> + Advanced collapsible
- *     for the raw step timeline
+ *   - Page header (contextual back link + run summary + status badge)
+ *   - Main column: <RunReviewPanel variant="page"> + grouped Activity with
+ *     an explicit Advanced mode for raw executor records and payloads
  *   - Sidebar: run metadata, AI usage cost breakdown, regen-summary button
  *     (admins only when summary failed), and per-flag conversation when the
  *     run's verdict is "down"
@@ -18,19 +18,29 @@
  * hooks, shadcn primitives, Tailwind. No inline styles.
  */
 
-import { useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+	useMemo,
+	useState,
+	type MouseEvent as ReactMouseEvent,
+} from "react";
+import {
+	Link,
+	useLocation,
+	useNavigate,
+	useParams,
+} from "react-router-dom";
 import {
 	AlertCircle,
 	ArrowLeft,
 	Bot,
 	CheckCircle,
-	ChevronDown,
+	ChevronRight,
+	Code2,
 	Clock,
+	ListTree,
 	Loader2,
 	RefreshCw,
 	Sparkles,
-	Terminal,
 	XCircle,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -40,24 +50,23 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
+	CardAction,
 	CardContent,
+	CardDescription,
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import {
-	Collapsible,
-	CollapsibleContent,
-	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAgent } from "@/hooks/useAgents";
 import { useAgentRunUpdates } from "@/hooks/useAgentRunUpdates";
 import {
-	formatCost,
-	formatDuration,
-	formatNumber,
-} from "@/lib/utils";
+	createAgentRunNavigationState,
+	getLocationHref,
+	readAgentRunNavigationOrigin,
+	type AgentRunNavigationOrigin,
+} from "@/lib/agent-run-navigation";
+import { formatCost, formatDuration, formatNumber } from "@/lib/utils";
 import {
 	useAgentRun,
 	useClearVerdict,
@@ -72,9 +81,11 @@ import type { components } from "@/lib/v1";
 import { FlagConversation } from "@/components/agents/FlagConversation";
 import {
 	RunReviewPanel,
+	RunPayloads,
 	type Verdict,
 } from "@/components/agents/RunReviewPanel";
-import { Timeline } from "@/components/agents/Timeline";
+import { AdvancedTimeline, Timeline } from "@/components/agents/Timeline";
+import { activityDomId } from "@/components/agents/run-activity";
 
 type AgentRunDetailResponse = components["schemas"]["AgentRunDetailResponse"];
 
@@ -85,28 +96,53 @@ export function AgentRunDetailPage() {
 	}>();
 	const queryClient = useQueryClient();
 	const { isPlatformAdmin } = useAuth();
+	const location = useLocation();
+	const navigate = useNavigate();
+	const navigationOrigin = readAgentRunNavigationOrigin(location.state);
 
 	// `useAgentRun` returns a hand-rolled `AgentRunDetail` type that predates
 	// some OpenAPI fields (asked/did/verdict/etc). Re-cast to the OpenAPI
 	// schema for full field access.
 	const { data: rawRun, isLoading } = useAgentRun(runId);
 	const run = rawRun as unknown as AgentRunDetailResponse | undefined;
-	const { data: agent } = useAgent(agentId);
+	const owningAgentId = run?.agent_id ?? agentId;
+	const { data: agent } = useAgent(owningAgentId);
+	const parentRunId = navigationOrigin
+		? undefined
+		: (run?.parent_run_id ?? undefined);
+	const { data: rawParentRun } = useAgentRun(parentRunId);
+	const parentRun = parentRunId
+		? (rawParentRun as unknown as AgentRunDetailResponse | undefined)
+		: undefined;
 
 	// Refetch this run whenever the backend broadcasts an update for it —
 	// covers summarizer transitions (pending → generating → completed) and
 	// step-writes so the page reflects live state without a manual refresh.
-	useAgentRunUpdates({ agentId });
+	useAgentRunUpdates({ agentId: owningAgentId });
 
 	const verdict = ((run?.verdict as Verdict | undefined) ?? null) as Verdict;
 	const [note, setNote] = useState<string>(run?.verdict_note ?? "");
-	const [advancedOpen, setAdvancedOpen] = useState(false);
+	const [advancedView, setAdvancedView] = useState(false);
+	const [previewedActivityId, setPreviewedActivityId] = useState<
+		string | null
+	>(null);
+	const [expandedDelegationsByRun, setExpandedDelegationsByRun] = useState<
+		Record<string, ReadonlySet<string>>
+	>({});
+	const [restoreActivityByRun, setRestoreActivityByRun] = useState<
+		Record<string, string>
+	>({});
 
 	const setVerdict = useSetVerdict();
 	const clearVerdict = useClearVerdict();
 	const regenSummary = useRegenerateSummary();
 	const rerun = useRerunAgentRun();
-	const navigate = useNavigate();
+	const currentRunOrigin: AgentRunNavigationOrigin | null = run
+		? {
+				href: getLocationHref(location),
+				label: `Back to ${run.agent_name ?? agent?.name ?? "parent"} run`,
+			}
+		: null;
 
 	const isFlagged = verdict === "down";
 	const { data: conversation } = useFlagConversation(
@@ -168,13 +204,77 @@ export function AgentRunDetailPage() {
 			{
 				onSuccess: (data) => {
 					toast.success("Rerun queued");
-					if (data.run_id) {
-						navigate(`/agents/${run.agent_id}/runs/${data.run_id}`);
+					if (data.run_id && currentRunOrigin) {
+						navigate(
+							`/agents/${run.agent_id}/runs/${data.run_id}`,
+							{
+								state: createAgentRunNavigationState(
+									currentRunOrigin,
+								),
+							},
+						);
 					}
 				},
 				onError: () => toast.error("Failed to queue rerun"),
 			},
 		);
+	}
+
+	function handleContextBackClick(
+		event: ReactMouseEvent<HTMLAnchorElement>,
+	) {
+		if (
+			!navigationOrigin ||
+			event.defaultPrevented ||
+			event.button !== 0 ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey
+		) {
+			return;
+		}
+
+		event.preventDefault();
+		navigate(-1);
+	}
+
+	function handleActivityReferenceActivate(activityId: string) {
+		const target = document.getElementById(activityDomId(activityId));
+		if (!target) return;
+		const reduceMotion =
+			window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ??
+			false;
+		target.scrollIntoView({
+			behavior: reduceMotion ? "auto" : "smooth",
+			block: "center",
+		});
+		target.focus({ preventScroll: true });
+	}
+
+	function handleDelegationExpandedChange(
+		activityId: string,
+		expanded: boolean,
+	) {
+		if (!runId) return;
+		setExpandedDelegationsByRun((current) => {
+			const nextForRun = new Set(current[runId] ?? []);
+			if (expanded) {
+				nextForRun.add(activityId);
+			} else {
+				nextForRun.delete(activityId);
+			}
+			return { ...current, [runId]: nextForRun };
+		});
+	}
+
+	function handleOpenChildRun(activityId: string) {
+		if (!runId) return;
+		setPreviewedActivityId(null);
+		setRestoreActivityByRun((current) => ({
+			...current,
+			[runId]: activityId,
+		}));
 	}
 
 	if (isLoading) {
@@ -195,6 +295,9 @@ export function AgentRunDetailPage() {
 	}
 
 	if (!run) {
+		const notFoundBackHref =
+			navigationOrigin?.href ??
+			(agentId ? `/agents/${agentId}` : "/agents");
 		return (
 			<div
 				className="flex flex-col items-center justify-center gap-3 py-16 text-center"
@@ -203,8 +306,11 @@ export function AgentRunDetailPage() {
 				<AlertCircle className="h-10 w-10 text-muted-foreground" />
 				<div className="text-lg font-medium">Run not found</div>
 				<Button asChild variant="outline">
-					<Link to={agentId ? `/agents/${agentId}` : "/agents"}>
-						Back to agent
+					<Link
+						to={notFoundBackHref}
+						onClick={handleContextBackClick}
+					>
+						{navigationOrigin?.label ?? "Back to agent"}
 					</Link>
 				</Button>
 			</div>
@@ -224,6 +330,18 @@ export function AgentRunDetailPage() {
 	// the summarizer prompt). `did` is a multi-sentence narrative under v3+
 	// and too long for a title; only fall back to it when `asked` is empty.
 	const headerSummary = run.asked || run.did || "Agent run";
+	const parentRunHref = parentRun
+		? `/agents/${parentRun.agent_id}/runs/${parentRun.id}`
+		: null;
+	const backHref =
+		navigationOrigin?.href ??
+		parentRunHref ??
+		`/agents/${run.agent_id}`;
+	const backLabel =
+		navigationOrigin?.label ??
+		(parentRun
+			? `Back to ${parentRun.agent_name ?? "parent"} run`
+			: `Back to ${agent?.name ?? run.agent_name ?? "agent"}`);
 
 	return (
 		<div
@@ -232,11 +350,13 @@ export function AgentRunDetailPage() {
 		>
 			{/* Breadcrumb */}
 			<Link
-				to={`/agents/${run.agent_id}`}
+				to={backHref}
+				onClick={handleContextBackClick}
+				data-testid="run-context-back"
 				className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
 			>
 				<ArrowLeft className="h-3 w-3" />
-				{agent?.name ?? "Back to agent"}
+				{backLabel}
 			</Link>
 
 			{/* Header */}
@@ -263,11 +383,15 @@ export function AgentRunDetailPage() {
 									</span>
 								</>
 							) : null}
-							<span>·</span>
-							<span>
-								{run.iterations_used} iter ·{" "}
-								{formatNumber(run.tokens_used)} tok
-							</span>
+							{advancedView ? (
+								<>
+									<span>·</span>
+									<span>
+										{run.iterations_used} iter ·{" "}
+										{formatNumber(run.tokens_used)} tok
+									</span>
+								</>
+							) : null}
 						</div>
 					</div>
 				</div>
@@ -302,41 +426,118 @@ export function AgentRunDetailPage() {
 							note={note}
 							onVerdict={handleVerdict}
 							onNote={setNote}
+							onActivityReferencePreview={setPreviewedActivityId}
+							onActivityReferenceActivate={
+								handleActivityReferenceActivate
+							}
 						/>
 					</Card>
 
-					{/* Advanced (raw step timeline) */}
-					<Collapsible
-						open={advancedOpen}
-						onOpenChange={setAdvancedOpen}
-					>
-						<CollapsibleTrigger asChild>
-							<button
-								type="button"
-								className="flex w-full items-center gap-2 rounded-2xl bg-card px-3 py-2 text-left text-xs text-muted-foreground shadow-sm ring-1 ring-foreground/5 hover:bg-accent/40 dark:ring-foreground/10"
-							>
-								<ChevronDown
-									className={`h-3 w-3 transition-transform ${
-										advancedOpen ? "rotate-0" : "-rotate-90"
-									}`}
+					<Card data-slot="run-activity">
+						<CardHeader className="border-b pb-4">
+							<CardTitle className="flex items-center gap-2 text-sm">
+								<ListTree className="h-4 w-4 text-muted-foreground" />
+								Activity
+							</CardTitle>
+							<CardDescription className="text-xs">
+								How the agent handled this run, in order
+							</CardDescription>
+							<CardAction>
+								<div
+									role="group"
+									aria-label="Activity detail level"
+									className="flex rounded-lg bg-muted p-0.5 text-xs"
+								>
+									<button
+										type="button"
+										aria-pressed={!advancedView}
+										onClick={() => setAdvancedView(false)}
+										className={`rounded-md px-2.5 py-1.5 font-medium transition-colors ${
+											!advancedView
+												? "bg-background text-foreground shadow-sm"
+												: "text-muted-foreground hover:text-foreground"
+										}`}
+									>
+										Activity
+									</button>
+									<button
+										type="button"
+										aria-pressed={advancedView}
+										onClick={() => setAdvancedView(true)}
+										className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium transition-colors ${
+											advancedView
+												? "bg-background text-foreground shadow-sm"
+												: "text-muted-foreground hover:text-foreground"
+										}`}
+									>
+										<Code2 className="h-3 w-3" />
+										Advanced
+									</button>
+								</div>
+							</CardAction>
+						</CardHeader>
+						<CardContent>
+							<div className="grid gap-5">
+								<Timeline
+									steps={run.steps ?? []}
+									childRunIds={run.child_run_ids ?? []}
+									childRuns={run.child_runs ?? []}
+									runStatus={run.status}
+									showTechnicalDetails={advancedView}
+									highlightedActivityId={previewedActivityId}
+									expandedDelegationIds={
+										runId
+											? expandedDelegationsByRun[runId]
+											: undefined
+									}
+									onDelegationExpandedChange={
+										handleDelegationExpandedChange
+									}
+									restoreActivityId={
+										runId
+											? restoreActivityByRun[runId]
+											: null
+									}
+									onOpenChildRun={handleOpenChildRun}
+									childRunOrigin={
+										currentRunOrigin ?? undefined
+									}
 								/>
-								<Terminal className="h-3 w-3" />
-								<span>
-									Timeline ({(run.steps ?? []).length} steps)
-								</span>
-								<span className="ml-2 text-[11px]">
-									Step-by-step view of what the executor did
-								</span>
-							</button>
-						</CollapsibleTrigger>
-						<CollapsibleContent>
-							<Card className="mt-2">
-								<CardContent className="p-3">
-									<Timeline steps={run.steps ?? []} />
-								</CardContent>
-							</Card>
-						</CollapsibleContent>
-					</Collapsible>
+								{advancedView && (run.input || run.output) ? (
+									<section className="border-t pt-4">
+										<div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+											Run payloads
+										</div>
+										<RunPayloads
+											input={run.input}
+											output={run.output}
+										/>
+									</section>
+								) : null}
+								{advancedView &&
+								(run.steps?.length ?? 0) > 0 ? (
+									<details
+										className="group border-t pt-4"
+										data-slot="raw-executor-trace"
+									>
+										<summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+											<ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+											<Code2 className="h-3.5 w-3.5" />
+											<span>Raw executor trace</span>
+											<span className="ml-auto font-normal tabular-nums">
+												{run.steps?.length ?? 0} events
+											</span>
+										</summary>
+										<div className="mt-2.5 rounded-lg border bg-background/50 p-3">
+											<AdvancedTimeline
+												steps={run.steps ?? []}
+											/>
+										</div>
+									</details>
+								) : null}
+							</div>
+						</CardContent>
+					</Card>
 
 					{/* Per-flag conversation (only when verdict=down) */}
 					{isFlagged ? (
@@ -365,16 +566,18 @@ export function AgentRunDetailPage() {
 					<Card>
 						<CardHeader className="pb-2">
 							<CardTitle className="text-sm">
-								Run metadata
+								Run details
 							</CardTitle>
 						</CardHeader>
 						<CardContent>
 							<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
-								<MetaRow label="Run ID">
-									<span className="font-mono text-[11px] break-all">
-										{run.id}
-									</span>
-								</MetaRow>
+								{advancedView ? (
+									<MetaRow label="Run ID">
+										<span className="font-mono text-[11px] break-all">
+											{run.id}
+										</span>
+									</MetaRow>
+								) : null}
 								{run.started_at ? (
 									<MetaRow label="Started">
 										{new Date(
@@ -387,17 +590,21 @@ export function AgentRunDetailPage() {
 										? formatDuration(run.duration_ms)
 										: "—"}
 								</MetaRow>
-								<MetaRow label="Iterations">
-									{run.iterations_used}
-								</MetaRow>
-								<MetaRow label="Tokens">
-									{formatNumber(run.tokens_used)}
-								</MetaRow>
-								<MetaRow label="Model">
-									<span className="font-mono">
-										{run.llm_model ?? "default"}
-									</span>
-								</MetaRow>
+								{advancedView ? (
+									<>
+										<MetaRow label="Iterations">
+											{run.iterations_used}
+										</MetaRow>
+										<MetaRow label="Tokens">
+											{formatNumber(run.tokens_used)}
+										</MetaRow>
+										<MetaRow label="Model">
+											<span className="font-mono">
+												{run.llm_model ?? "default"}
+											</span>
+										</MetaRow>
+									</>
+								) : null}
 								<MetaRow label="Trigger">
 									{run.trigger_type}
 								</MetaRow>
@@ -411,7 +618,7 @@ export function AgentRunDetailPage() {
 					</Card>
 
 					{/* AI usage */}
-					{run.ai_usage && run.ai_usage.length > 0 ? (
+					{advancedView && run.ai_usage && run.ai_usage.length > 0 ? (
 						<AIUsageCard
 							usage={run.ai_usage}
 							totals={run.ai_totals ?? null}
@@ -423,9 +630,7 @@ export function AgentRunDetailPage() {
 						<Card>
 							<CardContent className="flex items-center justify-between gap-3 py-3 text-xs">
 								<div>
-									<div className="font-medium">
-										Summary
-									</div>
+									<div className="font-medium">Summary</div>
 									<div className="text-muted-foreground">
 										{summaryFailed
 											? "Generation failed"
@@ -615,7 +820,10 @@ function AIUsageCard({
 					</thead>
 					<tbody>
 						{grouped.map((row) => (
-							<tr key={row.model} className="border-b last:border-0">
+							<tr
+								key={row.model}
+								className="border-b last:border-0"
+							>
 								<td className="py-1.5 pr-2 font-mono text-muted-foreground">
 									{row.model.length > 20
 										? `${row.model.slice(0, 18)}…`

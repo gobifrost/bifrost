@@ -19,7 +19,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+	Link,
+	useLocation,
+	useNavigate,
+	useParams,
+} from "react-router-dom";
 import {
 	ArrowLeft,
 	CheckCircle,
@@ -57,6 +62,11 @@ import {
 	formatNumber,
 	formatRelativeTime,
 } from "@/lib/utils";
+import {
+	createAgentRunNavigationState,
+	getLocationHref,
+	type AgentRunNavigationOrigin,
+} from "@/lib/agent-run-navigation";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
@@ -65,9 +75,14 @@ type AgentRunDetailResponse = components["schemas"]["AgentRunDetailResponse"];
 export function AgentReviewPage() {
 	const { id: agentId } = useParams<{ id: string }>();
 	const navigate = useNavigate();
+	const location = useLocation();
 	const queryClient = useQueryClient();
 
 	const { data: agent } = useAgent(agentId);
+	const runNavigationOrigin: AgentRunNavigationOrigin = {
+		href: getLocationHref(location),
+		label: `Back to ${agent?.name ?? "agent"} review queue`,
+	};
 
 	// Queue: flagged runs for this agent. Backend filter returns only the
 	// completed flagged set we want to walk through.
@@ -260,6 +275,7 @@ export function AgentReviewPage() {
 					note={note}
 					onVerdict={handleVerdict}
 					onNote={setNote}
+					runNavigationOrigin={runNavigationOrigin}
 				/>
 			) : (
 				<Skeleton className="h-96 w-full" />
@@ -327,12 +343,14 @@ function FlipbookCard({
 	note,
 	onVerdict,
 	onNote,
+	runNavigationOrigin,
 }: {
 	run: AgentRunDetailResponse;
 	verdict: Verdict;
 	note: string;
 	onVerdict: (v: Verdict) => void;
 	onNote: (n: string) => void;
+	runNavigationOrigin: AgentRunNavigationOrigin;
 }) {
 	const startedAt = run.started_at ?? run.created_at;
 	return (
@@ -358,6 +376,9 @@ function FlipbookCard({
 					<Button asChild variant="ghost" size="sm">
 						<Link
 							to={`/agents/${run.agent_id}/runs/${run.id}`}
+							state={createAgentRunNavigationState(
+								runNavigationOrigin,
+							)}
 							data-testid="open-detail"
 						>
 							Open full detail
@@ -374,6 +395,7 @@ function FlipbookCard({
 					note={note}
 					onVerdict={onVerdict}
 					onNote={onNote}
+					runNavigationOrigin={runNavigationOrigin}
 				/>
 			</CardContent>
 		</Card>

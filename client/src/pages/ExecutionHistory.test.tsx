@@ -99,7 +99,7 @@ vi.mock("@/components/ui/date-range-picker", () => ({
 	DateRangePicker: () => null,
 }));
 
-const executionHistoryModule = import("./ExecutionHistory");
+import { ExecutionHistory } from "./ExecutionHistory";
 
 // -----------------------------------------------------------------------------
 // Fixtures
@@ -169,7 +169,6 @@ function LocationProbe() {
 }
 
 async function renderPage(initialEntries?: string[]) {
-	const { ExecutionHistory } = await executionHistoryModule;
 	return renderWithProviders(
 		<>
 			<ExecutionHistory />

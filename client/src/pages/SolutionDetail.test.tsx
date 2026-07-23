@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { SolutionDetail } from "./SolutionDetail";
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -172,7 +173,6 @@ function makeEntities(statusOverride = "active") {
 }
 
 async function renderPage() {
-	const { SolutionDetail } = await import("./SolutionDetail");
 	return renderWithProviders(<SolutionDetail />);
 }
 

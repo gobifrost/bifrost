@@ -7,13 +7,16 @@
  *   - variant="drawer": runs sheet (compact side panel)
  *
  * Consistent UX across all three: same summary structure (asked / did / output),
- * same tool-call preview, same verdict capture bar.
+ * same human-readable action fallback, same verdict capture bar.
  */
 
 import { Link } from "react-router-dom";
 import {
 	User,
 	Bot,
+	Check,
+	CircleDot,
+	GitBranch,
 	Wrench,
 	ThumbsUp,
 	ThumbsDown,
@@ -24,23 +27,31 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
+import { VariablesTreeView } from "@/components/ui/variables-tree-view";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/utils";
+import {
+	createAgentRunNavigationState,
+	type AgentRunNavigationOrigin,
+} from "@/lib/agent-run-navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRegenerateSummary } from "@/services/agentRuns";
 import type { components } from "@/lib/v1";
 
 import { DidNarrative } from "./DidNarrative";
-import { isEmptyJson, JsonTree } from "./JsonTree";
+import {
+	buildActivityReferenceIndex,
+	buildRunActivity,
+	type RunActivityItem,
+} from "./run-activity";
 import { SummaryPlaceholder } from "./SummaryPlaceholder";
 
 export type Verdict = "up" | "down" | null;
 
 type AgentRunDetail = components["schemas"]["AgentRunDetailResponse"];
-type AgentRunStep = components["schemas"]["AgentRunStepResponse"];
 
 export type RunReviewVariant = "page" | "flipbook" | "drawer";
 
@@ -52,110 +63,92 @@ export interface RunReviewPanelProps {
 	onNote: (n: string) => void;
 	variant?: RunReviewVariant;
 	hideVerdictBar?: boolean;
+	runNavigationOrigin?: AgentRunNavigationOrigin;
+	onActivityReferencePreview?: (activityId: string | null) => void;
+	onActivityReferenceActivate?: (activityId: string) => void;
 }
 
-interface ToolCallContent {
-	// Shape emitted by autonomous_agent_executor.py _record_step(..., "tool_call", ...)
-	tool_name?: string;
-	arguments?: unknown;
-}
-
-/** Pull tool calls out of run.steps.
- *
- * The executor records one `tool_call` step per invocation with
- * `content = { tool_name, arguments }` (see
- * api/src/services/execution/autonomous_agent_executor.py). Older code in
- * this component read `content.tool` / `content.args` which don't exist —
- * that's why every row rendered as `tool {}`.
- */
-function extractToolCalls(steps: AgentRunStep[] | undefined): {
-	tool: string;
-	args: unknown;
-	duration_ms: number | null;
-}[] {
-	if (!steps) return [];
-	return steps
-		.filter((s) => s.type === "tool_call")
-		.map((s) => {
-			const content = (s.content ?? {}) as ToolCallContent;
-			return {
-				tool: content.tool_name ?? "tool",
-				args: content.arguments ?? {},
-				duration_ms: s.duration_ms ?? null,
-			};
-		});
-}
-
-interface ToolCallRowProps {
-	tool: string;
-	args: unknown;
-	duration_ms: number | null;
-}
-
-/** Tool-call row: tool name + (when args non-empty) chevron-disclosure +
- * duration. No inline args preview — that pushed long objects past the
- * card's right edge. Expanded form uses the shared JsonTree viewer.
- */
-function ToolCallRow({ tool, args, duration_ms }: ToolCallRowProps) {
-	const [open, setOpen] = useState(false);
-	const empty = isEmptyJson(args);
-	const expandable = !empty;
-
+/** Human fallback for runs that predate prose summaries. */
+function ActivityFallbackRow({ item }: { item: RunActivityItem }) {
+	const delegated = item.kind === "delegation";
+	const failed = item.isError || item.kind === "error";
+	const completed = !!item.resultStep && !failed;
+	const Icon = failed
+		? AlertCircle
+		: delegated
+			? GitBranch
+			: completed
+				? Check
+				: CircleDot;
+	const iconTone = failed
+		? "bg-rose-500/15 text-rose-600 dark:text-rose-300"
+		: delegated
+			? "bg-violet-500/15 text-violet-600 dark:text-violet-300"
+			: completed
+				? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+				: "bg-muted text-muted-foreground";
 	return (
-		<div className="overflow-hidden rounded-md bg-muted/50 ring-1 ring-foreground/5 text-xs">
-			<button
-				type="button"
-				onClick={() => expandable && setOpen((v) => !v)}
-				disabled={!expandable}
-				aria-expanded={expandable ? open : undefined}
-				aria-label={
-					expandable
-						? open
-							? "Hide arguments"
-							: "Show arguments"
-						: undefined
-				}
+		<div
+			className="flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-2 text-xs ring-1 ring-foreground/5"
+			data-activity-kind={failed ? "error" : item.kind}
+		>
+			<div
 				className={cn(
-					"flex w-full items-center gap-2 px-2 py-1.5 text-left",
-					expandable && "hover:bg-accent/40",
+					"grid h-5 w-5 shrink-0 place-items-center rounded-full",
+					iconTone,
 				)}
 			>
-				{expandable ? (
-					<ChevronRight
-						className={cn(
-							"h-3 w-3 shrink-0 text-muted-foreground transition-transform",
-							open && "rotate-90",
-						)}
-					/>
-				) : (
-					<span className="h-3 w-3 shrink-0" />
-				)}
-				<span className="min-w-0 flex-1 truncate font-mono font-medium">
-					{tool}
+				<Icon className="h-3 w-3" />
+			</div>
+			<span className="min-w-0 flex-1 font-medium">{item.title}</span>
+			{item.durationMs != null ? (
+				<span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+					{formatDuration(item.durationMs)}
 				</span>
-				<span className="shrink-0 text-[11px] text-muted-foreground">
-					{duration_ms != null ? formatDuration(duration_ms) : ""}
-				</span>
-			</button>
-			{expandable && open ? (
-				<div className="max-h-[240px] overflow-y-auto border-t bg-muted px-3 py-2">
-					<JsonTree value={args} />
-				</div>
 			) : null}
 		</div>
 	);
 }
 
-
-/** Render input/output that may be a string OR a JSON object. */
-function renderPayload(value: unknown): string {
-	if (value === null || value === undefined) return "";
+function payloadText(value: unknown): string {
 	if (typeof value === "string") return value;
 	try {
 		return JSON.stringify(value, null, 2);
 	} catch {
 		return String(value);
 	}
+}
+
+export function RunPayloads({
+	input,
+	output,
+	compact = false,
+}: {
+	input: unknown;
+	output: unknown;
+	compact?: boolean;
+}) {
+	const hasInput = input !== null && input !== undefined && input !== "";
+	const hasOutput = output !== null && output !== undefined && output !== "";
+	if (!hasInput && !hasOutput) return null;
+	return (
+		<div className="grid gap-2" data-slot="run-payloads">
+			{hasInput ? (
+				<RawDisclosure
+					label="Raw input"
+					value={input}
+					compact={compact}
+				/>
+			) : null}
+			{hasOutput ? (
+				<RawDisclosure
+					label="Raw output"
+					value={output}
+					compact={compact}
+				/>
+			) : null}
+		</div>
+	);
 }
 
 export function RunReviewPanel({
@@ -166,24 +159,26 @@ export function RunReviewPanel({
 	onNote,
 	variant = "page",
 	hideVerdictBar = false,
+	runNavigationOrigin,
+	onActivityReferencePreview,
+	onActivityReferenceActivate,
 }: RunReviewPanelProps) {
-	const toolCalls = extractToolCalls(run.steps);
-	// "What it did" rendering decision tree:
-	//   v3+ summary with prose `did`     → render DidNarrative (chips inline
-	//                                       when [tool_name] markers present;
-	//                                       graceful plain-prose otherwise).
-	//   no `did` but has tool_call steps → fall back to the raw tool-call
-	//                                       list (v1/v2 era, pre-summary).
-	//   neither                          → hide the section entirely.
+	const activity = buildRunActivity(
+		run.steps,
+		run.child_run_ids,
+		run.child_runs,
+	);
+	const fallbackActions = activity.filter((item) => item.kind !== "response");
+	const activityReferences = buildActivityReferenceIndex(activity);
+	// Prefer summary prose, safely humanizing any old [tool_name] markers.
+	// Runs without prose get a short action list derived from recorded calls;
+	// exact identifiers and payloads live only in the detail page's Advanced view.
 	const hasDidProse = !!run.did && run.did.trim().length > 0;
 	const canVerdict = run.status === "completed" && !hideVerdictBar;
 	const compact = variant === "drawer";
-	const maxToolCalls = compact ? 3 : 4;
-	const visibleTools = toolCalls.slice(0, maxToolCalls);
-	const overflow = toolCalls.length - visibleTools.length;
-	const inputText = renderPayload(run.input);
-	const outputText = renderPayload(run.output);
-
+	const maxActions = compact ? 3 : 4;
+	const visibleActions = fallbackActions.slice(0, maxActions);
+	const overflow = fallbackActions.length - visibleActions.length;
 	const { isPlatformAdmin } = useAuth();
 	const queryClient = useQueryClient();
 	const regenSummary = useRegenerateSummary();
@@ -229,7 +224,8 @@ export function RunReviewPanel({
 						)}
 					>
 						<div className="flex items-center gap-2">
-							{summaryStatus === "generating" || regenSummary.isPending ? (
+							{summaryStatus === "generating" ||
+							regenSummary.isPending ? (
 								<Loader2 className="h-3.5 w-3.5 animate-spin" />
 							) : (
 								<RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
@@ -249,7 +245,9 @@ export function RunReviewPanel({
 						{summaryStatus !== "generating" ? (
 							<button
 								type="button"
-								disabled={!isPlatformAdmin || regenSummary.isPending}
+								disabled={
+									!isPlatformAdmin || regenSummary.isPending
+								}
 								title={
 									isPlatformAdmin
 										? "Re-run summarization"
@@ -282,7 +280,10 @@ export function RunReviewPanel({
 						)}
 					>
 						{run.asked || (
-							<SummaryPlaceholder status={run.summary_status} runStatus={run.status} />
+							<SummaryPlaceholder
+								status={run.summary_status}
+								runStatus={run.status}
+							/>
 						)}
 					</div>
 				</Section>
@@ -291,7 +292,7 @@ export function RunReviewPanel({
 					<Section
 						icon={<Wrench size={13} />}
 						iconClassName="bg-blue-500/15 text-blue-600 dark:text-blue-400"
-						label="What it did"
+						label="What the agent did"
 						compact={compact}
 					>
 						<div
@@ -302,28 +303,29 @@ export function RunReviewPanel({
 						>
 							<DidNarrative
 								text={run.did}
-								steps={run.steps}
+								activityReferences={activityReferences}
+								onReferencePreview={onActivityReferencePreview}
+								onReferenceActivate={
+									onActivityReferenceActivate
+								}
 								compact={compact}
 							/>
 						</div>
 					</Section>
-				) : toolCalls.length > 0 ? (
+				) : fallbackActions.length > 0 ? (
 					// No `did` summary at all (pre-summary or summary failed)
-					// — fall back to the raw tool-call list so the user
-					// still sees what the agent did.
+					// — preserve visibility with human-readable action names.
 					<Section
 						icon={<Wrench size={13} />}
 						iconClassName="bg-blue-500/15 text-blue-600 dark:text-blue-400"
-						label={`What it did · ${toolCalls.length} tool call${toolCalls.length === 1 ? "" : "s"}`}
+						label={`What the agent did · ${fallbackActions.length} action${fallbackActions.length === 1 ? "" : "s"}`}
 						compact={compact}
 					>
 						<div className="grid gap-1.5">
-							{visibleTools.map((c, i) => (
-								<ToolCallRow
-									key={i}
-									tool={c.tool}
-									args={c.args}
-									duration_ms={c.duration_ms}
+							{visibleActions.map((item) => (
+								<ActivityFallbackRow
+									key={item.id}
+									item={item}
 								/>
 							))}
 							{overflow > 0 ? (
@@ -331,6 +333,13 @@ export function RunReviewPanel({
 									+{overflow} more —{" "}
 									<Link
 										to={`/agents/${run.agent_id}/runs/${run.id}`}
+										state={
+											runNavigationOrigin
+												? createAgentRunNavigationState(
+														runNavigationOrigin,
+													)
+												: undefined
+										}
 										className="text-primary hover:underline"
 									>
 										open full detail
@@ -354,14 +363,29 @@ export function RunReviewPanel({
 								compact ? "text-xs" : "text-sm",
 							)}
 						>
-							{run.answered ||
-								// Fall back to `did` for v1/v2 summaries (no
-								// separate `answered` field). Shows the
-								// generic-but-better-than-nothing one-liner.
-								run.did ||
-								(
-									<SummaryPlaceholder status={run.summary_status} runStatus={run.status} />
-								)}
+							{run.answered ? (
+								run.answered
+							) : run.did ? (
+								// Older summaries have no separate answer and
+								// may still contain executor markers. Reuse the
+								// safe narrative renderer for that fallback.
+								<DidNarrative
+									text={run.did}
+									activityReferences={activityReferences}
+									onReferencePreview={
+										onActivityReferencePreview
+									}
+									onReferenceActivate={
+										onActivityReferenceActivate
+									}
+									compact={compact}
+								/>
+							) : (
+								<SummaryPlaceholder
+									status={run.summary_status}
+									runStatus={run.status}
+								/>
+							)}
 						</div>
 					</Section>
 				) : (
@@ -404,19 +428,6 @@ export function RunReviewPanel({
 						</div>
 					</Section>
 				) : null}
-
-				{inputText || outputText ? (
-					<Section label="Raw payloads" compact={compact} plain>
-						<div className="grid gap-2">
-							{inputText ? (
-								<RawDisclosure label="Raw input" text={inputText} compact={compact} />
-							) : null}
-							{outputText ? (
-								<RawDisclosure label="Raw output" text={outputText} compact={compact} />
-							) : null}
-						</div>
-					</Section>
-				) : null}
 			</div>
 
 			{canVerdict ? (
@@ -431,7 +442,9 @@ export function RunReviewPanel({
 					data-slot="verdict-bar"
 				>
 					<div className="flex items-center gap-2">
-						<div className="text-sm text-muted-foreground">Verdict</div>
+						<div className="text-sm text-muted-foreground">
+							Verdict
+						</div>
 						<button
 							type="button"
 							aria-label="Mark as good"
@@ -538,18 +551,23 @@ function Section({
 
 interface RawDisclosureProps {
 	label: string;
-	text: string;
+	value: unknown;
 	compact?: boolean;
 }
 
-/** Collapsible raw input/output block. Opaque unless admin explicitly opens it. */
-function RawDisclosure({ label, text, compact }: RawDisclosureProps) {
+/** Collapsible input/output block. Structured values use the shared variable tree. */
+function RawDisclosure({ label, value, compact }: RawDisclosureProps) {
 	const [open, setOpen] = useState(false);
+	const contentId = useId();
+	const serialized = payloadText(value);
+	const structuredValue = parseStructuredPayload(value);
 	return (
 		<div className="overflow-hidden rounded-md bg-muted/50 ring-1 ring-foreground/5">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
+				aria-expanded={open}
+				aria-controls={contentId}
 				className={cn(
 					"flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-muted-foreground hover:text-foreground",
 					compact ? "text-xs" : "text-[13px]",
@@ -563,21 +581,54 @@ function RawDisclosure({ label, text, compact }: RawDisclosureProps) {
 				/>
 				<span>{label}</span>
 				<span className="ml-auto text-[11px]">
-					{text.length.toLocaleString()} chars
+					{serialized.length.toLocaleString()} chars
 				</span>
 			</button>
 			{open ? (
-				<pre
+				<div
+					id={contentId}
 					className={cn(
-						"max-h-[240px] overflow-auto border-t bg-muted px-3 py-2 font-mono whitespace-pre-wrap break-words",
+						"max-h-[240px] overflow-auto border-t bg-muted px-3 py-2 whitespace-pre-wrap break-words",
 						compact ? "text-[11px]" : "text-xs",
 					)}
 				>
-					{text}
-				</pre>
+					{structuredValue !== UNPARSEABLE_PAYLOAD ? (
+						<VariablesTreeView
+							data={asPayloadVariables(structuredValue)}
+						/>
+					) : (
+						serialized
+					)}
+				</div>
 			) : null}
 		</div>
 	);
+}
+
+const UNPARSEABLE_PAYLOAD = Symbol("unparseable-payload");
+
+function parseStructuredPayload(value: unknown): unknown {
+	if (value !== null && typeof value === "object") return value;
+	if (typeof value !== "string") return UNPARSEABLE_PAYLOAD;
+	const trimmed = value.trim();
+	if (!(
+		(trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+		(trimmed.startsWith("[") && trimmed.endsWith("]"))
+	)) {
+		return UNPARSEABLE_PAYLOAD;
+	}
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return UNPARSEABLE_PAYLOAD;
+	}
+}
+
+function asPayloadVariables(value: unknown): Record<string, unknown> {
+	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	return { value };
 }
 
 export interface MetadataChipsProps {
@@ -594,7 +645,8 @@ export function MetadataChips({ metadata, highlight }: MetadataChipsProps) {
 			{entries.map(([k, v]) => {
 				const isHit =
 					q &&
-					(k.toLowerCase().includes(q) || v.toLowerCase().includes(q));
+					(k.toLowerCase().includes(q) ||
+						v.toLowerCase().includes(q));
 				return (
 					<span
 						key={k}

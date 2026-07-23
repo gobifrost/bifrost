@@ -40,9 +40,11 @@ describe("RunCard", () => {
 		expect(screen.getByText(/routed to support/i)).toBeInTheDocument();
 	});
 
-	it("renders the status badge", () => {
+	it("renders the subtle status indicator", () => {
 		renderWithProviders(<RunCard run={baseRun} />);
-		expect(screen.getByText(/^completed$/i)).toBeInTheDocument();
+		expect(
+			screen.getByRole("img", { name: "Status: Completed" }),
+		).toBeInTheDocument();
 	});
 
 	it("renders 'Good' verdict badge when verdict='up'", () => {
@@ -63,7 +65,9 @@ describe("RunCard", () => {
 		const { user } = renderWithProviders(
 			<RunCard run={baseRun} onOpen={onOpen} />,
 		);
-		await user.click(screen.getByRole("button", { name: /how do i reset/i }));
+		await user.click(
+			screen.getByRole("button", { name: /how do i reset/i }),
+		);
 		expect(onOpen).toHaveBeenCalled();
 	});
 
@@ -73,9 +77,7 @@ describe("RunCard", () => {
 		const { user } = renderWithProviders(
 			<RunCard run={baseRun} onOpen={onOpen} onVerdict={onVerdict} />,
 		);
-		await user.click(
-			screen.getByRole("button", { name: /mark as good/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /mark as good/i }));
 		expect(onVerdict).toHaveBeenCalledWith("up");
 		expect(onOpen).not.toHaveBeenCalled();
 	});
@@ -150,7 +152,10 @@ describe("RunCard", () => {
 			await user.keyboard("  escalate to tier 2  ");
 			// Blur by tabbing away — userEvent handles this
 			input.blur();
-			expect(onNote).toHaveBeenCalledWith(baseRun.id, "escalate to tier 2");
+			expect(onNote).toHaveBeenCalledWith(
+				baseRun.id,
+				"escalate to tier 2",
+			);
 		});
 
 		it("does not call onNote on blur when value is unchanged", async () => {

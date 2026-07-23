@@ -6,7 +6,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { renderWithProviders, screen } from "@/test-utils";
+
+function NavigationStateProbe() {
+	const location = useLocation();
+	return (
+		<pre data-testid="navigation-state">
+			{JSON.stringify(location.state)}
+		</pre>
+	);
+}
 
 const mockUseAgentStats = vi.fn();
 vi.mock("@/services/agents", () => ({
@@ -96,6 +106,43 @@ describe("AgentOverviewTab", () => {
 	it("renders the recent runs list", async () => {
 		await renderTab();
 		expect(screen.getByText(/help me/i)).toBeInTheDocument();
+		expect(
+			screen.getByRole("img", { name: "Status: Completed" }),
+		).toBeInTheDocument();
+	});
+
+	it("keeps the overview as the origin when a recent run is opened", async () => {
+		const { AgentOverviewTab } = await import("./AgentOverviewTab");
+		const { user } = renderWithProviders(
+			<Routes>
+				<Route
+					path="/agents/:agentId"
+					element={<AgentOverviewTab agentId="agent-1" />}
+				/>
+				<Route
+					path="/agents/:agentId/runs/:runId"
+					element={<NavigationStateProbe />}
+				/>
+			</Routes>,
+			{ initialEntries: ["/agents/agent-1?tab=overview"] },
+		);
+
+		await user.click(screen.getByRole("link", { name: /help me/i }));
+		expect(screen.getByTestId("navigation-state")).toHaveTextContent(
+			JSON.stringify({
+				agentRunOrigin: {
+					href: "/agents/agent-1?tab=overview",
+					label: "Back to Triage overview",
+				},
+			}),
+		);
+	});
+
+	it("links View all runs directly to the Runs tab", async () => {
+		await renderTab();
+		expect(
+			screen.getByRole("link", { name: /view all runs/i }),
+		).toHaveAttribute("href", "/agents/agent-1?tab=runs");
 	});
 
 	it("hides the 'Needs attention' card when no flagged runs", async () => {
@@ -133,7 +180,11 @@ describe("AgentOverviewTab", () => {
 		});
 		mockUseAgentRuns.mockReturnValue({
 			data: {
-				items: [makeRun(), makeRun({ id: "run-2" }), makeRun({ id: "run-3" })],
+				items: [
+					makeRun(),
+					makeRun({ id: "run-2" }),
+					makeRun({ id: "run-3" }),
+				],
 				total: 3,
 				next_cursor: null,
 			},

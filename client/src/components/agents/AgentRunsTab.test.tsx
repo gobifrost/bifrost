@@ -115,6 +115,16 @@ describe("AgentRunsTab — list", () => {
 		).toBeInTheDocument();
 	});
 
+	it("exposes the run collection as a named scroll region", async () => {
+		await renderTab();
+		const region = screen.getByRole("region", { name: /run history/i });
+
+		expect(region).toHaveClass("agent-runs-scroll-region");
+		expect(region).toContainElement(
+			screen.getByText(/how do i reset my password/i),
+		);
+	});
+
 	it("shows an empty message when the list is empty", async () => {
 		mockUseInfiniteAgentRuns.mockReturnValue(makeInfinitePages([], 0));
 		await renderTab();

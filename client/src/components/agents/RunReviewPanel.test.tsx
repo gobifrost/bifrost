@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent } from "@testing-library/react";
 import { renderWithProviders, screen } from "@/test-utils";
 import type { components } from "@/lib/v1";
 
@@ -17,7 +16,7 @@ vi.mock("@/services/agentRuns", () => ({
 	}),
 }));
 
-import { RunReviewPanel } from "./RunReviewPanel";
+import { RunPayloads, RunReviewPanel } from "./RunReviewPanel";
 
 type AgentRunDetail = components["schemas"]["AgentRunDetailResponse"];
 
@@ -39,6 +38,8 @@ const baseRun: AgentRunDetail = {
 	created_at: "2026-04-21T10:00:00Z",
 	metadata: {},
 	steps: [],
+	child_run_ids: [],
+	child_runs: [],
 };
 
 describe("RunReviewPanel", () => {
@@ -57,8 +58,43 @@ describe("RunReviewPanel", () => {
 		).toBeInTheDocument();
 	});
 
+	it("keeps raw run payloads out of the normal review panel", () => {
+		renderWithProviders(
+			<RunReviewPanel
+				run={baseRun}
+				verdict={null}
+				note=""
+				onVerdict={() => {}}
+				onNote={() => {}}
+			/>,
+		);
+		expect(screen.queryByText("Raw input")).not.toBeInTheDocument();
+		expect(screen.queryByText("Raw output")).not.toBeInTheDocument();
+	});
+
+	it("renders raw payloads only when the advanced payload component is used", async () => {
+		const { user } = renderWithProviders(
+			<RunPayloads input={{ ticket_id: 42 }} output={{ routed: true }} />,
+		);
+		expect(screen.getByText("Raw input")).toBeInTheDocument();
+		expect(screen.getByText("Raw output")).toBeInTheDocument();
+		const inputDisclosure = screen.getByRole("button", {
+			name: /raw input/i,
+		});
+		expect(inputDisclosure).toHaveAttribute("aria-expanded", "false");
+		await user.click(inputDisclosure);
+		expect(inputDisclosure).toHaveAttribute("aria-expanded", "true");
+		const variableName = screen.getByText("ticket_id:");
+		expect(inputDisclosure).toHaveAttribute(
+			"aria-controls",
+			variableName.closest("div[id]")?.id,
+		);
+		expect(variableName).toBeInTheDocument();
+		expect(screen.getByText("42")).toBeInTheDocument();
+	});
+
 	it("renders the agent answer when completed (answered field, falls back to did)", () => {
-		// `did` is also rendered in the "What it did" prose section, so the
+		// `did` is also rendered in the "What the agent did" prose section, so the
 		// text appears in both places; either is fine — we just need at
 		// least one match.
 		renderWithProviders(
@@ -70,7 +106,9 @@ describe("RunReviewPanel", () => {
 				onNote={() => {}}
 			/>,
 		);
-		expect(screen.getAllByText(/routed to support/i).length).toBeGreaterThan(0);
+		expect(
+			screen.getAllByText(/routed to support/i).length,
+		).toBeGreaterThan(0);
 	});
 
 	it("uses `answered` over `did` in the answer section when both present", () => {
@@ -90,6 +128,28 @@ describe("RunReviewPanel", () => {
 		expect(
 			screen.getByText("Sent password-reset link"),
 		).toBeInTheDocument();
+	});
+
+	it("humanizes executor markers when older `did` prose is the answer fallback", () => {
+		renderWithProviders(
+			<RunReviewPanel
+				run={{
+					...baseRun,
+					did: "Checked the ticket with [ai_ticketing_get_ticket_details].",
+					answered: null,
+				}}
+				verdict={null}
+				note=""
+				onVerdict={() => {}}
+				onNote={() => {}}
+			/>,
+		);
+		expect(
+			screen.getAllByText("Get ticket details").length,
+		).toBeGreaterThan(0);
+		expect(
+			screen.queryByText("ai_ticketing_get_ticket_details"),
+		).not.toBeInTheDocument();
 	});
 
 	it("calls onVerdict('up') when good toggle clicked", async () => {
@@ -188,7 +248,7 @@ describe("RunReviewPanel", () => {
 				onNote={() => {}}
 			/>,
 		);
-		// `did` renders in both "What it did" prose AND falls back into
+		// `did` renders in both "What the agent did" prose AND falls back into
 		// "What the agent answered" when `answered` is null — both fine.
 		expect(
 			screen.getAllByText(/looked up the ticket and routed to tier 2/i)
@@ -196,14 +256,101 @@ describe("RunReviewPanel", () => {
 		).toBeGreaterThan(0);
 		// Tool-call list should NOT render — we have prose to show instead.
 		expect(
-			screen.queryByText(/what it did · 0 tool call/i),
+			screen.queryByText(/what the agent did · 0 actions/i),
 		).not.toBeInTheDocument();
 	});
 
-	it("renders tool call section when steps include tool calls", () => {
-		// Fallback path: when there's no `did` summary, fall back to the raw
-		// tool-call list. Step content is { tool_name, arguments } per
-		// autonomous_agent_executor.py _record_step(..., "tool_call", ...).
+	it("uses the recorded child agent name in delegation prose", () => {
+		const run: AgentRunDetail = {
+			...baseRun,
+			did: "Asked [delegate_to_troubleshooting_agent] to collect evidence.",
+			steps: [
+				{
+					id: "s1",
+					run_id: baseRun.id,
+					step_number: 1,
+					type: "tool_result",
+					content: {
+						tool_name: "delegate_to_troubleshooting_agent",
+						child_run_id: "child-1",
+						result: { status: "completed" },
+					},
+					created_at: baseRun.created_at,
+				},
+			],
+			child_run_ids: ["child-1"],
+			child_runs: [
+				{
+					id: "child-1",
+					agent_id: "agent-child",
+					agent_name: "Endpoint Troubleshooter",
+					status: "completed",
+					asked: "Collect endpoint evidence",
+					did: null,
+					answered: null,
+					duration_ms: 1000,
+					created_at: baseRun.created_at,
+				},
+			],
+		};
+		renderWithProviders(
+			<RunReviewPanel
+				run={run}
+				verdict={null}
+				note=""
+				onVerdict={() => {}}
+				onNote={() => {}}
+			/>,
+		);
+
+		expect(screen.getAllByText("Endpoint Troubleshooter")).toHaveLength(2);
+		expect(
+			screen.queryByText("Troubleshooting Agent"),
+		).not.toBeInTheDocument();
+	});
+
+	it("connects verified narrative references to their grouped activity item", async () => {
+		const onPreview = vi.fn();
+		const onActivate = vi.fn();
+		const run: AgentRunDetail = {
+			...baseRun,
+			did: "Checked [ai_ticketing_get_ticket_details] before triage.",
+			steps: [
+				{
+					id: "s1",
+					run_id: baseRun.id,
+					step_number: 1,
+					type: "tool_call",
+					content: {
+						tool_name: "ai_ticketing_get_ticket_details",
+						arguments: { ticket_id: 423068 },
+					},
+					created_at: baseRun.created_at,
+				},
+			],
+		};
+		const { user } = renderWithProviders(
+			<RunReviewPanel
+				run={run}
+				verdict={null}
+				note=""
+				onVerdict={() => {}}
+				onNote={() => {}}
+				onActivityReferencePreview={onPreview}
+				onActivityReferenceActivate={onActivate}
+			/>,
+		);
+
+		const reference = screen.getAllByRole("link", {
+			name: /show looked up ticket details in activity/i,
+		})[0];
+		await user.hover(reference);
+		expect(onPreview).toHaveBeenLastCalledWith("s1");
+		await user.click(reference);
+		expect(onActivate).toHaveBeenCalledWith("s1");
+	});
+
+	it("renders a friendly action summary when prose is unavailable", () => {
 		const run: AgentRunDetail = {
 			...baseRun,
 			did: null,
@@ -231,27 +378,66 @@ describe("RunReviewPanel", () => {
 				onNote={() => {}}
 			/>,
 		);
-		expect(screen.getByText(/what it did · 1 tool call/i)).toBeInTheDocument();
-		// Real tool name must render, not the generic "tool" placeholder.
 		expect(
-			screen.getByText("ai_ticketing_get_ticket_details"),
+			screen.getByText(/what the agent did · 1 action/i),
 		).toBeInTheDocument();
-		// Args are collapsed by default behind a chevron disclosure; expand
-		// them and confirm the args render via the JsonTree (key + value).
-		fireEvent.click(
-			screen.getByRole("button", { name: /show arguments/i }),
-		);
-		expect(screen.getByText(/"ticket_id"/)).toBeInTheDocument();
-		expect(screen.getByText("423068")).toBeInTheDocument();
+		expect(
+			screen.getByText("Looked up ticket details"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("ai_ticketing_get_ticket_details"),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText(/423068/)).not.toBeInTheDocument();
 	});
 
-	it("renders tool call rows even when arguments object is empty", () => {
-		// Regression guard for the `tool {}` screenshot — zero-arg tool calls
-		// must still show the tool name as the row label, but the args column
-		// renders nothing (no `{}` clutter) and there's no expand affordance.
+	it("does not present a failed fallback action as successful", () => {
 		const run: AgentRunDetail = {
 			...baseRun,
-			did: null,  // force the fallback tool-call list
+			did: null,
+			steps: [
+				{
+					id: "s1",
+					run_id: baseRun.id,
+					step_number: 1,
+					type: "tool_call",
+					content: {
+						tool_name: "ai_ticketing_submit_triage",
+						arguments: {},
+					},
+					created_at: baseRun.created_at,
+				},
+				{
+					id: "s2",
+					run_id: baseRun.id,
+					step_number: 2,
+					type: "tool_error",
+					content: {
+						tool_name: "ai_ticketing_submit_triage",
+						error: "Permission denied",
+					},
+					created_at: baseRun.created_at,
+				},
+			],
+		};
+		const { container } = renderWithProviders(
+			<RunReviewPanel
+				run={run}
+				verdict={null}
+				note=""
+				onVerdict={() => {}}
+				onNote={() => {}}
+			/>,
+		);
+		expect(screen.getByText("Could not submit triage")).toBeInTheDocument();
+		expect(
+			container.querySelector('[data-activity-kind="error"]'),
+		).toBeInTheDocument();
+	});
+
+	it("renders zero-argument actions without empty-object clutter", () => {
+		const run: AgentRunDetail = {
+			...baseRun,
+			did: null, // force the fallback tool-call list
 			steps: [
 				{
 					id: "s1",
@@ -273,18 +459,14 @@ describe("RunReviewPanel", () => {
 				onNote={() => {}}
 			/>,
 		);
-		expect(screen.getByText("list_workflows")).toBeInTheDocument();
-		// No "{}" placeholder should appear; no expand button either.
+		expect(screen.getByText("Listed workflows")).toBeInTheDocument();
 		expect(screen.queryByText("{}")).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: /show arguments/i }),
-		).not.toBeInTheDocument();
 	});
 
-	it("collapses non-empty tool args behind a disclosure that expands inline", () => {
+	it("keeps non-empty tool arguments out of the normal review", () => {
 		const run: AgentRunDetail = {
 			...baseRun,
-			did: null,  // force the fallback tool-call list
+			did: null, // force the fallback tool-call list
 			steps: [
 				{
 					id: "s1",
@@ -309,19 +491,18 @@ describe("RunReviewPanel", () => {
 				onNote={() => {}}
 			/>,
 		);
-		// Collapsed: button with the show-args label; one-line preview visible.
-		const expandBtn = screen.getByRole("button", { name: /show arguments/i });
-		expect(expandBtn).toHaveAttribute("aria-expanded", "false");
-		fireEvent.click(expandBtn);
-		expect(
-			screen.getByRole("button", { name: /hide arguments/i }),
-		).toHaveAttribute("aria-expanded", "true");
+		expect(screen.getByText("Sent email")).toBeInTheDocument();
+		expect(screen.queryByText(/user@x.com/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/show arguments/i)).not.toBeInTheDocument();
 	});
 
 	it("renders metadata chips when metadata present", () => {
 		renderWithProviders(
 			<RunReviewPanel
-				run={{ ...baseRun, metadata: { ticket_id: "4821", org: "acme" } }}
+				run={{
+					...baseRun,
+					metadata: { ticket_id: "4821", org: "acme" },
+				}}
 				verdict={null}
 				note=""
 				onVerdict={() => {}}
@@ -365,7 +546,12 @@ describe("RunReviewPanel", () => {
 	it("shows the in-panel regenerate bar when summary is pending", () => {
 		renderWithProviders(
 			<RunReviewPanel
-				run={{ ...baseRun, summary_status: "pending", asked: "", did: "" }}
+				run={{
+					...baseRun,
+					summary_status: "pending",
+					asked: "",
+					did: "",
+				}}
 				verdict={null}
 				note=""
 				onVerdict={() => {}}
@@ -381,7 +567,12 @@ describe("RunReviewPanel", () => {
 		mockAuth.mockReturnValueOnce({ isPlatformAdmin: false });
 		renderWithProviders(
 			<RunReviewPanel
-				run={{ ...baseRun, summary_status: "failed", asked: "", did: "" }}
+				run={{
+					...baseRun,
+					summary_status: "failed",
+					asked: "",
+					did: "",
+				}}
 				verdict={null}
 				note=""
 				onVerdict={() => {}}

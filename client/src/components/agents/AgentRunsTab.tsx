@@ -143,7 +143,7 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 	}
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="agent-runs-tab flex flex-col gap-4">
 			{/* Search + filter bar */}
 			<div className="flex flex-wrap items-center gap-3">
 				<div className="relative flex-1 min-w-[240px] max-w-md">
@@ -209,11 +209,13 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 				) : null}
 			</div>
 
-			<CapturedDataFilter
-				agentId={agentId}
-				value={metadataConditions}
-				onChange={setMetadataConditions}
-			/>
+			<div className="agent-runs-filter-region">
+				<CapturedDataFilter
+					agentId={agentId}
+					value={metadataConditions}
+					onChange={setMetadataConditions}
+				/>
+			</div>
 
 			{flaggedCount > 0 ? (
 				<QueueBanner
@@ -224,7 +226,11 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 			) : null}
 
 			{/* Run list */}
-			<div className="flex flex-col gap-2">
+			<div
+				className="agent-runs-scroll-region flex flex-col gap-2"
+				role="region"
+				aria-label="Run history"
+			>
 				{isLoading ? (
 					<>
 						<Skeleton className="h-20 w-full" />

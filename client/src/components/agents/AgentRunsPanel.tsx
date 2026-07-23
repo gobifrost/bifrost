@@ -9,7 +9,7 @@
  * runs tab.
  */
 
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
 	AlertCircle,
@@ -41,6 +41,10 @@ import {
 	useInfiniteAgentRuns,
 	useRerunAgentRun,
 } from "@/services/agentRuns";
+import {
+	createAgentRunNavigationState,
+	getLocationHref,
+} from "@/lib/agent-run-navigation";
 import { formatDate, formatDuration } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
@@ -89,6 +93,11 @@ function VerdictGlyph({ verdict }: { verdict: AgentRun["verdict"] }) {
 
 export function AgentRunsPanel() {
 	const navigate = useNavigate();
+	const location = useLocation();
+	const runNavigationState = createAgentRunNavigationState({
+		href: getLocationHref(location),
+		label: "Back to run history",
+	});
 	const {
 		data,
 		isLoading,
@@ -119,6 +128,7 @@ export function AgentRunsPanel() {
 						if (source) {
 							navigate(
 								`/agents/${source.agent_id}/runs/${data.run_id}`,
+								{ state: runNavigationState },
 							);
 						}
 					}
@@ -174,6 +184,7 @@ export function AgentRunsPanel() {
 							onClick={() =>
 								navigate(
 									`/agents/${run.agent_id}/runs/${run.id}`,
+									{ state: runNavigationState },
 								)
 							}
 						>

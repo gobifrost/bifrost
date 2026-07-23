@@ -1,5 +1,9 @@
-"""AgentRunResponse + AgentRunDetailResponse include new fields."""
-from src.models.contracts.agent_runs import AgentRunResponse, AgentRunDetailResponse
+"""Agent-run response contracts expose the expected summary fields."""
+from src.models.contracts.agent_runs import (
+    AgentRunChildResponse,
+    AgentRunDetailResponse,
+    AgentRunResponse,
+)
 
 
 def test_agent_run_response_has_new_fields():
@@ -18,3 +22,18 @@ def test_agent_run_detail_response_inherits_new_fields():
         "verdict", "verdict_note",
     ):
         assert name in fields
+
+
+def test_agent_run_detail_response_has_lean_child_summaries():
+    assert "child_runs" in AgentRunDetailResponse.model_fields
+    assert set(AgentRunChildResponse.model_fields) == {
+        "id",
+        "agent_id",
+        "agent_name",
+        "status",
+        "asked",
+        "did",
+        "answered",
+        "duration_ms",
+        "created_at",
+    }

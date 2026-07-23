@@ -65,9 +65,24 @@ class AgentRunResponse(BaseModel):
     parent_run_id: UUID | None = None
 
 
+class AgentRunChildResponse(BaseModel):
+    """User-facing summary of a delegated child run."""
+
+    id: UUID
+    agent_id: UUID
+    agent_name: str
+    status: str
+    asked: str | None = None
+    did: str | None = None
+    answered: str | None = None
+    duration_ms: int | None = None
+    created_at: datetime
+
+
 class AgentRunDetailResponse(AgentRunResponse):
     steps: list[AgentRunStepResponse] = Field(default_factory=list)
     child_run_ids: list[UUID] = Field(default_factory=list)
+    child_runs: list[AgentRunChildResponse] = Field(default_factory=list)
     ai_usage: list[AIUsagePublicSimple] | None = None
     ai_totals: AIUsageTotalsSimple | None = None
 

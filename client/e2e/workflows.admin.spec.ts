@@ -35,13 +35,15 @@ test.describe("Workflow Listing", () => {
 		const actionButtons = page.getByRole("button", {
 			name: /execute workflow|test tool|preview data/i,
 		});
-		const hasWorkflows = (await actionButtons.count()) > 0;
-		const hasEmptyState = await page
-			.getByText(/no workflows available|no workflows match/i)
-			.isVisible()
-			.catch(() => false);
+		const emptyState = page.getByText(
+			/no workflows available|no workflows match/i,
+		);
 
-		expect(hasWorkflows || hasEmptyState).toBe(true);
+		// The heading renders before the workflow query settles. Wait for the
+		// loaded list or its empty state instead of sampling during skeletons.
+		await expect(actionButtons.first().or(emptyState)).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test("should show workflow details when clicked", async ({ page }) => {
@@ -88,15 +90,15 @@ test.describe("Workflow Execution", () => {
 		const executeButton = page
 			.getByRole("button", { name: /execute|run/i })
 			.first();
+		const emptyState = page.getByText(
+			/no workflows available|no workflows match/i,
+		);
 
-		// Either we have execute buttons or no workflows
-		const hasButton = await executeButton.isVisible().catch(() => false);
-		const hasEmptyState = await page
-			.getByText(/no workflows available|no workflows match/i)
-			.isVisible()
-			.catch(() => false);
-
-		expect(hasButton || hasEmptyState).toBe(true);
+		// The heading renders before the workflow query settles. Wait for the
+		// loaded list or its empty state instead of sampling during skeletons.
+		await expect(executeButton.or(emptyState)).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test("should navigate to execute page when clicking execute", async ({
@@ -113,6 +115,13 @@ test.describe("Workflow Execution", () => {
 		const executeButton = page
 			.getByRole("button", { name: /execute|run/i })
 			.first();
+		const emptyState = page.getByText(
+			/no workflows available|no workflows match/i,
+		);
+
+		await expect(executeButton.or(emptyState)).toBeVisible({
+			timeout: 10000,
+		});
 
 		if (await executeButton.isVisible().catch(() => false)) {
 			await executeButton.click();
@@ -126,7 +135,6 @@ test.describe("Workflow Execution", () => {
 			expect(isOnExecutePage || hasExecutionForm).toBe(true);
 		}
 	});
-
 });
 
 test.describe("Workflow Discovery", () => {

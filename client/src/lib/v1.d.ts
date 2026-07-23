@@ -9870,6 +9870,39 @@ export interface components {
              */
             logo?: string | null;
         };
+        /**
+         * AgentRunChildResponse
+         * @description User-facing summary of a delegated child run.
+         */
+        AgentRunChildResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Agent Name */
+            agent_name: string;
+            /** Status */
+            status: string;
+            /** Asked */
+            asked?: string | null;
+            /** Did */
+            did?: string | null;
+            /** Answered */
+            answered?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** AgentRunCreateRequest */
         AgentRunCreateRequest: {
             /** Agent Name */
@@ -9988,6 +10021,8 @@ export interface components {
             steps?: components["schemas"]["AgentRunStepResponse"][];
             /** Child Run Ids */
             child_run_ids?: string[];
+            /** Child Runs */
+            child_runs?: components["schemas"]["AgentRunChildResponse"][];
             /** Ai Usage */
             ai_usage?: components["schemas"]["AIUsagePublicSimple"][] | null;
             ai_totals?: components["schemas"]["AIUsageTotalsSimple"] | null;
