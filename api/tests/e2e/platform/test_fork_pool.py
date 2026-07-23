@@ -251,7 +251,7 @@ class TestForkBasedExecution:
         asyncio.set_event_loop(loop)
         try:
             execution_ids = loop.run_until_complete(
-                asyncio.gather(*[run_one(i) for i in range(5)])
+                asyncio.gather(*[run_one(i) for i in range(30)])
             )
         finally:
             loop.close()
@@ -274,7 +274,7 @@ class TestForkBasedExecution:
 
         results = poll_until(check_all_completed, max_wait=30.0, interval=0.5)
         assert results is not None, "Not all executions completed within timeout"
-        assert len(results) == 5, f"Expected 5 results, got {len(results)}"
+        assert len(results) == 30, f"Expected 30 results, got {len(results)}"
 
         # All should succeed
         for r in results:
@@ -283,7 +283,7 @@ class TestForkBasedExecution:
         # Results should have correct indices
         result_data = [r.get("result", {}) for r in results]
         indices = sorted(d.get("index") for d in result_data)
-        assert indices == [0, 1, 2, 3, 4], f"Wrong indices: {indices}"
+        assert indices == list(range(30)), f"Wrong indices: {indices}"
 
     def test_execution_timeout(self, e2e_client, platform_admin, timeout_workflow):
         """Timeout should still kill forked processes."""

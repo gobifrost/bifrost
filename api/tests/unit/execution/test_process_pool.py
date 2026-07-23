@@ -10,6 +10,7 @@ NOTE: These tests use mocks to avoid spawning real processes.
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from queue import Empty
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from src.services.execution.process_pool import (
     ProcessHandle,
     ProcessPoolManager,
     ProcessState,
+    _PidWrapper,
 )
 from src.services.execution.simple_worker import (
     FailedPackage,
@@ -157,6 +159,29 @@ class TestProcessHandle:
 
         uptime = handle.uptime_seconds
         assert 59.0 < uptime < 61.0
+
+
+class TestPidWrapper:
+    """Tests for grandchild PID lifecycle tracking."""
+
+    def test_template_exit_status_makes_process_not_alive(self):
+        wrapper = _PidWrapper(12345)
+
+        wrapper.mark_exited(0)
+
+        with patch("src.services.execution.process_pool.os.kill") as mock_kill:
+            assert wrapper.is_alive() is False
+        assert wrapper.exitcode == 0
+        mock_kill.assert_not_called()
+
+    def test_join_never_attempts_to_reap_from_grandparent(self):
+        wrapper = _PidWrapper(12345)
+        wrapper.mark_exited(-9)
+
+        with patch("src.services.execution.process_pool.os.waitpid") as mock_waitpid:
+            wrapper.join(timeout=0.1)
+
+        mock_waitpid.assert_not_called()
 
 
 class TestProcessPoolManagerInit:
@@ -994,6 +1019,110 @@ class TestCrashedProcessReport:
 
         # Handle still removed from pool (cleanup still happens)
         assert "process-sigkill-2" not in pool.processes
+
+    @pytest.mark.asyncio
+    async def test_clean_exit_waits_for_pending_result_instead_of_reporting_crash(self):
+        """A reaped clean exit gets time for its result pipe to become readable."""
+        callback = AsyncMock()
+        pool = ProcessPoolManager(max_workers=5, on_result=callback)
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = 0
+
+        result = {
+            "type": "result",
+            "execution_id": "exec-clean",
+            "success": True,
+            "result": {"status": "ok"},
+        }
+        result_queue = MagicMock()
+        result_queue.get_nowait.side_effect = Empty
+        handle = ProcessHandle(
+            id="process-clean",
+            process=mock_process,
+            pid=99997,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-clean",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+            ),
+        )
+        pool.processes[handle.id] = handle
+
+        await pool._check_process_health()
+
+        callback.assert_not_awaited()
+        assert handle.id in pool.processes
+        assert handle.clean_exit_observed_at is not None
+
+        result_queue.get_nowait.side_effect = None
+        result_queue.get_nowait.return_value = result
+        await pool._check_process_health()
+
+        callback.assert_awaited_once_with(result)
+        assert handle.id not in pool.processes
+
+    @pytest.mark.asyncio
+    async def test_clean_exit_without_result_reports_crash_after_grace(self):
+        """A clean exit that never produced a result eventually fails loudly."""
+        callback = AsyncMock()
+        pool = ProcessPoolManager(max_workers=5, on_result=callback)
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = 0
+        result_queue = MagicMock()
+        result_queue.get_nowait.side_effect = Empty
+        handle = ProcessHandle(
+            id="process-clean-no-result",
+            process=mock_process,
+            pid=99996,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-clean-no-result",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+            ),
+            clean_exit_observed_at=(
+                datetime.now(timezone.utc) - timedelta(seconds=3)
+            ),
+        )
+        pool.processes[handle.id] = handle
+
+        await pool._check_process_health()
+
+        callback.assert_awaited_once()
+        assert callback.await_args.args[0]["error_type"] == "ProcessCrashError"
+        assert handle.id not in pool.processes
+
+    def test_collects_authoritative_exit_status_from_template(self):
+        pool = ProcessPoolManager(max_workers=5)
+        template = MagicMock()
+        template.collect_child_exit_statuses.return_value = {99995: -9}
+        pool._template = template
+        wrapper = _PidWrapper(99995)
+        handle = ProcessHandle(
+            id="process-reaped",
+            process=wrapper,
+            pid=99995,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+        )
+        pool.processes[handle.id] = handle
+
+        pool._collect_child_exit_statuses()
+
+        assert wrapper.exitcode == -9
 
 
 # ---------------------------------------------------------------------------
