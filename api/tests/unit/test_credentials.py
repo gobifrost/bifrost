@@ -95,8 +95,8 @@ class TestCredentialProvenance:
         yield tmp_path
         creds_mod._reset_persistent_backend_for_tests()
 
-    def test_url_only_process_override_does_not_borrow_dotenv_tokens(
-        self, isolated_store, monkeypatch, caplog
+    def test_process_url_ignores_dotenv_tokens(
+        self, isolated_store, monkeypatch
     ):
         (isolated_store / ".env").write_text(
             "BIFROST_API_URL=http://localhost:36092\n"
@@ -110,7 +110,6 @@ class TestCredentialProvenance:
             "2099-01-01T00:00:00+00:00",
         )
         monkeypatch.setenv("BIFROST_API_URL", "https://prod.example.com")
-        caplog.set_level("WARNING", logger="bifrost.credentials")
 
         creds_mod.load_dotenv_context()
         result = creds_mod.get_credentials()
@@ -123,14 +122,6 @@ class TestCredentialProvenance:
         assert result["refresh_token"] == "production-refresh"
         assert "BIFROST_ACCESS_TOKEN" not in os.environ
         assert "BIFROST_REFRESH_TOKEN" not in os.environ
-        assert len(caplog.records) == 1
-        warning = caplog.records[0]
-        assert warning.args == (
-            "http://localhost:36092",
-            "https://prod.example.com",
-        )
-        assert "localhost-access" not in warning.getMessage()
-        assert "localhost-refresh" not in warning.getMessage()
 
     def test_complete_process_tuple_wins_over_dotenv_and_persistent(
         self, isolated_store, monkeypatch
@@ -157,21 +148,99 @@ class TestCredentialProvenance:
         assert result["access_token"] == "process-access"
         assert result["refresh_token"] == "process-refresh"
 
-    def test_complete_nearest_dotenv_tuple_is_used(self, isolated_store):
+    def test_dotenv_url_selects_global_credentials_and_ignores_tokens(
+        self, isolated_store
+    ):
         (isolated_store / ".env").write_text(
             "BIFROST_API_URL=http://localhost:36092\n"
             "BIFROST_ACCESS_TOKEN=localhost-access\n"
             "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+        creds_mod.save_credentials(
+            "http://localhost:36092",
+            "stored-local-access",
+            "stored-local-refresh",
+            "2099-01-01T00:00:00+00:00",
         )
 
         result = creds_mod.get_credentials()
 
         assert result is not None
         assert result["api_url"] == "http://localhost:36092"
-        assert result["access_token"] == "localhost-access"
-        assert result["refresh_token"] == "localhost-refresh"
+        assert result["access_token"] == "stored-local-access"
+        assert result["refresh_token"] == "stored-local-refresh"
 
-    def test_matching_url_only_process_override_uses_complete_dotenv_tuple(
+    def test_parent_dotenv_never_overrides_default(
+        self, isolated_store, monkeypatch
+    ):
+        (isolated_store / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+            "BIFROST_SOLUTION_ID=parent-solution\n"
+        )
+        child_repo = isolated_store / "solutions" / "aspen"
+        child_repo.mkdir(parents=True)
+        creds_mod.save_credentials(
+            "https://bifrost.gocovi.com",
+            "production-access",
+            "production-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        creds_mod.save_credentials(
+            "http://localhost:36092",
+            "stored-local-access",
+            "stored-local-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        creds_mod.set_default_connection("https://bifrost.gocovi.com")
+        monkeypatch.chdir(child_repo)
+
+        creds_mod.load_dotenv_context()
+        current_url, source = creds_mod.resolve_current_connection()
+        result = creds_mod.get_credentials()
+
+        assert current_url == "https://bifrost.gocovi.com"
+        assert source == "default"
+        assert result is not None
+        assert result["api_url"] == "https://bifrost.gocovi.com"
+        assert result["access_token"] == "production-access"
+        assert "BIFROST_SOLUTION_ID" not in os.environ
+
+    def test_only_current_directory_dotenv_is_an_explicit_override(
+        self, isolated_store, monkeypatch
+    ):
+        scratch = isolated_store / "debug-scratch"
+        scratch.mkdir()
+        (scratch / ".env").write_text(
+            "BIFROST_API_URL=http://localhost:36092\n"
+            "BIFROST_ACCESS_TOKEN=localhost-access\n"
+            "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
+        )
+        creds_mod.save_credentials(
+            "https://bifrost.gocovi.com",
+            "production-access",
+            "production-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        creds_mod.save_credentials(
+            "http://localhost:36092",
+            "stored-local-access",
+            "stored-local-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
+        creds_mod.set_default_connection("https://bifrost.gocovi.com")
+        monkeypatch.chdir(scratch)
+
+        current_url, source = creds_mod.resolve_current_connection()
+        result = creds_mod.get_credentials()
+
+        assert current_url == "http://localhost:36092"
+        assert source == ".env"
+        assert result is not None
+        assert result["access_token"] == "stored-local-access"
+
+    def test_process_url_uses_global_credentials_not_dotenv_tokens(
         self, isolated_store, monkeypatch
     ):
         (isolated_store / ".env").write_text(
@@ -179,13 +248,19 @@ class TestCredentialProvenance:
             "BIFROST_ACCESS_TOKEN=localhost-access\n"
             "BIFROST_REFRESH_TOKEN=localhost-refresh\n"
         )
+        creds_mod.save_credentials(
+            "http://localhost:36092",
+            "stored-local-access",
+            "stored-local-refresh",
+            "2099-01-01T00:00:00+00:00",
+        )
         monkeypatch.setenv("BIFROST_API_URL", "http://localhost:36092")
 
         result = creds_mod.get_credentials()
 
         assert result is not None
-        assert result["access_token"] == "localhost-access"
-        assert result["refresh_token"] == "localhost-refresh"
+        assert result["access_token"] == "stored-local-access"
+        assert result["refresh_token"] == "stored-local-refresh"
 
     def test_child_url_only_dotenv_uses_persistent_credentials_not_parent_tokens(
         self, isolated_store, monkeypatch

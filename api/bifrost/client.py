@@ -223,12 +223,15 @@ async def refresh_connection_access_token(
 
         stored_access_token = creds.access_token
         stored_refresh_token = creds.refresh_token
-        env_backed = resolved.source in {"process", "dotenv"}
+        process_backed = resolved.source == "process"
 
         if coordinator.latest_access_token is not None:
             if observed_access_token != coordinator.latest_access_token:
                 return coordinator.latest_access_token
-            if not env_backed and stored_access_token != coordinator.latest_access_token:
+            if (
+                not process_backed
+                and stored_access_token != coordinator.latest_access_token
+            ):
                 coordinator.latest_access_token = stored_access_token
                 coordinator.latest_refresh_token = stored_refresh_token
                 return stored_access_token

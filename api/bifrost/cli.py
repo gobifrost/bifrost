@@ -432,11 +432,10 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
 async def password_login_flow(api_url: str, email: str, password: str) -> tuple[int, dict | None]:
     """
-    Password-grant login. Tokens are returned to the caller; the caller
-    decides where to persist them. The CLI's `bifrost login` command writes
-    BIFROST_API_URL + the two tokens to .env in CWD so subsequent commands
-    in that directory inherit them. Suitable only for isolated development
-    stacks with MFA disabled.
+    Password-grant login. Tokens are returned to the caller for storage in the
+    global URL-keyed credential backend. The CLI writes only BIFROST_API_URL to
+    CWD's .env so commands there select the development instance. Suitable only
+    for isolated development stacks with MFA disabled.
 
     Returns (exit_code, payload). On success, payload is the parsed JSON
     response from /auth/login containing access_token / refresh_token.
@@ -583,12 +582,12 @@ def _line_assigns_env_var(line: str, key: str) -> bool:
 
 def _remove_env_connection(api_url: str) -> bool:
     """
-    Remove a matching folder-local Bifrost connection from CWD's .env.
+    Remove a matching folder-local Bifrost URL selector from CWD's .env.
 
     The URL is the binding key. Only when it matches ``api_url`` do we remove
-    the URL plus any password-grant access and refresh tokens from that file.
-    Browser login writes only the URL, while password-grant login writes all
-    three values.
+    the URL plus any legacy access and refresh token lines from that file.
+    Current login flows store credentials globally by URL and write only the
+    URL selector to .env.
 
     Returns True if a matching connection was removed.
     """
@@ -988,12 +987,10 @@ Browser (default): Device-code flow; tokens stored in OS keychain (with JSON
                    On success, writes BIFROST_API_URL=<url> to .env in the
                    current directory so subsequent CLI commands target this
                    instance.
-Password: When --email and --password are passed, performs an ephemeral
-          password-grant login and writes BIFROST_API_URL +
-          BIFROST_ACCESS_TOKEN + BIFROST_REFRESH_TOKEN to .env in the
-          current directory. Subsequent CLI commands from this directory
-          pick the tokens up automatically. For isolated dev stacks only
-          — refuses if MFA is enabled on the instance.
+Password: When --email and --password are passed, performs a password-grant
+          login. Credentials are stored globally by URL; .env receives only
+          BIFROST_API_URL so this directory selects that connection. For
+          isolated dev stacks only — refuses if MFA is enabled.
 
 Options:
   --url, -u URL         API URL (default: BIFROST_API_URL or http://localhost:8000)
@@ -1038,26 +1035,25 @@ Examples:
         assert password is not None
         rc, data = asyncio.run(password_login_flow(api_url, email, password))
         if rc == 0 and data is not None:
-            # Persist URL + tokens to CWD's .env so subsequent `bifrost`
-            # commands from this directory just work — no shell-eval needed.
-            # Isolation is by directory: each sandbox dir has its own .env.
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=data.get("expires_in", 1800)
+            )
+            credentials.save_credentials(
+                api_url=api_url,
+                access_token=data["access_token"],
+                refresh_token=data["refresh_token"],
+                expires_at=expires_at.isoformat(),
+            )
+
+            # The exact-directory .env selects the URL only. Tokens stay in
+            # the global credential store keyed by that URL.
             try:
                 _write_env_url(api_url)
-                _upsert_env_vars(
-                    {
-                        "BIFROST_ACCESS_TOKEN": data["access_token"],
-                        "BIFROST_REFRESH_TOKEN": data["refresh_token"],
-                    }
-                )
             except OSError as e:
                 print(
                     f"Warning: could not update .env in current directory: {e}",
                     file=sys.stderr,
                 )
-                # Fall back to printing so the caller can eval them.
-                print(f"BIFROST_API_URL={api_url}")
-                print(f"BIFROST_ACCESS_TOKEN={data['access_token']}")
-                print(f"BIFROST_REFRESH_TOKEN={data['refresh_token']}")
         return rc
 
     # Browser device-code flow (persistent → keychain or JSON fallback).
@@ -1112,9 +1108,8 @@ If --url is omitted, logs out from the URL resolved by the same rules as
 connection).
 
 After clearing persistent credentials, if the current directory's .env is
-bound to that URL, you'll be prompted to remove the complete folder binding.
-For browser login this is the URL; for password login it also includes the
-folder-local access and refresh tokens.
+bound to that URL, you'll be prompted to remove its URL selector. Legacy token
+lines in that same file are removed as cleanup.
 
 Options:
   --url, -u URL   Specific URL to log out from

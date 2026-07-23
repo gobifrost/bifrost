@@ -228,7 +228,7 @@ async def test_refresh_reuses_credentials_replaced_by_another_caller(
 
 
 @pytest.mark.asyncio
-async def test_env_credentials_survive_multiple_rotating_refreshes(
+async def test_global_credentials_survive_multiple_rotating_refreshes(
     isolated_credentials, monkeypatch, tmp_path
 ) -> None:
     from bifrost import client as client_mod
@@ -239,6 +239,12 @@ async def test_env_credentials_survive_multiple_rotating_refreshes(
         "BIFROST_API_URL=https://api.example.com\n"
         "BIFROST_ACCESS_TOKEN=access-0\n"
         "BIFROST_REFRESH_TOKEN=refresh-0\n"
+    )
+    isolated_credentials.save_credentials(
+        api_url,
+        "access-0",
+        "refresh-0",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
     )
     refresh_tokens_seen: list[str] = []
 
@@ -275,12 +281,12 @@ async def test_env_credentials_survive_multiple_rotating_refreshes(
     assert first == "access-1"
     assert second == "access-2"
     assert refresh_tokens_seen == ["refresh-0", "refresh-1"]
-    assert isolated_credentials.get_persistent_backend().get(api_url) is None
+    assert isolated_credentials.get_persistent_backend().get(api_url) is not None
     assert isolated_credentials.get_credentials(api_url)["access_token"] == "access-2"
     assert isolated_credentials.get_credentials(api_url)["refresh_token"] == "refresh-2"
     env_text = (tmp_path / ".env").read_text()
-    assert "BIFROST_ACCESS_TOKEN=access-2" in env_text
-    assert "BIFROST_REFRESH_TOKEN=refresh-2" in env_text
+    assert "BIFROST_ACCESS_TOKEN=access-0" in env_text
+    assert "BIFROST_REFRESH_TOKEN=refresh-0" in env_text
 
 
 @pytest.mark.asyncio

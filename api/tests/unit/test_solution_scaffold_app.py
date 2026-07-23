@@ -34,16 +34,19 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "lucide-react" in pkg["dependencies"]
     assert pkg["scripts"]["dev"] == "vite"
 
-    # vite.config reads the CLI's own token (env OR the nearest .env up the
-    # tree), so `npm run dev` authenticates with NO token pasting.
+    # vite.config reads a URL selector (process env or exact-directory .env)
+    # and gets credentials from process env or the global CLI store, so
+    # `npm run dev` authenticates with NO token pasting.
     vc = files["vite.config.ts"]
     assert "BIFROST_ACCESS_TOKEN" in vc
     assert "VITE_BIFROST_TOKEN" in vc
     assert "process.env.BIFROST_ACCESS_TOKEN" in vc  # env first
-    assert "dirname" in vc  # walks up to find the .env
-    # R7-P2-f: device-code login stores the token in the keyring / credentials.json
-    # (not a .env), so the config must fall back to the CLI credential store via
-    # `bifrost auth token` — otherwise the normal login path starts dev tokenless.
+    assert 'join(process.cwd(), ".env")' in vc
+    assert "dirname" not in vc
+    assert "(BIFROST_API_URL|BIFROST_ACCESS_TOKEN)" not in vc
+    assert "BIFROST_ACCESS_TOKEN" not in files[".env.example"]
+    # Tokens live in the keyring / credentials.json, so the config must fall
+    # back to the CLI store via `bifrost auth token`.
     assert "auth" in vc and "token" in vc
     assert "execFileSync" in vc
     # SECURITY (Codex R6-P1-c): the token is injected ONLY for `vite` serve
