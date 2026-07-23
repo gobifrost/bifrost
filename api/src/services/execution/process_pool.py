@@ -38,7 +38,7 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from queue import Empty
 from typing import Any, Awaitable, Callable
@@ -54,6 +54,8 @@ from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
 
 logger = logging.getLogger(__name__)
+
+_CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
 
 
 async def _notify_requirements_failures(result: RequirementsInstallResult) -> None:
@@ -201,6 +203,9 @@ class ProcessHandle:
     # Used by the orphan sweep to wait out the grace-sleep window before treating
     # a KILLED handle as truly stuck.
     killed_at: datetime | None = None
+    # Timestamp set when the template reports a clean exit before the result
+    # loop has drained the child's result pipe.
+    clean_exit_observed_at: datetime | None = None
 
     @property
     def is_alive(self) -> bool:
@@ -226,29 +231,25 @@ class _PidWrapper:
         self.exitcode: int | None = None
 
     def is_alive(self) -> bool:
+        if self.exitcode is not None:
+            return False
         try:
             os.kill(self.pid, 0)
             return True
         except OSError:
             return False
 
+    def mark_exited(self, exitcode: int) -> None:
+        """Record the authoritative exit status reported by the child parent."""
+        self.exitcode = exitcode
+
     def join(self, timeout: float | None = None) -> None:
-        import time
-        try:
-            if timeout is not None:
-                # Non-blocking waitpid with polling
-                deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    pid, status = os.waitpid(self.pid, os.WNOHANG)
-                    if pid != 0:
-                        self.exitcode = os.waitstatus_to_exitcode(status)
-                        return
-                    time.sleep(0.1)
-            else:
-                _, status = os.waitpid(self.pid, 0)
-                self.exitcode = os.waitstatus_to_exitcode(status)
-        except ChildProcessError:
-            pass  # Already reaped
+        """Wait for disappearance without trying to reap a grandchild."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.is_alive():
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            time.sleep(0.05)
 
 
 # Type alias for result callback
@@ -1126,6 +1127,8 @@ class ProcessPoolManager:
         """
         to_remove: list[str] = []
 
+        self._collect_child_exit_statuses()
+
         # Snapshot to a list — items() iterator is unsafe across the awaits
         # below (peer coroutines like _handle_result mutate self.processes).
         for process_id, handle in list(self.processes.items()):
@@ -1133,6 +1136,23 @@ class ProcessPoolManager:
             if process_id not in self.processes:
                 continue
             if not handle.is_alive and handle.state != ProcessState.KILLED:
+                if handle.current_execution and not handle.result_reported:
+                    try:
+                        result = handle.result_queue.get_nowait()
+                    except (Empty, EOFError, OSError):
+                        result = None
+
+                    if isinstance(result, dict):
+                        await self._handle_result(handle, result)
+                        continue
+
+                    if handle.process.exitcode == 0:
+                        now = datetime.now(timezone.utc)
+                        if handle.clean_exit_observed_at is None:
+                            handle.clean_exit_observed_at = now
+                        if now - handle.clean_exit_observed_at < _CLEAN_EXIT_RESULT_GRACE:
+                            continue
+
                 # Case A: unexpected crash
                 logger.warning(
                     f"Process {process_id} crashed "
@@ -1176,6 +1196,28 @@ class ProcessPoolManager:
                     removed_any = True
             if removed_any:
                 await self._notify_slot_free()
+
+    def _collect_child_exit_statuses(self) -> None:
+        """Apply exit statuses gathered by the template that owns the children."""
+        template = self._template
+        if template is None:
+            return
+
+        try:
+            exit_statuses = template.collect_child_exit_statuses()
+        except (EOFError, OSError, RuntimeError) as e:
+            logger.warning(f"Could not collect child exit statuses from template: {e}")
+            return
+
+        handles_by_pid = {
+            handle.pid: handle
+            for handle in self.processes.values()
+            if handle.pid is not None
+        }
+        for child_pid, exitcode in exit_statuses.items():
+            handle = handles_by_pid.get(child_pid)
+            if handle is not None and isinstance(handle.process, _PidWrapper):
+                handle.process.mark_exited(exitcode)
 
     async def _report_orphan(self, handle: ProcessHandle) -> None:
         """

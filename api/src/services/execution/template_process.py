@@ -87,7 +87,24 @@ class _RecvQueue:
 
 # Commands sent from consumer to template via pipe
 CMD_FORK = "fork"
+CMD_GET_EXIT_STATUSES = "get_exit_statuses"
 CMD_SHUTDOWN = "shutdown"
+
+
+def _reap_children(exit_statuses: dict[int, int]) -> None:
+    """Reap exited fork children and retain their exit status for the consumer."""
+    while True:
+        try:
+            child_pid, status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        except InterruptedError:
+            continue
+
+        if child_pid == 0:
+            return
+
+        exit_statuses[child_pid] = os.waitstatus_to_exitcode(status)
 
 
 def _template_main(
@@ -248,7 +265,10 @@ def _template_main(
 
     # ----- Fork loop -----
     # Single-threaded, no event loop. Just wait for commands and fork.
+    exit_statuses: dict[int, int] = {}
     while True:
+        _reap_children(exit_statuses)
+
         try:
             if not pipe.poll(timeout=1.0):
                 continue
@@ -262,6 +282,16 @@ def _template_main(
         if cmd.get("action") == CMD_SHUTDOWN:
             logger.info("Template received shutdown command")
             break
+
+        if cmd.get("action") == CMD_GET_EXIT_STATUSES:
+            # A child may have exited after the sweep at the top of the loop.
+            _reap_children(exit_statuses)
+            pipe.send({
+                "status": "exit_statuses",
+                "exit_statuses": list(exit_statuses.items()),
+            })
+            exit_statuses.clear()
+            continue
 
         if cmd.get("action") == CMD_FORK:
             worker_id = cmd.get("worker_id", "unknown")
@@ -593,6 +623,24 @@ class TemplateProcess:
             work_queue,
             result_queue,
         )
+
+    def collect_child_exit_statuses(self) -> dict[int, int]:
+        """Return statuses for children reaped by the template since the last call."""
+        if self._pipe is None or not self.is_alive():
+            return {}
+
+        self._pipe.send({"action": CMD_GET_EXIT_STATUSES})
+        if not self._pipe.poll(timeout=5):
+            raise RuntimeError("Template process did not return child exit statuses within 5s")
+
+        msg = self._pipe.recv()
+        if msg.get("status") != "exit_statuses":
+            raise RuntimeError(f"Unexpected template exit-status response: {msg}")
+
+        return {
+            int(child_pid): int(exit_code)
+            for child_pid, exit_code in msg.get("exit_statuses", [])
+        }
 
     def shutdown(self) -> None:
         """Send shutdown command to template and wait for it to exit."""
