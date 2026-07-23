@@ -2488,10 +2488,22 @@ def _vite_child_env(
     return env
 
 
-@solution_group.command(name="start", help="Run the app's dev server + local workflows (one origin).")
+@solution_group.command(
+    name="start",
+    help=(
+        "Run the app's dev server + local workflows on one stable origin. "
+        "Preview credentials are renewed automatically."
+    ),
+)
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
-@click.option("--port", default=3000, show_default=True, type=int, help="Local origin port.")
+@click.option(
+    "--port",
+    default=3000,
+    show_default=True,
+    type=int,
+    help="Stable local proxy origin port; reuse it across restarts.",
+)
 @click.option("--host", "bind_host", default="127.0.0.1", show_default=True,
               help="Address for the local origin to bind.")
 @click.option("--public-url", default=None,
@@ -2574,6 +2586,7 @@ def start_cmd(
     # Cheap, deterministic refusals come BEFORE a possibly-minutes install:
     # aborting on a busy port after the user sat through npm is hostile.
     vite_port = port + 1
+    _ensure_port_free(port)
     _ensure_port_free(vite_port)
 
     original_sdk_spec = _heal_sdk_dep(chosen.app_dir, client.api_url)

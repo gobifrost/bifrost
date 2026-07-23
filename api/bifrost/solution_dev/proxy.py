@@ -12,14 +12,17 @@ Routes:
   everything else              → reverse-proxy to the Vite dev server (the app),
                                  including Vite's own HMR websocket.
 
-The upstream proxy injects the CLI token (Authorization), the bound install org
-(X-Bifrost-Org), and the bound install id (``?solution=`` / ``solution_id``) so
-data-plane calls run under the same install scope as deployed.
+The upstream proxy injects the current CLI token (Authorization), the bound
+install org (X-Bifrost-Org), and the bound install id (``?solution=`` /
+``solution_id``) so data-plane calls run under the same install scope as
+deployed. The proxy renews JWT-shaped access tokens before expiry and still
+refreshes reactively on an upstream 401.
 
-WebSockets are NOT given the injected Authorization header: the browser
-authenticates the realtime socket via cookies or a `token` query param (see
-client/src/services/websocket.ts). The `token` query param rides along in
-`rel_url`; cookies are forwarded explicitly on the upstream handshake.
+WebSockets cannot carry the injected Authorization header. For platform
+realtime sockets, the proxy replaces the bundle's static `token` query param
+with its current renewed CLI token on every upstream handshake (see
+client/src/lib/app-sdk/ws-client.ts). Cookies are forwarded explicitly too.
+Vite HMR sockets remain untouched.
 Requested subprotocols (e.g. Vite's `vite-hmr`) are echoed back to the client
 and forwarded upstream — browsers fail the connection otherwise. When either
 side closes, the bridge tears down both sockets (no half-open pump leaks).
@@ -27,10 +30,13 @@ side closes, the bridge tears down both sockets (no half-open pump leaks).
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
+import json
 import re
+import time
 import uuid as _uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 import aiohttp
@@ -60,7 +66,14 @@ class _UpstreamAuthorityError(ValueError):
     """The constructed proxy target's authority is not the trusted base's."""
 
 
-DEV_AUTH_EXPIRED_DETAIL = "Your CLI token has expired. Restart `bifrost solution start`."
+DEV_AUTH_EXPIRED_DETAIL = (
+    "The local preview could not renew your CLI credentials yet. It will keep "
+    "trying automatically; run `bifrost login` only if your refresh session has expired."
+)
+_AUTH_REFRESH_LEEWAY_SECONDS = 60.0
+_AUTH_REFRESH_POLL_SECONDS = 30.0
+_AUTH_REFRESH_RETRY_SECONDS = 2.0
+_DEV_SESSION_PATH = "/__bifrost_dev/session"
 
 
 def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
@@ -111,6 +124,7 @@ class DevProxyConfig:
     auth_expired: bool = False
     branding: dict[str, Any] | None = None
     branding_loaded: bool = False
+    session_id: str = field(default_factory=lambda: str(_uuid.uuid4()))
 
 
 # Typed app keys (avoid aiohttp's NotAppKeyWarning for plain-string keys).
@@ -129,6 +143,7 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
     app[_HTTP] = httpx.AsyncClient(timeout=120.0)
     app[_WARNED_UUID_REFS] = set()
 
+    app.router.add_get(_DEV_SESSION_PATH, _dev_session_handler)
     app.router.add_post("/api/workflows/execute", _execute_handler)
     app.router.add_route("*", "/ws/{tail:.*}", _ws_handler)
     app.router.add_route("*", "/api/{tail:.*}", _api_proxy_handler)
@@ -137,6 +152,7 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
     async def _close(app):
         await app[_HTTP].aclose()
 
+    app.cleanup_ctx.append(_proactive_auth_refresh_context)
     app.on_cleanup.append(_close)
     return app
 
@@ -170,20 +186,93 @@ def _passthrough_headers(resp, default_content_type: str) -> dict[str, str]:
     return headers
 
 
-async def _refresh_cli_token(cfg: DevProxyConfig, observed_access_token: str) -> bool:
+def _jwt_expiry(token: str) -> float | None:
+    """Read an unverified JWT exp hint for renewal scheduling.
+
+    Authentication still happens upstream. This parser only decides when to
+    call the real refresh endpoint, so opaque/non-JWT tokens simply retain the
+    existing refresh-on-401 behavior.
+    """
+    try:
+        payload_segment = token.split(".")[1]
+        padding = "=" * (-len(payload_segment) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_segment + padding))
+        if not isinstance(payload, dict):
+            return None
+        expiry = payload.get("exp")
+        if isinstance(expiry, (int, float)) and not isinstance(expiry, bool):
+            return float(expiry)
+    except (IndexError, ValueError, TypeError):
+        pass
+    return None
+
+
+async def _refresh_cli_token(
+    cfg: DevProxyConfig,
+    observed_access_token: str,
+    *,
+    mark_expired_on_failure: bool = True,
+) -> bool:
     if cfg.refresh_token is None:
-        cfg.auth_expired = True
+        if mark_expired_on_failure:
+            cfg.auth_expired = True
         return False
     try:
         token = await cfg.refresh_token(observed_access_token)
     except Exception:
         token = None
     if not token:
-        cfg.auth_expired = True
+        if mark_expired_on_failure:
+            cfg.auth_expired = True
         return False
     cfg.token = token
     cfg.auth_expired = False
     return True
+
+
+async def _proactive_auth_refresh_loop(app: web.Application) -> None:
+    """Renew an active preview token before its JWT expiry.
+
+    The shared client refresh coordinator serializes this with any reactive
+    HTTP refresh. A transient early failure does not poison the preview while
+    the current token remains valid; the loop retries and only marks auth as
+    expired after the actual exp time passes.
+    """
+    cfg: DevProxyConfig = app[_CFG]
+    while True:
+        expiry = _jwt_expiry(cfg.token)
+        if expiry is None:
+            await asyncio.sleep(_AUTH_REFRESH_POLL_SECONDS)
+            continue
+
+        remaining = expiry - time.time()
+        if remaining > _AUTH_REFRESH_LEEWAY_SECONDS:
+            await asyncio.sleep(
+                min(
+                    _AUTH_REFRESH_POLL_SECONDS,
+                    remaining - _AUTH_REFRESH_LEEWAY_SECONDS,
+                )
+            )
+            continue
+
+        observed_access_token = cfg.token
+        refreshed = await _refresh_cli_token(
+            cfg,
+            observed_access_token,
+            mark_expired_on_failure=remaining <= 0,
+        )
+        if refreshed and cfg.token != observed_access_token:
+            continue
+        await asyncio.sleep(_AUTH_REFRESH_RETRY_SECONDS)
+
+
+async def _proactive_auth_refresh_context(app: web.Application):
+    task = asyncio.create_task(_proactive_auth_refresh_loop(app))
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def _authed_upstream_request(
@@ -233,6 +322,43 @@ def _dev_auth_expired_json_response() -> web.Response:
     )
 
 
+async def _dev_session_handler(request: web.Request) -> web.Response:
+    cfg: DevProxyConfig = request.app[_CFG]
+    return web.json_response(
+        {"session_id": cfg.session_id},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _dev_recovery_script(session_id: str) -> str:
+    encoded_session_id = json.dumps(session_id)
+    return f"""<script data-bifrost-dev-recovery>
+(() => {{
+  const sessionId = {encoded_session_id};
+  const checkSession = async () => {{
+    try {{
+      const response = await fetch("{_DEV_SESSION_PATH}", {{ cache: "no-store" }});
+      if (!response.ok) return;
+      const current = await response.json();
+      if (current.session_id !== sessionId) window.location.reload();
+    }} catch (_) {{
+      // Keep polling while the CLI proxy is restarting on this same origin.
+    }}
+  }};
+  window.setInterval(checkSession, 5000);
+}})();
+</script>"""
+
+
+def _inject_dev_recovery_script(body: bytes, session_id: str) -> bytes:
+    script = _dev_recovery_script(session_id).encode()
+    marker = b"</head>"
+    offset = body.lower().find(marker)
+    if offset == -1:
+        return script + body
+    return body[:offset] + script + body[offset:]
+
+
 async def _get_branding(request: web.Request) -> dict[str, Any]:
     cfg: DevProxyConfig = request.app[_CFG]
     if cfg.branding_loaded:
@@ -275,6 +401,9 @@ async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{escaped_product_name} Dev Auth Expired</title>
+    <script>
+      window.setTimeout(() => window.location.reload(), 3000);
+    </script>
     <script>
       try {{
         if ((localStorage.getItem("theme") || "dark") === "dark") {{
@@ -489,9 +618,9 @@ async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
           <div class="actions">
             <h2>What you can do:</h2>
             <ul>
-              <li>• Stop this server and restart <code>bifrost solution start</code></li>
-              <li>• If restarting does not fix it, run <code>bifrost login</code></li>
-              <li>• Refresh this page after the Solution dev server is running again</li>
+              <li>• This page retries automatically; no CLI restart is needed</li>
+              <li>• If it does not recover, run <code>bifrost login</code> in another terminal</li>
+              <li>• Keep <code>bifrost solution start</code> running on this origin</li>
             </ul>
           </div>
         </div>
@@ -523,6 +652,11 @@ def _ws_scheme(http_url: str) -> str:
     if http_url.startswith("http://"):
         return "ws://" + http_url[len("http://"):]
     return http_url
+
+
+def _with_cli_token(rel_url: yarl.URL, token: str) -> yarl.URL:
+    """Replace a bundle-baked websocket token with the live proxy token."""
+    return rel_url.update_query(token=token)
 
 
 async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketResponse:
@@ -579,7 +713,12 @@ async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketRe
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Bridge realtime (/ws/...) sockets to the dev API."""
     cfg: DevProxyConfig = request.app[_CFG]
-    target = _ws_scheme(_join_upstream(cfg.upstream_url, request.rel_url))
+    target = _ws_scheme(
+        _join_upstream(
+            cfg.upstream_url,
+            _with_cli_token(request.rel_url, cfg.token),
+        )
+    )
     return await _ws_proxy(request, target)
 
 
@@ -716,7 +855,12 @@ async def _execute_handler(request: web.Request) -> web.Response:
 async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
     cfg: DevProxyConfig = request.app[_CFG]
     if _is_ws_upgrade(request):
-        target = _ws_scheme(_join_upstream(cfg.upstream_url, request.rel_url))
+        target = _ws_scheme(
+            _join_upstream(
+                cfg.upstream_url,
+                _with_cli_token(request.rel_url, cfg.token),
+            )
+        )
         return await _ws_proxy(request, target)
     data = await request.read()
     try:
@@ -751,10 +895,10 @@ async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
         # state (the SDK header historically collapsed every auth failure to
         # "Account"). Verify the CLI-backed proxy session before handing the
         # document to Vite. This also refreshes a stale access token once via
-        # the same coordinated authority used by API calls. On failure, reuse
-        # the branded dev diagnostics page before any app JavaScript runs.
-        if cfg.auth_expired:
-            return await _dev_auth_expired_page_response(request)
+        # the same coordinated authority used by API calls. Even after an
+        # earlier failure, retry here so a rotated credential written by
+        # another CLI process can be adopted without restarting this preview.
+        # On failure, reuse the branded diagnostics page before app JS runs.
         try:
             auth = await _authed_upstream_request(
                 request,
@@ -815,7 +959,16 @@ async def _vite_proxy_handler(request: web.Request) -> web.StreamResponse:
             {"detail": f"Error talking to the app dev server (vite): {type(exc).__name__}: {exc}"},
             status=502,
         )
+    body = resp.content
+    response_headers = _passthrough_headers(resp, "text/html")
+    content_type = response_headers["content-type"].lower()
+    if resp.status_code == 200 and content_type.startswith("text/html"):
+        body = _inject_dev_recovery_script(body, cfg.session_id)
+        # A cached document would retain an obsolete session id and could
+        # reload-loop after a proxy restart.
+        response_headers["cache-control"] = "no-store"
     return web.Response(
-        body=resp.content, status=resp.status_code,
-        headers=_passthrough_headers(resp, "text/html"),
+        body=body,
+        status=resp.status_code,
+        headers=response_headers,
     )

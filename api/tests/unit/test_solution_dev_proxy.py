@@ -1,5 +1,8 @@
 import asyncio
+import base64
+import json
 import socket
+import time
 
 import aiohttp
 import httpx
@@ -10,7 +13,22 @@ from bifrost.solution_dev.function_host import (
     LocalWorkflowImportError,
     LocalWorkflowResolutionError,
 )
-from bifrost.solution_dev.proxy import DevProxyConfig, _join_upstream, build_dev_app
+from bifrost.solution_dev.proxy import (
+    DEV_AUTH_EXPIRED_DETAIL,
+    DevProxyConfig,
+    _join_upstream,
+    build_dev_app,
+)
+
+
+def _jwt_with_exp(exp: float) -> str:
+    """Build an unsigned JWT-shaped token; the proxy only reads the exp hint."""
+
+    def _segment(value: dict) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{_segment({'alg': 'none'})}.{_segment({'exp': exp})}."
 
 
 def test_join_upstream_keeps_trusted_authority():
@@ -524,6 +542,45 @@ async def test_api_proxy_refreshes_cli_token_once_after_401():
         await up_runner.cleanup()
 
 
+async def test_active_preview_proactively_renews_token_before_a_request_401():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+    refreshed = asyncio.Event()
+
+    async def refresh_token(observed_token):
+        record["refresh_called"] = observed_token
+        refreshed.set()
+        return "fresh-token"
+
+    expired_token = _jwt_with_exp(time.time() - 1)
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token=expired_token,
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url="http://127.0.0.1:1"),
+        dev_port,
+    )
+    try:
+        await asyncio.wait_for(refreshed.wait(), timeout=1)
+        await asyncio.sleep(0)
+        async with httpx.AsyncClient() as c:
+            response = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+        assert response.status_code == 200
+        assert record["refresh_called"] == expired_token
+        # Renewal happened before browser traffic, so the request never sent
+        # the expired token and never needed the reactive 401 path.
+        assert record["auth_headers"] == ["Bearer fresh-token"]
+        assert cfg.auth_expired is False
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
 async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
     record = {}
     up_port, dev_port = _free_port(), _free_port()
@@ -549,12 +606,64 @@ async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
         assert r.headers["x-bifrost-dev-auth"] == "expired"
         assert r.json() == {
             "error": "bifrost_dev_auth_expired",
-            "detail": "Your CLI token has expired. Restart `bifrost solution start`.",
+            "detail": DEV_AUTH_EXPIRED_DETAIL,
         }
         assert record["refresh_called"] == "stale-token"
         assert record["auth_headers"] == ["Bearer stale-token"]
     finally:
         await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_document_reload_recovers_after_credentials_are_replaced():
+    record = {}
+    up_port, vite_port, dev_port = _free_port(), _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+
+    async def index(_request):
+        return web.Response(text="<html><body>Vite app</body></html>", content_type="text/html")
+
+    vite = web.Application()
+    vite.router.add_get("/", index)
+    vite_runner = await _serve(vite, vite_port)
+    can_refresh = False
+
+    async def refresh_token(_observed_token):
+        return "fresh-token" if can_refresh else None
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url=f"http://127.0.0.1:{vite_port}"),
+        dev_port,
+    )
+    try:
+        async with httpx.AsyncClient() as c:
+            failed = await c.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+            assert failed.status_code == 401
+            assert cfg.auth_expired is True
+
+            # Another CLI process/login can replace the stored credential tuple.
+            # The already-running preview must adopt it on the next automatic or
+            # manual document reload; auth_expired cannot be a permanent latch.
+            can_refresh = True
+            recovered = await c.get(
+                f"http://127.0.0.1:{dev_port}/",
+                headers={"Accept": "text/html"},
+            )
+
+        assert recovered.status_code == 200
+        assert "Vite app" in recovered.text
+        assert cfg.token == "fresh-token"
+        assert cfg.auth_expired is False
+    finally:
+        await dev_runner.cleanup()
+        await vite_runner.cleanup()
         await up_runner.cleanup()
 
 
@@ -642,7 +751,8 @@ async def test_vite_proxy_serves_branded_auth_expired_page_before_the_app():
         assert "/api/branding/logo/square" not in page.text
         assert "/api/branding/logo/rectangle" not in page.text
         assert "#aa3366" in page.text
-        assert "Your CLI token has expired" in page.text
+        assert "will keep trying automatically" in page.text
+        assert "no CLI restart is needed" in page.text
         assert "bifrost solution start" in page.text
         assert "Vite app" not in page.text
         assert record["auth_headers"] == ["Bearer stale-token"]
@@ -685,26 +795,90 @@ async def test_vite_proxy_refuses_to_render_app_when_auth_preflight_cannot_reach
         await vite_runner.cleanup()
 
 
-async def test_ws_upgrade_bridges_to_upstream():
+async def test_ws_upgrade_replaces_baked_token_with_live_cli_token():
     record = {}
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
-    cfg = DevProxyConfig(upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="O")
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="live-cli-token",
+        app_id="A",
+        org_id="O",
+    )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
-                f"http://127.0.0.1:{dev_port}/ws/echo?channels=x&token=tok"
+                f"http://127.0.0.1:{dev_port}/ws/echo?channels=x&token=baked-stale-token"
             ) as ws:
                 await ws.send_str("ping")
                 msg = await ws.receive()
                 assert msg.type == aiohttp.WSMsgType.TEXT
                 assert msg.data == "echo:ping"
-        # rel_url (channels + token) is forwarded verbatim to the dev API.
-        assert record["ws_query"] == "channels=x&token=tok"
+        # A Vite bundle is static for the lifetime of the child process. The
+        # proxy must replace its baked token on every upstream WS handshake.
+        assert record["ws_query"] == "channels=x&token=live-cli-token"
     finally:
         await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_browser_session_reload_signal_changes_after_same_origin_restart():
+    record = {}
+    up_port, vite_port, dev_port = _free_port(), _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+
+    async def index(_request):
+        return web.Response(text="<html><head></head><body>Vite app</body></html>",
+                            content_type="text/html")
+
+    vite = web.Application()
+    vite.router.add_get("/", index)
+    vite_runner = await _serve(vite, vite_port)
+
+    async def _start_proxy():
+        cfg = DevProxyConfig(
+            upstream_url=f"http://127.0.0.1:{up_port}",
+            token="fresh-token",
+            app_id="A",
+            org_id="O",
+        )
+        runner = await _serve(
+            build_dev_app(cfg, _StubHost(set()), vite_url=f"http://127.0.0.1:{vite_port}"),
+            dev_port,
+        )
+        return cfg, runner
+
+    origin = f"http://127.0.0.1:{dev_port}"
+    first_cfg, first_runner = await _start_proxy()
+    try:
+        async with httpx.AsyncClient() as c:
+            first_page = await c.get(f"{origin}/", headers={"Accept": "text/html"})
+            first_session = (await c.get(f"{origin}/__bifrost_dev/session")).json()
+    finally:
+        await first_runner.cleanup()
+
+    second_cfg, second_runner = await _start_proxy()
+    try:
+        async with httpx.AsyncClient() as c:
+            second_page = await c.get(f"{origin}/", headers={"Accept": "text/html"})
+            second_session = (await c.get(f"{origin}/__bifrost_dev/session")).json()
+
+        assert first_cfg.session_id != second_cfg.session_id
+        assert first_session == {"session_id": first_cfg.session_id}
+        assert second_session == {"session_id": second_cfg.session_id}
+        assert "data-bifrost-dev-recovery" in first_page.text
+        assert first_cfg.session_id in first_page.text
+        assert "window.location.reload()" in first_page.text
+        assert "data-bifrost-dev-recovery" in second_page.text
+        # Both generations used the exact same browser-visible origin. An open
+        # page can poll it through downtime, see the new session id, and reload.
+        assert str(first_page.url).startswith(origin)
+        assert str(second_page.url).startswith(origin)
+    finally:
+        await second_runner.cleanup()
+        await vite_runner.cleanup()
         await up_runner.cleanup()
 
 
