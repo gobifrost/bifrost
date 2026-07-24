@@ -117,6 +117,8 @@ dependencies = [
     # =========================================================================
     "aiobotocore",  # Async S3 client
     "types-aiobotocore[s3]",  # Type stubs for S3
+    "azure-identity",  # Managed identity credential for Azure Blob user-delegation SAS
+    "azure-storage-blob",  # Azure Blob object storage backend
 
     # =========================================================================
     # LLM Providers (AI Agent System)

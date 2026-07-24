@@ -17,6 +17,7 @@ def mock_settings():
     settings.s3_access_key = "bifrost"
     settings.s3_secret_key = "bifrost123"
     settings.s3_region = "us-east-1"
+    settings.object_storage_provider = "s3"
     settings.redis_url = ""  # Disable Redis lock in unit tests
     return settings
 
@@ -168,6 +169,19 @@ class TestSyncDown:
         # Cleanup
         import shutil
         shutil.rmtree(target.parent)
+
+    @pytest.mark.asyncio
+    async def test_raises_in_azure_blob_mode_before_aws_sync(
+        self, mock_settings, tmp_path
+    ):
+        mock_settings.object_storage_provider = "azure_blob"
+        manager = GitRepoManager(settings=mock_settings)
+
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run:
+            with pytest.raises(RuntimeError, match="S3-only"):
+                await manager.sync_down(tmp_path)
+
+        mock_run.assert_not_awaited()
 
 
 class TestSyncUp:

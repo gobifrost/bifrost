@@ -128,6 +128,9 @@ class S3StorageClient:
             )
         return self._rewrite_presigned_url(url)
 
+    def presigned_upload_headers(self, content_type: str) -> dict[str, str]:
+        return {"Content-Type": content_type}
+
     async def generate_presigned_download_url(
         self,
         path: str,

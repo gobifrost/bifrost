@@ -308,6 +308,61 @@ async def test_build_writes_current_schema_version_into_manifest(
     )
 
 
+@pytest.mark.asyncio
+async def test_live_build_writes_through_app_storage_live_api(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Live builds must use AppStorageService instead of private S3 internals."""
+    bundler = BundlerService()
+    temp_root = tmp_path / "bundle-work"
+    temp_root.mkdir()
+
+    async def fake_materialize(src_dir_arg, repo_prefix):
+        del src_dir_arg, repo_prefix
+        return ["pages/index.tsx"]
+
+    async def fake_tailwind(src_dir_arg, sources):
+        del src_dir_arg, sources
+        return False, set()
+
+    async def fake_esbuild(cfg):
+        out_dir = pathlib.Path(cfg["out_dir"])
+        out_dir.mkdir()
+        (out_dir / "entry.js").write_bytes(b"console.log('live');")
+        return {
+            "success": True,
+            "outputs": [{"path": "entry.js"}],
+            "entry_file": "entry.js",
+            "css_file": None,
+            "errors": [],
+            "warnings": [],
+            "duration_ms": 3,
+        }
+
+    bundler._materialize_source = fake_materialize  # type: ignore[method-assign]
+    bundler._generate_app_tailwind = fake_tailwind  # type: ignore[method-assign]
+    bundler._write_entry = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    bundler._write_bifrost_package = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    bundler._run_esbuild = fake_esbuild  # type: ignore[method-assign]
+
+    with patch("tempfile.TemporaryDirectory") as temp_dir:
+        temp_dir.return_value.__enter__.return_value = str(temp_root)
+        temp_dir.return_value.__exit__.return_value = None
+        bundler._app_storage.write_live_file = AsyncMock()
+        bundler._app_storage.write_preview_file = AsyncMock()
+
+        result = await bundler.build("app-id", "apps/test/", mode="live")
+
+    assert result.success is True
+    bundler._app_storage.write_preview_file.assert_not_called()
+    live_writes = bundler._app_storage.write_live_file.await_args_list
+    assert [call.args[:2] for call in live_writes] == [
+        ("app-id", "entry.js"),
+        ("app-id", "manifest.json"),
+    ]
+    assert live_writes[0].args[2] == b"console.log('live');"
+
+
 # ---------------------------------------------------------------------------
 # _generate_app_tailwind — per-app Tailwind compilation step that fills in
 # arbitrary values / responsive variants the host's preloaded Tailwind misses.
