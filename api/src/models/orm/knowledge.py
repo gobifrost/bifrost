@@ -9,8 +9,17 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -73,6 +82,38 @@ class KnowledgeStore(Base):
     # known dimension; sequential scan is fine at our scale.
     embedding: Mapped[list] = mapped_column(Vector(), nullable=False)
 
+    # Lexical side of hybrid retrieval. Imported knowledge commonly stores
+    # titles and navigation context in metadata rather than repeating them in
+    # every chunk, so those fields are weighted above body text. Avoid indexing
+    # the entire metadata JSON: image UUIDs and other transport metadata add
+    # noise without improving retrieval.
+    search_tsv: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            """
+            setweight(to_tsvector('english', coalesce(key, '')), 'A') ||
+            setweight(
+                to_tsvector('english', coalesce(metadata ->> 'title', '')),
+                'A'
+            ) ||
+            setweight(
+                to_tsvector('english', coalesce(metadata ->> 'parent_slug', '')),
+                'B'
+            ) ||
+            setweight(
+                to_tsvector(
+                    'english',
+                    coalesce(metadata ->> 'faq_breadcrumbs', '')
+                ),
+                'B'
+            ) ||
+            setweight(to_tsvector('english', coalesce(content, '')), 'C')
+            """,
+            persisted=True,
+        ),
+        deferred=True,
+    )
+
     # Audit
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
@@ -126,6 +167,12 @@ class KnowledgeStore(Base):
         ),
         # Metadata filtering (GIN index for JSONB) - uses column name "metadata" not attribute name
         Index("ix_knowledge_metadata", "metadata", postgresql_using="gin"),
+        # PostgreSQL full-text candidate retrieval for hybrid knowledge search.
+        Index(
+            "ix_knowledge_search_tsv_gin",
+            "search_tsv",
+            postgresql_using="gin",
+        ),
         # Note: Vector index (IVFFlat) is created in migration since it requires
         # special syntax not easily expressed in SQLAlchemy
     )

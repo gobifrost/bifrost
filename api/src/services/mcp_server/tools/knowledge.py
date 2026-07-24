@@ -82,6 +82,7 @@ async def search_knowledge(
             results = await repo.search(
                 query_embedding=query_embedding,
                 namespace=namespaces_to_search,
+                query_text=query,
                 limit=limit,
                 fallback=True,
             )
@@ -117,7 +118,11 @@ TOOLS = [
     (
         "search_knowledge",
         "Search Knowledge",
-        "Search the Bifrost knowledge base. Returns at most 5 results.",
+        (
+            "Hybrid-search the Bifrost knowledge base. Returns at most 5 "
+            "deduplicated results; use materially different queries for "
+            "follow-up searches."
+        ),
     ),
 ]
 

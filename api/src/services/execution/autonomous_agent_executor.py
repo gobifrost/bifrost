@@ -37,7 +37,9 @@ from src.services.llm import LLMMessage, ToolCallRequest, get_llm_client
 from src.services.knowledge.search_budget import (
     KnowledgeSearchBudget,
     clamp_knowledge_result_limit,
+    compact_knowledge_metadata,
     knowledge_search_rejection_payload,
+    select_novel_knowledge_evidence,
 )
 from src.services.mcp_client import dispatch as mcp_dispatch
 from src.services.mcp_client.errors import (
@@ -602,6 +604,7 @@ class AutonomousAgentExecutor:
                 results = await repo.search(
                     query_embedding=query_embedding,
                     namespace=namespaces,
+                    query_text=query,
                     limit=limit,
                     fallback=True,
                 )
@@ -610,21 +613,33 @@ class AutonomousAgentExecutor:
                 return "No relevant knowledge found."
 
             # Format results
-            search_results = [
-                {
-                    "content": doc.content,
-                    "namespace": doc.namespace,
-                    "score": round(doc.score, 4) if doc.score else None,
-                    "key": doc.key,
-                    "metadata": doc.metadata,
-                }
-                for doc in results
-            ]
+            evidence = select_novel_knowledge_evidence(
+                self._knowledge_search_budget,
+                [
+                    (
+                        doc.id,
+                        {
+                            "content": doc.content,
+                            "namespace": doc.namespace,
+                            "score": round(doc.score, 4)
+                            if doc.score is not None
+                            else None,
+                            "key": doc.key,
+                            "metadata": compact_knowledge_metadata(doc.metadata),
+                        },
+                    )
+                    for doc in results
+                ],
+            )
             return json.dumps({
-                "documents": search_results,
-                "count": len(search_results),
+                "documents": evidence.documents,
+                "count": len(evidence.documents),
+                "omitted_duplicate_evidence": evidence.omitted_duplicates,
+                "omitted_for_evidence_budget": evidence.omitted_for_budget,
                 "searches_used": decision.searches_used,
                 "searches_remaining": decision.searches_remaining,
+                "evidence_chars_used": evidence.evidence_chars_used,
+                "evidence_chars_remaining": evidence.evidence_chars_remaining,
             })
 
         except Exception as e:

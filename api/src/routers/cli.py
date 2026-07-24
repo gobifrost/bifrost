@@ -2313,14 +2313,14 @@ async def cli_knowledge_store_many(
 
 @router.post(
     "/knowledge/search",
-    summary="Search for similar documents",
+    summary="Hybrid-search knowledge documents",
 )
 async def cli_knowledge_search(
     request: "CLIKnowledgeSearchRequest",
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> list[CLIKnowledgeDocumentResponse]:
-    """Search for similar documents using vector similarity."""
+    """Search knowledge using fused lexical and vector rankings."""
     _deny_external_knowledge(current_user)
     from src.models.contracts.cli import CLIKnowledgeDocumentResponse
     from src.repositories.knowledge import KnowledgeRepository
@@ -2342,6 +2342,7 @@ async def cli_knowledge_search(
         results = await repo.search(
             query_embedding=query_embedding,
             namespace=request.namespace,
+            query_text=request.query,
             limit=request.limit,
             min_score=request.min_score,
             metadata_filter=request.metadata_filter,
